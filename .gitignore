@@ -1,0 +1,52 @@
+# Build output ---------------------------------------------------------------
+build/
+out/
+bin/
+lib/
+cmake-build-*/
+
+# Visual Studio / CMake integration -----------------------------------------
+.vs/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+CMakeSettings.json.user
+CMakeUserPresets.json
+
+# IDE local state ------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# JUCE-generated --------------------------------------------------------------
+JuceLibraryCode/
+Builds/
+*.jucer.bak
+
+# OS noise -------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Compiled artefacts ---------------------------------------------------------
+*.obj
+*.o
+*.exe
+*.pdb
+*.ilk
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.exp
+
+# Python sidecar tools (Demucs, etc.) ---------------------------------------
+__pycache__/
+*.pyc
+.venv/
+venv/
