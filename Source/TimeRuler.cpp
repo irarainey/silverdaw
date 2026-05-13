@@ -5,6 +5,7 @@ TimeRuler::TimeRuler (const juce::AudioTransportSource& tr, double pps)
     : transport (tr),
       pixelsPerSecond (pps)
 {
+    setOpaque (true);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
@@ -46,7 +47,8 @@ void TimeRuler::paint (juce::Graphics& g)
 
     const double endSecs = (double) bounds.getRight() / pixelsPerSecond;
 
-    g.setFont (juce::Font (11.0f));
+    static const juce::Font labelFont (11.0f);
+    g.setFont (labelFont);
 
     // Minor ticks
     g.setColour (juce::Colour::fromRGB (60, 60, 65));

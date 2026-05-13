@@ -6,6 +6,7 @@ TrackLane::TrackLane (Track& t, const juce::AudioTransportSource& tr, double pps
       transport (tr),
       pixelsPerSecond (pps)
 {
+    setOpaque (true);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     track.getThumbnail().addChangeListener (this);
 }
@@ -36,26 +37,29 @@ void TrackLane::paint (juce::Graphics& g)
 
     auto& thumb = track.getThumbnail();
     const double totalSeconds = thumb.getTotalLength();
-    if (totalSeconds <= 0.0)
-        return;
+    if (totalSeconds > 0.0)
+    {
+        const double offsetSeconds = track.getStartOffsetSeconds();
+        const int    clipX = (int) std::round (offsetSeconds * pixelsPerSecond);
+        const int    clipW = juce::jmax (1, (int) std::round (totalSeconds * pixelsPerSecond));
 
-    const double offsetSeconds = track.getStartOffsetSeconds();
-    const int    clipX = (int) std::round (offsetSeconds * pixelsPerSecond);
-    const int    clipW = juce::jmax (1, (int) std::round (totalSeconds * pixelsPerSecond));
+        juce::Rectangle<int> clipBounds (clipX, bounds.getY() + 4,
+                                         clipW, bounds.getHeight() - 8);
 
-    juce::Rectangle<int> clipBounds (clipX, bounds.getY() + 4,
-                                     clipW, bounds.getHeight() - 8);
+        // Skip the expensive thumbnail draw when the dirty region misses the clip
+        // (e.g. a playhead-only repaint of a 3-pixel-wide strip).
+        if (g.getClipBounds().intersects (clipBounds))
+        {
+            g.setColour (juce::Colour::fromRGB (35, 55, 80));
+            g.fillRect (clipBounds);
 
-    // Clip body.
-    g.setColour (juce::Colour::fromRGB (35, 55, 80));
-    g.fillRect (clipBounds);
+            g.setColour (juce::Colours::lightblue);
+            thumb.drawChannels (g, clipBounds.reduced (1, 1), 0.0, totalSeconds, 1.0f);
 
-    g.setColour (juce::Colours::lightblue);
-    thumb.drawChannels (g, clipBounds.reduced (1, 1), 0.0, totalSeconds, 1.0f);
-
-    // Clip outline.
-    g.setColour (juce::Colour::fromRGB (90, 130, 180));
-    g.drawRect (clipBounds, 1);
+            g.setColour (juce::Colour::fromRGB (90, 130, 180));
+            g.drawRect (clipBounds, 1);
+        }
+    }
 
     // Playhead — vertical line if it falls within this lane's visible area.
     const auto playheadSeconds = transport.getCurrentPosition();
@@ -112,5 +116,35 @@ void TrackLane::mouseUp (const juce::MouseEvent& e)
 void TrackLane::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
     if (source == &track.getThumbnail())
+    {
+        // AudioThumbnail broadcasts progress updates very frequently while a
+        // file is being scanned. Coalesce them: schedule one repaint at most
+        // every 50 ms instead of repainting on every change.
+        if (! thumbnailRepaintPending)
+        {
+            thumbnailRepaintPending = true;
+            startTimer (50);
+        }
+    }
+}
+
+void TrackLane::timerCallback()
+{
+    stopTimer();
+    thumbnailRepaintPending = false;
+
+    auto& thumb = track.getThumbnail();
+    const double totalSeconds = thumb.getTotalLength();
+    if (totalSeconds <= 0.0)
+    {
         repaint();
+        return;
+    }
+
+    // Only repaint the area occupied by the clip, not the entire (possibly
+    // tens-of-thousands-of-pixels-wide) lane.
+    const double offsetSeconds = track.getStartOffsetSeconds();
+    const int    clipX = (int) std::round (offsetSeconds * pixelsPerSecond);
+    const int    clipW = juce::jmax (1, (int) std::round (totalSeconds * pixelsPerSecond));
+    repaint (clipX, 0, clipW, getHeight());
 }

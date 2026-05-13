@@ -1,8 +1,24 @@
 #include "TrackMixerSource.h"
 
 //==============================================================================
-TrackMixerSource::TrackMixerSource() = default;
-TrackMixerSource::~TrackMixerSource() { releaseResources(); }
+TrackMixerSource::TrackMixerSource()
+{
+    // 'normal' priority is JUCE's recommended setting for disk read-ahead
+    // threads. Running it 'high' starves the message thread and makes the UI
+    // sluggish whenever the buffer is refilling.
+    readAheadThread.startThread (juce::Thread::Priority::normal);
+}
+
+TrackMixerSource::~TrackMixerSource()
+{
+    // Tracks must be destroyed before the thread they're using stops.
+    {
+        const juce::ScopedLock sl (tracksLock);
+        tracks.clear();
+    }
+    readAheadThread.stopThread (2000);
+    releaseResources();
+}
 
 //==============================================================================
 Track* TrackMixerSource::addTrack (std::unique_ptr<Track> track)
@@ -59,9 +75,11 @@ void TrackMixerSource::prepareToPlay (int samplesPerBlockExpected, double sample
     currentSampleRate = sampleRate;
     prepared          = true;
 
-    // Two output channels is what the main component asks for; tracks render
-    // into a temp buffer sized to match before being summed into the output.
-    tempBuffer.setSize (2, samplesPerBlockExpected, false, true, true);
+    // Pre-size the temp buffer with headroom so the audio thread never has to
+    // allocate inside getNextAudioBlock(). 2x the expected block size covers
+    // devices that occasionally ask for larger blocks than they advertised.
+    tempBuffer.setSize (2, juce::jmax (1, samplesPerBlockExpected * 2),
+                        false, true, true);
 
     const juce::ScopedLock sl (tracksLock);
     for (auto& t : tracks)
@@ -83,9 +101,11 @@ void TrackMixerSource::getNextAudioBlock (const juce::AudioSourceChannelInfo& in
 {
     info.clearActiveBufferRegion();
 
-    const juce::ScopedLock sl (tracksLock);
+    // Try-lock: if the message thread is mid-add/remove, skip this block
+    // rather than risk priority inversion on the audio thread.
+    const juce::CriticalSection::ScopedTryLockType sl (tracksLock);
 
-    if (tracks.empty() || currentSampleRate <= 0.0)
+    if (! sl.isLocked() || tracks.empty() || currentSampleRate <= 0.0)
     {
         currentPosition += info.numSamples;
         return;
@@ -94,10 +114,13 @@ void TrackMixerSource::getNextAudioBlock (const juce::AudioSourceChannelInfo& in
     const bool anySoloed = std::any_of (tracks.begin(), tracks.end(),
                                         [] (const auto& t) { return t->isSoloed(); });
 
-    // Make sure the temp buffer is large enough.
+    // Safety net: tempBuffer is pre-sized in prepareToPlay() to 2x the
+    // expected block size, so this should never fire on the audio thread.
+    // Keep the resize as a last-resort guard against pathological drivers.
     if (tempBuffer.getNumSamples() < info.numSamples
         || tempBuffer.getNumChannels() < info.buffer->getNumChannels())
     {
+        jassertfalse;
         tempBuffer.setSize (juce::jmax (2, info.buffer->getNumChannels()),
                             info.numSamples, false, true, true);
     }

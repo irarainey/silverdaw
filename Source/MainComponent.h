@@ -128,5 +128,9 @@ private:
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 
+    // Cached UI state used to avoid redundant repaints/allocations on the 30 Hz timer.
+    int          lastPlayheadX   { -1 };
+    juce::String lastTimeLabel;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

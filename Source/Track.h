@@ -22,7 +22,8 @@ class Track : public juce::PositionableAudioSource
 public:
     //==============================================================================
     Track (juce::AudioFormatManager& formatManager,
-           juce::AudioThumbnailCache& thumbnailCache);
+           juce::AudioThumbnailCache& thumbnailCache,
+           juce::TimeSliceThread&     readAheadThread);
     ~Track() override;
 
     //==============================================================================
@@ -75,13 +76,24 @@ public:
 private:
     //==============================================================================
     juce::AudioFormatManager&                       formatManager;
+    juce::TimeSliceThread&                          readAheadThread;
     juce::AudioThumbnail                            thumbnail;
 
-    // The audio chain: AudioFormatReaderSource -> ResamplingAudioSource.
-    // 'sourceLock' guards swaps in loadFile() against the audio thread.
+    // The audio chain: AudioFormatReaderSource -> BufferingAudioSource ->
+    // ResamplingAudioSource. The BufferingAudioSource lifts file decode off
+    // the audio thread onto the shared read-ahead thread.
+    // 'sourceLock' guards swaps in loadFile() against the audio thread. We
+    // use a CriticalSection (cheap user-mode lock when uncontended, OS-yields
+    // when contended) and ScopedTryLockType on the audio thread, so neither
+    // thread ever busy-spins on the other.
     juce::CriticalSection                            sourceLock;
     std::unique_ptr<juce::AudioFormatReaderSource>   readerSource;
+    std::unique_ptr<juce::BufferingAudioSource>      bufferingSource;
     std::unique_ptr<juce::ResamplingAudioSource>     resampler;
+    // Non-owning pointer to whichever source the audio thread should read
+    // from. Equals bufferingSource.get() when file and device sample rates
+    // match (bypassing the resampler entirely), otherwise resampler.get().
+    juce::AudioSource*                               activeSource { nullptr };
 
     juce::File   file;
     juce::String name;

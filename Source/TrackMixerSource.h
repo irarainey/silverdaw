@@ -18,6 +18,11 @@ public:
     TrackMixerSource();
     ~TrackMixerSource() override;
 
+    /** The shared background thread that all Tracks use to read ahead from
+        disk via BufferingAudioSource. Owned by the mixer so its lifetime
+        covers every Track that references it. */
+    juce::TimeSliceThread& getReadAheadThread() noexcept { return readAheadThread; }
+
     //==============================================================================
     /** Adds a track. Takes ownership. Returns a non-owning pointer so the UI
         can keep a reference to it. */
@@ -42,6 +47,13 @@ public:
 
 private:
     //==============================================================================
+    // Read-ahead thread shared by every Track's BufferingAudioSource. Started
+    // in the ctor and stopped in the dtor so its lifetime brackets all tracks.
+    juce::TimeSliceThread                 readAheadThread { "Jackdaw read-ahead" };
+
+    // CriticalSection + ScopedTryLockType on the audio thread: user-mode-fast
+    // when uncontended, OS-yields (instead of busy-spinning) under contention,
+    // and the audio callback never blocks the message thread.
     mutable juce::CriticalSection         tracksLock;
     std::vector<std::unique_ptr<Track>>   tracks;
 

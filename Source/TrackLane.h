@@ -20,7 +20,8 @@
     The click-vs-drag distinction is based on a small movement threshold.
 */
 class TrackLane  : public juce::Component,
-                   private juce::ChangeListener
+                   private juce::ChangeListener,
+                   private juce::Timer
 {
 public:
     TrackLane (Track& track,
@@ -47,6 +48,7 @@ public:
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster* source) override;
+    void timerCallback() override;
 
     Track&                               track;
     const juce::AudioTransportSource&    transport;
@@ -57,6 +59,10 @@ private:
     bool   isDragging       { false };
     int    mouseDownX       { 0 };
     double dragStartOffset  { 0.0 };
+
+    // Coalesces the high-frequency AudioThumbnail change broadcasts that
+    // happen while a file is being scanned.
+    bool   thumbnailRepaintPending { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TrackLane)
 };

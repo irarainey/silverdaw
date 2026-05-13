@@ -1,8 +1,11 @@
 #include "Track.h"
 
 //==============================================================================
-Track::Track (juce::AudioFormatManager& fm, juce::AudioThumbnailCache& cache)
+Track::Track (juce::AudioFormatManager& fm,
+              juce::AudioThumbnailCache& cache,
+              juce::TimeSliceThread&     thread)
     : formatManager (fm),
+      readAheadThread (thread),
       thumbnail (512, fm, cache)
 {
 }
@@ -20,24 +23,49 @@ bool Track::loadFile (const juce::File& newFile)
         return false;
 
     const auto newFileSampleRate = reader->sampleRate;
+    const int  numFileChannels   = (int) reader->numChannels;
 
     auto newReaderSource = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
-    auto newResampler    = std::make_unique<juce::ResamplingAudioSource> (newReaderSource.get(),
-                                                                          false,
-                                                                          (int) reader->numChannels);
+
+    // Roughly half a second of read-ahead at typical sample rates is enough
+    // to hide file I/O and codec decode latency without bloating memory.
+    constexpr int kBufferSamples = 32768;
+    auto newBuffered = std::make_unique<juce::BufferingAudioSource> (
+        newReaderSource.get(),
+        readAheadThread,
+        /*deleteSourceWhenDeleted*/ false,
+        kBufferSamples,
+        numFileChannels);
+
+    auto newResampler = std::make_unique<juce::ResamplingAudioSource> (newBuffered.get(),
+                                                                       false,
+                                                                       numFileChannels);
 
     // If the audio device has already been prepared, prepare the new chain
     // *before* swapping it into place. That avoids glitches.
     if (deviceSampleRate > 0.0)
     {
+        newReaderSource->prepareToPlay (currentBlockSize, deviceSampleRate);
+        newBuffered->prepareToPlay     (currentBlockSize, deviceSampleRate);
         newResampler->setResamplingRatio (newFileSampleRate / deviceSampleRate);
-        newResampler->prepareToPlay (currentBlockSize, deviceSampleRate);
+        newResampler->prepareToPlay    (currentBlockSize, deviceSampleRate);
     }
+
+    // Bypass the resampler entirely when rates match: ResamplingAudioSource
+    // with ratio 1.0 still pays the full per-sample Lagrange interpolation
+    // cost, which is significant across many tracks.
+    const bool ratesMatch = deviceSampleRate > 0.0
+                          && std::abs (newFileSampleRate - deviceSampleRate) < 0.5;
+    juce::AudioSource* newActive = ratesMatch
+        ? static_cast<juce::AudioSource*> (newBuffered.get())
+        : static_cast<juce::AudioSource*> (newResampler.get());
 
     {
         const juce::ScopedLock sl (sourceLock);
         readerSource     = std::move (newReaderSource);
+        bufferingSource  = std::move (newBuffered);
         resampler        = std::move (newResampler);
+        activeSource     = newActive;
         fileSampleRate   = newFileSampleRate;
         currentDevicePos = 0;
     }
@@ -62,33 +90,45 @@ void Track::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
     if (readerSource != nullptr)
         readerSource->prepareToPlay (samplesPerBlockExpected, sampleRate);
 
+    if (bufferingSource != nullptr)
+        bufferingSource->prepareToPlay (samplesPerBlockExpected, sampleRate);
+
     if (resampler != nullptr)
     {
         if (fileSampleRate > 0.0)
             resampler->setResamplingRatio (fileSampleRate / sampleRate);
         resampler->prepareToPlay (samplesPerBlockExpected, sampleRate);
     }
+
+    const bool ratesMatch = fileSampleRate > 0.0
+                          && std::abs (fileSampleRate - sampleRate) < 0.5;
+    activeSource = ratesMatch
+        ? static_cast<juce::AudioSource*> (bufferingSource.get())
+        : static_cast<juce::AudioSource*> (resampler.get());
 }
 
 void Track::releaseResources()
 {
     const juce::ScopedLock sl (sourceLock);
 
-    if (resampler    != nullptr) resampler->releaseResources();
-    if (readerSource != nullptr) readerSource->releaseResources();
+    if (resampler       != nullptr) resampler->releaseResources();
+    if (bufferingSource != nullptr) bufferingSource->releaseResources();
+    if (readerSource    != nullptr) readerSource->releaseResources();
 }
 
 void Track::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 {
-    const juce::ScopedLock sl (sourceLock);
+    // Try-lock: if the message thread is mid-swap in loadFile(), emit silence
+    // for this block rather than blocking the audio thread on the OS.
+    const juce::CriticalSection::ScopedTryLockType sl (sourceLock);
 
-    if (resampler == nullptr)
+    if (! sl.isLocked() || activeSource == nullptr)
     {
         info.clearActiveBufferRegion();
         return;
     }
 
-    resampler->getNextAudioBlock (info);
+    activeSource->getNextAudioBlock (info);
     currentDevicePos += info.numSamples;
 }
 
@@ -105,6 +145,12 @@ void Track::setNextReadPosition (juce::int64 newPosition)
     // Convert device-rate samples back to file-rate samples for the reader.
     const auto filePos = (juce::int64) ((double) newPosition * fileSampleRate / deviceSampleRate);
     readerSource->setNextReadPosition (filePos);
+
+    // The buffering source caches blocks ahead of the read head; tell it the
+    // stream has discontinued so it discards any prefetch from the old
+    // position before the audio thread next pulls from it.
+    if (bufferingSource != nullptr)
+        bufferingSource->setNextReadPosition (filePos);
 
     // Reset the resampler so it doesn't carry filter state across the seek.
     if (resampler != nullptr)

@@ -168,7 +168,11 @@ void MainComponent::recomputeTimelineSize()
     const int contentHeight   = kRulerHeight + totalRowsHeight;
     const int height          = juce::jmax (contentHeight, timelineViewport.getHeight());
 
-    timelineContent.setSize (width, height);
+    // Only resize when the bounds actually change; otherwise we trigger a
+    // cascade of resized() calls on every child during a mouse-drag and
+    // re-layout the entire arrange view on every pixel of movement.
+    if (width != timelineContent.getWidth() || height != timelineContent.getHeight())
+        timelineContent.setSize (width, height);
 }
 
 //==============================================================================
@@ -221,7 +225,9 @@ void MainComponent::stopButtonClicked()
 //==============================================================================
 void MainComponent::addTrackFromFile (const juce::File& file)
 {
-    auto track = std::make_unique<Track> (formatManager, thumbnailCache);
+    auto track = std::make_unique<Track> (formatManager,
+                                           thumbnailCache,
+                                           mixer.getReadAheadThread());
     if (! track->loadFile (file))
     {
         juce::NativeMessageBox::showMessageBoxAsync (
@@ -343,15 +349,33 @@ void MainComponent::timerCallback()
 {
     const auto pos = transportSource.getCurrentPosition();
     const auto len = transportSource.getLengthInSeconds();
-    timeLabel.setText (formatTime (pos) + " / " + formatTime (len),
-                       juce::dontSendNotification);
 
-    // Refresh the moving playhead.
-    if (ruler != nullptr)
-        ruler->repaint();
+    auto newLabel = formatTime (pos) + " / " + formatTime (len);
+    if (newLabel != lastTimeLabel)
+    {
+        timeLabel.setText (newLabel, juce::dontSendNotification);
+        lastTimeLabel = std::move (newLabel);
+    }
 
+    const int newX = (int) std::round (pos * kPixelsPerSecond);
+    if (newX == lastPlayheadX)
+        return;
+
+    auto invalidatePlayheadStrip = [] (juce::Component* c, int oldX, int newPlayheadX)
+    {
+        if (c == nullptr)
+            return;
+        const int h = c->getHeight();
+        if (oldX >= 0)
+            c->repaint (oldX - 1, 0, 3, h);
+        c->repaint (newPlayheadX - 1, 0, 3, h);
+    };
+
+    invalidatePlayheadStrip (ruler.get(), lastPlayheadX, newX);
     for (auto& ui : trackUis)
-        ui.lane->repaint();
+        invalidatePlayheadStrip (ui.lane.get(), lastPlayheadX, newX);
+
+    lastPlayheadX = newX;
 }
 
 juce::String MainComponent::formatTime (double seconds) const
