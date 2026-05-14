@@ -4,8 +4,7 @@ import AppTitleBar from '@/components/AppTitleBar.vue'
 import TimelineView from '@/components/TimelineView.vue'
 import TransportBar from '@/components/TransportBar.vue'
 import { useProjectStore } from '@/stores/projectStore'
-import { decodeAudioToPeaks } from '@/lib/audio'
-import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
+import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
 
 const project = useProjectStore()
 
@@ -22,37 +21,11 @@ onBeforeUnmount(() => {
   disconnectBridge()
 })
 
-async function handleMenuAction(action: string): Promise<void> {
-  if (action === 'file.addTrack') await addTrackFromFile()
-}
-
-async function addTrackFromFile(): Promise<void> {
-  const opened = await window.jackdaw.openAudioFile().catch((err) => {
-    console.error('[addTrack] dialog/read failed:', err)
-    return null
-  })
-  if (!opened) return
-
-  try {
-    const decoded = await decodeAudioToPeaks(opened.data)
-    const trackId = project.addTrackFromAudio({
-      filePath: opened.filePath,
-      fileName: opened.fileName,
-      durationMs: decoded.durationMs,
-      sampleRate: decoded.sampleRate,
-      channelCount: decoded.channelCount,
-      peaks: decoded.peaks
-    })
-
-    // Tell the backend so it can load the same file for playback.
-    sendBridge('CLIP_ADD', {
-      trackId,
-      filePath: opened.filePath,
-      positionMs: 0
-    })
-  } catch (err) {
-    console.error('[addTrack] decode failed:', err)
-  }
+function handleMenuAction(action: string): void {
+  // Adding a track is now just "create an empty track". Importing a file
+  // into the track happens via the per-track Import button on the track
+  // header panel (see TrackHeaderPanel.vue).
+  if (action === 'file.addTrack') project.addTrack()
 }
 </script>
 

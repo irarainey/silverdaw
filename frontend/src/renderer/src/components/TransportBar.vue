@@ -29,11 +29,6 @@ function onSkipBack(): void {
   sendBridge('TRANSPORT_STOP')
 }
 
-function onRewind(): void {
-  // No fine-grained seek yet; treat as stop.
-  sendBridge('TRANSPORT_STOP')
-}
-
 function onPlay(): void {
   // Optimistically flip the UI state; the backend's PLAYHEAD_UPDATE will
   // overwrite this within ~16 ms either way.
@@ -44,11 +39,6 @@ function onPlay(): void {
     sendBridge('TRANSPORT_PLAY')
     transport.setPlaybackState(true)
   }
-}
-
-function onStop(): void {
-  sendBridge('TRANSPORT_STOP')
-  transport.setPlaybackState(false, 0)
 }
 
 function onSkipForward(): void {
@@ -76,12 +66,6 @@ function onSkipForward(): void {
           <path d="M6 5h2v14H6V5zm3 7l11-7v14L9 12z" />
         </svg>
       </button>
-      <button type="button" class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100" title="Rewind"
-        @click="onRewind">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5">
-          <path d="M11 5L2 12l9 7V5zm11 0l-9 7 9 7V5z" />
-        </svg>
-      </button>
       <button type="button" class="rounded p-2 hover:bg-blue-600 hover:text-white"
         :class="transport.isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
         :title="transport.isPlaying ? 'Pause' : 'Play'" @click="onPlay">
@@ -91,12 +75,6 @@ function onSkipForward(): void {
         </svg>
         <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-6 w-6">
           <path d="M8 5v14l11-7L8 5z" />
-        </svg>
-      </button>
-      <button type="button" class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100" title="Stop"
-        @click="onStop">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5">
-          <path d="M6 6h12v12H6z" />
         </svg>
       </button>
       <button type="button" class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100" title="Skip to end"

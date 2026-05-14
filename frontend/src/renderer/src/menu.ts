@@ -29,7 +29,7 @@ export const menus: MenuDef[] = [
       { label: 'Save', action: 'file.save', accelerator: 'Ctrl+S' },
       { label: 'Save As...', action: 'file.saveAs', accelerator: 'Ctrl+Shift+S' },
       SEP,
-      { label: 'Add Track from File...', action: 'file.addTrack', accelerator: 'Ctrl+T' },
+      { label: 'Add Track', action: 'file.addTrack', accelerator: 'Ctrl+T' },
       { label: 'Export Mixdown...', action: 'file.exportMixdown' },
       SEP,
       { label: 'Exit', action: 'file.exit' }

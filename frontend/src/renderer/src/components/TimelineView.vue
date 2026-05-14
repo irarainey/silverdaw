@@ -14,6 +14,7 @@ import type { Application, Container, Graphics, Text } from 'pixi.js'
 import { useProjectStore, type Clip, TRACK_PALETTE } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { PEAKS_PER_SECOND } from '@/lib/audio'
+import { send as sendBridge } from '@/lib/bridgeService'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 
 const project = useProjectStore()
@@ -44,9 +45,13 @@ const TIME_SIG_NUM = 4
 const SUBDIVISIONS_PER_BEAT = 4
 
 // Theme (matches tailwind zinc palette).
-const BG = 0x09090b // zinc-950
+// The track-header column shares the transport bar's `bg-zinc-900` so the
+// chrome reads as one continuous surface, while the timeline canvas itself
+// stays a shade darker (`zinc-950`) to keep the editable area visually
+// distinct from the surrounding UI.
+const BG = 0x09090b // zinc-950 (timeline canvas)
 const TRACK_BG = 0x18181b // zinc-900
-const TRACK_HEADER_BG = 0x27272a // zinc-800
+const TRACK_HEADER_BG = 0x18181b // zinc-900 (matches TransportBar)
 const RULER_BG = 0x18181b
 const RULER_TICK = 0x52525b // zinc-600 (ruler baseline + header divider)
 const RULER_LABEL_HINT = 0xa1a1aa // zinc-400 (bar-number labels)
@@ -65,6 +70,18 @@ let rulerLayer: Container | null = null
 let tracksLayer: Container | null = null
 let headersLayer: Container | null = null
 let playheadLayer: Container | null = null
+
+// Viewport-space rectangles for every clip drawn in the last `redraw`.
+// Used by the pointer-down handler to hit-test clips so dragging a clip
+// takes priority over the playhead-seek drag. Repopulated every frame.
+interface ClipHitRegion {
+    clipId: string
+    x: number
+    y: number
+    w: number
+    h: number
+}
+const clipHitRegions: ClipHitRegion[] = []
 
 // Horizontal scroll offset in pixels. The PixiJS canvas itself stays at the
 // viewport size; we just translate what we draw inside it. The TrackHeaderPanel
@@ -204,6 +221,11 @@ onMounted(async () => {
     // horizontal scroll because the timeline has no vertical scroll surface.
     host.value.addEventListener('wheel', onWheel, { passive: false })
 
+    // Playhead seek-drag: pointerdown anywhere on the timeline canvas (right
+    // of the header column, above the horizontal scrollbar lane) starts a
+    // drag that snaps to the nearest sub-beat (1/16 of a bar at 4/4).
+    host.value.addEventListener('pointerdown', onPlayheadPointerDown)
+
     rulerLayer = new ContainerCtor()
     tracksLayer = new ContainerCtor()
     // Headers drawn last so they sit above any scrolled clip content (future).
@@ -246,6 +268,13 @@ onBeforeUnmount(() => {
     resizeObserver?.disconnect()
     resizeObserver = null
     host.value?.removeEventListener('wheel', onWheel)
+    host.value?.removeEventListener('pointerdown', onPlayheadPointerDown)
+    window.removeEventListener('pointermove', onPlayheadPointerMove)
+    window.removeEventListener('pointerup', onPlayheadPointerUp)
+    window.removeEventListener('pointercancel', onPlayheadPointerUp)
+    window.removeEventListener('pointermove', onClipPointerMove)
+    window.removeEventListener('pointerup', onClipPointerUp)
+    window.removeEventListener('pointercancel', onClipPointerUp)
     app?.destroy(true, { children: true, texture: true })
     app = null
     rulerLayer = null
@@ -254,11 +283,12 @@ onBeforeUnmount(() => {
     playheadLayer = null
 })
 
-// Re-render whenever the project changes. `tracks` is what triggers most updates
-// because clips are added via `addTrackFromAudio` which mutates this array.
-// (For per-clip mutations later, deep-watching `clips` would also be needed.)
+// Re-render whenever the project's track or clip count changes. Both track-
+// add/remove and clip-import need to repaint: the former changes the row
+// stack, the latter materialises a waveform on an existing row and may grow
+// the track's `lengthMs` (which extends the timeline).
 watch(
-    () => project.tracks.length,
+    () => [project.tracks.length, Object.keys(project.clips).length] as const,
     () => {
         redraw()
         updatePlayhead()
@@ -293,6 +323,7 @@ function redraw(): void {
     rulerLayer.removeChildren()
     tracksLayer.removeChildren()
     headersLayer.removeChildren()
+    clipHitRegions.length = 0
 
     // `screen.width` is the renderer's logical (CSS-pixel) drawing-space
     // width — i.e. the width we should draw to in stage coordinates so that
@@ -407,6 +438,10 @@ function drawRuler(width: number): void {
 function drawGrid(width: number): void {
     if (!tracksLayer || !GraphicsCtor) return
 
+    // Don't draw a grid on an empty timeline — it just adds visual noise to
+    // the empty-state. The grid reappears the moment the first track is added.
+    if (project.tracks.length === 0) return
+
     const rightEdge = width - SCROLLBAR_WIDTH
     const gridLeft = TRACK_HEADER_WIDTH
     const gridTop = RULER_HEIGHT
@@ -442,12 +477,23 @@ function drawGrid(width: number): void {
 }
 
 function drawTracks(width: number): void {
-    if (!tracksLayer || !headersLayer || !GraphicsCtor) return
+    if (!tracksLayer || !headersLayer || !GraphicsCtor || !app) return
 
     // Track rows live in the area between the ruler and the horizontal
     // scrollbar lane and to the left of the vertical scrollbar lane.
     const rightEdge = width - SCROLLBAR_WIDTH
     const visibleBottom = RULER_HEIGHT + trackAreaHeight.value
+
+    // Full-height track-header column fill: ensures the left strip reads as
+    // a continuous `zinc-900` panel (matching the TransportBar) even when
+    // there are no tracks or the track list doesn't fill the viewport. The
+    // per-row header rectangles drawn below sit on top of this, so the
+    // colour is identical either way.
+    const headerColumnBg = new GraphicsCtor()
+    headerColumnBg
+        .rect(0, RULER_HEIGHT, TRACK_HEADER_WIDTH, app.renderer.screen.height - RULER_HEIGHT)
+        .fill(TRACK_HEADER_BG)
+    tracksLayer.addChild(headerColumnBg)
 
     // Pass 1: row backgrounds + headers. Collect visible rows so we can do a
     // second pass for clips AFTER the grid is drawn, ensuring clip blocks
@@ -518,6 +564,10 @@ function drawClip(clip: Clip, rowY: number, palette: (typeof TRACK_PALETTE)[numb
     block.roundRect(x, innerY, w, innerH, 4).fill({ color: palette.fill, alpha: 0.85 }).stroke({ color: palette.border, width: 1, alpha: 0.9 })
     tracksLayer.addChild(block)
 
+    // Record the viewport-space rectangle so pointer-down can hit-test for
+    // drag-to-move. The visible region (after culling) is enough.
+    clipHitRegions.push({ clipId: clip.id, x, y: innerY, w, h: innerH })
+
     // Waveform. Only iterate the visible pixel range so very long clips don't
     // tank the framerate when zooming or scrolling.
     const wave = new GraphicsCtor()
@@ -551,8 +601,65 @@ function drawClip(clip: Clip, rowY: number, palette: (typeof TRACK_PALETTE)[numb
     wave.stroke({ color: palette.wave, width: 1, alpha: 0.95 })
     tracksLayer.addChild(wave)
 
+    // Filename header strip in the top-left of the clip. Sized to fit the
+    // filename but capped by the clip width, and skipped entirely if the
+    // clip is too narrow to be useful. Drawn last so it overlays the
+    // waveform near the top edge.
+    drawClipHeader(clip, x, innerY, w, palette)
+
     // Silence "unused" lint warning for the imported constant.
     void PEAKS_PER_SECOND
+}
+
+/**
+ * Draw the clip's filename in a coloured strip pinned to its top-left
+ * corner. The strip's width is the lesser of the clip's full width and
+ * whatever fits the filename plus padding, so short filenames don't span
+ * unnecessarily wide. The label is truncated with an ellipsis if even that
+ * doesn't fit. Character-width is approximated rather than measured to keep
+ * per-clip cost flat.
+ */
+function drawClipHeader(
+    clip: Clip,
+    clipX: number,
+    clipInnerY: number,
+    clipW: number,
+    palette: (typeof TRACK_PALETTE)[number]
+): void {
+    if (!tracksLayer || !GraphicsCtor || !TextCtor) return
+
+    const HEADER_H = 14
+    const PAD_X = 4
+    const FONT_SIZE = 10
+    const APPROX_CHAR_W = 5.5
+
+    // A clip narrower than this can't usefully show even an ellipsis.
+    if (clipW < 20) return
+
+    const maxChars = Math.max(1, Math.floor((clipW - PAD_X * 2) / APPROX_CHAR_W))
+    const text =
+        clip.fileName.length > maxChars
+            ? clip.fileName.slice(0, Math.max(1, maxChars - 1)) + '…'
+            : clip.fileName
+
+    // Header background: same colour as the clip border so it blends with
+    // the outline. Width caps at the clip's own width.
+    const desiredW = Math.min(clipW, text.length * APPROX_CHAR_W + PAD_X * 2)
+    const headerBg = new GraphicsCtor()
+    headerBg.rect(clipX, clipInnerY, desiredW, HEADER_H).fill({ color: palette.border, alpha: 0.95 })
+    tracksLayer.addChild(headerBg)
+
+    const label = new TextCtor({
+        text,
+        style: {
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            fontSize: FONT_SIZE,
+            fill: 0x09090b // zinc-950, high contrast against the bright header
+        }
+    })
+    label.x = Math.round(clipX + PAD_X)
+    label.y = Math.round(clipInnerY + (HEADER_H - FONT_SIZE) / 2 - 1)
+    tracksLayer.addChild(label)
 }
 
 /**
@@ -571,10 +678,12 @@ function updatePlayhead(): void {
     const width = app.renderer.screen.width - SCROLLBAR_WIDTH
     const absX = TRACK_HEADER_WIDTH + (transport.positionMs / 1000) * pxPerSecond.value
 
-    // Auto-follow during playback: keep the playhead pinned at the viewport
-    // centre once it crosses the midpoint. When stopped/paused, leave scrollX
-    // alone so the user can scroll freely.
-    if (transport.isPlaying) {
+    // Auto-follow during playback OR while the user is dragging the playhead:
+    // once the head crosses the viewport midpoint, scroll the content so it
+    // stays pinned at the centre. `clampScroll()` will cap `scrollX` at the
+    // end of the timeline content, so once the scroll has reached the end
+    // the head naturally continues toward the right edge.
+    if (transport.isPlaying || isDraggingPlayhead) {
         const viewportCentre = TRACK_HEADER_WIDTH + (width - TRACK_HEADER_WIDTH) / 2
         const desired = Math.max(0, absX - viewportCentre)
         if (Math.abs(desired - scrollX.value) > 0.5) {
@@ -636,6 +745,10 @@ function updatePlayhead(): void {
 function onWheel(e: WheelEvent): void {
     if (!host.value) return
     e.preventDefault()
+    // Zoom is meaningless until there's something on the timeline. Disabling
+    // it on an empty project also prevents the ruler grid scale shifting
+    // around before the user has any visual reference to anchor it to.
+    if (project.tracks.length === 0) return
     const delta = e.deltaY || e.deltaX
     if (delta === 0) return
 
@@ -664,6 +777,148 @@ function onWheel(e: WheelEvent): void {
 
     redraw()
     updatePlayhead()
+}
+
+// -----------------------------------------------------------------------
+// Playhead seek-drag.
+//
+// Pointer-down inside the timeline content area moves the playhead to the
+// nearest snap point and starts a drag; pointer-move while the drag is
+// active keeps re-seeking. Snap target is one sub-beat — i.e. 1/16 of a
+// bar at 4/4 — derived from the project BPM.
+// -----------------------------------------------------------------------
+const MS_PER_SUB_BEAT = 60000 / (BPM * SUBDIVISIONS_PER_BEAT)
+let isDraggingPlayhead = false
+
+// Active clip-drag state. Tracks the clip being moved and the ms offset
+// within the clip where the user originally clicked, so the clip's leading
+// edge follows the cursor minus that grab offset (then snaps to grid).
+let draggedClipId: string | null = null
+let clipGrabOffsetMs = 0
+
+function pointerToSnappedMs(clientX: number): number | null {
+    if (!host.value || !app) return null
+    const rect = host.value.getBoundingClientRect()
+    const x = clientX - rect.left
+    const rightEdge = app.renderer.screen.width - SCROLLBAR_WIDTH
+    if (x < TRACK_HEADER_WIDTH || x > rightEdge) return null
+    const trackLocalX = x - TRACK_HEADER_WIDTH
+    const rawMs = ((scrollX.value + trackLocalX) / pxPerSecond.value) * 1000
+    return Math.max(0, Math.round(rawMs / MS_PER_SUB_BEAT) * MS_PER_SUB_BEAT)
+}
+
+/**
+ * Convert the pointer's viewport-X into an unsnapped timeline ms. Returns
+ * `null` if the pointer is outside the track-content area. Used by clip
+ * drag where we want raw ms (so we can subtract the grab offset before
+ * snapping the clip's leading edge).
+ */
+function pointerToRawMs(clientX: number): number | null {
+    if (!host.value || !app) return null
+    const rect = host.value.getBoundingClientRect()
+    const x = clientX - rect.left
+    const rightEdge = app.renderer.screen.width - SCROLLBAR_WIDTH
+    if (x < TRACK_HEADER_WIDTH || x > rightEdge) return null
+    return ((scrollX.value + x - TRACK_HEADER_WIDTH) / pxPerSecond.value) * 1000
+}
+
+function seekTo(positionMs: number): void {
+    transport.setPosition(positionMs)
+    sendBridge('TRANSPORT_SEEK', { positionMs })
+    updatePlayhead()
+}
+
+function hitTestClip(clientX: number, clientY: number): ClipHitRegion | null {
+    if (!host.value) return null
+    const rect = host.value.getBoundingClientRect()
+    const x = clientX - rect.left
+    const y = clientY - rect.top
+    // Iterate in reverse so the top-most drawn clip wins if any ever overlap.
+    for (let i = clipHitRegions.length - 1; i >= 0; i--) {
+        const r = clipHitRegions[i]
+        if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r
+    }
+    return null
+}
+
+function onPlayheadPointerDown(e: PointerEvent): void {
+    if (e.button !== 0) return
+    if (project.tracks.length === 0) return
+    if (!host.value || !app) return
+
+    // Ignore clicks below the horizontal scrollbar lane so dragging the
+    // scrollbar thumb doesn't double-trigger a seek.
+    const rect = host.value.getBoundingClientRect()
+    const y = e.clientY - rect.top
+    const bottomLimit = app.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
+    if (y > bottomLimit) return
+
+    // Clip drag takes priority — if pointer is on a clip block, drag it.
+    const hit = hitTestClip(e.clientX, e.clientY)
+    if (hit) {
+        const clip = project.clips[hit.clipId]
+        if (clip) {
+            const pointerMs = pointerToRawMs(e.clientX)
+            if (pointerMs !== null) {
+                draggedClipId = clip.id
+                clipGrabOffsetMs = pointerMs - clip.startMs
+                window.addEventListener('pointermove', onClipPointerMove)
+                window.addEventListener('pointerup', onClipPointerUp)
+                window.addEventListener('pointercancel', onClipPointerUp)
+                e.preventDefault()
+                return
+            }
+        }
+    }
+
+    const ms = pointerToSnappedMs(e.clientX)
+    if (ms === null) return
+
+    isDraggingPlayhead = true
+    window.addEventListener('pointermove', onPlayheadPointerMove)
+    window.addEventListener('pointerup', onPlayheadPointerUp)
+    window.addEventListener('pointercancel', onPlayheadPointerUp)
+    seekTo(ms)
+    e.preventDefault()
+}
+
+function onPlayheadPointerMove(e: PointerEvent): void {
+    if (!isDraggingPlayhead) return
+    const ms = pointerToSnappedMs(e.clientX)
+    if (ms === null) return
+    if (ms === transport.positionMs) return
+    seekTo(ms)
+}
+
+function onPlayheadPointerUp(_e: PointerEvent): void {
+    if (!isDraggingPlayhead) return
+    isDraggingPlayhead = false
+    window.removeEventListener('pointermove', onPlayheadPointerMove)
+    window.removeEventListener('pointerup', onPlayheadPointerUp)
+    window.removeEventListener('pointercancel', onPlayheadPointerUp)
+}
+
+function onClipPointerMove(e: PointerEvent): void {
+    if (draggedClipId === null) return
+    const clip = project.clips[draggedClipId]
+    if (!clip) return
+    const pointerMs = pointerToRawMs(e.clientX)
+    if (pointerMs === null) return
+
+    const rawStartMs = pointerMs - clipGrabOffsetMs
+    const snapped = Math.max(0, Math.round(rawStartMs / MS_PER_SUB_BEAT) * MS_PER_SUB_BEAT)
+    if (snapped === clip.startMs) return
+    project.moveClip(clip.id, snapped)
+    redraw()
+    updatePlayhead()
+}
+
+function onClipPointerUp(_e: PointerEvent): void {
+    if (draggedClipId === null) return
+    draggedClipId = null
+    window.removeEventListener('pointermove', onClipPointerMove)
+    window.removeEventListener('pointerup', onClipPointerUp)
+    window.removeEventListener('pointercancel', onClipPointerUp)
 }
 
 /**
@@ -831,7 +1086,7 @@ function onVTrackPointerDown(e: PointerEvent): void {
         <!-- Empty state hint. -->
         <div v-if="project.tracks.length === 0"
             class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-zinc-600">
-            Add a track via File &rsaquo; Add Track from File... (Ctrl+T)
+            Add a track to start
         </div>
     </div>
 </template>

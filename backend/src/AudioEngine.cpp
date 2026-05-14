@@ -54,12 +54,18 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
         return false;
 
     auto track = std::make_unique<Track>();
+    track->sampleRate = reader->sampleRate;
 
     // `AudioFormatReaderSource` takes ownership of the reader (deleteWhenRemoved=true).
     track->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
 
+    // OffsetSource sits between the reader and the transport so any timeline
+    // offset is reflected in the audio the transport's read-ahead buffer
+    // pulls; the transport itself still represents the global timeline.
+    track->offsetSource = std::make_unique<OffsetSource>(track->readerSource.get());
+
     track->transportSource = std::make_unique<juce::AudioTransportSource>();
-    track->transportSource->setSource(track->readerSource.get(),
+    track->transportSource->setSource(track->offsetSource.get(),
                                       32768,            // read-ahead buffer size in samples
                                       &readAheadThread, // background reader thread (required when buffer > 0)
                                       (double)reader->sampleRate, (int)reader->numChannels);
@@ -126,6 +132,34 @@ void AudioEngine::stop()
             track->transportSource->setPosition(0.0);
         }
     }
+}
+
+void AudioEngine::setPositionMs(double ms)
+{
+    const double seconds = juce::jmax(0.0, ms / 1000.0);
+    for (auto& [id, track] : tracks)
+        if (track->transportSource != nullptr)
+            track->transportSource->setPosition(seconds);
+}
+
+bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
+{
+    auto it = tracks.find(trackId);
+    if (it == tracks.end())
+        return false;
+
+    auto& track = it->second;
+    if (track->offsetSource == nullptr || track->transportSource == nullptr)
+        return false;
+
+    const double clampedMs = juce::jmax(0.0, offsetMs);
+    const juce::int64 newOffsetSamples = (juce::int64)(clampedMs * track->sampleRate / 1000.0);
+    track->offsetSource->setOffsetSamples(newOffsetSamples);
+
+    // Re-apply the current transport position so the read-ahead buffer is
+    // refilled with the correct silence / audio mix for the new offset.
+    track->transportSource->setPosition(track->transportSource->getCurrentPosition());
+    return true;
 }
 
 bool AudioEngine::isPlaying() const

@@ -13,8 +13,8 @@ export interface Clip {
   readonly trackId: string
   readonly filePath: string
   readonly fileName: string
-  /** Offset from the timeline origin (ms). */
-  readonly startMs: number
+  /** Offset from the timeline origin (ms). Mutable so clips can be dragged. */
+  startMs: number
   readonly durationMs: number
   readonly sampleRate: number
   readonly channelCount: number
@@ -30,7 +30,17 @@ export interface Track {
   soloed: boolean
   /** Index into `TRACK_PALETTE`. Selects the waveform / clip-block colours. */
   colorIndex: number
+  /**
+   * Visible length of the track in ms. New tracks default to
+   * `DEFAULT_TRACK_LENGTH_MS`; if a longer file is imported the track grows
+   * to fit it. This is what drives `durationMs` for the timeline ruler /
+   * scroll extent.
+   */
+  lengthMs: number
 }
+
+/** Default visible length of a new empty track — 10 minutes. */
+export const DEFAULT_TRACK_LENGTH_MS = 10 * 60 * 1000
 
 /**
  * Fixed 16-entry palette presented in the track-header colour picker. Each
@@ -85,9 +95,16 @@ export const useProjectStore = defineStore('project', {
   }),
 
   getters: {
-    /** Project duration in ms — the latest end of any clip, or 0. */
+    /**
+     * Project duration in ms. The timeline always shows at least the longest
+     * track's `lengthMs`, plus whatever a clip at the end of a track might
+     * extend past that.
+     */
     durationMs(state): number {
       let max = 0
+      for (const t of state.tracks) {
+        if (t.lengthMs > max) max = t.lengthMs
+      }
       for (const id in state.clips) {
         const c = state.clips[id]
         const end = c.startMs + c.durationMs
@@ -104,46 +121,95 @@ export const useProjectStore = defineStore('project', {
 
   actions: {
     /**
-     * Add a new track populated with a single clip starting at t=0.
-     * Returns the new track's id.
+     * Add a new empty track. The track shows up immediately in the timeline
+     * with the default visible length; clips can be imported into it later
+     * via `addClipToTrack`. Returns the new track's id.
      */
-    addTrackFromAudio(audio: {
-      filePath: string
-      fileName: string
-      durationMs: number
-      sampleRate: number
-      channelCount: number
-      peaks: Float32Array
-    }): string {
+    addTrack(): string {
       const trackId = `t${this.nextTrackIndex++}`
-      const clipId = `c${this.nextClipIndex++}`
-
       const track: Track = {
         id: trackId,
-        // Default name = file stem (sans extension).
-        name: audio.fileName.replace(/\.[^.]+$/, ''),
-        clipIds: [clipId],
+        name: `Track ${this.tracks.length + 1}`,
+        clipIds: [],
         muted: false,
         soloed: false,
-        // Walk through the palette so consecutively added tracks get distinct
-        // colours. Users can override per-track via the header colour picker.
-        colorIndex: this.tracks.length % TRACK_PALETTE.length
+        // Rotate through the palette so consecutive new tracks get distinct
+        // colours. Users can override per-track via the colour picker.
+        colorIndex: this.tracks.length % TRACK_PALETTE.length,
+        lengthMs: DEFAULT_TRACK_LENGTH_MS
       }
+      this.tracks.push(track)
+      return trackId
+    },
+
+    /**
+     * Add a decoded audio file as a clip on an existing track, starting at
+     * the given offset (default 0). Grows the track's `lengthMs` if the clip
+     * extends past the current end. Returns the new clip's id, or `null` if
+     * the track wasn't found.
+     */
+    addClipToTrack(
+      trackId: string,
+      audio: {
+        filePath: string
+        fileName: string
+        durationMs: number
+        sampleRate: number
+        channelCount: number
+        peaks: Float32Array
+      },
+      startMs = 0
+    ): string | null {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return null
+
+      const clipId = `c${this.nextClipIndex++}`
       const clip: Clip = {
         id: clipId,
         trackId,
         filePath: audio.filePath,
         fileName: audio.fileName,
-        startMs: 0,
+        startMs,
         durationMs: audio.durationMs,
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
         peaks: audio.peaks
       }
-
-      this.tracks.push(track)
       this.clips[clipId] = clip
-      return trackId
+      track.clipIds.push(clipId)
+
+      // Grow the visible track length if this clip extends past the end.
+      const clipEnd = clip.startMs + clip.durationMs
+      if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
+
+      // If the track was previously unnamed (default "Track N") and this is
+      // its first clip, take the file stem as a more helpful label.
+      if (track.clipIds.length === 1 && /^Track \d+$/.test(track.name)) {
+        track.name = audio.fileName.replace(/\.[^.]+$/, '')
+      }
+
+      return clipId
+    },
+
+    /**
+     * Move an existing clip to a new timeline offset (ms). Grows the host
+     * track's `lengthMs` if the clip now extends past the previous end and
+     * notifies the backend so playback respects the new position.
+     */
+    moveClip(clipId: string, startMs: number): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const snapped = Math.max(0, startMs)
+      if (clip.startMs === snapped) return
+      clip.startMs = snapped
+
+      const track = this.tracks.find((t) => t.id === clip.trackId)
+      if (track) {
+        const clipEnd = clip.startMs + clip.durationMs
+        if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
+      }
+
+      sendBridge('CLIP_MOVE', { trackId: clip.trackId, positionMs: snapped })
     },
 
     /** Remove a track and all its clips, locally and on the backend. */

@@ -95,11 +95,28 @@ int main(int /*argc*/, char* /*argv*/[])
                     return;
 
                 const bool ok = engine.addClip(trackId, juce::File(filePath));
+                if (ok)
+                {
+                    // Apply the requested timeline offset so the clip plays
+                    // back at the position the frontend chose (e.g. at the
+                    // current playhead).
+                    const double positionMs = (double)payload.getProperty("positionMs", 0.0);
+                    if (positionMs > 0.0)
+                        engine.setClipOffsetMs(trackId, positionMs);
+                }
                 auto* p = new juce::DynamicObject();
                 p->setProperty("trackId", trackId);
                 p->setProperty("filePath", filePath);
                 p->setProperty("ok", ok);
                 bridge.broadcast(ok ? "CLIP_ADDED" : "CLIP_ADD_FAILED", juce::var(p));
+            }
+            else if (type == "CLIP_MOVE")
+            {
+                const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+                if (trackId.isEmpty())
+                    return;
+                const double positionMs = (double)payload.getProperty("positionMs", 0.0);
+                engine.setClipOffsetMs(trackId, positionMs);
             }
             else if (type == "TRANSPORT_PLAY")
             {
@@ -112,6 +129,11 @@ int main(int /*argc*/, char* /*argv*/[])
             else if (type == "TRANSPORT_STOP")
             {
                 engine.stop();
+            }
+            else if (type == "TRANSPORT_SEEK")
+            {
+                const double positionMs = (double)payload.getProperty("positionMs", 0.0);
+                engine.setPositionMs(positionMs);
             }
             else if (type == "TRACK_REMOVE")
             {
