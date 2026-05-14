@@ -1,0 +1,135 @@
+{
+  // ─── Editor ──────────────────────────────────────────────────────────────
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "editor.rulers": [100, 120],
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+
+  // ─── TypeScript / Vue (Volar takeover mode) ──────────────────────────────
+  // Use the workspace TypeScript SDK so Volar and tsc agree.
+  "typescript.tsdk": "frontend/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "vue.server.hybridMode": true,
+  "[vue]": {
+    "editor.defaultFormatter": "Vue.volar"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+
+  // ─── Tailwind CSS ────────────────────────────────────────────────────────
+  "tailwindCSS.includeLanguages": {
+    "vue": "html",
+    "vue-html": "html"
+  },
+  "files.associations": {
+    "*.css": "tailwindcss",
+    "*.postcss": "postcss"
+  },
+
+  // ─── ESLint ──────────────────────────────────────────────────────────────
+  "eslint.validate": ["javascript", "typescript", "vue"],
+  "eslint.workingDirectories": [{ "pattern": "frontend" }],
+
+  // ─── C / C++ / CMake (JUCE backend) ──────────────────────────────────────
+  // Pin to MSVC (cl.exe) — required for JUCE + VST3 + ONNX on Windows.
+  "cmake.generator": "Ninja",
+  "cmake.sourceDirectory": "${workspaceFolder}/backend",
+  "cmake.buildDirectory": "${workspaceFolder}/backend/build",
+  "cmake.configureOnOpen": false,
+  "cmake.preferredGenerators": ["Ninja", "Visual Studio 17 2022"],
+  "cmake.useCMakePresets": "auto",
+  // IntelliSense is provided by clangd; cpptools is kept for the debugger only.
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.autocomplete": "disabled",
+  "C_Cpp.errorSquiggles": "disabled",
+  "C_Cpp.formatting": "disabled",
+  // Use the clangd bundled with Visual Studio 2026 so it matches the MSVC toolchain.
+  "clangd.path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\VC\\Tools\\Llvm\\x64\\bin\\clangd.exe",
+  // Tell clangd where the build dir with compile_commands.json lives.
+  "clangd.arguments": [
+    "--background-index",
+    "--compile-commands-dir=${workspaceFolder}/backend/build",
+    "--header-insertion=never",
+    "--clang-tidy",
+    "--completion-style=detailed",
+    "--pch-storage=memory"
+  ],
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "[c]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+
+  // ─── Markdown ────────────────────────────────────────────────────────────
+  "[markdown]": {
+    "editor.defaultFormatter": "yzhang.markdown-all-in-one",
+    "editor.wordWrap": "on",
+    "editor.quickSuggestions": {
+      "comments": "off",
+      "strings": "off",
+      "other": "off"
+    }
+  },
+
+  // ─── Files / search excludes ─────────────────────────────────────────────
+  "files.exclude": {
+    "**/.git": true,
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/out": true,
+    "backend/build": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/out": true,
+    "backend/build": true,
+    "JUCE/**": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/backend/build/**": true,
+    "**/JUCE/**": true
+  },
+
+  // ─── Spelling ────────────────────────────────────────────────────────────
+  "cSpell.words": [
+    "BTrack",
+    "Camelot",
+    "clangd",
+    "Demucs",
+    "DirectML",
+    "electron-vite",
+    "htdemucs",
+    "Jackdaw",
+    "JUCE",
+    "KeyFinder",
+    "libsamplerate",
+    "Pinia",
+    "PixiJS",
+    "pnpm",
+    "Rubberband",
+    "sidechain",
+    "Tailwind",
+    "uWebSockets",
+    "Volar",
+    "ValueTree",
+    "winget"
+  ]
+}

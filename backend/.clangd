@@ -1,0 +1,32 @@
+# clangd configuration for the Jackdaw backend.
+# Docs: https://clangd.llvm.org/config
+
+CompileFlags:
+  # CMake writes compile_commands.json into backend/build/ (CMAKE_EXPORT_COMPILE_COMMANDS=ON).
+  CompilationDatabase: build
+  # JUCE / MSVC produce a few flags clangd doesn't understand; silence them.
+  Remove:
+    - -fcolor-diagnostics
+    - /Zc:__cplusplus
+    - /MP*
+    - /Gm-
+  Add:
+    - -Wno-unknown-warning-option
+    - -Wno-unknown-pragmas
+
+Diagnostics:
+  UnusedIncludes: Strict
+  ClangTidy:
+    Add:
+      - modernize-*
+      - bugprone-*
+      - performance-*
+      - readability-*
+    Remove:
+      - modernize-use-trailing-return-type
+      - readability-identifier-length
+      - readability-magic-numbers
+
+Index:
+  Background: Build
+  StandardLibrary: Yes

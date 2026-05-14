@@ -1,0 +1,159 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    // ─── Backend (JUCE / CMake) ──────────────────────────────────────────
+    // Every backend task is launched through scripts/Invoke-DevShell.ps1 so
+    // cl.exe / cmake / ninja are on PATH regardless of how VS Code was started.
+    // Tasks use type "process" (not "shell") so each arg is passed verbatim —
+    // VS Code's shell wrapper would otherwise mangle the embedded quotes.
+    {
+      "label": "backend: configure",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
+        "cmake -S '${workspaceFolder}/backend' -B '${workspaceFolder}/backend/build' -G Ninja -DCMAKE_BUILD_TYPE=Debug"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "always",
+        "clear": true
+      },
+      "detail": "Configure the JUCE backend with CMake + Ninja (Debug)."
+    },
+    {
+      "label": "backend: build",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
+        "cmake --build '${workspaceFolder}/backend/build' --config Debug --parallel"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$msCompile"],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "always"
+      },
+      "detail": "Build the JUCE backend (Debug)."
+    },
+    {
+      "label": "backend: build (Release)",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
+        "cmake --build '${workspaceFolder}/backend/build' --config Release --parallel"
+      ],
+      "problemMatcher": ["$msCompile"],
+      "detail": "Build the JUCE backend (Release)."
+    },
+    {
+      "label": "backend: clean",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
+        "cmake --build '${workspaceFolder}/backend/build' --target clean"
+      ],
+      "problemMatcher": [],
+      "detail": "Clean backend build artefacts."
+    },
+
+    // ─── Frontend (Electron + Vite + Vue) ────────────────────────────────
+    {
+      "label": "frontend: install",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["install"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": [],
+      "detail": "Install frontend dependencies with pnpm."
+    },
+    {
+      "label": "frontend: dev",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["dev"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^([^\\s].*)\\((\\d+|\\d+,\\d+|\\d+,\\d+,\\d+,\\d+)\\):\\s+(error|warning|info)\\s+(TS|@?[\\w-]+):\\s+(.*)$",
+          "file": 1,
+          "location": 2,
+          "severity": 3,
+          "code": 4,
+          "message": 5
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*VITE.*",
+          "endsPattern": ".*(ready in|Local:).*"
+        }
+      },
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "always"
+      },
+      "detail": "Run electron-vite dev server with HMR."
+    },
+    {
+      "label": "frontend: build",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["build"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": ["$tsc"],
+      "detail": "Production build of the Electron frontend."
+    },
+    {
+      "label": "frontend: lint",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["lint"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": ["$eslint-stylish"],
+      "detail": "Run ESLint over frontend sources."
+    },
+    {
+      "label": "frontend: typecheck",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["typecheck"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": ["$tsc"],
+      "detail": "Run vue-tsc / tsc --noEmit."
+    },
+
+    // ─── Combined ────────────────────────────────────────────────────────
+    {
+      "label": "dev: all",
+      "dependsOrder": "parallel",
+      "dependsOn": ["backend: build", "frontend: dev"],
+      "problemMatcher": [],
+      "detail": "Build backend, then run frontend dev server alongside it."
+    }
+  ]
+}

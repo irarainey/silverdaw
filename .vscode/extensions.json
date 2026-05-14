@@ -1,0 +1,38 @@
+{
+  "recommendations": [
+    // C++ / JUCE backend
+    "ms-vscode.cpptools",
+    "ms-vscode.cpptools-extension-pack",
+    "ms-vscode.cmake-tools",
+    "llvm-vs-code-extensions.vscode-clangd",
+
+    // Electron / Vue 3 / TypeScript frontend
+    "Vue.volar",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "bradlc.vscode-tailwindcss",
+    "csstools.postcss",
+    "christian-kohler.npm-intellisense",
+    "christian-kohler.path-intellisense",
+
+    // Dev workflow
+    "eamodio.gitlens",
+    "GitHub.vscode-pull-request-github",
+    "EditorConfig.EditorConfig",
+    "streetsidesoftware.code-spell-checker",
+    "usernamehw.errorlens",
+
+    // Markdown / docs
+    "yzhang.markdown-all-in-one",
+    "DavidAnson.vscode-markdownlint",
+    "bierner.markdown-mermaid",
+
+    // Misc utilities
+    "ms-vscode.hexeditor",
+    "aaron-bond.better-comments"
+  ],
+  "unwantedRecommendations": [
+    // Volar takes over TS in .vue files; avoid the legacy Vetur
+    "octref.vetur"
+  ]
+}

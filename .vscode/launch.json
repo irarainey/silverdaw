@@ -1,0 +1,62 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    // ─── JUCE backend (C++ / MSVC) ────────────────────────────────────────
+    {
+      "name": "Backend: Launch (Debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/build/JackdawBackend_artefacts/Debug/JackdawBackend.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/backend/build/JackdawBackend_artefacts/Debug",
+      "environment": [],
+      "console": "integratedTerminal",
+      "preLaunchTask": "backend: build"
+    },
+    {
+      "name": "Backend: Attach to running process",
+      "type": "cppvsdbg",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    },
+
+    // ─── Electron frontend ────────────────────────────────────────────────
+    // Main process (Node side of Electron).
+    {
+      "name": "Frontend: Electron Main",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/frontend",
+      "runtimeExecutable": "${workspaceFolder}/frontend/node_modules/.bin/electron-vite",
+      "runtimeArgs": ["dev"],
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/frontend/node_modules/.bin/electron-vite.cmd"
+      },
+      "console": "integratedTerminal",
+      "outputCapture": "std",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    // Renderer process (Chromium side) — attach via remote debugging port.
+    {
+      "name": "Frontend: Electron Renderer (attach)",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}/frontend/src/renderer",
+      "sourceMaps": true,
+      "timeout": 30000
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full stack: Backend + Frontend",
+      "configurations": ["Backend: Launch (Debug)", "Frontend: Electron Main"],
+      "stopAll": true,
+      "presentation": {
+        "group": "1_jackdaw",
+        "order": 1
+      }
+    }
+  ]
+}
