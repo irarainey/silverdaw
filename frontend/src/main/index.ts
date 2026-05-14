@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { join } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 
 // ─── Theme / colours (kept in sync with the renderer Tailwind palette) ──────
 const TITLE_BAR_HEIGHT = 36
@@ -102,14 +103,10 @@ function handleMenuAction(action: string): void {
     case 'file.saveAs':
       console.log('[menu] save as (todo)')
       break
-    case 'file.importAudio':
-      void dialog
-        .showOpenDialog(mainWindow, {
-          title: 'Import Audio',
-          filters: [{ name: 'Audio files', extensions: ['wav', 'mp3', 'flac', 'aiff', 'ogg'] }],
-          properties: ['openFile', 'multiSelections']
-        })
-        .then((r) => console.log('[menu] import:', r.filePaths))
+    case 'file.addTrack':
+      // Forwarded to the renderer (see below); the renderer drives the
+      // open-file flow so it can decode + render in one place.
+      wc.send('menu:action', action)
       break
     case 'file.exportMixdown':
       console.log('[menu] export mixdown (todo)')
@@ -184,6 +181,25 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
 
   ipcMain.on('menu:action', (_evt, action: string) => handleMenuAction(action))
+
+  // Open an audio file via the OS dialog and stream its bytes back to the renderer.
+  // Returns null if the user cancels.
+  ipcMain.handle('audio:open', async () => {
+    if (!mainWindow) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Add Track from File',
+      filters: [
+        { name: 'Audio files', extensions: ['wav', 'mp3', 'flac', 'aiff', 'aif', 'ogg', 'm4a'] }
+      ],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const filePath = result.filePaths[0]
+    const buf = await readFile(filePath)
+    // Copy into a plain ArrayBuffer so it survives the IPC boundary cleanly.
+    const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+    return { filePath, fileName: basename(filePath), data }
+  })
 
   startBackend()
   createWindow()

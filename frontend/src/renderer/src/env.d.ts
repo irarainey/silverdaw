@@ -7,12 +7,20 @@ declare module '*.vue' {
 }
 
 declare global {
+  interface OpenedAudioFile {
+    readonly filePath: string
+    readonly fileName: string
+    readonly data: ArrayBuffer
+  }
+
   interface Window {
     jackdaw: {
       readonly appName: string
       readonly version: string
       readonly platform: NodeJS.Platform
       menuAction(action: string): void
+      openAudioFile(): Promise<OpenedAudioFile | null>
+      onMenuAction(handler: (action: string) => void): () => void
     }
   }
 }
