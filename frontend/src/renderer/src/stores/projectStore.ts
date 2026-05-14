@@ -28,6 +28,8 @@ export interface Track {
   clipIds: string[]
   muted: boolean
   soloed: boolean
+  /** Per-track volume as a linear gain (0.0 = silent, 1.0 = unity). */
+  volume: number
   /** Index into `TRACK_PALETTE`. Selects the waveform / clip-block colours. */
   colorIndex: number
   /**
@@ -133,6 +135,7 @@ export const useProjectStore = defineStore('project', {
         clipIds: [],
         muted: false,
         soloed: false,
+        volume: 1.0,
         // Rotate through the palette so consecutive new tracks get distinct
         // colours. Users can override per-track via the colour picker.
         colorIndex: this.tracks.length % TRACK_PALETTE.length,
@@ -276,7 +279,19 @@ export const useProjectStore = defineStore('project', {
     pushTrackGain(track: Track): void {
       const anySolo = this.anySoloed
       const audible = !track.muted && (!anySolo || track.soloed)
-      sendBridge('TRACK_GAIN', { trackId: track.id, gain: audible ? 1.0 : 0.0 })
+      const gain = audible ? track.volume : 0.0
+      sendBridge('TRACK_GAIN', { trackId: track.id, gain })
+    },
+
+    /**
+     * Set a track's volume (linear gain, 0.0–1.0) and push the new effective
+     * gain to the backend. Mute / solo still override volume to silence.
+     */
+    setTrackVolume(trackId: string, volume: number): void {
+      const t = this.tracks.find((x) => x.id === trackId)
+      if (!t) return
+      t.volume = Math.min(1, Math.max(0, volume))
+      this.pushTrackGain(t)
     },
 
     /** Set the palette index used to draw a track's waveform / clips. */

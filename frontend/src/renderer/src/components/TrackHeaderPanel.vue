@@ -83,6 +83,25 @@ const HEADER_WIDTH = 175
                         </div>
                     </div>
 
+                    <!-- Middle: volume slider. Controls the track's overall
+                         level (linear gain 0\u20131); mute / solo still
+                         override to silence. -->
+                    <div class="flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            class="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true">
+                            <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                        </svg>
+                        <input type="range" min="0" max="1" step="0.01" :value="track.volume"
+                            :title="'Volume ' + Math.round(track.volume * 100) + '%'"
+                            class="track-volume h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
+                            @input="(e) => project.setTrackVolume(track.id, Number((e.target as HTMLInputElement).value))" />
+                        <span class="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-500">
+                            {{ Math.round(track.volume * 100) }}
+                        </span>
+                    </div>
+
                     <!-- Bottom row: close / import / mute / solo. -->
                     <div class="flex items-center gap-1">
                         <button type="button"
@@ -136,3 +155,48 @@ const HEADER_WIDTH = 175
         </div>
     </div>
 </template>
+
+<style scoped>
+/* Compact range slider styled to match the dark zinc chrome. The default
+   browser thumb is too tall for our 1px track, so we shrink it and
+   colour it to match the track palette. */
+.track-volume {
+    outline: none;
+}
+
+.track-volume::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 9999px;
+    background: #e4e4e7;
+    /* zinc-200 */
+    border: 1px solid #71717a;
+    /* zinc-500 */
+    cursor: pointer;
+    margin-top: -5px;
+}
+
+.track-volume::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 9999px;
+    background: #e4e4e7;
+    border: 1px solid #71717a;
+    cursor: pointer;
+}
+
+.track-volume::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 9999px;
+    background: #3f3f46;
+    /* zinc-700 */
+}
+
+.track-volume::-moz-range-track {
+    height: 3px;
+    border-radius: 9999px;
+    background: #3f3f46;
+}
+</style>
