@@ -9,7 +9,7 @@
 // - Time-axis is left-to-right, fixed `PX_PER_SECOND` (no zoom yet).
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Application, Container, Graphics } from 'pixi.js'
+import type { Application, Container, Graphics } from 'pixi.js'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
 import { PEAKS_PER_SECOND } from '@/lib/audio'
 
@@ -39,11 +39,27 @@ let resizeObserver: ResizeObserver | null = null
 let rulerLayer: Container | null = null
 let tracksLayer: Container | null = null
 let headersLayer: Container | null = null
+// Constructor handles populated after the dynamic pixi.js import resolves.
+let GraphicsCtor: typeof Graphics | null = null
+let ContainerCtor: typeof Container | null = null
 
 onMounted(async () => {
   if (!host.value) return
 
-  app = new Application()
+  // Lazy-load PixiJS so the title bar + transport bar render before the
+  // ~500 KB pixi bundle finishes parsing. Also apply the CSP-safe shader
+  // patch (Electron's renderer disallows `unsafe-eval`) before constructing
+  // the WebGL renderer.
+  // @ts-expect-error -- pixi.js/unsafe-eval has no published .d.ts; it's side-effect-only.
+  await import('pixi.js/unsafe-eval')
+  const pixi = await import('pixi.js')
+  GraphicsCtor = pixi.Graphics
+  ContainerCtor = pixi.Container
+
+  // The component could have unmounted while pixi was loading.
+  if (!host.value) return
+
+  app = new pixi.Application()
   await app.init({
     background: BG,
     antialias: true,
@@ -52,13 +68,20 @@ onMounted(async () => {
     resolution: window.devicePixelRatio || 1
   })
 
+  // And again — component might have unmounted while init was awaiting.
+  if (!host.value) {
+    app.destroy(true, { children: true, texture: true })
+    app = null
+    return
+  }
+
   host.value.appendChild(app.canvas)
   app.canvas.style.display = 'block'
 
-  rulerLayer = new Container()
-  tracksLayer = new Container()
+  rulerLayer = new ContainerCtor()
+  tracksLayer = new ContainerCtor()
   // Headers drawn last so they sit above any scrolled clip content (future).
-  headersLayer = new Container()
+  headersLayer = new ContainerCtor()
 
   app.stage.addChild(rulerLayer)
   app.stage.addChild(tracksLayer)
@@ -99,16 +122,16 @@ function redraw(): void {
 }
 
 function drawRuler(width: number): void {
-  if (!rulerLayer) return
+  if (!rulerLayer || !GraphicsCtor) return
 
-  const bg = new Graphics()
+  const bg = new GraphicsCtor()
   bg.rect(0, 0, width, RULER_HEIGHT).fill(RULER_BG)
   bg.moveTo(0, RULER_HEIGHT - 0.5).lineTo(width, RULER_HEIGHT - 0.5).stroke({ color: RULER_TICK, width: 1, alpha: 0.6 })
   rulerLayer.addChild(bg)
 
   // Tick every second; major tick every 5s.
   const totalSeconds = Math.ceil((width - TRACK_HEADER_WIDTH) / PX_PER_SECOND) + 1
-  const ticks = new Graphics()
+  const ticks = new GraphicsCtor()
   for (let s = 0; s <= totalSeconds; s++) {
     const x = TRACK_HEADER_WIDTH + s * PX_PER_SECOND + 0.5
     const isMajor = s % 5 === 0
@@ -119,7 +142,7 @@ function drawRuler(width: number): void {
   rulerLayer.addChild(ticks)
 
   // Header column background sits in the ruler row too.
-  const headerCorner = new Graphics()
+  const headerCorner = new GraphicsCtor()
   headerCorner.rect(0, 0, TRACK_HEADER_WIDTH, RULER_HEIGHT).fill(TRACK_HEADER_BG)
   rulerLayer.addChild(headerCorner)
 
@@ -128,7 +151,7 @@ function drawRuler(width: number): void {
 }
 
 function drawTracks(width: number): void {
-  if (!tracksLayer || !headersLayer) return
+  if (!tracksLayer || !headersLayer || !GraphicsCtor) return
 
   const tracks = project.tracks
   for (let i = 0; i < tracks.length; i++) {
@@ -136,12 +159,12 @@ function drawTracks(width: number): void {
     const y = RULER_HEIGHT + i * (TRACK_HEIGHT + TRACK_GAP)
 
     // Row background (spans full width, behind both header and clips).
-    const rowBg = new Graphics()
+    const rowBg = new GraphicsCtor()
     rowBg.rect(0, y, width, TRACK_HEIGHT).fill(TRACK_BG)
     tracksLayer.addChild(rowBg)
 
     // Track header.
-    const header = new Graphics()
+    const header = new GraphicsCtor()
     header.rect(0, y, TRACK_HEADER_WIDTH, TRACK_HEIGHT).fill(TRACK_HEADER_BG)
     header
       .moveTo(TRACK_HEADER_WIDTH - 0.5, y)
@@ -159,7 +182,7 @@ function drawTracks(width: number): void {
 }
 
 function drawClip(clip: Clip, rowY: number): void {
-  if (!tracksLayer) return
+  if (!tracksLayer || !GraphicsCtor) return
 
   const x = TRACK_HEADER_WIDTH + (clip.startMs / 1000) * PX_PER_SECOND
   const w = (clip.durationMs / 1000) * PX_PER_SECOND
@@ -169,12 +192,12 @@ function drawClip(clip: Clip, rowY: number): void {
   const midY = innerY + innerH / 2
 
   // Clip block + border.
-  const block = new Graphics()
+  const block = new GraphicsCtor()
   block.roundRect(x, innerY, w, innerH, 4).fill({ color: CLIP_FILL, alpha: 0.85 }).stroke({ color: CLIP_BORDER, width: 1, alpha: 0.9 })
   tracksLayer.addChild(block)
 
   // Waveform.
-  const wave = new Graphics()
+  const wave = new GraphicsCtor()
   // peaks array has 2 entries (min, max) per peak; PEAKS_PER_SECOND peaks per second.
   const peaks = clip.peaks
   const peakCount = peaks.length / 2

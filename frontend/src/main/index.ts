@@ -48,7 +48,10 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: COLOUR_BG,
-    show: false,
+    // Show the window immediately. `backgroundColor` paints the frame dark
+    // before any HTML loads, so there is no flash-of-unstyled-content even
+    // without the `ready-to-show` deferral.
+    show: true,
     // Frameless on Windows/Linux; macOS gets its native traffic-light buttons inset.
     titleBarStyle: 'hidden',
     titleBarOverlay:
@@ -64,11 +67,13 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
-
   if (process.env['ELECTRON_RENDERER_URL']) {
     void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
+    // Open DevTools only once the renderer has painted; opening it on the
+    // critical first-paint path noticeably delays the visible window.
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow?.webContents.openDevTools({ mode: 'detach' })
+    })
   } else {
     void mainWindow.loadFile(join(__dirname, '..', 'renderer', 'index.html'))
   }
@@ -201,8 +206,11 @@ app.whenReady().then(() => {
     return { filePath, fileName: basename(filePath), data }
   })
 
-  startBackend()
+  // Create the window first so the user sees a frame immediately; defer
+  // backend-process spawn to the next tick so it doesn't contend with the
+  // renderer for CPU during initial paint.
   createWindow()
+  setImmediate(startBackend)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
