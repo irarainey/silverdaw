@@ -5,6 +5,7 @@ import TimelineView from '@/components/TimelineView.vue'
 import TransportBar from '@/components/TransportBar.vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { decodeAudioToPeaks } from '@/lib/audio'
+import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
 
 const project = useProjectStore()
 
@@ -12,11 +13,13 @@ let unsubscribeMenu: (() => void) | null = null
 
 onMounted(() => {
   unsubscribeMenu = window.jackdaw.onMenuAction(handleMenuAction)
+  connectBridge()
 })
 
 onBeforeUnmount(() => {
   unsubscribeMenu?.()
   unsubscribeMenu = null
+  disconnectBridge()
 })
 
 async function handleMenuAction(action: string): Promise<void> {
@@ -32,13 +35,20 @@ async function addTrackFromFile(): Promise<void> {
 
   try {
     const decoded = await decodeAudioToPeaks(opened.data)
-    project.addTrackFromAudio({
+    const trackId = project.addTrackFromAudio({
       filePath: opened.filePath,
       fileName: opened.fileName,
       durationMs: decoded.durationMs,
       sampleRate: decoded.sampleRate,
       channelCount: decoded.channelCount,
       peaks: decoded.peaks
+    })
+
+    // Tell the backend so it can load the same file for playback.
+    sendBridge('CLIP_ADD', {
+      trackId,
+      filePath: opened.filePath,
+      positionMs: 0
     })
   } catch (err) {
     console.error('[addTrack] decode failed:', err)

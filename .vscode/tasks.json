@@ -27,6 +27,24 @@
       "detail": "Configure the JUCE backend with CMake + Ninja (Debug)."
     },
     {
+      "label": "backend: kill running",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$p = Get-Process JackdawBackend -ErrorAction SilentlyContinue; if ($p) { $p | Stop-Process -Force -ErrorAction SilentlyContinue; $p | Wait-Process -Timeout 5 -ErrorAction SilentlyContinue }; exit 0"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "silent"
+      },
+      "detail": "Stop any running JackdawBackend.exe so the linker can overwrite it."
+    },
+    {
       "label": "backend: build",
       "type": "process",
       "command": "pwsh",
@@ -38,6 +56,7 @@
         "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
         "cmake --build '${workspaceFolder}/backend/build' --config Debug --parallel"
       ],
+      "dependsOn": ["backend: kill running"],
       "group": {
         "kind": "build",
         "isDefault": true
@@ -61,6 +80,7 @@
         "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
         "cmake --build '${workspaceFolder}/backend/build' --config Release --parallel"
       ],
+      "dependsOn": ["backend: kill running"],
       "problemMatcher": ["$msCompile"],
       "detail": "Build the JUCE backend (Release)."
     },

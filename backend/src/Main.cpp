@@ -1,22 +1,157 @@
+#include "AudioEngine.h"
+#include "BridgeServer.h"
+
+#include <atomic>
+#include <csignal>
 #include <iostream>
-#include <juce_core/juce_core.h>
+#include <juce_events/juce_events.h>
 
 //==============================================================================
 // Jackdaw headless audio backend - entry point.
 //
-// Launched as a child process by the Electron frontend. Real responsibilities
-// (audio engine, WebSocket server, project state) will land in later phases.
+// Lifecycle:
+//   1. Initialise JUCE GUI singletons (MessageManager, AudioFormatManager pool).
+//   2. Spin up the audio engine (default output device, stereo).
+//   3. Start the WebSocket bridge on ws://localhost:8765.
+//   4. Run the JUCE message dispatch loop. Audio runs on its own thread,
+//      WebSocket I/O runs on ixwebsocket's threads; all engine mutations
+//      are marshalled onto the message thread for safety.
 //
 // NOTE: keep string literals ASCII-only. juce::String(const char*) asserts on
 // any byte > 127. For Unicode text, wrap with juce::CharPointer_UTF8.
 //==============================================================================
+
+namespace
+{
+constexpr int kBridgePort = 8765;
+constexpr int kPlayheadUpdateHz = 60;
+
+std::atomic<bool> g_shouldQuit{false};
+
+void onSignal(int /*sig*/)
+{
+    g_shouldQuit.store(true);
+    juce::MessageManager::getInstance()->stopDispatchLoop();
+}
+
+/** Polls the audio engine and broadcasts PLAYHEAD_UPDATE while playing. */
+class PlayheadEmitter : public juce::Timer
+{
+  public:
+    PlayheadEmitter(jackdaw::AudioEngine& e, jackdaw::BridgeServer& b) : engine(e), bridge(b) {}
+
+    void timerCallback() override
+    {
+        const bool playing = engine.isPlaying();
+        const double posMs = engine.getPositionMs();
+
+        // Always broadcast on transitions; while playing, broadcast every tick so the
+        // renderer can drive a smooth playhead.
+        if (playing || posMs != lastPosMs)
+        {
+            auto* p = new juce::DynamicObject();
+            p->setProperty("positionMs", posMs);
+            p->setProperty("isPlaying", playing);
+            bridge.broadcast("PLAYHEAD_UPDATE", juce::var(p));
+            lastPosMs = posMs;
+        }
+    }
+
+  private:
+    jackdaw::AudioEngine& engine;
+    jackdaw::BridgeServer& bridge;
+    double lastPosMs = -1.0;
+};
+} // namespace
+
 int main(int /*argc*/, char* /*argv*/[])
 {
     const juce::String banner = "Jackdaw Backend v0.1.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
                                 juce::SystemStats::getCpuVendor() + ")";
-
     std::cout << banner.toStdString() << '\n';
-    std::cout << "Headless mode. WebSocket server not yet implemented." << '\n';
 
+    // Initialises MessageManager, JUCE singletons, etc. Required even for headless apps.
+    const juce::ScopedJuceInitialiser_GUI juceInit;
+
+    jackdaw::AudioEngine engine;
+    if (const auto err = engine.initialise(); err.isNotEmpty())
+    {
+        std::cerr << "[engine] audio device init failed: " << err.toStdString() << '\n';
+        // Continue anyway - frontend can still load files, just won't hear anything.
+    }
+
+    jackdaw::BridgeServer bridge;
+
+    // Route incoming messages from the bridge to the engine. Already on the
+    // JUCE message thread (BridgeServer::onIncoming marshals via callAsync).
+    bridge.onMessage(
+        [&engine, &bridge](const juce::String& type, const juce::var& payload)
+        {
+            if (type == "CLIP_ADD")
+            {
+                const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+                const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+                if (trackId.isEmpty() || filePath.isEmpty())
+                    return;
+
+                const bool ok = engine.addClip(trackId, juce::File(filePath));
+                auto* p = new juce::DynamicObject();
+                p->setProperty("trackId", trackId);
+                p->setProperty("filePath", filePath);
+                p->setProperty("ok", ok);
+                bridge.broadcast(ok ? "CLIP_ADDED" : "CLIP_ADD_FAILED", juce::var(p));
+            }
+            else if (type == "TRANSPORT_PLAY")
+            {
+                engine.play();
+            }
+            else if (type == "TRANSPORT_PAUSE")
+            {
+                engine.pause();
+            }
+            else if (type == "TRANSPORT_STOP")
+            {
+                engine.stop();
+            }
+            else if (type == "TRACK_REMOVE")
+            {
+                const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+                if (trackId.isEmpty())
+                    return;
+                engine.removeTrack(trackId);
+            }
+            else if (type == "TRACK_GAIN")
+            {
+                const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+                if (trackId.isEmpty())
+                    return;
+                const float gain = (float)(double)payload.getProperty("gain", 1.0);
+                engine.setTrackGain(trackId, gain);
+            }
+            else
+            {
+                std::cerr << "[bridge] unhandled message type: " << type.toStdString() << '\n';
+            }
+        });
+
+    if (!bridge.start(kBridgePort))
+    {
+        std::cerr << "[bridge] failed to start; exiting\n";
+        return 1;
+    }
+
+    PlayheadEmitter emitter(engine, bridge);
+    emitter.startTimerHz(kPlayheadUpdateHz);
+
+    // Catch Ctrl+C so the dispatch loop can exit cleanly.
+    std::signal(SIGINT, onSignal);
+    std::signal(SIGTERM, onSignal);
+
+    juce::MessageManager::getInstance()->runDispatchLoop();
+
+    emitter.stopTimer();
+    bridge.stop();
+    engine.shutdown();
+    std::cout << "[main] shutdown complete\n";
     return 0;
 }

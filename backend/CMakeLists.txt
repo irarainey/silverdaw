@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 project(JackdawBackend
     VERSION 0.1.0
     DESCRIPTION "Jackdaw headless audio backend"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,21 +26,46 @@ FetchContent_Declare(JUCE
     GIT_PROGRESS   TRUE)
 FetchContent_MakeAvailable(JUCE)
 
+# ─── IXWebSocket ─────────────────────────────────────────────────────────
+# Local-only WebSocket bridge between the JUCE backend and the Electron
+# renderer. TLS + zlib are disabled — we only ever talk to ws://localhost.
+set(IXWEBSOCKET_GIT_TAG "v11.4.5" CACHE STRING "IXWebSocket version to fetch")
+set(USE_TLS OFF CACHE BOOL "" FORCE)
+set(USE_ZLIB OFF CACHE BOOL "" FORCE)
+set(USE_OPEN_SSL OFF CACHE BOOL "" FORCE)
+set(USE_MBED_TLS OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(IXWebSocket
+    GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+    GIT_TAG        ${IXWEBSOCKET_GIT_TAG}
+    GIT_SHALLOW    TRUE
+    GIT_PROGRESS   TRUE)
+FetchContent_MakeAvailable(IXWebSocket)
+
 # ─── Target ──────────────────────────────────────────────────────────────
 juce_add_console_app(JackdawBackend
     PRODUCT_NAME "Jackdaw Backend"
     COMPANY_NAME "Jackdaw")
 
 target_sources(JackdawBackend PRIVATE
-    src/Main.cpp)
+    src/Main.cpp
+    src/AudioEngine.cpp
+    src/BridgeServer.cpp)
 
 target_compile_definitions(JackdawBackend PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    JUCE_USE_WINDOWS_MEDIA_FORMAT=1
     JUCE_STANDALONE_APPLICATION=1)
 
 target_link_libraries(JackdawBackend PRIVATE
     juce::juce_core
     juce::juce_events
+    juce::juce_audio_basics
+    juce::juce_audio_devices
+    juce::juce_audio_formats
+    juce::juce_audio_processors
+    juce::juce_audio_utils
+    ixwebsocket
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)

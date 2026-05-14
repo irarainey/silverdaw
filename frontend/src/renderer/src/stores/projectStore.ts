@@ -6,6 +6,7 @@
 
 import { defineStore } from 'pinia'
 import { PEAKS_PER_SECOND } from '@/lib/audio'
+import { send as sendBridge } from '@/lib/bridgeService'
 
 export interface Clip {
   readonly id: string
@@ -25,6 +26,8 @@ export interface Track {
   readonly id: string
   name: string
   clipIds: string[]
+  muted: boolean
+  soloed: boolean
 }
 
 interface ProjectState {
@@ -52,6 +55,11 @@ export const useProjectStore = defineStore('project', {
         if (end > max) max = end
       }
       return max
+    },
+
+    /** True if any track is currently soloed. */
+    anySoloed(state): boolean {
+      return state.tracks.some((t) => t.soloed)
     }
   },
 
@@ -75,7 +83,9 @@ export const useProjectStore = defineStore('project', {
         id: trackId,
         // Default name = file stem (sans extension).
         name: audio.fileName.replace(/\.[^.]+$/, ''),
-        clipIds: [clipId]
+        clipIds: [clipId],
+        muted: false,
+        soloed: false
       }
       const clip: Clip = {
         id: clipId,
@@ -92,6 +102,52 @@ export const useProjectStore = defineStore('project', {
       this.tracks.push(track)
       this.clips[clipId] = clip
       return trackId
+    },
+
+    /** Remove a track and all its clips, locally and on the backend. */
+    removeTrack(trackId: string): void {
+      const idx = this.tracks.findIndex((t) => t.id === trackId)
+      if (idx < 0) return
+
+      const track = this.tracks[idx]
+      for (const clipId of track.clipIds) delete this.clips[clipId]
+      this.tracks.splice(idx, 1)
+
+      sendBridge('TRACK_REMOVE', { trackId })
+
+      // Removing a soloed track changes audibility for everyone else.
+      if (track.soloed) this.pushAllGains()
+    },
+
+    /** Toggle the mute state for one track and push the new gain to the backend. */
+    toggleMute(trackId: string): void {
+      const t = this.tracks.find((x) => x.id === trackId)
+      if (!t) return
+      t.muted = !t.muted
+      this.pushTrackGain(t)
+    },
+
+    /**
+     * Toggle the solo state. Because solo affects audibility of every other
+     * track, we re-push gains for the whole project on every toggle.
+     */
+    toggleSolo(trackId: string): void {
+      const t = this.tracks.find((x) => x.id === trackId)
+      if (!t) return
+      t.soloed = !t.soloed
+      this.pushAllGains()
+    },
+
+    /** Re-push every track's effective gain to the backend (e.g. on reconnect). */
+    pushAllGains(): void {
+      for (const t of this.tracks) this.pushTrackGain(t)
+    },
+
+    /** Internal: compute effective gain for a track and send it. */
+    pushTrackGain(track: Track): void {
+      const anySolo = this.anySoloed
+      const audible = !track.muted && (!anySolo || track.soloed)
+      sendBridge('TRACK_GAIN', { trackId: track.id, gain: audible ? 1.0 : 0.0 })
     }
   }
 })
