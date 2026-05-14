@@ -13,12 +13,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Application, Container, Graphics, Text } from 'pixi.js'
 import { useProjectStore, type Clip, TRACK_PALETTE } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useLibraryStore } from '@/stores/libraryStore'
 import { PEAKS_PER_SECOND } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 
 const project = useProjectStore()
 const transport = useTransportStore()
+const library = useLibraryStore()
 const host = ref<HTMLDivElement | null>(null)
 
 // Layout constants.
@@ -226,6 +228,14 @@ onMounted(async () => {
     // drag that snaps to the nearest sub-beat (1/16 of a bar at 4/4).
     host.value.addEventListener('pointerdown', onPlayheadPointerDown)
 
+    // Drag-and-drop landing zone for library items. The actual drag payload
+    // is set on the library cards (`application/x-jackdaw-library-item`);
+    // we just compute the target track + start time and update the ghost.
+    host.value.addEventListener('dragenter', onTimelineDragEnter)
+    host.value.addEventListener('dragover', onTimelineDragOver)
+    host.value.addEventListener('dragleave', onTimelineDragLeave)
+    host.value.addEventListener('drop', onTimelineDrop)
+
     rulerLayer = new ContainerCtor()
     tracksLayer = new ContainerCtor()
     // Headers drawn last so they sit above any scrolled clip content (future).
@@ -269,6 +279,10 @@ onBeforeUnmount(() => {
     resizeObserver = null
     host.value?.removeEventListener('wheel', onWheel)
     host.value?.removeEventListener('pointerdown', onPlayheadPointerDown)
+    host.value?.removeEventListener('dragenter', onTimelineDragEnter)
+    host.value?.removeEventListener('dragover', onTimelineDragOver)
+    host.value?.removeEventListener('dragleave', onTimelineDragLeave)
+    host.value?.removeEventListener('drop', onTimelineDrop)
     window.removeEventListener('pointermove', onPlayheadPointerMove)
     window.removeEventListener('pointerup', onPlayheadPointerUp)
     window.removeEventListener('pointercancel', onPlayheadPointerUp)
@@ -702,38 +716,100 @@ function updatePlayhead(): void {
     playheadLayer.removeChildren()
 
     const trackCount = project.tracks.length
-    if (trackCount === 0) return
+    if (trackCount === 0) {
+        // No tracks → nothing to draw, including no drop ghost.
+        return
+    }
 
     const x = absX - scrollX.value
+    const playheadOnScreen = x >= TRACK_HEADER_WIDTH && x <= width
 
-    // Don't draw if the playhead falls behind the header column or past the canvas.
-    if (x < TRACK_HEADER_WIDTH || x > width) return
+    if (playheadOnScreen) {
+        // Line spans the ruler + exactly the visible track rows, clipped to
+        // the bottom of the visible track area so it never crosses into the
+        // horizontal-scrollbar lane.
+        const tracksHeight = tracksContentHeight.value
+        const bottomY = Math.min(
+            RULER_HEIGHT + trackAreaHeight.value,
+            RULER_HEIGHT + tracksHeight - scrollY.value
+        )
 
-    // Line spans the ruler + exactly the visible track rows, clipped to the
-    // bottom of the visible track area so it never crosses into the
-    // horizontal-scrollbar lane.
-    const tracksHeight = tracksContentHeight.value
-    const bottomY = Math.min(
-        RULER_HEIGHT + trackAreaHeight.value,
-        RULER_HEIGHT + tracksHeight - scrollY.value
+        const g = new GraphicsCtor()
+
+        // Vertical line.
+        g.moveTo(x + 0.5, 0).lineTo(x + 0.5, bottomY).stroke({ color: PLAYHEAD, width: 1, alpha: 0.9 })
+
+        // Small triangular heads at each end so the playhead is easy to spot.
+        // Top: points down into the ruler. Bottom: points up from the end of
+        // the visible track area (or the project end if it's higher up).
+        const headW = 8
+        g.poly([x - headW / 2, 0, x + headW / 2, 0, x, headW]).fill({ color: PLAYHEAD, alpha: 0.95 })
+        g.poly([
+            x - headW / 2, bottomY,
+            x + headW / 2, bottomY,
+            x, bottomY - headW
+        ]).fill({ color: PLAYHEAD, alpha: 0.95 })
+
+        playheadLayer.addChild(g)
+    }
+
+    // Drop-preview ghost — drawn on top of the playhead regardless of
+    // whether the playhead itself is currently visible. Shown while a
+    // library item is being dragged over a valid track row; green for "OK
+    // to drop", red for "would overlap".
+    if (dropPreview) drawDropPreview()
+}
+
+/**
+ * Render the translucent rectangle showing where a dragged library item
+ * would land. Coordinates are in viewport space; `dropPreview` itself is in
+ * timeline units (track index + ms) so the ghost stays correct as the
+ * user scrolls / zooms.
+ */
+function drawDropPreview(): void {
+    if (!app || !playheadLayer || !GraphicsCtor || !dropPreview) return
+
+    const dp = dropPreview
+    if (dp.trackIndex < 0 || dp.trackIndex >= project.tracks.length) return
+
+    const rightEdge = app.renderer.screen.width - SCROLLBAR_WIDTH
+    const yTop = RULER_HEIGHT + dp.trackIndex * (TRACK_HEIGHT + TRACK_GAP) - scrollY.value
+    // Off-screen vertically — skip.
+    if (yTop + TRACK_HEIGHT <= RULER_HEIGHT) return
+    if (yTop >= app.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)) return
+
+    const absLeft = TRACK_HEADER_WIDTH + (dp.startMs / 1000) * pxPerSecond.value
+    const width = Math.max(2, (dp.durationMs / 1000) * pxPerSecond.value)
+    const xLeft = absLeft - scrollX.value
+    const xRight = xLeft + width
+    if (xRight <= TRACK_HEADER_WIDTH || xLeft >= rightEdge) return
+
+    // Clip horizontally so the ghost never spills over the header column or
+    // the right scrollbar lane.
+    const clippedLeft = Math.max(TRACK_HEADER_WIDTH, xLeft)
+    const clippedRight = Math.min(rightEdge, xRight)
+    const w = clippedRight - clippedLeft
+    if (w <= 0) return
+
+    // Clip vertically against the bottom-of-tracks-area as well.
+    const bottomLimit = Math.min(
+        app.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0),
+        RULER_HEIGHT + trackAreaHeight.value
     )
+    const clippedTop = Math.max(RULER_HEIGHT, yTop)
+    const clippedBottom = Math.min(bottomLimit, yTop + TRACK_HEIGHT)
+    const h = clippedBottom - clippedTop
+    if (h <= 0) return
+
+    const colour = dp.valid ? 0x22c55e : 0xef4444 // green-500 / red-500
 
     const g = new GraphicsCtor()
-
-    // Vertical line.
-    g.moveTo(x + 0.5, 0).lineTo(x + 0.5, bottomY).stroke({ color: PLAYHEAD, width: 1, alpha: 0.9 })
-
-    // Small triangular heads at each end so the playhead is easy to spot.
-    // Top: points down into the ruler. Bottom: points up from the end of the
-    // visible track area (or the project end if it's higher up).
-    const headW = 8
-    g.poly([x - headW / 2, 0, x + headW / 2, 0, x, headW]).fill({ color: PLAYHEAD, alpha: 0.95 })
-    g.poly([
-        x - headW / 2, bottomY,
-        x + headW / 2, bottomY,
-        x, bottomY - headW
-    ]).fill({ color: PLAYHEAD, alpha: 0.95 })
-
+    g.rect(clippedLeft, clippedTop, w, h).fill({ color: colour, alpha: 0.18 })
+    g.rect(clippedLeft + 0.5, clippedTop + 0.5, w - 1, h - 1).stroke({
+        color: colour,
+        width: 1.5,
+        alpha: 0.9
+    })
     playheadLayer.addChild(g)
 }
 
@@ -927,6 +1003,182 @@ function onClipPointerUp(_e: PointerEvent): void {
     window.removeEventListener('pointermove', onClipPointerMove)
     window.removeEventListener('pointerup', onClipPointerUp)
     window.removeEventListener('pointercancel', onClipPointerUp)
+}
+
+// ─── Drop handling: library items → timeline ──────────────────────────────
+//
+// When a library card is dragged onto the timeline canvas we compute the
+// target track and start time on every `dragover`, render a translucent
+// "ghost" rectangle at that position (green if valid, red if it would
+// overlap an existing clip), and on `drop` route the placement through
+// `projectStore.addClipFromLibrary`.
+
+const MIME_LIBRARY_ITEM = 'application/x-jackdaw-library-item'
+
+interface DropPreview {
+    trackIndex: number
+    startMs: number
+    durationMs: number
+    valid: boolean
+}
+
+let dropPreview: DropPreview | null = null
+
+/**
+ * True iff an in-app library drag is currently in flight. We rely on the
+ * id parked on `libraryStore.currentDragItemId` by LibraryPanel's
+ * `dragstart` handler rather than sniffing `dataTransfer.types` — Chromium
+ * puts the DataTransfer in "protected mode" during `dragover`, which hides
+ * custom MIME types and was making the drag fail silently. The MIME
+ * payload is still set on the drag for round-trip compatibility (and is
+ * used as the authoritative source on the final `drop` event).
+ */
+function isLibraryDrag(): boolean {
+    return library.currentDragItemId !== null
+}
+
+/**
+ * Inspect the in-flight drag to discover which library item is being
+ * dragged. `dataTransfer.getData(MIME)` returns `''` during `dragover` for
+ * security reasons, so we instead read the id that LibraryPanel parks on
+ * `libraryStore.currentDragItemId` in its `dragstart` handler. `getData`
+ * does work during the final `drop` event; the caller passes
+ * `viaGetData = true` there as a more authoritative fallback.
+ */
+function resolveDragItem(
+    e: DragEvent,
+    viaGetData = false
+): import('@/stores/libraryStore').LibraryItem | null {
+    if (viaGetData) {
+        const id = e.dataTransfer?.getData(MIME_LIBRARY_ITEM) ?? ''
+        if (id) {
+            const item = library.getItem(id)
+            if (item) return item
+        }
+    }
+    const liveId = library.currentDragItemId
+    return liveId ? library.getItem(liveId) : null
+}
+
+/**
+ * Convert a viewport-local pointer position into a target track index +
+ * snapped start time. Returns null if the pointer falls outside the
+ * scrollable track area, in the inter-track gap, or below the last track.
+ */
+function pointerToTrackDrop(clientX: number, clientY: number): { trackIndex: number; startMs: number } | null {
+    if (!host.value || !app) return null
+    const rect = host.value.getBoundingClientRect()
+    const x = clientX - rect.left
+    const y = clientY - rect.top
+
+    const rightEdge = app.renderer.screen.width - SCROLLBAR_WIDTH
+    if (x < TRACK_HEADER_WIDTH || x > rightEdge) return null
+    if (y < RULER_HEIGHT) return null
+    const bottomLimit = app.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
+    if (y > bottomLimit) return null
+
+    const contentY = y + scrollY.value - RULER_HEIGHT
+    const slot = TRACK_HEIGHT + TRACK_GAP
+    const trackIndex = Math.floor(contentY / slot)
+    if (trackIndex < 0 || trackIndex >= project.tracks.length) return null
+    // Reject the inter-track gap so dropping between rows doesn't pick one
+    // arbitrarily — the user has to land in the row proper.
+    const yWithinSlot = contentY - trackIndex * slot
+    if (yWithinSlot >= TRACK_HEIGHT) return null
+
+    const trackLocalX = x - TRACK_HEADER_WIDTH
+    const rawMs = ((scrollX.value + trackLocalX) / pxPerSecond.value) * 1000
+    const snap = MS_PER_SUB_BEAT()
+    const startMs = Math.max(0, Math.round(rawMs / snap) * snap)
+    return { trackIndex, startMs }
+}
+
+function onTimelineDragEnter(e: DragEvent): void {
+    if (!isLibraryDrag()) return
+    e.preventDefault()
+}
+
+function onTimelineDragOver(e: DragEvent): void {
+    if (!isLibraryDrag()) return
+    e.preventDefault()
+    if (!e.dataTransfer) return
+
+    const target = pointerToTrackDrop(e.clientX, e.clientY)
+    const item = resolveDragItem(e)
+    if (!target || !item) {
+        e.dataTransfer.dropEffect = 'none'
+        if (dropPreview !== null) {
+            dropPreview = null
+            updatePlayhead()
+        }
+        return
+    }
+
+    const overlaps = project.wouldClipOverlap(
+        project.tracks[target.trackIndex].id,
+        target.startMs,
+        item.durationMs
+    )
+    e.dataTransfer.dropEffect = overlaps ? 'none' : 'copy'
+
+    // Only re-render the ghost when the resolved drop changes; the
+    // dragover event fires very frequently and `updatePlayhead` clears
+    // and rebuilds the playhead layer.
+    const next: DropPreview = {
+        trackIndex: target.trackIndex,
+        startMs: target.startMs,
+        durationMs: item.durationMs,
+        valid: !overlaps
+    }
+    if (
+        dropPreview === null ||
+        dropPreview.trackIndex !== next.trackIndex ||
+        dropPreview.startMs !== next.startMs ||
+        dropPreview.durationMs !== next.durationMs ||
+        dropPreview.valid !== next.valid
+    ) {
+        dropPreview = next
+        updatePlayhead()
+    }
+}
+
+function onTimelineDragLeave(e: DragEvent): void {
+    if (!isLibraryDrag()) return
+    // Only clear when the drag actually leaves the host (not when crossing
+    // between child elements). `relatedTarget === null` is the cross-window
+    // case; `!host.contains(relatedTarget)` covers leaving the host bounds.
+    const related = e.relatedTarget as Node | null
+    if (related && host.value && host.value.contains(related)) return
+    if (dropPreview !== null) {
+        dropPreview = null
+        updatePlayhead()
+    }
+}
+
+function onTimelineDrop(e: DragEvent): void {
+    if (!isLibraryDrag()) return
+    e.preventDefault()
+
+    // Clear the ghost first so the timeline doesn't briefly show the old
+    // preview after the drop completes.
+    dropPreview = null
+
+    // Prefer the dataTransfer payload (authoritative on `drop`); fall back
+    // to the store-tracked id if the MIME data was somehow empty.
+    const item = resolveDragItem(e, true)
+    if (!item) {
+        updatePlayhead()
+        return
+    }
+
+    const target = pointerToTrackDrop(e.clientX, e.clientY)
+    if (!target) {
+        updatePlayhead()
+        return
+    }
+
+    project.addClipFromLibrary(project.tracks[target.trackIndex].id, item, target.startMs)
+    updatePlayhead()
 }
 
 /**

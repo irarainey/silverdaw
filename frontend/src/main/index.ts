@@ -216,6 +216,44 @@ app.whenReady().then(() => {
     return { filePath, fileName: basename(filePath), data }
   })
 
+  // Multi-file variant used by the library panel's Import button.
+  // Returns an array of opened files (paths + bytes) or `[]` if cancelled.
+  ipcMain.handle('audio:openMany', async () => {
+    if (!mainWindow) return []
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import Audio into Library',
+      filters: [
+        { name: 'Audio files', extensions: ['wav', 'mp3', 'flac', 'aiff', 'aif', 'ogg', 'm4a'] }
+      ],
+      properties: ['openFile', 'multiSelections']
+    })
+    if (result.canceled || result.filePaths.length === 0) return []
+    const out: { filePath: string; fileName: string; data: ArrayBuffer }[] = []
+    for (const filePath of result.filePaths) {
+      try {
+        const buf = await readFile(filePath)
+        const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+        out.push({ filePath, fileName: basename(filePath), data })
+      } catch (err) {
+        console.error('[audio:openMany] read failed for', filePath, err)
+      }
+    }
+    return out
+  })
+
+  // Read an audio file by absolute path (e.g. one obtained from an OS
+  // drag-drop via `webUtils.getPathForFile`). Returns null on failure.
+  ipcMain.handle('audio:readFile', async (_evt, filePath: string) => {
+    try {
+      const buf = await readFile(filePath)
+      const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+      return { filePath, fileName: basename(filePath), data }
+    } catch (err) {
+      console.error('[audio:readFile] failed for', filePath, err)
+      return null
+    }
+  })
+
   // Create the window first so the user sees a frame immediately; defer
   // backend-process spawn to the next tick so it doesn't contend with the
   // renderer for CPU during initial paint.

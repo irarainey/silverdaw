@@ -216,6 +216,63 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * True if placing a clip of `durationMs` length on `trackId` starting at
+     * `startMs` would overlap any existing clip on that track. Used by the
+     * library drag-drop flow to reject drops onto occupied space.
+     */
+    wouldClipOverlap(trackId: string, startMs: number, durationMs: number): boolean {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return false
+      const newStart = Math.max(0, startMs)
+      const newEnd = newStart + durationMs
+      for (const otherId of track.clipIds) {
+        const other = this.clips[otherId]
+        if (!other) continue
+        const otherEnd = other.startMs + other.durationMs
+        // Overlap if ranges intersect; touching edges (newEnd === other.startMs
+        // or newStart === otherEnd) are allowed.
+        if (newStart < otherEnd && newEnd > other.startMs) return true
+      }
+      return false
+    },
+
+    /**
+     * Place a clip from the library onto a track at `startMs`. Reuses the
+     * library item's already-decoded peaks (no re-decode). Sends the matching
+     * `CLIP_ADD` to the backend so the audio engine loads the file too.
+     *
+     * Returns the new clip's id, or `null` if the track is missing or the
+     * placement would overlap an existing clip on that track.
+     */
+    addClipFromLibrary(
+      trackId: string,
+      libraryItem: {
+        filePath: string
+        fileName: string
+        durationMs: number
+        sampleRate: number
+        channelCount: number
+        peaks: Float32Array
+      },
+      startMs: number
+    ): string | null {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return null
+      const snapped = Math.max(0, Math.floor(startMs))
+      if (this.wouldClipOverlap(trackId, snapped, libraryItem.durationMs)) return null
+
+      const clipId = this.addClipToTrack(trackId, libraryItem, snapped)
+      if (!clipId) return null
+
+      sendBridge('CLIP_ADD', {
+        trackId,
+        filePath: libraryItem.filePath,
+        positionMs: snapped
+      })
+      return clipId
+    },
+
+    /**
      * Set the project's visible timeline length (ms). Updates every track's
      * `lengthMs`, but never below the end of that track's longest clip — so
      * the user can shrink the project but never clip audio off-screen.

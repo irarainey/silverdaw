@@ -1,6 +1,6 @@
 // Preload script - runs in an isolated context with access to Node APIs.
 // Expose only what the renderer needs via `contextBridge`.
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 export interface OpenedAudioFile {
   filePath: string
@@ -22,6 +22,31 @@ const api = {
    * Resolves to `null` if the user cancels.
    */
   openAudioFile: (): Promise<OpenedAudioFile | null> => ipcRenderer.invoke('audio:open'),
+  /**
+   * Multi-file variant. Used by the library panel's Import button.
+   * Returns an array of opened files (empty if the user cancels).
+   */
+  openAudioFiles: (): Promise<OpenedAudioFile[]> => ipcRenderer.invoke('audio:openMany'),
+  /**
+   * Read an audio file by absolute filesystem path. Used after an OS
+   * drag-drop, where the path comes from `getPathForFile(file)`.
+   * Resolves to `null` if the read fails.
+   */
+  readAudioFile: (filePath: string): Promise<OpenedAudioFile | null> =>
+    ipcRenderer.invoke('audio:readFile', filePath),
+  /**
+   * Resolve an OS drag-dropped `File` to its absolute filesystem path.
+   * Wraps Electron's `webUtils.getPathForFile` so the renderer can pass
+   * the result to `readAudioFile`. Returns `''` if no path is available
+   * (e.g. the drag came from inside the app rather than from the OS).
+   */
+  getPathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
   /**
    * Subscribe to menu actions forwarded from the main process so the renderer
    * can drive UI flows (e.g. "Add Track from File...").

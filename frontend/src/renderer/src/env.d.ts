@@ -20,6 +20,9 @@ declare global {
       readonly platform: NodeJS.Platform
       menuAction(action: string): void
       openAudioFile(): Promise<OpenedAudioFile | null>
+      openAudioFiles(): Promise<OpenedAudioFile[]>
+      readAudioFile(filePath: string): Promise<OpenedAudioFile | null>
+      getPathForFile(file: File): string
       onMenuAction(handler: (action: string) => void): () => void
       showStatusDialog(connected: boolean): void
     }

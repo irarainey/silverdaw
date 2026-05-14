@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import AppTitleBar from '@/components/AppTitleBar.vue'
 import TimelineView from '@/components/TimelineView.vue'
 import TransportBar from '@/components/TransportBar.vue'
+import LibraryPanel from '@/components/LibraryPanel.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
@@ -10,6 +11,10 @@ import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/
 
 const project = useProjectStore()
 const transport = useTransportStore()
+
+// Library-panel height in px. Persisted only in-memory for now; resized
+// interactively via the drag handle along the panel's top edge.
+const libraryHeight = ref(180)
 
 let unsubscribeMenu: (() => void) | null = null
 
@@ -45,6 +50,8 @@ function handleMenuAction(action: string): void {
     <main class="flex-1 overflow-hidden">
       <TimelineView />
     </main>
+
+    <LibraryPanel v-model:height="libraryHeight" />
 
     <StatusBar />
   </div>
