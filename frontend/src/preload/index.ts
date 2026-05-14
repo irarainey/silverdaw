@@ -31,6 +31,14 @@ const api = {
     const listener = (_evt: IpcRendererEvent, action: string): void => handler(action)
     ipcRenderer.on('menu:action', listener)
     return () => ipcRenderer.removeListener('menu:action', listener)
+  },
+  /**
+   * Ask the main process to show a native dialog summarising the current
+   * backend connection state. The renderer owns the live state in
+   * `transportStore`, so it passes the boolean through.
+   */
+  showStatusDialog: (connected: boolean): void => {
+    ipcRenderer.send('dialog:status', connected)
   }
 } as const
 

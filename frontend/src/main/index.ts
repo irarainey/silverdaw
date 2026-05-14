@@ -69,11 +69,6 @@ function createWindow(): void {
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-    // Open DevTools only once the renderer has painted; opening it on the
-    // critical first-paint path noticeably delays the visible window.
-    mainWindow.webContents.once('did-finish-load', () => {
-      mainWindow?.webContents.openDevTools({ mode: 'detach' })
-    })
   } else {
     void mainWindow.loadFile(join(__dirname, '..', 'renderer', 'index.html'))
   }
@@ -186,6 +181,21 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
 
   ipcMain.on('menu:action', (_evt, action: string) => handleMenuAction(action))
+
+  // Show a native message box with the current backend connection state.
+  // The renderer holds the live state, so it passes the boolean through.
+  ipcMain.on('dialog:status', (_evt, connected: boolean) => {
+    if (!mainWindow) return
+    void dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Status',
+      message: connected ? 'Backend connected' : 'Backend disconnected',
+      detail: connected
+        ? 'The audio engine bridge is connected and ready.'
+        : 'The audio engine bridge is not currently connected.',
+      buttons: ['OK']
+    })
+  })
 
   // Open an audio file via the OS dialog and stream its bytes back to the renderer.
   // Returns null if the user cancels.

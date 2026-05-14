@@ -63,6 +63,8 @@ export const menus: MenuDef[] = [
       { label: 'Documentation', action: 'help.docs' },
       { label: 'Report an Issue...', action: 'help.reportIssue' },
       SEP,
+      { label: 'Status', action: 'help.status' },
+      SEP,
       { label: 'About Jackdaw', action: 'help.about' }
     ]
   }

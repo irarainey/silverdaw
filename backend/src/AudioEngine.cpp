@@ -55,6 +55,7 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
 
     auto track = std::make_unique<Track>();
     track->sampleRate = reader->sampleRate;
+    track->numChannels = (int)reader->numChannels;
 
     // `AudioFormatReaderSource` takes ownership of the reader (deleteWhenRemoved=true).
     track->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
@@ -68,7 +69,7 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
     track->transportSource->setSource(track->offsetSource.get(),
                                       32768,            // read-ahead buffer size in samples
                                       &readAheadThread, // background reader thread (required when buffer > 0)
-                                      (double)reader->sampleRate, (int)reader->numChannels);
+                                      track->sampleRate, track->numChannels);
 
     // Replace any existing track with the same id.
     if (auto it = tracks.find(trackId); it != tracks.end())
@@ -156,9 +157,24 @@ bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
     const juce::int64 newOffsetSamples = (juce::int64)(clampedMs * track->sampleRate / 1000.0);
     track->offsetSource->setOffsetSamples(newOffsetSamples);
 
-    // Re-apply the current transport position so the read-ahead buffer is
-    // refilled with the correct silence / audio mix for the new offset.
-    track->transportSource->setPosition(track->transportSource->getCurrentPosition());
+    // Fully rebuild the transport's source chain so the read-ahead
+    // `BufferingAudioSource` is reconstructed from scratch and can't
+    // serve any prefetched samples from the OLD offset. Just re-seeking
+    // is racy: the background reader thread may not have moved off the
+    // cached range before playback starts, so the listener would still
+    // hear the old audio at the old playhead position.
+    const double pos = track->transportSource->getCurrentPosition();
+    const bool wasPlaying = track->transportSource->isPlaying();
+    if (wasPlaying)
+        track->transportSource->stop();
+
+    track->transportSource->setSource(nullptr, 0, nullptr);
+    track->transportSource->setSource(track->offsetSource.get(), 32768, &readAheadThread, track->sampleRate,
+                                      track->numChannels);
+
+    track->transportSource->setPosition(pos);
+    if (wasPlaying)
+        track->transportSource->start();
     return true;
 }
 

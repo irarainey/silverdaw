@@ -212,6 +212,27 @@ export const useProjectStore = defineStore('project', {
       sendBridge('CLIP_MOVE', { trackId: clip.trackId, positionMs: snapped })
     },
 
+    /**
+     * Set the project's visible timeline length (ms). Updates every track's
+     * `lengthMs`, but never below the end of that track's longest clip — so
+     * the user can shrink the project but never clip audio off-screen.
+     * No-op when there are no tracks.
+     */
+    setProjectLengthMs(lengthMs: number): void {
+      if (this.tracks.length === 0) return
+      const target = Math.max(0, Math.floor(lengthMs))
+      for (const track of this.tracks) {
+        let minLength = 0
+        for (const clipId of track.clipIds) {
+          const clip = this.clips[clipId]
+          if (!clip) continue
+          const end = clip.startMs + clip.durationMs
+          if (end > minLength) minLength = end
+        }
+        track.lengthMs = Math.max(target, minLength)
+      }
+    },
+
     /** Remove a track and all its clips, locally and on the backend. */
     removeTrack(trackId: string): void {
       const idx = this.tracks.findIndex((t) => t.id === trackId)

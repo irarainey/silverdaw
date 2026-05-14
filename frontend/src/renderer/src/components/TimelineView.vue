@@ -36,11 +36,11 @@ const TRACK_GAP = 4
 const TRACK_HEADER_WIDTH = 175
 const RULER_HEIGHT = 28
 
-// Musical grid. Hard-coded for now; later these will come from the project
-// store once tempo/time-signature are first-class. SUBDIVISIONS_PER_BEAT=4
-// means quarter-beat resolution (i.e. 16th notes in 4/4), which gives the
-// coarsest snap target we want to support without making the grid too dense.
-const BPM = 120
+// Musical grid. The BPM comes from `transportStore` so the user can edit
+// it from the TransportBar; the grid + snap unit re-derive on the next
+// redraw. SUBDIVISIONS_PER_BEAT=4 means quarter-beat resolution (i.e.
+// 16th notes in 4/4), which is the coarsest snap target we want to
+// support without making the grid too dense.
 const TIME_SIG_NUM = 4
 const SUBDIVISIONS_PER_BEAT = 4
 
@@ -317,6 +317,13 @@ watch([maxScrollX, maxScrollY], () => {
     if (clampScroll()) redraw()
 })
 
+// BPM is editable from the transport bar; the ruler ticks, grid lines and
+// snap unit all derive from it, so any change requires a full repaint.
+watch(() => transport.bpm, () => {
+    redraw()
+    updatePlayhead()
+})
+
 function redraw(): void {
     if (!app || !rulerLayer || !tracksLayer || !headersLayer) return
 
@@ -369,7 +376,7 @@ function drawRuler(width: number): void {
     // Iterate quarter-beat (sub) indices in content-space, drawing into one
     // of three Graphics buckets by tier so each tier can have its own stroke
     // style applied in a single call.
-    const pxPerBeat = (60 / BPM) * pxPerSecond.value
+    const pxPerBeat = (60 / transport.bpm) * pxPerSecond.value
     const pxPerSub = pxPerBeat / SUBDIVISIONS_PER_BEAT
     const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
 
@@ -396,13 +403,12 @@ function drawRuler(width: number): void {
     rulerLayer.addChild(beatTicks)
     rulerLayer.addChild(barTicks)
 
-    // Bar-number labels centred above each bar line. The first bar line (at
-    // t=0) is left unlabelled because it doubles as the start-of-track
-    // marker; labelling starts at "1" on the *second* bar line so the
-    // numbers count completed bars rather than bar starts.
+    // Bar-number labels centred above each bar line. Bars are 0-indexed,
+    // so the first bar line (t=0) is labelled "0" and each subsequent
+    // bar line increments by one — matching the Bar.Beat.Sub display in
+    // the transport bar.
     if (TextCtor) {
-        const firstLabelledSub = Math.max(firstSub, subsPerBar)
-        const startSub = Math.ceil(firstLabelledSub / subsPerBar) * subsPerBar
+        const startSub = Math.ceil(firstSub / subsPerBar) * subsPerBar
         for (let s = startSub; s <= lastSub; s += subsPerBar) {
             const x = TRACK_HEADER_WIDTH + s * pxPerSub - scrollX.value + 0.5
             if (x < TRACK_HEADER_WIDTH || x > rightEdge) continue
@@ -448,7 +454,7 @@ function drawGrid(width: number): void {
     const gridBottom = RULER_HEIGHT + trackAreaHeight.value
     if (gridBottom <= gridTop || rightEdge <= gridLeft) return
 
-    const pxPerBeat = (60 / BPM) * pxPerSecond.value
+    const pxPerBeat = (60 / transport.bpm) * pxPerSecond.value
     const pxPerSub = pxPerBeat / SUBDIVISIONS_PER_BEAT
     const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
 
@@ -787,7 +793,7 @@ function onWheel(e: WheelEvent): void {
 // active keeps re-seeking. Snap target is one sub-beat — i.e. 1/16 of a
 // bar at 4/4 — derived from the project BPM.
 // -----------------------------------------------------------------------
-const MS_PER_SUB_BEAT = 60000 / (BPM * SUBDIVISIONS_PER_BEAT)
+const MS_PER_SUB_BEAT = (): number => 60000 / (transport.bpm * SUBDIVISIONS_PER_BEAT)
 let isDraggingPlayhead = false
 
 // Active clip-drag state. Tracks the clip being moved and the ms offset
@@ -804,7 +810,8 @@ function pointerToSnappedMs(clientX: number): number | null {
     if (x < TRACK_HEADER_WIDTH || x > rightEdge) return null
     const trackLocalX = x - TRACK_HEADER_WIDTH
     const rawMs = ((scrollX.value + trackLocalX) / pxPerSecond.value) * 1000
-    return Math.max(0, Math.round(rawMs / MS_PER_SUB_BEAT) * MS_PER_SUB_BEAT)
+    const snap = MS_PER_SUB_BEAT()
+    return Math.max(0, Math.round(rawMs / snap) * snap)
 }
 
 /**
@@ -906,7 +913,8 @@ function onClipPointerMove(e: PointerEvent): void {
     if (pointerMs === null) return
 
     const rawStartMs = pointerMs - clipGrabOffsetMs
-    const snapped = Math.max(0, Math.round(rawStartMs / MS_PER_SUB_BEAT) * MS_PER_SUB_BEAT)
+    const snap = MS_PER_SUB_BEAT()
+    const snapped = Math.max(0, Math.round(rawStartMs / snap) * snap)
     if (snapped === clip.startMs) return
     project.moveClip(clip.id, snapped)
     redraw()

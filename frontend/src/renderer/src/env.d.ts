@@ -21,6 +21,7 @@ declare global {
       menuAction(action: string): void
       openAudioFile(): Promise<OpenedAudioFile | null>
       onMenuAction(handler: (action: string) => void): () => void
+      showStatusDialog(connected: boolean): void
     }
   }
 }

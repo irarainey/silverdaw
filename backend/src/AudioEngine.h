@@ -206,6 +206,7 @@ class AudioEngine
         std::unique_ptr<OffsetSource> offsetSource;
         std::unique_ptr<juce::AudioTransportSource> transportSource;
         double sampleRate = 44100.0;
+        int numChannels = 2;
     };
 
     juce::AudioDeviceManager deviceManager;
