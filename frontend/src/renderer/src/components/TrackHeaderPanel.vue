@@ -29,10 +29,10 @@ const HEADER_WIDTH = 140
                 'opacity-50': track.muted || (project.anySoloed && !track.soloed),
                 'ring-1 ring-inset ring-cyan-500/60': track.soloed
             }" :style="{
-        top: RULER_HEIGHT + i * (TRACK_HEIGHT + TRACK_GAP) + 'px',
-        height: TRACK_HEIGHT + 'px',
-        width: HEADER_WIDTH + 'px'
-    }">
+                top: RULER_HEIGHT + i * (TRACK_HEIGHT + TRACK_GAP) + 'px',
+                height: TRACK_HEIGHT + 'px',
+                width: HEADER_WIDTH + 'px'
+            }">
             <!-- Top row: name + close button. -->
             <div class="flex items-start justify-between gap-1">
                 <div class="min-w-0 flex-1">
@@ -58,18 +58,20 @@ const HEADER_WIDTH = 140
                 <button type="button"
                     class="flex h-6 w-6 items-center justify-center rounded border text-[11px] font-bold transition-colors disabled:cursor-not-allowed"
                     :class="(track.muted || (project.anySoloed && !track.soloed))
-                            ? 'border-amber-400 bg-amber-500 text-zinc-950 hover:bg-amber-400'
-                            : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
-                        " :title="project.anySoloed && !track.soloed ? 'Muted by solo on another track' : (track.muted ? 'Unmute' : 'Mute')"
+                        ? 'border-amber-400 bg-amber-500 text-zinc-950 hover:bg-amber-400'
+                        : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
+                        "
+                    :title="project.anySoloed && !track.soloed ? 'Muted by solo on another track' : (track.muted ? 'Unmute' : 'Mute')"
                     :disabled="project.anySoloed && !track.soloed" @click="project.toggleMute(track.id)">
                     M
                 </button>
                 <button type="button"
                     class="flex h-6 w-6 items-center justify-center rounded border text-[11px] font-bold transition-colors disabled:cursor-not-allowed"
                     :class="track.soloed
-                            ? 'border-cyan-400 bg-cyan-500 text-zinc-950 hover:bg-cyan-400'
-                            : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
-                        " :title="project.anySoloed && !track.soloed ? 'Another track is soloed' : (track.soloed ? 'Un-solo' : 'Solo')"
+                        ? 'border-cyan-400 bg-cyan-500 text-zinc-950 hover:bg-cyan-400'
+                        : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
+                        "
+                    :title="project.anySoloed && !track.soloed ? 'Another track is soloed' : (track.soloed ? 'Un-solo' : 'Solo')"
                     :disabled="project.anySoloed && !track.soloed" @click="project.toggleSolo(track.id)">
                     S
                 </button>
