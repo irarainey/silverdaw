@@ -13,8 +13,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ─── JUCE ────────────────────────────────────────────────────────────────
-# JUCE lives at the repo root as a git submodule (sibling of `backend/`).
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../JUCE JUCE)
+# JUCE is fetched at configure time. The first configure downloads ~250MB
+# into `backend/build/_deps/juce-src/`; subsequent configures are cached.
+# Bump JUCE_GIT_TAG to update the pinned version.
+set(JUCE_GIT_TAG "8.0.12" CACHE STRING "JUCE version to fetch")
+
+include(FetchContent)
+FetchContent_Declare(JUCE
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG        ${JUCE_GIT_TAG}
+    GIT_SHALLOW    TRUE
+    GIT_PROGRESS   TRUE)
+FetchContent_MakeAvailable(JUCE)
 
 # ─── Target ──────────────────────────────────────────────────────────────
 juce_add_console_app(JackdawBackend

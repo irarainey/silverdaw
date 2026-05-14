@@ -38,7 +38,9 @@
   },
   "files.associations": {
     "*.css": "tailwindcss",
-    "*.postcss": "postcss"
+    "*.postcss": "postcss",
+    ".clangd": "yaml",
+    ".clang-format": "yaml"
   },
 
   // ─── ESLint ──────────────────────────────────────────────────────────────
@@ -99,23 +101,25 @@
     "**/node_modules": true,
     "**/dist": true,
     "**/out": true,
-    "backend/build": true,
-    "JUCE/**": true
+    "backend/build": true
   },
   "files.watcherExclude": {
     "**/node_modules/**": true,
-    "**/backend/build/**": true,
-    "**/JUCE/**": true
+    "**/backend/build/**": true
   },
 
   // ─── Spelling ────────────────────────────────────────────────────────────
   "cSpell.words": [
+    "Allman",
     "BTrack",
+    "bugprone",
     "Camelot",
     "clangd",
+    "cplusplus",
     "Demucs",
     "DirectML",
     "electron-vite",
+    "fcolor",
     "htdemucs",
     "Jackdaw",
     "JUCE",
@@ -128,8 +132,8 @@
     "sidechain",
     "Tailwind",
     "uWebSockets",
-    "Volar",
     "ValueTree",
+    "Volar",
     "winget"
   ]
 }
