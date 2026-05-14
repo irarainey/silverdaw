@@ -11,6 +11,8 @@ declare global {
     jackdaw: {
       readonly appName: string
       readonly version: string
+      readonly platform: NodeJS.Platform
+      menuAction(action: string): void
     }
   }
 }

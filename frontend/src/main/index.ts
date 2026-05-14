@@ -1,6 +1,11 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
+
+// ─── Theme / colours (kept in sync with the renderer Tailwind palette) ──────
+const TITLE_BAR_HEIGHT = 36
+const COLOUR_BG = '#18181b' // zinc-900
+const COLOUR_FG = '#d4d4d8' // zinc-300
 
 let backendProcess: ChildProcess | null = null
 let mainWindow: BrowserWindow | null = null
@@ -39,11 +44,20 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    backgroundColor: '#111827',
+    minWidth: 900,
+    minHeight: 600,
+    backgroundColor: COLOUR_BG,
     show: false,
-    autoHideMenuBar: true,
+    // Frameless on Windows/Linux; macOS gets its native traffic-light buttons inset.
+    titleBarStyle: 'hidden',
+    titleBarOverlay:
+      process.platform === 'win32' || process.platform === 'linux'
+        ? { color: COLOUR_BG, symbolColor: COLOUR_FG, height: TITLE_BAR_HEIGHT }
+        : undefined,
+    trafficLightPosition: { x: 12, y: 11 },
     webPreferences: {
-      preload: join(__dirname, '..', 'preload', 'index.js'),
+      // electron-vite emits the preload bundle as `index.mjs` (ESM).
+      preload: join(__dirname, '..', 'preload', 'index.mjs'),
       contextIsolation: true,
       sandbox: false
     }
@@ -59,7 +73,118 @@ function createWindow(): void {
   }
 }
 
+/**
+ * Menu actions invoked from the custom HTML menu bar via IPC.
+ * Most of these are stubs that just log; they will be wired to backend
+ * commands as features land.
+ */
+function handleMenuAction(action: string): void {
+  if (!mainWindow) return
+  const wc = mainWindow.webContents
+
+  switch (action) {
+    // File
+    case 'file.newProject':
+      console.log('[menu] new project (todo)')
+      break
+    case 'file.openProject':
+      void dialog
+        .showOpenDialog(mainWindow, {
+          title: 'Open Project',
+          filters: [{ name: 'Jackdaw project', extensions: ['jdaw'] }],
+          properties: ['openFile']
+        })
+        .then((r) => console.log('[menu] open project:', r.filePaths))
+      break
+    case 'file.save':
+      console.log('[menu] save (todo)')
+      break
+    case 'file.saveAs':
+      console.log('[menu] save as (todo)')
+      break
+    case 'file.importAudio':
+      void dialog
+        .showOpenDialog(mainWindow, {
+          title: 'Import Audio',
+          filters: [{ name: 'Audio files', extensions: ['wav', 'mp3', 'flac', 'aiff', 'ogg'] }],
+          properties: ['openFile', 'multiSelections']
+        })
+        .then((r) => console.log('[menu] import:', r.filePaths))
+      break
+    case 'file.exportMixdown':
+      console.log('[menu] export mixdown (todo)')
+      break
+    case 'file.exit':
+      // Destroy every window (skips the renderer's close-event handlers) and
+      // exit hard. app.quit() can occasionally stall when a detached devtools
+      // window or pending IPC keeps the event loop busy.
+      BrowserWindow.getAllWindows().forEach((w) => {
+        if (!w.isDestroyed()) w.destroy()
+      })
+      app.exit(0)
+      break
+
+    // Edit
+    case 'edit.undo':
+      wc.undo()
+      break
+    case 'edit.redo':
+      wc.redo()
+      break
+    case 'edit.cut':
+      wc.cut()
+      break
+    case 'edit.copy':
+      wc.copy()
+      break
+    case 'edit.paste':
+      wc.paste()
+      break
+    case 'edit.preferences':
+      console.log('[menu] preferences (todo)')
+      break
+
+    // View
+    case 'view.reload':
+      wc.reload()
+      break
+    case 'view.toggleDevTools':
+      wc.toggleDevTools()
+      break
+    case 'view.toggleFullScreen':
+      mainWindow.setFullScreen(!mainWindow.isFullScreen())
+      break
+
+    // Help
+    case 'help.docs':
+      void shell.openExternal('https://github.com/irarainey/jackdaw')
+      break
+    case 'help.reportIssue':
+      void shell.openExternal('https://github.com/irarainey/jackdaw/issues/new')
+      break
+    case 'help.about':
+      void dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'About Jackdaw',
+        message: 'Jackdaw',
+        detail: `Version 0.1.0\nElectron ${process.versions.electron}\nNode ${process.versions.node}\nChromium ${process.versions.chrome}`,
+        buttons: ['OK']
+      })
+      break
+
+    default:
+      console.warn('[menu] unknown action:', action)
+  }
+}
+
 app.whenReady().then(() => {
+  nativeTheme.themeSource = 'dark'
+
+  // Hide the native application menu — we render our own in HTML.
+  Menu.setApplicationMenu(null)
+
+  ipcMain.on('menu:action', (_evt, action: string) => handleMenuAction(action))
+
   startBackend()
   createWindow()
 

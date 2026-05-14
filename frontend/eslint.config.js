@@ -1,24 +1,79 @@
 import js from '@eslint/js'
 import vue from 'eslint-plugin-vue'
+import vueParser from 'vue-eslint-parser'
 import tsParser from '@typescript-eslint/parser'
+import tsPlugin from '@typescript-eslint/eslint-plugin'
+import globals from 'globals'
 
 export default [
+  {
+    ignores: ['out/**', 'dist/**', 'node_modules/**']
+  },
   js.configs.recommended,
   ...vue.configs['flat/recommended'],
+  // TypeScript files (Electron main + preload run in Node; renderer TS runs in the browser).
   {
-    files: ['**/*.ts', '**/*.vue'],
+    files: ['**/*.ts'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
         ecmaVersion: 'latest',
         sourceType: 'module'
+      },
+      globals: {
+        ...globals.node,
+        ...globals.browser
       }
     },
+    plugins: {
+      '@typescript-eslint': tsPlugin
+    },
     rules: {
-      'vue/multi-word-component-names': 'off'
+      // Defer to typescript-eslint's variant so TS-specific constructs
+      // (declared module augmentations, interface members, etc.) aren't flagged.
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
+      ]
     }
   },
+  // Vue SFCs: parsed by vue-eslint-parser; <script lang="ts"> delegated to TS parser.
   {
-    ignores: ['out/**', 'dist/**', 'node_modules/**']
+    files: ['**/*.vue'],
+    languageOptions: {
+      parser: vueParser,
+      parserOptions: {
+        parser: tsParser,
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+        extraFileExtensions: ['.vue']
+      },
+      globals: {
+        ...globals.browser
+      }
+    },
+    plugins: {
+      '@typescript-eslint': tsPlugin
+    },
+    rules: {
+      'vue/multi-word-component-names': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
+      ]
+    }
+  },
+  // Ambient declaration files: relax unused-var rules since interfaces/types
+  // are not "used" in the runtime sense. TypeScript itself catches undefined
+  // identifiers here far better than core ESLint can.
+  {
+    files: ['**/*.d.ts'],
+    rules: {
+      'no-undef': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': 'off'
+    }
   }
 ]
