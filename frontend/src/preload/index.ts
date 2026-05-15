@@ -9,6 +9,30 @@ export interface OpenedAudioFile {
   data: ArrayBuffer
 }
 
+export interface AudioMetadata {
+  title?: string
+  artist?: string
+  albumArtist?: string
+  album?: string
+  year?: number
+  genre?: string[]
+  trackNumber?: number
+  trackTotal?: number
+  discNumber?: number
+  discTotal?: number
+  bpm?: number
+  key?: string
+  composer?: string
+  comment?: string
+  codec?: string
+  container?: string
+  bitrate?: number
+  lossless?: boolean
+  tagTypes?: string[]
+  /** First embedded picture as a data URL, if present and under the size cap. */
+  coverArtDataUrl?: string
+}
+
 export interface UiPreferences {
   trackHeaderWidth: number
   libraryPanelHeight: number
@@ -39,6 +63,14 @@ const api = {
    */
   readAudioFile: (filePath: string): Promise<OpenedAudioFile | null> =>
     ipcRenderer.invoke('audio:readFile', filePath),
+  /**
+   * Read ID3 / Vorbis / iTunes / BWF metadata from an audio file. Returns
+   * a normalized subset of fields the renderer can display. Resolves to
+   * `null` if the file can't be parsed (the library entry still works
+   * with just the Web Audio technical info).
+   */
+  readAudioMetadata: (filePath: string): Promise<AudioMetadata | null> =>
+    ipcRenderer.invoke('audio:readMetadata', filePath),
   /**
    * Resolve an OS drag-dropped `File` to its absolute filesystem path.
    * Wraps Electron's `webUtils.getPathForFile` so the renderer can pass

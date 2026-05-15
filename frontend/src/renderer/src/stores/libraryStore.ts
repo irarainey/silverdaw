@@ -19,6 +19,12 @@ export interface LibraryItem {
   readonly channelCount: number
   /** Alternating min/max float pairs at PEAKS_PER_SECOND resolution. */
   readonly peaks: Float32Array
+  /**
+   * ID3 / Vorbis / iTunes / BWF tag info, populated asynchronously by the
+   * main process via `audio:readMetadata`. `undefined` while loading,
+   * `null` once we know the file has no parseable tags.
+   */
+  metadata?: AudioMetadata | null
 }
 
 interface LibraryState {
@@ -134,6 +140,18 @@ export const useLibraryStore = defineStore('library', {
     },
 
     /**
+     * Attach tag metadata (artist / title / cover art / bitrate / …) to an
+     * existing library item. Called by the import flow once the main
+     * process finishes parsing. `null` means “parsing finished but no
+     * usable tags were found” — distinct from `undefined` (“still loading”).
+     */
+    setItemMetadata(itemId: string, metadata: AudioMetadata | null): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      item.metadata = metadata
+    },
+
+    /**
      * Add `count` files to the current import batch. Drives the
      * progress bar in the status bar; pair every call with the same
      * number of `noteImportFinished()` calls (one per file, regardless
@@ -168,3 +186,17 @@ export const useLibraryStore = defineStore('library', {
     }
   }
 })
+
+/**
+ * Resolve a library item to the label that should be used wherever it's
+ * shown to the user as a single line (clip name on the timeline, drag
+ * ghost text, etc.). Prefers the tag title; falls back to the file name
+ * if there's no title or the title is just whitespace.
+ */
+export function libraryItemDisplayName(item: {
+  fileName: string
+  metadata?: AudioMetadata | null
+}): string {
+  const title = item.metadata?.title?.trim()
+  return title && title.length > 0 ? title : item.fileName
+}

@@ -13,6 +13,29 @@ declare global {
     readonly data: ArrayBuffer
   }
 
+  interface AudioMetadata {
+    readonly title?: string
+    readonly artist?: string
+    readonly albumArtist?: string
+    readonly album?: string
+    readonly year?: number
+    readonly genre?: readonly string[]
+    readonly trackNumber?: number
+    readonly trackTotal?: number
+    readonly discNumber?: number
+    readonly discTotal?: number
+    readonly bpm?: number
+    readonly key?: string
+    readonly composer?: string
+    readonly comment?: string
+    readonly codec?: string
+    readonly container?: string
+    readonly bitrate?: number
+    readonly lossless?: boolean
+    readonly tagTypes?: readonly string[]
+    readonly coverArtDataUrl?: string
+  }
+
   interface UiPreferences {
     trackHeaderWidth: number
     libraryPanelHeight: number
@@ -27,6 +50,7 @@ declare global {
       openAudioFile(): Promise<OpenedAudioFile | null>
       openAudioFiles(): Promise<OpenedAudioFile[]>
       readAudioFile(filePath: string): Promise<OpenedAudioFile | null>
+      readAudioMetadata(filePath: string): Promise<AudioMetadata | null>
       getPathForFile(file: File): string
       onMenuAction(handler: (action: string) => void): () => void
       showStatusDialog(connected: boolean): void

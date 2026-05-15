@@ -12,7 +12,7 @@ import { decodeAudioToPeaks } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
-import { useLibraryStore } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 
 /**
  * Open the audio-file dialog and add the chosen file as a clip on the given
@@ -50,7 +50,12 @@ export async function importAudioIntoTrack(
     // there; otherwise decode once and register the new library item.
     let audio = library.items.find((i) => i.filePath === opened.filePath) ?? null
     if (!audio) {
-      const decoded = await decodeAudioToPeaks(opened.data)
+      // Parse peaks (slow) and tags (fast) in parallel so the card appears
+      // with full info in one shot rather than text-then-pop-in-cover-art.
+      const [decoded, metadata] = await Promise.all([
+        decodeAudioToPeaks(opened.data),
+        window.jackdaw.readAudioMetadata(opened.filePath).catch(() => null)
+      ])
       const itemId = library.addItem({
         filePath: opened.filePath,
         fileName: opened.fileName,
@@ -59,6 +64,7 @@ export async function importAudioIntoTrack(
         channelCount: decoded.channelCount,
         peaks: decoded.peaks
       })
+      library.setItemMetadata(itemId, metadata)
       audio = library.getItem(itemId)
     }
     if (!audio) return null
@@ -67,7 +73,7 @@ export async function importAudioIntoTrack(
       trackId,
       {
         filePath: audio.filePath,
-        fileName: audio.fileName,
+        fileName: libraryItemDisplayName(audio),
         durationMs: audio.durationMs,
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
@@ -115,8 +121,11 @@ export async function importAudioIntoLibrary(opened: {
     const existing = library.items.find((i) => i.filePath === opened.filePath)
     if (existing) return existing.id
 
-    const decoded = await decodeAudioToPeaks(opened.data)
-    return library.addItem({
+    const [decoded, metadata] = await Promise.all([
+      decodeAudioToPeaks(opened.data),
+      window.jackdaw.readAudioMetadata(opened.filePath).catch(() => null)
+    ])
+    const itemId = library.addItem({
       filePath: opened.filePath,
       fileName: opened.fileName,
       durationMs: decoded.durationMs,
@@ -124,6 +133,8 @@ export async function importAudioIntoLibrary(opened: {
       channelCount: decoded.channelCount,
       peaks: decoded.peaks
     })
+    library.setItemMetadata(itemId, metadata)
+    return itemId
   } catch (err) {
     console.error('[importAudio] library decode failed:', err)
     return null

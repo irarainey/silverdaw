@@ -2,6 +2,87 @@ import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen }
 import { spawn, type ChildProcess } from 'node:child_process'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
+
+// ─── Audio metadata ─────────────────────────────────────────────────────────
+// Normalized shape returned over IPC. All fields are optional because
+// different containers / tag versions populate different subsets.
+
+export interface AudioMetadata {
+  title?: string
+  artist?: string
+  albumArtist?: string
+  album?: string
+  year?: number
+  genre?: string[]
+  trackNumber?: number
+  trackTotal?: number
+  discNumber?: number
+  discTotal?: number
+  bpm?: number
+  key?: string
+  composer?: string
+  comment?: string
+  /** Codec name, e.g. `'MPEG 1 Layer 3'`, `'FLAC'`, `'PCM'`. */
+  codec?: string
+  /** Container format, e.g. `'MPEG'`, `'FLAC'`, `'WAVE'`. */
+  container?: string
+  /** Average bitrate in bits per second. */
+  bitrate?: number
+  lossless?: boolean
+  /** Tag types found, e.g. `['ID3v2.3']`. */
+  tagTypes?: string[]
+  /** First embedded picture as a data URL, if present and under the size cap. */
+  coverArtDataUrl?: string
+}
+
+/** Drop embedded pictures larger than this so we don't bloat the Pinia store. */
+const MAX_COVER_ART_BYTES = 2 * 1024 * 1024
+
+function pickCoverArt(pictures: IPicture[] | undefined): string | undefined {
+  if (!pictures || pictures.length === 0) return undefined
+  // Prefer a front-cover-type picture if the tag distinguishes them; else first.
+  const front = pictures.find((p) => (p.type ?? '').toLowerCase().includes('cover')) ?? pictures[0]
+  if (!front.data || front.data.length === 0 || front.data.length > MAX_COVER_ART_BYTES)
+    return undefined
+  const mime = front.format || 'image/jpeg'
+  const base64 = Buffer.from(front.data).toString('base64')
+  return `data:${mime};base64,${base64}`
+}
+
+function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
+  const { common, format } = meta
+  const out: AudioMetadata = {}
+  if (common.title) out.title = common.title
+  if (common.artist) out.artist = common.artist
+  if (common.albumartist) out.albumArtist = common.albumartist
+  if (common.album) out.album = common.album
+  if (typeof common.year === 'number') out.year = common.year
+  if (common.genre && common.genre.length > 0) out.genre = common.genre
+  if (common.track) {
+    if (typeof common.track.no === 'number') out.trackNumber = common.track.no
+    if (typeof common.track.of === 'number') out.trackTotal = common.track.of
+  }
+  if (common.disk) {
+    if (typeof common.disk.no === 'number') out.discNumber = common.disk.no
+    if (typeof common.disk.of === 'number') out.discTotal = common.disk.of
+  }
+  if (typeof common.bpm === 'number') out.bpm = common.bpm
+  if (common.key) out.key = common.key
+  if (common.composer && common.composer.length > 0) out.composer = common.composer.join(', ')
+  if (common.comment && common.comment.length > 0) {
+    const first = common.comment[0]
+    out.comment = typeof first === 'string' ? first : (first?.text ?? undefined)
+  }
+  if (format.codec) out.codec = format.codec
+  if (format.container) out.container = format.container
+  if (typeof format.bitrate === 'number') out.bitrate = format.bitrate
+  if (typeof format.lossless === 'boolean') out.lossless = format.lossless
+  if (format.tagTypes && format.tagTypes.length > 0) out.tagTypes = [...format.tagTypes]
+  const cover = pickCoverArt(common.picture)
+  if (cover) out.coverArtDataUrl = cover
+  return out
+}
 
 // ─── Theme / colours (kept in sync with the renderer Tailwind palette) ──────
 const TITLE_BAR_HEIGHT = 36
@@ -424,6 +505,20 @@ app.whenReady().then(async () => {
       return { filePath, fileName: basename(filePath), data }
     } catch (err) {
       console.error('[audio:readFile] failed for', filePath, err)
+      return null
+    }
+  })
+
+  // Extract ID3 / Vorbis / iTunes / BWF metadata from an audio file. Returns
+  // a normalized subset of fields the renderer can display in the library
+  // card and tooltip. Resolves to `null` if parsing fails (the import still
+  // succeeds with only the technical info from Web Audio).
+  ipcMain.handle('audio:readMetadata', async (_evt, filePath: string) => {
+    try {
+      const meta = await parseFile(filePath, { duration: false, skipCovers: false })
+      return normalizeMetadata(meta)
+    } catch (err) {
+      console.warn('[audio:readMetadata] failed for', filePath, err)
       return null
     }
   })

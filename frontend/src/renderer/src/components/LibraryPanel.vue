@@ -138,6 +138,73 @@ function formatDuration(ms: number): string {
     return `${m}:${String(s).padStart(2, '0')}`
 }
 
+// ─── Metadata display helpers ─────────────────────────────────────
+// Cards show the track title on the top line (falling back to the file
+// name) and the artist on a second muted line when tags are present. The
+// full metadata payload (album, BPM, key, codec, bitrate, sample rate,
+// tag versions, …) is exposed via the `title` attribute so hovering
+// surfaces everything without cluttering the grid.
+
+function displayTitle(item: LibraryItem): string {
+    return item.metadata?.title ?? item.fileName
+}
+
+function displayArtist(item: LibraryItem): string {
+    return item.metadata?.artist ?? ''
+}
+
+function channelLabel(count: number): string {
+    if (count === 1) return 'Mono'
+    if (count === 2) return 'Stereo'
+    return `${count} ch`
+}
+
+function buildTooltip(item: LibraryItem): string {
+    const lines: string[] = [item.filePath]
+    const m = item.metadata
+    if (m) {
+        const tagLines: string[] = []
+        if (m.title) tagLines.push(`Title: ${m.title}`)
+        if (m.artist) tagLines.push(`Artist: ${m.artist}`)
+        if (m.albumArtist && m.albumArtist !== m.artist)
+            tagLines.push(`Album artist: ${m.albumArtist}`)
+        if (m.album) {
+            tagLines.push(m.year ? `Album: ${m.album} (${m.year})` : `Album: ${m.album}`)
+        } else if (m.year) {
+            tagLines.push(`Year: ${m.year}`)
+        }
+        if (typeof m.trackNumber === 'number') {
+            tagLines.push(
+                `Track: ${m.trackNumber}${m.trackTotal ? ' of ' + m.trackTotal : ''}`
+            )
+        }
+        if (typeof m.discNumber === 'number') {
+            tagLines.push(
+                `Disc: ${m.discNumber}${m.discTotal ? ' of ' + m.discTotal : ''}`
+            )
+        }
+        if (m.genre && m.genre.length > 0) tagLines.push(`Genre: ${m.genre.join(', ')}`)
+        if (m.composer) tagLines.push(`Composer: ${m.composer}`)
+        if (typeof m.bpm === 'number') tagLines.push(`BPM: ${m.bpm}`)
+        if (m.key) tagLines.push(`Key: ${m.key}`)
+        if (tagLines.length > 0) {
+            lines.push('')
+            lines.push(...tagLines)
+        }
+    }
+    // Technical line is always shown so users can compare files at a glance.
+    const tech: string[] = []
+    if (m?.codec) tech.push(m.codec)
+    if (typeof m?.bitrate === 'number') tech.push(`${Math.round(m.bitrate / 1000)} kbps`)
+    tech.push(`${(item.sampleRate / 1000).toFixed(1)} kHz`)
+    tech.push(channelLabel(item.channelCount))
+    if (m && typeof m.lossless === 'boolean') tech.push(m.lossless ? 'Lossless' : 'Lossy')
+    lines.push('')
+    lines.push(tech.join(' · '))
+    if (m?.tagTypes && m.tagTypes.length > 0) lines.push(`Tags: ${m.tagTypes.join(', ')}`)
+    return lines.join('\n')
+}
+
 // ─── Resize handle (top edge of the panel) ────────────────────────────────
 
 const MIN_PANEL_HEIGHT = 80
@@ -206,23 +273,39 @@ function onResizePointerUp(): void {
             </div>
             <div v-else class="flex flex-wrap gap-2">
                 <div v-for="item in library.items" :key="item.id" draggable="true"
-                    class="library-item group relative flex h-20 w-40 shrink-0 cursor-grab select-none flex-col justify-between rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1.5 text-left transition-colors hover:border-zinc-500 hover:bg-zinc-950 active:cursor-grabbing"
-                    :title="item.filePath" @dragstart="(e) => onItemDragStart(e, item)" @dragend="onItemDragEnd">
-                    <div class="min-w-0 truncate text-xs font-medium text-zinc-100">
-                        {{ item.fileName }}
+                    class="library-item group relative flex h-20 w-48 shrink-0 cursor-grab select-none items-stretch overflow-hidden rounded border border-zinc-700 bg-zinc-950/60 text-left transition-colors hover:border-zinc-500 hover:bg-zinc-950 active:cursor-grabbing"
+                    :title="buildTooltip(item)" @dragstart="(e) => onItemDragStart(e, item)" @dragend="onItemDragEnd">
+                    <!-- Cover art thumbnail (or fallback) on the left edge. -->
+                    <div
+                        class="flex h-full w-15 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900">
+                        <img v-if="item.metadata?.coverArtDataUrl" :src="item.metadata.coverArtDataUrl" alt=""
+                            class="h-full w-full object-cover" draggable="false" />
+                        <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
+                            class="h-6 w-6 text-zinc-700" aria-hidden="true">
+                            <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
+                        </svg>
                     </div>
-                    <div class="flex items-center justify-between text-[10px] text-zinc-500">
-                        <span class="font-mono tabular-nums">{{ formatDuration(item.durationMs) }}</span>
-                        <button type="button" tabindex="-1" :disabled="library.isItemInUse(item.id)"
-                            class="rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:text-zinc-700"
-                            :title="library.isItemInUse(item.id) ? 'In use \u2014 remove the clip from the track first' : 'Remove from library'"
-                            @click="library.removeItem(item.id)" @mousedown.stop @dragstart.stop.prevent>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
-                                class="h-3 w-3" aria-hidden="true">
-                                <path
-                                    d="M18.3 5.71L12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.3 19.71 2.88 18.3 9.17 12 2.88 5.71 4.3 4.29 10.59 10.6l6.3-6.3z" />
-                            </svg>
-                        </button>
+                    <!-- Text body. -->
+                    <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">
+                        <div class="min-w-0 truncate text-xs font-medium text-zinc-100">
+                            {{ displayTitle(item) }}
+                        </div>
+                        <div v-if="displayArtist(item)" class="min-w-0 truncate text-[11px] text-zinc-400">
+                            {{ displayArtist(item) }}
+                        </div>
+                        <div class="mt-auto flex items-center justify-between text-[10px] text-zinc-500">
+                            <span class="font-mono tabular-nums">{{ formatDuration(item.durationMs) }}</span>
+                            <button type="button" tabindex="-1" :disabled="library.isItemInUse(item.id)"
+                                class="rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:text-zinc-700"
+                                :title="library.isItemInUse(item.id) ? 'In use \u2014 remove the clip from the track first' : 'Remove from library'"
+                                @click="library.removeItem(item.id)" @mousedown.stop @dragstart.stop.prevent>
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
+                                    class="h-3 w-3" aria-hidden="true">
+                                    <path
+                                        d="M18.3 5.71L12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.3 19.71 2.88 18.3 9.17 12 2.88 5.71 4.3 4.29 10.59 10.6l6.3-6.3z" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

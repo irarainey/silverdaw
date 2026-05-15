@@ -35,7 +35,12 @@ export default [
       '@typescript-eslint/no-unused-vars': [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
-      ]
+      ],
+      // TypeScript's own checker catches undefined identifiers (including
+      // ambient globals declared in `env.d.ts`) far better than ESLint's
+      // core rule, which can't see `declare global { … }`. The official
+      // typescript-eslint guidance is to disable this rule for TS files.
+      'no-undef': 'off'
     }
   },
   // Vue SFCs: parsed by vue-eslint-parser; <script lang="ts"> delegated to TS parser.

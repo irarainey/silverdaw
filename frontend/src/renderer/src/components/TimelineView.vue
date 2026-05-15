@@ -13,7 +13,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Application, Container, Graphics, Text } from 'pixi.js'
 import { useProjectStore, type Clip, TRACK_PALETTE } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
-import { useLibraryStore } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useUiStore } from '@/stores/uiStore'
 import { PEAKS_PER_SECOND } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
@@ -1193,7 +1193,11 @@ function onTimelineDrop(e: DragEvent): void {
         return
     }
 
-    project.addClipFromLibrary(project.tracks[target.trackIndex].id, item, target.startMs)
+    project.addClipFromLibrary(
+        project.tracks[target.trackIndex].id,
+        { ...item, fileName: libraryItemDisplayName(item) },
+        target.startMs
+    )
     updatePlayhead()
 }
 
