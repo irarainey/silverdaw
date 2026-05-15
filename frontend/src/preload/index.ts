@@ -94,7 +94,16 @@ const api = {
    * backend is launched with `--port <N>`, so all three processes agree
    * on a single source of truth.
    */
-  getBridgePort: (): Promise<number> => ipcRenderer.invoke('bridge:getPort')
+  getBridgePort: (): Promise<number> => ipcRenderer.invoke('bridge:getPort'),
+  /**
+   * Resolve the per-session AUTH token the renderer must send as its
+   * first WebSocket message. Generated once by main at startup and
+   * passed to the spawned backend via the `JACKDAW_BRIDGE_TOKEN` env
+   * var; the backend closes any socket that doesn't AUTH correctly.
+   * Returning the token over the trusted preload bridge keeps it out
+   * of argv and out of the HTML.
+   */
+  getBridgeToken: (): Promise<string> => ipcRenderer.invoke('bridge:getToken')
 } as const
 
 contextBridge.exposeInMainWorld('jackdaw', api)

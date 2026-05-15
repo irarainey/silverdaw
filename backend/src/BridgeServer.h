@@ -5,7 +5,7 @@
 #include <juce_core/juce_core.h>
 #include <memory>
 #include <mutex>
-#include <unordered_set>
+#include <unordered_map>
 
 // Forward-declare so we don't drag the ixwebsocket headers into the public surface.
 namespace ix
@@ -28,6 +28,24 @@ namespace jackdaw
  *
  * Outgoing messages (`broadcast`) are sent on the calling thread directly;
  * ixwebsocket internally serialises sends per-client.
+ *
+ * Authentication
+ * ──────────────
+ * The server binds to loopback only, but any other process running as the
+ * same user can still open a connection. Each connection is therefore
+ * gated by a per-session AUTH token: a client's FIRST message must be
+ * `{"type":"AUTH","payload":{"token":"<hex>"}}` matching the value
+ * registered via `setExpectedToken()` (in turn injected by the Electron
+ * main process through the `JACKDAW_BRIDGE_TOKEN` env var / `--token`
+ * flag). Until that handshake completes:
+ *   • any non-AUTH envelope causes the socket to be closed immediately;
+ *   • a wrong-token AUTH envelope also closes the socket;
+ *   • `broadcast()` does NOT deliver to that client.
+ * On success the server replies with the existing `READY` envelope.
+ *
+ * If `setExpectedToken()` is never called (or called with an empty
+ * string) authentication is disabled and every client is accepted — a
+ * convenience for stand-alone manual debugging.
  */
 class BridgeServer
 {
@@ -39,6 +57,14 @@ class BridgeServer
 
     BridgeServer(const BridgeServer&) = delete;
     BridgeServer& operator=(const BridgeServer&) = delete;
+
+    /**
+     * Set the per-session AUTH token required from every connecting
+     * client. MUST be called before `start()`; mutating it after the
+     * server is running races with the I/O thread. Empty string disables
+     * authentication.
+     */
+    void setExpectedToken(const juce::String& token);
 
     /** Bind to `ws://127.0.0.1:port` (loopback only) and start serving. Returns true on success. */
     bool start(int port);
@@ -56,20 +82,36 @@ class BridgeServer
      */
     void onMessage(MessageHandler handler);
 
-    /** Broadcast a JSON envelope `{ type, payload }` to all connected clients. */
+    /**
+     * Broadcast a JSON envelope `{ type, payload }` to all currently
+     * authenticated clients. Pre-AUTH clients are silently skipped.
+     */
     void broadcast(const juce::String& type, const juce::var& payload = juce::var());
 
-    /** Number of currently-connected WebSocket clients. */
+    /** Number of currently-connected WebSocket clients (authenticated or not). */
     std::size_t getClientCount() const;
 
   private:
-    void onIncoming(const std::string& raw);
+    /** Per-client state held alongside the shared_ptr in `clients`. */
+    struct ClientInfo
+    {
+        std::shared_ptr<ix::WebSocket> socket;
+        bool authenticated = false;
+    };
+
+    void onIncomingFromClient(ix::WebSocket& webSocket, const std::string& raw);
+    /** Returns true if `payload.token` matches `expectedToken`. */
+    bool checkAuthToken(const juce::var& payload) const;
+    /** Send the post-AUTH `READY` envelope directly to one client. */
+    static void sendReadyTo(ix::WebSocket& webSocket);
 
     std::unique_ptr<ix::WebSocketServer> server;
     MessageHandler messageHandler;
+    juce::String expectedToken;
 
     mutable std::mutex clientsMutex;
-    std::unordered_set<std::shared_ptr<ix::WebSocket>> clients;
+    /** Keyed by the raw `ix::WebSocket*` identity from `setOnClientMessageCallback`. */
+    std::unordered_map<ix::WebSocket*, ClientInfo> clients;
 
     std::atomic<bool> running{false};
 };

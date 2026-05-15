@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve as pathResolve } from 'node:path'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
@@ -152,6 +153,16 @@ function resolveBridgePort(): number {
 
 const bridgePort = resolveBridgePort()
 
+// ─── Backend bridge AUTH token ──────────────────────────────────────────────
+// Loopback alone is not a strong trust boundary — any other process running
+// as the same user can connect to the WebSocket. Each backend launch gets a
+// fresh 256-bit random token; main passes it to the backend via the
+// `JACKDAW_BRIDGE_TOKEN` env var (NOT a CLI arg — argv is visible in the OS
+// process table) and exposes it to the renderer through `bridge:getToken`,
+// so the renderer can send it as the first WebSocket message. The backend
+// closes any socket that fails to AUTH on its first envelope.
+const bridgeToken = randomBytes(32).toString('hex')
+
 // ─── Persisted preferences (window state + UI panel sizes) ──────────────────
 // Stored as JSON in `<userData>/preferences.json`. Writes are debounced so a
 // burst of resize/move events doesn't hammer the disk; an unconditional
@@ -293,7 +304,17 @@ function startBackend(): void {
     exeName
   )
 
-  backendProcess = spawn(exePath, ['--port', String(bridgePort)], { stdio: 'inherit' })
+  backendProcess = spawn(exePath, ['--port', String(bridgePort)], {
+    stdio: 'inherit',
+    // Forward `JACKDAW_BRIDGE_TOKEN` via the spawn env (NOT via argv —
+    // command-line arguments are visible in the OS process table). The
+    // backend's `resolveBridgeToken()` reads the same env var and
+    // requires every WebSocket client to AUTH with this exact value.
+    env: {
+      ...process.env,
+      JACKDAW_BRIDGE_TOKEN: bridgeToken
+    }
+  })
 
   backendProcess.on('exit', (code) => {
     console.log(`[backend] exited with code ${code}`)
@@ -507,6 +528,12 @@ app.whenReady().then(async () => {
   // once at main-process start (env var or default) and shared with the
   // spawned backend via `--port`.
   ipcMain.handle('bridge:getPort', () => bridgePort)
+
+  // Hand the renderer the per-session AUTH token so it can send the
+  // initial `{type:'AUTH',payload:{token}}` envelope. The token never
+  // appears in argv or in the renderer's HTML — only the trusted preload
+  // bridge can fetch it.
+  ipcMain.handle('bridge:getToken', () => bridgeToken)
 
   // Open an audio file via the OS dialog and stream its bytes back to the renderer.
   // Returns null if the user cancels.

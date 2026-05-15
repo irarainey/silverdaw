@@ -118,6 +118,40 @@ int resolveBridgePort(int argc, char* argv[])
     return kDefaultBridgePort;
 }
 
+/**
+ * Resolve the per-session AUTH token the bridge will require from every
+ * connecting client. Precedence (highest first):
+ *   1. `--token <hex>` or `--token=<hex>` command-line argument
+ *   2. `JACKDAW_BRIDGE_TOKEN` environment variable
+ *   3. empty string → authentication disabled (stand-alone manual debug only;
+ *      `BridgeServer` logs a loud warning when this happens at startup).
+ *
+ * Electron main generates a fresh random token per session and forwards it
+ * via the env var. The CLI form is provided for hand-testing the backend
+ * out of process — never use it in production: command-line arguments are
+ * visible to other processes via the OS process table.
+ */
+// `argv` is necessarily a C-style array — see note on `resolveBridgePort`.
+// NOLINTNEXTLINE(modernize-avoid-c-arrays,hicpp-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
+juce::String resolveBridgeToken(int argc, char* argv[])
+{
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string_view arg{argv[i]};
+        if (arg == "--token" && i + 1 < argc)
+        {
+            return juce::String{argv[i + 1]};
+        }
+        constexpr std::string_view prefix = "--token=";
+        if (arg.size() > prefix.size() && arg.substr(0, prefix.size()) == prefix)
+        {
+            return juce::String{std::string(arg.substr(prefix.size()))};
+        }
+    }
+
+    return juce::SystemStats::getEnvironmentVariable("JACKDAW_BRIDGE_TOKEN", {});
+}
+
 /** Polls the audio engine and broadcasts PLAYHEAD_UPDATE while playing. */
 class PlayheadEmitter : public juce::Timer
 {
@@ -267,6 +301,7 @@ int runBackend(int argc, char* argv[])
     std::cout << banner.toStdString() << '\n';
 
     const int bridgePort = resolveBridgePort(argc, argv);
+    const juce::String bridgeToken = resolveBridgeToken(argc, argv);
 
     // Initialises MessageManager, JUCE singletons, etc. Required even for headless apps.
     const juce::ScopedJuceInitialiser_GUI juceInit;
@@ -279,6 +314,16 @@ int runBackend(int argc, char* argv[])
     }
 
     jackdaw::BridgeServer bridge;
+
+    if (bridgeToken.isEmpty())
+    {
+        std::cerr << "[bridge] WARNING: no AUTH token set (JACKDAW_BRIDGE_TOKEN unset and "
+                     "--token not given); accepting all loopback clients. DO NOT USE IN PRODUCTION.\n";
+    }
+    else
+    {
+        bridge.setExpectedToken(bridgeToken);
+    }
 
     // Route incoming messages from the bridge to the engine. Already on the
     // JUCE message thread (BridgeServer::onIncoming marshals via callAsync).

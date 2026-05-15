@@ -33,6 +33,7 @@ declare global {
       getUiPreferences(): Promise<UiPreferences>
       setUiPreferences(partial: Partial<UiPreferences>): void
       getBridgePort(): Promise<number>
+      getBridgeToken(): Promise<string>
     }
   }
 }

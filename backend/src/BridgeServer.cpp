@@ -28,6 +28,14 @@ void BridgeServer::onMessage(MessageHandler handler)
     messageHandler = std::move(handler);
 }
 
+void BridgeServer::setExpectedToken(const juce::String& token)
+{
+    // Same threading rule as `onMessage`: `expectedToken` is read from the
+    // I/O thread without a lock, so it must be frozen before `start()`.
+    jassert(!running.load());
+    expectedToken = token;
+}
+
 bool BridgeServer::start(int port)
 {
     if (running.load())
@@ -54,45 +62,42 @@ bool BridgeServer::start(int port)
             {
             case ix::WebSocketMessageType::Open:
             {
+                std::lock_guard<std::mutex> lock(clientsMutex);
+                // Find the shared_ptr that backs this WebSocket so we can
+                // hold a reference for `broadcast()`. ixwebsocket exposes
+                // this via `getClients()` on the server. New clients are
+                // tracked as un-authenticated until they send a valid AUTH
+                // envelope (or unconditionally, if no token was set).
+                for (const auto& c : server->getClients())
                 {
-                    std::lock_guard<std::mutex> lock(clientsMutex);
-                    // Find the shared_ptr that backs this WebSocket so we can hold
-                    // a reference for `broadcast()`. ixwebsocket exposes this via
-                    // `getClients()` on the server.
-                    for (const auto& c : server->getClients())
+                    if (c.get() == &webSocket)
                     {
-                        if (c.get() == &webSocket)
-                        {
-                            clients.insert(c);
-                        }
+                        ClientInfo info;
+                        info.socket = c;
+                        info.authenticated = expectedToken.isEmpty();
+                        clients.insert_or_assign(c.get(), std::move(info));
                     }
                 }
-                // Hello message so the client knows we're up.
-                auto* obj = new juce::DynamicObject();
-                obj->setProperty("version", "0.1.0");
-                broadcast("READY", juce::var(obj));
+                // No READY here: we send READY only after the client
+                // proves it knows the session token. If auth is disabled
+                // (empty `expectedToken`) the client is already marked
+                // authenticated above, so send READY immediately.
+                if (expectedToken.isEmpty())
+                {
+                    sendReadyTo(webSocket);
+                }
                 break;
             }
 
             case ix::WebSocketMessageType::Close:
             {
                 std::lock_guard<std::mutex> lock(clientsMutex);
-                for (auto it = clients.begin(); it != clients.end();)
-                {
-                    if (it->get() == &webSocket)
-                    {
-                        it = clients.erase(it);
-                    }
-                    else
-                    {
-                        ++it;
-                    }
-                }
+                clients.erase(&webSocket);
                 break;
             }
 
             case ix::WebSocketMessageType::Message:
-                onIncoming(msg->str);
+                onIncomingFromClient(webSocket, msg->str);
                 break;
 
             case ix::WebSocketMessageType::Error:
@@ -141,10 +146,11 @@ void BridgeServer::stop()
     ix::uninitNetSystem();
 }
 
-void BridgeServer::onIncoming(const std::string& raw)
+void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::string& raw)
 {
-    // Parse JSON on the I/O thread, then dispatch the typed message onto the
-    // JUCE message thread so the AudioEngine isn't accessed from multiple threads.
+    // Parse JSON on the I/O thread, then either consume the envelope here
+    // (AUTH handshake) or dispatch the typed message onto the JUCE message
+    // thread so the AudioEngine isn't accessed from multiple threads.
     juce::var parsed = juce::JSON::parse(juce::String(raw));
     if (!parsed.isObject())
     {
@@ -159,15 +165,92 @@ void BridgeServer::onIncoming(const std::string& raw)
         return;
     }
 
-    auto handler = messageHandler; // copy for safe capture
-    juce::MessageManager::callAsync(
-        [handler, type, payload]
+    // Auth gate: every envelope from a non-authenticated client must be an
+    // `AUTH` carrying the expected token. Anything else (including a wrong
+    // token) gets the connection slammed shut so a misbehaving local
+    // process can't keep probing.
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex);
+        const auto it = clients.find(&webSocket);
+        if (it == clients.end())
         {
-            if (handler)
+            // We don't know this client (it must have closed between the
+            // I/O thread reading the message and us getting here). Drop.
+            return;
+        }
+        if (!it->second.authenticated)
+        {
+            if (type != "AUTH" || !checkAuthToken(payload))
             {
-                handler(type, payload);
+                std::cerr << "[bridge] auth failed for client; closing\n";
+                webSocket.close();
+                clients.erase(it);
+                return;
             }
-        });
+            it->second.authenticated = true;
+            // Send READY now that the client is trusted. Release the lock
+            // around the send so we don't hold it across IXWebSocket's
+            // internal mutex.
+        }
+        else if (type == "AUTH")
+        {
+            // Re-sending AUTH after success is harmless; just ignore it so
+            // we don't double-dispatch a meaningless message to the engine.
+            return;
+        }
+        else
+        {
+            // Authenticated, non-AUTH message: fall through to dispatch.
+            auto handler = messageHandler; // copy for safe capture
+            juce::MessageManager::callAsync(
+                [handler, type, payload]
+                {
+                    if (handler)
+                    {
+                        handler(type, payload);
+                    }
+                });
+            return;
+        }
+    }
+
+    // Reached only on a successful AUTH transition.
+    sendReadyTo(webSocket);
+}
+
+bool BridgeServer::checkAuthToken(const juce::var& payload) const
+{
+    if (expectedToken.isEmpty())
+    {
+        return true;
+    }
+    const juce::String token = payload.getProperty("token", juce::var()).toString();
+    // Length check first short-circuits the per-char loop on the common
+    // mismatch case while still letting the inner loop run constant-time
+    // on matching-length inputs (defence against trivial timing attacks).
+    if (token.length() != expectedToken.length())
+    {
+        return false;
+    }
+    int diff = 0;
+    for (int i = 0; i < expectedToken.length(); ++i)
+    {
+        diff |= static_cast<int>(expectedToken[i]) ^ static_cast<int>(token[i]);
+    }
+    return diff == 0;
+}
+
+void BridgeServer::sendReadyTo(ix::WebSocket& webSocket)
+{
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("version", "0.1.0");
+
+    auto* envelope = new juce::DynamicObject();
+    envelope->setProperty("type", juce::String("READY"));
+    envelope->setProperty("payload", juce::var(obj));
+
+    const auto serialised = juce::JSON::toString(juce::var(envelope), true).toStdString();
+    webSocket.send(serialised);
 }
 
 // `type` and `payload` differ semantically (envelope-type tag vs. arbitrary
@@ -191,11 +274,14 @@ void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
     const auto serialised = juce::JSON::toString(juce::var(envelope), true).toStdString();
 
     std::lock_guard<std::mutex> lock(clientsMutex);
-    for (const auto& client : clients)
+    for (const auto& [_, info] : clients)
     {
-        if (client != nullptr)
+        // Pre-AUTH clients have no business receiving engine state
+        // (`PLAYHEAD_UPDATE`, `CLIP_ADDED`, …). They're dropped silently
+        // here and either complete the handshake or get closed.
+        if (info.authenticated && info.socket != nullptr)
         {
-            client->send(serialised);
+            info.socket->send(serialised);
         }
     }
 }
