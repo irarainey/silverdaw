@@ -10,14 +10,21 @@
 //
 // Layout is absolute-positioned so it stays in sync with the PixiJS-drawn
 // row backgrounds. RULER_HEIGHT / TRACK_HEIGHT / TRACK_GAP must match the
-// values in TimelineView.vue.
+// values in TimelineView.vue. The column WIDTH is user-resizable and lives
+// on `uiStore.trackHeaderWidth`; the drag handle is in TimelineView (it
+// straddles the seam between this column and the canvas).
 
+import { computed } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
+import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoTrack } from '@/lib/importAudio'
 
 withDefaults(defineProps<{ scrollY?: number }>(), { scrollY: 0 })
 
 const project = useProjectStore()
+const ui = useUiStore()
+
+const headerWidth = computed(() => ui.trackHeaderWidth)
 
 function onImportClick(trackId: string): void {
     // Fire-and-forget; failures are logged inside the helper.
@@ -28,7 +35,6 @@ function onImportClick(trackId: string): void {
 const RULER_HEIGHT = 28
 const TRACK_HEIGHT = 96
 const TRACK_GAP = 4
-const HEADER_WIDTH = 175
 </script>
 
 <template>
@@ -40,7 +46,7 @@ const HEADER_WIDTH = 175
       playhead can render *above* it \u2014 an HTML `border-r` here would always
       sit on top of the canvas and cover the playhead at t=0.
     -->
-    <div class="pointer-events-none absolute inset-y-0 left-0 select-none" :style="{ width: HEADER_WIDTH + 'px' }">
+    <div class="pointer-events-none absolute inset-y-0 left-0 select-none" :style="{ width: headerWidth + 'px' }">
         <!--
           Add-track button sits in the strip above the first track, aligned
           with the ruler row. Clicking it appends a new empty track via the
@@ -72,7 +78,7 @@ const HEADER_WIDTH = 175
                     }" :style="{
                         top: (i * (TRACK_HEIGHT + TRACK_GAP)) + 'px',
                         height: TRACK_HEIGHT + 'px',
-                        width: HEADER_WIDTH + 'px'
+                        width: headerWidth + 'px'
                     }">
                     <!-- Top row: name. -->
                     <div class="flex items-start gap-1">

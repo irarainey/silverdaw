@@ -13,6 +13,11 @@ declare global {
     readonly data: ArrayBuffer
   }
 
+  interface UiPreferences {
+    trackHeaderWidth: number
+    libraryPanelHeight: number
+  }
+
   interface Window {
     jackdaw: {
       readonly appName: string
@@ -25,6 +30,8 @@ declare global {
       getPathForFile(file: File): string
       onMenuAction(handler: (action: string) => void): () => void
       showStatusDialog(connected: boolean): void
+      getUiPreferences(): Promise<UiPreferences>
+      setUiPreferences(partial: Partial<UiPreferences>): void
     }
   }
 }

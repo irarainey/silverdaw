@@ -9,6 +9,11 @@ export interface OpenedAudioFile {
   data: ArrayBuffer
 }
 
+export interface UiPreferences {
+  trackHeaderWidth: number
+  libraryPanelHeight: number
+}
+
 const api = {
   appName: 'Jackdaw',
   version: '0.1.0',
@@ -64,6 +69,20 @@ const api = {
    */
   showStatusDialog: (connected: boolean): void => {
     ipcRenderer.send('dialog:status', connected)
+  },
+  /**
+   * Fetch the persisted UI preferences (panel sizes etc.) from the main
+   * process. Window bounds are applied by main directly, so they're not
+   * part of the renderer-visible payload.
+   */
+  getUiPreferences: (): Promise<UiPreferences> => ipcRenderer.invoke('prefs:getUi'),
+  /**
+   * Update one or more UI preference keys. The renderer calls this
+   * (debounced) whenever the user resizes a panel; main persists the
+   * change to disk.
+   */
+  setUiPreferences: (partial: Partial<UiPreferences>): void => {
+    ipcRenderer.send('prefs:setUi', partial)
   }
 } as const
 

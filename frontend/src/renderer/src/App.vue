@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted } from 'vue'
 import AppTitleBar from '@/components/AppTitleBar.vue'
 import TimelineView from '@/components/TimelineView.vue'
 import TransportBar from '@/components/TransportBar.vue'
@@ -7,20 +7,23 @@ import LibraryPanel from '@/components/LibraryPanel.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useUiStore } from '@/stores/uiStore'
 import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
 
 const project = useProjectStore()
 const transport = useTransportStore()
-
-// Library-panel height in px. Persisted only in-memory for now; resized
-// interactively via the drag handle along the panel's top edge.
-const libraryHeight = ref(180)
+const ui = useUiStore()
 
 let unsubscribeMenu: (() => void) | null = null
 
 onMounted(() => {
   unsubscribeMenu = window.jackdaw.onMenuAction(handleMenuAction)
   connectBridge()
+  // Pull persisted panel sizes from the main-process preferences file so
+  // the layout is correct from the very first paint. (Default values are
+  // already in the store, so a slow hydrate just looks like a tiny size
+  // tween rather than a jarring jump.)
+  void ui.hydrate()
 })
 
 onBeforeUnmount(() => {
@@ -51,7 +54,7 @@ function handleMenuAction(action: string): void {
       <TimelineView />
     </main>
 
-    <LibraryPanel v-model:height="libraryHeight" />
+    <LibraryPanel :height="ui.libraryPanelHeight" @update:height="ui.setLibraryPanelHeight" />
 
     <StatusBar />
   </div>

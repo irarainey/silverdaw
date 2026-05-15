@@ -14,6 +14,7 @@ import type { Application, Container, Graphics, Text } from 'pixi.js'
 import { useProjectStore, type Clip, TRACK_PALETTE } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { useUiStore } from '@/stores/uiStore'
 import { PEAKS_PER_SECOND } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
@@ -21,6 +22,7 @@ import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 const project = useProjectStore()
 const transport = useTransportStore()
 const library = useLibraryStore()
+const ui = useUiStore()
 const host = ref<HTMLDivElement | null>(null)
 
 // Layout constants.
@@ -35,7 +37,12 @@ const MAX_PX_PER_SECOND = 480
 const pxPerSecond = ref(DEFAULT_PX_PER_SECOND)
 const TRACK_HEIGHT = 96
 const TRACK_GAP = 4
-const TRACK_HEADER_WIDTH = 175
+// Track-header column width is a *user-resizable* layout pref held on
+// `uiStore`. Pixi-side code reads it via `headerWidth()` so every redraw
+// reflects the current value; `watch(headerWidthRef, redraw)` further
+// down repaints the canvas whenever the user drags the divider.
+const headerWidth = (): number => ui.trackHeaderWidth
+const headerWidthRef = computed(() => ui.trackHeaderWidth)
 const RULER_HEIGHT = 28
 
 // Musical grid. The BPM comes from `transportStore` so the user can edit
@@ -110,7 +117,7 @@ const SCROLLBAR_WIDTH = 12
 const contentPx = computed(() => Math.max(0, (project.durationMs / 1000) * pxPerSecond.value))
 // Width of the scrollable lane (excludes the fixed header column AND the
 // permanently-reserved vertical scrollbar lane on the right).
-const trackAreaWidth = computed(() => Math.max(0, viewportWidth.value - TRACK_HEADER_WIDTH - SCROLLBAR_WIDTH))
+const trackAreaWidth = computed(() => Math.max(0, viewportWidth.value - headerWidth() - SCROLLBAR_WIDTH))
 // Pixels the user can scroll horizontally. 0 → content fits, hide the bar.
 const maxScrollX = computed(() => Math.max(0, contentPx.value - trackAreaWidth.value))
 const showScrollbar = computed(() => maxScrollX.value > 0)
@@ -338,6 +345,15 @@ watch(() => transport.bpm, () => {
     updatePlayhead()
 })
 
+// The track-header column is user-resizable via the divider drag handle.
+// Every cached pixel position (ruler ticks, header backgrounds, clip
+// x-coordinates) is computed off `headerWidth()`, so we just repaint on
+// each width change.
+watch(headerWidthRef, () => {
+    redraw()
+    updatePlayhead()
+})
+
 function redraw(): void {
     if (!app || !rulerLayer || !tracksLayer || !headersLayer) return
 
@@ -370,8 +386,8 @@ function drawHeaderDivider(): void {
     const bottom = app.renderer.screen.height
     const divider = new GraphicsCtor()
     divider
-        .moveTo(TRACK_HEADER_WIDTH - 0.5, 0)
-        .lineTo(TRACK_HEADER_WIDTH - 0.5, bottom)
+        .moveTo(headerWidth() - 0.5, 0)
+        .lineTo(headerWidth() - 0.5, bottom)
         .stroke({ color: RULER_TICK, width: 1, alpha: 0.6 })
     headersLayer.addChild(divider)
 }
@@ -395,15 +411,15 @@ function drawRuler(width: number): void {
     const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
 
     const firstSub = Math.max(0, Math.floor(scrollX.value / pxPerSub))
-    const lastSub = Math.ceil((scrollX.value + (rightEdge - TRACK_HEADER_WIDTH)) / pxPerSub)
+    const lastSub = Math.ceil((scrollX.value + (rightEdge - headerWidth())) / pxPerSub)
 
     const subTicks = new GraphicsCtor()
     const beatTicks = new GraphicsCtor()
     const barTicks = new GraphicsCtor()
 
     for (let s = firstSub; s <= lastSub; s++) {
-        const x = TRACK_HEADER_WIDTH + s * pxPerSub - scrollX.value + 0.5
-        if (x < TRACK_HEADER_WIDTH || x > rightEdge) continue
+        const x = headerWidth() + s * pxPerSub - scrollX.value + 0.5
+        if (x < headerWidth() || x > rightEdge) continue
         const isBar = s % subsPerBar === 0
         const isBeat = s % SUBDIVISIONS_PER_BEAT === 0
         const tickH = isBar ? 14 : isBeat ? 10 : 5
@@ -424,8 +440,8 @@ function drawRuler(width: number): void {
     if (TextCtor) {
         const startSub = Math.ceil(firstSub / subsPerBar) * subsPerBar
         for (let s = startSub; s <= lastSub; s += subsPerBar) {
-            const x = TRACK_HEADER_WIDTH + s * pxPerSub - scrollX.value + 0.5
-            if (x < TRACK_HEADER_WIDTH || x > rightEdge) continue
+            const x = headerWidth() + s * pxPerSub - scrollX.value + 0.5
+            if (x < headerWidth() || x > rightEdge) continue
             const barNumber = s / subsPerBar
             const label = new TextCtor({
                 text: String(barNumber),
@@ -444,7 +460,7 @@ function drawRuler(width: number): void {
 
     // Header column background sits in the ruler row too.
     const headerCorner = new GraphicsCtor()
-    headerCorner.rect(0, 0, TRACK_HEADER_WIDTH, RULER_HEIGHT).fill(TRACK_HEADER_BG)
+    headerCorner.rect(0, 0, headerWidth(), RULER_HEIGHT).fill(TRACK_HEADER_BG)
     rulerLayer.addChild(headerCorner)
 }
 
@@ -463,7 +479,7 @@ function drawGrid(width: number): void {
     if (project.tracks.length === 0) return
 
     const rightEdge = width - SCROLLBAR_WIDTH
-    const gridLeft = TRACK_HEADER_WIDTH
+    const gridLeft = headerWidth()
     const gridTop = RULER_HEIGHT
     const gridBottom = RULER_HEIGHT + trackAreaHeight.value
     if (gridBottom <= gridTop || rightEdge <= gridLeft) return
@@ -511,7 +527,7 @@ function drawTracks(width: number): void {
     // colour is identical either way.
     const headerColumnBg = new GraphicsCtor()
     headerColumnBg
-        .rect(0, RULER_HEIGHT, TRACK_HEADER_WIDTH, app.renderer.screen.height - RULER_HEIGHT)
+        .rect(0, RULER_HEIGHT, headerWidth(), app.renderer.screen.height - RULER_HEIGHT)
         .fill(TRACK_HEADER_BG)
     tracksLayer.addChild(headerColumnBg)
 
@@ -536,10 +552,10 @@ function drawTracks(width: number): void {
 
         // Track header.
         const header = new GraphicsCtor()
-        header.rect(0, y, TRACK_HEADER_WIDTH, TRACK_HEIGHT).fill(TRACK_HEADER_BG)
+        header.rect(0, y, headerWidth(), TRACK_HEIGHT).fill(TRACK_HEADER_BG)
         header
-            .moveTo(TRACK_HEADER_WIDTH - 0.5, y)
-            .lineTo(TRACK_HEADER_WIDTH - 0.5, y + TRACK_HEIGHT)
+            .moveTo(headerWidth() - 0.5, y)
+            .lineTo(headerWidth() - 0.5, y + TRACK_HEIGHT)
             .stroke({ color: RULER_TICK, width: 1, alpha: 0.6 })
         headersLayer.addChild(header)
 
@@ -567,12 +583,12 @@ function drawClip(clip: Clip, rowY: number, palette: (typeof TRACK_PALETTE)[numb
     if (!app || !tracksLayer || !GraphicsCtor) return
 
     const viewportWidthPx = app.renderer.screen.width - SCROLLBAR_WIDTH
-    const absX = TRACK_HEADER_WIDTH + (clip.startMs / 1000) * pxPerSecond.value
+    const absX = headerWidth() + (clip.startMs / 1000) * pxPerSecond.value
     const w = (clip.durationMs / 1000) * pxPerSecond.value
     const x = absX - scrollX.value
 
     // Cull entirely off-screen clips so we don't waste CPU on their waveform.
-    if (x + w < TRACK_HEADER_WIDTH || x > viewportWidthPx) return
+    if (x + w < headerWidth() || x > viewportWidthPx) return
 
     const padding = 4
     const innerY = rowY + padding
@@ -596,7 +612,7 @@ function drawClip(clip: Clip, rowY: number, palette: (typeof TRACK_PALETTE)[numb
     const samplesPerPixel = Math.max(1, peakCount / w)
     const half = innerH / 2 - 2
 
-    const pxStart = Math.max(0, Math.floor(TRACK_HEADER_WIDTH - x))
+    const pxStart = Math.max(0, Math.floor(headerWidth() - x))
     const pxEnd = Math.min(w, Math.ceil(viewportWidthPx - x))
 
     for (let px = pxStart; px < pxEnd; px++) {
@@ -696,7 +712,7 @@ function updatePlayhead(): void {
     if (!app || !playheadLayer || !GraphicsCtor) return
 
     const width = app.renderer.screen.width - SCROLLBAR_WIDTH
-    const absX = TRACK_HEADER_WIDTH + (transport.positionMs / 1000) * pxPerSecond.value
+    const absX = headerWidth() + (transport.positionMs / 1000) * pxPerSecond.value
 
     // Auto-follow during playback OR while the user is dragging the playhead:
     // once the head crosses the viewport midpoint, scroll the content so it
@@ -704,7 +720,7 @@ function updatePlayhead(): void {
     // end of the timeline content, so once the scroll has reached the end
     // the head naturally continues toward the right edge.
     if (transport.isPlaying || isDraggingPlayhead) {
-        const viewportCentre = TRACK_HEADER_WIDTH + (width - TRACK_HEADER_WIDTH) / 2
+        const viewportCentre = headerWidth() + (width - headerWidth()) / 2
         const desired = Math.max(0, absX - viewportCentre)
         if (Math.abs(desired - scrollX.value) > 0.5) {
             scrollX.value = desired
@@ -722,7 +738,7 @@ function updatePlayhead(): void {
     }
 
     const x = absX - scrollX.value
-    const playheadOnScreen = x >= TRACK_HEADER_WIDTH && x <= width
+    const playheadOnScreen = x >= headerWidth() && x <= width
 
     if (playheadOnScreen) {
         // Line spans the ruler + exactly the visible track rows, clipped to
@@ -778,15 +794,15 @@ function drawDropPreview(): void {
     if (yTop + TRACK_HEIGHT <= RULER_HEIGHT) return
     if (yTop >= app.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)) return
 
-    const absLeft = TRACK_HEADER_WIDTH + (dp.startMs / 1000) * pxPerSecond.value
+    const absLeft = headerWidth() + (dp.startMs / 1000) * pxPerSecond.value
     const width = Math.max(2, (dp.durationMs / 1000) * pxPerSecond.value)
     const xLeft = absLeft - scrollX.value
     const xRight = xLeft + width
-    if (xRight <= TRACK_HEADER_WIDTH || xLeft >= rightEdge) return
+    if (xRight <= headerWidth() || xLeft >= rightEdge) return
 
     // Clip horizontally so the ghost never spills over the header column or
     // the right scrollbar lane.
-    const clippedLeft = Math.max(TRACK_HEADER_WIDTH, xLeft)
+    const clippedLeft = Math.max(headerWidth(), xLeft)
     const clippedRight = Math.min(rightEdge, xRight)
     const w = clippedRight - clippedLeft
     if (w <= 0) return
@@ -846,7 +862,7 @@ function onWheel(e: WheelEvent): void {
     // after applying the new zoom.
     const hostRect = host.value.getBoundingClientRect()
     const pointerXInHost = e.clientX - hostRect.left
-    const trackLocalX = Math.max(0, Math.min(trackAreaWidth.value, pointerXInHost - TRACK_HEADER_WIDTH))
+    const trackLocalX = Math.max(0, Math.min(trackAreaWidth.value, pointerXInHost - headerWidth()))
     const timeAtAnchorSec = (scrollX.value + trackLocalX) / prev
 
     pxPerSecond.value = next
@@ -883,8 +899,8 @@ function pointerToSnappedMs(clientX: number): number | null {
     const rect = host.value.getBoundingClientRect()
     const x = clientX - rect.left
     const rightEdge = app.renderer.screen.width - SCROLLBAR_WIDTH
-    if (x < TRACK_HEADER_WIDTH || x > rightEdge) return null
-    const trackLocalX = x - TRACK_HEADER_WIDTH
+    if (x < headerWidth() || x > rightEdge) return null
+    const trackLocalX = x - headerWidth()
     const rawMs = ((scrollX.value + trackLocalX) / pxPerSecond.value) * 1000
     const snap = MS_PER_SUB_BEAT()
     return Math.max(0, Math.round(rawMs / snap) * snap)
@@ -901,8 +917,8 @@ function pointerToRawMs(clientX: number): number | null {
     const rect = host.value.getBoundingClientRect()
     const x = clientX - rect.left
     const rightEdge = app.renderer.screen.width - SCROLLBAR_WIDTH
-    if (x < TRACK_HEADER_WIDTH || x > rightEdge) return null
-    return ((scrollX.value + x - TRACK_HEADER_WIDTH) / pxPerSecond.value) * 1000
+    if (x < headerWidth() || x > rightEdge) return null
+    return ((scrollX.value + x - headerWidth()) / pxPerSecond.value) * 1000
 }
 
 function seekTo(positionMs: number): void {
@@ -1072,7 +1088,7 @@ function pointerToTrackDrop(clientX: number, clientY: number): { trackIndex: num
     const y = clientY - rect.top
 
     const rightEdge = app.renderer.screen.width - SCROLLBAR_WIDTH
-    if (x < TRACK_HEADER_WIDTH || x > rightEdge) return null
+    if (x < headerWidth() || x > rightEdge) return null
     if (y < RULER_HEIGHT) return null
     const bottomLimit = app.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
     if (y > bottomLimit) return null
@@ -1086,7 +1102,7 @@ function pointerToTrackDrop(clientX: number, clientY: number): { trackIndex: num
     const yWithinSlot = contentY - trackIndex * slot
     if (yWithinSlot >= TRACK_HEIGHT) return null
 
-    const trackLocalX = x - TRACK_HEADER_WIDTH
+    const trackLocalX = x - headerWidth()
     const rawMs = ((scrollX.value + trackLocalX) / pxPerSecond.value) * 1000
     const snap = MS_PER_SUB_BEAT()
     const startMs = Math.max(0, Math.round(rawMs / snap) * snap)
@@ -1306,6 +1322,35 @@ function onVTrackPointerDown(e: PointerEvent): void {
     redraw()
     updatePlayhead()
 }
+
+// ─── Track-header column resize ────────────────────────────────────────────
+// The user can drag the vertical divider on the right edge of the track
+// header column to grow / shrink it. Width is persisted via `uiStore`.
+
+let headerResizePointerId: number | null = null
+let headerResizeStartX = 0
+let headerResizeStartWidth = 0
+
+function onHeaderResizePointerDown(e: PointerEvent): void {
+    if (e.button !== 0) return
+    headerResizePointerId = e.pointerId
+    headerResizeStartX = e.clientX
+    headerResizeStartWidth = ui.trackHeaderWidth
+        ; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    e.preventDefault()
+}
+
+function onHeaderResizePointerMove(e: PointerEvent): void {
+    if (headerResizePointerId !== e.pointerId) return
+    const delta = e.clientX - headerResizeStartX
+    ui.setTrackHeaderWidth(headerResizeStartWidth + delta)
+}
+
+function onHeaderResizePointerUp(e: PointerEvent): void {
+    if (headerResizePointerId !== e.pointerId) return
+    headerResizePointerId = null
+        ; (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+}
 </script>
 
 <template>
@@ -1314,6 +1359,15 @@ function onVTrackPointerDown(e: PointerEvent): void {
 
         <!-- HTML overlay for track headers (name + M/S/X buttons). -->
         <TrackHeaderPanel :scroll-y="scrollY" />
+
+        <!-- Vertical divider drag handle. Sits on top of the column boundary
+             between the track-header panel and the timeline canvas. The
+             visible line is 1px (drawn by Pixi); this hit area is 6px wide
+             and straddles the seam so it's easy to grab. -->
+        <div class="absolute inset-y-0 z-20 w-1.5 cursor-col-resize" :style="{ left: (headerWidth() - 3) + 'px' }"
+            title="Drag to resize track header column" @pointerdown="onHeaderResizePointerDown"
+            @pointermove="onHeaderResizePointerMove" @pointerup="onHeaderResizePointerUp"
+            @pointercancel="onHeaderResizePointerUp" />
 
         <!-- Vertical scrollbar lane. Spans the full canvas height (over the
              ruler row at the top and over the corner above the horizontal
@@ -1334,7 +1388,7 @@ function onVTrackPointerDown(e: PointerEvent): void {
              outside this component) and to the right of the track header
              column. Only rendered when content overflows the viewport. -->
         <div v-if="showScrollbar" ref="scrollbarTrack" class="absolute bottom-0 cursor-pointer bg-zinc-900/80" :style="{
-            left: TRACK_HEADER_WIDTH + 'px',
+            left: headerWidth() + 'px',
             right: SCROLLBAR_WIDTH + 'px',
             height: SCROLLBAR_HEIGHT + 'px'
         }" @pointerdown="onTrackPointerDown">

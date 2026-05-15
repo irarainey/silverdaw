@@ -1,7 +1,7 @@
-import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 
 // ─── Theme / colours (kept in sync with the renderer Tailwind palette) ──────
 const TITLE_BAR_HEIGHT = 36
@@ -10,6 +10,129 @@ const COLOUR_FG = '#d4d4d8' // zinc-300
 
 let backendProcess: ChildProcess | null = null
 let mainWindow: BrowserWindow | null = null
+
+// ─── Persisted preferences (window state + UI panel sizes) ──────────────────
+// Stored as JSON in `<userData>/preferences.json`. Writes are debounced so a
+// burst of resize/move events doesn't hammer the disk; an unconditional
+// flush runs on `before-quit` to make sure the final state is captured.
+
+interface WindowPrefs {
+  x?: number
+  y?: number
+  width: number
+  height: number
+  maximized: boolean
+}
+
+interface UiPrefs {
+  trackHeaderWidth: number
+  libraryPanelHeight: number
+}
+
+interface Preferences {
+  window: WindowPrefs
+  ui: UiPrefs
+}
+
+const DEFAULT_PREFS: Preferences = {
+  window: { width: 1400, height: 900, maximized: false },
+  ui: { trackHeaderWidth: 175, libraryPanelHeight: 180 }
+}
+
+let prefs: Preferences = structuredClone(DEFAULT_PREFS)
+let prefsPath = ''
+let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+function getPrefsPath(): string {
+  if (!prefsPath) prefsPath = join(app.getPath('userData'), 'preferences.json')
+  return prefsPath
+}
+
+async function loadPreferences(): Promise<void> {
+  try {
+    const raw = await readFile(getPrefsPath(), 'utf8')
+    const parsed = JSON.parse(raw) as Partial<Preferences>
+    // Merge over defaults so newly-added keys get sane values on first run
+    // after an upgrade.
+    prefs = {
+      window: { ...DEFAULT_PREFS.window, ...(parsed.window ?? {}) },
+      ui: { ...DEFAULT_PREFS.ui, ...(parsed.ui ?? {}) }
+    }
+  } catch (err) {
+    // ENOENT on first run is expected; anything else is logged but we still
+    // fall back to defaults rather than blocking startup.
+    const code = (err as { code?: string }).code
+    if (code !== 'ENOENT') {
+      console.warn('[prefs] load failed, using defaults:', err)
+    }
+    prefs = structuredClone(DEFAULT_PREFS)
+  }
+}
+
+function schedulePrefsSave(): void {
+  if (prefsSaveTimer) clearTimeout(prefsSaveTimer)
+  prefsSaveTimer = setTimeout(() => {
+    prefsSaveTimer = null
+    void flushPrefsSave()
+  }, 400)
+}
+
+async function flushPrefsSave(): Promise<void> {
+  if (prefsSaveTimer) {
+    clearTimeout(prefsSaveTimer)
+    prefsSaveTimer = null
+  }
+  try {
+    const path = getPrefsPath()
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, JSON.stringify(prefs, null, 2), 'utf8')
+  } catch (err) {
+    console.warn('[prefs] save failed:', err)
+  }
+}
+
+/**
+ * Return a window bounds object clamped to fall inside one of the currently
+ * connected displays. Prevents the window from opening off-screen after a
+ * monitor is unplugged.
+ */
+function resolveWindowBounds(): { x?: number; y?: number; width: number; height: number } {
+  const w = prefs.window
+  const width = Math.max(900, Math.min(8000, w.width))
+  const height = Math.max(600, Math.min(8000, w.height))
+  if (typeof w.x !== 'number' || typeof w.y !== 'number') {
+    return { width, height }
+  }
+  // Confirm the saved top-left is on a connected display; if not, drop the
+  // position and let Electron centre the window on the primary display.
+  const displays = screen.getAllDisplays()
+  const onScreen = displays.some((d) => {
+    const { x, y, width: dw, height: dh } = d.workArea
+    return w.x! >= x && w.y! >= y && w.x! < x + dw && w.y! < y + dh
+  })
+  return onScreen ? { x: w.x, y: w.y, width, height } : { width, height }
+}
+
+function captureWindowState(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  // Don't overwrite the saved x/y/width/height while the window is in a
+  // maximized state — we want to restore the *unmaximized* bounds next time.
+  const maximized = mainWindow.isMaximized()
+  prefs.window.maximized = maximized
+  if (!maximized) {
+    // `getNormalBounds()` is symmetric with `setBounds()` — round-tripping
+    // through it keeps the window from drifting bigger each session.
+    // `getBounds()` on Windows with `titleBarStyle: 'hidden'` returns
+    // values that, when fed back into the constructor or `setBounds`,
+    // produce a slightly larger window — a few px of growth per restart.
+    const b = mainWindow.getNormalBounds()
+    prefs.window.x = b.x
+    prefs.window.y = b.y
+    prefs.window.width = b.width
+    prefs.window.height = b.height
+  }
+  schedulePrefsSave()
+}
 
 function startBackend(): void {
   // In dev: JUCE's juce_add_console_app outputs to
@@ -42,17 +165,19 @@ function startBackend(): void {
 }
 
 function createWindow(): void {
+  const bounds = resolveWindowBounds()
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    // Important: do NOT pass x/y/width/height in the constructor on Windows
+    // with `titleBarStyle: 'hidden'` + multi-monitor mixed DPI. The
+    // constructor interprets those values in a different coordinate space
+    // than `getBounds()` reports, causing the saved size to drift bigger
+    // on every restart. We hide the window, position+size it explicitly
+    // via `setBounds()` (which is symmetric with `getBounds`/`getNormalBounds`),
+    // then show it.
     minWidth: 900,
     minHeight: 600,
     backgroundColor: COLOUR_BG,
-    // Show the window immediately. `backgroundColor` paints the frame dark
-    // before any HTML loads, so there is no flash-of-unstyled-content even
-    // without the `ready-to-show` deferral.
-    show: true,
-    // Frameless on Windows/Linux; macOS gets its native traffic-light buttons inset.
+    show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay:
       process.platform === 'win32' || process.platform === 'linux'
@@ -65,6 +190,50 @@ function createWindow(): void {
       contextIsolation: true,
       sandbox: false
     }
+  })
+
+  // Apply saved bounds. Use `setBounds` so we're symmetric with the
+  // `getBounds()` we save in `captureWindowState` — round-tripping is
+  // stable even on a secondary monitor with a different DPI scale.
+  //
+  // Windows mixed-DPI workaround: when the constructor-default display has
+  // a different scale factor than the target display (e.g. primary @ 125%,
+  // secondary @ 100%), the FIRST `setBounds` call applies the size using
+  // the previous display's scale, then the window moves to the new
+  // display and Electron reports back a size scaled by the ratio. Calling
+  // `setBounds` a second time — now that Electron knows which display the
+  // window lives on — applies the size at the correct scale.
+  if (typeof bounds.x === 'number' && typeof bounds.y === 'number') {
+    const rect = {
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height
+    }
+    mainWindow.setBounds(rect)
+    if (process.platform === 'win32') mainWindow.setBounds(rect)
+  } else {
+    mainWindow.setSize(bounds.width, bounds.height)
+    mainWindow.center()
+  }
+
+  // Restore maximized state without losing the unmaximized bounds: the
+  // `setBounds` above used the unmaximized size, so calling `maximize()`
+  // now gives us the right "double-click title bar → restore" target.
+  if (prefs.window.maximized) mainWindow.maximize()
+
+  mainWindow.show()
+
+  // Persist window position / size / maximized state. `resize` and `move`
+  // fire continuously while the user drags, so saves are debounced inside
+  // `captureWindowState`.
+  mainWindow.on('resize', captureWindowState)
+  mainWindow.on('move', captureWindowState)
+  mainWindow.on('maximize', captureWindowState)
+  mainWindow.on('unmaximize', captureWindowState)
+  mainWindow.on('close', () => {
+    captureWindowState()
+    void flushPrefsSave()
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -174,8 +343,13 @@ function handleMenuAction(action: string): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   nativeTheme.themeSource = 'dark'
+
+  // Load persisted preferences (window bounds + UI panel sizes) before the
+  // first window is created so the restored size/position is applied at
+  // construction time rather than as a post-show resize flash.
+  await loadPreferences()
 
   // Hide the native application menu — we render our own in HTML.
   Menu.setApplicationMenu(null)
@@ -254,6 +428,17 @@ app.whenReady().then(() => {
     }
   })
 
+  // Hand the renderer its persisted preferences (UI panel sizes etc.) on
+  // request. Window bounds are applied by main so they aren't included.
+  ipcMain.handle('prefs:getUi', () => prefs.ui)
+
+  // Update one or more UI preference keys. The renderer calls this whenever
+  // the user resizes a panel; main debounces the write to disk.
+  ipcMain.on('prefs:setUi', (_evt, partial: Partial<UiPrefs>) => {
+    prefs.ui = { ...prefs.ui, ...partial }
+    schedulePrefsSave()
+  })
+
   // Create the window first so the user sees a frame immediately; defer
   // backend-process spawn to the next tick so it doesn't contend with the
   // renderer for CPU during initial paint.
@@ -278,4 +463,6 @@ app.on('before-quit', () => {
     backendProcess.kill()
     backendProcess = null
   }
+  // Make sure any pending debounced write hits disk before we exit.
+  void flushPrefsSave()
 })
