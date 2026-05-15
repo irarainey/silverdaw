@@ -13,15 +13,28 @@ import type { AudioMetadata } from '../shared/types'
 /** Drop embedded pictures larger than this so we don't bloat the Pinia store. */
 const MAX_COVER_ART_BYTES = 2 * 1024 * 1024
 
-function pickCoverArt(pictures: IPicture[] | undefined): string | undefined {
+/**
+ * Pick the best cover-art picture (preferring an explicit front cover) and
+ * return its raw bytes + MIME type. The renderer turns the buffer into a
+ * `Blob` + `URL.createObjectURL`, so we ship binary across IPC rather than
+ * base64-inflated data URLs.
+ */
+function pickCoverArt(
+  pictures: IPicture[] | undefined
+): { data: ArrayBuffer; mimeType: string } | undefined {
   if (!pictures || pictures.length === 0) return undefined
   // Prefer a front-cover-type picture if the tag distinguishes them; else first.
   const front = pictures.find((p) => (p.type ?? '').toLowerCase().includes('cover')) ?? pictures[0]
-  if (!front.data || front.data.length === 0 || front.data.length > MAX_COVER_ART_BYTES)
+  if (!front.data || front.data.length === 0 || front.data.length > MAX_COVER_ART_BYTES) {
     return undefined
-  const mime = front.format || 'image/jpeg'
-  const base64 = Buffer.from(front.data).toString('base64')
-  return `data:${mime};base64,${base64}`
+  }
+  // Copy into a fresh ArrayBuffer so we hand IPC an owned, transferable
+  // buffer rather than a view into the (potentially larger) parse-result
+  // arena `music-metadata` keeps internally.
+  const src = front.data
+  const data = src.buffer.slice(src.byteOffset, src.byteOffset + src.byteLength) as ArrayBuffer
+  const mimeType = front.format || 'image/jpeg'
+  return { data, mimeType }
 }
 
 function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
@@ -54,7 +67,7 @@ function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
   if (typeof format.lossless === 'boolean') out.lossless = format.lossless
   if (format.tagTypes && format.tagTypes.length > 0) out.tagTypes = [...format.tagTypes]
   const cover = pickCoverArt(common.picture)
-  if (cover) out.coverArtDataUrl = cover
+  if (cover) out.coverArt = cover
   return out
 }
 
