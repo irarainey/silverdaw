@@ -94,7 +94,19 @@ const api = {
    * backend is launched with `--port <N>`, so all three processes agree
    * on a single source of truth.
    */
-  getBridgePort: (): Promise<number> => ipcRenderer.invoke('bridge:getPort')
+  getBridgePort: (): Promise<number> => ipcRenderer.invoke('bridge:getPort'),
+  /**
+   * Transcode decoded PCM into a temp WAV the JUCE backend can read.
+   * Used for formats the backend can't decode natively (e.g. AAC/M4A on
+   * Windows). `channels` is one Float32Array per channel, planar. The
+   * returned path is owned by the main-process temp cache and is safe
+   * to send to the backend via `CLIP_ADD`. Returns `null` on failure.
+   */
+  writeTempWav: (args: {
+    sourcePath: string
+    channels: Float32Array[]
+    sampleRate: number
+  }): Promise<string | null> => ipcRenderer.invoke('audio:writeTempWav', args)
 } as const
 
 contextBridge.exposeInMainWorld('jackdaw', api)

@@ -254,6 +254,8 @@ export const useProjectStore = defineStore('project', {
         sampleRate: number
         channelCount: number
         peaks: Float32Array
+        /** Optional backend-loadable path; falls back to `filePath`. */
+        playbackFilePath?: string
       },
       startMs: number
     ): string | null {
@@ -267,7 +269,7 @@ export const useProjectStore = defineStore('project', {
 
       sendBridge('CLIP_ADD', {
         trackId,
-        filePath: libraryItem.filePath,
+        filePath: libraryItem.playbackFilePath ?? libraryItem.filePath,
         positionMs: snapped
       })
       return clipId

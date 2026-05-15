@@ -33,6 +33,11 @@ declare global {
       getUiPreferences(): Promise<UiPreferences>
       setUiPreferences(partial: Partial<UiPreferences>): void
       getBridgePort(): Promise<number>
+      writeTempWav(args: {
+        sourcePath: string
+        channels: Float32Array[]
+        sampleRate: number
+      }): Promise<string | null>
     }
   }
 }

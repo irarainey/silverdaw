@@ -178,8 +178,9 @@ class AudioEngine
     /**
      * Load `filePath` into a new track keyed by `trackId`. Replaces an
      * existing track with the same id. Returns true on success.
+     * On failure, `outError` (if non-null) is populated with a short diagnostic.
      */
-    bool addClip(const juce::String& trackId, const juce::File& filePath);
+    bool addClip(const juce::String& trackId, const juce::File& filePath, juce::String* outError = nullptr);
 
     /** Remove the track with the given id. Returns true if it existed. */
     bool removeTrack(const juce::String& trackId);

@@ -17,6 +17,10 @@ function getAudioContext(): AudioContext {
 /**
  * Decodes a raw audio buffer (any browser-supported format) into a peaks
  * array suitable for waveform rendering, plus its duration and channel count.
+ *
+ * The decoded planar PCM (`channels`) is also returned so callers can
+ * forward it to the main process for re-encoding as WAV (used when the
+ * JUCE backend can't decode the original format natively).
  */
 export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
   durationMs: number
@@ -24,11 +28,24 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
   channelCount: number
   /** Alternating min, max pairs at `PEAKS_PER_SECOND` resolution. */
   peaks: Float32Array
+  /** Planar PCM, one Float32Array per channel. */
+  channels: Float32Array[]
 }> {
   // `decodeAudioData` consumes the ArrayBuffer; clone first so the caller
   // can retain a copy if needed.
   const ctx = getAudioContext()
   const audioBuffer = await ctx.decodeAudioData(data.slice(0))
+
+  // `getChannelData` returns a view into the AudioBuffer's internal
+  // storage. We copy into standalone Float32Arrays so the data survives
+  // the AudioBuffer going out of scope and can be transferred over IPC.
+  const channels: Float32Array[] = []
+  for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+    const src = audioBuffer.getChannelData(c)
+    const copy = new Float32Array(src.length)
+    copy.set(src)
+    channels.push(copy)
+  }
 
   const peaks = computePeaks(audioBuffer, PEAKS_PER_SECOND)
 
@@ -36,7 +53,8 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
     durationMs: audioBuffer.duration * 1000,
     sampleRate: audioBuffer.sampleRate,
     channelCount: audioBuffer.numberOfChannels,
-    peaks
+    peaks,
+    channels
   }
 }
 

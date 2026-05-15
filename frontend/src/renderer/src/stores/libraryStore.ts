@@ -20,6 +20,15 @@ export interface LibraryItem {
   /** Alternating min/max float pairs at PEAKS_PER_SECOND resolution. */
   readonly peaks: Float32Array
   /**
+   * Path the JUCE backend should actually load when this item is placed
+   * on a track. Equals `filePath` for formats the backend can decode
+   * natively (WAV/AIFF/FLAC/Ogg/MP3/WMA). For others (e.g. .m4a on
+   * Windows), the import flow asks main to transcode the decoded PCM to
+   * a temp WAV and stores that path here. UI continues to display the
+   * original `filePath` / `fileName` to the user.
+   */
+  readonly playbackFilePath: string
+  /**
    * ID3 / Vorbis / iTunes / BWF tag info, populated asynchronously by the
    * main process via `audio:readMetadata`. `undefined` while loading,
    * `null` once we know the file has no parseable tags.
@@ -89,6 +98,8 @@ export const useLibraryStore = defineStore('library', {
       sampleRate: number
       channelCount: number
       peaks: Float32Array
+      /** Optional override; defaults to `filePath`. */
+      playbackFilePath?: string
     }): string {
       const existing = this.items.find((i) => i.filePath === audio.filePath)
       if (existing) return existing.id
@@ -101,7 +112,8 @@ export const useLibraryStore = defineStore('library', {
         durationMs: audio.durationMs,
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
-        peaks: audio.peaks
+        peaks: audio.peaks,
+        playbackFilePath: audio.playbackFilePath ?? audio.filePath
       })
       return id
     },

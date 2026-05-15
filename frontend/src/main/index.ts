@@ -2,6 +2,8 @@ import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen }
 import { spawn, type ChildProcess } from 'node:child_process'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve as pathResolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
 import type { AudioMetadata } from '../shared/types'
 
@@ -80,6 +82,15 @@ const AUDIO_FILE_EXTENSIONS_SET: ReadonlySet<string> = new Set<string>(AUDIO_FIL
  * process can — see FE-004 in the security review.
  */
 const issuedAudioPaths: Set<string> = new Set<string>()
+
+/**
+ * Filesystem cache for renderer-side transcodes. The renderer decodes
+ * lossy / non-native formats (e.g. .m4a) via the Web Audio API and asks
+ * main to dump the PCM as a WAV; the backend then reads that WAV. Files
+ * are keyed by a hash of the source path + decoded geometry so the same
+ * import doesn't re-transcode on every clip placement.
+ */
+const TRANSCODE_CACHE_DIR = join(tmpdir(), 'jackdaw-transcode-cache')
 
 /** Normalise to an absolute path so allow-list membership is canonical. */
 function canonicalisePath(p: string): string {
@@ -585,6 +596,125 @@ app.whenReady().then(async () => {
       console.warn('[audio:readMetadata] failed for', filePath, err)
       return null
     }
+  })
+
+  // Write decoded PCM (from the renderer's Web Audio decoder) to a temp
+  // WAV file the JUCE backend can read. Used for formats the backend's
+  // AudioFormatManager doesn't understand natively on this platform —
+  // notably AAC / M4A / MP4 on Windows, where JUCE's bundled formats only
+  // cover WAV/AIFF/FLAC/Ogg + the Windows Media SDK (WMA family + MP3).
+  //
+  // Returns the absolute path to the written WAV, or `null` on failure.
+  // The path is added to the audio allow-list so the renderer may re-read
+  // it via `audio:readFile` if it ever needs to (the backend reads it via
+  // its own filesystem access, independently of the allow-list).
+  ipcMain.handle('audio:writeTempWav', async (_evt, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return null
+    const p = payload as {
+      sourcePath?: unknown
+      channels?: unknown
+      sampleRate?: unknown
+    }
+    if (typeof p.sourcePath !== 'string' || !isAllowedAudioPath(p.sourcePath)) {
+      console.warn('[audio:writeTempWav] rejected source not on allow-list:', p.sourcePath)
+      return null
+    }
+    if (typeof p.sampleRate !== 'number' || !Number.isFinite(p.sampleRate) || p.sampleRate <= 0) {
+      return null
+    }
+    if (!Array.isArray(p.channels) || p.channels.length === 0 || p.channels.length > 8) {
+      return null
+    }
+    const chans: Float32Array[] = []
+    let frameCount = -1
+    for (const c of p.channels) {
+      let arr: Float32Array
+      if (c instanceof Float32Array) {
+        arr = c
+      } else if (c instanceof ArrayBuffer) {
+        arr = new Float32Array(c)
+      } else if (ArrayBuffer.isView(c)) {
+        const view = c as ArrayBufferView
+        arr = new Float32Array(view.buffer, view.byteOffset, view.byteLength / 4)
+      } else {
+        return null
+      }
+      if (frameCount < 0) frameCount = arr.length
+      else if (arr.length !== frameCount) return null
+      chans.push(arr)
+    }
+    if (frameCount <= 0) return null
+
+    try {
+      await mkdir(TRANSCODE_CACHE_DIR, { recursive: true })
+    } catch (err) {
+      console.error('[audio:writeTempWav] failed to create cache dir:', err)
+      return null
+    }
+
+    // Cache key includes channel + frame + rate so a re-decode that
+    // produced different output (sample-rate change, etc.) won't collide.
+    const hash = createHash('sha1')
+      .update(canonicalisePath(p.sourcePath))
+      .update(`|sr=${p.sampleRate}|ch=${chans.length}|n=${frameCount}`)
+      .digest('hex')
+      .slice(0, 16)
+    const outPath = join(TRANSCODE_CACHE_DIR, `${hash}.wav`)
+
+    // 32-bit float WAV (WAVE_FORMAT_IEEE_FLOAT, code 0x0003). JUCE's WAV
+    // reader handles both float and integer PCM; float avoids quantising
+    // the renderer's already-decoded sample data.
+    const numChannels = chans.length
+    const bitsPerSample = 32
+    const byteRate = p.sampleRate * numChannels * 4
+    const blockAlign = numChannels * 4
+    const dataSize = frameCount * blockAlign
+    const headerSize = 44
+    const buf = Buffer.alloc(headerSize + dataSize)
+
+    let off = 0
+    buf.write('RIFF', off)
+    off += 4
+    buf.writeUInt32LE(headerSize + dataSize - 8, off)
+    off += 4
+    buf.write('WAVE', off)
+    off += 4
+    buf.write('fmt ', off)
+    off += 4
+    buf.writeUInt32LE(16, off)
+    off += 4
+    buf.writeUInt16LE(3 /* IEEE_FLOAT */, off)
+    off += 2
+    buf.writeUInt16LE(numChannels, off)
+    off += 2
+    buf.writeUInt32LE(p.sampleRate, off)
+    off += 4
+    buf.writeUInt32LE(byteRate, off)
+    off += 4
+    buf.writeUInt16LE(blockAlign, off)
+    off += 2
+    buf.writeUInt16LE(bitsPerSample, off)
+    off += 2
+    buf.write('data', off)
+    off += 4
+    buf.writeUInt32LE(dataSize, off)
+    off += 4
+    // Interleave planar channels frame-by-frame.
+    for (let f = 0; f < frameCount; f++) {
+      for (let c = 0; c < numChannels; c++) {
+        buf.writeFloatLE(chans[c]![f]!, off)
+        off += 4
+      }
+    }
+
+    try {
+      await writeFile(outPath, buf)
+    } catch (err) {
+      console.error('[audio:writeTempWav] failed to write WAV:', err)
+      return null
+    }
+    registerIssuedPath(outPath)
+    return outPath
   })
 
   // Hand the renderer its persisted preferences (UI panel sizes etc.) on

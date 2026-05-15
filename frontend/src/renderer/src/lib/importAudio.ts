@@ -15,6 +15,58 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 
 /**
+ * File extensions the JUCE backend's `AudioFormatManager` can decode
+ * natively on every supported platform. Anything outside this set is
+ * round-tripped through the renderer's Web Audio decoder + a temp WAV
+ * write so the backend still has a file it understands.
+ *
+ * Notably AAC / M4A / MP4 are NOT in this list: on Windows JUCE only
+ * ships the legacy Windows Media Format SDK reader (WMA family + MP3),
+ * not a Media Foundation reader, so those formats need transcoding.
+ */
+const BACKEND_NATIVE_EXTS: ReadonlySet<string> = new Set([
+  '.wav',
+  '.aif',
+  '.aiff',
+  '.flac',
+  '.ogg',
+  '.mp3',
+  '.wma'
+])
+
+function fileExtensionOf(filePath: string): string {
+  const dot = filePath.lastIndexOf('.')
+  if (dot < 0) return ''
+  return filePath.slice(dot).toLowerCase()
+}
+
+/**
+ * Resolve the path the JUCE backend should load for a freshly-decoded
+ * file. For natively-supported formats this is just the source path.
+ * Otherwise we ask main to write the decoded PCM as a temp WAV and
+ * return that path. Falls back to the source path on transcode failure
+ * so the user still gets a useful error from the backend.
+ */
+async function resolvePlaybackPath(
+  sourcePath: string,
+  decoded: { sampleRate: number; channels: Float32Array[] }
+): Promise<string> {
+  if (BACKEND_NATIVE_EXTS.has(fileExtensionOf(sourcePath))) return sourcePath
+  try {
+    const wavPath = await window.jackdaw.writeTempWav({
+      sourcePath,
+      channels: decoded.channels,
+      sampleRate: decoded.sampleRate
+    })
+    if (wavPath) return wavPath
+    console.warn('[importAudio] transcode returned null for', sourcePath)
+  } catch (err) {
+    console.error('[importAudio] transcode failed for', sourcePath, err)
+  }
+  return sourcePath
+}
+
+/**
  * Open the audio-file dialog and add the chosen file as a clip on the given
  * track. If `startMs` is omitted the clip is placed at the current playhead
  * position. The file is also added to the project library so it can be
@@ -56,13 +108,17 @@ export async function importAudioIntoTrack(
         decodeAudioToPeaks(opened.data),
         window.jackdaw.readAudioMetadata(opened.filePath).catch(() => null)
       ])
+      // If the backend can't decode this format natively, write the
+      // already-decoded PCM out as a temp WAV and point playback at that.
+      const playbackFilePath = await resolvePlaybackPath(opened.filePath, decoded)
       const itemId = library.addItem({
         filePath: opened.filePath,
         fileName: opened.fileName,
         durationMs: decoded.durationMs,
         sampleRate: decoded.sampleRate,
         channelCount: decoded.channelCount,
-        peaks: decoded.peaks
+        peaks: decoded.peaks,
+        playbackFilePath
       })
       library.setItemMetadata(itemId, metadata)
       audio = library.getItem(itemId)
@@ -83,10 +139,11 @@ export async function importAudioIntoTrack(
     )
     if (!clipId) return null
 
-    // Tell the backend so it can load the same file for playback.
+    // Tell the backend so it can load the same file for playback. Use the
+    // (possibly transcoded) playback path, not the original source path.
     sendBridge('CLIP_ADD', {
       trackId,
-      filePath: audio.filePath,
+      filePath: audio.playbackFilePath,
       positionMs: resolvedStartMs
     })
 
@@ -125,13 +182,15 @@ export async function importAudioIntoLibrary(opened: {
       decodeAudioToPeaks(opened.data),
       window.jackdaw.readAudioMetadata(opened.filePath).catch(() => null)
     ])
+    const playbackFilePath = await resolvePlaybackPath(opened.filePath, decoded)
     const itemId = library.addItem({
       filePath: opened.filePath,
       fileName: opened.fileName,
       durationMs: decoded.durationMs,
       sampleRate: decoded.sampleRate,
       channelCount: decoded.channelCount,
-      peaks: decoded.peaks
+      peaks: decoded.peaks,
+      playbackFilePath
     })
     library.setItemMetadata(itemId, metadata)
     return itemId

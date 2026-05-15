@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 
 #include <algorithm>
+#include <iostream>
 
 namespace jackdaw
 {
@@ -14,8 +15,9 @@ AudioEngine::~AudioEngine()
 
 juce::String AudioEngine::initialise()
 {
-    // Register all built-in audio formats (WAV/AIFF/FLAC/OGG) plus, on
-    // Windows, the Media Foundation format for MP3/M4A/WMA support.
+    // Register all built-in audio formats. On Windows this includes
+    // WindowsMediaAudioFormat (gated by JUCE_USE_WINDOWS_MEDIA_FORMAT)
+    // for MP3/M4A/WMA support via Media Foundation.
     formatManager.registerBasicFormats();
 
     // Background thread must be running before any track's read-ahead
@@ -46,16 +48,43 @@ void AudioEngine::shutdown()
     readAheadThread.stopThread(1000);
 }
 
-bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePath)
+bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePath, juce::String* outError)
 {
     if (!filePath.existsAsFile())
     {
+        const auto msg = "file does not exist: " + filePath.getFullPathName();
+        std::cerr << "[addClip] " << msg.toStdString() << std::endl;
+        if (outError != nullptr)
+            *outError = msg;
         return false;
     }
 
     auto* reader = formatManager.createReaderFor(filePath);
     if (reader == nullptr)
     {
+        // The File overload filters formats by extension. JUCE's WindowsMediaAudioFormat
+        // only advertises .mp3/.wma/.wmv/.asf/.wm even though Media Foundation can also
+        // decode .m4a/.mp4/.aac. Fall back to the stream overload, which lets every
+        // registered format probe the bytes directly.
+        if (auto stream = filePath.createInputStream())
+        {
+            reader = formatManager.createReaderFor(std::move(stream));
+        }
+    }
+    if (reader == nullptr)
+    {
+        juce::StringArray formatNames;
+        for (int i = 0; i < formatManager.getNumKnownFormats(); ++i)
+        {
+            auto* af = formatManager.getKnownFormat(i);
+            formatNames.add(af != nullptr ? af->getFormatName() : juce::String("<null>"));
+        }
+        const auto msg = "createReaderFor returned null (ext=" + filePath.getFileExtension() + ", size="
+                         + juce::String(filePath.getSize()) + " bytes, registered=["
+                         + formatNames.joinIntoString(", ") + "])";
+        std::cerr << "[addClip] " << msg.toStdString() << std::endl;
+        if (outError != nullptr)
+            *outError = msg;
         return false;
     }
 

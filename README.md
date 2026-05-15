@@ -43,6 +43,32 @@ Every frame is a UTF-8 JSON object with this envelope:
 The renderer dispatches inbound messages in `frontend/src/renderer/src/lib/bridgeService.ts`;
 the backend dispatches inbound messages in `backend/src/Main.cpp` (`dispatchBridgeMessage`).
 
+## Audio formats
+
+The JUCE backend decodes formats supported by its `AudioFormatManager`:
+
+- **All platforms**: WAV, AIFF, FLAC, Ogg Vorbis.
+- **Windows**: additionally MP3 and the Windows Media family (WMA / WMV / ASF / WM) via
+  the Windows Media Format SDK that ships with JUCE.
+
+Other formats the user may want to import (notably **AAC / M4A / MP4** on Windows, where
+JUCE doesn't bundle a Media Foundation reader) are handled in the renderer:
+
+1. The Web Audio API (`AudioContext.decodeAudioData`) decodes the file — it understands
+   every codec the host Chromium build does.
+2. The decoded PCM is sent to the Electron main process via the `audio:writeTempWav` IPC,
+   which writes a 32-bit float WAV into `%TEMP%/jackdaw-transcode-cache/` (or the OS
+   equivalent) keyed by a hash of the source path + sample rate + channel count + length.
+3. The cached WAV path is sent to the backend as `CLIP_ADD.filePath`, so the audio engine
+   only ever sees formats it can decode natively. The original path stays on the library
+   item for display purposes; re-dragging the same library item onto another track reuses
+   the cached WAV without re-decoding.
+
+The relevant code lives in
+`frontend/src/renderer/src/lib/audio.ts`,
+`frontend/src/renderer/src/lib/importAudio.ts` (`BACKEND_NATIVE_EXTS` + `resolvePlaybackPath`)
+and the `audio:writeTempWav` handler in `frontend/src/main/index.ts`.
+
 ## Prerequisites
 
 Jackdaw is developed in Visual Studio Code; the toolchain is cross-platform.

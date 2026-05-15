@@ -163,7 +163,8 @@ void handleClipAdd(const juce::var& payload, jackdaw::AudioEngine& engine, jackd
         return;
     }
 
-    const bool ok = engine.addClip(trackId, juce::File(filePath));
+    juce::String errorMsg;
+    const bool ok = engine.addClip(trackId, juce::File(filePath), &errorMsg);
     if (ok)
     {
         // Apply the requested timeline offset so the clip plays back at the
@@ -178,6 +179,8 @@ void handleClipAdd(const juce::var& payload, jackdaw::AudioEngine& engine, jackd
     p->setProperty("trackId", trackId);
     p->setProperty("filePath", filePath);
     p->setProperty("ok", ok);
+    if (!ok)
+        p->setProperty("error", errorMsg);
     bridge.broadcast(ok ? "CLIP_ADDED" : "CLIP_ADD_FAILED", juce::var(p));
 }
 
