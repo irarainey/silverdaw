@@ -31,7 +31,8 @@ export default defineConfig({
     root: 'src/renderer',
     resolve: {
       alias: {
-        '@': resolve(__dirname, 'src/renderer/src')
+        '@': resolve(__dirname, 'src/renderer/src'),
+        '@shared': resolve(__dirname, 'src/shared')
       }
     },
     plugins: [vue(), tailwindcss()],

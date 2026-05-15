@@ -1,5 +1,11 @@
 /// <reference types="vite/client" />
 
+import type {
+  AudioMetadata as SharedAudioMetadata,
+  OpenedAudioFile as SharedOpenedAudioFile,
+  UiPreferences as SharedUiPreferences
+} from '@shared/types'
+
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
   const component: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>
@@ -7,39 +13,13 @@ declare module '*.vue' {
 }
 
 declare global {
-  interface OpenedAudioFile {
-    readonly filePath: string
-    readonly fileName: string
-    readonly data: ArrayBuffer
-  }
-
-  interface AudioMetadata {
-    readonly title?: string
-    readonly artist?: string
-    readonly albumArtist?: string
-    readonly album?: string
-    readonly year?: number
-    readonly genre?: readonly string[]
-    readonly trackNumber?: number
-    readonly trackTotal?: number
-    readonly discNumber?: number
-    readonly discTotal?: number
-    readonly bpm?: number
-    readonly key?: string
-    readonly composer?: string
-    readonly comment?: string
-    readonly codec?: string
-    readonly container?: string
-    readonly bitrate?: number
-    readonly lossless?: boolean
-    readonly tagTypes?: readonly string[]
-    readonly coverArtDataUrl?: string
-  }
-
-  interface UiPreferences {
-    trackHeaderWidth: number
-    libraryPanelHeight: number
-  }
+  // Re-exported from `frontend/src/shared/types.ts` as ambient globals so
+  // renderer code can keep using the bare names without an import. The
+  // single source of truth lives in the shared module — preload and main
+  // import the same types directly.
+  type OpenedAudioFile = SharedOpenedAudioFile
+  type AudioMetadata = SharedAudioMetadata
+  type UiPreferences = SharedUiPreferences
 
   interface Window {
     jackdaw: {
@@ -52,6 +32,7 @@ declare global {
       onMenuAction(handler: (action: string) => void): () => void
       getUiPreferences(): Promise<UiPreferences>
       setUiPreferences(partial: Partial<UiPreferences>): void
+      getBridgePort(): Promise<number>
     }
   }
 }

@@ -46,11 +46,15 @@ class BridgeServer
     /** Stop the server, disconnect clients. Safe to call multiple times. */
     void stop();
 
-    /** Register the handler called for every parsed incoming message. */
-    void onMessage(MessageHandler handler)
-    {
-        messageHandler = std::move(handler);
-    }
+    /**
+     * Register the handler called for every parsed incoming message.
+     *
+     * MUST be called before `start()`. After `start()` the handler is read
+     * from the I/O-thread `onIncoming` callback without synchronisation —
+     * mutating it concurrently would be a data race. The `jassert` in the
+     * implementation catches accidental late registrations in debug builds.
+     */
+    void onMessage(MessageHandler handler);
 
     /** Broadcast a JSON envelope `{ type, payload }` to all connected clients. */
     void broadcast(const juce::String& type, const juce::var& payload = juce::var());

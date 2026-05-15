@@ -62,7 +62,11 @@ export default [
       '@typescript-eslint': tsPlugin
     },
     rules: {
-      'vue/multi-word-component-names': 'off',
+      // Multi-word names are best practice (avoids clashes with native HTML
+      // elements). Allow `App` for the conventional root-component name —
+      // re-enabling globally would force `TheApp`/`AppRoot` style renames
+      // that just add noise.
+      'vue/multi-word-component-names': ['error', { ignores: ['App'] }],
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',

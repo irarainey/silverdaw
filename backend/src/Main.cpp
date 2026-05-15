@@ -5,6 +5,8 @@
 #include <csignal>
 #include <iostream>
 #include <juce_events/juce_events.h>
+#include <string>
+#include <string_view>
 
 //==============================================================================
 // Jackdaw headless audio backend - entry point.
@@ -23,7 +25,9 @@
 
 namespace
 {
-constexpr int kBridgePort = 8765;
+constexpr int kDefaultBridgePort = 8765;
+constexpr int kMinBridgePort = 1024;
+constexpr int kMaxBridgePort = 65535;
 constexpr int kPlayheadUpdateHz = 60;
 
 std::atomic<bool> g_shouldQuit{false};
@@ -32,6 +36,86 @@ void onSignal(int /*sig*/)
 {
     g_shouldQuit.store(true);
     juce::MessageManager::getInstance()->stopDispatchLoop();
+}
+
+/**
+ * Parse an integer port from a string. Returns the parsed value on success,
+ * or `kDefaultBridgePort` on any failure (out of range / non-numeric /
+ * trailing garbage). A warning is emitted on stderr in the failure path so
+ * silent fallbacks remain debuggable.
+ */
+int parsePort(std::string_view value, std::string_view source)
+{
+    if (value.empty())
+    {
+        return kDefaultBridgePort;
+    }
+
+    int port = 0;
+    try
+    {
+        std::size_t consumed = 0;
+        port = std::stoi(std::string(value), &consumed);
+        if (consumed != value.size())
+        {
+            throw std::invalid_argument("trailing characters");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[main] invalid port from " << source << " (" << value << "): " << e.what()
+                  << "; using default " << kDefaultBridgePort << '\n';
+        return kDefaultBridgePort;
+    }
+
+    if (port < kMinBridgePort || port > kMaxBridgePort)
+    {
+        std::cerr << "[main] port " << port << " from " << source << " outside [" << kMinBridgePort << ", "
+                  << kMaxBridgePort << "]; using default " << kDefaultBridgePort << '\n';
+        return kDefaultBridgePort;
+    }
+
+    return port;
+}
+
+/**
+ * Resolve the bridge listen port. Precedence (highest first):
+ *   1. `--port <N>` or `--port=N` command-line argument
+ *   2. `JACKDAW_BRIDGE_PORT` environment variable
+ *   3. compiled-in default (`kDefaultBridgePort`)
+ *
+ * The Electron main process picks an unused loopback port and passes it
+ * via `--port` so multiple Jackdaw instances can run side-by-side without
+ * colliding on 8765.
+ */
+// `argv` is necessarily a C-style array — that's the only legal signature for
+// `main` and forwarded helpers. clang-tidy's modernize check doesn't model that.
+// NOLINTNEXTLINE(modernize-avoid-c-arrays,hicpp-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
+int resolveBridgePort(int argc, char* argv[])
+{
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string_view arg{argv[i]};
+        if (arg == "--port" && i + 1 < argc)
+        {
+            return parsePort(argv[i + 1], "--port");
+        }
+        constexpr std::string_view prefix = "--port=";
+        if (arg.size() > prefix.size() && arg.substr(0, prefix.size()) == prefix)
+        {
+            return parsePort(arg.substr(prefix.size()), "--port=");
+        }
+    }
+
+    // JUCE's wrapper is portable AND silences the MSVC "getenv is unsafe"
+    // deprecation noise without a per-translation-unit pragma.
+    const juce::String envValue = juce::SystemStats::getEnvironmentVariable("JACKDAW_BRIDGE_PORT", {});
+    if (envValue.isNotEmpty())
+    {
+        return parsePort(envValue.toStdString(), "JACKDAW_BRIDGE_PORT");
+    }
+
+    return kDefaultBridgePort;
 }
 
 /** Polls the audio engine and broadcasts PLAYHEAD_UPDATE while playing. */
@@ -174,11 +258,15 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, j
     }
 }
 
-int runBackend()
+// See note on `resolveBridgePort`: argv must remain a C-style array.
+// NOLINTNEXTLINE(modernize-avoid-c-arrays,hicpp-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
+int runBackend(int argc, char* argv[])
 {
     const juce::String banner = "Jackdaw Backend v0.1.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
                                 juce::SystemStats::getCpuVendor() + ")";
     std::cout << banner.toStdString() << '\n';
+
+    const int bridgePort = resolveBridgePort(argc, argv);
 
     // Initialises MessageManager, JUCE singletons, etc. Required even for headless apps.
     const juce::ScopedJuceInitialiser_GUI juceInit;
@@ -197,7 +285,7 @@ int runBackend()
     bridge.onMessage([&engine, &bridge](const juce::String& type, const juce::var& payload)
                      { dispatchBridgeMessage(type, payload, engine, bridge); });
 
-    if (!bridge.start(kBridgePort))
+    if (!bridge.start(bridgePort))
     {
         std::cerr << "[bridge] failed to start; exiting\n";
         return 1;
@@ -222,12 +310,13 @@ int runBackend()
 
 // The catch handler logs to std::cerr, which clang-tidy can't statically prove is
 // non-throwing; in practice cerr won't throw without exceptions() being enabled.
-// NOLINTNEXTLINE(bugprone-exception-escape)
-int main(int /*argc*/, char* /*argv*/[])
+// `argv` has to be a C-style array — only legal `main` signature.
+// NOLINTNEXTLINE(bugprone-exception-escape,modernize-avoid-c-arrays,hicpp-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
+int main(int argc, char* argv[])
 {
     try
     {
-        return runBackend();
+        return runBackend(argc, argv);
     }
     catch (const std::exception& e)
     {

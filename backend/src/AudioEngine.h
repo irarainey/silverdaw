@@ -62,7 +62,7 @@ class OffsetSource : public juce::PositionableAudioSource
             return;
         }
 
-        const juce::int64 startPos = position;
+        const juce::int64 startPos = position.load(std::memory_order_relaxed);
         const juce::int64 endPos = startPos + info.numSamples;
         const juce::int64 off = offsetSamples.load();
 
@@ -70,7 +70,7 @@ class OffsetSource : public juce::PositionableAudioSource
         {
             // Entirely before the offset: emit silence.
             info.clearActiveBufferRegion();
-            position = endPos;
+            position.store(endPos, std::memory_order_relaxed);
             return;
         }
 
@@ -79,7 +79,7 @@ class OffsetSource : public juce::PositionableAudioSource
             // Entirely past the offset: forward to the child.
             child->setNextReadPosition(startPos - off);
             child->getNextAudioBlock(info);
-            position = endPos;
+            position.store(endPos, std::memory_order_relaxed);
             return;
         }
 
@@ -97,12 +97,12 @@ class OffsetSource : public juce::PositionableAudioSource
         child->setNextReadPosition(0);
         child->getNextAudioBlock(audibleInfo);
 
-        position = endPos;
+        position.store(endPos, std::memory_order_relaxed);
     }
 
     void setNextReadPosition(juce::int64 newPosition) override
     {
-        position = newPosition;
+        position.store(newPosition, std::memory_order_relaxed);
         const juce::int64 off = offsetSamples.load();
         if (child != nullptr)
         {
@@ -112,7 +112,7 @@ class OffsetSource : public juce::PositionableAudioSource
 
     juce::int64 getNextReadPosition() const override
     {
-        return position;
+        return position.load(std::memory_order_relaxed);
     }
 
     juce::int64 getTotalLength() const override
@@ -127,7 +127,24 @@ class OffsetSource : public juce::PositionableAudioSource
 
   private:
     juce::PositionableAudioSource* child = nullptr;
-    juce::int64 position = 0;
+    // Read-position invariant
+    // ───────────────────────
+    // `position` is treated as the *next read position* in the parent
+    // (`PositionableAudioSource`) sample frame. It is only ever advanced
+    // by `getNextAudioBlock()` (called on the audio thread by JUCE's
+    // `BufferingAudioSource` / `AudioTransportSource` plumbing) and
+    // reset by `setNextReadPosition()` (called on the message thread
+    // when the engine seeks or rebuilds the source chain).
+    //
+    // Those two callers never run concurrently for the same source under
+    // normal JUCE usage, BUT `getNextReadPosition()` may be called from
+    // the message thread (e.g. metering, UI polling) while the audio
+    // thread is mid-block. Making `position` `std::atomic` makes that
+    // observation well-defined under the C++ memory model without
+    // requiring a coarse lock around the audio callback. Relaxed
+    // ordering is sufficient: there is no other state we need to
+    // synchronise with the position value.
+    std::atomic<juce::int64> position{0};
     std::atomic<juce::int64> offsetSamples{0};
 };
 

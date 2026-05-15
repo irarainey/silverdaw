@@ -1,42 +1,9 @@
 // Preload script - runs in an isolated context with access to Node APIs.
 // Expose only what the renderer needs via `contextBridge`.
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
+import type { AudioMetadata, OpenedAudioFile, UiPreferences } from '../shared/types'
 
-export interface OpenedAudioFile {
-  filePath: string
-  fileName: string
-  /** Raw file bytes; the renderer decodes via Web Audio API. */
-  data: ArrayBuffer
-}
-
-export interface AudioMetadata {
-  title?: string
-  artist?: string
-  albumArtist?: string
-  album?: string
-  year?: number
-  genre?: string[]
-  trackNumber?: number
-  trackTotal?: number
-  discNumber?: number
-  discTotal?: number
-  bpm?: number
-  key?: string
-  composer?: string
-  comment?: string
-  codec?: string
-  container?: string
-  bitrate?: number
-  lossless?: boolean
-  tagTypes?: string[]
-  /** First embedded picture as a data URL, if present and under the size cap. */
-  coverArtDataUrl?: string
-}
-
-export interface UiPreferences {
-  trackHeaderWidth: number
-  libraryPanelHeight: number
-}
+export type { AudioMetadata, OpenedAudioFile, UiPreferences }
 
 const api = {
   /** Send a menu action ID to the main process. */
@@ -57,6 +24,10 @@ const api = {
    * Read an audio file by absolute filesystem path. Used after an OS
    * drag-drop, where the path comes from `getPathForFile(file)`.
    * Resolves to `null` if the read fails.
+   *
+   * Main rejects any path it has not previously surfaced to the renderer
+   * via an open-dialog result or via `getPathForFile` — see the path
+   * allow-list in `frontend/src/main/index.ts`.
    */
   readAudioFile: (filePath: string): Promise<OpenedAudioFile | null> =>
     ipcRenderer.invoke('audio:readFile', filePath),
@@ -65,6 +36,8 @@ const api = {
    * a normalized subset of fields the renderer can display. Resolves to
    * `null` if the file can't be parsed (the library entry still works
    * with just the Web Audio technical info).
+   *
+   * Same allow-list rules as `readAudioFile` apply.
    */
   readAudioMetadata: (filePath: string): Promise<AudioMetadata | null> =>
     ipcRenderer.invoke('audio:readMetadata', filePath),
@@ -73,10 +46,20 @@ const api = {
    * Wraps Electron's `webUtils.getPathForFile` so the renderer can pass
    * the result to `readAudioFile`. Returns `''` if no path is available
    * (e.g. the drag came from inside the app rather than from the OS).
+   *
+   * The path is also registered with the main process so subsequent
+   * `readAudioFile` / `readAudioMetadata` calls will accept it.
    */
   getPathForFile: (file: File): string => {
     try {
-      return webUtils.getPathForFile(file)
+      const filePath = webUtils.getPathForFile(file)
+      if (filePath !== '') {
+        // Fire-and-forget: main side-effects the allow-list. If main hasn't
+        // registered the path by the time the renderer calls `readAudioFile`
+        // the read simply fails — the user can re-drop.
+        ipcRenderer.send('audio:registerDroppedPath', filePath)
+      }
+      return filePath
     } catch {
       return ''
     }
@@ -104,7 +87,14 @@ const api = {
    */
   setUiPreferences: (partial: Partial<UiPreferences>): void => {
     ipcRenderer.send('prefs:setUi', partial)
-  }
+  },
+  /**
+   * Resolve the WebSocket port the JUCE backend is listening on. The
+   * value is chosen by main at startup (env override + default) and the
+   * backend is launched with `--port <N>`, so all three processes agree
+   * on a single source of truth.
+   */
+  getBridgePort: (): Promise<number> => ipcRenderer.invoke('bridge:getPort')
 } as const
 
 contextBridge.exposeInMainWorld('jackdaw', api)

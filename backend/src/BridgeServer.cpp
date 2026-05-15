@@ -18,6 +18,16 @@ BridgeServer::~BridgeServer()
     stop();
 }
 
+void BridgeServer::onMessage(MessageHandler handler)
+{
+    // The handler is read without locking from `onIncoming` on the
+    // ixwebsocket I/O thread; mutating it after the server is running is a
+    // data race. Caller must register exactly once during construction,
+    // before `start()`.
+    jassert(!running.load());
+    messageHandler = std::move(handler);
+}
+
 bool BridgeServer::start(int port)
 {
     if (running.load())

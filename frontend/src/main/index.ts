@@ -1,40 +1,14 @@
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, extname, join, resolve as pathResolve } from 'node:path'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
+import type { AudioMetadata } from '../shared/types'
 
 // ─── Audio metadata ─────────────────────────────────────────────────────────
-// Normalized shape returned over IPC. All fields are optional because
-// different containers / tag versions populate different subsets.
-
-export interface AudioMetadata {
-  title?: string
-  artist?: string
-  albumArtist?: string
-  album?: string
-  year?: number
-  genre?: string[]
-  trackNumber?: number
-  trackTotal?: number
-  discNumber?: number
-  discTotal?: number
-  bpm?: number
-  key?: string
-  composer?: string
-  comment?: string
-  /** Codec name, e.g. `'MPEG 1 Layer 3'`, `'FLAC'`, `'PCM'`. */
-  codec?: string
-  /** Container format, e.g. `'MPEG'`, `'FLAC'`, `'WAVE'`. */
-  container?: string
-  /** Average bitrate in bits per second. */
-  bitrate?: number
-  lossless?: boolean
-  /** Tag types found, e.g. `['ID3v2.3']`. */
-  tagTypes?: string[]
-  /** First embedded picture as a data URL, if present and under the size cap. */
-  coverArtDataUrl?: string
-}
+// `AudioMetadata` lives in `src/shared/types.ts` and is shared with preload +
+// renderer. The helpers below take a `music-metadata` parse result and emit
+// the normalised wire shape.
 
 /** Drop embedded pictures larger than this so we don't bloat the Pinia store. */
 const MAX_COVER_ART_BYTES = 2 * 1024 * 1024
@@ -93,9 +67,77 @@ const COLOUR_FG = '#d4d4d8' // zinc-300
 // path-validation guard on `audio:readFile` / `audio:readMetadata`. Keep in
 // sync with the JUCE backend's supported formats.
 const AUDIO_FILE_EXTENSIONS = ['wav', 'mp3', 'flac', 'aiff', 'aif', 'ogg', 'm4a'] as const
+const AUDIO_FILE_EXTENSIONS_SET: ReadonlySet<string> = new Set<string>(AUDIO_FILE_EXTENSIONS)
+
+/**
+ * Whitelist of absolute filesystem paths the renderer is allowed to read via
+ * `audio:readFile` / `audio:readMetadata`. Populated when main hands a path
+ * to the renderer (open-dialog result) or when the renderer reports a path
+ * obtained from an OS drag-drop via `webUtils.getPathForFile` through the
+ * `audio:registerDroppedPath` IPC.
+ *
+ * Without this guard a compromised renderer could read any file the main
+ * process can — see FE-004 in the security review.
+ */
+const issuedAudioPaths: Set<string> = new Set<string>()
+
+/** Normalise to an absolute path so allow-list membership is canonical. */
+function canonicalisePath(p: string): string {
+  return pathResolve(p)
+}
+
+/** Add a path to the allow-list using its canonical absolute form. */
+function registerIssuedPath(filePath: string): void {
+  if (typeof filePath !== 'string' || filePath === '') return
+  issuedAudioPaths.add(canonicalisePath(filePath))
+}
+
+/**
+ * True if `filePath` is on the allow-list AND has an accepted audio
+ * extension. The extension check is belt-and-braces: every path that
+ * makes it onto the allow-list has already passed the dialog filter or
+ * a drag-drop from the OS, but defence-in-depth is cheap here.
+ */
+function isAllowedAudioPath(filePath: unknown): filePath is string {
+  if (typeof filePath !== 'string' || filePath === '') return false
+  const ext = extname(filePath).replace(/^\./, '').toLowerCase()
+  if (!AUDIO_FILE_EXTENSIONS_SET.has(ext)) return false
+  return issuedAudioPaths.has(canonicalisePath(filePath))
+}
 
 let backendProcess: ChildProcess | null = null
 let mainWindow: BrowserWindow | null = null
+
+// ─── Backend bridge port ────────────────────────────────────────────────────
+// The JUCE backend listens on `ws://127.0.0.1:<bridgePort>`. The port is
+// resolvable via `JACKDAW_BRIDGE_PORT` so multiple Jackdaw instances (or a
+// stand-alone backend used for debugging) can avoid colliding on 8765.
+// Main passes the same value to the backend via `--port` AND exposes it to
+// the renderer through `bridge:getPort`, so all three processes agree on
+// one canonical source of truth.
+const DEFAULT_BRIDGE_PORT = 8765
+const MIN_BRIDGE_PORT = 1024
+const MAX_BRIDGE_PORT = 65535
+
+function resolveBridgePort(): number {
+  const raw = process.env['JACKDAW_BRIDGE_PORT']
+  if (raw === undefined || raw === '') return DEFAULT_BRIDGE_PORT
+  const parsed = Number.parseInt(raw, 10)
+  if (
+    !Number.isFinite(parsed) ||
+    !Number.isInteger(parsed) ||
+    parsed < MIN_BRIDGE_PORT ||
+    parsed > MAX_BRIDGE_PORT
+  ) {
+    console.warn(
+      `[main] JACKDAW_BRIDGE_PORT=${raw} is not a valid port in [${MIN_BRIDGE_PORT}, ${MAX_BRIDGE_PORT}]; using default ${DEFAULT_BRIDGE_PORT}`
+    )
+    return DEFAULT_BRIDGE_PORT
+  }
+  return parsed
+}
+
+const bridgePort = resolveBridgePort()
 
 // ─── Persisted preferences (window state + UI panel sizes) ──────────────────
 // Stored as JSON in `<userData>/preferences.json`. Writes are debounced so a
@@ -238,7 +280,7 @@ function startBackend(): void {
     exeName
   )
 
-  backendProcess = spawn(exePath, [], { stdio: 'inherit' })
+  backendProcess = spawn(exePath, ['--port', String(bridgePort)], { stdio: 'inherit' })
 
   backendProcess.on('exit', (code) => {
     console.log(`[backend] exited with code ${code}`)
@@ -448,6 +490,11 @@ app.whenReady().then(async () => {
 
   ipcMain.on('menu:action', (_evt, action: string) => handleMenuAction(action))
 
+  // Tell the renderer which port the JUCE bridge is listening on. Resolved
+  // once at main-process start (env var or default) and shared with the
+  // spawned backend via `--port`.
+  ipcMain.handle('bridge:getPort', () => bridgePort)
+
   // Open an audio file via the OS dialog and stream its bytes back to the renderer.
   // Returns null if the user cancels.
   ipcMain.handle('audio:open', async () => {
@@ -462,6 +509,9 @@ app.whenReady().then(async () => {
     const buf = await readFile(filePath)
     // Copy into a plain ArrayBuffer so it survives the IPC boundary cleanly.
     const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+    // Whitelist this path so the renderer can re-read it later via
+    // `audio:readFile` (e.g. when the user re-imports the same file).
+    registerIssuedPath(filePath)
     return { filePath, fileName: basename(filePath), data }
   })
 
@@ -480,6 +530,7 @@ app.whenReady().then(async () => {
       try {
         const buf = await readFile(filePath)
         const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+        registerIssuedPath(filePath)
         out.push({ filePath, fileName: basename(filePath), data })
       } catch (err) {
         console.error('[audio:openMany] read failed for', filePath, err)
@@ -488,9 +539,26 @@ app.whenReady().then(async () => {
     return out
   })
 
+  // Renderer reports a path it obtained from an OS drag-drop via
+  // `webUtils.getPathForFile`. The path is added to the allow-list so the
+  // follow-up `audio:readFile` / `audio:readMetadata` calls will pass the
+  // FE-004 guard. We intentionally do NO further validation here: only the
+  // OS shell can have populated this string (the renderer can't fabricate
+  // a `File` with an arbitrary path), and even if it could, the actual
+  // read still has to satisfy the extension allow-list below.
+  ipcMain.on('audio:registerDroppedPath', (_evt, filePath: unknown) => {
+    if (typeof filePath !== 'string') return
+    registerIssuedPath(filePath)
+  })
+
   // Read an audio file by absolute path (e.g. one obtained from an OS
-  // drag-drop via `webUtils.getPathForFile`). Returns null on failure.
-  ipcMain.handle('audio:readFile', async (_evt, filePath: string) => {
+  // drag-drop via `webUtils.getPathForFile`). Returns null on failure or
+  // when the path is not on the allow-list.
+  ipcMain.handle('audio:readFile', async (_evt, filePath: unknown) => {
+    if (!isAllowedAudioPath(filePath)) {
+      console.warn('[audio:readFile] rejected path not on allow-list:', filePath)
+      return null
+    }
     try {
       const buf = await readFile(filePath)
       const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
@@ -505,7 +573,11 @@ app.whenReady().then(async () => {
   // a normalized subset of fields the renderer can display in the library
   // card and tooltip. Resolves to `null` if parsing fails (the import still
   // succeeds with only the technical info from Web Audio).
-  ipcMain.handle('audio:readMetadata', async (_evt, filePath: string) => {
+  ipcMain.handle('audio:readMetadata', async (_evt, filePath: unknown) => {
+    if (!isAllowedAudioPath(filePath)) {
+      console.warn('[audio:readMetadata] rejected path not on allow-list:', filePath)
+      return null
+    }
     try {
       const meta = await parseFile(filePath, { duration: false, skipCovers: false })
       return normalizeMetadata(meta)
