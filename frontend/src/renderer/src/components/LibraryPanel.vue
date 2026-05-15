@@ -239,84 +239,141 @@ function onResizePointerUp(): void {
 </script>
 
 <template>
-    <section class="relative flex shrink-0 flex-col border-t border-zinc-800 bg-zinc-900 text-zinc-100"
-        :style="{ height: height + 'px' }" @dragenter="onPanelDragEnter" @dragover="onPanelDragOver"
-        @dragleave="onPanelDragLeave" @drop="onPanelDrop">
-        <!-- Top resize handle. The visible line is 1px; the hit area is 6px tall
+  <section
+    class="relative flex shrink-0 flex-col border-t border-zinc-800 bg-zinc-900 text-zinc-100"
+    :style="{ height: height + 'px' }"
+    @dragenter="onPanelDragEnter"
+    @dragover="onPanelDragOver"
+    @dragleave="onPanelDragLeave"
+    @drop="onPanelDrop"
+  >
+    <!-- Top resize handle. The visible line is 1px; the hit area is 6px tall
              so it's easy to grab. The cursor changes to row-resize on hover. -->
-        <div class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize" title="Drag to resize"
-            @pointerdown="onResizePointerDown" />
+    <div
+      class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize"
+      title="Drag to resize"
+      @pointerdown="onResizePointerDown"
+    />
 
-        <!-- Header. -->
-        <header
-            class="flex h-8 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-3 text-xs uppercase tracking-wide text-zinc-400">
-            <div class="flex items-center gap-2">
-                <span class="font-semibold text-zinc-200">Library</span>
-                <span class="text-zinc-500">{{ itemCount }} {{ itemCount === 1 ? 'item' : 'items' }}</span>
+    <!-- Header. -->
+    <header
+      class="flex h-8 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-3 text-xs uppercase tracking-wide text-zinc-400"
+    >
+      <div class="flex items-center gap-2">
+        <span class="font-semibold text-zinc-200">Library</span>
+        <span class="text-zinc-500">{{ itemCount }} {{ itemCount === 1 ? 'item' : 'items' }}</span>
+      </div>
+      <button
+        type="button"
+        class="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+        title="Import audio files into the library"
+        @click="onImportClick"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          class="h-3.5 w-3.5"
+          aria-hidden="true"
+        >
+          <path d="M12 3v10.59l3.3-3.3 1.4 1.42L12 17.4l-4.7-5.69 1.4-1.42 3.3 3.3V3h2zM5 19h14v2H5v-2z" />
+        </svg>
+        <span>Import</span>
+      </button>
+    </header>
+
+    <!-- Body. Either an empty-state hint or a horizontal-scrolling row of cards. -->
+    <div class="relative flex-1 overflow-auto p-2">
+      <div
+        v-if="library.items.length === 0"
+        class="flex h-full w-full items-center justify-center text-xs text-zinc-500"
+      >
+        Drop audio files here, or click <span class="mx-1 font-medium text-zinc-300">Import</span> to add them.
+      </div>
+      <div
+        v-else
+        class="flex flex-wrap gap-2"
+      >
+        <div
+          v-for="item in library.items"
+          :key="item.id"
+          draggable="true"
+          class="library-item group relative flex h-20 w-48 shrink-0 cursor-grab select-none items-stretch overflow-hidden rounded border border-zinc-700 bg-zinc-950/60 text-left transition-colors hover:border-zinc-500 hover:bg-zinc-950 active:cursor-grabbing"
+          :title="buildTooltip(item)"
+          @dragstart="(e) => onItemDragStart(e, item)"
+          @dragend="onItemDragEnd"
+        >
+          <!-- Cover art thumbnail (or fallback) on the left edge. -->
+          <div
+            class="flex h-full w-15 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
+          >
+            <img
+              v-if="item.metadata?.coverArtDataUrl"
+              :src="item.metadata.coverArtDataUrl"
+              alt=""
+              class="h-full w-full object-cover"
+              draggable="false"
+            >
+            <svg
+              v-else
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              class="h-6 w-6 text-zinc-700"
+              aria-hidden="true"
+            >
+              <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
+            </svg>
+          </div>
+          <!-- Text body. -->
+          <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">
+            <div class="min-w-0 truncate text-xs font-medium text-zinc-100">
+              {{ displayTitle(item) }}
             </div>
-            <button type="button"
-                class="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-                title="Import audio files into the library" @click="onImportClick">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-3.5 w-3.5"
-                    aria-hidden="true">
-                    <path d="M12 3v10.59l3.3-3.3 1.4 1.42L12 17.4l-4.7-5.69 1.4-1.42 3.3 3.3V3h2zM5 19h14v2H5v-2z" />
+            <div
+              v-if="displayArtist(item)"
+              class="min-w-0 truncate text-[11px] text-zinc-400"
+            >
+              {{ displayArtist(item) }}
+            </div>
+            <div class="mt-auto flex items-center justify-between text-[10px] text-zinc-500">
+              <span class="font-mono tabular-nums">{{ formatDuration(item.durationMs) }}</span>
+              <button
+                type="button"
+                tabindex="-1"
+                :disabled="library.isItemInUse(item.id)"
+                class="rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:text-zinc-700"
+                :title="library.isItemInUse(item.id) ? 'In use \u2014 remove the clip from the track first' : 'Remove from library'"
+                @click="library.removeItem(item.id)"
+                @mousedown.stop
+                @dragstart.stop.prevent
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="h-3 w-3"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M18.3 5.71L12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.3 19.71 2.88 18.3 9.17 12 2.88 5.71 4.3 4.29 10.59 10.6l6.3-6.3z"
+                  />
                 </svg>
-                <span>Import</span>
-            </button>
-        </header>
-
-        <!-- Body. Either an empty-state hint or a horizontal-scrolling row of cards. -->
-        <div class="relative flex-1 overflow-auto p-2">
-            <div v-if="library.items.length === 0"
-                class="flex h-full w-full items-center justify-center text-xs text-zinc-500">
-                Drop audio files here, or click <span class="mx-1 font-medium text-zinc-300">Import</span> to add them.
+              </button>
             </div>
-            <div v-else class="flex flex-wrap gap-2">
-                <div v-for="item in library.items" :key="item.id" draggable="true"
-                    class="library-item group relative flex h-20 w-48 shrink-0 cursor-grab select-none items-stretch overflow-hidden rounded border border-zinc-700 bg-zinc-950/60 text-left transition-colors hover:border-zinc-500 hover:bg-zinc-950 active:cursor-grabbing"
-                    :title="buildTooltip(item)" @dragstart="(e) => onItemDragStart(e, item)" @dragend="onItemDragEnd">
-                    <!-- Cover art thumbnail (or fallback) on the left edge. -->
-                    <div
-                        class="flex h-full w-15 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900">
-                        <img v-if="item.metadata?.coverArtDataUrl" :src="item.metadata.coverArtDataUrl" alt=""
-                            class="h-full w-full object-cover" draggable="false" />
-                        <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
-                            class="h-6 w-6 text-zinc-700" aria-hidden="true">
-                            <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
-                        </svg>
-                    </div>
-                    <!-- Text body. -->
-                    <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">
-                        <div class="min-w-0 truncate text-xs font-medium text-zinc-100">
-                            {{ displayTitle(item) }}
-                        </div>
-                        <div v-if="displayArtist(item)" class="min-w-0 truncate text-[11px] text-zinc-400">
-                            {{ displayArtist(item) }}
-                        </div>
-                        <div class="mt-auto flex items-center justify-between text-[10px] text-zinc-500">
-                            <span class="font-mono tabular-nums">{{ formatDuration(item.durationMs) }}</span>
-                            <button type="button" tabindex="-1" :disabled="library.isItemInUse(item.id)"
-                                class="rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:text-zinc-700"
-                                :title="library.isItemInUse(item.id) ? 'In use \u2014 remove the clip from the track first' : 'Remove from library'"
-                                @click="library.removeItem(item.id)" @mousedown.stop @dragstart.stop.prevent>
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
-                                    class="h-3 w-3" aria-hidden="true">
-                                    <path
-                                        d="M18.3 5.71L12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.3 19.71 2.88 18.3 9.17 12 2.88 5.71 4.3 4.29 10.59 10.6l6.3-6.3z" />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- OS-drag overlay — blue dashed outline + tint when dragging files in. -->
-            <div v-if="isDragOver"
-                class="pointer-events-none absolute inset-1 flex items-center justify-center rounded border-2 border-dashed border-blue-500 bg-blue-500/10 text-sm font-medium text-blue-200">
-                Drop audio files to add them to the library
-            </div>
+          </div>
         </div>
-    </section>
+      </div>
+
+      <!-- OS-drag overlay — blue dashed outline + tint when dragging files in. -->
+      <div
+        v-if="isDragOver"
+        class="pointer-events-none absolute inset-1 flex items-center justify-center rounded border-2 border-dashed border-blue-500 bg-blue-500/10 text-sm font-medium text-blue-200"
+      >
+        Drop audio files to add them to the library
+      </div>
+    </div>
+  </section>
 </template>
 
 <style scoped>

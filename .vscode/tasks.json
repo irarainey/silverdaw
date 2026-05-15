@@ -99,6 +99,25 @@
       "problemMatcher": [],
       "detail": "Clean backend build artefacts."
     },
+    {
+      "label": "backend: lint",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
+        "pwsh -NoProfile -ExecutionPolicy Bypass -File '${workspaceFolder}/scripts/Invoke-ClangTidy.ps1'"
+      ],
+      "problemMatcher": ["$gcc"],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "always"
+      },
+      "detail": "Run clang-tidy over backend C++ sources (requires backend: configure first)."
+    },
 
     // ─── Frontend (Electron + Vite + Vue) ────────────────────────────────
     {

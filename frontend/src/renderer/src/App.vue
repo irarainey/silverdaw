@@ -54,7 +54,10 @@ function handleMenuAction(action: string): void {
       <TimelineView />
     </main>
 
-    <LibraryPanel :height="ui.libraryPanelHeight" @update:height="ui.setLibraryPanelHeight" />
+    <LibraryPanel
+      :height="ui.libraryPanelHeight"
+      @update:height="ui.setLibraryPanelHeight"
+    />
 
     <StatusBar />
   </div>

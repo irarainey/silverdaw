@@ -21,7 +21,9 @@ BridgeServer::~BridgeServer()
 bool BridgeServer::start(int port)
 {
     if (running.load())
+    {
         return true;
+    }
 
     // On Windows this calls WSAStartup; on POSIX it is a no-op. Required
     // before any socket(2) / setsockopt(2) call, otherwise listen() fails
@@ -32,7 +34,7 @@ bool BridgeServer::start(int port)
     server = std::make_unique<ix::WebSocketServer>(port);
 
     server->setOnClientMessageCallback(
-        [this](std::shared_ptr<ix::ConnectionState> /*state*/, ix::WebSocket& webSocket,
+        [this](const std::shared_ptr<ix::ConnectionState>& /*state*/, ix::WebSocket& webSocket,
                const ix::WebSocketMessagePtr& msg)
         {
             switch (msg->type)
@@ -44,9 +46,13 @@ bool BridgeServer::start(int port)
                     // Find the shared_ptr that backs this WebSocket so we can hold
                     // a reference for `broadcast()`. ixwebsocket exposes this via
                     // `getClients()` on the server.
-                    for (auto& c : server->getClients())
+                    for (const auto& c : server->getClients())
+                    {
                         if (c.get() == &webSocket)
+                        {
                             clients.insert(c);
+                        }
+                    }
                 }
                 // Hello message so the client knows we're up.
                 auto* obj = new juce::DynamicObject();
@@ -61,9 +67,13 @@ bool BridgeServer::start(int port)
                 for (auto it = clients.begin(); it != clients.end();)
                 {
                     if (it->get() == &webSocket)
+                    {
                         it = clients.erase(it);
+                    }
                     else
+                    {
                         ++it;
+                    }
                 }
                 break;
             }
@@ -99,7 +109,9 @@ bool BridgeServer::start(int port)
 void BridgeServer::stop()
 {
     if (!running.load())
+    {
         return;
+    }
     running.store(false);
 
     {
@@ -122,39 +134,57 @@ void BridgeServer::onIncoming(const std::string& raw)
     // JUCE message thread so the AudioEngine isn't accessed from multiple threads.
     juce::var parsed = juce::JSON::parse(juce::String(raw));
     if (!parsed.isObject())
+    {
         return;
+    }
 
     juce::String type = parsed.getProperty("type", juce::var()).toString();
     juce::var payload = parsed.getProperty("payload", juce::var());
 
     if (type.isEmpty())
+    {
         return;
+    }
 
     auto handler = messageHandler; // copy for safe capture
     juce::MessageManager::callAsync(
         [handler, type, payload]
         {
             if (handler)
+            {
                 handler(type, payload);
+            }
         });
 }
 
+// `type` and `payload` differ semantically (envelope-type tag vs. arbitrary
+// JSON body); the (type, payload) order is the wire-protocol convention
+// shared with the renderer and intentionally fixed.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
 {
     if (!running.load())
+    {
         return;
+    }
 
     auto* envelope = new juce::DynamicObject();
     envelope->setProperty("type", type);
     if (!payload.isVoid())
+    {
         envelope->setProperty("payload", payload);
+    }
 
     const auto serialised = juce::JSON::toString(juce::var(envelope), true).toStdString();
 
     std::lock_guard<std::mutex> lock(clientsMutex);
-    for (auto& client : clients)
+    for (const auto& client : clients)
+    {
         if (client != nullptr)
+        {
             client->send(serialised);
+        }
+    }
 }
 
 std::size_t BridgeServer::getClientCount() const

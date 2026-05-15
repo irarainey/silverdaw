@@ -106,34 +106,5 @@
   "files.watcherExclude": {
     "**/node_modules/**": true,
     "**/backend/build/**": true
-  },
-
-  // ─── Spelling ────────────────────────────────────────────────────────────
-  "cSpell.words": [
-    "Allman",
-    "BTrack",
-    "bugprone",
-    "Camelot",
-    "clangd",
-    "cplusplus",
-    "Demucs",
-    "DirectML",
-    "electron-vite",
-    "fcolor",
-    "htdemucs",
-    "Jackdaw",
-    "JUCE",
-    "KeyFinder",
-    "libsamplerate",
-    "Pinia",
-    "PixiJS",
-    "pnpm",
-    "Rubberband",
-    "sidechain",
-    "Tailwind",
-    "uWebSockets",
-    "ValueTree",
-    "Volar",
-    "winget"
-  ]
+  }
 }

@@ -41,13 +41,17 @@ class OffsetSource : public juce::PositionableAudioSource
     void prepareToPlay(int blockSize, double sampleRate) override
     {
         if (child != nullptr)
+        {
             child->prepareToPlay(blockSize, sampleRate);
+        }
     }
 
     void releaseResources() override
     {
         if (child != nullptr)
+        {
             child->releaseResources();
+        }
     }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
@@ -101,7 +105,9 @@ class OffsetSource : public juce::PositionableAudioSource
         position = newPosition;
         const juce::int64 off = offsetSamples.load();
         if (child != nullptr)
+        {
             child->setNextReadPosition(newPosition >= off ? newPosition - off : 0);
+        }
     }
 
     juce::int64 getNextReadPosition() const override

@@ -1358,53 +1358,84 @@ function onHeaderResizePointerUp(e: PointerEvent): void {
 </script>
 
 <template>
-    <div class="relative h-full w-full overflow-hidden">
-        <div ref="host" class="absolute inset-0" />
+  <div class="relative h-full w-full overflow-hidden">
+    <div
+      ref="host"
+      class="absolute inset-0"
+    />
 
-        <!-- HTML overlay for track headers (name + M/S/X buttons). -->
-        <TrackHeaderPanel :scroll-y="scrollY" />
+    <!-- HTML overlay for track headers (name + M/S/X buttons). -->
+    <TrackHeaderPanel :scroll-y="scrollY" />
 
-        <!-- Vertical divider drag handle. Sits on top of the column boundary
+    <!-- Vertical divider drag handle. Sits on top of the column boundary
              between the track-header panel and the timeline canvas. The
              visible line is 1px (drawn by Pixi); this hit area is 6px wide
              and straddles the seam so it's easy to grab. -->
-        <div class="absolute inset-y-0 z-20 w-1.5 cursor-col-resize" :style="{ left: (headerWidth() - 3) + 'px' }"
-            title="Drag to resize track header column" @pointerdown="onHeaderResizePointerDown"
-            @pointermove="onHeaderResizePointerMove" @pointerup="onHeaderResizePointerUp"
-            @pointercancel="onHeaderResizePointerUp" />
+    <div
+      class="absolute inset-y-0 z-20 w-1.5 cursor-col-resize"
+      :style="{ left: (headerWidth() - 3) + 'px' }"
+      title="Drag to resize track header column"
+      @pointerdown="onHeaderResizePointerDown"
+      @pointermove="onHeaderResizePointerMove"
+      @pointerup="onHeaderResizePointerUp"
+      @pointercancel="onHeaderResizePointerUp"
+    />
 
-        <!-- Vertical scrollbar lane. Spans the full canvas height (over the
+    <!-- Vertical scrollbar lane. Spans the full canvas height (over the
              ruler row at the top and over the corner above the horizontal
              scrollbar at the bottom) so the thumb travels the entire canvas.
              The thumb only becomes interactive when there's overflow
              (`maxScrollY > 0`). -->
-        <div ref="vScrollbarTrack" class="absolute inset-y-0 right-0 bg-zinc-900/80"
-            :class="maxScrollY > 0 ? 'cursor-pointer' : ''" :style="{
-                width: SCROLLBAR_WIDTH + 'px'
-            }" @pointerdown="onVTrackPointerDown">
-            <div v-if="maxScrollY > 0"
-                class="absolute left-1 w-2 cursor-grab rounded-full bg-zinc-500 hover:bg-zinc-400 active:cursor-grabbing active:bg-zinc-300"
-                :style="{ top: vThumbTopPx + 'px', height: vThumbHeightPx + 'px' }" @pointerdown="onVThumbPointerDown"
-                @pointermove="onVThumbPointerMove" @pointerup="onVThumbPointerUp" @pointercancel="onVThumbPointerUp" />
-        </div>
+    <div
+      ref="vScrollbarTrack"
+      class="absolute inset-y-0 right-0 bg-zinc-900/80"
+      :class="maxScrollY > 0 ? 'cursor-pointer' : ''"
+      :style="{
+        width: SCROLLBAR_WIDTH + 'px'
+      }"
+      @pointerdown="onVTrackPointerDown"
+    >
+      <div
+        v-if="maxScrollY > 0"
+        class="absolute left-1 w-2 cursor-grab rounded-full bg-zinc-500 hover:bg-zinc-400 active:cursor-grabbing active:bg-zinc-300"
+        :style="{ top: vThumbTopPx + 'px', height: vThumbHeightPx + 'px' }"
+        @pointerdown="onVThumbPointerDown"
+        @pointermove="onVThumbPointerMove"
+        @pointerup="onVThumbPointerUp"
+        @pointercancel="onVThumbPointerUp"
+      />
+    </div>
 
-        <!-- Horizontal scrollbar. Sits above the transport bar (which lives
+    <!-- Horizontal scrollbar. Sits above the transport bar (which lives
              outside this component) and to the right of the track header
              column. Only rendered when content overflows the viewport. -->
-        <div v-if="showScrollbar" ref="scrollbarTrack" class="absolute bottom-0 cursor-pointer bg-zinc-900/80" :style="{
-            left: headerWidth() + 'px',
-            right: SCROLLBAR_WIDTH + 'px',
-            height: SCROLLBAR_HEIGHT + 'px'
-        }" @pointerdown="onTrackPointerDown">
-            <div class="absolute top-1 h-2 cursor-grab rounded-full bg-zinc-500 hover:bg-zinc-400 active:cursor-grabbing active:bg-zinc-300"
-                :style="{ left: thumbLeftPx + 'px', width: thumbWidthPx + 'px' }" @pointerdown="onThumbPointerDown"
-                @pointermove="onThumbPointerMove" @pointerup="onThumbPointerUp" @pointercancel="onThumbPointerUp" />
-        </div>
-
-        <!-- Empty state hint. -->
-        <div v-if="project.tracks.length === 0"
-            class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-zinc-600">
-            Add a track to start
-        </div>
+    <div
+      v-if="showScrollbar"
+      ref="scrollbarTrack"
+      class="absolute bottom-0 cursor-pointer bg-zinc-900/80"
+      :style="{
+        left: headerWidth() + 'px',
+        right: SCROLLBAR_WIDTH + 'px',
+        height: SCROLLBAR_HEIGHT + 'px'
+      }"
+      @pointerdown="onTrackPointerDown"
+    >
+      <div
+        class="absolute top-1 h-2 cursor-grab rounded-full bg-zinc-500 hover:bg-zinc-400 active:cursor-grabbing active:bg-zinc-300"
+        :style="{ left: thumbLeftPx + 'px', width: thumbWidthPx + 'px' }"
+        @pointerdown="onThumbPointerDown"
+        @pointermove="onThumbPointerMove"
+        @pointerup="onThumbPointerUp"
+        @pointercancel="onThumbPointerUp"
+      />
     </div>
+
+    <!-- Empty state hint. -->
+    <div
+      v-if="project.tracks.length === 0"
+      class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-zinc-600"
+    >
+      Add a track to start
+    </div>
+  </div>
 </template>

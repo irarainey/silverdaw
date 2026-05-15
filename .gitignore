@@ -32,3 +32,5 @@ cmake-build-*/
 
 # Electron-vite
 .electron-vite/
+
+lint-output.txt

@@ -1,5 +1,7 @@
 #include "AudioEngine.h"
 
+#include <algorithm>
+
 namespace jackdaw
 {
 
@@ -47,11 +49,15 @@ void AudioEngine::shutdown()
 bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePath)
 {
     if (!filePath.existsAsFile())
+    {
         return false;
+    }
 
     auto* reader = formatManager.createReaderFor(filePath);
     if (reader == nullptr)
+    {
         return false;
+    }
 
     auto track = std::make_unique<Track>();
     track->sampleRate = reader->sampleRate;
@@ -88,7 +94,9 @@ bool AudioEngine::removeTrack(const juce::String& trackId)
 {
     auto it = tracks.find(trackId);
     if (it == tracks.end())
+    {
         return false;
+    }
 
     // Remove from mixer first so the audio thread stops pulling samples,
     // then release the file reader by clearing the transport's source.
@@ -102,25 +110,37 @@ bool AudioEngine::setTrackGain(const juce::String& trackId, float gain)
 {
     auto it = tracks.find(trackId);
     if (it == tracks.end())
+    {
         return false;
+    }
 
     if (it->second->transportSource != nullptr)
-        it->second->transportSource->setGain(juce::jlimit(0.0f, 4.0f, gain));
+    {
+        it->second->transportSource->setGain(juce::jlimit(0.0F, 4.0F, gain));
+    }
     return true;
 }
 
 void AudioEngine::play()
 {
     for (auto& [id, track] : tracks)
+    {
         if (track->transportSource != nullptr)
+        {
             track->transportSource->start();
+        }
+    }
 }
 
 void AudioEngine::pause()
 {
     for (auto& [id, track] : tracks)
+    {
         if (track->transportSource != nullptr)
+        {
             track->transportSource->stop();
+        }
+    }
 }
 
 void AudioEngine::stop()
@@ -139,22 +159,30 @@ void AudioEngine::setPositionMs(double ms)
 {
     const double seconds = juce::jmax(0.0, ms / 1000.0);
     for (auto& [id, track] : tracks)
+    {
         if (track->transportSource != nullptr)
+        {
             track->transportSource->setPosition(seconds);
+        }
+    }
 }
 
 bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
 {
     auto it = tracks.find(trackId);
     if (it == tracks.end())
+    {
         return false;
+    }
 
     auto& track = it->second;
     if (track->offsetSource == nullptr || track->transportSource == nullptr)
+    {
         return false;
+    }
 
     const double clampedMs = juce::jmax(0.0, offsetMs);
-    const juce::int64 newOffsetSamples = (juce::int64)(clampedMs * track->sampleRate / 1000.0);
+    const auto newOffsetSamples = static_cast<juce::int64>(clampedMs * track->sampleRate / 1000.0);
     track->offsetSource->setOffsetSamples(newOffsetSamples);
 
     // Fully rebuild the transport's source chain so the read-ahead
@@ -166,7 +194,9 @@ bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
     const double pos = track->transportSource->getCurrentPosition();
     const bool wasPlaying = track->transportSource->isPlaying();
     if (wasPlaying)
+    {
         track->transportSource->stop();
+    }
 
     track->transportSource->setSource(nullptr, 0, nullptr);
     track->transportSource->setSource(track->offsetSource.get(), 32768, &readAheadThread, track->sampleRate,
@@ -174,23 +204,29 @@ bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
 
     track->transportSource->setPosition(pos);
     if (wasPlaying)
+    {
         track->transportSource->start();
+    }
     return true;
 }
 
 bool AudioEngine::isPlaying() const
 {
-    for (const auto& [id, track] : tracks)
-        if (track->transportSource != nullptr && track->transportSource->isPlaying())
-            return true;
-    return false;
+    return std::any_of(tracks.begin(), tracks.end(),
+                       [](const auto& entry)
+                       {
+                           const auto& transport = entry.second->transportSource;
+                           return transport != nullptr && transport->isPlaying();
+                       });
 }
 
 double AudioEngine::getPositionMs() const
 {
     // Use the first track as master clock; all tracks start at t=0 in Phase 1.
     if (tracks.empty())
+    {
         return 0.0;
+    }
 
     const auto& first = tracks.begin()->second;
     return first->transportSource != nullptr ? first->transportSource->getCurrentPosition() * 1000.0 : 0.0;

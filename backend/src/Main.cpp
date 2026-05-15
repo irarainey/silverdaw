@@ -62,9 +62,112 @@ class PlayheadEmitter : public juce::Timer
     jackdaw::BridgeServer& bridge;
     double lastPosMs = -1.0;
 };
-} // namespace
 
-int main(int /*argc*/, char* /*argv*/[])
+void handleClipAdd(const juce::var& payload, jackdaw::AudioEngine& engine, jackdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    if (trackId.isEmpty() || filePath.isEmpty())
+    {
+        return;
+    }
+
+    const bool ok = engine.addClip(trackId, juce::File(filePath));
+    if (ok)
+    {
+        // Apply the requested timeline offset so the clip plays back at the
+        // position the frontend chose (e.g. at the current playhead).
+        const double positionMs = static_cast<double>(payload.getProperty("positionMs", 0.0));
+        if (positionMs > 0.0)
+        {
+            engine.setClipOffsetMs(trackId, positionMs);
+        }
+    }
+    auto* p = new juce::DynamicObject();
+    p->setProperty("trackId", trackId);
+    p->setProperty("filePath", filePath);
+    p->setProperty("ok", ok);
+    bridge.broadcast(ok ? "CLIP_ADDED" : "CLIP_ADD_FAILED", juce::var(p));
+}
+
+void handleClipMove(const juce::var& payload, jackdaw::AudioEngine& engine)
+{
+    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    if (trackId.isEmpty())
+    {
+        return;
+    }
+    const double positionMs = static_cast<double>(payload.getProperty("positionMs", 0.0));
+    engine.setClipOffsetMs(trackId, positionMs);
+}
+
+void handleTrackRemove(const juce::var& payload, jackdaw::AudioEngine& engine)
+{
+    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    if (trackId.isEmpty())
+    {
+        return;
+    }
+    engine.removeTrack(trackId);
+}
+
+void handleTrackGain(const juce::var& payload, jackdaw::AudioEngine& engine)
+{
+    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    if (trackId.isEmpty())
+    {
+        return;
+    }
+    const auto gain = static_cast<float>(static_cast<double>(payload.getProperty("gain", 1.0)));
+    engine.setTrackGain(trackId, gain);
+}
+
+// Same wire-protocol convention as BridgeServer::broadcast: (type, payload) order is
+// fixed by design, so the easily-swappable-parameters check is intentionally silenced.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, jackdaw::AudioEngine& engine,
+                           jackdaw::BridgeServer& bridge)
+{
+    if (type == "CLIP_ADD")
+    {
+        handleClipAdd(payload, engine, bridge);
+    }
+    else if (type == "CLIP_MOVE")
+    {
+        handleClipMove(payload, engine);
+    }
+    else if (type == "TRANSPORT_PLAY")
+    {
+        engine.play();
+    }
+    else if (type == "TRANSPORT_PAUSE")
+    {
+        engine.pause();
+    }
+    else if (type == "TRANSPORT_STOP")
+    {
+        engine.stop();
+    }
+    else if (type == "TRANSPORT_SEEK")
+    {
+        const double positionMs = static_cast<double>(payload.getProperty("positionMs", 0.0));
+        engine.setPositionMs(positionMs);
+    }
+    else if (type == "TRACK_REMOVE")
+    {
+        handleTrackRemove(payload, engine);
+    }
+    else if (type == "TRACK_GAIN")
+    {
+        handleTrackGain(payload, engine);
+    }
+    else
+    {
+        std::cerr << "[bridge] unhandled message type: " << type.toStdString() << '\n';
+    }
+}
+
+int runBackend()
 {
     const juce::String banner = "Jackdaw Backend v0.1.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
                                 juce::SystemStats::getCpuVendor() + ")";
@@ -84,77 +187,8 @@ int main(int /*argc*/, char* /*argv*/[])
 
     // Route incoming messages from the bridge to the engine. Already on the
     // JUCE message thread (BridgeServer::onIncoming marshals via callAsync).
-    bridge.onMessage(
-        [&engine, &bridge](const juce::String& type, const juce::var& payload)
-        {
-            if (type == "CLIP_ADD")
-            {
-                const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
-                const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
-                if (trackId.isEmpty() || filePath.isEmpty())
-                    return;
-
-                const bool ok = engine.addClip(trackId, juce::File(filePath));
-                if (ok)
-                {
-                    // Apply the requested timeline offset so the clip plays
-                    // back at the position the frontend chose (e.g. at the
-                    // current playhead).
-                    const double positionMs = (double)payload.getProperty("positionMs", 0.0);
-                    if (positionMs > 0.0)
-                        engine.setClipOffsetMs(trackId, positionMs);
-                }
-                auto* p = new juce::DynamicObject();
-                p->setProperty("trackId", trackId);
-                p->setProperty("filePath", filePath);
-                p->setProperty("ok", ok);
-                bridge.broadcast(ok ? "CLIP_ADDED" : "CLIP_ADD_FAILED", juce::var(p));
-            }
-            else if (type == "CLIP_MOVE")
-            {
-                const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
-                if (trackId.isEmpty())
-                    return;
-                const double positionMs = (double)payload.getProperty("positionMs", 0.0);
-                engine.setClipOffsetMs(trackId, positionMs);
-            }
-            else if (type == "TRANSPORT_PLAY")
-            {
-                engine.play();
-            }
-            else if (type == "TRANSPORT_PAUSE")
-            {
-                engine.pause();
-            }
-            else if (type == "TRANSPORT_STOP")
-            {
-                engine.stop();
-            }
-            else if (type == "TRANSPORT_SEEK")
-            {
-                const double positionMs = (double)payload.getProperty("positionMs", 0.0);
-                engine.setPositionMs(positionMs);
-            }
-            else if (type == "TRACK_REMOVE")
-            {
-                const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
-                if (trackId.isEmpty())
-                    return;
-                engine.removeTrack(trackId);
-            }
-            else if (type == "TRACK_GAIN")
-            {
-                const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
-                if (trackId.isEmpty())
-                    return;
-                const float gain = (float)(double)payload.getProperty("gain", 1.0);
-                engine.setTrackGain(trackId, gain);
-            }
-            else
-            {
-                std::cerr << "[bridge] unhandled message type: " << type.toStdString() << '\n';
-            }
-        });
+    bridge.onMessage([&engine, &bridge](const juce::String& type, const juce::var& payload)
+                     { dispatchBridgeMessage(type, payload, engine, bridge); });
 
     if (!bridge.start(kBridgePort))
     {
@@ -176,4 +210,26 @@ int main(int /*argc*/, char* /*argv*/[])
     engine.shutdown();
     std::cout << "[main] shutdown complete\n";
     return 0;
+}
+} // namespace
+
+// The catch handler logs to std::cerr, which clang-tidy can't statically prove is
+// non-throwing; in practice cerr won't throw without exceptions() being enabled.
+// NOLINTNEXTLINE(bugprone-exception-escape)
+int main(int /*argc*/, char* /*argv*/[])
+{
+    try
+    {
+        return runBackend();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[fatal] uncaught exception: " << e.what() << '\n';
+        return 1;
+    }
+    catch (...)
+    {
+        std::cerr << "[fatal] uncaught non-standard exception\n";
+        return 1;
+    }
 }

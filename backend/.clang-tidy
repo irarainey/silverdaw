@@ -1,0 +1,24 @@
+# clang-tidy configuration for the Jackdaw backend.
+#
+# This file is read when running `clang-tidy` from the command line (e.g.
+# `scripts/Invoke-ClangTidy.ps1` or the VS Code task `backend: lint`).
+# The IDE-time integration via clangd uses the separate `Diagnostics.ClangTidy`
+# block in `.clangd`; both lists should be kept in sync.
+#
+# HeaderFilterRegex restricts diagnostics to *our* headers (under backend/src/)
+# so we don't drown in warnings from JUCE / IXWebSocket / the C++ standard
+# library, which are pulled in via target_link_libraries and won't be touched.
+
+---
+Checks: >
+  -*,
+  bugprone-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-identifier-length,
+  -readability-magic-numbers
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*[\\/]backend[\\/]src[\\/].*'
+FormatStyle: file
