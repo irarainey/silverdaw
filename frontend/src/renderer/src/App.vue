@@ -31,7 +31,7 @@ const stopImportingWatcher = watch(
 )
 
 onMounted(() => {
-  unsubscribeMenu = window.jackdaw.onMenuAction(handleMenuAction)
+  unsubscribeMenu = window.rook.onMenuAction(handleMenuAction)
   connectBridge()
   // Pull persisted panel sizes from the main-process preferences file so
   // the layout is correct from the very first paint. (Default values are

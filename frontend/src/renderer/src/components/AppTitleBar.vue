@@ -17,7 +17,7 @@ function onHover(i: number): void {
 function invoke(item: MenuItemDef): void {
   if (item.disabled || !item.action) return
   openIndex.value = null
-  window.jackdaw.menuAction(item.action)
+  window.rook.menuAction(item.action)
 }
 
 function onDocumentClick(e: MouseEvent): void {
@@ -49,8 +49,8 @@ onBeforeUnmount(() => {
     <!-- Brand. Replace this inline SVG with an <img src="@/assets/logo.svg" /> if you want a custom asset. -->
     <div
       class="flex items-center px-3 text-zinc-100"
-      aria-label="Jackdaw"
-      title="Jackdaw"
+      aria-label="Rook"
+      title="Rook"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"

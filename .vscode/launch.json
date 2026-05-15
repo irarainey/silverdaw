@@ -6,10 +6,10 @@
       "name": "Backend: Launch (Debug)",
       "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}/backend/build/JackdawBackend_artefacts/Debug/JackdawBackend.exe",
+      "program": "${workspaceFolder}/backend/build/RookBackend_artefacts/Debug/RookBackend.exe",
       "args": [],
       "stopAtEntry": false,
-      "cwd": "${workspaceFolder}/backend/build/JackdawBackend_artefacts/Debug",
+      "cwd": "${workspaceFolder}/backend/build/RookBackend_artefacts/Debug",
       "environment": [],
       "console": "integratedTerminal",
       "preLaunchTask": "backend: build"
@@ -54,7 +54,7 @@
       "configurations": ["Backend: Launch (Debug)", "Frontend: Electron Main"],
       "stopAll": true,
       "presentation": {
-        "group": "1_jackdaw",
+        "group": "1_rook",
         "order": 1
       }
     }

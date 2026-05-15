@@ -8,7 +8,7 @@
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <juce_events/juce_events.h>
 
-namespace jackdaw
+namespace rook
 {
 
 BridgeServer::BridgeServer(juce::String expectedTokenIn, MessageHandler handler)
@@ -278,4 +278,4 @@ std::size_t BridgeServer::getClientCount() const
     return clients.size();
 }
 
-} // namespace jackdaw
+} // namespace rook
