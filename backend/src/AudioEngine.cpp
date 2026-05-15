@@ -81,9 +81,9 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
             auto* af = formatManager.getKnownFormat(i);
             formatNames.add(af != nullptr ? af->getFormatName() : juce::String("<null>"));
         }
-        const auto msg = "createReaderFor returned null (ext=" + filePath.getFileExtension() + ", size="
-                         + juce::String(filePath.getSize()) + " bytes, registered=["
-                         + formatNames.joinIntoString(", ") + "])";
+        const auto msg = "createReaderFor returned null (ext=" + filePath.getFileExtension() +
+                         ", size=" + juce::String(filePath.getSize()) + " bytes, registered=[" +
+                         formatNames.joinIntoString(", ") + "])";
         std::cerr << "[addClip] " << msg.toStdString() << '\n';
         if (outError != nullptr)
         {
