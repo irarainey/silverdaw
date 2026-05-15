@@ -63,8 +63,8 @@ int parsePort(std::string_view value, std::string_view source)
     }
     catch (const std::exception& e)
     {
-        std::cerr << "[main] invalid port from " << source << " (" << value << "): " << e.what()
-                  << "; using default " << kDefaultBridgePort << '\n';
+        std::cerr << "[main] invalid port from " << source << " (" << value << "): " << e.what() << "; using default "
+                  << kDefaultBridgePort << '\n';
         return kDefaultBridgePort;
     }
 
