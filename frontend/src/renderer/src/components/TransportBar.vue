@@ -162,32 +162,66 @@ function onSkipForward(): void {
 
 <template>
   <header
-    class="flex h-16 w-full select-none items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 text-zinc-300">
+    class="flex h-16 w-full select-none items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 text-zinc-300"
+  >
     <!-- Left: spacer (matches the right Timing box width so the centre buttons stay truly centred). -->
     <div class="flex-1" />
 
     <!-- Centre: transport buttons -->
     <div class="flex items-center gap-1">
-      <button type="button" class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-        title="Skip to start" @click="onSkipBack">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5">
+      <button
+        type="button"
+        class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+        title="Skip to start"
+        @click="onSkipBack"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          class="h-5 w-5"
+        >
           <path d="M6 5h2v14H6V5zm3 7l11-7v14L9 12z" />
         </svg>
       </button>
-      <button type="button" class="rounded p-2 hover:bg-blue-600 hover:text-white"
+      <button
+        type="button"
+        class="rounded p-2 hover:bg-blue-600 hover:text-white"
         :class="transport.isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
-        :title="transport.isPlaying ? 'Pause' : 'Play'" @click="onPlay">
-        <svg v-if="transport.isPlaying" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
-          class="h-6 w-6">
+        :title="transport.isPlaying ? 'Pause' : 'Play'"
+        @click="onPlay"
+      >
+        <svg
+          v-if="transport.isPlaying"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          class="h-6 w-6"
+        >
           <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
         </svg>
-        <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-6 w-6">
+        <svg
+          v-else
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          class="h-6 w-6"
+        >
           <path d="M8 5v14l11-7L8 5z" />
         </svg>
       </button>
-      <button type="button" class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100" title="Skip to end"
-        @click="onSkipForward">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5">
+      <button
+        type="button"
+        class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+        title="Skip to end"
+        @click="onSkipForward"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          class="h-5 w-5"
+        >
           <path d="M16 5h2v14h-2V5zM4 5l11 7-11 7V5z" />
         </svg>
       </button>
@@ -195,7 +229,10 @@ function onSkipForward(): void {
 
     <!-- Right: Timing box (position / bar / length / BPM). -->
     <div class="flex flex-1 justify-end">
-      <div class="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950/40 px-2 py-1" title="Timing">
+      <div
+        class="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950/40 px-2 py-1"
+        title="Timing"
+      >
         <div class="flex flex-col items-start leading-none">
           <span class="text-[9px] uppercase tracking-wide text-zinc-500">Pos</span>
           <span class="font-mono text-base tabular-nums text-zinc-100">{{ positionDisplay }}</span>
@@ -203,30 +240,63 @@ function onSkipForward(): void {
         <div class="h-7 w-px bg-zinc-800" />
         <div class="flex flex-col items-start leading-none">
           <span class="text-[9px] uppercase tracking-wide text-zinc-500">Bar</span>
-          <span class="font-mono text-base tabular-nums text-zinc-100" title="Bar.Beat.Sub">{{
+          <span
+            class="font-mono text-base tabular-nums text-zinc-100"
+            title="Bar.Beat.Sub"
+          >{{
             barPosition
-            }}</span>
+          }}</span>
         </div>
         <div class="h-7 w-px bg-zinc-800" />
         <div class="flex flex-col items-start leading-none">
           <span class="text-[9px] uppercase tracking-wide text-zinc-500">Length</span>
           <div class="flex items-center">
-            <input v-model="lengthInput" type="text" inputmode="numeric" spellcheck="false" :disabled="!lengthEditable"
+            <input
+              v-model="lengthInput"
+              type="text"
+              inputmode="numeric"
+              spellcheck="false"
+              :disabled="!lengthEditable"
               :title="lengthEditable ? 'Project length (mm:ss or h:mm:ss). Use ↑/↓ or the spinner to adjust by 1s; hold Shift for 10s.' : 'Add a track to edit project length'"
               class="w-12 bg-transparent font-mono text-base tabular-nums text-zinc-100 outline-none focus:text-blue-300 disabled:cursor-not-allowed disabled:text-zinc-500"
-              @focus="isEditingLength = true" @blur="onLengthCommit" @keydown="onLengthKeydown">
+              @focus="isEditingLength = true"
+              @blur="onLengthCommit"
+              @keydown="onLengthKeydown"
+            >
             <div class="ml-0.5 flex flex-col text-zinc-500">
-              <button type="button" tabindex="-1" :disabled="!lengthEditable" title="Increase length (Shift: +10s)"
+              <button
+                type="button"
+                tabindex="-1"
+                :disabled="!lengthEditable"
+                title="Increase length (Shift: +10s)"
                 class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
-                @mousedown.prevent @click="(e) => bumpLength(e.shiftKey ? 10 : 1)">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-3 w-3">
+                @mousedown.prevent
+                @click="(e) => bumpLength(e.shiftKey ? 10 : 1)"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="h-3 w-3"
+                >
                   <path d="M7 14l5-5 5 5H7z" />
                 </svg>
               </button>
-              <button type="button" tabindex="-1" :disabled="!lengthEditable" title="Decrease length (Shift: -10s)"
+              <button
+                type="button"
+                tabindex="-1"
+                :disabled="!lengthEditable"
+                title="Decrease length (Shift: -10s)"
                 class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
-                @mousedown.prevent @click="(e) => bumpLength(e.shiftKey ? -10 : -1)">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-3 w-3">
+                @mousedown.prevent
+                @click="(e) => bumpLength(e.shiftKey ? -10 : -1)"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="h-3 w-3"
+                >
                   <path d="M7 10l5 5 5-5H7z" />
                 </svg>
               </button>
@@ -237,22 +307,51 @@ function onSkipForward(): void {
         <div class="flex flex-col items-start leading-none">
           <span class="text-[9px] uppercase tracking-wide text-zinc-500">BPM</span>
           <div class="flex items-center">
-            <input v-model="bpmInput" type="number" min="20" max="300" step="0.1" spellcheck="false"
+            <input
+              v-model="bpmInput"
+              type="number"
+              min="20"
+              max="300"
+              step="0.1"
+              spellcheck="false"
               title="Tempo (20 – 300 BPM). Use ↑/↓ or the spinner to adjust by 1; hold Shift for 10."
               class="w-12 bg-transparent font-mono text-base tabular-nums text-zinc-100 outline-none focus:text-blue-300 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-              @focus="isEditingBpm = true" @blur="onBpmCommit" @keydown="onBpmKeydown">
+              @focus="isEditingBpm = true"
+              @blur="onBpmCommit"
+              @keydown="onBpmKeydown"
+            >
             <div class="ml-0.5 flex flex-col text-zinc-500">
-              <button type="button" tabindex="-1" title="Increase BPM (Shift: +10)"
-                class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100" @mousedown.prevent
-                @click="(e) => bumpBpm(e.shiftKey ? 10 : 1)">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-3 w-3">
+              <button
+                type="button"
+                tabindex="-1"
+                title="Increase BPM (Shift: +10)"
+                class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100"
+                @mousedown.prevent
+                @click="(e) => bumpBpm(e.shiftKey ? 10 : 1)"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="h-3 w-3"
+                >
                   <path d="M7 14l5-5 5 5H7z" />
                 </svg>
               </button>
-              <button type="button" tabindex="-1" title="Decrease BPM (Shift: -10)"
-                class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100" @mousedown.prevent
-                @click="(e) => bumpBpm(e.shiftKey ? -10 : -1)">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-3 w-3">
+              <button
+                type="button"
+                tabindex="-1"
+                title="Decrease BPM (Shift: -10)"
+                class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100"
+                @mousedown.prevent
+                @click="(e) => bumpBpm(e.shiftKey ? -10 : -1)"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="h-3 w-3"
+                >
                   <path d="M7 10l5 5 5-5H7z" />
                 </svg>
               </button>

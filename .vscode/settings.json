@@ -15,8 +15,16 @@
   "typescript.tsdk": "frontend/node_modules/typescript/lib",
   "typescript.enablePromptUseWorkspaceTsdk": true,
   "vue.server.hybridMode": true,
+  // For `.vue` files we deliberately disable formatOnSave: Volar's HTML
+  // formatter collapses template attributes back onto one line, which
+  // immediately re-triggers our `vue/max-attributes-per-line` /
+  // `vue/first-attribute-linebreak` ESLint rules. With formatOnSave off
+  // the `source.fixAll.eslint` code action below is the sole authority
+  // on Vue formatting, so save → ESLint --fix → done. Manual "Format
+  // Document" (Shift+Alt+F) still runs Volar if you want it.
   "[vue]": {
-    "editor.defaultFormatter": "Vue.volar"
+    "editor.defaultFormatter": "Vue.volar",
+    "editor.formatOnSave": false
   },
   "[typescript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
