@@ -47,9 +47,21 @@ the backend dispatches inbound messages in `backend/src/Main.cpp` (`dispatchBrid
 
 Jackdaw is developed in Visual Studio Code; the toolchain is cross-platform.
 
-- A **C++17 compiler** — MSVC (Visual Studio Build Tools, C++ workload) on Windows, Clang ≥ 14
-  on macOS, or GCC ≥ 11 / Clang ≥ 14 on Linux. JUCE 8 also needs the platform's audio headers
-  (e.g. ALSA / JACK dev packages on Linux, the macOS SDK on macOS).
+- A **C++17 compiler** — MSVC on Windows, Clang ≥ 14 on macOS, or GCC ≥ 11 / Clang ≥ 14 on
+  Linux. JUCE 8 also needs the platform's audio headers (e.g. ALSA / JACK dev packages on
+  Linux, the macOS SDK on macOS). On Windows the full Visual Studio IDE is **not** required:
+  the standalone **Build Tools for Visual Studio** SKU with the *C++ build tools* workload is
+  sufficient (it ships `cl.exe`, `link.exe`, the Windows SDK, `vswhere.exe` and the Developer
+  Shell module that `scripts/Invoke-DevShell.ps1` relies on). Quick install:
+
+  ```powershell
+  winget install --id Microsoft.VisualStudio.2022.BuildTools `
+    --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+  ```
+
+  If you already have Visual Studio or Build Tools installed without the C++ workload, run the
+  Visual Studio Installer and **Modify** the install to add *C++ build tools* (Build Tools SKU)
+  or *Desktop development with C++* (full VS).
 - **CMake** ≥ 3.22 and **Ninja**.
 - **Node.js** ≥ 20 and **pnpm** ≥ 9 (the frontend is pure ESM and pnpm-only — see
   `frontend/pnpm-workspace.yaml`).
