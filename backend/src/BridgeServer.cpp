@@ -31,7 +31,10 @@ bool BridgeServer::start(int port)
     // and balanced by ix::uninitNetSystem() in stop().
     ix::initNetSystem();
 
-    server = std::make_unique<ix::WebSocketServer>(port);
+    // Explicit loopback bind: the bridge is renderer<->backend only and must
+    // never accept connections from off-host (the renderer lives in the same
+    // Electron process tree). Don't rely on IXWebSocket's default host.
+    server = std::make_unique<ix::WebSocketServer>(port, "127.0.0.1");
 
     server->setOnClientMessageCallback(
         [this](const std::shared_ptr<ix::ConnectionState>& /*state*/, ix::WebSocket& webSocket,

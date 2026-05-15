@@ -61,7 +61,7 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
 
     auto track = std::make_unique<Track>();
     track->sampleRate = reader->sampleRate;
-    track->numChannels = (int)reader->numChannels;
+    track->numChannels = static_cast<int>(reader->numChannels);
 
     // `AudioFormatReaderSource` takes ownership of the reader (deleteWhenRemoved=true).
     track->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);

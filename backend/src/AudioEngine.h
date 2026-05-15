@@ -31,7 +31,7 @@ class OffsetSource : public juce::PositionableAudioSource
 
     void setOffsetSamples(juce::int64 samples)
     {
-        offsetSamples.store(juce::jmax((juce::int64)0, samples));
+        offsetSamples.store(juce::jmax(static_cast<juce::int64>(0), samples));
     }
     juce::int64 getOffsetSamples() const
     {
@@ -84,7 +84,7 @@ class OffsetSource : public juce::PositionableAudioSource
         }
 
         // Block straddles the offset: silent leading section + audible tail.
-        const int silentSamples = (int)(off - startPos);
+        const int silentSamples = static_cast<int>(off - startPos);
         const int audibleSamples = info.numSamples - silentSamples;
 
         juce::AudioSourceChannelInfo silentInfo = info;

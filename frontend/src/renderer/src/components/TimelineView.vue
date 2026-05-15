@@ -538,6 +538,7 @@ function drawTracks(width: number): void {
     const visibleRows: { track: (typeof tracks)[number]; y: number }[] = []
     for (let i = 0; i < tracks.length; i++) {
         const track = tracks[i]
+        if (!track) continue
         const y = RULER_HEIGHT + i * (TRACK_HEIGHT + TRACK_GAP) - scrollY.value
 
         // Cull rows that are entirely outside the visible track area.
@@ -570,7 +571,9 @@ function drawTracks(width: number): void {
 
     // Pass 2: clips.
     for (const { track, y } of visibleRows) {
-        const palette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]
+        // Modular index is always in-bounds; the non-null assertion is for
+        // noUncheckedIndexedAccess.
+        const palette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
         for (const clipId of track.clipIds) {
             const clip = project.clips[clipId]
             if (!clip) continue
@@ -623,8 +626,10 @@ function drawClip(clip: Clip, rowY: number, palette: (typeof TRACK_PALETTE)[numb
         let min = 0
         let max = 0
         for (let i = startIdx; i < endIdx; i++) {
-            const lo = peaks[i * 2]
-            const hi = peaks[i * 2 + 1]
+            // Peaks are written in [min, max] pairs by computePeaks(); the
+            // bounds check above guarantees both indices are in range.
+            const lo = peaks[i * 2]!
+            const hi = peaks[i * 2 + 1]!
             if (lo < min) min = lo
             if (hi > max) max = hi
         }
@@ -935,6 +940,7 @@ function hitTestClip(clientX: number, clientY: number): ClipHitRegion | null {
     // Iterate in reverse so the top-most drawn clip wins if any ever overlap.
     for (let i = clipHitRegions.length - 1; i >= 0; i--) {
         const r = clipHitRegions[i]
+        if (!r) continue
         if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r
     }
     return null
@@ -1131,7 +1137,7 @@ function onTimelineDragOver(e: DragEvent): void {
     }
 
     const overlaps = project.wouldClipOverlap(
-        project.tracks[target.trackIndex].id,
+        project.tracks[target.trackIndex]!.id,
         target.startMs,
         item.durationMs
     )
@@ -1194,7 +1200,7 @@ function onTimelineDrop(e: DragEvent): void {
     }
 
     project.addClipFromLibrary(
-        project.tracks[target.trackIndex].id,
+        project.tracks[target.trackIndex]!.id,
         { ...item, fileName: libraryItemDisplayName(item) },
         target.startMs
     )

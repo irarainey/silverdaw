@@ -109,6 +109,7 @@ export const useProjectStore = defineStore('project', {
       }
       for (const id in state.clips) {
         const c = state.clips[id]
+        if (!c) continue
         const end = c.startMs + c.durationMs
         if (end > max) max = end
       }
@@ -299,6 +300,7 @@ export const useProjectStore = defineStore('project', {
       if (idx < 0) return
 
       const track = this.tracks[idx]
+      if (!track) return
       for (const clipId of track.clipIds) delete this.clips[clipId]
       this.tracks.splice(idx, 1)
 

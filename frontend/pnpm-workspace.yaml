@@ -1,4 +1,7 @@
 allowBuilds:
   electron: true
   esbuild: true
-  vue-demi: set this to true or false
+  # vue-demi ships a postinstall that picks Vue 2 vs Vue 3 by rewriting its
+  # own files. We don't need it (we use Vue 3 directly), and pnpm 11 errors
+  # on any unlisted ignored build, so deny it explicitly.
+  vue-demi: false

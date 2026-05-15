@@ -129,7 +129,7 @@ export const useLibraryStore = defineStore('library', {
       if (!item) return false
       const project = useProjectStore()
       for (const id in project.clips) {
-        if (project.clips[id].filePath === item.filePath) return true
+        if (project.clips[id]?.filePath === item.filePath) return true
       }
       return false
     },

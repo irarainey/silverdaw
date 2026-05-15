@@ -43,9 +43,6 @@ declare global {
 
   interface Window {
     jackdaw: {
-      readonly appName: string
-      readonly version: string
-      readonly platform: NodeJS.Platform
       menuAction(action: string): void
       openAudioFile(): Promise<OpenedAudioFile | null>
       openAudioFiles(): Promise<OpenedAudioFile[]>
@@ -53,7 +50,6 @@ declare global {
       readAudioMetadata(filePath: string): Promise<AudioMetadata | null>
       getPathForFile(file: File): string
       onMenuAction(handler: (action: string) => void): () => void
-      showStatusDialog(connected: boolean): void
       getUiPreferences(): Promise<UiPreferences>
       setUiPreferences(partial: Partial<UiPreferences>): void
     }

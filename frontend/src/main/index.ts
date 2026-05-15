@@ -89,6 +89,11 @@ const TITLE_BAR_HEIGHT = 36
 const COLOUR_BG = '#18181b' // zinc-900
 const COLOUR_FG = '#d4d4d8' // zinc-300
 
+// File extensions accepted by every audio open-dialog and (later) by the
+// path-validation guard on `audio:readFile` / `audio:readMetadata`. Keep in
+// sync with the JUCE backend's supported formats.
+const AUDIO_FILE_EXTENSIONS = ['wav', 'mp3', 'flac', 'aiff', 'aif', 'ogg', 'm4a'] as const
+
 let backendProcess: ChildProcess | null = null
 let mainWindow: BrowserWindow | null = null
 
@@ -266,10 +271,16 @@ function createWindow(): void {
         : undefined,
     trafficLightPosition: { x: 12, y: 11 },
     webPreferences: {
-      // electron-vite emits the preload bundle as `index.mjs` (ESM).
-      preload: join(__dirname, '..', 'preload', 'index.mjs'),
+      // electron-vite emits the preload bundle as `index.cjs` (CommonJS).
+      // Sandboxed renderers can only load CJS preload scripts.
+      preload: join(__dirname, '..', 'preload', 'index.cjs'),
       contextIsolation: true,
-      sandbox: false
+      // Preload uses only contextBridge / ipcRenderer / webUtils, all of
+      // which remain available in a sandboxed preload. Keeping sandbox on
+      // restores Chromium's renderer-process isolation guarantees.
+      sandbox: true,
+      nodeIntegration: false,
+      webSecurity: true
     }
   })
 
@@ -437,30 +448,13 @@ app.whenReady().then(async () => {
 
   ipcMain.on('menu:action', (_evt, action: string) => handleMenuAction(action))
 
-  // Show a native message box with the current backend connection state.
-  // The renderer holds the live state, so it passes the boolean through.
-  ipcMain.on('dialog:status', (_evt, connected: boolean) => {
-    if (!mainWindow) return
-    void dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'Status',
-      message: connected ? 'Backend connected' : 'Backend disconnected',
-      detail: connected
-        ? 'The audio engine bridge is connected and ready.'
-        : 'The audio engine bridge is not currently connected.',
-      buttons: ['OK']
-    })
-  })
-
   // Open an audio file via the OS dialog and stream its bytes back to the renderer.
   // Returns null if the user cancels.
   ipcMain.handle('audio:open', async () => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Add Track from File',
-      filters: [
-        { name: 'Audio files', extensions: ['wav', 'mp3', 'flac', 'aiff', 'aif', 'ogg', 'm4a'] }
-      ],
+      filters: [{ name: 'Audio files', extensions: [...AUDIO_FILE_EXTENSIONS] }],
       properties: ['openFile']
     })
     if (result.canceled || result.filePaths.length === 0) return null
@@ -477,9 +471,7 @@ app.whenReady().then(async () => {
     if (!mainWindow) return []
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Import Audio into Library',
-      filters: [
-        { name: 'Audio files', extensions: ['wav', 'mp3', 'flac', 'aiff', 'aif', 'ogg', 'm4a'] }
-      ],
+      filters: [{ name: 'Audio files', extensions: [...AUDIO_FILE_EXTENSIONS] }],
       properties: ['openFile', 'multiSelections']
     })
     if (result.canceled || result.filePaths.length === 0) return []

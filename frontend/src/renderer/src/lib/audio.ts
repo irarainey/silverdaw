@@ -63,7 +63,7 @@ function computePeaks(buffer: AudioBuffer, peaksPerSecond: number): Float32Array
     for (let i = start; i < end; i++) {
       // Average across channels for a mono peak.
       let sum = 0
-      for (let c = 0; c < numberOfChannels; c++) sum += channels[c][i]
+      for (let c = 0; c < numberOfChannels; c++) sum += channels[c]![i]!
       const v = sum / numberOfChannels
       if (v < min) min = v
       else if (v > max) max = v

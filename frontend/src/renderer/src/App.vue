@@ -6,12 +6,10 @@ import TransportBar from '@/components/TransportBar.vue'
 import LibraryPanel from '@/components/LibraryPanel.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import { useProjectStore } from '@/stores/projectStore'
-import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
 
 const project = useProjectStore()
-const transport = useTransportStore()
 const ui = useUiStore()
 
 let unsubscribeMenu: (() => void) | null = null
@@ -37,10 +35,6 @@ function handleMenuAction(action: string): void {
   // into the track happens via the per-track Import button on the track
   // header panel (see TrackHeaderPanel.vue).
   if (action === 'file.addTrack') project.addTrack()
-  // The backend connection indicator used to live on the transport bar;
-  // it now lives behind Help → Status. The renderer holds the live state
-  // in `transportStore`, so we hand it to main for the native dialog.
-  else if (action === 'help.status') window.jackdaw.showStatusDialog(transport.connected)
 }
 </script>
 

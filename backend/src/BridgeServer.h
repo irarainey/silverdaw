@@ -40,7 +40,7 @@ class BridgeServer
     BridgeServer(const BridgeServer&) = delete;
     BridgeServer& operator=(const BridgeServer&) = delete;
 
-    /** Bind to `ws://0.0.0.0:port` and start serving. Returns true on success. */
+    /** Bind to `ws://127.0.0.1:port` (loopback only) and start serving. Returns true on success. */
     bool start(int port);
 
     /** Stop the server, disconnect clients. Safe to call multiple times. */

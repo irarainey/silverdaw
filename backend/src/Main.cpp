@@ -38,7 +38,10 @@ void onSignal(int /*sig*/)
 class PlayheadEmitter : public juce::Timer
 {
   public:
-    PlayheadEmitter(jackdaw::AudioEngine& e, jackdaw::BridgeServer& b) : engine(e), bridge(b) {}
+    PlayheadEmitter(jackdaw::AudioEngine& e, jackdaw::BridgeServer& b)
+        : engine(e), bridge(b), payloadObject(new juce::DynamicObject()), payload(payloadObject.get())
+    {
+    }
 
     void timerCallback() override
     {
@@ -46,13 +49,13 @@ class PlayheadEmitter : public juce::Timer
         const double posMs = engine.getPositionMs();
 
         // Always broadcast on transitions; while playing, broadcast every tick so the
-        // renderer can drive a smooth playhead.
+        // renderer can drive a smooth playhead. Reuse a single DynamicObject so we
+        // don't churn the heap 60x/s on the message thread.
         if (playing || posMs != lastPosMs)
         {
-            auto* p = new juce::DynamicObject();
-            p->setProperty("positionMs", posMs);
-            p->setProperty("isPlaying", playing);
-            bridge.broadcast("PLAYHEAD_UPDATE", juce::var(p));
+            payloadObject->setProperty("positionMs", posMs);
+            payloadObject->setProperty("isPlaying", playing);
+            bridge.broadcast("PLAYHEAD_UPDATE", payload);
             lastPosMs = posMs;
         }
     }
@@ -60,6 +63,10 @@ class PlayheadEmitter : public juce::Timer
   private:
     jackdaw::AudioEngine& engine;
     jackdaw::BridgeServer& bridge;
+    // Reference-counted: held alive by `payloadObject`; `payload` is the
+    // pre-wrapped juce::var we hand to broadcast() each tick.
+    juce::DynamicObject::Ptr payloadObject;
+    juce::var payload;
     double lastPosMs = -1.0;
 };
 

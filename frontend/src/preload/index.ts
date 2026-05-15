@@ -39,9 +39,6 @@ export interface UiPreferences {
 }
 
 const api = {
-  appName: 'Jackdaw',
-  version: '0.1.0',
-  platform: process.platform,
   /** Send a menu action ID to the main process. */
   menuAction: (action: string): void => {
     ipcRenderer.send('menu:action', action)
@@ -93,14 +90,6 @@ const api = {
     const listener = (_evt: IpcRendererEvent, action: string): void => handler(action)
     ipcRenderer.on('menu:action', listener)
     return () => ipcRenderer.removeListener('menu:action', listener)
-  },
-  /**
-   * Ask the main process to show a native dialog summarising the current
-   * backend connection state. The renderer owns the live state in
-   * `transportStore`, so it passes the boolean through.
-   */
-  showStatusDialog: (connected: boolean): void => {
-    ipcRenderer.send('dialog:status', connected)
   },
   /**
    * Fetch the persisted UI preferences (panel sizes etc.) from the main
