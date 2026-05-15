@@ -13,6 +13,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { msPerSubBeat as msPerSubBeatAt } from '@/lib/musicTime'
 import {
   DEFAULT_PX_PER_SECOND,
   MAX_PX_PER_SECOND,
@@ -60,7 +61,8 @@ export function useGridGeometry(): GridGeometry {
 
   // Function (not computed) so callers always read the *latest* BPM even
   // mid-drag without each handler having to wire up its own watcher.
-  const msPerSubBeat = (): number => 60000 / (transport.bpm * SUBDIVISIONS_PER_BEAT)
+  // Single source of truth lives in `lib/musicTime.ts`.
+  const msPerSubBeat = (): number => msPerSubBeatAt(transport.bpm, SUBDIVISIONS_PER_BEAT)
 
   function setPxPerSecond(next: number): number {
     const clamped = Math.min(MAX_PX_PER_SECOND, Math.max(MIN_PX_PER_SECOND, next))

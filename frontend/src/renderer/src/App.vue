@@ -5,6 +5,7 @@ import TimelineView from '@/components/TimelineView.vue'
 import TransportBar from '@/components/TransportBar.vue'
 import LibraryPanel from '@/components/LibraryPanel.vue'
 import StatusBar from '@/components/StatusBar.vue'
+import NotificationToasts from '@/components/NotificationToasts.vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
@@ -71,6 +72,8 @@ function handleMenuAction(action: string): void {
     />
 
     <StatusBar />
+
+    <NotificationToasts />
   </div>
 </template>
 

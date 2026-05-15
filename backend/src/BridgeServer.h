@@ -50,37 +50,40 @@ namespace jackdaw
 class BridgeServer
 {
   public:
-    using MessageHandler = std::function<void(const juce::String& type, const juce::var& payload)>;
+    /**
+     * Handler invoked for every authenticated inbound envelope. The
+     * `BridgeServer&` first argument lets the handler call `broadcast()`
+     * to send acknowledgements (e.g. `CLIP_ADDED`) — it can't capture the
+     * server by reference because the handler is constructor-injected
+     * before the server object exists.
+     */
+    using MessageHandler =
+        std::function<void(BridgeServer& self, const juce::String& type, const juce::var& payload)>;
 
-    BridgeServer();
+    /**
+     * Construct a bridge server with the per-session AUTH token and the
+     * message handler. Both are frozen for the lifetime of the object:
+     * the I/O-thread `onIncoming` callback reads `messageHandler` and
+     * `expectedToken` without synchronisation, so constructor injection
+     * is what makes that race-free by construction.
+     *
+     * An empty `expectedToken` disables authentication (stand-alone
+     * manual debugging only). A null `handler` is legal but every inbound
+     * envelope will be silently dropped.
+     */
+    BridgeServer(juce::String expectedToken, MessageHandler handler);
     ~BridgeServer();
 
     BridgeServer(const BridgeServer&) = delete;
     BridgeServer& operator=(const BridgeServer&) = delete;
-
-    /**
-     * Set the per-session AUTH token required from every connecting
-     * client. MUST be called before `start()`; mutating it after the
-     * server is running races with the I/O thread. Empty string disables
-     * authentication.
-     */
-    void setExpectedToken(const juce::String& token);
+    BridgeServer(BridgeServer&&) = delete;
+    BridgeServer& operator=(BridgeServer&&) = delete;
 
     /** Bind to `ws://127.0.0.1:port` (loopback only) and start serving. Returns true on success. */
     bool start(int port);
 
     /** Stop the server, disconnect clients. Safe to call multiple times. */
     void stop();
-
-    /**
-     * Register the handler called for every parsed incoming message.
-     *
-     * MUST be called before `start()`. After `start()` the handler is read
-     * from the I/O-thread `onIncoming` callback without synchronisation —
-     * mutating it concurrently would be a data race. The `jassert` in the
-     * implementation catches accidental late registrations in debug builds.
-     */
-    void onMessage(MessageHandler handler);
 
     /**
      * Broadcast a JSON envelope `{ type, payload }` to all currently
@@ -106,8 +109,9 @@ class BridgeServer
     static void sendReadyTo(ix::WebSocket& webSocket);
 
     std::unique_ptr<ix::WebSocketServer> server;
-    MessageHandler messageHandler;
-    juce::String expectedToken;
+    // Both immutable after construction: the I/O thread reads them lock-free.
+    const MessageHandler messageHandler;
+    const juce::String expectedToken;
 
     mutable std::mutex clientsMutex;
     /** Keyed by the raw `ix::WebSocket*` identity from `setOnClientMessageCallback`. */

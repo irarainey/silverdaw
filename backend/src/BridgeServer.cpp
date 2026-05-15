@@ -11,29 +11,14 @@
 namespace jackdaw
 {
 
-BridgeServer::BridgeServer() = default;
+BridgeServer::BridgeServer(juce::String expectedTokenIn, MessageHandler handler)
+    : messageHandler(std::move(handler)), expectedToken(std::move(expectedTokenIn))
+{
+}
 
 BridgeServer::~BridgeServer()
 {
     stop();
-}
-
-void BridgeServer::onMessage(MessageHandler handler)
-{
-    // The handler is read without locking from `onIncoming` on the
-    // ixwebsocket I/O thread; mutating it after the server is running is a
-    // data race. Caller must register exactly once during construction,
-    // before `start()`.
-    jassert(!running.load());
-    messageHandler = std::move(handler);
-}
-
-void BridgeServer::setExpectedToken(const juce::String& token)
-{
-    // Same threading rule as `onMessage`: `expectedToken` is read from the
-    // I/O thread without a lock, so it must be frozen before `start()`.
-    jassert(!running.load());
-    expectedToken = token;
 }
 
 bool BridgeServer::start(int port)
@@ -201,13 +186,14 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
         else
         {
             // Authenticated, non-AUTH message: fall through to dispatch.
-            auto handler = messageHandler; // copy for safe capture
+            // `messageHandler` is `const` and set by the constructor, so
+            // it's safe to reference from the async lambda without a copy.
             juce::MessageManager::callAsync(
-                [handler, type, payload]
+                [this, type, payload]
                 {
-                    if (handler)
+                    if (messageHandler)
                     {
-                        handler(type, payload);
+                        messageHandler(*this, type, payload);
                     }
                 });
             return;

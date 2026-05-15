@@ -202,7 +202,8 @@ const TRACK_GAP = 4
               :value="track.volume"
               :title="'Volume ' + Math.round(track.volume * 100) + '%'"
               class="track-volume h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
-              @input="(e) => project.setTrackVolume(track.id, Number((e.target as HTMLInputElement).value))"
+              @input="(e) => project.setTrackVolumeLocal(track.id, Number((e.target as HTMLInputElement).value))"
+              @change="(e) => project.setTrackVolume(track.id, Number((e.target as HTMLInputElement).value))"
             >
             <span class="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-500">
               {{ Math.round(track.volume * 100) }}

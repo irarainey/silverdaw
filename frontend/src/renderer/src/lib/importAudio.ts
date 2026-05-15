@@ -133,7 +133,10 @@ export async function importAudioIntoTrack(
         durationMs: audio.durationMs,
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
-        peaks: audio.peaks
+        peaks: audio.peaks,
+        // Store the backend's path on the clip so a later CLIP_ADD_FAILED
+        // ack can match the optimistically-added clip and remove it.
+        playbackFilePath: audio.playbackFilePath
       },
       resolvedStartMs
     )

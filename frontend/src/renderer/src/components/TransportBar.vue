@@ -7,6 +7,7 @@ import { computed, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
 
 const project = useProjectStore()
 const transport = useTransportStore()
@@ -14,29 +15,12 @@ const transport = useTransportStore()
 const positionDisplay = computed(() => formatTime(transport.positionMs))
 
 /**
- * Current playhead position expressed as Bar.Beat.Sub (0-indexed), the
- * usual DAW convention. 4/4 time and 4 sub-beats per beat are assumed —
- * same as the timeline grid.
- *
- * Operates on integer sub-beat counts (rather than fractional beats) so
- * floating-point drift doesn't push exact bar boundaries down to the
- * previous bar (e.g. 3.9999… → bar 0 beat 3 sub 3 instead of bar 1).
- * The error otherwise compounds with position and shows up most clearly
- * far along the timeline.
+ * Playhead position as `Bar.Beat.Sub` (0-indexed). 4/4 with four
+ * sub-beats per beat — same as the timeline grid. See `musicTime.ts`
+ * for the integer-sub-beat rounding that avoids float drift at exact
+ * bar boundaries.
  */
-const barPositionDisplay = computed(() => {
-  const bpm = Math.max(1, transport.bpm)
-  const subsPerBeat = 4
-  const beatsPerBar = 4
-  const subsPerBar = subsPerBeat * beatsPerBar
-  const msPerSub = 60000 / (bpm * subsPerBeat)
-  const totalSubs = Math.max(0, Math.round(transport.positionMs / msPerSub))
-  const bar = Math.floor(totalSubs / subsPerBar)
-  const subsInBar = totalSubs % subsPerBar
-  const beatInBar = Math.floor(subsInBar / subsPerBeat)
-  const subInBeat = subsInBar % subsPerBeat
-  return `${bar}.${beatInBar}.${subInBeat}`
-})
+const barPosition = computed(() => barPositionDisplay(transport.positionMs, transport.bpm))
 
 // Editable project-length field. Mirrors `project.durationMs` whenever the
 // user is not actively editing it; on commit (blur / Enter) we parse the
@@ -64,47 +48,6 @@ watch(
 )
 
 const lengthEditable = computed(() => project.tracks.length > 0)
-
-function formatTime(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000))
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  const mm = String(m).padStart(2, '0')
-  const ss = String(s).padStart(2, '0')
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
-}
-
-/**
- * Parse a user-entered time string into milliseconds. Accepts `ss`,
- * `mm:ss` and `h:mm:ss` (fractional seconds allowed in the last
- * component). Returns `null` on a malformed input so the caller can fall
- * back to the previous value.
- */
-function parseTime(text: string): number | null {
-  const trimmed = text.trim()
-  if (!trimmed) return null
-  const parts = trimmed.split(':').map((p) => p.trim())
-  if (parts.length > 3) return null
-  for (const p of parts) {
-    if (p === '' || Number.isNaN(Number(p))) return null
-  }
-  let h = 0,
-    m = 0,
-    s = 0
-  if (parts.length === 1) {
-    s = Number(parts[0])
-  } else if (parts.length === 2) {
-    m = Number(parts[0])
-    s = Number(parts[1])
-  } else {
-    h = Number(parts[0])
-    m = Number(parts[1])
-    s = Number(parts[2])
-  }
-  if (h < 0 || m < 0 || s < 0) return null
-  return Math.round((h * 3600 + m * 60 + s) * 1000)
-}
 
 function onLengthCommit(): void {
   isEditingLength.value = false
@@ -261,7 +204,7 @@ function onSkipForward(): void {
         <div class="flex flex-col items-start leading-none">
           <span class="text-[9px] uppercase tracking-wide text-zinc-500">Bar</span>
           <span class="font-mono text-base tabular-nums text-zinc-100" title="Bar.Beat.Sub">{{
-            barPositionDisplay
+            barPosition
             }}</span>
         </div>
         <div class="h-7 w-px bg-zinc-800" />

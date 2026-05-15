@@ -5,6 +5,7 @@
 #include <csignal>
 #include <iostream>
 #include <juce_events/juce_events.h>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -188,6 +189,24 @@ class PlayheadEmitter : public juce::Timer
     double lastPosMs = -1.0;
 };
 
+/**
+ * Extract a numeric field from a bridge payload without the silent
+ * coercion that `juce::var::getProperty(key, default)` performs. Returns
+ * `std::nullopt` (and logs once) when the field is missing or wrong-typed
+ * so dispatch handlers can reject the envelope instead of silently
+ * applying a default value (e.g. seek-to-0, zero-gain).
+ */
+std::optional<double> tryGetNumber(const juce::var& payload, const char* key)
+{
+    const juce::var v = payload.getProperty(key, juce::var());
+    if (v.isDouble() || v.isInt() || v.isInt64())
+    {
+        return static_cast<double>(v);
+    }
+    std::cerr << "[bridge] field '" << key << "' missing or non-numeric; envelope ignored\n";
+    return std::nullopt;
+}
+
 void handleClipAdd(const juce::var& payload, jackdaw::AudioEngine& engine, jackdaw::BridgeServer& bridge)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
@@ -203,10 +222,10 @@ void handleClipAdd(const juce::var& payload, jackdaw::AudioEngine& engine, jackd
     {
         // Apply the requested timeline offset so the clip plays back at the
         // position the frontend chose (e.g. at the current playhead).
-        const double positionMs = static_cast<double>(payload.getProperty("positionMs", 0.0));
-        if (positionMs > 0.0)
+        const auto positionMs = tryGetNumber(payload, "positionMs");
+        if (positionMs.has_value() && *positionMs > 0.0)
         {
-            engine.setClipOffsetMs(trackId, positionMs);
+            engine.setClipOffsetMs(trackId, *positionMs);
         }
     }
     auto* p = new juce::DynamicObject();
@@ -227,8 +246,11 @@ void handleClipMove(const juce::var& payload, jackdaw::AudioEngine& engine)
     {
         return;
     }
-    const double positionMs = static_cast<double>(payload.getProperty("positionMs", 0.0));
-    engine.setClipOffsetMs(trackId, positionMs);
+    const auto positionMs = tryGetNumber(payload, "positionMs");
+    if (positionMs.has_value())
+    {
+        engine.setClipOffsetMs(trackId, *positionMs);
+    }
 }
 
 void handleTrackRemove(const juce::var& payload, jackdaw::AudioEngine& engine)
@@ -248,8 +270,12 @@ void handleTrackGain(const juce::var& payload, jackdaw::AudioEngine& engine)
     {
         return;
     }
-    const auto gain = static_cast<float>(static_cast<double>(payload.getProperty("gain", 1.0)));
-    engine.setTrackGain(trackId, gain);
+    const auto gain = tryGetNumber(payload, "gain");
+    if (!gain.has_value())
+    {
+        return;
+    }
+    engine.setTrackGain(trackId, static_cast<float>(*gain));
 }
 
 // Same wire-protocol convention as BridgeServer::broadcast: (type, payload) order is
@@ -280,8 +306,11 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, j
     }
     else if (type == "TRANSPORT_SEEK")
     {
-        const double positionMs = static_cast<double>(payload.getProperty("positionMs", 0.0));
-        engine.setPositionMs(positionMs);
+        const auto positionMs = tryGetNumber(payload, "positionMs");
+        if (positionMs.has_value())
+        {
+            engine.setPositionMs(*positionMs);
+        }
     }
     else if (type == "TRACK_REMOVE")
     {
@@ -318,22 +347,22 @@ int runBackend(int argc, char* argv[])
         // Continue anyway - frontend can still load files, just won't hear anything.
     }
 
-    jackdaw::BridgeServer bridge;
-
     if (bridgeToken.isEmpty())
     {
         std::cerr << "[bridge] WARNING: no AUTH token set (JACKDAW_BRIDGE_TOKEN unset and "
                      "--token not given); accepting all loopback clients. DO NOT USE IN PRODUCTION.\n";
     }
-    else
-    {
-        bridge.setExpectedToken(bridgeToken);
-    }
 
-    // Route incoming messages from the bridge to the engine. Already on the
-    // JUCE message thread (BridgeServer::onIncoming marshals via callAsync).
-    bridge.onMessage([&engine, &bridge](const juce::String& type, const juce::var& payload)
-                     { dispatchBridgeMessage(type, payload, engine, bridge); });
+    // Construct the bridge with the token and message handler frozen at
+    // construction time — the I/O thread reads both lock-free, so freezing
+    // them at construction is what makes the read race-free by design.
+    // The handler receives `BridgeServer&` from `onIncoming` so it can
+    // call `broadcast()` for acks (e.g. CLIP_ADDED) without a chicken-and-
+    // -egg capture problem.
+    jackdaw::BridgeServer bridge(bridgeToken,
+                                 [&engine](jackdaw::BridgeServer& self, const juce::String& type,
+                                           const juce::var& payload)
+                                 { dispatchBridgeMessage(type, payload, engine, self); });
 
     if (!bridge.start(bridgePort))
     {

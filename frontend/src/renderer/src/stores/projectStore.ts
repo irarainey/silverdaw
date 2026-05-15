@@ -7,11 +7,20 @@
 import { defineStore } from 'pinia'
 import { PEAKS_PER_SECOND } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 
 export interface Clip {
   readonly id: string
   readonly trackId: string
   readonly filePath: string
+  /**
+   * Path the *backend* loads for playback. Differs from `filePath` only
+   * when the source format isn't natively decodable by JUCE
+   * (e.g. AAC / M4A on Windows) and we hand the engine a transcoded
+   * temp WAV instead. Used to match `CLIP_ADDED` / `CLIP_ADD_FAILED`
+   * acks back to the originating clip in the renderer.
+   */
+  readonly playbackFilePath?: string
   readonly fileName: string
   /** Offset from the timeline origin (ms). Mutable so clips can be dragged. */
   startMs: number
@@ -161,6 +170,8 @@ export const useProjectStore = defineStore('project', {
         sampleRate: number
         channelCount: number
         peaks: Float32Array
+        /** Optional backend-loadable path; falls back to `filePath`. */
+        playbackFilePath?: string
       },
       startMs = 0
     ): string | null {
@@ -172,6 +183,7 @@ export const useProjectStore = defineStore('project', {
         id: clipId,
         trackId,
         filePath: audio.filePath,
+        playbackFilePath: audio.playbackFilePath,
         fileName: audio.fileName,
         startMs,
         durationMs: audio.durationMs,
@@ -347,12 +359,62 @@ export const useProjectStore = defineStore('project', {
     /**
      * Set a track's volume (linear gain, 0.0–1.0) and push the new effective
      * gain to the backend. Mute / solo still override volume to silence.
+     *
+     * Use this for *commits* (e.g. the slider's `@change` event). For the
+     * live drag (every `@input`) use `setTrackVolumeLocal` so we don't
+     * flood the bridge with one envelope per pixel of slider movement.
      */
     setTrackVolume(trackId: string, volume: number): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
       t.volume = Math.min(1, Math.max(0, volume))
       this.pushTrackGain(t)
+    },
+
+    /**
+     * Update a track's volume *locally only* — used by the slider's
+     * `@input` event so the UI feels immediate without pushing one
+     * `TRACK_GAIN` envelope per pixel of movement. The committed value
+     * goes out on `@change` via `setTrackVolume`.
+     */
+    setTrackVolumeLocal(trackId: string, volume: number): void {
+      const t = this.tracks.find((x) => x.id === trackId)
+      if (!t) return
+      t.volume = Math.min(1, Math.max(0, volume))
+    },
+
+    /**
+     * Reconcile a `CLIP_ADDED` / `CLIP_ADD_FAILED` ack from the backend
+     * against the optimistically-added clip in the renderer.
+     *
+     * - On success the clip stays put (the backend now has a matching
+     *   `Track`/`Clip` and will produce audio).
+     * - On failure we drop the clip and surface a toast so the user
+     *   sees *why* their drop-target file didn't make it (codec
+     *   unsupported, file missing, etc.). Matching is by
+     *   `playbackFilePath ?? filePath` because the bridge ack carries
+     *   the path the backend actually saw (post-transcode).
+     */
+    confirmClipAdd(trackId: string, filePath: string, ok: boolean, error?: string): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const clipId = track.clipIds.find((id) => {
+        const c = this.clips[id]
+        if (!c) return false
+        return (c.playbackFilePath ?? c.filePath) === filePath
+      })
+      if (ok) {
+        // No state change needed — the optimistic clip is now confirmed.
+        return
+      }
+      if (clipId) {
+        delete this.clips[clipId]
+        track.clipIds = track.clipIds.filter((id) => id !== clipId)
+      }
+      const message = error
+        ? `Couldn't add clip: ${error}`
+        : 'Couldn\u2019t add clip (backend rejected the file).'
+      useNotificationsStore().pushError(message)
     },
 
     /** Set the palette index used to draw a track's waveform / clips. */

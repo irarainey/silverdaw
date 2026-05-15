@@ -14,6 +14,7 @@
 // guards before they reach the Pinia stores.
 
 import { useTransportStore } from '@/stores/transportStore'
+import { useProjectStore } from '@/stores/projectStore'
 import {
   isBridgeInboundType,
   isClipAckPayload,
@@ -196,10 +197,19 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'CLIP_ADDED':
-    case 'CLIP_ADD_FAILED':
-      // Acknowledgements; not used yet but useful when bugs surface.
-      console.log('[bridge]', msg.type, msg.payload)
+    case 'CLIP_ADD_FAILED': {
+      // Reconcile the ack against the optimistically-added clip. On
+      // failure the project store removes the clip and surfaces a toast
+      // with the backend-supplied reason; on success it's a no-op.
+      const project = useProjectStore()
+      project.confirmClipAdd(
+        msg.payload.trackId,
+        msg.payload.filePath,
+        msg.payload.ok,
+        msg.payload.error
+      )
       break
+    }
 
     default:
       assertNever(msg)

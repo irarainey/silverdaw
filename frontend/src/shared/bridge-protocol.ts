@@ -92,6 +92,11 @@ export interface ClipAckPayload {
   trackId: string
   filePath: string
   ok: boolean
+  /**
+   * Backend-supplied error message. Present iff `ok === false`.
+   * Surfaced through `notificationsStore.pushError(...)` in the renderer.
+   */
+  error?: string
 }
 
 export interface BridgeInboundMap {
@@ -158,6 +163,7 @@ export function isClipAckPayload(value: unknown): value is ClipAckPayload {
     isPlainObject(value) &&
     typeof value.trackId === 'string' &&
     typeof value.filePath === 'string' &&
-    typeof value.ok === 'boolean'
+    typeof value.ok === 'boolean' &&
+    (value.error === undefined || typeof value.error === 'string')
   )
 }
