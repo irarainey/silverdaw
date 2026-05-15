@@ -359,10 +359,9 @@ int runBackend(int argc, char* argv[])
     // The handler receives `BridgeServer&` from `onIncoming` so it can
     // call `broadcast()` for acks (e.g. CLIP_ADDED) without a chicken-and-
     // -egg capture problem.
-    jackdaw::BridgeServer bridge(bridgeToken,
-                                 [&engine](jackdaw::BridgeServer& self, const juce::String& type,
-                                           const juce::var& payload)
-                                 { dispatchBridgeMessage(type, payload, engine, self); });
+    jackdaw::BridgeServer bridge(
+        bridgeToken, [&engine](jackdaw::BridgeServer& self, const juce::String& type, const juce::var& payload)
+        { dispatchBridgeMessage(type, payload, engine, self); });
 
     if (!bridge.start(bridgePort))
     {

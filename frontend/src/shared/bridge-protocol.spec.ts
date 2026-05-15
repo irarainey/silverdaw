@@ -56,9 +56,7 @@ describe('isClipAckPayload', () => {
   })
 
   it('accepts a failure ack with an error string', () => {
-    expect(isClipAckPayload({ trackId: 't1', filePath: '/p', ok: false, error: 'boom' })).toBe(
-      true
-    )
+    expect(isClipAckPayload({ trackId: 't1', filePath: '/p', ok: false, error: 'boom' })).toBe(true)
   })
 
   it('rejects an ack with a non-string error', () => {

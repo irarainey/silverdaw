@@ -57,8 +57,7 @@ class BridgeServer
      * server by reference because the handler is constructor-injected
      * before the server object exists.
      */
-    using MessageHandler =
-        std::function<void(BridgeServer& self, const juce::String& type, const juce::var& payload)>;
+    using MessageHandler = std::function<void(BridgeServer& self, const juce::String& type, const juce::var& payload)>;
 
     /**
      * Construct a bridge server with the per-session AUTH token and the
