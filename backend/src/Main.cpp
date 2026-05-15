@@ -214,7 +214,9 @@ void handleClipAdd(const juce::var& payload, jackdaw::AudioEngine& engine, jackd
     p->setProperty("filePath", filePath);
     p->setProperty("ok", ok);
     if (!ok)
+    {
         p->setProperty("error", errorMsg);
+    }
     bridge.broadcast(ok ? "CLIP_ADDED" : "CLIP_ADD_FAILED", juce::var(p));
 }
 

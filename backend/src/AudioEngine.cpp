@@ -53,9 +53,11 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
     if (!filePath.existsAsFile())
     {
         const auto msg = "file does not exist: " + filePath.getFullPathName();
-        std::cerr << "[addClip] " << msg.toStdString() << std::endl;
+        std::cerr << "[addClip] " << msg.toStdString() << '\n';
         if (outError != nullptr)
+        {
             *outError = msg;
+        }
         return false;
     }
 
@@ -82,9 +84,11 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
         const auto msg = "createReaderFor returned null (ext=" + filePath.getFileExtension() + ", size="
                          + juce::String(filePath.getSize()) + " bytes, registered=["
                          + formatNames.joinIntoString(", ") + "])";
-        std::cerr << "[addClip] " << msg.toStdString() << std::endl;
+        std::cerr << "[addClip] " << msg.toStdString() << '\n';
         if (outError != nullptr)
+        {
             *outError = msg;
+        }
         return false;
     }
 
