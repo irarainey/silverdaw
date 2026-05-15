@@ -210,10 +210,18 @@ class AudioEngine
 
     /**
      * Set the timeline offset (ms) for the clip on `trackId` — i.e. how far
-     * along the global timeline its audio should start. The transport's
-     * current position is re-applied so any read-ahead buffer is refilled
-     * with the correct silence / audio for the new offset. Returns true if
-     * the track existed.
+     * along the global timeline its audio should start.
+     *
+     * Fast path (transport stopped or paused): updates the
+     * `OffsetSource`'s atomic offset only. Lock-free, no allocations,
+     * cheap enough to call per-frame during a clip drag.
+     *
+     * Fallback (transport actively playing): additionally rebuilds the
+     * track's source chain so the `BufferingAudioSource`'s prefetch can't
+     * serve ~0.7 s of stale audio at the OLD offset. The current
+     * playback position is preserved across the rebuild.
+     *
+     * Returns true if the track existed.
      */
     bool setClipOffsetMs(const juce::String& trackId, double offsetMs);
 

@@ -216,30 +216,49 @@ bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
 
     const double clampedMs = juce::jmax(0.0, offsetMs);
     const auto newOffsetSamples = static_cast<juce::int64>(clampedMs * track->sampleRate / 1000.0);
+
+    // Fast path: lock-free atomic write of the new offset.
+    // ────────────────────────────────────────────────────
+    // `OffsetSource::offsetSamples` is `std::atomic<int64>`. The next
+    // call to `OffsetSource::getNextAudioBlock()` (issued by JUCE's
+    // `BufferingAudioSource` background prefetch thread) sees the new
+    // value and emits samples for the new offset. No locks, no
+    // allocations, no source-chain rebuild.
+    //
+    // This is the right behaviour for the common case: clip-drag
+    // updates while the transport is stopped. The frontend can stream
+    // every intermediate position to us during a drag without us
+    // having to tear down and rebuild a `BufferingAudioSource` per
+    // frame. By the time the user presses Play, the offset has been
+    // live for many blocks and any prefetch is already coherent.
     track->offsetSource->setOffsetSamples(newOffsetSamples);
 
-    // Fully rebuild the transport's source chain so the read-ahead
-    // `BufferingAudioSource` is reconstructed from scratch and can't
-    // serve any prefetched samples from the OLD offset. Just re-seeking
-    // is racy: the background reader thread may not have moved off the
-    // cached range before playback starts, so the listener would still
-    // hear the old audio at the old playhead position.
-    const double pos = track->transportSource->getCurrentPosition();
-    const bool wasPlaying = track->transportSource->isPlaying();
-    if (wasPlaying)
+    // Fallback: full source-chain rebuild when actively playing.
+    // ──────────────────────────────────────────────────────────
+    // If the transport is currently playing, the `BufferingAudioSource`
+    // has prefetched ~0.7 s of audio (32 768 samples at 48 kHz) from
+    // `OffsetSource` using the OLD offset. Those samples are already
+    // baked into its internal ring buffer; the atomic write cannot
+    // reach them. Without the rebuild the listener would hear
+    // wrong-audio-at-wrong-position until the prefetch thread caught
+    // up, which is audibly broken on a moving clip.
+    //
+    // `setSource(nullptr) + setSource(...)` destroys and recreates the
+    // `BufferingAudioSource` from scratch, so its buffer is guaranteed
+    // empty and the first prefetch reads through the new offset. The
+    // current playback position is preserved across the rebuild so
+    // playback continues without a perceptible seek.
+    if (track->transportSource->isPlaying())
     {
+        const double pos = track->transportSource->getCurrentPosition();
         track->transportSource->stop();
-    }
-
-    track->transportSource->setSource(nullptr, 0, nullptr);
-    track->transportSource->setSource(track->offsetSource.get(), 32768, &readAheadThread, track->sampleRate,
-                                      track->numChannels);
-
-    track->transportSource->setPosition(pos);
-    if (wasPlaying)
-    {
+        track->transportSource->setSource(nullptr, 0, nullptr);
+        track->transportSource->setSource(track->offsetSource.get(), 32768, &readAheadThread, track->sampleRate,
+                                          track->numChannels);
+        track->transportSource->setPosition(pos);
         track->transportSource->start();
     }
+
     return true;
 }
 
