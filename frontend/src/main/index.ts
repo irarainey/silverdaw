@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen }
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { basename, dirname, extname, join, resolve as pathResolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, resolve as pathResolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
@@ -111,9 +111,24 @@ function canonicalisePath(p: string): string {
   return pathResolve(p)
 }
 
-/** Add a path to the allow-list using its canonical absolute form. */
+/**
+ * Add a path to the allow-list using its canonical absolute form. Rejects
+ * anything that isn't an absolute path with an accepted audio extension,
+ * so a future regression that leaks `ipcRenderer.send` to a compromised
+ * renderer can't pollute the read allow-list with arbitrary filesystem
+ * locations. (FE-004 in the security review.)
+ */
 function registerIssuedPath(filePath: string): void {
   if (typeof filePath !== 'string' || filePath === '') return
+  if (!isAbsolute(filePath)) {
+    console.warn('[main] refusing to register non-absolute path:', filePath)
+    return
+  }
+  const ext = extname(filePath).replace(/^\./, '').toLowerCase()
+  if (!AUDIO_FILE_EXTENSIONS_SET.has(ext)) {
+    console.warn('[main] refusing to register non-audio path:', filePath)
+    return
+  }
   issuedAudioPaths.add(canonicalisePath(filePath))
 }
 

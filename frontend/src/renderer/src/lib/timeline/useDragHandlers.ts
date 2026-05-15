@@ -40,7 +40,6 @@ export interface DragHandlersOptions {
   host: Ref<HTMLElement | null>
   app: Readonly<Ref<Application | null>>
   scrollX: Ref<number>
-  scrollY: Ref<number>
   showScrollbar: ComputedRef<boolean>
   geometry: GridGeometry
   /** Returns the latest clip-hit-regions array (populated by drawClip). */

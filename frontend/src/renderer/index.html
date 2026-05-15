@@ -3,6 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Content-Security-Policy:
+        - 'unsafe-inline' on style-src is required by Tailwind v4, which
+          injects JIT-generated rules as inline <style> blocks at runtime.
+          The residual XSS risk is bounded by sandbox + contextIsolation +
+          the absence of any remote content (default-src 'self', and no
+          remote script/style is ever loaded). Revisit if/when Tailwind
+          supports a nonced-style mode in this version.
+        - connect-src whitelists ws://127.0.0.1:* / ws://localhost:* only
+          for the loopback JUCE bridge; img-src allows blob: for decoded
+          cover-art Blobs returned from the music-metadata parser.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*"
