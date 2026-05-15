@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
+  "packageManager": "pnpm@11.1.1",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",

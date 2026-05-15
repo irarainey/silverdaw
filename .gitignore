@@ -7,6 +7,11 @@ node_modules/
 .npm/
 .pnpm-debug.log*
 npm-debug.log*
+# Block stray npm lockfiles — this project is pnpm-only. A package-lock.json
+# alongside pnpm-lock.yaml corrupts node_modules (mixed-manager installs).
+package-lock.json
+npm-shrinkwrap.json
+yarn.lock
 
 # Build outputs
 dist/
