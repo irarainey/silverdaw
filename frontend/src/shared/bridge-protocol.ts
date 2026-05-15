@@ -39,10 +39,24 @@ export interface TransportSeekPayload {
 }
 
 /**
+ * Per-session AUTH handshake. MUST be the first envelope the renderer
+ * sends on every new WebSocket connection — the backend rejects (closes)
+ * the socket on any other initial message or on a token mismatch. The
+ * token value comes from main via `window.jackdaw.getBridgeToken()`; main
+ * passes the same value to the spawned backend through the
+ * `JACKDAW_BRIDGE_TOKEN` env var. See `backend/src/BridgeServer.h` for the
+ * server side of the contract.
+ */
+export interface AuthPayload {
+  token: string
+}
+
+/**
  * Map of outbound envelope `type` → payload type. Payload-less envelopes
  * (TRANSPORT_PLAY etc.) map to `undefined`.
  */
 export interface BridgeOutboundMap {
+  AUTH: AuthPayload
   CLIP_ADD: ClipAddPayload
   CLIP_MOVE: ClipMovePayload
   TRACK_REMOVE: TrackRemovePayload

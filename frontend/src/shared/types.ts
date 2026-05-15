@@ -41,8 +41,19 @@ export interface AudioMetadata {
   lossless?: boolean
   /** Tag types found, e.g. `['ID3v2.3']`. */
   tagTypes?: string[]
-  /** First embedded picture as a data URL, if present and under the size cap. */
-  coverArtDataUrl?: string
+  /**
+   * First embedded picture as raw bytes + mime type, if present and under
+   * the size cap. The renderer wraps this in a `Blob` and exposes it via
+   * `URL.createObjectURL`, then revokes the URL when the library item is
+   * removed — keeping ~1–10 MB of base64 out of every persisted Pinia
+   * snapshot and out of Vue's reactivity proxy.
+   */
+  coverArt?: {
+    /** Raw image bytes (PNG / JPEG / etc.). */
+    data: ArrayBuffer
+    /** MIME type as reported by the tag, e.g. `'image/jpeg'`. */
+    mimeType: string
+  }
 }
 
 /**

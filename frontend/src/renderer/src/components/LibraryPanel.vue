@@ -308,8 +308,8 @@ function onResizePointerUp(): void {
             class="flex h-full w-15 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
           >
             <img
-              v-if="item.metadata?.coverArtDataUrl"
-              :src="item.metadata.coverArtDataUrl"
+              v-if="item.coverArtUrl"
+              :src="item.coverArtUrl"
               alt=""
               class="h-full w-full object-cover"
               draggable="false"

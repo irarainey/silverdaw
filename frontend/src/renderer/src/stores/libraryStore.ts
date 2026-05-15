@@ -32,8 +32,22 @@ export interface LibraryItem {
    * ID3 / Vorbis / iTunes / BWF tag info, populated asynchronously by the
    * main process via `audio:readMetadata`. `undefined` while loading,
    * `null` once we know the file has no parseable tags.
+   *
+   * Note: the `coverArt` field of `AudioMetadata` is stripped before the
+   * value lands here — the raw bytes live for one tick inside
+   * `setItemMetadata`, then get wrapped in a Blob and exposed as
+   * `coverArtUrl` below. Keeping the bytes out of the reactive object
+   * stops Vue from proxying ~MB-sized buffers and stops Pinia devtools
+   * from snapshotting them.
    */
   metadata?: AudioMetadata | null
+  /**
+   * `URL.createObjectURL(blob)` for the embedded cover art, if any.
+   * Owned by the library store: created in `setItemMetadata`, revoked in
+   * `removeItem` / `revokeItemCoverArt`. Components bind directly to it
+   * as an `<img :src>` — no base64, no copying.
+   */
+  coverArtUrl?: string
 }
 
 interface LibraryState {
@@ -122,11 +136,16 @@ export const useLibraryStore = defineStore('library', {
      * Remove an item from the library. No-op if the item's file is still
      * referenced by any clip on any track — the user must delete those
      * clips first. Returns true if the item was actually removed.
+     *
+     * Also revokes the cover-art object URL so the underlying Blob is
+     * eligible for GC; without this the renderer would leak ~MB per
+     * imported file across the session.
      */
     removeItem(itemId: string): boolean {
       const idx = this.items.findIndex((i) => i.id === itemId)
       if (idx < 0) return false
       if (this.isItemInUse(itemId)) return false
+      revokeItemCoverArt(this.items[idx])
       this.items.splice(idx, 1)
       return true
     },
@@ -156,11 +175,35 @@ export const useLibraryStore = defineStore('library', {
      * existing library item. Called by the import flow once the main
      * process finishes parsing. `null` means “parsing finished but no
      * usable tags were found” — distinct from `undefined` (“still loading”).
+     *
+     * If the metadata carries embedded cover art, the raw bytes are
+     * stripped out of the stored metadata object and turned into a
+     * `Blob` + `URL.createObjectURL`. The resulting URL is stashed on
+     * the item as `coverArtUrl`; the previous URL (if any) is revoked
+     * so re-importing a file with a different cover doesn't leak.
      */
     setItemMetadata(itemId: string, metadata: AudioMetadata | null): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
-      item.metadata = metadata
+
+      // Drop any previously-issued cover URL before we overwrite it.
+      revokeItemCoverArt(item)
+      item.coverArtUrl = undefined
+
+      if (metadata == null) {
+        item.metadata = metadata
+        return
+      }
+
+      // Pull the cover bytes off the metadata object so we don't store a
+      // multi-megabyte ArrayBuffer inside Vue's reactivity proxy. The
+      // wrapped Blob URL is the only handle the rest of the app sees.
+      const { coverArt, ...rest } = metadata
+      item.metadata = rest
+      if (coverArt && coverArt.data.byteLength > 0) {
+        const blob = new Blob([coverArt.data], { type: coverArt.mimeType })
+        item.coverArtUrl = URL.createObjectURL(blob)
+      }
     },
 
     /**
@@ -211,4 +254,14 @@ export function libraryItemDisplayName(item: {
 }): string {
   const title = item.metadata?.title?.trim()
   return title && title.length > 0 ? title : item.fileName
+}
+
+/**
+ * Revoke the cover-art object URL on `item` if one has been issued.
+ * Safe to call when no URL is set. Does NOT clear `item.coverArtUrl` —
+ * callers either delete the item outright (no further references) or
+ * overwrite the property immediately afterwards.
+ */
+function revokeItemCoverArt(item: LibraryItem | undefined): void {
+  if (item?.coverArtUrl) URL.revokeObjectURL(item.coverArtUrl)
 }

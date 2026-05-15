@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve as pathResolve } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -15,15 +16,28 @@ import type { AudioMetadata } from '../shared/types'
 /** Drop embedded pictures larger than this so we don't bloat the Pinia store. */
 const MAX_COVER_ART_BYTES = 2 * 1024 * 1024
 
-function pickCoverArt(pictures: IPicture[] | undefined): string | undefined {
+/**
+ * Pick the best cover-art picture (preferring an explicit front cover) and
+ * return its raw bytes + MIME type. The renderer turns the buffer into a
+ * `Blob` + `URL.createObjectURL`, so we ship binary across IPC rather than
+ * base64-inflated data URLs.
+ */
+function pickCoverArt(
+  pictures: IPicture[] | undefined
+): { data: ArrayBuffer; mimeType: string } | undefined {
   if (!pictures || pictures.length === 0) return undefined
   // Prefer a front-cover-type picture if the tag distinguishes them; else first.
   const front = pictures.find((p) => (p.type ?? '').toLowerCase().includes('cover')) ?? pictures[0]
-  if (!front.data || front.data.length === 0 || front.data.length > MAX_COVER_ART_BYTES)
+  if (!front.data || front.data.length === 0 || front.data.length > MAX_COVER_ART_BYTES) {
     return undefined
-  const mime = front.format || 'image/jpeg'
-  const base64 = Buffer.from(front.data).toString('base64')
-  return `data:${mime};base64,${base64}`
+  }
+  // Copy into a fresh ArrayBuffer so we hand IPC an owned, transferable
+  // buffer rather than a view into the (potentially larger) parse-result
+  // arena `music-metadata` keeps internally.
+  const src = front.data
+  const data = src.buffer.slice(src.byteOffset, src.byteOffset + src.byteLength) as ArrayBuffer
+  const mimeType = front.format || 'image/jpeg'
+  return { data, mimeType }
 }
 
 function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
@@ -56,7 +70,7 @@ function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
   if (typeof format.lossless === 'boolean') out.lossless = format.lossless
   if (format.tagTypes && format.tagTypes.length > 0) out.tagTypes = [...format.tagTypes]
   const cover = pickCoverArt(common.picture)
-  if (cover) out.coverArtDataUrl = cover
+  if (cover) out.coverArt = cover
   return out
 }
 
@@ -149,6 +163,16 @@ function resolveBridgePort(): number {
 }
 
 const bridgePort = resolveBridgePort()
+
+// ─── Backend bridge AUTH token ──────────────────────────────────────────────
+// Loopback alone is not a strong trust boundary — any other process running
+// as the same user can connect to the WebSocket. Each backend launch gets a
+// fresh 256-bit random token; main passes it to the backend via the
+// `JACKDAW_BRIDGE_TOKEN` env var (NOT a CLI arg — argv is visible in the OS
+// process table) and exposes it to the renderer through `bridge:getToken`,
+// so the renderer can send it as the first WebSocket message. The backend
+// closes any socket that fails to AUTH on its first envelope.
+const bridgeToken = randomBytes(32).toString('hex')
 
 // ─── Persisted preferences (window state + UI panel sizes) ──────────────────
 // Stored as JSON in `<userData>/preferences.json`. Writes are debounced so a
@@ -291,7 +315,17 @@ function startBackend(): void {
     exeName
   )
 
-  backendProcess = spawn(exePath, ['--port', String(bridgePort)], { stdio: 'inherit' })
+  backendProcess = spawn(exePath, ['--port', String(bridgePort)], {
+    stdio: 'inherit',
+    // Forward `JACKDAW_BRIDGE_TOKEN` via the spawn env (NOT via argv —
+    // command-line arguments are visible in the OS process table). The
+    // backend's `resolveBridgeToken()` reads the same env var and
+    // requires every WebSocket client to AUTH with this exact value.
+    env: {
+      ...process.env,
+      JACKDAW_BRIDGE_TOKEN: bridgeToken
+    }
+  })
 
   backendProcess.on('exit', (code) => {
     console.log(`[backend] exited with code ${code}`)
@@ -505,6 +539,12 @@ app.whenReady().then(async () => {
   // once at main-process start (env var or default) and shared with the
   // spawned backend via `--port`.
   ipcMain.handle('bridge:getPort', () => bridgePort)
+
+  // Hand the renderer the per-session AUTH token so it can send the
+  // initial `{type:'AUTH',payload:{token}}` envelope. The token never
+  // appears in argv or in the renderer's HTML — only the trusted preload
+  // bridge can fetch it.
+  ipcMain.handle('bridge:getToken', () => bridgeToken)
 
   // Open an audio file via the OS dialog and stream its bytes back to the renderer.
   // Returns null if the user cancels.

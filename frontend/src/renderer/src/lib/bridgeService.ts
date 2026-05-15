@@ -42,14 +42,20 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let stopped = false
 
 /**
- * Cached promise for the resolved bridge URL. Resolving the port goes
- * through an async preload IPC; we only need to do it once per session,
- * and concurrent `connect()` calls share the same in-flight promise.
+ * Resolved bridge connection parameters: the WebSocket URL plus the
+ * per-session AUTH token the renderer must send as its first envelope.
+ * Both come from main via preload IPC; we resolve them once per session
+ * and share the same in-flight promise across concurrent `connect()` calls.
  */
-let bridgeUrlPromise: Promise<string> | null = null
+interface BridgeConnection {
+  url: string
+  token: string
+}
 
-function resolveBridgeUrl(): Promise<string> {
-  if (bridgeUrlPromise) return bridgeUrlPromise
+let bridgeConnectionPromise: Promise<BridgeConnection> | null = null
+
+function resolveBridgeConnection(): Promise<BridgeConnection> {
+  if (bridgeConnectionPromise) return bridgeConnectionPromise
   const api = window.jackdaw
   const portPromise: Promise<number> =
     api && typeof api.getBridgePort === 'function'
@@ -58,8 +64,20 @@ function resolveBridgeUrl(): Promise<string> {
           return DEFAULT_BRIDGE_PORT
         })
       : Promise.resolve(DEFAULT_BRIDGE_PORT)
-  bridgeUrlPromise = portPromise.then((port) => `ws://${BRIDGE_HOST}:${port}`)
-  return bridgeUrlPromise
+  const tokenPromise: Promise<string> =
+    api && typeof api.getBridgeToken === 'function'
+      ? api.getBridgeToken().catch((err) => {
+          // An empty token disables AUTH on the backend — only ever true in
+          // stand-alone debug runs without `JACKDAW_BRIDGE_TOKEN` set.
+          console.warn('[bridge] getBridgeToken failed; sending empty token', err)
+          return ''
+        })
+      : Promise.resolve('')
+  bridgeConnectionPromise = Promise.all([portPromise, tokenPromise]).then(([port, token]) => ({
+    url: `ws://${BRIDGE_HOST}:${port}`,
+    token
+  }))
+  return bridgeConnectionPromise
 }
 
 /** Open the connection. Safe to call multiple times. */
@@ -72,7 +90,7 @@ export function connect(): void {
     return
   }
 
-  void resolveBridgeUrl().then((url) => {
+  void resolveBridgeConnection().then((conn) => {
     // Bail if `disconnect()` ran between the resolve and the open.
     if (stopped) return
     if (
@@ -81,16 +99,27 @@ export function connect(): void {
     ) {
       return
     }
-    openSocket(url)
+    openSocket(conn)
   })
 }
 
-function openSocket(url: string): void {
+function openSocket(conn: BridgeConnection): void {
+  const { url, token } = conn
   const ws = new WebSocket(url)
   socket = ws
 
   ws.addEventListener('open', () => {
     reconnectDelay = RECONNECT_DELAY_MS
+    // Per-session AUTH MUST be the first envelope on every new socket:
+    // the backend closes any client whose first message isn't a valid AUTH.
+    // We push it directly (instead of via the typed `send()`) so it bypasses
+    // the connected-state guard — at this instant `socket.readyState` is
+    // OPEN but `setConnected(true)` hasn't been called yet.
+    try {
+      ws.send(JSON.stringify({ type: 'AUTH', payload: { token } }))
+    } catch (err) {
+      console.warn('[bridge] failed to send AUTH envelope', err)
+    }
     useTransportStore().setConnected(true)
     console.log('[bridge] connected', url)
   })
