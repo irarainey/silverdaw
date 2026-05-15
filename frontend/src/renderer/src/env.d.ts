@@ -22,7 +22,7 @@ declare global {
   type UiPreferences = SharedUiPreferences
 
   interface Window {
-    jackdaw: {
+    rook: {
       menuAction(action: string): void
       openAudioFile(): Promise<OpenedAudioFile | null>
       openAudioFiles(): Promise<OpenedAudioFile[]>

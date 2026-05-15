@@ -14,7 +14,7 @@ class WebSocketServer;
 class WebSocket;
 } // namespace ix
 
-namespace jackdaw
+namespace rook
 {
 
 /**
@@ -36,7 +36,7 @@ namespace jackdaw
  * gated by a per-session AUTH token: a client's FIRST message must be
  * `{"type":"AUTH","payload":{"token":"<hex>"}}` matching the value
  * registered via `setExpectedToken()` (in turn injected by the Electron
- * main process through the `JACKDAW_BRIDGE_TOKEN` env var / `--token`
+ * main process through the `ROOK_BRIDGE_TOKEN` env var / `--token`
  * flag). Until that handshake completes:
  *   • any non-AUTH envelope causes the socket to be closed immediately;
  *   • a wrong-token AUTH envelope also closes the socket;
@@ -119,4 +119,4 @@ class BridgeServer
     std::atomic<bool> running{false};
 };
 
-} // namespace jackdaw
+} // namespace rook

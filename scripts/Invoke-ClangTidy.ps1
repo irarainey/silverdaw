@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Lint the Jackdaw backend C++ sources with clang-tidy.
+    Lint the Rook backend C++ sources with clang-tidy.
 
 .DESCRIPTION
     Runs clang-tidy over every *.cpp under backend/src/ using the

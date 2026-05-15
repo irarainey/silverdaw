@@ -53,7 +53,7 @@ function schedulePush(partial: { trackHeaderWidth?: number; libraryPanelHeight?:
     const payload = pendingPush
     pendingPush = {}
     pushTimer = null
-    window.jackdaw.setUiPreferences(payload)
+    window.rook.setUiPreferences(payload)
   }, 150)
 }
 
@@ -72,7 +72,7 @@ export const useUiStore = defineStore('ui', {
     async hydrate(): Promise<void> {
       if (this.hydrated) return
       try {
-        const saved = await window.jackdaw.getUiPreferences()
+        const saved = await window.rook.getUiPreferences()
         this.trackHeaderWidth = clampHeaderWidth(saved.trackHeaderWidth)
         this.libraryPanelHeight = clampLibraryHeight(saved.libraryPanelHeight)
       } catch (err) {

@@ -9,7 +9,7 @@
 #include <memory>
 #include <unordered_map>
 
-namespace jackdaw
+namespace rook
 {
 
 /**
@@ -248,9 +248,9 @@ class AudioEngine
 
     // Background thread used by each track's read-ahead buffer so file I/O
     // never happens on the audio thread.
-    juce::TimeSliceThread readAheadThread{"jackdaw-readahead"};
+    juce::TimeSliceThread readAheadThread{"rook-readahead"};
 
     std::unordered_map<juce::String, std::unique_ptr<Track>> tracks;
 };
 
-} // namespace jackdaw
+} // namespace rook

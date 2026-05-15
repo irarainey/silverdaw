@@ -1,4 +1,4 @@
-# clangd configuration for the Jackdaw backend.
+# clangd configuration for the Rook backend.
 # Docs: https://clangd.llvm.org/config
 
 CompileFlags:

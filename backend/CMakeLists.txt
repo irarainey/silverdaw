@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(JackdawBackend
+project(RookBackend
     VERSION 0.1.0
-    DESCRIPTION "Jackdaw headless audio backend"
+    DESCRIPTION "Rook headless audio backend"
     LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -43,22 +43,22 @@ FetchContent_Declare(IXWebSocket
 FetchContent_MakeAvailable(IXWebSocket)
 
 # ─── Target ──────────────────────────────────────────────────────────────
-juce_add_console_app(JackdawBackend
-    PRODUCT_NAME "Jackdaw Backend"
-    COMPANY_NAME "Jackdaw")
+juce_add_console_app(RookBackend
+    PRODUCT_NAME "Rook Backend"
+    COMPANY_NAME "Rook")
 
-target_sources(JackdawBackend PRIVATE
+target_sources(RookBackend PRIVATE
     src/Main.cpp
     src/AudioEngine.cpp
     src/BridgeServer.cpp)
 
-target_compile_definitions(JackdawBackend PRIVATE
+target_compile_definitions(RookBackend PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_USE_WINDOWS_MEDIA_FORMAT=1
     JUCE_STANDALONE_APPLICATION=1)
 
-target_link_libraries(JackdawBackend PRIVATE
+target_link_libraries(RookBackend PRIVATE
     juce::juce_core
     juce::juce_events
     juce::juce_audio_basics

@@ -98,7 +98,7 @@ const api = {
   /**
    * Resolve the per-session AUTH token the renderer must send as its
    * first WebSocket message. Generated once by main at startup and
-   * passed to the spawned backend via the `JACKDAW_BRIDGE_TOKEN` env
+   * passed to the spawned backend via the `ROOK_BRIDGE_TOKEN` env
    * var; the backend closes any socket that doesn't AUTH correctly.
    * Returning the token over the trusted preload bridge keeps it out
    * of argv and out of the HTML.
@@ -118,6 +118,6 @@ const api = {
   }): Promise<string | null> => ipcRenderer.invoke('audio:writeTempWav', args)
 } as const
 
-contextBridge.exposeInMainWorld('jackdaw', api)
+contextBridge.exposeInMainWorld('rook', api)
 
-export type JackdawApi = typeof api
+export type RookApi = typeof api
