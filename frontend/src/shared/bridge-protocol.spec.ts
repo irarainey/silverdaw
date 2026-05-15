@@ -3,12 +3,21 @@ import {
   isBridgeInboundType,
   isClipAckPayload,
   isPlayheadUpdatePayload,
-  isReadyPayload
+  isReadyPayload,
+  isTrackGainAppliedPayload,
+  isTrackRemovedPayload
 } from './bridge-protocol'
 
 describe('isBridgeInboundType', () => {
   it('accepts every inbound type', () => {
-    for (const t of ['READY', 'PLAYHEAD_UPDATE', 'CLIP_ADDED', 'CLIP_ADD_FAILED']) {
+    for (const t of [
+      'READY',
+      'PLAYHEAD_UPDATE',
+      'CLIP_ADDED',
+      'CLIP_ADD_FAILED',
+      'TRACK_REMOVED',
+      'TRACK_GAIN_APPLIED'
+    ]) {
       expect(isBridgeInboundType(t)).toBe(true)
     }
   })
@@ -67,5 +76,33 @@ describe('isClipAckPayload', () => {
     expect(isClipAckPayload({ filePath: '/p', ok: true })).toBe(false)
     expect(isClipAckPayload({ trackId: 't1', ok: true })).toBe(false)
     expect(isClipAckPayload({ trackId: 't1', filePath: '/p' })).toBe(false)
+  })
+})
+
+describe('isTrackRemovedPayload', () => {
+  it('accepts a well-shaped payload', () => {
+    expect(isTrackRemovedPayload({ trackId: 't1', ok: true })).toBe(true)
+    expect(isTrackRemovedPayload({ trackId: 't1', ok: false })).toBe(true)
+  })
+
+  it('rejects missing or wrong-typed fields', () => {
+    expect(isTrackRemovedPayload({ trackId: 't1' })).toBe(false)
+    expect(isTrackRemovedPayload({ ok: true })).toBe(false)
+    expect(isTrackRemovedPayload({ trackId: 1, ok: true })).toBe(false)
+    expect(isTrackRemovedPayload({ trackId: 't1', ok: 'yes' })).toBe(false)
+  })
+})
+
+describe('isTrackGainAppliedPayload', () => {
+  it('accepts a well-shaped payload', () => {
+    expect(isTrackGainAppliedPayload({ trackId: 't1', gain: 0.5, ok: true })).toBe(true)
+    expect(isTrackGainAppliedPayload({ trackId: 't1', gain: 0, ok: false })).toBe(true)
+  })
+
+  it('rejects missing or wrong-typed fields', () => {
+    expect(isTrackGainAppliedPayload({ trackId: 't1', gain: 0.5 })).toBe(false)
+    expect(isTrackGainAppliedPayload({ trackId: 't1', ok: true })).toBe(false)
+    expect(isTrackGainAppliedPayload({ gain: 0.5, ok: true })).toBe(false)
+    expect(isTrackGainAppliedPayload({ trackId: 't1', gain: '0.5', ok: true })).toBe(false)
   })
 })

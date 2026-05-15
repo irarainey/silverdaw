@@ -20,6 +20,8 @@ import {
   isClipAckPayload,
   isPlayheadUpdatePayload,
   isReadyPayload,
+  isTrackGainAppliedPayload,
+  isTrackRemovedPayload,
   type BridgeInboundMessage,
   type BridgeInboundType,
   type BridgeOutboundArgs,
@@ -211,6 +213,31 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'TRACK_REMOVED': {
+      // The renderer optimistically removed the track at request time. The
+      // ack is purely diagnostic: a negative ack means our view drifted
+      // out of sync with the backend (unknown trackId on the engine side).
+      if (!msg.payload.ok) {
+        console.warn('[bridge] TRACK_REMOVED ok=false for', msg.payload.trackId)
+      }
+      break
+    }
+
+    case 'TRACK_GAIN_APPLIED': {
+      // Same shape as TRACK_REMOVED: optimistic update already happened
+      // on commit; the ack just confirms the engine accepted it. A
+      // negative ack means the trackId was unknown on the backend.
+      if (!msg.payload.ok) {
+        console.warn(
+          '[bridge] TRACK_GAIN_APPLIED ok=false for',
+          msg.payload.trackId,
+          'gain=',
+          msg.payload.gain
+        )
+      }
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -248,6 +275,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
     case 'CLIP_ADDED':
     case 'CLIP_ADD_FAILED':
       return isClipAckPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_REMOVED':
+      return isTrackRemovedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_GAIN_APPLIED':
+      return isTrackGainAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

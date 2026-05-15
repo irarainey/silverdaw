@@ -99,11 +99,38 @@ export interface ClipAckPayload {
   error?: string
 }
 
+/**
+ * Backend ack for a prior `TRACK_REMOVE` envelope. `ok === false` means the
+ * track id was unknown on the backend (i.e. the renderer's view drifted out
+ * of sync). The renderer has already optimistically removed the row, so a
+ * negative ack is logged but otherwise non-fatal.
+ */
+export interface TrackRemovedPayload {
+  trackId: string
+  ok: boolean
+}
+
+/**
+ * Backend ack for a prior `TRACK_GAIN` envelope, echoing the gain value
+ * actually applied (clamped or quantised on the backend if needed) so the
+ * renderer can verify the engine state matches local expectations. `ok ===
+ * false` means the track id was unknown — gain mismatches are logged as a
+ * warning, not surfaced to the user.
+ */
+export interface TrackGainAppliedPayload {
+  trackId: string
+  /** Linear gain actually applied on the backend. */
+  gain: number
+  ok: boolean
+}
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PLAYHEAD_UPDATE: PlayheadUpdatePayload
   CLIP_ADDED: ClipAckPayload
   CLIP_ADD_FAILED: ClipAckPayload
+  TRACK_REMOVED: TrackRemovedPayload
+  TRACK_GAIN_APPLIED: TrackGainAppliedPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -131,7 +158,9 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'READY',
   'PLAYHEAD_UPDATE',
   'CLIP_ADDED',
-  'CLIP_ADD_FAILED'
+  'CLIP_ADD_FAILED',
+  'TRACK_REMOVED',
+  'TRACK_GAIN_APPLIED'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -165,5 +194,20 @@ export function isClipAckPayload(value: unknown): value is ClipAckPayload {
     typeof value.filePath === 'string' &&
     typeof value.ok === 'boolean' &&
     (value.error === undefined || typeof value.error === 'string')
+  )
+}
+
+/** Guard for `TrackRemovedPayload`. */
+export function isTrackRemovedPayload(value: unknown): value is TrackRemovedPayload {
+  return isPlainObject(value) && typeof value.trackId === 'string' && typeof value.ok === 'boolean'
+}
+
+/** Guard for `TrackGainAppliedPayload`. */
+export function isTrackGainAppliedPayload(value: unknown): value is TrackGainAppliedPayload {
+  return (
+    isPlainObject(value) &&
+    typeof value.trackId === 'string' &&
+    typeof value.gain === 'number' &&
+    typeof value.ok === 'boolean'
   )
 }

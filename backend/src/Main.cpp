@@ -253,17 +253,21 @@ void handleClipMove(const juce::var& payload, jackdaw::AudioEngine& engine)
     }
 }
 
-void handleTrackRemove(const juce::var& payload, jackdaw::AudioEngine& engine)
+void handleTrackRemove(const juce::var& payload, jackdaw::AudioEngine& engine, jackdaw::BridgeServer& bridge)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     if (trackId.isEmpty())
     {
         return;
     }
-    engine.removeTrack(trackId);
+    const bool ok = engine.removeTrack(trackId);
+    auto* p = new juce::DynamicObject();
+    p->setProperty("trackId", trackId);
+    p->setProperty("ok", ok);
+    bridge.broadcast("TRACK_REMOVED", juce::var(p));
 }
 
-void handleTrackGain(const juce::var& payload, jackdaw::AudioEngine& engine)
+void handleTrackGain(const juce::var& payload, jackdaw::AudioEngine& engine, jackdaw::BridgeServer& bridge)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     if (trackId.isEmpty())
@@ -275,7 +279,13 @@ void handleTrackGain(const juce::var& payload, jackdaw::AudioEngine& engine)
     {
         return;
     }
-    engine.setTrackGain(trackId, static_cast<float>(*gain));
+    const auto gainF = static_cast<float>(*gain);
+    const bool ok = engine.setTrackGain(trackId, gainF);
+    auto* p = new juce::DynamicObject();
+    p->setProperty("trackId", trackId);
+    p->setProperty("gain", gainF);
+    p->setProperty("ok", ok);
+    bridge.broadcast("TRACK_GAIN_APPLIED", juce::var(p));
 }
 
 // Same wire-protocol convention as BridgeServer::broadcast: (type, payload) order is
@@ -314,11 +324,11 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, j
     }
     else if (type == "TRACK_REMOVE")
     {
-        handleTrackRemove(payload, engine);
+        handleTrackRemove(payload, engine, bridge);
     }
     else if (type == "TRACK_GAIN")
     {
-        handleTrackGain(payload, engine);
+        handleTrackGain(payload, engine, bridge);
     }
     else
     {
