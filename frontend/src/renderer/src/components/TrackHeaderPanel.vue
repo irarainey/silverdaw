@@ -14,7 +14,7 @@
 // on `uiStore.trackHeaderWidth`; the drag handle is in TimelineView (it
 // straddles the seam between this column and the canvas).
 
-import { computed } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoTrack } from '@/lib/importAudio'
@@ -29,6 +29,52 @@ const headerWidth = computed(() => ui.trackHeaderWidth)
 function onImportClick(trackId: string): void {
     // Fire-and-forget; failures are logged inside the helper.
     void importAudioIntoTrack(trackId)
+}
+
+// ─── Inline rename ────────────────────────────────────────────────────────
+// Clicking the track name swaps it for a text input. Enter / blur commits;
+// Escape cancels. The input is auto-focused and pre-selects the current
+// name so the user can either retype from scratch or tweak a few chars.
+// Only one row can be in edit mode at a time, so a single ref is enough.
+
+const editingTrackId = ref<string | null>(null)
+const editingValue = ref('')
+let nameInputEl: HTMLInputElement | null = null
+
+function setNameInputEl(el: Element | null): void {
+    // Function-style template ref — avoids the Vue-3-inside-v-for array
+    // behaviour, since at most one input is rendered at a time anyway.
+    nameInputEl = el as HTMLInputElement | null
+}
+
+async function startRename(trackId: string, currentName: string): Promise<void> {
+    editingTrackId.value = trackId
+    editingValue.value = currentName
+    await nextTick()
+    if (nameInputEl) {
+        nameInputEl.focus()
+        nameInputEl.select()
+    }
+}
+
+function commitRename(trackId: string): void {
+    if (editingTrackId.value !== trackId) return
+    project.setTrackName(trackId, editingValue.value)
+    editingTrackId.value = null
+}
+
+function cancelRename(): void {
+    editingTrackId.value = null
+}
+
+function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
+    if (e.key === 'Enter') {
+        e.preventDefault()
+        commitRename(trackId)
+    } else if (e.key === 'Escape') {
+        e.preventDefault()
+        cancelRename()
+    }
 }
 
 // Keep in sync with TimelineView.vue layout constants.
@@ -80,10 +126,18 @@ const TRACK_GAP = 4
                         height: TRACK_HEIGHT + 'px',
                         width: headerWidth + 'px'
                     }">
-                    <!-- Top row: name. -->
+                    <!-- Top row: name. Click to rename inline; Enter / blur
+                         commits, Escape cancels. Only the track header is
+                         renamed — clip labels keep their own names. -->
                     <div class="flex items-start gap-1">
                         <div class="min-w-0 flex-1">
-                            <div class="truncate font-medium text-zinc-100" :title="track.name">
+                            <input v-if="editingTrackId === track.id" :ref="setNameInputEl" v-model="editingValue"
+                                type="text" spellcheck="false"
+                                class="w-full rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-xs font-medium text-zinc-100 outline-none focus:border-cyan-500"
+                                @blur="commitRename(track.id)" @keydown="(e) => onRenameKeydown(e, track.id)" />
+                            <div v-else class="truncate font-medium text-zinc-100"
+                                :title="track.name + ' \u2014 click to rename'"
+                                @click="startRename(track.id, track.name)">
                                 {{ track.name }}
                             </div>
                         </div>

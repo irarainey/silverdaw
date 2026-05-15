@@ -357,6 +357,19 @@ export const useProjectStore = defineStore('project', {
       if (!t) return
       if (colorIndex < 0 || colorIndex >= TRACK_PALETTE.length) return
       t.colorIndex = colorIndex
+    },
+
+    /**
+     * Rename a track. Whitespace is trimmed; empty names are rejected so
+     * the header column always has something to display. Does not touch
+     * any clip names — those keep their per-clip labels.
+     */
+    setTrackName(trackId: string, name: string): void {
+      const t = this.tracks.find((x) => x.id === trackId)
+      if (!t) return
+      const trimmed = name.trim()
+      if (trimmed.length === 0) return
+      t.name = trimmed
     }
   }
 })
