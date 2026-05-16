@@ -20,7 +20,7 @@ Both surfaces of the monorepo are in scope:
 
 Apply the in-repo instruction files as the primary contract; defer to the canonical references where they're silent:
 
-- **C++**: [.github/agents/expert-cpp-software-engineer.agent.md](.github/agents/expert-cpp-software-engineer.agent.md), ISO C++17, C++ Core Guidelines, CERT C++, JUCE API conventions, `backend/.clangd` + `backend/.clang-tidy` + `backend/.clang-format`.
+- **C++**: ISO C++17, C++ Core Guidelines, CERT C++, JUCE API conventions, `backend/.clangd` + `backend/.clang-tidy` + `backend/.clang-format`.
 - **TypeScript**: [.github/instructions/typescript-5-es2022.instructions.md](.github/instructions/typescript-5-es2022.instructions.md) (TS 5.x → ES2022, pure ESM, no `any`).
 - **Vue 3**: [.github/instructions/vuejs3.instructions.md](.github/instructions/vuejs3.instructions.md) (Composition API, `<script setup lang="ts">`, Pinia stores by domain, `vue/vue3-recommended`).
 - **Markdown / docs**: [.github/instructions/markdown.instructions.md](.github/instructions/markdown.instructions.md), [.github/instructions/documentation-update.instructions.md](.github/instructions/documentation-update.instructions.md).
