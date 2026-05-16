@@ -32,7 +32,12 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src/renderer/src'),
-        '@shared': resolve(__dirname, 'src/shared')
+        '@shared': resolve(__dirname, 'src/shared'),
+        // Icons + future static assets live at the project root (outside
+        // `src/renderer/`) so the main process can also reach them via
+        // `app.getAppPath()`. Renderer code imports them through this
+        // alias and Vite handles the asset URL generation.
+        '@resources': resolve(__dirname, 'resources')
       }
     },
     plugins: [vue(), tailwindcss()],

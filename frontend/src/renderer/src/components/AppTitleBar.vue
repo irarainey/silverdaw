@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { menus, type MenuItemDef } from '@/menu'
+// The 32x32 variant displays cleanly at the 16-px title-bar size on
+// both 100% and 200%-DPI displays. Vite turns the import into a
+// hashed-URL static asset at build time.
+import iconUrl from '@resources/icons/32x32.png'
 
 const openIndex = ref<number | null>(null)
 const root = ref<HTMLElement | null>(null)
@@ -46,30 +50,21 @@ onBeforeUnmount(() => {
     class="titlebar flex h-9 w-full select-none items-stretch bg-zinc-900 text-xs text-zinc-300"
     style="-webkit-app-region: drag"
   >
-    <!-- Brand. Replace this inline SVG with an <img src="@/assets/logo.svg" /> if you want a custom asset. -->
+    <!-- Brand. Sourced from `frontend/resources/icons/` so the same icon
+         set powers the title bar, the OS taskbar, and (later) the
+         packaged-app exe. -->
     <div
       class="flex items-center px-3 text-zinc-100"
       aria-label="Silverdaw"
       title="Silverdaw"
     >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        class="h-4 w-4"
+      <img
+        :src="iconUrl"
+        alt=""
         aria-hidden="true"
+        class="h-4 w-4"
+        draggable="false"
       >
-        <path d="M16 7h.01" />
-        <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20" />
-        <path d="m20 7 2 .5-2 .5" />
-        <path d="M10 18v3" />
-        <path d="M14 17.75V21" />
-        <path d="M7 18a6 6 0 0 0 3.84-10.61" />
-      </svg>
     </div>
 
     <!-- Menus -->

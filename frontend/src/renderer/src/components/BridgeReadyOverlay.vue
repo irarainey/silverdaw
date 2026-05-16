@@ -18,6 +18,9 @@
 // laggy on a healthy local connection.
 
 import { useTransportStore } from '@/stores/transportStore'
+// 256-px source is large enough to render crisply at 128 px on 2x DPI
+// while staying small enough to inline as a hashed-URL static asset.
+import logoUrl from '@resources/icons/256x256.png'
 
 const transport = useTransportStore()
 </script>
@@ -38,7 +41,15 @@ const transport = useTransportStore()
       aria-live="polite"
       aria-busy="true"
     >
-      <div class="flex flex-col items-center gap-4 text-zinc-200">
+      <div class="flex flex-col items-center gap-6 text-zinc-200">
+        <!-- Brand mark, centred above the status text. -->
+        <img
+          :src="logoUrl"
+          alt=""
+          aria-hidden="true"
+          class="h-32 w-32 select-none"
+          draggable="false"
+        >
         <!-- Simple CSS spinner: a 32px ring with a brighter top arc -->
         <div
           class="h-8 w-8 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-100"

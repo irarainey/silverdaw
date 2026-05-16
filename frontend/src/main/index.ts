@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, resolve as pathResolve } from 'node:path'
 import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogLevel } from './log'
@@ -367,6 +368,15 @@ function startBackend(): void {
 
 function createWindow(): void {
   const bounds = resolveWindowBounds()
+  // Resolve the window icon from `<app>/resources/icons/icon.ico`. The
+  // file is optional — if the user hasn't dropped one in yet, Electron
+  // falls back to its default and the app still starts cleanly. See
+  // `resources/README.md` for the spec.
+  const iconPath = join(app.getAppPath(), 'resources', 'icons', 'icon.ico')
+  const icon = existsSync(iconPath) ? iconPath : undefined
+  if (!icon) {
+    logMain('INFO ', 'main', `no app icon at ${iconPath} — using Electron default`)
+  }
   mainWindow = new BrowserWindow({
     // Important: do NOT pass x/y/width/height in the constructor on Windows
     // with `titleBarStyle: 'hidden'` + multi-monitor mixed DPI. The
@@ -378,6 +388,7 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: COLOUR_BG,
+    icon,
     show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay:
@@ -552,6 +563,14 @@ function handleMenuAction(action: string): void {
 
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'dark'
+
+  // Windows: associate the running process with a stable AppUserModelID
+  // so the taskbar groups our windows under one icon and the start-menu
+  // pin (post-install, Phase 6) targets the right shortcut. Must be set
+  // BEFORE the first BrowserWindow is created.
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.silverdaw.app')
+  }
 
   // Initialise cross-layer logging before anything else so this session's
   // main / backend / renderer events all land in one `.logs/<stamp>/` dir.
