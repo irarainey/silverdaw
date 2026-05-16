@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <iostream>
 
-namespace rook
+namespace silverdaw
 {
 
 AudioEngine::AudioEngine() = default;
@@ -284,4 +284,4 @@ double AudioEngine::getPositionMs() const
     return first->transportSource != nullptr ? first->transportSource->getCurrentPosition() * 1000.0 : 0.0;
 }
 
-} // namespace rook
+} // namespace silverdaw

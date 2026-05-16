@@ -10,7 +10,7 @@
 #include <string_view>
 
 //==============================================================================
-// Rook headless audio backend - entry point.
+// Silverdaw headless audio backend - entry point.
 //
 // Lifecycle:
 //   1. Initialise JUCE GUI singletons (MessageManager, AudioFormatManager pool).
@@ -82,11 +82,11 @@ int parsePort(std::string_view value, std::string_view source)
 /**
  * Resolve the bridge listen port. Precedence (highest first):
  *   1. `--port <N>` or `--port=N` command-line argument
- *   2. `ROOK_BRIDGE_PORT` environment variable
+ *   2. `SILVERDAW_BRIDGE_PORT` environment variable
  *   3. compiled-in default (`kDefaultBridgePort`)
  *
  * The Electron main process picks an unused loopback port and passes it
- * via `--port` so multiple Rook instances can run side-by-side without
+ * via `--port` so multiple Silverdaw instances can run side-by-side without
  * colliding on 8765.
  */
 // `argv` is necessarily a C-style array — that's the only legal signature for
@@ -110,10 +110,10 @@ int resolveBridgePort(int argc, char* argv[])
 
     // JUCE's wrapper is portable AND silences the MSVC "getenv is unsafe"
     // deprecation noise without a per-translation-unit pragma.
-    const juce::String envValue = juce::SystemStats::getEnvironmentVariable("ROOK_BRIDGE_PORT", {});
+    const juce::String envValue = juce::SystemStats::getEnvironmentVariable("SILVERDAW_BRIDGE_PORT", {});
     if (envValue.isNotEmpty())
     {
-        return parsePort(envValue.toStdString(), "ROOK_BRIDGE_PORT");
+        return parsePort(envValue.toStdString(), "SILVERDAW_BRIDGE_PORT");
     }
 
     return kDefaultBridgePort;
@@ -123,7 +123,7 @@ int resolveBridgePort(int argc, char* argv[])
  * Resolve the per-session AUTH token the bridge will require from every
  * connecting client. Precedence (highest first):
  *   1. `--token <hex>` or `--token=<hex>` command-line argument
- *   2. `ROOK_BRIDGE_TOKEN` environment variable
+ *   2. `SILVERDAW_BRIDGE_TOKEN` environment variable
  *   3. empty string → authentication disabled (stand-alone manual debug only;
  *      `BridgeServer` logs a loud warning when this happens at startup).
  *
@@ -150,14 +150,14 @@ juce::String resolveBridgeToken(int argc, char* argv[])
         }
     }
 
-    return juce::SystemStats::getEnvironmentVariable("ROOK_BRIDGE_TOKEN", {});
+    return juce::SystemStats::getEnvironmentVariable("SILVERDAW_BRIDGE_TOKEN", {});
 }
 
 /** Polls the audio engine and broadcasts PLAYHEAD_UPDATE while playing. */
 class PlayheadEmitter : public juce::Timer
 {
   public:
-    PlayheadEmitter(rook::AudioEngine& e, rook::BridgeServer& b)
+    PlayheadEmitter(silverdaw::AudioEngine& e, silverdaw::BridgeServer& b)
         : engine(e), bridge(b), payloadObject(new juce::DynamicObject()), payload(payloadObject.get())
     {
     }
@@ -180,8 +180,8 @@ class PlayheadEmitter : public juce::Timer
     }
 
   private:
-    rook::AudioEngine& engine;
-    rook::BridgeServer& bridge;
+    silverdaw::AudioEngine& engine;
+    silverdaw::BridgeServer& bridge;
     // Reference-counted: held alive by `payloadObject`; `payload` is the
     // pre-wrapped juce::var we hand to broadcast() each tick.
     juce::DynamicObject::Ptr payloadObject;
@@ -207,7 +207,7 @@ std::optional<double> tryGetNumber(const juce::var& payload, const char* key)
     return std::nullopt;
 }
 
-void handleClipAdd(const juce::var& payload, rook::AudioEngine& engine, rook::BridgeServer& bridge)
+void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::BridgeServer& bridge)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
@@ -239,7 +239,7 @@ void handleClipAdd(const juce::var& payload, rook::AudioEngine& engine, rook::Br
     bridge.broadcast(ok ? "CLIP_ADDED" : "CLIP_ADD_FAILED", juce::var(p));
 }
 
-void handleClipMove(const juce::var& payload, rook::AudioEngine& engine)
+void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     if (trackId.isEmpty())
@@ -253,7 +253,7 @@ void handleClipMove(const juce::var& payload, rook::AudioEngine& engine)
     }
 }
 
-void handleTrackRemove(const juce::var& payload, rook::AudioEngine& engine, rook::BridgeServer& bridge)
+void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::BridgeServer& bridge)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     if (trackId.isEmpty())
@@ -267,7 +267,7 @@ void handleTrackRemove(const juce::var& payload, rook::AudioEngine& engine, rook
     bridge.broadcast("TRACK_REMOVED", juce::var(p));
 }
 
-void handleTrackGain(const juce::var& payload, rook::AudioEngine& engine, rook::BridgeServer& bridge)
+void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::BridgeServer& bridge)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     if (trackId.isEmpty())
@@ -291,8 +291,8 @@ void handleTrackGain(const juce::var& payload, rook::AudioEngine& engine, rook::
 // Same wire-protocol convention as BridgeServer::broadcast: (type, payload) order is
 // fixed by design, so the easily-swappable-parameters check is intentionally silenced.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, rook::AudioEngine& engine,
-                           rook::BridgeServer& bridge)
+void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, silverdaw::AudioEngine& engine,
+                           silverdaw::BridgeServer& bridge)
 {
     if (type == "CLIP_ADD")
     {
@@ -340,7 +340,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, r
 // NOLINTNEXTLINE(modernize-avoid-c-arrays,hicpp-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
 int runBackend(int argc, char* argv[])
 {
-    const juce::String banner = "Rook Backend v0.1.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
+    const juce::String banner = "Silverdaw Backend v0.1.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
                                 juce::SystemStats::getCpuVendor() + ")";
     std::cout << banner.toStdString() << '\n';
 
@@ -350,7 +350,7 @@ int runBackend(int argc, char* argv[])
     // Initialises MessageManager, JUCE singletons, etc. Required even for headless apps.
     const juce::ScopedJuceInitialiser_GUI juceInit;
 
-    rook::AudioEngine engine;
+    silverdaw::AudioEngine engine;
     if (const auto err = engine.initialise(); err.isNotEmpty())
     {
         std::cerr << "[engine] audio device init failed: " << err.toStdString() << '\n';
@@ -359,7 +359,7 @@ int runBackend(int argc, char* argv[])
 
     if (bridgeToken.isEmpty())
     {
-        std::cerr << "[bridge] WARNING: no AUTH token set (ROOK_BRIDGE_TOKEN unset and "
+        std::cerr << "[bridge] WARNING: no AUTH token set (SILVERDAW_BRIDGE_TOKEN unset and "
                      "--token not given); accepting all loopback clients. DO NOT USE IN PRODUCTION.\n";
     }
 
@@ -369,8 +369,8 @@ int runBackend(int argc, char* argv[])
     // The handler receives `BridgeServer&` from `onIncoming` so it can
     // call `broadcast()` for acks (e.g. CLIP_ADDED) without a chicken-and-
     // -egg capture problem.
-    rook::BridgeServer bridge(
-        bridgeToken, [&engine](rook::BridgeServer& self, const juce::String& type, const juce::var& payload)
+    silverdaw::BridgeServer bridge(
+        bridgeToken, [&engine](silverdaw::BridgeServer& self, const juce::String& type, const juce::var& payload)
         { dispatchBridgeMessage(type, payload, engine, self); });
 
     if (!bridge.start(bridgePort))

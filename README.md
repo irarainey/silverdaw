@@ -1,13 +1,13 @@
-# Rook
+# Silverdaw
 
 A digital audio workstation built with a headless JUCE audio engine and an Electron + Vue 3 UI,
 linked by a localhost WebSocket bridge.
 
 ## Architecture
 
-Rook is split into two processes that talk over a localhost WebSocket bridge:
+Silverdaw is split into two processes that talk over a localhost WebSocket bridge:
 
-- **Backend** (`backend/`) — A headless C++17 / JUCE 8 binary (`RookBackend`) that owns the
+- **Backend** (`backend/`) — A headless C++17 / JUCE 8 binary (`SilverdawBackend`) that owns the
   audio device, mixer and timeline. It exposes its state and commands over an
   [IXWebSocket](https://github.com/machinezone/IXWebSocket) server bound to `127.0.0.1`.
 - **Frontend** (`frontend/`) — An Electron 31 + Vue 3 (Composition API, `<script setup>`) app
@@ -16,7 +16,7 @@ Rook is split into two processes that talk over a localhost WebSocket bridge:
 
 ```text
 +---------------------------+        ws://127.0.0.1:8765        +-------------------------+
-|  Electron renderer (Vue)  |  <----------------------------->  |  RookBackend (JUCE)  |
+|  Electron renderer (Vue)  |  <----------------------------->  |  SilverdawBackend (JUCE)  |
 |  + Electron main (IPC)    |        envelope JSON frames       |  AudioEngine + Bridge   |
 +---------------------------+                                   +-------------------------+
 ```
@@ -57,7 +57,7 @@ JUCE doesn't bundle a Media Foundation reader) are handled in the renderer:
 1. The Web Audio API (`AudioContext.decodeAudioData`) decodes the file — it understands
    every codec the host Chromium build does.
 2. The decoded PCM is sent to the Electron main process via the `audio:writeTempWav` IPC,
-   which writes a 32-bit float WAV into `%TEMP%/rook-transcode-cache/` (or the OS
+   which writes a 32-bit float WAV into `%TEMP%/silverdaw-transcode-cache/` (or the OS
    equivalent) keyed by a hash of the source path + sample rate + channel count + length.
 3. The cached WAV path is sent to the backend as `CLIP_ADD.filePath`, so the audio engine
    only ever sees formats it can decode natively. The original path stays on the library
@@ -71,7 +71,7 @@ and the `audio:writeTempWav` handler in `frontend/src/main/index.ts`.
 
 ## Prerequisites
 
-Rook is developed in Visual Studio Code; the toolchain is cross-platform.
+Silverdaw is developed in Visual Studio Code; the toolchain is cross-platform.
 
 - A **C++17 compiler** — MSVC on Windows, Clang ≥ 14 on macOS, or GCC ≥ 11 / Clang ≥ 14 on
   Linux. JUCE 8 also needs the platform's audio headers (e.g. ALSA / JACK dev packages on
@@ -162,7 +162,7 @@ backend/             JUCE audio engine + WebSocket bridge (C++17, CMake)
 frontend/            Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
   src/
     main/            Electron main process (window, menu, IPC, prefs)
-    preload/         contextBridge surface exposed as window.rook
+    preload/         contextBridge surface exposed as window.silverdaw
     renderer/src/    Vue 3 SPA (Composition API, Pinia, PixiJS, Tailwind v4)
 scripts/             Dev-shell + clang-tidy helpers (PowerShell)
 .github/instructions Copilot/AI agent guidance per file type

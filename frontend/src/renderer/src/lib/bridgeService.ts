@@ -1,7 +1,7 @@
 // WebSocket bridge to the JUCE backend.
 //
 // - Connects to `ws://127.0.0.1:<port>` on `connect()`, where `<port>` is
-//   resolved from main via `window.rook.getBridgePort()` so the renderer
+//   resolved from main via `window.silverdaw.getBridgePort()` so the renderer
 //   and the spawned backend always agree on a single port (chosen by main).
 // - Reconnects with backoff if the socket drops (backend restarts during dev).
 // - Dispatches incoming `{ type, payload }` envelopes to the appropriate
@@ -59,7 +59,7 @@ let bridgeConnectionPromise: Promise<BridgeConnection> | null = null
 
 function resolveBridgeConnection(): Promise<BridgeConnection> {
   if (bridgeConnectionPromise) return bridgeConnectionPromise
-  const api = window.rook
+  const api = window.silverdaw
   const portPromise: Promise<number> =
     api && typeof api.getBridgePort === 'function'
       ? api.getBridgePort().catch((err) => {
@@ -71,7 +71,7 @@ function resolveBridgeConnection(): Promise<BridgeConnection> {
     api && typeof api.getBridgeToken === 'function'
       ? api.getBridgeToken().catch((err) => {
           // An empty token disables AUTH on the backend — only ever true in
-          // stand-alone debug runs without `ROOK_BRIDGE_TOKEN` set.
+          // stand-alone debug runs without `SILVERDAW_BRIDGE_TOKEN` set.
           console.warn('[bridge] getBridgeToken failed; sending empty token', err)
           return ''
         })

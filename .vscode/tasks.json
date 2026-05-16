@@ -35,14 +35,14 @@
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        "$p = Get-Process RookBackend -ErrorAction SilentlyContinue; if ($p) { $p | Stop-Process -Force -ErrorAction SilentlyContinue; $p | Wait-Process -Timeout 5 -ErrorAction SilentlyContinue }; exit 0"
+        "$p = Get-Process SilverdawBackend -ErrorAction SilentlyContinue; if ($p) { $p | Stop-Process -Force -ErrorAction SilentlyContinue; $p | Wait-Process -Timeout 5 -ErrorAction SilentlyContinue }; exit 0"
       ],
       "problemMatcher": [],
       "presentation": {
         "panel": "dedicated",
         "reveal": "silent"
       },
-      "detail": "Stop any running RookBackend.exe so the linker can overwrite it."
+      "detail": "Stop any running SilverdawBackend.exe so the linker can overwrite it."
     },
     {
       "label": "backend: build",

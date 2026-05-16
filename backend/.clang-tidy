@@ -1,4 +1,4 @@
-# clang-tidy configuration for the Rook backend.
+# clang-tidy configuration for the Silverdaw backend.
 #
 # This file is read when running `clang-tidy` from the command line (e.g.
 # `scripts/Invoke-ClangTidy.ps1` or the VS Code task `backend: lint`).

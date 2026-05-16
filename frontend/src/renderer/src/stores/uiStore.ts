@@ -53,7 +53,7 @@ function schedulePush(partial: { trackHeaderWidth?: number; libraryPanelHeight?:
     const payload = pendingPush
     pendingPush = {}
     pushTimer = null
-    window.rook.setUiPreferences(payload)
+    window.silverdaw.setUiPreferences(payload)
   }, 150)
 }
 
@@ -72,7 +72,7 @@ export const useUiStore = defineStore('ui', {
     async hydrate(): Promise<void> {
       if (this.hydrated) return
       try {
-        const saved = await window.rook.getUiPreferences()
+        const saved = await window.silverdaw.getUiPreferences()
         this.trackHeaderWidth = clampHeaderWidth(saved.trackHeaderWidth)
         this.libraryPanelHeight = clampLibraryHeight(saved.libraryPanelHeight)
       } catch (err) {

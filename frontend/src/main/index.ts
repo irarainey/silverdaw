@@ -104,7 +104,7 @@ const issuedAudioPaths: Set<string> = new Set<string>()
  * are keyed by a hash of the source path + decoded geometry so the same
  * import doesn't re-transcode on every clip placement.
  */
-const TRANSCODE_CACHE_DIR = join(tmpdir(), 'rook-transcode-cache')
+const TRANSCODE_CACHE_DIR = join(tmpdir(), 'silverdaw-transcode-cache')
 
 /** Normalise to an absolute path so allow-list membership is canonical. */
 function canonicalisePath(p: string): string {
@@ -150,7 +150,7 @@ let mainWindow: BrowserWindow | null = null
 
 // ─── Backend bridge port ────────────────────────────────────────────────────
 // The JUCE backend listens on `ws://127.0.0.1:<bridgePort>`. The port is
-// resolvable via `ROOK_BRIDGE_PORT` so multiple Rook instances (or a
+// resolvable via `SILVERDAW_BRIDGE_PORT` so multiple Silverdaw instances (or a
 // stand-alone backend used for debugging) can avoid colliding on 8765.
 // Main passes the same value to the backend via `--port` AND exposes it to
 // the renderer through `bridge:getPort`, so all three processes agree on
@@ -160,7 +160,7 @@ const MIN_BRIDGE_PORT = 1024
 const MAX_BRIDGE_PORT = 65535
 
 function resolveBridgePort(): number {
-  const raw = process.env['ROOK_BRIDGE_PORT']
+  const raw = process.env['SILVERDAW_BRIDGE_PORT']
   if (raw === undefined || raw === '') return DEFAULT_BRIDGE_PORT
   const parsed = Number.parseInt(raw, 10)
   if (
@@ -170,7 +170,7 @@ function resolveBridgePort(): number {
     parsed > MAX_BRIDGE_PORT
   ) {
     console.warn(
-      `[main] ROOK_BRIDGE_PORT=${raw} is not a valid port in [${MIN_BRIDGE_PORT}, ${MAX_BRIDGE_PORT}]; using default ${DEFAULT_BRIDGE_PORT}`
+      `[main] SILVERDAW_BRIDGE_PORT=${raw} is not a valid port in [${MIN_BRIDGE_PORT}, ${MAX_BRIDGE_PORT}]; using default ${DEFAULT_BRIDGE_PORT}`
     )
     return DEFAULT_BRIDGE_PORT
   }
@@ -183,7 +183,7 @@ const bridgePort = resolveBridgePort()
 // Loopback alone is not a strong trust boundary — any other process running
 // as the same user can connect to the WebSocket. Each backend launch gets a
 // fresh 256-bit random token; main passes it to the backend via the
-// `ROOK_BRIDGE_TOKEN` env var (NOT a CLI arg — argv is visible in the OS
+// `SILVERDAW_BRIDGE_TOKEN` env var (NOT a CLI arg — argv is visible in the OS
 // process table) and exposes it to the renderer through `bridge:getToken`,
 // so the renderer can send it as the first WebSocket message. The backend
 // closes any socket that fails to AUTH on its first envelope.
@@ -314,10 +314,10 @@ function captureWindowState(): void {
 
 function startBackend(): void {
   // In dev: JUCE's juce_add_console_app outputs to
-  //   <repo>/backend/build/RookBackend_artefacts/<Config>/RookBackend.exe
+  //   <repo>/backend/build/SilverdawBackend_artefacts/<Config>/SilverdawBackend.exe
   // In a packaged build this path will need to be re-resolved.
-  const exeName = process.platform === 'win32' ? 'RookBackend.exe' : 'RookBackend'
-  const buildConfig = process.env['ROOK_BACKEND_CONFIG'] ?? 'Debug'
+  const exeName = process.platform === 'win32' ? 'SilverdawBackend.exe' : 'SilverdawBackend'
+  const buildConfig = process.env['SILVERDAW_BACKEND_CONFIG'] ?? 'Debug'
   const exePath = join(
     __dirname,
     '..',
@@ -325,20 +325,20 @@ function startBackend(): void {
     '..',
     'backend',
     'build',
-    'RookBackend_artefacts',
+    'SilverdawBackend_artefacts',
     buildConfig,
     exeName
   )
 
   backendProcess = spawn(exePath, ['--port', String(bridgePort)], {
     stdio: 'inherit',
-    // Forward `ROOK_BRIDGE_TOKEN` via the spawn env (NOT via argv —
+    // Forward `SILVERDAW_BRIDGE_TOKEN` via the spawn env (NOT via argv —
     // command-line arguments are visible in the OS process table). The
     // backend's `resolveBridgeToken()` reads the same env var and
     // requires every WebSocket client to AUTH with this exact value.
     env: {
       ...process.env,
-      ROOK_BRIDGE_TOKEN: bridgeToken
+      SILVERDAW_BRIDGE_TOKEN: bridgeToken
     }
   })
 
@@ -455,7 +455,7 @@ function handleMenuAction(action: string): void {
       void dialog
         .showOpenDialog(mainWindow, {
           title: 'Open Project',
-          filters: [{ name: 'Rook project', extensions: ['rook'] }],
+          filters: [{ name: 'Silverdaw project', extensions: ['silverdaw'] }],
           properties: ['openFile']
         })
         .then((r) => console.log('[menu] open project:', r.filePaths))
@@ -517,16 +517,16 @@ function handleMenuAction(action: string): void {
 
     // Help
     case 'help.docs':
-      void shell.openExternal('https://github.com/irarainey/rook')
+      void shell.openExternal('https://github.com/irarainey/silverdaw')
       break
     case 'help.reportIssue':
-      void shell.openExternal('https://github.com/irarainey/rook/issues/new')
+      void shell.openExternal('https://github.com/irarainey/silverdaw/issues/new')
       break
     case 'help.about':
       void dialog.showMessageBox(mainWindow, {
         type: 'info',
-        title: 'About Rook',
-        message: 'Rook',
+        title: 'About Silverdaw',
+        message: 'Silverdaw',
         detail: `Version 0.1.0\nElectron ${process.versions.electron}\nNode ${process.versions.node}\nChromium ${process.versions.chrome}`,
         buttons: ['OK']
       })

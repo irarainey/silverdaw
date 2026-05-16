@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(RookBackend
+project(SilverdawBackend
     VERSION 0.1.0
-    DESCRIPTION "Rook headless audio backend"
+    DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -43,22 +43,22 @@ FetchContent_Declare(IXWebSocket
 FetchContent_MakeAvailable(IXWebSocket)
 
 # ─── Target ──────────────────────────────────────────────────────────────
-juce_add_console_app(RookBackend
-    PRODUCT_NAME "Rook Backend"
-    COMPANY_NAME "Rook")
+juce_add_console_app(SilverdawBackend
+    PRODUCT_NAME "Silverdaw Backend"
+    COMPANY_NAME "Silverdaw")
 
-target_sources(RookBackend PRIVATE
+target_sources(SilverdawBackend PRIVATE
     src/Main.cpp
     src/AudioEngine.cpp
     src/BridgeServer.cpp)
 
-target_compile_definitions(RookBackend PRIVATE
+target_compile_definitions(SilverdawBackend PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_USE_WINDOWS_MEDIA_FORMAT=1
     JUCE_STANDALONE_APPLICATION=1)
 
-target_link_libraries(RookBackend PRIVATE
+target_link_libraries(SilverdawBackend PRIVATE
     juce::juce_core
     juce::juce_events
     juce::juce_audio_basics

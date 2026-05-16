@@ -53,7 +53,7 @@ async function resolvePlaybackPath(
 ): Promise<string> {
   if (BACKEND_NATIVE_EXTS.has(fileExtensionOf(sourcePath))) return sourcePath
   try {
-    const wavPath = await window.rook.writeTempWav({
+    const wavPath = await window.silverdaw.writeTempWav({
       sourcePath,
       channels: decoded.channels,
       sampleRate: decoded.sampleRate
@@ -83,7 +83,7 @@ export async function importAudioIntoTrack(
   const transport = useTransportStore()
   const library = useLibraryStore()
 
-  const opened = await window.rook.openAudioFile().catch((err) => {
+  const opened = await window.silverdaw.openAudioFile().catch((err) => {
     console.error('[importAudio] dialog/read failed:', err)
     return null
   })
@@ -106,7 +106,7 @@ export async function importAudioIntoTrack(
       // with full info in one shot rather than text-then-pop-in-cover-art.
       const [decoded, metadata] = await Promise.all([
         decodeAudioToPeaks(opened.data),
-        window.rook.readAudioMetadata(opened.filePath).catch(() => null)
+        window.silverdaw.readAudioMetadata(opened.filePath).catch(() => null)
       ])
       // If the backend can't decode this format natively, write the
       // already-decoded PCM out as a temp WAV and point playback at that.
@@ -183,7 +183,7 @@ export async function importAudioIntoLibrary(opened: {
 
     const [decoded, metadata] = await Promise.all([
       decodeAudioToPeaks(opened.data),
-      window.rook.readAudioMetadata(opened.filePath).catch(() => null)
+      window.silverdaw.readAudioMetadata(opened.filePath).catch(() => null)
     ])
     const playbackFilePath = await resolvePlaybackPath(opened.filePath, decoded)
     const itemId = library.addItem({

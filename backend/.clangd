@@ -1,4 +1,4 @@
-# clangd configuration for the Rook backend.
+# clangd configuration for the Silverdaw backend.
 # Docs: https://clangd.llvm.org/config
 
 CompileFlags:

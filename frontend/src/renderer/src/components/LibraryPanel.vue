@@ -6,7 +6,7 @@
 // listener which calls `projectStore.addClipFromLibrary`.
 //
 // Drag payload for "library item → timeline":
-//   dataTransfer.setData('application/x-rook-library-item', itemId)
+//   dataTransfer.setData('application/x-silverdaw-library-item', itemId)
 //   dataTransfer.effectAllowed = 'copy'
 //
 // Resize: the user can drag the top edge to grow / shrink the panel. The
@@ -36,9 +36,9 @@ let dragDepth = 0
 const itemCount = computed(() => library.items.length)
 
 async function onImportClick(): Promise<void> {
-    const opened = await window.rook.openAudioFiles().catch((err) => {
+    const opened = await window.silverdaw.openAudioFiles().catch((err) => {
         console.error('[LibraryPanel] openAudioFiles failed:', err)
-        return [] as Awaited<ReturnType<typeof window.rook.openAudioFiles>>
+        return [] as Awaited<ReturnType<typeof window.silverdaw.openAudioFiles>>
     })
     if (opened.length === 0) return
     // Register the batch with the library store so the status-bar progress
@@ -87,13 +87,13 @@ async function onPanelDrop(e: DragEvent): Promise<void> {
         // The preload exposes Electron's `webUtils.getPathForFile`, the only
         // way to recover an absolute path from a drag-dropped File since
         // Electron dropped `file.path` in v32.
-        const path = window.rook.getPathForFile(file)
+        const path = window.silverdaw.getPathForFile(file)
         if (!path) {
             console.warn('[LibraryPanel] dropped file has no path:', file.name)
             library.noteImportFinished()
             continue
         }
-        const opened = await window.rook.readAudioFile(path)
+        const opened = await window.silverdaw.readAudioFile(path)
         if (!opened) {
             library.noteImportFinished()
             continue
@@ -117,7 +117,7 @@ function hasFiles(e: DragEvent): boolean {
 function onItemDragStart(e: DragEvent, item: LibraryItem): void {
     if (!e.dataTransfer) return
     e.dataTransfer.effectAllowed = 'copy'
-    e.dataTransfer.setData('application/x-rook-library-item', item.id)
+    e.dataTransfer.setData('application/x-silverdaw-library-item', item.id)
     // A plain-text fallback helps debugging and lets external surfaces
     // identify the drag if it escapes the app.
     e.dataTransfer.setData('text/plain', item.fileName)

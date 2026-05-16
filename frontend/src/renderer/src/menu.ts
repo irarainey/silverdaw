@@ -1,5 +1,5 @@
 // Menu bar definitions used by the custom title bar.
-// `action` IDs are sent to the main process via window.rook.menuAction().
+// `action` IDs are sent to the main process via window.silverdaw.menuAction().
 
 export interface MenuItemDef {
   /** Visible label, or `null` for a separator. */
@@ -63,7 +63,7 @@ export const menus: MenuDef[] = [
       { label: 'Documentation', action: 'help.docs' },
       { label: 'Report an Issue...', action: 'help.reportIssue' },
       SEP,
-      { label: 'About Rook', action: 'help.about' }
+      { label: 'About Silverdaw', action: 'help.about' }
     ]
   }
 ]

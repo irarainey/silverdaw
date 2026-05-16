@@ -17,7 +17,7 @@ export default defineConfig({
       // Force CommonJS output for the preload bundle. The renderer runs with
       // `sandbox: true` (see frontend/src/main/index.ts), and Electron only
       // accepts CJS preload scripts in sandboxed renderers — an ESM preload
-      // is silently rejected, which leaves `window.rook` undefined and
+      // is silently rejected, which leaves `window.silverdaw` undefined and
       // every menu-driven IPC call (Import, Toggle DevTools, …) no-ops.
       rollupOptions: {
         output: {

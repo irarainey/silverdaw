@@ -52,7 +52,7 @@ export interface DropZoneOptions {
   onPreviewChanged: () => void
 }
 
-const MIME_LIBRARY_ITEM = 'application/x-rook-library-item'
+const MIME_LIBRARY_ITEM = 'application/x-silverdaw-library-item'
 
 export function useDropZone(opts: DropZoneOptions): DropZone {
   const library = useLibraryStore()
