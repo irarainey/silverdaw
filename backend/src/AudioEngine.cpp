@@ -1,6 +1,5 @@
 #include "AudioEngine.h"
 
-#include <algorithm>
 #include <iostream>
 
 namespace silverdaw
@@ -30,7 +29,7 @@ juce::String AudioEngine::initialise()
 
     if (err.isEmpty())
     {
-        sourcePlayer.setSource(&mixer);
+        sourcePlayer.setSource(&master);
         deviceManager.addAudioCallback(&sourcePlayer);
     }
 
@@ -48,7 +47,19 @@ void AudioEngine::shutdown()
     readAheadThread.stopThread(1000);
 }
 
-bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePath, juce::String* outError)
+double AudioEngine::trackSeekSecondsFor(const Track& track, juce::int64 masterSamples) const
+{
+    // Latency compensation: read this track `latencySamples` earlier than
+    // master so a future delay-introducing processor downstream still
+    // outputs samples aligned with master. Clamp negatives to 0 (a track
+    // can't read from before the timeline starts).
+    const juce::int64 compensated = juce::jmax(static_cast<juce::int64>(0), masterSamples - track.latencySamples);
+    const double sr = master.getSampleRate() > 0.0 ? master.getSampleRate() : track.sampleRate;
+    return sr > 0.0 ? static_cast<double>(compensated) / sr : 0.0;
+}
+
+bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePath, double initialOffsetMs,
+                          juce::String* outError)
 {
     if (!filePath.existsAsFile())
     {
@@ -103,12 +114,39 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
     // offset is reflected in the audio the transport's read-ahead buffer
     // pulls; the transport itself still represents the global timeline.
     track->offsetSource = std::make_unique<OffsetSource>(track->readerSource.get());
+    // Apply the initial timeline offset BEFORE the transport begins prefetching,
+    // so the very first samples the BufferingAudioSource pulls are at the right
+    // place. Avoids a brief offset=0 glimpse if the clip is added during playback.
+    const double clampedInitialMs = juce::jmax(0.0, initialOffsetMs);
+    track->offsetSource->setOffsetSamples(
+        static_cast<juce::int64>(clampedInitialMs * track->sampleRate / 1000.0));
 
     track->transportSource = std::make_unique<juce::AudioTransportSource>();
     track->transportSource->setSource(track->offsetSource.get(),
                                       32768,            // read-ahead buffer size in samples
                                       &readAheadThread, // background reader thread (required when buffer > 0)
                                       track->sampleRate, track->numChannels);
+
+    // Per-track transports are kept in the "started" state for their entire
+    // lifetime in the engine. The master clock is the single play/pause gate;
+    // when the gate is closed nobody pulls these transports, so they don't
+    // advance. Starting them here means the first thing the master gate
+    // does when it opens is hear audio, not silence-then-audio.
+    track->transportSource->start();
+
+    // Seek the new track to the current master position (latency-compensated)
+    // so it joins playback in sync if added mid-session.
+    track->transportSource->setPosition(trackSeekSecondsFor(*track, master.getPositionSamples()));
+
+    // If we're currently playing, briefly close the master gate while we
+    // swap the mixer input list. The audio callback will see a single
+    // block of silence, which is acceptable for a clip-add event and
+    // avoids any partial-state pull from a mixer mid-mutation.
+    const bool wasPlaying = master.isPlaying();
+    if (wasPlaying)
+    {
+        master.setPlaying(false);
+    }
 
     // Replace any existing track with the same id.
     if (auto it = tracks.find(trackId); it != tracks.end())
@@ -119,6 +157,11 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
 
     mixer.addInputSource(track->transportSource.get(), false);
     tracks.emplace(trackId, std::move(track));
+
+    if (wasPlaying)
+    {
+        master.setPlaying(true);
+    }
 
     return true;
 }
@@ -156,46 +199,48 @@ bool AudioEngine::setTrackGain(const juce::String& trackId, float gain)
 
 void AudioEngine::play()
 {
-    for (auto& [id, track] : tracks)
-    {
-        if (track->transportSource != nullptr)
-        {
-            track->transportSource->start();
-        }
-    }
+    // Master gate is the single play/pause control. Per-track transports
+    // are already in the started state (see `addClip`), so opening the
+    // gate is enough to make audio flow.
+    master.setPlaying(true);
 }
 
 void AudioEngine::pause()
 {
-    for (auto& [id, track] : tracks)
-    {
-        if (track->transportSource != nullptr)
-        {
-            track->transportSource->stop();
-        }
-    }
+    // Close the gate. Per-track transports stay started but don't advance
+    // because nothing is pulling on them while the gate is closed.
+    master.setPlaying(false);
 }
 
 void AudioEngine::stop()
 {
+    master.setPlaying(false);
+    master.setPositionSamples(0);
+    // Fan out to per-track transports so their internal positions are
+    // reset to 0 too; the next `play()` then resumes from a known-good
+    // zero across all tracks.
     for (auto& [id, track] : tracks)
     {
         if (track->transportSource != nullptr)
         {
-            track->transportSource->stop();
-            track->transportSource->setPosition(0.0);
+            track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
         }
     }
 }
 
 void AudioEngine::setPositionMs(double ms)
 {
-    const double seconds = juce::jmax(0.0, ms / 1000.0);
+    const double sr = master.getSampleRate();
+    const double clampedMs = juce::jmax(0.0, ms);
+    const auto masterSamples = sr > 0.0
+                                   ? static_cast<juce::int64>(clampedMs * sr / 1000.0)
+                                   : static_cast<juce::int64>(0);
+    master.setPositionSamples(masterSamples);
     for (auto& [id, track] : tracks)
     {
         if (track->transportSource != nullptr)
         {
-            track->transportSource->setPosition(seconds);
+            track->transportSource->setPosition(trackSeekSecondsFor(*track, masterSamples));
         }
     }
 }
@@ -248,7 +293,22 @@ bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
     // empty and the first prefetch reads through the new offset. The
     // current playback position is preserved across the rebuild so
     // playback continues without a perceptible seek.
-    if (track->transportSource->isPlaying())
+    // Fallback: full source-chain rebuild when the master gate is open.
+    // ────────────────────────────────────────────────────────────────
+    // When playing, the `BufferingAudioSource` has prefetched ~0.7 s of
+    // audio (32 768 samples at 48 kHz) from `OffsetSource` using the OLD
+    // offset. Those samples are already baked into its internal ring
+    // buffer; the atomic write cannot reach them. Without the rebuild
+    // the listener would hear wrong-audio-at-wrong-position until the
+    // prefetch thread caught up, which is audibly broken on a moving
+    // clip.
+    //
+    // `setSource(nullptr) + setSource(...)` destroys and recreates the
+    // `BufferingAudioSource` from scratch, so its buffer is guaranteed
+    // empty and the first prefetch reads through the new offset. The
+    // current playback position is preserved across the rebuild so
+    // playback continues without a perceptible seek.
+    if (master.isPlaying())
     {
         const double pos = track->transportSource->getCurrentPosition();
         track->transportSource->stop();
@@ -264,24 +324,17 @@ bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
 
 bool AudioEngine::isPlaying() const
 {
-    return std::any_of(tracks.begin(), tracks.end(),
-                       [](const auto& entry)
-                       {
-                           const auto& transport = entry.second->transportSource;
-                           return transport != nullptr && transport->isPlaying();
-                       });
+    return master.isPlaying();
 }
 
 double AudioEngine::getPositionMs() const
 {
-    // Use the first track as master clock; all tracks start at t=0 in Phase 1.
-    if (tracks.empty())
+    const double sr = master.getSampleRate();
+    if (sr <= 0.0)
     {
         return 0.0;
     }
-
-    const auto& first = tracks.begin()->second;
-    return first->transportSource != nullptr ? first->transportSource->getCurrentPosition() * 1000.0 : 0.0;
+    return (static_cast<double>(master.getPositionSamples()) / sr) * 1000.0;
 }
 
 } // namespace silverdaw

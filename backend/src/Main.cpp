@@ -216,18 +216,16 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         return;
     }
 
+    // Pull the initial offset out of the payload up front so addClip can
+    // apply it atomically with the load — otherwise a separate
+    // setClipOffsetMs call would race against the audio thread, briefly
+    // playing the clip at offset 0.
+    const juce::var posVar = payload.getProperty("positionMs", juce::var());
+    const double initialOffsetMs =
+        (posVar.isDouble() || posVar.isInt() || posVar.isInt64()) ? juce::jmax(0.0, static_cast<double>(posVar)) : 0.0;
+
     juce::String errorMsg;
-    const bool ok = engine.addClip(trackId, juce::File(filePath), &errorMsg);
-    if (ok)
-    {
-        // Apply the requested timeline offset so the clip plays back at the
-        // position the frontend chose (e.g. at the current playhead).
-        const auto positionMs = tryGetNumber(payload, "positionMs");
-        if (positionMs.has_value() && *positionMs > 0.0)
-        {
-            engine.setClipOffsetMs(trackId, *positionMs);
-        }
-    }
+    const bool ok = engine.addClip(trackId, juce::File(filePath), initialOffsetMs, &errorMsg);
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
     p->setProperty("filePath", filePath);

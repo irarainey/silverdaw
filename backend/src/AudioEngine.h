@@ -149,6 +149,114 @@ class OffsetSource : public juce::PositionableAudioSource
 };
 
 /**
+ * Authoritative master transport clock.
+ *
+ * Wraps the engine's mixer at the top of the audio graph so the chain is
+ *
+ *   tracks[i] → OffsetSource → AudioTransportSource → MixerAudioSource
+ *                                                    → MasterClockSource → device
+ *
+ * `MasterClockSource` is the single source of truth for "what time is it":
+ *
+ *   - When `playing == false` it CLEARS the active buffer region and does
+ *     NOT pull from the child. This is the gate — no per-track transport
+ *     advances when the gate is closed because nobody is pulling from
+ *     them, and we don't emit a stale audio tail after pause/stop.
+ *   - When `playing == true` it pulls from the child and advances
+ *     `positionSamples` by `info.numSamples`. The increment happens AFTER
+ *     the pull, so `getPositionSamples()` reads as "next read position",
+ *     matching JUCE's `getNextReadPosition` convention.
+ *
+ * `positionSamples` is in DEVICE-SAMPLE-RATE samples (i.e. project
+ * timeline samples at the device's current rate). On device sample-rate
+ * change, `prepareToPlay` rescales the stored counter to preserve real
+ * time (seconds), not samples.
+ *
+ * Per-track `latencySamples` (also in device-sample-rate samples) is
+ * subtracted when fanning out seeks to per-track transports so that a
+ * future latency-introducing processor (e.g. Rubber Band) can declare
+ * its delay via `Track::latencySamples` and the engine will read its
+ * input that many samples earlier. Today every track reports 0; the
+ * compensation path is wired but a no-op.
+ */
+class MasterClockSource : public juce::AudioSource
+{
+  public:
+    explicit MasterClockSource(juce::AudioSource& child) : child(child) {}
+
+    void prepareToPlay(int blockSize, double newSampleRate) override
+    {
+        const double oldSr = sampleRate.load(std::memory_order_acquire);
+        if (oldSr > 0.0 && newSampleRate > 0.0 && oldSr != newSampleRate)
+        {
+            // Preserve real time across device sample-rate changes:
+            // `samples_new = samples_old * (sr_new / sr_old)`.
+            const juce::int64 oldPos = positionSamples.load(std::memory_order_relaxed);
+            const auto rescaled = static_cast<juce::int64>(
+                (static_cast<double>(oldPos) * newSampleRate) / oldSr);
+            positionSamples.store(rescaled, std::memory_order_relaxed);
+        }
+        sampleRate.store(newSampleRate, std::memory_order_release);
+        child.prepareToPlay(blockSize, newSampleRate);
+    }
+
+    void releaseResources() override
+    {
+        child.releaseResources();
+    }
+
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+    {
+        if (!playing.load(std::memory_order_acquire))
+        {
+            // Gate closed: emit silence, do NOT pull from the mixer.
+            // Per-track transports therefore don't advance either,
+            // because nothing is pulling on them.
+            info.clearActiveBufferRegion();
+            return;
+        }
+
+        child.getNextAudioBlock(info);
+        positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
+    }
+
+    void setPlaying(bool p) noexcept
+    {
+        playing.store(p, std::memory_order_release);
+    }
+    bool isPlaying() const noexcept
+    {
+        return playing.load(std::memory_order_acquire);
+    }
+
+    void setPositionSamples(juce::int64 p) noexcept
+    {
+        positionSamples.store(juce::jmax(static_cast<juce::int64>(0), p), std::memory_order_relaxed);
+    }
+    juce::int64 getPositionSamples() const noexcept
+    {
+        return positionSamples.load(std::memory_order_relaxed);
+    }
+
+    double getSampleRate() const noexcept
+    {
+        return sampleRate.load(std::memory_order_acquire);
+    }
+
+  private:
+    juce::AudioSource& child;
+    std::atomic<juce::int64> positionSamples{0};
+    std::atomic<bool> playing{false};
+    // Device sample rate. Updated only from `prepareToPlay`, read from
+    // message-thread accessors that convert samples↔ms. The audio
+    // callback path itself doesn't read it.
+    std::atomic<double> sampleRate{0.0};
+
+    static_assert(std::atomic<juce::int64>::is_always_lock_free,
+                  "MasterClockSource requires a lock-free 64-bit atomic counter on the audio thread");
+};
+
+/**
  * Headless audio engine.
  *
  * Owns a `juce::AudioDeviceManager` plus a mixer source that combines
@@ -177,10 +285,14 @@ class AudioEngine
 
     /**
      * Load `filePath` into a new track keyed by `trackId`. Replaces an
-     * existing track with the same id. Returns true on success.
+     * existing track with the same id. `initialOffsetMs` is the clip's
+     * starting position on the global timeline (passed atomically with
+     * the load so the clip never briefly plays at offset 0 before the
+     * intended offset is applied). Returns true on success.
      * On failure, `outError` (if non-null) is populated with a short diagnostic.
      */
-    bool addClip(const juce::String& trackId, const juce::File& filePath, juce::String* outError = nullptr);
+    bool addClip(const juce::String& trackId, const juce::File& filePath, double initialOffsetMs = 0.0,
+                 juce::String* outError = nullptr);
 
     /** Remove the track with the given id. Returns true if it existed. */
     bool removeTrack(const juce::String& trackId);
@@ -239,11 +351,28 @@ class AudioEngine
         std::unique_ptr<juce::AudioTransportSource> transportSource;
         double sampleRate = 44100.0;
         int numChannels = 2;
+        /**
+         * Future-processor latency declared by this track, in
+         * device-sample-rate samples. Subtracted from the master read
+         * position when seeking this track's transport so a delayed
+         * processor (e.g. Rubber Band) downstream of the reader still
+         * outputs samples aligned to the master clock. 0 means
+         * "this track introduces no latency" — true for every track
+         * today; plumbed for Phase 3+ warp work.
+         */
+        juce::int64 latencySamples = 0;
     };
+
+    /** Compute a per-track transport seek position (in seconds) given the master sample position. */
+    double trackSeekSecondsFor(const Track& track, juce::int64 masterSamples) const;
 
     juce::AudioDeviceManager deviceManager;
     juce::AudioSourcePlayer sourcePlayer;
     juce::MixerAudioSource mixer;
+    // MasterClockSource wraps the mixer; the source player is wired to it
+    // so the audio thread sees `master → mixer → tracks`. Constructed
+    // after `mixer` so the reference is valid; declaration order matters.
+    MasterClockSource master{mixer};
     juce::AudioFormatManager formatManager;
 
     // Background thread used by each track's read-ahead buffer so file I/O
