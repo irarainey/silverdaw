@@ -410,6 +410,24 @@ function createWindow(): void {
     }
   })
 
+  // Strip Chromium's built-in reload accelerators. A DAW project window
+  // has no user-facing reason to reload (it'd be equivalent to closing
+  // and reopening the app, except it leaves the backend's audio engine
+  // running on a now-orphaned project state — a re-AUTH then bombards
+  // the bridge with re-broadcast peaks frames). Dev iteration uses Vite
+  // HMR, not full reload; if a dev really needs a full reload they can
+  // close and relaunch the renderer.
+  const RELOAD_KEYS = new Set(['F5', 'F3'])
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const isReloadKey = RELOAD_KEYS.has(input.key) ||
+      (input.control && (input.key === 'r' || input.key === 'R')) ||
+      (input.meta && (input.key === 'r' || input.key === 'R'))
+    if (isReloadKey) {
+      event.preventDefault()
+    }
+  })
+
   // Apply saved bounds. Use `setBounds` so we're symmetric with the
   // `getBounds()` we save in `captureWindowState` — round-tripping is
   // stable even on a secondary monitor with a different DPI scale.
@@ -529,9 +547,6 @@ function handleMenuAction(action: string): void {
       break
 
     // View
-    case 'view.reload':
-      wc.reload()
-      break
     case 'view.toggleDevTools':
       wc.toggleDevTools()
       break

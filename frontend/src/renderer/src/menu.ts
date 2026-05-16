@@ -51,7 +51,6 @@ export const menus: MenuDef[] = [
   {
     label: 'View',
     items: [
-      { label: 'Reload', action: 'view.reload', accelerator: 'Ctrl+R' },
       { label: 'Toggle Developer Tools', action: 'view.toggleDevTools', accelerator: 'F12' },
       SEP,
       { label: 'Toggle Full Screen', action: 'view.toggleFullScreen', accelerator: 'F11' }
