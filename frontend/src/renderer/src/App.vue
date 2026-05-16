@@ -6,13 +6,16 @@ import TransportBar from '@/components/TransportBar.vue'
 import LibraryPanel from '@/components/LibraryPanel.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import NotificationToasts from '@/components/NotificationToasts.vue'
+import BridgeReadyOverlay from '@/components/BridgeReadyOverlay.vue'
 import { useProjectStore } from '@/stores/projectStore'
+import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 
 const project = useProjectStore()
+const transport = useTransportStore()
 const ui = useUiStore()
 const library = useLibraryStore()
 
@@ -53,6 +56,15 @@ onBeforeUnmount(() => {
 
 function handleMenuAction(action: string): void {
   log.info('menu', `action ${action}`)
+  // Drop any menu action (incl. keyboard shortcut) that arrives before
+  // the bridge has delivered its initial PROJECT_STATE — the visible
+  // <BridgeReadyOverlay> swallows mouse clicks but accelerators bypass
+  // it, and acting on stale local state before reconcile would lose
+  // the action (it'd race the snapshot apply pass).
+  if (!transport.bridgeReady) {
+    log.warn('menu', `dropped ${action} (bridge not ready)`)
+    return
+  }
   // Adding a track is now just "create an empty track". Importing a file
   // into the track happens via the per-track Import button on the track
   // header panel (see TrackHeaderPanel.vue).
@@ -78,6 +90,8 @@ function handleMenuAction(action: string): void {
     <StatusBar />
 
     <NotificationToasts />
+
+    <BridgeReadyOverlay />
   </div>
 </template>
 

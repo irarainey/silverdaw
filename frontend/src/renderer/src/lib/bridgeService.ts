@@ -274,8 +274,12 @@ function dispatch(msg: BridgeInboundMessage): void {
       // Reset locally first so the UI snaps to 0 immediately, then ask
       // the backend to zero its master clock so subsequent
       // PLAYHEAD_UPDATEs agree.
-      useTransportStore().setPlaybackState(false, 0)
+      const t = useTransportStore()
+      t.setPlaybackState(false, 0)
       send('TRANSPORT_STOP')
+      // Unblock the UI now that we have an authoritative snapshot and
+      // the renderer's optimistic state is reconciled.
+      t.setBridgeReady(true)
       break
     }
 
