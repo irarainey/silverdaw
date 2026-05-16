@@ -134,6 +134,14 @@ watch(
   }
 )
 
+// Waveform peaks arrived asynchronously for one or more clips (e.g.
+// post-reload `WAVEFORM_REQUEST` round-trip). Counter ticks on every
+// `setClipPeaks`; cheaper than a deep watch on `project.clips`.
+watch(
+  () => project.peaksRevision,
+  () => redraw()
+)
+
 // Playhead moves at 60 Hz from the backend. Also reset scroll on rewind
 // to 0 (Stop / Back-to-Start), regardless of whether play was active.
 watch(

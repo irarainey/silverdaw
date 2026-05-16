@@ -7,7 +7,10 @@
 import { defineStore } from 'pinia'
 import { PEAKS_PER_SECOND } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { log } from '@/lib/log'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { useLibraryStore } from '@/stores/libraryStore'
+import type { ProjectStatePayload } from '@shared/bridge-protocol'
 
 export interface Clip {
   readonly id: string
@@ -25,10 +28,15 @@ export interface Clip {
   /** Offset from the timeline origin (ms). Mutable so clips can be dragged. */
   startMs: number
   readonly durationMs: number
-  readonly sampleRate: number
+  /** Backend-reported sample rate. May be 0 for placeholder clips until WAVEFORM_DATA arrives. */
+  sampleRate: number
   readonly channelCount: number
-  /** Alternating min, max float pairs at PEAKS_PER_SECOND resolution. */
-  readonly peaks: Float32Array
+  /**
+   * Alternating min, max float pairs at PEAKS_PER_SECOND resolution.
+   * Empty for placeholder clips reconstructed from PROJECT_STATE
+   * until a `WAVEFORM_DATA` binary frame fills them in.
+   */
+  peaks: Float32Array
 }
 
 export interface Track {
@@ -93,16 +101,22 @@ export const TRACK_PALETTE: readonly TrackPaletteEntry[] = [
 interface ProjectState {
   tracks: Track[]
   clips: Record<string, Clip>
-  nextTrackIndex: number
-  nextClipIndex: number
+  /**
+   * Incremented whenever any clip's peaks change. Provides a single
+   * shallow-reactive signal that consumers (e.g. the Pixi timeline
+   * draw watch) can subscribe to without paying the cost of a deep
+   * watch on every clip in the project. The clip peaks themselves are
+   * mutated in place by `setClipPeaks`; this counter is what tells
+   * the renderer to redraw.
+   */
+  peaksRevision: number
 }
 
 export const useProjectStore = defineStore('project', {
   state: (): ProjectState => ({
     tracks: [],
     clips: {},
-    nextTrackIndex: 1,
-    nextClipIndex: 1
+    peaksRevision: 0
   }),
 
   getters: {
@@ -138,7 +152,10 @@ export const useProjectStore = defineStore('project', {
      * via `addClipToTrack`. Returns the new track's id.
      */
     addTrack(): string {
-      const trackId = `t${this.nextTrackIndex++}`
+      // UUID rather than a counter so the id is unique across renderer
+      // reloads, multiple windows, and future project save/load. The
+      // display name still uses the running count.
+      const trackId = crypto.randomUUID()
       const track: Track = {
         id: trackId,
         name: `Track ${this.tracks.length + 1}`,
@@ -152,6 +169,11 @@ export const useProjectStore = defineStore('project', {
         lengthMs: DEFAULT_TRACK_LENGTH_MS
       }
       this.tracks.push(track)
+      // Inform the backend so it can record the structural track in its
+      // ValueTree. The renderer doesn't wait for the ack — `TRACK_ADDED`
+      // is purely diagnostic (the renderer already shows the track).
+      sendBridge('TRACK_ADD', { trackId })
+      log.info('project', `addTrack id=${trackId}`)
       return trackId
     },
 
@@ -178,7 +200,7 @@ export const useProjectStore = defineStore('project', {
       const track = this.tracks.find((t) => t.id === trackId)
       if (!track) return null
 
-      const clipId = `c${this.nextClipIndex++}`
+      const clipId = crypto.randomUUID()
       const clip: Clip = {
         id: clipId,
         trackId,
@@ -225,7 +247,8 @@ export const useProjectStore = defineStore('project', {
         if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
       }
 
-      sendBridge('CLIP_MOVE', { trackId: clip.trackId, positionMs: snapped })
+      sendBridge('CLIP_MOVE', { clipId: clip.id, positionMs: snapped })
+      log.debug('project', `moveClip id=${clipId} -> ${snapped}ms`)
     },
 
     /**
@@ -281,9 +304,11 @@ export const useProjectStore = defineStore('project', {
 
       sendBridge('CLIP_ADD', {
         trackId,
+        clipId,
         filePath: libraryItem.playbackFilePath ?? libraryItem.filePath,
         positionMs: snapped
       })
+      log.info('project', `addClipFromLibrary track=${trackId} clip=${clipId} pos=${snapped}ms`)
       return clipId
     },
 
@@ -322,6 +347,7 @@ export const useProjectStore = defineStore('project', {
 
       // Removing a soloed track changes audibility for everyone else.
       if (track.soloed) this.pushAllGains()
+      log.info('project', `removeTrack id=${trackId}`)
     },
 
     /** Toggle the mute state for one track and push the new gain to the backend. */
@@ -329,6 +355,7 @@ export const useProjectStore = defineStore('project', {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
       t.muted = !t.muted
+      log.info('project', `toggleMute id=${trackId} muted=${t.muted}`)
       this.pushTrackGain(t)
     },
 
@@ -340,6 +367,7 @@ export const useProjectStore = defineStore('project', {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
       t.soloed = !t.soloed
+      log.info('project', `toggleSolo id=${trackId} soloed=${t.soloed}`)
       this.pushAllGains()
     },
 
@@ -368,6 +396,7 @@ export const useProjectStore = defineStore('project', {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
       t.volume = Math.min(1, Math.max(0, volume))
+      log.debug('project', `setTrackVolume id=${trackId} volume=${t.volume}`)
       this.pushTrackGain(t)
     },
 
@@ -391,24 +420,20 @@ export const useProjectStore = defineStore('project', {
      *   `Track`/`Clip` and will produce audio).
      * - On failure we drop the clip and surface a toast so the user
      *   sees *why* their drop-target file didn't make it (codec
-     *   unsupported, file missing, etc.). Matching is by
-     *   `playbackFilePath ?? filePath` because the bridge ack carries
-     *   the path the backend actually saw (post-transcode).
+     *   unsupported, file missing, etc.). Matching is by `clipId` —
+     *   the bridge ack echoes back the id the renderer assigned at
+     *   send time.
      */
-    confirmClipAdd(trackId: string, filePath: string, ok: boolean, error?: string): void {
-      const track = this.tracks.find((t) => t.id === trackId)
-      if (!track) return
-      const clipId = track.clipIds.find((id) => {
-        const c = this.clips[id]
-        if (!c) return false
-        return (c.playbackFilePath ?? c.filePath) === filePath
-      })
+    confirmClipAdd(trackId: string, clipId: string, ok: boolean, error?: string): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
       if (ok) {
         // No state change needed — the optimistic clip is now confirmed.
         return
       }
-      if (clipId) {
-        delete this.clips[clipId]
+      const track = this.tracks.find((t) => t.id === trackId)
+      delete this.clips[clipId]
+      if (track) {
         track.clipIds = track.clipIds.filter((id) => id !== clipId)
       }
       const message = error
@@ -423,6 +448,7 @@ export const useProjectStore = defineStore('project', {
       if (!t) return
       if (colorIndex < 0 || colorIndex >= TRACK_PALETTE.length) return
       t.colorIndex = colorIndex
+      log.info('project', `setTrackColor id=${trackId} colorIndex=${colorIndex}`)
     },
 
     /**
@@ -436,9 +462,199 @@ export const useProjectStore = defineStore('project', {
       const trimmed = name.trim()
       if (trimmed.length === 0) return
       t.name = trimmed
+      log.info('project', `setTrackName id=${trackId} name="${trimmed}"`)
+    },
+
+    /**
+     * Apply a backend-authoritative `PROJECT_STATE` snapshot. Called once
+     * per connection right after AUTH succeeds (see `bridgeService`).
+     *
+     * Semantics:
+     *   - For every clip the backend knows about that the renderer also
+     *     has (matched by `clipId`): update `startMs` to the backend
+     *     value so the timeline reflects backend truth.
+     *   - For every clip the renderer has that the backend does NOT
+     *     know about: drop it. The backend is the source of truth — a
+     *     renderer-side clip with no backend twin can't be played.
+     *   - For every clip the backend has that the renderer does NOT
+     *     know about: log a warning and skip. The renderer can't draw
+     *     it (no waveform peaks yet) — backend-supplied peaks land in
+     *     the Phase 1 `backend-waveform-data` todo, which is when this
+     *     branch becomes a "rehydrate from backend" reconnect-recovery
+     *     path.
+     *
+     * Track gains are not reconciled here (the renderer's mute/solo/
+     * volume model is the source of truth for audibility and will
+     * re-push gains via `pushAllGains` on reconnect if needed).
+     */
+    /**
+     * Replace a clip's waveform peaks. Called by the bridge service when
+     * a `WAVEFORM_DATA` binary frame arrives — either as a result of a
+     * just-added clip's auto-broadcast from the backend, or in response
+     * to a `WAVEFORM_REQUEST` the renderer sent during snapshot
+     * rehydrate. Silent no-op for unknown clipIds (the clip may have
+     * been removed between request and response).
+     */
+    setClipPeaks(clipId: string, peaks: Float32Array, sampleRate: number): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      clip.peaks = peaks
+      if (sampleRate > 0) clip.sampleRate = sampleRate
+      // Tick the global peaks revision so consumers redraw. A single
+      // counter is much cheaper than a `deep: true` watch on `clips`,
+      // and the redraw cost is amortised across however many clips
+      // get their peaks in one PROJECT_STATE rehydrate cycle.
+      this.peaksRevision++
+      // Also refresh the matching library item's peaks (and sample
+      // rate) so the library card shows the waveform after a reload.
+      // The two never disagree because both are keyed off `filePath`.
+      const lib = useLibraryStore()
+      const item = lib.items.find((i) => i.filePath === clip.filePath)
+      if (item && item.peaks.length === 0) {
+        lib.setItemPeaks(item.id, peaks, sampleRate)
+      }
+      log.debug('project', `setClipPeaks id=${clipId} peaks=${peaks.length / 2} sr=${sampleRate}`)
+    },
+
+    applyProjectStateSnapshot(snapshot: ProjectStatePayload): void {
+      log.info(
+        'project',
+        `applyProjectStateSnapshot tracks=${snapshot.tracks.length} clips=${snapshot.tracks.reduce((n, t) => n + t.clips.length, 0)}`
+      )
+      const library = useLibraryStore()
+      // Collect ids of clips that still need peaks after reconciliation so
+      // we can fire WAVEFORM_REQUESTs at the end in one pass.
+      const clipsNeedingPeaks: string[] = []
+      for (const t of snapshot.tracks) {
+        // Reconstruct any track the backend knows but the renderer doesn't
+        // (e.g. after a renderer reload). Audio is already live on the
+        // backend; this rebuilds the visual representation so the user
+        // sees what's playing. Display name + colour use the position in
+        // the snapshot so they're deterministic across reloads.
+        let track = this.tracks.find((x) => x.id === t.id)
+        if (!track) {
+          const index = this.tracks.length
+          track = {
+            id: t.id,
+            name: `Track ${index + 1}`,
+            clipIds: [],
+            muted: false,
+            soloed: false,
+            volume: Math.min(1, Math.max(0, t.gain)),
+            colorIndex: index % TRACK_PALETTE.length,
+            lengthMs: DEFAULT_TRACK_LENGTH_MS
+          }
+          this.tracks.push(track)
+        }
+        for (const c of t.clips) {
+          const offset = Math.max(0, c.offsetMs)
+          // Ensure a library entry exists for this clip's source file. The
+          // library is otherwise renderer-only state and would be empty
+          // after a reload; we rebuild it from the backend-known clip
+          // filePaths so dragging the same sample to another track still
+          // works post-reload. Peaks fill in once WAVEFORM_DATA arrives;
+          // sampleRate / channelCount aren't known at this point and stay
+          // 0 until then.
+          const existingLib = library.items.find((i) => i.filePath === c.filePath)
+          if (!existingLib) {
+            const libId = library.addItem({
+              filePath: c.filePath,
+              fileName: filePathToBasename(c.filePath),
+              durationMs: Math.max(0, c.durationMs),
+              sampleRate: 0,
+              channelCount: 0,
+              peaks: new Float32Array(0),
+              playbackFilePath: c.filePath
+            })
+            // Fetch ID3 / Vorbis / iTunes tags asynchronously so the
+            // library card shows the cover art + title after reload
+            // (same data path the import flow uses). Fire-and-forget;
+            // failures degrade silently to "no metadata".
+            void window.silverdaw
+              .readAudioMetadata(c.filePath)
+              .then((metadata) => library.setItemMetadata(libId, metadata))
+              .catch((err) => log.warn('library', `readAudioMetadata failed for ${c.filePath}: ${String(err)}`))
+          }
+          const existing = this.clips[c.id]
+          if (existing) {
+            existing.startMs = offset
+            if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
+            continue
+          }
+          // Reconstruct a placeholder clip the renderer can draw at the
+          // correct timeline position and width. Waveform peaks are
+          // requested separately below.
+          const fileName = filePathToDisplayName(c.filePath)
+          const placeholder: Clip = {
+            id: c.id,
+            trackId: t.id,
+            filePath: c.filePath,
+            playbackFilePath: c.filePath,
+            fileName,
+            startMs: offset,
+            durationMs: Math.max(0, c.durationMs),
+            sampleRate: 0,
+            channelCount: 0,
+            peaks: new Float32Array(0)
+          }
+          this.clips[c.id] = placeholder
+          track.clipIds.push(c.id)
+          clipsNeedingPeaks.push(c.id)
+          const clipEnd = placeholder.startMs + placeholder.durationMs
+          if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
+          if (track.clipIds.length === 1 && /^Track \d+$/.test(track.name)) {
+            track.name = fileName
+          }
+        }
+      }
+      // PROJECT_STATE is *additive only*. We do NOT drop optimistic
+      // tracks/clips that aren't in the snapshot:
+      //
+      //   - Renderer creates `t1` (optimistic) and queues TRACK_ADD.
+      //   - Backend sends the post-AUTH PROJECT_STATE from the message
+      //     thread; that snapshot is taken BEFORE the queued TRACK_ADD
+      //     has been processed, so it doesn't include `t1`.
+      //   - Wiping `t1` here would be a data-loss bug — the user just
+      //     made it.
+      //
+      // The renderer's own action flow (`confirmClipAdd` for failed
+      // adds, `removeTrack` for user-driven removal) is responsible for
+      // dropping state. PROJECT_STATE only adds backend-known state the
+      // renderer doesn't already have.
+      //
+      // Request peaks for every clip that doesn't have any. The backend
+      // serves cached peaks instantly or kicks the worker pool; either
+      // way the response is a WAVEFORM_DATA binary frame that
+      // `setClipPeaks` consumes.
+      for (const clipId of clipsNeedingPeaks) {
+        sendBridge('WAVEFORM_REQUEST', { clipId })
+      }
     }
   }
 })
+
+/**
+ * Derive a clip's display name from its backend file path. Strips the
+ * directory and file extension; falls back to the full string if either
+ * step can't apply.
+ */
+function filePathToDisplayName(filePath: string): string {
+  // Handle both Windows backslash and POSIX forward-slash separators.
+  const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+  const basename = lastSep >= 0 ? filePath.slice(lastSep + 1) : filePath
+  const lastDot = basename.lastIndexOf('.')
+  return lastDot > 0 ? basename.slice(0, lastDot) : basename
+}
+
+/**
+ * Same as {@link filePathToDisplayName} but keeps the extension. Used for
+ * library item filenames where users expect to see "track.mp3" rather
+ * than just "track".
+ */
+function filePathToBasename(filePath: string): string {
+  const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+  return lastSep >= 0 ? filePath.slice(lastSep + 1) : filePath
+}
 
 // Re-export the constant for components that need to know the peaks resolution.
 export { PEAKS_PER_SECOND }

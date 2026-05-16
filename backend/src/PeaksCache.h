@@ -1,0 +1,53 @@
+#pragma once
+
+#include "Waveform.h"
+
+#include <juce_audio_formats/juce_audio_formats.h>
+#include <juce_core/juce_core.h>
+
+namespace silverdaw
+{
+
+/**
+ * Disk-backed peaks cache.
+ *
+ * Keyed by a stable hash of (filePath, mtime, size, peaksPerSecond) so
+ * any meaningful change to the underlying audio invalidates the entry
+ * automatically. Cache files live at
+ *
+ *   <userAppData>/Silverdaw/peaks/<hex>.peaks
+ *
+ * Each cache file is the same format used on the wire (modulo header
+ * length / JSON header): a tiny fixed-size binary header followed by raw
+ * little-endian float32 peaks. Reading is a single mmap-style file read;
+ * writing is one atomic file write.
+ *
+ * Thread-safe by file-system locking (each entry is read-only after
+ * write; concurrent writers for the same key produce identical bytes
+ * and either wins).
+ */
+class PeaksCache
+{
+  public:
+    /** Resolve and create the cache directory under user app data. Idempotent. */
+    PeaksCache();
+
+    /**
+     * Read a cached entry. Returns an empty `PeaksResult` if the entry
+     * is missing or fails validation.
+     */
+    waveform::PeaksResult tryLoad(const juce::File& sourceFile, int peaksPerSecond) const;
+
+    /**
+     * Atomically persist `result` for `sourceFile` at `peaksPerSecond`.
+     * No-op if `result.peaks` is empty (don't cache failures). Errors
+     * are logged but not propagated — cache misses are recoverable.
+     */
+    void store(const juce::File& sourceFile, const waveform::PeaksResult& result) const;
+
+  private:
+    juce::File cacheFileFor(const juce::File& sourceFile, int peaksPerSecond) const;
+    juce::File cacheDir;
+};
+
+} // namespace silverdaw

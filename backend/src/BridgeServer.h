@@ -60,17 +60,34 @@ class BridgeServer
     using MessageHandler = std::function<void(BridgeServer& self, const juce::String& type, const juce::var& payload)>;
 
     /**
-     * Construct a bridge server with the per-session AUTH token and the
-     * message handler. Both are frozen for the lifetime of the object:
-     * the I/O-thread `onIncoming` callback reads `messageHandler` and
-     * `expectedToken` without synchronisation, so constructor injection
-     * is what makes that race-free by construction.
+     * Targeted-send closure handed to `ClientReadyHandler`. Sends a single
+     * `{ type, payload }` envelope to the freshly-authenticated client
+     * (and only that client) so the backend can hand it any per-session
+     * initial state, e.g. `PROJECT_STATE`, before any broadcasts arrive.
+     */
+    using SendToClient = std::function<void(const juce::String& type, const juce::var& payload)>;
+
+    /**
+     * Invoked on the JUCE message thread immediately after a client
+     * completes the AUTH handshake. The handler typically calls
+     * `sendToClient(...)` one or more times to push initial state. May
+     * be empty.
+     */
+    using ClientReadyHandler = std::function<void(SendToClient sendToClient)>;
+
+    /**
+     * Construct a bridge server with the per-session AUTH token, message
+     * handler, and an optional post-AUTH initial-state hook. All three
+     * are frozen for the lifetime of the object: the I/O-thread callback
+     * reads them without synchronisation, so constructor injection is
+     * what makes that race-free by construction.
      *
      * An empty `expectedToken` disables authentication (stand-alone
      * manual debugging only). A null `handler` is legal but every inbound
-     * envelope will be silently dropped.
+     * envelope will be silently dropped. A null `readyHandler` means no
+     * targeted initial-state push (only `READY` is sent post-AUTH).
      */
-    BridgeServer(juce::String expectedToken, MessageHandler handler);
+    BridgeServer(juce::String expectedToken, MessageHandler handler, ClientReadyHandler readyHandler = {});
     ~BridgeServer();
 
     BridgeServer(const BridgeServer&) = delete;
@@ -90,6 +107,16 @@ class BridgeServer
      */
     void broadcast(const juce::String& type, const juce::var& payload = juce::var());
 
+    /**
+     * Broadcast a binary frame to all currently authenticated clients.
+     * The frame bytes are sent verbatim — typically the layout produced
+     * by `silverdaw::waveform::encodeWaveformFrame` (length-prefixed JSON
+     * header + raw payload). Used for bulk data planes (waveform peaks
+     * today, stems / previews later) where JSON serialisation cost is
+     * prohibitive.
+     */
+    void broadcastBinary(const std::string& frameBytes);
+
     /** Number of currently-connected WebSocket clients (authenticated or not). */
     std::size_t getClientCount() const;
 
@@ -108,8 +135,9 @@ class BridgeServer
     static void sendReadyTo(ix::WebSocket& webSocket);
 
     std::unique_ptr<ix::WebSocketServer> server;
-    // Both immutable after construction: the I/O thread reads them lock-free.
+    // All three immutable after construction: the I/O thread reads them lock-free.
     const MessageHandler messageHandler;
+    const ClientReadyHandler clientReadyHandler;
     const juce::String expectedToken;
 
     mutable std::mutex clientsMutex;

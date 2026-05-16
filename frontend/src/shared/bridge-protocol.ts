@@ -15,13 +15,18 @@
 
 export interface ClipAddPayload {
   trackId: string
+  clipId: string
   filePath: string
   positionMs: number
 }
 
 export interface ClipMovePayload {
-  trackId: string
+  clipId: string
   positionMs: number
+}
+
+export interface TrackAddPayload {
+  trackId: string
 }
 
 export interface TrackRemovePayload {
@@ -59,12 +64,18 @@ export interface BridgeOutboundMap {
   AUTH: AuthPayload
   CLIP_ADD: ClipAddPayload
   CLIP_MOVE: ClipMovePayload
+  TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
   TRACK_GAIN: TrackGainPayload
   TRANSPORT_PLAY: undefined
   TRANSPORT_PAUSE: undefined
   TRANSPORT_STOP: undefined
   TRANSPORT_SEEK: TransportSeekPayload
+  WAVEFORM_REQUEST: WaveformRequestPayload
+}
+
+export interface WaveformRequestPayload {
+  clipId: string
 }
 
 export type BridgeOutboundType = keyof BridgeOutboundMap
@@ -90,6 +101,7 @@ export interface PlayheadUpdatePayload {
 
 export interface ClipAckPayload {
   trackId: string
+  clipId: string
   filePath: string
   ok: boolean
   /**
@@ -97,6 +109,17 @@ export interface ClipAckPayload {
    * Surfaced through `notificationsStore.pushError(...)` in the renderer.
    */
   error?: string
+}
+
+/**
+ * Backend ack for a prior `TRACK_ADD` envelope. `ok === false` means the
+ * track id was unknown OR the payload was malformed; rare in practice
+ * because the renderer generates the trackId locally and addTrack on
+ * the backend is idempotent.
+ */
+export interface TrackAddedPayload {
+  trackId: string
+  ok: boolean
 }
 
 /**
@@ -124,11 +147,42 @@ export interface TrackGainAppliedPayload {
   ok: boolean
 }
 
+/**
+ * Initial backend-authoritative project snapshot sent by the bridge
+ * immediately after a successful AUTH handshake. The renderer treats
+ * itself as a mirror of this state — see `projectStore.applyProjectStateSnapshot`.
+ *
+ * Tracks and clips contain only the structural / audio-meaningful fields
+ * the backend owns. Render-only metadata (fileName, peaks, sampleRate,
+ * channelCount) stays with the renderer's existing optimistic state; on
+ * reconnect any clips known only to the backend will appear in the
+ * payload but won't render until backend-supplied peaks arrive (Phase 1
+ * todo: backend-waveform-data).
+ */
+export interface ProjectStateClip {
+  id: string
+  filePath: string
+  offsetMs: number
+  durationMs: number
+}
+
+export interface ProjectStateTrack {
+  id: string
+  gain: number
+  clips: ProjectStateClip[]
+}
+
+export interface ProjectStatePayload {
+  tracks: ProjectStateTrack[]
+}
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
+  PROJECT_STATE: ProjectStatePayload
   PLAYHEAD_UPDATE: PlayheadUpdatePayload
   CLIP_ADDED: ClipAckPayload
   CLIP_ADD_FAILED: ClipAckPayload
+  TRACK_ADDED: TrackAddedPayload
   TRACK_REMOVED: TrackRemovedPayload
   TRACK_GAIN_APPLIED: TrackGainAppliedPayload
 }
@@ -156,9 +210,11 @@ export type BridgeOutboundMessage = {
 /** Every legal inbound envelope `type`. Kept in lockstep with `BridgeInboundMap`. */
 const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>([
   'READY',
+  'PROJECT_STATE',
   'PLAYHEAD_UPDATE',
   'CLIP_ADDED',
   'CLIP_ADD_FAILED',
+  'TRACK_ADDED',
   'TRACK_REMOVED',
   'TRACK_GAIN_APPLIED'
 ])
@@ -191,10 +247,39 @@ export function isClipAckPayload(value: unknown): value is ClipAckPayload {
   return (
     isPlainObject(value) &&
     typeof value.trackId === 'string' &&
+    typeof value.clipId === 'string' &&
     typeof value.filePath === 'string' &&
     typeof value.ok === 'boolean' &&
     (value.error === undefined || typeof value.error === 'string')
   )
+}
+
+/** Guard for `TrackAddedPayload`. */
+export function isTrackAddedPayload(value: unknown): value is TrackAddedPayload {
+  return isPlainObject(value) && typeof value.trackId === 'string' && typeof value.ok === 'boolean'
+}
+
+/** Guard for `ProjectStatePayload`. */
+export function isProjectStatePayload(value: unknown): value is ProjectStatePayload {
+  if (!isPlainObject(value)) return false
+  if (!Array.isArray(value.tracks)) return false
+  for (const t of value.tracks) {
+    if (!isPlainObject(t)) return false
+    if (typeof t.id !== 'string' || typeof t.gain !== 'number') return false
+    if (!Array.isArray(t.clips)) return false
+    for (const c of t.clips) {
+      if (!isPlainObject(c)) return false
+      if (
+        typeof c.id !== 'string' ||
+        typeof c.filePath !== 'string' ||
+        typeof c.offsetMs !== 'number' ||
+        typeof c.durationMs !== 'number'
+      ) {
+        return false
+      }
+    }
+  }
+  return true
 }
 
 /** Guard for `TrackRemovedPayload`. */

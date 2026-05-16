@@ -19,6 +19,7 @@ import type { Application } from 'pixi.js'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { log } from '@/lib/log'
 import { SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from './constants'
 import type { GridGeometry } from './useGridGeometry'
 
@@ -144,6 +145,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
         if (pointerMs !== null) {
           draggedClipId = clip.id
           clipGrabOffsetMs = pointerMs - clip.startMs
+          log.info('drag', `clip drag start id=${clip.id} from=${clip.startMs}ms`)
           window.addEventListener('pointermove', onClipPointerMove)
           window.addEventListener('pointerup', onClipPointerUp)
           window.addEventListener('pointercancel', onClipPointerUp)
@@ -197,6 +199,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
 
   function onClipPointerUp(_e: PointerEvent): void {
     if (draggedClipId === null) return
+    const endClip = project.clips[draggedClipId]
+    log.info('drag', `clip drag end id=${draggedClipId} to=${endClip?.startMs ?? '?'}ms`)
     draggedClipId = null
     window.removeEventListener('pointermove', onClipPointerMove)
     window.removeEventListener('pointerup', onClipPointerUp)

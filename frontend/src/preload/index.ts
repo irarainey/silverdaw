@@ -115,7 +115,21 @@ const api = {
     sourcePath: string
     channels: Float32Array[]
     sampleRate: number
-  }): Promise<string | null> => ipcRenderer.invoke('audio:writeTempWav', args)
+  }): Promise<string | null> => ipcRenderer.invoke('audio:writeTempWav', args),
+  /**
+   * Flush a batch of renderer-side log entries to the main-process
+   * session log (`.logs/<stamp>/renderer.log`). Renderer-side logging
+   * (`lib/log.ts`) buffers entries on a ~50 ms timer and calls this
+   * once per flush so we avoid per-message IPC overhead.
+   *
+   * Each entry's `timestamp` is the renderer's `Date.now()` at the
+   * point the log call was made — preserved across the IPC hop so the
+   * persisted line reflects when the event actually happened, not
+   * when it was flushed.
+   */
+  logBatch: (
+    entries: ReadonlyArray<{ level: string; tag: string; message: string; timestamp: number }>
+  ): Promise<void> => ipcRenderer.invoke('log:append-batch', entries)
 } as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)

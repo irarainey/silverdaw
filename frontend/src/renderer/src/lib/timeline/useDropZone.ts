@@ -16,6 +16,7 @@ import { onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Application } from 'pixi.js'
 import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { log } from '@/lib/log'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
@@ -211,6 +212,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       { ...item, fileName: libraryItemDisplayName(item) },
       target.startMs
     )
+    log.info('dropzone', `drop trackIndex=${target.trackIndex} startMs=${target.startMs} item=${item.id}`)
     onPreviewChanged()
   }
 

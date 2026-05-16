@@ -39,6 +39,9 @@ declare global {
         channels: Float32Array[]
         sampleRate: number
       }): Promise<string | null>
+      logBatch(
+        entries: ReadonlyArray<{ level: string; tag: string; message: string; timestamp: number }>
+      ): Promise<void>
     }
   }
 }

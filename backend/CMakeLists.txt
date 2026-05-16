@@ -50,7 +50,11 @@ juce_add_console_app(SilverdawBackend
 target_sources(SilverdawBackend PRIVATE
     src/Main.cpp
     src/AudioEngine.cpp
-    src/BridgeServer.cpp)
+    src/BridgeServer.cpp
+    src/Log.cpp
+    src/PeaksCache.cpp
+    src/ProjectState.cpp
+    src/Waveform.cpp)
 
 target_compile_definitions(SilverdawBackend PRIVATE
     JUCE_WEB_BROWSER=0
@@ -61,6 +65,7 @@ target_compile_definitions(SilverdawBackend PRIVATE
 target_link_libraries(SilverdawBackend PRIVATE
     juce::juce_core
     juce::juce_events
+    juce::juce_data_structures
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats

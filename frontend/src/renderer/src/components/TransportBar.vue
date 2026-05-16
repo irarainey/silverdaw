@@ -7,6 +7,7 @@ import { computed, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { log } from '@/lib/log'
 import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
 
 const project = useProjectStore()
@@ -135,6 +136,7 @@ function bumpBpm(delta: number): void {
 
 function onSkipBack(): void {
   // Stop + rewind for now; Skip-back behaves like Stop until we have markers.
+  log.info('transport', 'click skip-back')
   sendBridge('TRANSPORT_STOP')
 }
 
@@ -142,9 +144,11 @@ function onPlay(): void {
   // Optimistically flip the UI state; the backend's PLAYHEAD_UPDATE will
   // overwrite this within ~16 ms either way.
   if (transport.isPlaying) {
+    log.info('transport', 'click pause')
     sendBridge('TRANSPORT_PAUSE')
     transport.setPlaybackState(false)
   } else {
+    log.info('transport', 'click play')
     sendBridge('TRANSPORT_PLAY')
     transport.setPlaybackState(true)
   }
@@ -156,6 +160,7 @@ function onSkipForward(): void {
   // we send the seek and let the backend's PLAYHEAD_UPDATE confirm.
   const end = project.durationMs
   if (!Number.isFinite(end) || end <= 0) return
+  log.info('transport', `click skip-forward -> ${end}ms`)
   sendBridge('TRANSPORT_SEEK', { positionMs: end })
 }
 </script>

@@ -9,16 +9,26 @@
 
 import { defineStore } from 'pinia'
 import { useProjectStore } from '@/stores/projectStore'
+import { log } from '@/lib/log'
 
 export interface LibraryItem {
   readonly id: string
   readonly filePath: string
   readonly fileName: string
   readonly durationMs: number
-  readonly sampleRate: number
+  /**
+   * Sample rate of the source file. May be 0 for placeholder items
+   * reconstructed from PROJECT_STATE before WAVEFORM_DATA arrives; gets
+   * filled in by `setItemPeaks`.
+   */
+  sampleRate: number
   readonly channelCount: number
-  /** Alternating min/max float pairs at PEAKS_PER_SECOND resolution. */
-  readonly peaks: Float32Array
+  /**
+   * Alternating min/max float pairs at PEAKS_PER_SECOND resolution. May
+   * be an empty array for placeholder items reconstructed from
+   * PROJECT_STATE; filled in by `setItemPeaks` when WAVEFORM_DATA arrives.
+   */
+  peaks: Float32Array
   /**
    * Path the JUCE backend should actually load when this item is placed
    * on a track. Equals `filePath` for formats the backend can decode
@@ -129,6 +139,10 @@ export const useLibraryStore = defineStore('library', {
         peaks: audio.peaks,
         playbackFilePath: audio.playbackFilePath ?? audio.filePath
       })
+      log.info(
+        'library',
+        `addItem id=${id} file=${audio.fileName} sr=${audio.sampleRate} ch=${audio.channelCount} ms=${audio.durationMs}`
+      )
       return id
     },
 
@@ -144,9 +158,13 @@ export const useLibraryStore = defineStore('library', {
     removeItem(itemId: string): boolean {
       const idx = this.items.findIndex((i) => i.id === itemId)
       if (idx < 0) return false
-      if (this.isItemInUse(itemId)) return false
+      if (this.isItemInUse(itemId)) {
+        log.warn('library', `removeItem refused (in use) id=${itemId}`)
+        return false
+      }
       revokeItemCoverArt(this.items[idx])
       this.items.splice(idx, 1)
+      log.info('library', `removeItem id=${itemId}`)
       return true
     },
 
@@ -204,6 +222,21 @@ export const useLibraryStore = defineStore('library', {
         const blob = new Blob([coverArt.data], { type: coverArt.mimeType })
         item.coverArtUrl = URL.createObjectURL(blob)
       }
+    },
+
+    /**
+     * Replace a library item's waveform peaks (and optionally its
+     * sample rate). Called by the project store when a `WAVEFORM_DATA`
+     * frame arrives for a clip whose source file maps to this item, so
+     * library cards rebuilt from PROJECT_STATE pick up their waveform
+     * once the backend serves the cached peaks. No-op for unknown ids.
+     */
+    setItemPeaks(itemId: string, peaks: Float32Array, sampleRate: number): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      item.peaks = peaks
+      if (sampleRate > 0) item.sampleRate = sampleRate
+      log.debug('library', `setItemPeaks id=${itemId} peaks=${peaks.length / 2} sr=${sampleRate}`)
     },
 
     /**

@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "Log.h"
 
 #include <iostream>
 
@@ -38,6 +39,7 @@ juce::String AudioEngine::initialise()
 
 void AudioEngine::shutdown()
 {
+    rebuildTimer.stopTimer();
     stop();
     deviceManager.removeAudioCallback(&sourcePlayer);
     sourcePlayer.setSource(nullptr);
@@ -58,9 +60,11 @@ double AudioEngine::trackSeekSecondsFor(const Track& track, juce::int64 masterSa
     return sr > 0.0 ? static_cast<double>(compensated) / sr : 0.0;
 }
 
-bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePath, double initialOffsetMs,
+bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath, double initialOffsetMs,
                           juce::String* outError)
 {
+    silverdaw::log::info("engine", "addClip id=" + clipId + " offsetMs=" + juce::String(initialOffsetMs) + " path=" +
+                                        filePath.getFileName());
     if (!filePath.existsAsFile())
     {
         const auto msg = "file does not exist: " + filePath.getFullPathName();
@@ -148,15 +152,15 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
         master.setPlaying(false);
     }
 
-    // Replace any existing track with the same id.
-    if (auto it = tracks.find(trackId); it != tracks.end())
+    // Replace any existing clip with the same id.
+    if (auto it = tracks.find(clipId); it != tracks.end())
     {
         mixer.removeInputSource(it->second->transportSource.get());
         tracks.erase(it);
     }
 
     mixer.addInputSource(track->transportSource.get(), false);
-    tracks.emplace(trackId, std::move(track));
+    tracks.emplace(clipId, std::move(track));
 
     if (wasPlaying)
     {
@@ -166,11 +170,12 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::File& filePat
     return true;
 }
 
-bool AudioEngine::removeTrack(const juce::String& trackId)
+bool AudioEngine::removeClip(const juce::String& clipId)
 {
-    auto it = tracks.find(trackId);
+    auto it = tracks.find(clipId);
     if (it == tracks.end())
     {
+        silverdaw::log::warn("engine", "removeClip unknown id=" + clipId);
         return false;
     }
 
@@ -179,14 +184,16 @@ bool AudioEngine::removeTrack(const juce::String& trackId)
     mixer.removeInputSource(it->second->transportSource.get());
     it->second->transportSource->setSource(nullptr);
     tracks.erase(it);
+    silverdaw::log::info("engine", "removeClip id=" + clipId);
     return true;
 }
 
-bool AudioEngine::setTrackGain(const juce::String& trackId, float gain)
+bool AudioEngine::setClipGain(const juce::String& clipId, float gain)
 {
-    auto it = tracks.find(trackId);
+    auto it = tracks.find(clipId);
     if (it == tracks.end())
     {
+        silverdaw::log::warn("engine", "setClipGain unknown id=" + clipId);
         return false;
     }
 
@@ -194,31 +201,62 @@ bool AudioEngine::setTrackGain(const juce::String& trackId, float gain)
     {
         it->second->transportSource->setGain(juce::jlimit(0.0F, 4.0F, gain));
     }
+    silverdaw::log::debug("engine", "setClipGain id=" + clipId + " gain=" + juce::String(gain));
     return true;
+}
+
+void AudioEngine::rebuildTrackPrefetch(Track& track)
+{
+    if (track.transportSource == nullptr || track.offsetSource == nullptr)
+    {
+        return;
+    }
+    const double pos = trackSeekSecondsFor(track, master.getPositionSamples());
+    const bool wasStarted = track.transportSource->isPlaying();
+    silverdaw::log::info("engine", "rebuild prefetch (wasStarted=" + juce::String(wasStarted ? 1 : 0) +
+                                       " pos=" + juce::String(pos) + ")");
+    track.transportSource->stop();
+    track.transportSource->setSource(nullptr, 0, nullptr);
+    track.transportSource->setSource(track.offsetSource.get(), 32768, &readAheadThread, track.sampleRate,
+                                     track.numChannels);
+    track.transportSource->setPosition(pos);
+    if (wasStarted)
+    {
+        track.transportSource->start();
+    }
+    track.prefetchDirty = false;
+}
+
+void AudioEngine::flushDirtyRebuilds()
+{
+    for (auto& [id, track] : tracks)
+    {
+        if (track->prefetchDirty)
+        {
+            rebuildTrackPrefetch(*track);
+        }
+    }
 }
 
 void AudioEngine::play()
 {
-    // Master gate is the single play/pause control. Per-track transports
-    // are already in the started state (see `addClip`), so opening the
-    // gate is enough to make audio flow.
+    rebuildTimer.stopTimer();
+    flushDirtyRebuilds();
     master.setPlaying(true);
+    silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
+                                       " pos=" + juce::String(master.getPositionSamples()) + ")");
 }
 
 void AudioEngine::pause()
 {
-    // Close the gate. Per-track transports stay started but don't advance
-    // because nothing is pulling on them while the gate is closed.
     master.setPlaying(false);
+    silverdaw::log::info("engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
 }
 
 void AudioEngine::stop()
 {
     master.setPlaying(false);
     master.setPositionSamples(0);
-    // Fan out to per-track transports so their internal positions are
-    // reset to 0 too; the next `play()` then resumes from a known-good
-    // zero across all tracks.
     for (auto& [id, track] : tracks)
     {
         if (track->transportSource != nullptr)
@@ -226,6 +264,7 @@ void AudioEngine::stop()
             track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
         }
     }
+    silverdaw::log::info("engine", "stop");
 }
 
 void AudioEngine::setPositionMs(double ms)
@@ -243,11 +282,12 @@ void AudioEngine::setPositionMs(double ms)
             track->transportSource->setPosition(trackSeekSecondsFor(*track, masterSamples));
         }
     }
+    silverdaw::log::info("engine", "setPositionMs " + juce::String(clampedMs));
 }
 
-bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
+bool AudioEngine::setClipOffsetMs(const juce::String& clipId, double offsetMs)
 {
-    auto it = tracks.find(trackId);
+    auto it = tracks.find(clipId);
     if (it == tracks.end())
     {
         return false;
@@ -278,45 +318,24 @@ bool AudioEngine::setClipOffsetMs(const juce::String& trackId, double offsetMs)
     // live for many blocks and any prefetch is already coherent.
     track->offsetSource->setOffsetSamples(newOffsetSamples);
 
-    // Fallback: full source-chain rebuild when actively playing.
-    // ──────────────────────────────────────────────────────────
-    // If the transport is currently playing, the `BufferingAudioSource`
-    // has prefetched ~0.7 s of audio (32 768 samples at 48 kHz) from
-    // `OffsetSource` using the OLD offset. Those samples are already
-    // baked into its internal ring buffer; the atomic write cannot
-    // reach them. Without the rebuild the listener would hear
-    // wrong-audio-at-wrong-position until the prefetch thread caught
-    // up, which is audibly broken on a moving clip.
-    //
-    // `setSource(nullptr) + setSource(...)` destroys and recreates the
-    // `BufferingAudioSource` from scratch, so its buffer is guaranteed
-    // empty and the first prefetch reads through the new offset. The
-    // current playback position is preserved across the rebuild so
-    // playback continues without a perceptible seek.
-    // Fallback: full source-chain rebuild when the master gate is open.
-    // ────────────────────────────────────────────────────────────────
-    // When playing, the `BufferingAudioSource` has prefetched ~0.7 s of
-    // audio (32 768 samples at 48 kHz) from `OffsetSource` using the OLD
-    // offset. Those samples are already baked into its internal ring
-    // buffer; the atomic write cannot reach them. Without the rebuild
-    // the listener would hear wrong-audio-at-wrong-position until the
-    // prefetch thread caught up, which is audibly broken on a moving
-    // clip.
-    //
-    // `setSource(nullptr) + setSource(...)` destroys and recreates the
-    // `BufferingAudioSource` from scratch, so its buffer is guaranteed
-    // empty and the first prefetch reads through the new offset. The
-    // current playback position is preserved across the rebuild so
-    // playback continues without a perceptible seek.
     if (master.isPlaying())
     {
-        const double pos = track->transportSource->getCurrentPosition();
-        track->transportSource->stop();
-        track->transportSource->setSource(nullptr, 0, nullptr);
-        track->transportSource->setSource(track->offsetSource.get(), 32768, &readAheadThread, track->sampleRate,
-                                          track->numChannels);
-        track->transportSource->setPosition(pos);
-        track->transportSource->start();
+        // Mid-playback move: rebuild now so the next block the device
+        // pulls is at the new offset. Defer-rebuild isn't viable here
+        // because audio is being produced live; the listener would
+        // otherwise hear the stale ~0.7 s of pre-move audio.
+        rebuildTrackPrefetch(*track);
+    }
+    else
+    {
+        // Paused move: mark dirty and arm the debounce timer. Each new
+        // setClipOffsetMs call restarts the timer, so a rapid drag
+        // collapses to a single rebuild ~150 ms after the user releases.
+        // By the time they click Play the rebuilt BufferingAudioSource
+        // has had time to fill its ring, and `play()` is just a master
+        // gate flip — no synchronous rebuild on the play click.
+        track->prefetchDirty = true;
+        rebuildTimer.startTimer(kRebuildDebounceMs);
     }
 
     return true;
@@ -335,6 +354,21 @@ double AudioEngine::getPositionMs() const
         return 0.0;
     }
     return (static_cast<double>(master.getPositionSamples()) / sr) * 1000.0;
+}
+
+double AudioEngine::getClipDurationMs(const juce::String& clipId) const
+{
+    const auto it = tracks.find(clipId);
+    if (it == tracks.end() || it->second->readerSource == nullptr)
+    {
+        return 0.0;
+    }
+    auto* reader = it->second->readerSource->getAudioFormatReader();
+    if (reader == nullptr || reader->sampleRate <= 0.0)
+    {
+        return 0.0;
+    }
+    return (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
 }
 
 } // namespace silverdaw

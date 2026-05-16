@@ -10,6 +10,7 @@
 
 import { decodeAudioToPeaks } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { log } from '@/lib/log'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
@@ -52,16 +53,22 @@ async function resolvePlaybackPath(
   decoded: { sampleRate: number; channels: Float32Array[] }
 ): Promise<string> {
   if (BACKEND_NATIVE_EXTS.has(fileExtensionOf(sourcePath))) return sourcePath
+  log.info('import', `transcode start ${sourcePath}`)
   try {
     const wavPath = await window.silverdaw.writeTempWav({
       sourcePath,
       channels: decoded.channels,
       sampleRate: decoded.sampleRate
     })
-    if (wavPath) return wavPath
+    if (wavPath) {
+      log.info('import', `transcode done -> ${wavPath}`)
+      return wavPath
+    }
     console.warn('[importAudio] transcode returned null for', sourcePath)
+    log.warn('import', `transcode returned null for ${sourcePath}`)
   } catch (err) {
     console.error('[importAudio] transcode failed for', sourcePath, err)
+    log.error('import', `transcode failed for ${sourcePath}: ${String(err)}`)
   }
   return sourcePath
 }
@@ -83,11 +90,16 @@ export async function importAudioIntoTrack(
   const transport = useTransportStore()
   const library = useLibraryStore()
 
+  log.info('import', `importAudioIntoTrack trackId=${trackId} startMs=${startMs ?? 'playhead'}`)
   const opened = await window.silverdaw.openAudioFile().catch((err) => {
     console.error('[importAudio] dialog/read failed:', err)
+    log.error('import', `dialog failed: ${String(err)}`)
     return null
   })
-  if (!opened) return null
+  if (!opened) {
+    log.info('import', 'dialog cancelled')
+    return null
+  }
 
   // Default to the current playhead position so importing while the cursor
   // is parked at e.g. bar 4 drops the clip right where the user is looking.
@@ -146,6 +158,7 @@ export async function importAudioIntoTrack(
     // (possibly transcoded) playback path, not the original source path.
     sendBridge('CLIP_ADD', {
       trackId,
+      clipId,
       filePath: audio.playbackFilePath,
       positionMs: resolvedStartMs
     })

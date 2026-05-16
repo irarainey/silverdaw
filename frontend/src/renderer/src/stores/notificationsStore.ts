@@ -10,6 +10,7 @@
 // `<NotificationToasts>` reads `items` and renders one card per entry.
 
 import { defineStore } from 'pinia'
+import { log } from '@/lib/log'
 
 export type NotificationKind = 'error' | 'info'
 
@@ -39,6 +40,7 @@ export const useNotificationsStore = defineStore('notifications', {
     push(kind: NotificationKind, message: string, ttlMs: number = DEFAULT_TTL_MS): number {
       const id = this.nextId++
       this.items.push({ id, kind, message })
+      log[kind === 'error' ? 'warn' : 'info']('notify', `${kind}: ${message}`)
       if (ttlMs > 0) {
         setTimeout(() => this.dismiss(id), ttlMs)
       }

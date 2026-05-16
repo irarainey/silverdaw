@@ -29,6 +29,8 @@ backend/build/
 Thumbs.db
 *.log
 .cache/
+# Cross-layer dev logs (see backend/src/Log.h, frontend main + renderer logger)
+.logs/
 
 # CMake junk
 CMakeCache.txt

@@ -1,11 +1,15 @@
 #pragma once
 
+#include "Log.h"
+
 #include <atomic>
+#include <cstdint>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_core/juce_core.h>
+#include <juce_events/juce_events.h>
 #include <memory>
 #include <unordered_map>
 
@@ -189,29 +193,37 @@ class MasterClockSource : public juce::AudioSource
         const double oldSr = sampleRate.load(std::memory_order_acquire);
         if (oldSr > 0.0 && newSampleRate > 0.0 && oldSr != newSampleRate)
         {
-            // Preserve real time across device sample-rate changes:
-            // `samples_new = samples_old * (sr_new / sr_old)`.
             const juce::int64 oldPos = positionSamples.load(std::memory_order_relaxed);
             const auto rescaled = static_cast<juce::int64>(
                 (static_cast<double>(oldPos) * newSampleRate) / oldSr);
             positionSamples.store(rescaled, std::memory_order_relaxed);
         }
         sampleRate.store(newSampleRate, std::memory_order_release);
+        silverdaw::log::info("master",
+                             "prepareToPlay block=" + juce::String(blockSize) + " sr=" + juce::String(newSampleRate));
         child.prepareToPlay(blockSize, newSampleRate);
     }
 
     void releaseResources() override
     {
+        silverdaw::log::info("master", "releaseResources");
         child.releaseResources();
     }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
     {
+        const auto count = callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        // Diagnostic heartbeat: ~1 s at 48 kHz / 512 buffer. Logged so we
+        // can tell whether the audio device thread is alive even when no
+        // audible output is being produced.
+        if ((count % 100) == 0)
+        {
+            silverdaw::log::debug("master", "cb#" + juce::String(static_cast<juce::int64>(count)) + " playing=" +
+                                                juce::String(playing.load(std::memory_order_acquire) ? 1 : 0) +
+                                                " pos=" + juce::String(positionSamples.load(std::memory_order_relaxed)));
+        }
         if (!playing.load(std::memory_order_acquire))
         {
-            // Gate closed: emit silence, do NOT pull from the mixer.
-            // Per-track transports therefore don't advance either,
-            // because nothing is pulling on them.
             info.clearActiveBufferRegion();
             return;
         }
@@ -251,6 +263,8 @@ class MasterClockSource : public juce::AudioSource
     // message-thread accessors that convert samples↔ms. The audio
     // callback path itself doesn't read it.
     std::atomic<double> sampleRate{0.0};
+    // Diagnostic counter for the audio-callback heartbeat log.
+    std::atomic<std::uint64_t> callbackCount{0};
 
     static_assert(std::atomic<juce::int64>::is_always_lock_free,
                   "MasterClockSource requires a lock-free 64-bit atomic counter on the audio thread");
@@ -284,25 +298,26 @@ class AudioEngine
     void shutdown();
 
     /**
-     * Load `filePath` into a new track keyed by `trackId`. Replaces an
-     * existing track with the same id. `initialOffsetMs` is the clip's
+     * Load `filePath` into a new playable source keyed by `clipId`. Replaces
+     * an existing source with the same id. `initialOffsetMs` is the clip's
      * starting position on the global timeline (passed atomically with
      * the load so the clip never briefly plays at offset 0 before the
      * intended offset is applied). Returns true on success.
      * On failure, `outError` (if non-null) is populated with a short diagnostic.
      */
-    bool addClip(const juce::String& trackId, const juce::File& filePath, double initialOffsetMs = 0.0,
+    bool addClip(const juce::String& clipId, const juce::File& filePath, double initialOffsetMs = 0.0,
                  juce::String* outError = nullptr);
 
-    /** Remove the track with the given id. Returns true if it existed. */
-    bool removeTrack(const juce::String& trackId);
+    /** Remove the playable source with the given clip id. Returns true if it existed. */
+    bool removeClip(const juce::String& clipId);
 
     /**
-     * Set the linear gain applied to `trackId` (0.0 = silent, 1.0 = unity).
-     * Used for mute/solo: the frontend computes effective audibility and
-     * pushes 0 or 1 per track. Returns true if the track existed.
+     * Set the linear gain applied to `clipId` (0.0 = silent, 1.0 = unity).
+     * Used for mute/solo: the frontend computes effective audibility per
+     * logical track and `Main.cpp` fans the resulting gain out to every
+     * clip on that track. Returns true if the clip existed.
      */
-    bool setTrackGain(const juce::String& trackId, float gain);
+    bool setClipGain(const juce::String& clipId, float gain);
 
     /** Start playback of all tracks from their current positions. */
     void play();
@@ -321,8 +336,8 @@ class AudioEngine
     void setPositionMs(double ms);
 
     /**
-     * Set the timeline offset (ms) for the clip on `trackId` — i.e. how far
-     * along the global timeline its audio should start.
+     * Set the timeline offset (ms) for `clipId` — i.e. how far along the
+     * global timeline its audio should start.
      *
      * Fast path (transport stopped or paused): updates the
      * `OffsetSource`'s atomic offset only. Lock-free, no allocations,
@@ -333,15 +348,32 @@ class AudioEngine
      * serve ~0.7 s of stale audio at the OLD offset. The current
      * playback position is preserved across the rebuild.
      *
-     * Returns true if the track existed.
+     * Returns true if the clip existed.
      */
-    bool setClipOffsetMs(const juce::String& trackId, double offsetMs);
+    bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
 
     /** True if any track is currently playing. */
     bool isPlaying() const;
 
     /** Master playhead position in milliseconds (uses the first track as clock). */
     double getPositionMs() const;
+
+    /**
+     * Duration of the clip's underlying file in milliseconds. Returns 0
+     * if the clip doesn't exist or its reader is unavailable.
+     */
+    double getClipDurationMs(const juce::String& clipId) const;
+
+    /**
+     * Access to the engine's `AudioFormatManager`. Used by the waveform
+     * subsystem to open an independent reader for peaks computation on a
+     * worker thread without disturbing the audio source the engine is
+     * already streaming.
+     */
+    juce::AudioFormatManager& getFormatManager() noexcept
+    {
+        return formatManager;
+    }
 
   private:
     struct Track
@@ -361,10 +393,52 @@ class AudioEngine
          * today; plumbed for Phase 3+ warp work.
          */
         juce::int64 latencySamples = 0;
+
+        /**
+         * Set true when the clip's offset has changed since the
+         * `BufferingAudioSource` was last (re)built. The buffer can hold
+         * up to ~0.7 s of prefetched audio at the OLD offset; if we let
+         * playback start with a dirty buffer the listener hears the old
+         * position briefly before the prefetch catches up. `play()`
+         * checks this flag and rebuilds the source chain for any track
+         * whose offset has moved while paused — preserving the master
+         * position so the audible result is sample-accurate.
+         */
+        bool prefetchDirty = false;
     };
 
     /** Compute a per-track transport seek position (in seconds) given the master sample position. */
     double trackSeekSecondsFor(const Track& track, juce::int64 masterSamples) const;
+
+    /** Rebuild a track's BufferingAudioSource so a fresh prefetch starts from the current offset. */
+    void rebuildTrackPrefetch(Track& track);
+
+    /** Rebuild every track flagged `prefetchDirty`. Runs synchronously on the message thread. */
+    void flushDirtyRebuilds();
+
+    /**
+     * Debounce timer: setClipOffsetMs (paused fast path) restarts a
+     * ~150 ms one-shot. When it fires we flush dirty rebuilds so a
+     * subsequent `play()` sees a hot prefetch buffer instead of paying
+     * the rebuild cost at play time. The timer fires on the JUCE
+     * message thread, same thread that mutates the tracks map, so
+     * no extra synchronisation is needed.
+     */
+    class RebuildTimer : public juce::Timer
+    {
+      public:
+        explicit RebuildTimer(AudioEngine& e) : engine(e) {}
+        void timerCallback() override
+        {
+            stopTimer();
+            engine.flushDirtyRebuilds();
+        }
+
+      private:
+        AudioEngine& engine;
+    };
+    RebuildTimer rebuildTimer{*this};
+    static constexpr int kRebuildDebounceMs = 150;
 
     juce::AudioDeviceManager deviceManager;
     juce::AudioSourcePlayer sourcePlayer;
@@ -379,7 +453,7 @@ class AudioEngine
     // never happens on the audio thread.
     juce::TimeSliceThread readAheadThread{"silverdaw-readahead"};
 
-    std::unordered_map<juce::String, std::unique_ptr<Track>> tracks;
+    std::unordered_map<juce::String, std::unique_ptr<Track>> tracks; // keyed by clipId
 };
 
 } // namespace silverdaw

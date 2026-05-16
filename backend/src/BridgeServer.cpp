@@ -1,4 +1,5 @@
 #include "BridgeServer.h"
+#include "Log.h"
 
 #include <iostream>
 #include <ixwebsocket/IXConnectionState.h>
@@ -11,8 +12,9 @@
 namespace silverdaw
 {
 
-BridgeServer::BridgeServer(juce::String expectedTokenIn, MessageHandler handler)
-    : messageHandler(std::move(handler)), expectedToken(std::move(expectedTokenIn))
+BridgeServer::BridgeServer(juce::String expectedTokenIn, MessageHandler handler, ClientReadyHandler readyHandler)
+    : messageHandler(std::move(handler)), clientReadyHandler(std::move(readyHandler)),
+      expectedToken(std::move(expectedTokenIn))
 {
 }
 
@@ -48,11 +50,6 @@ bool BridgeServer::start(int port)
             case ix::WebSocketMessageType::Open:
             {
                 std::lock_guard<std::mutex> lock(clientsMutex);
-                // Find the shared_ptr that backs this WebSocket so we can
-                // hold a reference for `broadcast()`. ixwebsocket exposes
-                // this via `getClients()` on the server. New clients are
-                // tracked as un-authenticated until they send a valid AUTH
-                // envelope (or unconditionally, if no token was set).
                 for (const auto& c : server->getClients())
                 {
                     if (c.get() == &webSocket)
@@ -63,10 +60,7 @@ bool BridgeServer::start(int port)
                         clients.insert_or_assign(c.get(), std::move(info));
                     }
                 }
-                // No READY here: we send READY only after the client
-                // proves it knows the session token. If auth is disabled
-                // (empty `expectedToken`) the client is already marked
-                // authenticated above, so send READY immediately.
+                silverdaw::log::info("bridge", "client connected (auth=" + juce::String(expectedToken.isEmpty() ? "disabled" : "pending") + ")");
                 if (expectedToken.isEmpty())
                 {
                     sendReadyTo(webSocket);
@@ -78,6 +72,7 @@ bool BridgeServer::start(int port)
             {
                 std::lock_guard<std::mutex> lock(clientsMutex);
                 clients.erase(&webSocket);
+                silverdaw::log::info("bridge", "client disconnected; remaining=" + juce::String(static_cast<int>(clients.size())));
                 break;
             }
 
@@ -86,7 +81,7 @@ bool BridgeServer::start(int port)
                 break;
 
             case ix::WebSocketMessageType::Error:
-                std::cerr << "[bridge] error: " << msg->errorInfo.reason << '\n';
+                silverdaw::log::error("bridge", juce::String("ws error: ") + juce::String(msg->errorInfo.reason));
                 break;
 
             default:
@@ -97,6 +92,7 @@ bool BridgeServer::start(int port)
     const auto res = server->listen();
     if (!res.first)
     {
+        silverdaw::log::error("bridge", juce::String("listen failed: ") + juce::String(res.second));
         std::cerr << "[bridge] listen failed: " << res.second << '\n';
         server.reset();
         ix::uninitNetSystem();
@@ -105,6 +101,7 @@ bool BridgeServer::start(int port)
 
     server->start();
     running.store(true);
+    silverdaw::log::info("bridge", "listening on ws://localhost:" + juce::String(port));
     std::cout << "[bridge] listening on ws://localhost:" << port << '\n';
     return true;
 }
@@ -133,6 +130,7 @@ void BridgeServer::stop()
 
 void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::string& raw)
 {
+    silverdaw::log::debug("bridge", "incoming bytes=" + juce::String(static_cast<int>(raw.size())));
     // Parse JSON on the I/O thread, then either consume the envelope here
     // (AUTH handshake) or dispatch the typed message onto the JUCE message
     // thread so the AudioEngine isn't accessed from multiple threads.
@@ -149,6 +147,12 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
     {
         return;
     }
+
+    // Captured here so the post-AUTH initial-state push can target this
+    // specific client. Held as a shared_ptr so the socket survives even
+    // if the client disconnects between the I/O thread and the message
+    // thread running the ready handler.
+    std::shared_ptr<ix::WebSocket> readyClient;
 
     // Auth gate: every envelope from a non-authenticated client must be an
     // `AUTH` carrying the expected token. Anything else (including a wrong
@@ -167,12 +171,14 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
         {
             if (type != "AUTH" || !checkAuthToken(payload))
             {
-                std::cerr << "[bridge] auth failed for client; closing\n";
+                silverdaw::log::warn("bridge", "auth failed; closing client");
                 webSocket.close();
                 clients.erase(it);
                 return;
             }
             it->second.authenticated = true;
+            readyClient = it->second.socket;
+            silverdaw::log::info("bridge", "client authenticated");
             // Send READY now that the client is trusted. Release the lock
             // around the send so we don't hold it across IXWebSocket's
             // internal mutex.
@@ -202,6 +208,38 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
 
     // Reached only on a successful AUTH transition.
     sendReadyTo(webSocket);
+
+    // Post-AUTH initial state push (e.g. PROJECT_STATE). Runs on the
+    // JUCE message thread so the handler can read engine/project state
+    // without locking. `readyClient` keeps the socket alive in the
+    // closure even if the connection drops before the handler fires.
+    if (clientReadyHandler && readyClient)
+    {
+        juce::MessageManager::callAsync(
+            [this, readyClient]
+            {
+                if (!clientReadyHandler)
+                {
+                    return;
+                }
+                auto sendToClient = [readyClient](const juce::String& sendType, const juce::var& sendPayload)
+                {
+                    if (!readyClient)
+                    {
+                        return;
+                    }
+                    auto* env = new juce::DynamicObject();
+                    env->setProperty("type", sendType);
+                    if (!sendPayload.isVoid())
+                    {
+                        env->setProperty("payload", sendPayload);
+                    }
+                    const auto serialised = juce::JSON::toString(juce::var(env), true).toStdString();
+                    readyClient->send(serialised);
+                };
+                clientReadyHandler(std::move(sendToClient));
+            });
+    }
 }
 
 bool BridgeServer::checkAuthToken(const juce::var& payload) const
@@ -259,12 +297,16 @@ void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
 
     const auto serialised = juce::JSON::toString(juce::var(envelope), true).toStdString();
 
+    // Skip the 60 Hz playhead chatter; everything else is rare enough
+    // that one line per envelope is useful for diagnostics.
+    if (type != "PLAYHEAD_UPDATE")
+    {
+        silverdaw::log::info("bridge", "broadcast " + type + " bytes=" + juce::String(static_cast<int>(serialised.size())));
+    }
+
     std::lock_guard<std::mutex> lock(clientsMutex);
     for (const auto& [_, info] : clients)
     {
-        // Pre-AUTH clients have no business receiving engine state
-        // (`PLAYHEAD_UPDATE`, `CLIP_ADDED`, …). They're dropped silently
-        // here and either complete the handshake or get closed.
         if (info.authenticated && info.socket != nullptr)
         {
             info.socket->send(serialised);
@@ -276,6 +318,34 @@ std::size_t BridgeServer::getClientCount() const
 {
     std::lock_guard<std::mutex> lock(clientsMutex);
     return clients.size();
+}
+
+void BridgeServer::broadcastBinary(const std::string& frameBytes)
+{
+    if (!running.load() || frameBytes.empty())
+    {
+        return;
+    }
+    int deliveredTo = 0;
+    int skippedNoAuth = 0;
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex);
+        for (const auto& [_, info] : clients)
+        {
+            if (info.authenticated && info.socket != nullptr)
+            {
+                info.socket->sendBinary(frameBytes);
+                ++deliveredTo;
+            }
+            else
+            {
+                ++skippedNoAuth;
+            }
+        }
+    }
+    silverdaw::log::info("bridge", "broadcastBinary bytes=" + juce::String(static_cast<int>(frameBytes.size())) +
+                                       " delivered=" + juce::String(deliveredTo) +
+                                       " skipped=" + juce::String(skippedNoAuth));
 }
 
 } // namespace silverdaw

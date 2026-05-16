@@ -1,13 +1,19 @@
 #include "AudioEngine.h"
 #include "BridgeServer.h"
+#include "Log.h"
+#include "PeaksCache.h"
+#include "ProjectState.h"
+#include "Waveform.h"
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <iostream>
 #include <juce_events/juce_events.h>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 
 //==============================================================================
 // Silverdaw headless audio backend - entry point.
@@ -30,6 +36,10 @@ constexpr int kDefaultBridgePort = 8765;
 constexpr int kMinBridgePort = 1024;
 constexpr int kMaxBridgePort = 65535;
 constexpr int kPlayheadUpdateHz = 60;
+// 4 workers keeps peak computation responsive without burning every core
+// on a giant project import. Each job is disk-bound + a tight scan loop,
+// so 4 is plenty even on a 16-core machine.
+constexpr int kPeakWorkerCount = 4;
 
 std::atomic<bool> g_shouldQuit{false};
 
@@ -207,11 +217,67 @@ std::optional<double> tryGetNumber(const juce::var& payload, const char* key)
     return std::nullopt;
 }
 
-void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::BridgeServer& bridge)
+/**
+ * Compute or load peaks for `filePath` and broadcast a binary
+ * `WAVEFORM_DATA` frame to all authenticated clients. Designed to be
+ * called from a `juce::ThreadPool` job — does its own disk I/O, never
+ * touches the message thread, and uses `BridgeServer::broadcastBinary`
+ * which is mutex-guarded so it's safe to call from any thread.
+ *
+ * Cache lookup first; on miss, compute + persist. The bridge broadcasts
+ * the same wire bytes either way. An empty result (decode failure) is
+ * NOT broadcast — silent failure means the renderer keeps drawing the
+ * empty placeholder until the user retries or the file becomes readable.
+ */
+void produceAndBroadcastPeaks(const juce::String& clipId, const juce::File& filePath,
+                              silverdaw::AudioEngine& engine, const silverdaw::PeaksCache& cache,
+                              silverdaw::BridgeServer& bridge)
+{
+    constexpr int kPeaksPerSecond = silverdaw::waveform::kDefaultPeaksPerSecond;
+    silverdaw::log::info("peaksjob", "start clipId=" + clipId + " file=" + filePath.getFileName());
+    auto result = cache.tryLoad(filePath, kPeaksPerSecond);
+    const bool fromCache = !result.peaks.empty();
+    if (!fromCache)
+    {
+        result = silverdaw::waveform::computePeaks(filePath, engine.getFormatManager(), kPeaksPerSecond);
+        if (!result.peaks.empty())
+        {
+            cache.store(filePath, result);
+        }
+    }
+    if (result.peaks.empty())
+    {
+        silverdaw::log::warn("peaksjob", "no peaks produced for clipId=" + clipId);
+        return;
+    }
+    const auto frames = silverdaw::waveform::encodeWaveformFrames(clipId, result);
+    for (std::size_t i = 0; i < frames.size(); ++i)
+    {
+        bridge.broadcastBinary(frames[i]);
+        // Yield briefly between chunks so IXWebSocket's per-connection
+        // I/O thread can drain reads from the renderer between writes.
+        // Without this, a back-to-back burst of ~16 chunks (e.g. two
+        // clips' peaks on a reconnect) starves the read side for
+        // seconds — every renderer command sent in that window is
+        // silently dropped on the floor. 2 ms × ~8 chunks = ~16 ms of
+        // extra import-to-waveform latency, which is well below the
+        // user-perceptible threshold.
+        if (i + 1 < frames.size())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    silverdaw::log::info("peaksjob", "done clipId=" + clipId + " chunks=" + juce::String(static_cast<int>(frames.size())) +
+                                          (fromCache ? " (cache hit)" : " (computed)"));
+}
+
+void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                   silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
     const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
-    if (trackId.isEmpty() || filePath.isEmpty())
+    if (trackId.isEmpty() || clipId.isEmpty() || filePath.isEmpty())
     {
         return;
     }
@@ -224,10 +290,32 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     const double initialOffsetMs =
         (posVar.isDouble() || posVar.isInt() || posVar.isInt64()) ? juce::jmax(0.0, static_cast<double>(posVar)) : 0.0;
 
+    // Auto-create the parent track in the ValueTree if the renderer didn't
+    // (e.g. older clients that never send TRACK_ADD). Idempotent.
+    projectState.addTrack(trackId);
+
     juce::String errorMsg;
-    const bool ok = engine.addClip(trackId, juce::File(filePath), initialOffsetMs, &errorMsg);
+    bool ok = engine.addClip(clipId, juce::File(filePath), initialOffsetMs, &errorMsg);
+    if (ok)
+    {
+        // Mirror the audio change into the structural project state, capturing
+        // the file's duration so PROJECT_STATE on reconnect can rebuild the
+        // clip block geometry without re-reading the file from the renderer.
+        const double durationMs = engine.getClipDurationMs(clipId);
+        if (!projectState.addClip(trackId, clipId, filePath, initialOffsetMs, durationMs))
+        {
+            // Engine accepted the audio source but ProjectState rejected
+            // (e.g. clipId collided). Roll back the audio side so the two
+            // models can't drift, and report failure to the renderer.
+            engine.removeClip(clipId);
+            ok = false;
+            errorMsg = "duplicate clipId or unknown trackId";
+        }
+    }
+
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
+    p->setProperty("clipId", clipId);
     p->setProperty("filePath", filePath);
     p->setProperty("ok", ok);
     if (!ok)
@@ -235,37 +323,102 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         p->setProperty("error", errorMsg);
     }
     bridge.broadcast(ok ? "CLIP_ADDED" : "CLIP_ADD_FAILED", juce::var(p));
+
+    if (ok)
+    {
+        // Kick off peaks generation on the worker pool. The job is fire-and-
+        // forget from the message thread's perspective; clients receive the
+        // waveform as a separate binary frame whenever the worker finishes
+        // (or instantly if the disk cache already has an entry for this file).
+        peakPool.addJob(
+            [clipId, file = juce::File(filePath), &engine, &cache, &bridge]
+            { produceAndBroadcastPeaks(clipId, file, engine, cache, bridge); });
+    }
 }
 
-void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine)
+void handleWaveformRequest(const juce::var& payload, silverdaw::AudioEngine& engine,
+                           silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
 {
-    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    if (clipId.isEmpty())
+    {
+        return;
+    }
+    // Find the file the backend has on record for this clip. The renderer
+    // never sends the path on a WAVEFORM_REQUEST — the backend is the
+    // authority over what file each clipId resolves to.
+    const auto trackId = projectState.getClipTrackId(clipId);
     if (trackId.isEmpty())
+    {
+        std::cerr << "[bridge] WAVEFORM_REQUEST for unknown clipId " << clipId.toStdString() << '\n';
+        return;
+    }
+    const auto filePath = projectState.getClipFilePath(clipId);
+    if (filePath.isEmpty())
+    {
+        return;
+    }
+
+    peakPool.addJob(
+        [clipId, file = juce::File(filePath), &engine, &cache, &bridge]
+        { produceAndBroadcastPeaks(clipId, file, engine, cache, bridge); });
+}
+
+void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState)
+{
+    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    if (clipId.isEmpty())
     {
         return;
     }
     const auto positionMs = tryGetNumber(payload, "positionMs");
     if (positionMs.has_value())
     {
-        engine.setClipOffsetMs(trackId, *positionMs);
+        engine.setClipOffsetMs(clipId, *positionMs);
+        projectState.setClipOffsetMs(clipId, *positionMs);
     }
 }
 
-void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::BridgeServer& bridge)
+void handleTrackAdd(const juce::var& payload, silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     if (trackId.isEmpty())
     {
         return;
     }
-    const bool ok = engine.removeTrack(trackId);
+    const bool ok = projectState.addTrack(trackId);
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
     p->setProperty("ok", ok);
+    bridge.broadcast("TRACK_ADDED", juce::var(p));
+}
+
+void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                       silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    if (trackId.isEmpty())
+    {
+        return;
+    }
+    const bool existed = projectState.hasTrack(trackId);
+    // Tear down every audio source on this track BEFORE dropping the
+    // track from ProjectState — otherwise the lookup loses the clip ids.
+    const auto clipIds = projectState.getTrackClipIds(trackId);
+    for (const auto& clipId : clipIds)
+    {
+        engine.removeClip(clipId);
+    }
+    projectState.removeTrack(trackId);
+    auto* p = new juce::DynamicObject();
+    p->setProperty("trackId", trackId);
+    p->setProperty("ok", existed);
     bridge.broadcast("TRACK_REMOVED", juce::var(p));
 }
 
-void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::BridgeServer& bridge)
+void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                     silverdaw::BridgeServer& bridge)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     if (trackId.isEmpty())
@@ -278,11 +431,19 @@ void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, s
         return;
     }
     const auto gainF = static_cast<float>(*gain);
-    const bool ok = engine.setTrackGain(trackId, gainF);
+    const bool stored = projectState.setTrackGain(trackId, gainF);
+    // Fan the gain out to every clip on this logical track so multi-clip
+    // tracks all hear the same volume. With one-clip-per-track today the
+    // loop body runs at most once; the structure is ready for Phase 4.
+    const auto clipIds = projectState.getTrackClipIds(trackId);
+    for (const auto& clipId : clipIds)
+    {
+        engine.setClipGain(clipId, gainF);
+    }
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
     p->setProperty("gain", gainF);
-    p->setProperty("ok", ok);
+    p->setProperty("ok", stored);
     bridge.broadcast("TRACK_GAIN_APPLIED", juce::var(p));
 }
 
@@ -290,47 +451,69 @@ void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, s
 // fixed by design, so the easily-swappable-parameters check is intentionally silenced.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, silverdaw::AudioEngine& engine,
-                           silverdaw::BridgeServer& bridge)
+                           silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
 {
     if (type == "CLIP_ADD")
     {
-        handleClipAdd(payload, engine, bridge);
+        silverdaw::log::info("bridge", "recv CLIP_ADD trackId=" + payload.getProperty("trackId", "").toString() +
+                                           " clipId=" + payload.getProperty("clipId", "").toString());
+        handleClipAdd(payload, engine, projectState, bridge, peakPool, cache);
     }
     else if (type == "CLIP_MOVE")
     {
-        handleClipMove(payload, engine);
+        silverdaw::log::debug("bridge", "recv CLIP_MOVE clipId=" + payload.getProperty("clipId", "").toString() +
+                                            " pos=" + payload.getProperty("positionMs", "").toString());
+        handleClipMove(payload, engine, projectState);
     }
     else if (type == "TRANSPORT_PLAY")
     {
+        silverdaw::log::info("bridge", "recv TRANSPORT_PLAY");
         engine.play();
     }
     else if (type == "TRANSPORT_PAUSE")
     {
+        silverdaw::log::info("bridge", "recv TRANSPORT_PAUSE");
         engine.pause();
     }
     else if (type == "TRANSPORT_STOP")
     {
+        silverdaw::log::info("bridge", "recv TRANSPORT_STOP");
         engine.stop();
     }
     else if (type == "TRANSPORT_SEEK")
     {
         const auto positionMs = tryGetNumber(payload, "positionMs");
+        silverdaw::log::info("bridge", "recv TRANSPORT_SEEK pos=" + juce::String(positionMs.value_or(-1.0)));
         if (positionMs.has_value())
         {
             engine.setPositionMs(*positionMs);
         }
     }
+    else if (type == "TRACK_ADD")
+    {
+        silverdaw::log::info("bridge", "recv TRACK_ADD trackId=" + payload.getProperty("trackId", "").toString());
+        handleTrackAdd(payload, projectState, bridge);
+    }
     else if (type == "TRACK_REMOVE")
     {
-        handleTrackRemove(payload, engine, bridge);
+        silverdaw::log::info("bridge", "recv TRACK_REMOVE trackId=" + payload.getProperty("trackId", "").toString());
+        handleTrackRemove(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_GAIN")
     {
-        handleTrackGain(payload, engine, bridge);
+        silverdaw::log::debug("bridge", "recv TRACK_GAIN trackId=" + payload.getProperty("trackId", "").toString() +
+                                            " gain=" + payload.getProperty("gain", "").toString());
+        handleTrackGain(payload, engine, projectState, bridge);
+    }
+    else if (type == "WAVEFORM_REQUEST")
+    {
+        silverdaw::log::debug("bridge", "recv WAVEFORM_REQUEST clipId=" + payload.getProperty("clipId", "").toString());
+        handleWaveformRequest(payload, engine, projectState, bridge, peakPool, cache);
     }
     else
     {
-        std::cerr << "[bridge] unhandled message type: " << type.toStdString() << '\n';
+        silverdaw::log::warn("bridge", "unhandled message type: " + type);
     }
 }
 
@@ -338,9 +521,16 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
 // NOLINTNEXTLINE(modernize-avoid-c-arrays,hicpp-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
 int runBackend(int argc, char* argv[])
 {
+    // Initialise the cross-layer file logger as early as possible so
+    // every subsequent backend event is captured. Electron main passes
+    // the per-session log directory via `SILVERDAW_LOG_DIR`; stand-
+    // alone debug runs fall back to `<exe-dir>/../.logs/standalone-...`.
+    silverdaw::log::initialise(juce::SystemStats::getEnvironmentVariable("SILVERDAW_LOG_DIR", {}));
+
     const juce::String banner = "Silverdaw Backend v0.1.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
                                 juce::SystemStats::getCpuVendor() + ")";
     std::cout << banner.toStdString() << '\n';
+    silverdaw::log::info("main", banner);
 
     const int bridgePort = resolveBridgePort(argc, argv);
     const juce::String bridgeToken = resolveBridgeToken(argc, argv);
@@ -351,28 +541,54 @@ int runBackend(int argc, char* argv[])
     silverdaw::AudioEngine engine;
     if (const auto err = engine.initialise(); err.isNotEmpty())
     {
+        silverdaw::log::error("engine", "audio device init failed: " + err);
         std::cerr << "[engine] audio device init failed: " << err.toStdString() << '\n';
-        // Continue anyway - frontend can still load files, just won't hear anything.
     }
+
+    silverdaw::ProjectState projectState;
+
+    // Disk-backed cache for waveform peaks. Reused across renderer reloads
+    // and even backend restarts so the same file never recomputes peaks
+    // twice. See `PeaksCache.h` for the on-disk format.
+    const silverdaw::PeaksCache peaksCache;
 
     if (bridgeToken.isEmpty())
     {
+        silverdaw::log::warn("bridge", "no AUTH token set; accepting all loopback clients (debug only)");
         std::cerr << "[bridge] WARNING: no AUTH token set (SILVERDAW_BRIDGE_TOKEN unset and "
                      "--token not given); accepting all loopback clients. DO NOT USE IN PRODUCTION.\n";
     }
 
-    // Construct the bridge with the token and message handler frozen at
-    // construction time — the I/O thread reads both lock-free, so freezing
-    // them at construction is what makes the read race-free by design.
-    // The handler receives `BridgeServer&` from `onIncoming` so it can
-    // call `broadcast()` for acks (e.g. CLIP_ADDED) without a chicken-and-
-    // -egg capture problem.
+    // Worker pool for off-message-thread work — currently only peaks
+    // computation. Declared BEFORE `bridge` so the bridge's lambdas can
+    // capture it by reference. Shutdown explicitly drains the pool
+    // before any of the captured objects (bridge, peaksCache, engine)
+    // destruct — see `peakPool.removeAllJobs(...)` below the dispatch
+    // loop.
+    juce::ThreadPool peakPool(kPeakWorkerCount);
+
+    // Construct the bridge with the token, message handler, and the
+    // post-AUTH initial-state hook frozen at construction time — the I/O
+    // thread reads all three lock-free, so freezing them at construction
+    // is what makes the read race-free by design. The handler receives
+    // `BridgeServer&` from `onIncoming` so it can call `broadcast()` for
+    // acks (e.g. CLIP_ADDED) without a chicken-and-egg capture problem.
     silverdaw::BridgeServer bridge(
-        bridgeToken, [&engine](silverdaw::BridgeServer& self, const juce::String& type, const juce::var& payload)
-        { dispatchBridgeMessage(type, payload, engine, self); });
+        bridgeToken,
+        [&engine, &projectState, &peakPool, &peaksCache](silverdaw::BridgeServer& self, const juce::String& type,
+                                                         const juce::var& payload)
+        { dispatchBridgeMessage(type, payload, engine, projectState, self, peakPool, peaksCache); },
+        [&projectState](const silverdaw::BridgeServer::SendToClient& sendToClient)
+        {
+            // PROJECT_STATE is sent only to the newly-authenticated client,
+            // not broadcast — other clients (if any) already have their own
+            // snapshot from when they connected.
+            sendToClient("PROJECT_STATE", projectState.toJson());
+        });
 
     if (!bridge.start(bridgePort))
     {
+        silverdaw::log::error("bridge", "failed to start; exiting");
         std::cerr << "[bridge] failed to start; exiting\n";
         return 1;
     }
@@ -386,9 +602,18 @@ int runBackend(int argc, char* argv[])
 
     juce::MessageManager::getInstance()->runDispatchLoop();
 
+    // Drain the peaks worker pool BEFORE any of `bridge` / `peaksCache` /
+    // `engine` destruct, so an in-flight job that captures references to
+    // them can't observe a half-destroyed object. `removeAllJobs(false)`
+    // waits up to the timeout for running jobs to finish naturally — the
+    // peaks loop is bounded by file size, ~hundreds of ms at worst.
+    peakPool.removeAllJobs(false, 5000);
+
     emitter.stopTimer();
     bridge.stop();
     engine.shutdown();
+    silverdaw::log::info("main", "shutdown complete");
+    silverdaw::log::shutdown();
     std::cout << "[main] shutdown complete\n";
     return 0;
 }

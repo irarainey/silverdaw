@@ -16,6 +16,7 @@
 import { computed, ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { importAudioIntoLibrary } from '@/lib/importAudio'
+import { log } from '@/lib/log'
 
 const props = defineProps<{
     /** Current panel height in CSS pixels (excluding the resize handle). */
@@ -36,11 +37,16 @@ let dragDepth = 0
 const itemCount = computed(() => library.items.length)
 
 async function onImportClick(): Promise<void> {
+    log.info('library', 'import-button click')
     const opened = await window.silverdaw.openAudioFiles().catch((err) => {
         console.error('[LibraryPanel] openAudioFiles failed:', err)
+        log.error('library', `openAudioFiles failed: ${String(err)}`)
         return [] as Awaited<ReturnType<typeof window.silverdaw.openAudioFiles>>
     })
-    if (opened.length === 0) return
+    if (opened.length === 0) {
+        log.info('library', 'import-button dialog cancelled')
+        return
+    }
     // Register the batch with the library store so the status-bar progress
     // bar reflects the whole import, not per-file flashes.
     library.beginImportBatch(opened.length)

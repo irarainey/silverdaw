@@ -10,6 +10,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
+import { log } from '@/lib/log'
 
 const project = useProjectStore()
 const ui = useUiStore()
@@ -31,6 +32,7 @@ const stopImportingWatcher = watch(
 )
 
 onMounted(() => {
+  log.info('app', 'mounted')
   unsubscribeMenu = window.silverdaw.onMenuAction(handleMenuAction)
   connectBridge()
   // Pull persisted panel sizes from the main-process preferences file so
@@ -41,6 +43,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  log.info('app', 'beforeUnmount')
   unsubscribeMenu?.()
   unsubscribeMenu = null
   disconnectBridge()
@@ -49,6 +52,7 @@ onBeforeUnmount(() => {
 })
 
 function handleMenuAction(action: string): void {
+  log.info('menu', `action ${action}`)
   // Adding a track is now just "create an empty track". Importing a file
   // into the track happens via the per-track Import button on the track
   // header panel (see TrackHeaderPanel.vue).

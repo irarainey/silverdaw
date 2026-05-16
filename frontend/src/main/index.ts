@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, resolve as pathResolve } from 'node:path'
+import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogLevel } from './log'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
@@ -229,6 +230,12 @@ function getPrefsPath(): string {
 async function loadPreferences(): Promise<void> {
   try {
     const raw = await readFile(getPrefsPath(), 'utf8')
+    // Empty file = no prefs yet (e.g. atomic-write was interrupted, or a
+    // brand-new install before the first save). Treat the same as ENOENT
+    // so we don't spam stderr with a SyntaxError on every startup.
+    if (raw.trim().length === 0) {
+      return
+    }
     const parsed = JSON.parse(raw) as Partial<Preferences>
     // Merge over defaults so newly-added keys get sane values on first run
     // after an upgrade.
@@ -336,18 +343,24 @@ function startBackend(): void {
     // command-line arguments are visible in the OS process table). The
     // backend's `resolveBridgeToken()` reads the same env var and
     // requires every WebSocket client to AUTH with this exact value.
+    // `SILVERDAW_LOG_DIR` is exported so the C++ logger writes its
+    // `backend.log` into the same per-session folder as `main.log` and
+    // `renderer.log`, enabling cross-layer timeline correlation.
     env: {
       ...process.env,
-      SILVERDAW_BRIDGE_TOKEN: bridgeToken
+      SILVERDAW_BRIDGE_TOKEN: bridgeToken,
+      SILVERDAW_LOG_DIR: getSessionDir()
     }
   })
 
   backendProcess.on('exit', (code) => {
+    logMain('INFO ', 'backend', `exited with code ${String(code)}`)
     console.log(`[backend] exited with code ${code}`)
     backendProcess = null
   })
 
   backendProcess.on('error', (err) => {
+    logMain('ERROR', 'backend', `failed to start: ${err.message}`)
     console.error('[backend] failed to start:', err)
   })
 }
@@ -540,6 +553,18 @@ function handleMenuAction(action: string): void {
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'dark'
 
+  // Initialise cross-layer logging before anything else so this session's
+  // main / backend / renderer events all land in one `.logs/<stamp>/` dir.
+  // Repo root is the directory above `frontend/`; for prod builds we
+  // fall back to the executable's parent so user installs aren't trying
+  // to write into Program Files.
+  const repoRoot = !app.isPackaged
+    ? pathResolve(__dirname, '..', '..', '..')
+    : pathResolve(app.getPath('userData'))
+  const sessionDir = initLogs(repoRoot)
+  logMain('INFO ', 'main', `session log dir: ${sessionDir}`)
+  logMain('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node}`)
+
   // Load persisted preferences (window bounds + UI panel sizes) before the
   // first window is created so the restored size/position is applied at
   // construction time rather than as a post-show resize flash.
@@ -549,6 +574,21 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
 
   ipcMain.on('menu:action', (_evt, action: string) => handleMenuAction(action))
+
+  // Renderer-side logger flushes batches of structured log entries here so
+  // they land in the same session directory as main / backend events.
+  // Each entry is { level, tag, message, timestamp }; the level is the
+  // same 5-char padded form used by the backend so columns align.
+  ipcMain.handle(
+    'log:append-batch',
+    (_evt, entries: Array<{ level: LogLevel; tag: string; message: string; timestamp: number }>) => {
+      if (!Array.isArray(entries)) return
+      for (const e of entries) {
+        if (!e || typeof e.tag !== 'string' || typeof e.message !== 'string') continue
+        logRendererLine(e.level ?? 'INFO ', e.tag, e.message, e.timestamp)
+      }
+    }
+  )
 
   // Tell the renderer which port the JUCE bridge is listening on. Resolved
   // once at main-process start (env var or default) and shared with the
@@ -809,4 +849,6 @@ app.on('before-quit', () => {
   }
   // Make sure any pending debounced write hits disk before we exit.
   void flushPrefsSave()
+  logMain('INFO ', 'main', 'before-quit')
+  closeLogs()
 })
