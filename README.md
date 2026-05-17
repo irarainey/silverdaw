@@ -19,11 +19,18 @@ Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engi
   OS dialogs, native menu, persisted preferences and backend spawn.
 
 ```text
-+---------------------------+        ws://127.0.0.1:8765        +-----------------------------+
++---------------------------+        ws://127.0.0.1:<port>      +-----------------------------+
 |  Electron renderer (Vue)  |  <----------------------------->  |  SilverdawBackend (JUCE)    |
-|  + Electron main (IPC)    |  text JSON  +  binary frames      |  AudioEngine + ProjectState |
+|  + Electron main (IPC)    |       text JSON envelopes         |  AudioEngine + ProjectState |
 +---------------------------+                                   +-----------------------------+
+            ^                                                                    |
+            |   bulk data (peaks, future stems) on disk                          |
+            +--------------------- %APPDATA%/Silverdaw/peaks/ <------------------+
 ```
+
+Main picks a free port in `[8765, 8784]` at startup so leftover Silverdaw processes can't lock
+new instances out, then hands the value to both the backend (via `--port`) and the renderer
+(via a `bridge:getPort` IPC).
 
 Threading invariants:
 
@@ -34,7 +41,7 @@ Threading invariants:
   thread via `juce::MessageManager::callAsync`.
 - **IXWebSocket I/O threads**: parse JSON, gate AUTH, then callAsync to the message thread.
 - **Peaks worker pool**: `juce::ThreadPool` of 4 workers computes / loads waveform peaks off the
-  message thread and broadcasts them as binary frames.
+  message thread, writes them to disk in the cache, and emits a small `WAVEFORM_READY` envelope.
 
 ## Project layout
 
@@ -42,20 +49,22 @@ Threading invariants:
 backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
   src/
     AudioEngine.*        Master transport clock, mixer, per-track audio sources
-    BridgeServer.*       IXWebSocket loopback server + AUTH + binary frame send
+    BridgeServer.*       IXWebSocket loopback server + AUTH + text-frame broadcast
     Main.cpp             Entry point, message dispatch, PlayheadEmitter, peaks ThreadPool
     PeaksCache.*         Disk-backed peaks cache (%APPDATA%/Silverdaw/peaks/)
-    ProjectState.*       juce::ValueTree wrapper + UndoManager
-    Waveform.*           Min/max peak computation + chunked binary frame encoder
+    ProjectFile.*        .silverdaw XML save / load (versioned ValueTree serialisation)
+    ProjectState.*       juce::ValueTree wrapper + UndoManager + dirty tracking
+    Waveform.*           Min/max peak computation
   CMakeLists.txt         FetchContent for JUCE + IXWebSocket
 frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
   resources/icons/       Multi-resolution .ico + PNG set (consumed by main + renderer)
   src/
-    main/                Electron main process (window, menu, IPC, prefs)
+    main/                Electron main process (window, menu, IPC, prefs, backend spawn)
     preload/             contextBridge surface exposed as window.silverdaw
     renderer/src/        Vue 3 SPA (Composition API, Pinia, PixiJS, Tailwind v4)
     shared/              Bridge wire-protocol catalogue + runtime guards (also TS-tested)
-scripts/                 Dev-shell + clang-tidy helpers (PowerShell)
+  electron-builder.yml   Windows NSIS installer config
+scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
 .github/instructions/    Copilot/AI agent guidance per file type
 ```
 
@@ -75,17 +84,18 @@ The bridge is **text only**. Every envelope is a JSON `{ type, payload }` frame:
   `{ "type": "AUTH", "payload": { "token": "<hex>" } }` — the renderer fetches the token from
   Electron main (it's a per-session random string passed via `SILVERDAW_BRIDGE_TOKEN` env var on
   backend spawn). Wrong / missing token closes the socket.
-- After AUTH succeeds the backend sends `PROJECT_STATE` exactly once (full snapshot of tracks +
-  clips). The renderer treats itself as an additive mirror of that snapshot.
+- After AUTH succeeds the backend sends `PROJECT_STATE` exactly once (full snapshot: tracks +
+  clips + file path + project name). The renderer treats it as the canonical truth; on a load
+  (`reset=true`) it wipes optimistic local state first, on the connect path it merges additively.
 
-**Bulk data goes via disk, never via the socket.** When the backend has new waveform peaks
+**Bulk data goes via disk, never via the socket.** When the backend has fresh waveform peaks
 ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate }`
-envelope. The cache file at `cachePath` (under `%APPDATA%/Silverdaw/peaks/`) holds the
-peaks themselves; the renderer reads it via main's `peaks:readCacheFile` IPC and parses the
-24-byte header + float32 payload locally. This mirrors how the design plan already treats
-audio files, stems and mixdowns — the WebSocket carries control plane, the filesystem
-carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight text-only path it was
-designed for.
+envelope. The cache file at `cachePath` (under `%APPDATA%/Silverdaw/peaks/`) holds the peaks
+themselves; the renderer reads it via main's `peaks:readCacheFile` IPC and parses the 24-byte
+header + float32 payload locally. This mirrors how the same architecture treats audio files,
+project files, and (future) stems / mixdowns — the WebSocket carries the control plane, the
+filesystem carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight text-only path
+it was designed for.
 
 The full envelope catalogue lives in
 [`frontend/src/shared/bridge-protocol.ts`](frontend/src/shared/bridge-protocol.ts) with TS
@@ -96,23 +106,40 @@ the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
 
 ## Project state model
 
-`ProjectState` (C++) wraps a `juce::ValueTree` (`PROJECT > TRACK[id, gain] > CLIP[id, filePath,
-offsetMs, durationMs]`) plus a shared `UndoManager`. It's the structural source of truth; the
-audio graph in `AudioEngine` is updated in lockstep by the bridge dispatch handlers.
+`ProjectState` (C++) wraps a `juce::ValueTree`
+(`PROJECT[name] > TRACK[id, gain] > CLIP[id, filePath, offsetMs, durationMs]`) plus a shared
+`UndoManager`. It's the structural source of truth; the audio graph in `AudioEngine` is updated
+in lockstep by the bridge dispatch handlers.
+
+**Save / load** is via `.silverdaw` files — a versioned XML serialisation of the ValueTree, with
+a small wrapping element carrying `schemaVersion`, `appVersion`, and an ISO `savedAt` timestamp.
+Atomic save (write `<file>.tmp` then rename) and forward-compatible load (unknown attributes /
+sibling elements are ignored). Logic lives in [`backend/src/ProjectFile.cpp`](backend/src/ProjectFile.cpp).
+
+**Dirty tracking** is driven by a `juce::ValueTree::Listener` on `ProjectState` that flips an
+internal flag on every mutation. The flag is cleared by `markClean()` (called after load + a
+successful save) and changes are broadcast as `PROJECT_DIRTY { dirty }` envelopes. The renderer
+mirrors it as `projectStore.isDirty`, shows a leading `•` next to the project name in the title
+bar when dirty, and intercepts **File → New / Open / Exit** and the window close button to
+prompt with **Save / Don't save / Cancel** before discarding work.
 
 On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
 
 - Reconstructs any track / clip / library item the backend knows but it doesn't (e.g. after a
-  backend restart).
+  renderer reload).
 - Sends `WAVEFORM_REQUEST` for every clip lacking peaks.
 - Re-fetches embedded metadata (cover art, artist/title) via `audio:readMetadata` IPC for
   reconstructed library items.
 
-`PROJECT_STATE` is purely additive — it never deletes optimistic state the user just created,
-so a race between an early user action and the snapshot arriving doesn't lose work.
+`PROJECT_STATE` is purely additive on the connect path — it never deletes optimistic state the
+user just created, so a race between an early user action and the snapshot arriving doesn't
+lose work. On a load / new-project the same envelope carries `reset: true` and the renderer
+wipes its mirror before applying.
 
-Until `PROJECT_STATE` arrives, a full-screen `BridgeReadyOverlay` blocks all input (mouse +
-menu shortcuts) so the user can't act on state that hasn't been reconciled yet.
+Until the first `PROJECT_STATE` arrives, an inline splash inside `index.html` (then the Vue
+`BridgeReadyOverlay` once it mounts) blocks all input so the user can't act on state that
+hasn't been reconciled yet. A 30-second timeout shows an "Unable to start Silverdaw" error if
+the bridge handshake never completes.
 
 ## Audio formats
 
@@ -134,14 +161,29 @@ handler in [`main/index.ts`](frontend/src/main/index.ts).
 
 ## Peaks cache
 
-Waveform peaks (int16-quantised, mono-mixed min/max pairs at 200 peaks/sec) are computed once
-per source file and persisted under `%APPDATA%/Silverdaw/peaks/<hash>.peaks`. The cache key is
-a 64-bit hash of `(filePath | mtime | size | peaksPerSecond)` — any change to the file
-invalidates the entry automatically. The on-disk format is preceded by a versioned header
-(magic + version + peaks-per-second + peak count + sample rate) so future format changes are
-detected as a miss rather than corrupted reads.
+Waveform peaks (mono-mixed `min, max` float32 pairs at 200 peaks/sec) are computed once per
+source file and persisted under `%APPDATA%/Silverdaw/peaks/<hash>.peaks`. The cache key is a
+64-bit hash of `(filePath | mtime | size | peaksPerSecond)` — any change to the file
+invalidates the entry automatically. The on-disk format is a 24-byte header (magic, version,
+peaksPerSecond, peakCount, sampleRate) followed by `peakCount × 2 × float32` little-endian
+peak values. Versioned so a future format change is detected as a miss rather than a corrupted
+read; the same layout is what the renderer reads via the `peaks:readCacheFile` IPC.
 
 The cache survives backend restarts.
+
+## Preferences
+
+User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`:
+
+- Window bounds + maximised state
+- Panel sizes (track-header column width, library panel height)
+- Last opened project path (for future Recent Projects MRU)
+- **Enable Debugging** — gates the visibility of the **Debug** menu (Toggle Developer Tools)
+  and the entire cross-layer file logger. Off by default. When on, the next launch writes a
+  per-session `<repo>/.logs/<ISO-timestamp>/{main,backend,renderer}.log` triple with aligned
+  millisecond timestamps so post-mortem analysis is one `cat *.log | sort` away.
+
+Toggled via the in-app **Edit → Preferences…** dialog; takes effect on next launch.
 
 ## Prerequisites
 
@@ -191,7 +233,9 @@ pnpm dev
 The same commands are also available as Visual Studio Code tasks (`backend: configure`,
 `backend: build`, `frontend: install`, `frontend: dev`, plus the composite `dev: all`).
 
-Production builds use `--config Release` for the backend and `pnpm build` for the frontend.
+The recommended dev path is **F5** in VS Code with the `Silverdaw (Dev)` launch configuration
+selected — it has a `preLaunchTask: "backend: build"` so the Debug backend is always rebuilt
+before the renderer starts.
 
 ## Packaging a Windows installer
 
@@ -200,7 +244,8 @@ The `scripts/Build-Release.ps1` helper does the whole release pipeline end-to-en
 1. Configures + builds the JUCE backend (`SilverdawBackend.exe`) in **Release**.
 2. Compiles the Electron main / preload / renderer bundles (`electron-vite build`).
 3. Packages an **NSIS installer** with `electron-builder`, bundling the
-   backend exe + icons + `LICENSE` + `THIRD_PARTY_LICENSES.md`.
+   backend exe + icons + `LICENSE` + `THIRD_PARTY_LICENSES.md`. Publisher metadata is set to
+   `Ira Rainey` in `electron-builder.yml`.
 
 From the repository root:
 
@@ -216,6 +261,10 @@ Outputs land in the repo-root `dist/` directory (gitignored except for a
   desktop + Start menu shortcuts.
 - `dist/win-unpacked/Silverdaw.exe` — the unpacked app for local smoke
   testing without going through the installer.
+
+The installer is **not** code-signed, so Windows SmartScreen will show an "Unknown publisher"
+warning on first run even though the Publisher field is populated. Code-signing is a separate
+follow-up that requires an Authenticode certificate.
 
 ### One-time prerequisite
 
@@ -247,7 +296,8 @@ pnpm dist:dir    # win-unpacked only, no NSIS step
   `readability-*`). Format with `clang-format` (`backend/.clang-format`).
 - **TypeScript / Vue**: `pnpm typecheck` (vue-tsc + tsc --noEmit), `pnpm lint` (ESLint flat
   config with `eslint-plugin-vue` and `@typescript-eslint`).
-- **Tests**: `pnpm test` runs Vitest over shared bridge-protocol guards and music-time helpers.
+- **Tests**: `pnpm test` runs Vitest over the shared bridge-protocol guards and music-time
+  helpers (49 tests at time of writing).
 
 ## License
 
