@@ -1,30 +1,13 @@
 {
   "version": "0.2.0",
   "configurations": [
-    // ─── JUCE backend (C++ / MSVC) ────────────────────────────────────────
+    // ─── Electron frontend (default F5 path) ──────────────────────────────
+    // This is the normal dev workflow: electron-vite builds + runs the
+    // renderer, the Electron main process spawns the JUCE backend itself
+    // (passing a fresh per-session AUTH token via env), and main + the
+    // backend's stdio + the renderer all share one terminal.
     {
-      "name": "Backend: Launch (Debug)",
-      "type": "cppvsdbg",
-      "request": "launch",
-      "program": "${workspaceFolder}/backend/build/SilverdawBackend_artefacts/Debug/SilverdawBackend.exe",
-      "args": [],
-      "stopAtEntry": false,
-      "cwd": "${workspaceFolder}/backend/build/SilverdawBackend_artefacts/Debug",
-      "environment": [],
-      "console": "integratedTerminal",
-      "preLaunchTask": "backend: build"
-    },
-    {
-      "name": "Backend: Attach to running process",
-      "type": "cppvsdbg",
-      "request": "attach",
-      "processId": "${command:pickProcess}"
-    },
-
-    // ─── Electron frontend ────────────────────────────────────────────────
-    // Main process (Node side of Electron).
-    {
-      "name": "Frontend: Electron Main",
+      "name": "Silverdaw (Dev)",
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}/frontend",
@@ -40,8 +23,13 @@
       // Without this an F5 launch picks up whatever stale exe sits in
       // `backend/build/SilverdawBackend_artefacts/Debug/`, which can be
       // wildly out of date with the protocol the renderer expects.
-      "preLaunchTask": "backend: build"
+      "preLaunchTask": "backend: build",
+      "presentation": {
+        "group": "1_silverdaw",
+        "order": 1
+      }
     },
+
     // Renderer process (Chromium side) — attach via remote debugging port.
     {
       "name": "Frontend: Electron Renderer (attach)",
@@ -50,17 +38,45 @@
       "port": 9222,
       "webRoot": "${workspaceFolder}/frontend/src/renderer",
       "sourceMaps": true,
-      "timeout": 30000
-    }
-  ],
-  "compounds": [
-    {
-      "name": "Full stack: Backend + Frontend",
-      "configurations": ["Backend: Launch (Debug)", "Frontend: Electron Main"],
-      "stopAll": true,
+      "timeout": 30000,
       "presentation": {
-        "group": "1_silverdaw",
-        "order": 1
+        "group": "2_advanced",
+        "order": 2
+      }
+    },
+
+    // ─── JUCE backend (C++ / MSVC) ───────────────────────────────────────
+    // Standalone backend launch for attaching a C++ debugger. ⚠ Do NOT
+    // start this alongside "Silverdaw (Dev)" — Electron's main process
+    // already spawns its own backend and the two would compete for the
+    // bridge port. Use this config only when you want a headless backend
+    // with no renderer (e.g. running the WebSocket protocol from a
+    // manual client). The `--token` arg passes a fixed dev value so
+    // hand-crafted client tests have something to AUTH with.
+    {
+      "name": "Backend only (Debug, no renderer)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/build/SilverdawBackend_artefacts/Debug/SilverdawBackend.exe",
+      "args": ["--token", "dev-standalone-token"],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/backend/build/SilverdawBackend_artefacts/Debug",
+      "environment": [],
+      "console": "integratedTerminal",
+      "preLaunchTask": "backend: build",
+      "presentation": {
+        "group": "2_advanced",
+        "order": 3
+      }
+    },
+    {
+      "name": "Backend: Attach to running process",
+      "type": "cppvsdbg",
+      "request": "attach",
+      "processId": "${command:pickProcess}",
+      "presentation": {
+        "group": "2_advanced",
+        "order": 4
       }
     }
   ]

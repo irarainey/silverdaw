@@ -101,40 +101,6 @@ const stopBridgeTimerWatcher = watch(
   }
 )
 
-// Auto-open the most recently saved/loaded project as soon as the bridge
-// is live. Runs exactly once per app session — the `once` flag stops a
-// later disconnect / reconnect cycle from re-opening it on top of the
-// user's current edits.
-let autoOpenAttempted = false
-const stopAutoOpenWatcher = watch(
-  () => transport.bridgeReady,
-  async (ready) => {
-    if (!ready || autoOpenAttempted) return
-    autoOpenAttempted = true
-    try {
-      const lastPath = await window.silverdaw.getLastProjectPath()
-      if (!lastPath) {
-        log.info('app', 'no last project; staying on the new empty project')
-        return
-      }
-      const exists = await window.silverdaw.projectFileExists(lastPath)
-      if (!exists) {
-        log.warn('app', `last project missing: ${lastPath}`)
-        window.silverdaw.setLastProjectPath(null)
-        return
-      }
-      log.info('app', `auto-opening last project: ${lastPath}`)
-      // Bring referenced audio paths into the renderer's allow-list
-      // before triggering the backend load — otherwise the post-load
-      // metadata refresh (cover art, ID3 tags) is blocked by main.
-      await window.silverdaw.prepareProjectOpen(lastPath)
-      project.requestLoad(lastPath)
-    } catch (err) {
-      log.warn('app', `auto-open failed: ${String(err)}`)
-    }
-  }
-)
-
 onBeforeUnmount(() => {
   log.info('app', 'beforeUnmount')
   unsubscribeMenu?.()
@@ -143,7 +109,6 @@ onBeforeUnmount(() => {
   unregisterShortcuts = null
   disconnectBridge()
   stopImportingWatcher()
-  stopAutoOpenWatcher()
   stopBridgeTimerWatcher()
   if (bridgeTimer) {
     clearTimeout(bridgeTimer)

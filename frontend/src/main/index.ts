@@ -539,11 +539,12 @@ function createWindow(): void {
     }
   })
 
-  // In an unpackaged dev session (the only place `pnpm dev` runs), open
-  // DevTools docked to the right so console / network panes are
-  // immediately accessible without the user having to know F12 works.
-  // Packaged builds defer entirely to the debug toggle + menu item.
-  if (!app.isPackaged) {
+  // In a dev session, auto-open DevTools when the user has explicitly
+  // enabled debug mode in Preferences. Packaged builds never auto-open —
+  // there's the Debug menu's "Toggle Developer Tools" for that — and an
+  // unpackaged session with debug off stays clean too (the user can
+  // always toggle the preference and relaunch).
+  if (!app.isPackaged && startupDebugEnabled) {
     mainWindow.webContents.once('did-finish-load', () => {
       mainWindow?.webContents.openDevTools({ mode: 'right' })
     })

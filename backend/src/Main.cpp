@@ -510,6 +510,8 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
 void rebuildEngineFromProject(silverdaw::AudioEngine& engine, const silverdaw::ProjectState& projectState)
 {
     const auto& root = projectState.getTree();
+    int rebuilt = 0;
+    int failed = 0;
     for (int t = 0; t < root.getNumChildren(); ++t)
     {
         const auto track = root.getChild(t);
@@ -531,8 +533,31 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, const silverdaw::P
             {
                 continue;
             }
-            engine.addClip(clipId, juce::File(filePath), offsetMs, nullptr);
+            juce::String err;
+            if (engine.addClip(clipId, juce::File(filePath), offsetMs, &err))
+            {
+                ++rebuilt;
+            }
+            else
+            {
+                ++failed;
+                // Always surface to stderr (independent of debug logging)
+                // because a missing source file is the single most common
+                // reason audio fails to play after a project load, and
+                // the user has no other diagnostic channel when debug is
+                // off. Renderer-facing toasts are added by the
+                // unresolved-files todo (save-load-unresolved-files).
+                std::cerr << "[project] addClip FAILED for clipId=" << clipId.toStdString()
+                          << " path=" << filePath.toStdString() << " err=" << err.toStdString() << '\n';
+                silverdaw::log::warn("project", "addClip failed clipId=" + clipId + " path=" + filePath +
+                                                     " err=" + err);
+            }
         }
+    }
+    if (failed > 0)
+    {
+        std::cerr << "[project] rebuilt " << rebuilt << " clip(s); " << failed
+                  << " failed (audio for those clips will be silent)\n";
     }
 }
 
