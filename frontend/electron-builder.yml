@@ -50,11 +50,14 @@ win:
         - x64
   icon: resources/icons/icon.ico
   artifactName: ${productName}-Setup-${version}.${ext}
-  # Shown in Add/Remove Programs, SmartScreen prompts, and the
-  # uninstaller header. Without this electron-builder falls back to
-  # whatever it can scrape from package.json `author`, which often
-  # leaves the publisher column blank.
-  publisherName: Ira Rainey
+  # `publisherName` moved into `signtoolOptions` in electron-builder
+  # 26.x. The string is written into the uninstaller registry entry's
+  # `Publisher` value (visible in Settings → Apps → installed apps and
+  # in the SmartScreen prompt). For NSIS we don't actually invoke
+  # signtool — the surrounding `signtoolOptions` object is still the
+  # canonical place to declare publisher metadata.
+  signtoolOptions:
+    publisherName: Ira Rainey
 
 nsis:
   oneClick: false
