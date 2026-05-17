@@ -2,6 +2,7 @@
 #include "BridgeServer.h"
 #include "Log.h"
 #include "PeaksCache.h"
+#include "ProjectFile.h"
 #include "ProjectState.h"
 #include "Waveform.h"
 
@@ -434,7 +435,7 @@ void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, s
     const bool stored = projectState.setTrackGain(trackId, gainF);
     // Fan the gain out to every clip on this logical track so multi-clip
     // tracks all hear the same volume. With one-clip-per-track today the
-    // loop body runs at most once; the structure is ready for Phase 4.
+    // loop body runs at most once; the structure is ready for Phase 5.
     const auto clipIds = projectState.getTrackClipIds(trackId);
     for (const auto& clipId : clipIds)
     {
@@ -447,12 +448,231 @@ void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, s
     bridge.broadcast("TRACK_GAIN_APPLIED", juce::var(p));
 }
 
+// ─── Project-level state (save / load / new / rename) ────────────────────
+
+/**
+ * Per-process project-lifecycle state. Owned by `runBackend`, captured by
+ * reference into every project-mutating handler. `currentPath` is empty
+ * for a project that has never been saved (the renderer shows the name
+ * "Untitled" alongside).
+ */
+struct ProjectSession
+{
+    juce::String currentPath;
+};
+
+/** Walk every clip in `projectState` and gather their ids in tree order. */
+juce::StringArray collectClipIds(const silverdaw::ProjectState& projectState)
+{
+    juce::StringArray ids;
+    const auto& root = projectState.getTree();
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        const auto track = root.getChild(t);
+        for (int c = 0; c < track.getNumChildren(); ++c)
+        {
+            const auto clip = track.getChild(c);
+            if (clip.hasType(juce::Identifier{"CLIP"}))
+            {
+                ids.add(clip.getProperty("id").toString());
+            }
+        }
+    }
+    return ids;
+}
+
+/**
+ * Build the PROJECT_STATE envelope payload. `reset` is added (as `true`)
+ * when the snapshot is a hard replacement (PROJECT_NEW / PROJECT_LOAD)
+ * so the renderer wipes optimistic local state first; on the connect
+ * path the snapshot is purely additive and `reset` is omitted.
+ */
+juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverdaw::ProjectState& projectState,
+                                    bool reset)
+{
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("filePath", session.currentPath.isEmpty() ? juce::var() : juce::var(session.currentPath));
+    obj->setProperty("name", projectState.getName());
+    if (reset)
+    {
+        obj->setProperty("reset", true);
+    }
+    obj->setProperty("tracks", projectState.tracksAsJson());
+    return juce::var(obj);
+}
+
+/**
+ * Replace the engine's playable sources with one per clip described in
+ * `projectState`. Caller is responsible for first dropping every clip
+ * the engine currently holds — `handleProjectLoad` / `handleProjectNew`
+ * do that immediately before invoking this.
+ */
+void rebuildEngineFromProject(silverdaw::AudioEngine& engine, const silverdaw::ProjectState& projectState)
+{
+    const auto& root = projectState.getTree();
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        const auto track = root.getChild(t);
+        if (!track.hasType(juce::Identifier{"TRACK"}))
+        {
+            continue;
+        }
+        for (int c = 0; c < track.getNumChildren(); ++c)
+        {
+            const auto clip = track.getChild(c);
+            if (!clip.hasType(juce::Identifier{"CLIP"}))
+            {
+                continue;
+            }
+            const juce::String clipId = clip.getProperty("id").toString();
+            const juce::String filePath = clip.getProperty("filePath").toString();
+            const double offsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
+            if (clipId.isEmpty() || filePath.isEmpty())
+            {
+                continue;
+            }
+            engine.addClip(clipId, juce::File(filePath), offsetMs, nullptr);
+        }
+    }
+}
+
+void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                      silverdaw::BridgeServer& bridge, ProjectSession& session)
+{
+    // Capture the CURRENT project's clip ids before we replace the tree —
+    // otherwise we'd ask the engine to remove the freshly-empty set,
+    // leaking the old playable sources.
+    const auto previousClipIds = collectClipIds(projectState);
+
+    engine.stop();
+    for (const auto& id : previousClipIds)
+    {
+        engine.removeClip(id);
+    }
+
+    juce::ValueTree fresh(juce::Identifier{"PROJECT"});
+    fresh.setProperty(juce::Identifier{"name"}, silverdaw::ProjectState::kDefaultName, nullptr);
+    projectState.replaceTree(fresh);
+    session.currentPath.clear();
+
+    bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, true));
+}
+
+void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
+                       silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                       ProjectSession& session)
+{
+    const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    if (filePath.isEmpty())
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("filePath", filePath);
+        p->setProperty("error", juce::String("Missing filePath"));
+        bridge.broadcast("PROJECT_LOAD_FAILED", juce::var(p));
+        return;
+    }
+
+    // Capture OLD clip ids before the load wipes the ValueTree — needed
+    // to tear down the engine's playable sources for the previous
+    // project. Done before `ProjectFile::load` so a load failure leaves
+    // the engine intact (we only call removeClip / addClip on success).
+    const auto previousClipIds = collectClipIds(projectState);
+
+    const auto result = silverdaw::ProjectFile::load(juce::File(filePath), projectState);
+    if (!result.ok)
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("filePath", filePath);
+        p->setProperty("error", result.error);
+        bridge.broadcast("PROJECT_LOAD_FAILED", juce::var(p));
+        silverdaw::log::warn("project", "PROJECT_LOAD failed: " + result.error);
+        return;
+    }
+
+    engine.stop();
+    for (const auto& id : previousClipIds)
+    {
+        engine.removeClip(id);
+    }
+    rebuildEngineFromProject(engine, projectState);
+    session.currentPath = filePath;
+
+    bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, true));
+    silverdaw::log::info("project", "PROJECT_LOAD ok path=" + filePath);
+}
+
+void handleProjectSave(const juce::var& payload, silverdaw::ProjectState& projectState,
+                       silverdaw::BridgeServer& bridge, ProjectSession& session, bool isSaveAs)
+{
+    juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    if (filePath.isEmpty())
+    {
+        // PROJECT_SAVE with no path falls back to the current project's
+        // path. The renderer is supposed to gate this on currentFilePath
+        // being non-null, but we double-check defensively.
+        filePath = session.currentPath;
+    }
+    if (filePath.isEmpty())
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("filePath", filePath);
+        p->setProperty("ok", false);
+        p->setProperty("error", juce::String("No project path; use Save As first"));
+        bridge.broadcast("PROJECT_SAVED", juce::var(p));
+        return;
+    }
+
+    const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
+    auto* p = new juce::DynamicObject();
+    p->setProperty("filePath", filePath);
+    p->setProperty("ok", result.wasOk());
+    if (!result.wasOk())
+    {
+        p->setProperty("error", result.getErrorMessage());
+    }
+    if (result.wasOk())
+    {
+        session.currentPath = filePath;
+        // For Save As, fold the file basename into the project name so
+        // the title bar updates without a separate rename round-trip.
+        if (isSaveAs)
+        {
+            const auto stem = juce::File(filePath).getFileNameWithoutExtension();
+            if (stem.isNotEmpty())
+            {
+                projectState.setName(stem);
+            }
+        }
+    }
+    bridge.broadcast("PROJECT_SAVED", juce::var(p));
+    silverdaw::log::info("project",
+                         juce::String("PROJECT_SAVE ") + (isSaveAs ? "(as) " : "") +
+                             (result.wasOk() ? "ok" : "fail: " + result.getErrorMessage()) + " path=" + filePath);
+    if (result.wasOk() && isSaveAs)
+    {
+        // Push the updated project state so the renderer picks up the
+        // new filePath + name without waiting on a rename ack.
+        bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, false));
+    }
+}
+
+void handleProjectRename(const juce::var& payload, silverdaw::ProjectState& projectState,
+                         silverdaw::BridgeServer& bridge)
+{
+    const juce::String name = payload.getProperty("name", juce::var()).toString();
+    projectState.setName(name);
+    auto* p = new juce::DynamicObject();
+    p->setProperty("name", projectState.getName());
+    p->setProperty("ok", true);
+    bridge.broadcast("PROJECT_RENAMED", juce::var(p));
+}
+
 // Same wire-protocol convention as BridgeServer::broadcast: (type, payload) order is
 // fixed by design, so the easily-swappable-parameters check is intentionally silenced.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
+                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache, ProjectSession& session)
 {
     if (type == "CLIP_ADD")
     {
@@ -511,6 +731,31 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::debug("bridge", "recv WAVEFORM_REQUEST clipId=" + payload.getProperty("clipId", "").toString());
         handleWaveformRequest(payload, engine, projectState, bridge, peakPool, cache);
     }
+    else if (type == "PROJECT_NEW")
+    {
+        silverdaw::log::info("bridge", "recv PROJECT_NEW");
+        handleProjectNew(engine, projectState, bridge, session);
+    }
+    else if (type == "PROJECT_SAVE")
+    {
+        silverdaw::log::info("bridge", "recv PROJECT_SAVE");
+        handleProjectSave(payload, projectState, bridge, session, /*isSaveAs*/ false);
+    }
+    else if (type == "PROJECT_SAVE_AS")
+    {
+        silverdaw::log::info("bridge", "recv PROJECT_SAVE_AS path=" + payload.getProperty("filePath", "").toString());
+        handleProjectSave(payload, projectState, bridge, session, /*isSaveAs*/ true);
+    }
+    else if (type == "PROJECT_LOAD")
+    {
+        silverdaw::log::info("bridge", "recv PROJECT_LOAD path=" + payload.getProperty("filePath", "").toString());
+        handleProjectLoad(payload, engine, projectState, bridge, session);
+    }
+    else if (type == "PROJECT_RENAME")
+    {
+        silverdaw::log::info("bridge", "recv PROJECT_RENAME name=" + payload.getProperty("name", "").toString());
+        handleProjectRename(payload, projectState, bridge);
+    }
     else
     {
         silverdaw::log::warn("bridge", "unhandled message type: " + type);
@@ -521,11 +766,17 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
 // NOLINTNEXTLINE(modernize-avoid-c-arrays,hicpp-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
 int runBackend(int argc, char* argv[])
 {
-    // Initialise the cross-layer file logger as early as possible so
-    // every subsequent backend event is captured. Electron main passes
-    // the per-session log directory via `SILVERDAW_LOG_DIR`; stand-
-    // alone debug runs fall back to `<exe-dir>/../.logs/standalone-...`.
-    silverdaw::log::initialise(juce::SystemStats::getEnvironmentVariable("SILVERDAW_LOG_DIR", {}));
+    // Initialise the cross-layer file logger only when Electron main
+    // explicitly opts in via `SILVERDAW_LOG_DIR` (set when the user has
+    // toggled "Enable Debugging" in Preferences). Without it the logger
+    // stays uninitialised and every `silverdaw::log::*` call is a
+    // silent no-op — so a normal-use packaged install never writes a
+    // backend.log nor creates a `.logs/` directory.
+    const auto logDirOverride = juce::SystemStats::getEnvironmentVariable("SILVERDAW_LOG_DIR", {});
+    if (logDirOverride.isNotEmpty())
+    {
+        silverdaw::log::initialise(logDirOverride);
+    }
 
     const juce::String banner = "Silverdaw Backend v1.0.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
                                 juce::SystemStats::getCpuVendor() + ")";
@@ -546,6 +797,7 @@ int runBackend(int argc, char* argv[])
     }
 
     silverdaw::ProjectState projectState;
+    ProjectSession session;
 
     // Disk-backed cache for waveform peaks. Reused across renderer reloads
     // and even backend restarts so the same file never recomputes peaks
@@ -575,15 +827,16 @@ int runBackend(int argc, char* argv[])
     // acks (e.g. CLIP_ADDED) without a chicken-and-egg capture problem.
     silverdaw::BridgeServer bridge(
         bridgeToken,
-        [&engine, &projectState, &peakPool, &peaksCache](silverdaw::BridgeServer& self, const juce::String& type,
-                                                         const juce::var& payload)
-        { dispatchBridgeMessage(type, payload, engine, projectState, self, peakPool, peaksCache); },
-        [&projectState](const silverdaw::BridgeServer::SendToClient& sendToClient)
+        [&engine, &projectState, &peakPool, &peaksCache, &session](silverdaw::BridgeServer& self,
+                                                                    const juce::String& type, const juce::var& payload)
+        { dispatchBridgeMessage(type, payload, engine, projectState, self, peakPool, peaksCache, session); },
+        [&projectState, &session](const silverdaw::BridgeServer::SendToClient& sendToClient)
         {
             // PROJECT_STATE is sent only to the newly-authenticated client,
             // not broadcast — other clients (if any) already have their own
-            // snapshot from when they connected.
-            sendToClient("PROJECT_STATE", projectState.toJson());
+            // snapshot from when they connected. `reset` is omitted on the
+            // connect path so the renderer treats it as additive.
+            sendToClient("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, false));
         });
 
     if (!bridge.start(bridgePort))

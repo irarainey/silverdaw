@@ -6,11 +6,16 @@
 // action (Add Track, drop a clip, click play) would race the reconcile
 // pass — at best a wasted command, at worst a stale-state divergence.
 //
-// Visibility is driven entirely by `transportStore.bridgeReady`:
+// Visibility is driven by `transportStore.bridgeReady`:
 //
 //   - false from process start until the first PROJECT_STATE arrives
 //     (and any later disconnect / reconnect cycle)
 //   - true once the bridge is up AND the snapshot has been applied
+//
+// If `bridgeFailureMessage` is also set (initial-connection timeout
+// fired in `App.vue`), the overlay flips from its spinner state into
+// an error state with a "Quit" button — the only useful action when
+// the backend never came up.
 //
 // Implementation is a fixed-position layer with `pointer-events: auto`
 // so it swallows clicks; a non-zero z-index keeps it above PixiJS and
@@ -23,6 +28,14 @@ import { useTransportStore } from '@/stores/transportStore'
 import logoUrl from '@resources/icons/256x256.png'
 
 const transport = useTransportStore()
+
+function quit(): void {
+  // Reuses the same File > Exit handler in main: destroys every window
+  // and calls `app.exit(0)`. We funnel through the menu IPC rather than
+  // adding a dedicated `app:quit` channel because there's only one
+  // canonical way to quit the app from the renderer.
+  window.silverdaw.menuAction('file.exit')
+}
 </script>
 
 <template>
@@ -39,9 +52,42 @@ const transport = useTransportStore()
       class="fixed inset-0 z-[1000] flex items-center justify-center bg-zinc-950/85 backdrop-blur-sm"
       role="status"
       aria-live="polite"
-      aria-busy="true"
+      :aria-busy="transport.bridgeFailureMessage === null"
     >
-      <div class="flex flex-col items-center gap-6 text-zinc-200">
+      <!-- Failure state: bridge timed out / failed terminally -->
+      <div
+        v-if="transport.bridgeFailureMessage"
+        class="flex w-[min(520px,92vw)] flex-col items-center gap-5 rounded-lg border border-red-900/60 bg-zinc-900 px-8 py-7 text-center text-zinc-200 shadow-2xl"
+      >
+        <img
+          :src="logoUrl"
+          alt=""
+          aria-hidden="true"
+          class="h-20 w-20 select-none opacity-60 grayscale"
+          draggable="false"
+        >
+        <div>
+          <h1 class="text-base font-semibold text-zinc-100">
+            Unable to start Silverdaw
+          </h1>
+          <p class="mt-2 text-xs leading-relaxed text-zinc-400">
+            {{ transport.bridgeFailureMessage }}
+          </p>
+        </div>
+        <button
+          type="button"
+          class="rounded bg-red-700 px-4 py-1.5 text-sm font-medium text-zinc-100 hover:bg-red-600 focus:ring-2 focus:ring-red-400 focus:outline-none"
+          @click="quit"
+        >
+          Quit Silverdaw
+        </button>
+      </div>
+
+      <!-- Loading state: still waiting for the initial PROJECT_STATE -->
+      <div
+        v-else
+        class="flex flex-col items-center gap-6 text-zinc-200"
+      >
         <!-- Brand mark, centred above the status text. -->
         <img
           :src="logoUrl"

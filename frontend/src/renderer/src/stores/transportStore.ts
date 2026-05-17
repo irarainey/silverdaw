@@ -22,6 +22,15 @@ interface TransportState {
    * race the reconcile pass.
    */
   bridgeReady: boolean
+  /**
+   * Set when the initial bridge connection has timed out (or otherwise
+   * failed terminally). When non-null the BridgeReadyOverlay swaps from
+   * its spinner state to an error message with a "Quit" button. Once
+   * set this stays set — there's no useful recovery path mid-session
+   * because the backend either never started or is responding with an
+   * incompatible protocol; quitting and relaunching is the right move.
+   */
+  bridgeFailureMessage: string | null
 }
 
 export const useTransportStore = defineStore('transport', {
@@ -30,7 +39,8 @@ export const useTransportStore = defineStore('transport', {
     positionMs: 0,
     bpm: 100,
     connected: false,
-    bridgeReady: false
+    bridgeReady: false,
+    bridgeFailureMessage: null
   }),
 
   actions: {
@@ -59,6 +69,10 @@ export const useTransportStore = defineStore('transport', {
     /** Called by the bridge service when PROJECT_STATE arrives. */
     setBridgeReady(ready: boolean): void {
       this.bridgeReady = ready
+    },
+    /** Set a terminal bridge-startup failure message (shown in the overlay). */
+    setBridgeFailure(message: string | null): void {
+      this.bridgeFailureMessage = message
     }
   }
 })

@@ -49,6 +49,15 @@ declare global {
         node: string
       }>
       openExternal(url: string): void
+      getLastProjectPath(): Promise<string | null>
+      setLastProjectPath(value: string | null): void
+      projectFileExists(path: string): Promise<boolean>
+      chooseProjectOpen(): Promise<string | null>
+      chooseProjectSaveAs(defaultName: string): Promise<string | null>
+      prepareProjectOpen(filePath: string): Promise<boolean>
+      getStartupDebugEnabled(): Promise<boolean>
+      getDebugEnabled(): Promise<boolean>
+      setDebugEnabled(value: boolean): void
     }
   }
 }

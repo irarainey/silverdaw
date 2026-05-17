@@ -72,10 +72,32 @@ export interface BridgeOutboundMap {
   TRANSPORT_STOP: undefined
   TRANSPORT_SEEK: TransportSeekPayload
   WAVEFORM_REQUEST: WaveformRequestPayload
+  PROJECT_NEW: undefined
+  PROJECT_SAVE: ProjectSavePayload
+  PROJECT_SAVE_AS: ProjectSaveAsPayload
+  PROJECT_LOAD: ProjectLoadPayload
+  PROJECT_RENAME: ProjectRenamePayload
 }
 
 export interface WaveformRequestPayload {
   clipId: string
+}
+
+/**
+ * Save the project. When `filePath` is omitted (or empty), the backend
+ * saves to the currently-loaded project path. The first save of a new
+ * project must use `PROJECT_SAVE_AS` to seed that path.
+ */
+export interface ProjectSavePayload {
+  filePath?: string
+}
+
+export interface ProjectSaveAsPayload {
+  filePath: string
+}
+
+export interface ProjectLoadPayload {
+  filePath: string
 }
 
 export type BridgeOutboundType = keyof BridgeOutboundMap
@@ -173,7 +195,39 @@ export interface ProjectStateTrack {
 }
 
 export interface ProjectStatePayload {
+  /** Absolute path to the current `.silverdaw` file, or `null` for an unsaved project. */
+  filePath: string | null
+  /** User-facing project name. `Untitled` for a freshly-created project. */
+  name: string
+  /**
+   * Renderer hint — when true, wipe optimistic local state (tracks, clips,
+   * library, selection, transport) before applying this snapshot. Sent on
+   * `PROJECT_LOAD` and `PROJECT_NEW`; absent / false on the connect path
+   * where the renderer treats the snapshot as additive (see
+   * `projectStore.applyProjectStateSnapshot`).
+   */
+  reset?: boolean
   tracks: ProjectStateTrack[]
+}
+
+export interface ProjectSavedPayload {
+  filePath: string
+  ok: boolean
+  error?: string
+}
+
+export interface ProjectLoadFailedPayload {
+  filePath: string
+  error: string
+}
+
+export interface ProjectRenamePayload {
+  name: string
+}
+
+export interface ProjectRenamedPayload {
+  name: string
+  ok: boolean
 }
 
 export interface BridgeInboundMap {
@@ -185,6 +239,9 @@ export interface BridgeInboundMap {
   TRACK_ADDED: TrackAddedPayload
   TRACK_REMOVED: TrackRemovedPayload
   TRACK_GAIN_APPLIED: TrackGainAppliedPayload
+  PROJECT_SAVED: ProjectSavedPayload
+  PROJECT_LOAD_FAILED: ProjectLoadFailedPayload
+  PROJECT_RENAMED: ProjectRenamedPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -216,7 +273,10 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'CLIP_ADD_FAILED',
   'TRACK_ADDED',
   'TRACK_REMOVED',
-  'TRACK_GAIN_APPLIED'
+  'TRACK_GAIN_APPLIED',
+  'PROJECT_SAVED',
+  'PROJECT_LOAD_FAILED',
+  'PROJECT_RENAMED'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -262,6 +322,9 @@ export function isTrackAddedPayload(value: unknown): value is TrackAddedPayload 
 /** Guard for `ProjectStatePayload`. */
 export function isProjectStatePayload(value: unknown): value is ProjectStatePayload {
   if (!isPlainObject(value)) return false
+  if (value.filePath !== null && typeof value.filePath !== 'string') return false
+  if (typeof value.name !== 'string') return false
+  if (value.reset !== undefined && typeof value.reset !== 'boolean') return false
   if (!Array.isArray(value.tracks)) return false
   for (const t of value.tracks) {
     if (!isPlainObject(t)) return false
@@ -280,6 +343,28 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
     }
   }
   return true
+}
+
+/** Guard for `ProjectSavedPayload`. */
+export function isProjectSavedPayload(value: unknown): value is ProjectSavedPayload {
+  return (
+    isPlainObject(value) &&
+    typeof value.filePath === 'string' &&
+    typeof value.ok === 'boolean' &&
+    (value.error === undefined || typeof value.error === 'string')
+  )
+}
+
+/** Guard for `ProjectLoadFailedPayload`. */
+export function isProjectLoadFailedPayload(value: unknown): value is ProjectLoadFailedPayload {
+  return (
+    isPlainObject(value) && typeof value.filePath === 'string' && typeof value.error === 'string'
+  )
+}
+
+/** Guard for `ProjectRenamedPayload`. */
+export function isProjectRenamedPayload(value: unknown): value is ProjectRenamedPayload {
+  return isPlainObject(value) && typeof value.name === 'string' && typeof value.ok === 'boolean'
 }
 
 /** Guard for `TrackRemovedPayload`. */

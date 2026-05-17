@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { createServer as createNetServer } from 'node:net'
 import { basename, dirname, extname, isAbsolute, join, resolve as pathResolve } from 'node:path'
 import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogLevel } from './log'
 import { createHash } from 'node:crypto'
@@ -179,7 +180,50 @@ function resolveBridgePort(): number {
   return parsed
 }
 
-const bridgePort = resolveBridgePort()
+let bridgePort = resolveBridgePort()
+const bridgePortEnvOverridden =
+  typeof process.env['SILVERDAW_BRIDGE_PORT'] === 'string' &&
+  process.env['SILVERDAW_BRIDGE_PORT']!.length > 0
+
+/**
+ * Probe whether `port` on `127.0.0.1` is free for a fresh TCP listener.
+ * Uses a short-lived `net.Server` rather than scraping `netstat` output
+ * — it works regardless of platform locale and gives a definitive
+ * answer (any error code from `listen()` means "not free").
+ *
+ * The server is closed immediately on success; there's a tiny race
+ * window before the backend itself binds, but loopback ports on Windows
+ * recycle fast enough that this is reliable in practice. Worst case
+ * the backend's own bind fails and the renderer surfaces the bridge
+ * timeout error.
+ */
+async function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createNetServer()
+    server.once('error', () => {
+      resolve(false)
+    })
+    server.once('listening', () => {
+      server.close(() => resolve(true))
+    })
+    server.listen(port, '127.0.0.1')
+  })
+}
+
+/**
+ * Find the first free port in `[start, start + count)`. Stops as soon
+ * as one binds. Returns `null` if every port in the range is taken —
+ * which only realistically happens if there are many zombie Silverdaw
+ * processes or another app is occupying the entire scan window.
+ */
+async function findFreeBridgePort(start: number, count: number): Promise<number | null> {
+  for (let i = 0; i < count; i++) {
+    const candidate = start + i
+    if (candidate > MAX_BRIDGE_PORT) break
+    if (await isPortFree(candidate)) return candidate
+  }
+  return null
+}
 
 // ─── Backend bridge AUTH token ──────────────────────────────────────────────
 // Loopback alone is not a strong trust boundary — any other process running
@@ -209,19 +253,50 @@ interface UiPrefs {
   libraryPanelHeight: number
 }
 
+/**
+ * Developer / diagnostic preferences. `enabled` gates the entire cross-layer
+ * file logger (backend.log + main.log + renderer.log) AND the visibility of
+ * the Debug menu (Toggle Developer Tools, etc.). The value is sampled once
+ * at startup and persists for the lifetime of the process; toggling it via
+ * Preferences takes effect on the NEXT launch (mirroring how a release-mode
+ * build is typically distinguished from a debug-mode one).
+ */
+interface DebugPrefs {
+  enabled: boolean
+}
+
 interface Preferences {
   window: WindowPrefs
   ui: UiPrefs
+  debug: DebugPrefs
+  /**
+   * Absolute path of the most-recently saved or loaded `.silverdaw`
+   * project. Read on startup to decide whether to auto-open the last
+   * project. `null` until the user saves / loads anything.
+   */
+  lastProjectPath: string | null
 }
 
 const DEFAULT_PREFS: Preferences = {
   window: { width: 1400, height: 900, maximized: false },
-  ui: { trackHeaderWidth: 175, libraryPanelHeight: 180 }
+  ui: { trackHeaderWidth: 175, libraryPanelHeight: 180 },
+  debug: { enabled: false },
+  lastProjectPath: null
 }
 
 let prefs: Preferences = structuredClone(DEFAULT_PREFS)
 let prefsPath = ''
 let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Snapshot of `prefs.debug.enabled` sampled once at startup, AFTER
+ * `loadPreferences()` runs. The Debug menu visibility, the cross-layer
+ * file logger, and the `SILVERDAW_LOG_DIR` env var passed to the JUCE
+ * backend are all gated on this constant — toggling Preferences during
+ * the session only updates the saved value and takes effect on the
+ * next launch.
+ */
+let startupDebugEnabled = false
 
 function getPrefsPath(): string {
   if (!prefsPath) prefsPath = join(app.getPath('userData'), 'preferences.json')
@@ -242,7 +317,12 @@ async function loadPreferences(): Promise<void> {
     // after an upgrade.
     prefs = {
       window: { ...DEFAULT_PREFS.window, ...(parsed.window ?? {}) },
-      ui: { ...DEFAULT_PREFS.ui, ...(parsed.ui ?? {}) }
+      ui: { ...DEFAULT_PREFS.ui, ...(parsed.ui ?? {}) },
+      debug: { ...DEFAULT_PREFS.debug, ...(parsed.debug ?? {}) },
+      lastProjectPath:
+        typeof parsed.lastProjectPath === 'string' && parsed.lastProjectPath.length > 0
+          ? parsed.lastProjectPath
+          : null
     }
   } catch (err) {
     // ENOENT on first run is expected; anything else is logged but we still
@@ -360,11 +440,12 @@ function startBackend(): void {
     // requires every WebSocket client to AUTH with this exact value.
     // `SILVERDAW_LOG_DIR` is exported so the C++ logger writes its
     // `backend.log` into the same per-session folder as `main.log` and
-    // `renderer.log`, enabling cross-layer timeline correlation.
+    // `renderer.log`. Only exported when debug logging is on; an empty
+    // env var would cause the backend to silently skip logger init.
     env: {
       ...process.env,
       SILVERDAW_BRIDGE_TOKEN: bridgeToken,
-      SILVERDAW_LOG_DIR: getSessionDir()
+      ...(startupDebugEnabled ? { SILVERDAW_LOG_DIR: getSessionDir() } : {})
     }
   })
 
@@ -431,7 +512,14 @@ function createWindow(): void {
   // the bridge with re-broadcast peaks frames). Dev iteration uses Vite
   // HMR, not full reload; if a dev really needs a full reload they can
   // close and relaunch the renderer.
+  //
+  // Ctrl+Shift+I / F12 (Chromium's default DevTools shortcuts) are also
+  // suppressed when the user has explicitly disabled debug mode in a
+  // PACKAGED install. In dev (`!app.isPackaged`) we always leave them
+  // available — diagnosing renderer issues without DevTools is
+  // unworkable, and there's no end user to protect from the dev menu.
   const RELOAD_KEYS = new Set(['F5', 'F3'])
+  const blockDevTools = app.isPackaged && !startupDebugEnabled
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     const isReloadKey = RELOAD_KEYS.has(input.key) ||
@@ -439,8 +527,27 @@ function createWindow(): void {
       (input.meta && (input.key === 'r' || input.key === 'R'))
     if (isReloadKey) {
       event.preventDefault()
+      return
+    }
+    if (blockDevTools) {
+      const isDevToolsKey =
+        (input.control && input.shift && (input.key === 'i' || input.key === 'I')) ||
+        input.key === 'F12'
+      if (isDevToolsKey) {
+        event.preventDefault()
+      }
     }
   })
+
+  // In an unpackaged dev session (the only place `pnpm dev` runs), open
+  // DevTools docked to the right so console / network panes are
+  // immediately accessible without the user having to know F12 works.
+  // Packaged builds defer entirely to the debug toggle + menu item.
+  if (!app.isPackaged) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow?.webContents.openDevTools({ mode: 'right' })
+    })
+  }
 
   // Apply saved bounds. Use `setBounds` so we're symmetric with the
   // `getBounds()` we save in `captureWindowState` — round-tripping is
@@ -505,22 +612,19 @@ function handleMenuAction(action: string): void {
   switch (action) {
     // File
     case 'file.newProject':
-      console.log('[menu] new project (todo)')
+      wc.send('menu:action', action)
       break
     case 'file.openProject':
-      void dialog
-        .showOpenDialog(mainWindow, {
-          title: 'Open Project',
-          filters: [{ name: 'Silverdaw project', extensions: ['silverdaw'] }],
-          properties: ['openFile']
-        })
-        .then((r) => console.log('[menu] open project:', r.filePaths))
+      wc.send('menu:action', action)
       break
     case 'file.save':
-      console.log('[menu] save (todo)')
+      wc.send('menu:action', action)
       break
     case 'file.saveAs':
-      console.log('[menu] save as (todo)')
+      wc.send('menu:action', action)
+      break
+    case 'file.renameProject':
+      wc.send('menu:action', action)
       break
     case 'file.addTrack':
       // Forwarded to the renderer (see below); the renderer drives the
@@ -557,7 +661,7 @@ function handleMenuAction(action: string): void {
       wc.paste()
       break
     case 'edit.preferences':
-      console.log('[menu] preferences (todo)')
+      wc.send('menu:action', action)
       break
 
     // View
@@ -597,22 +701,29 @@ app.whenReady().then(async () => {
     app.setAppUserModelId('com.silverdaw.app')
   }
 
-  // Initialise cross-layer logging before anything else so this session's
-  // main / backend / renderer events all land in one `.logs/<stamp>/` dir.
-  // Repo root is the directory above `frontend/`; for prod builds we
-  // fall back to the executable's parent so user installs aren't trying
-  // to write into Program Files.
-  const repoRoot = !app.isPackaged
-    ? pathResolve(__dirname, '..', '..', '..')
-    : pathResolve(app.getPath('userData'))
-  const sessionDir = initLogs(repoRoot)
-  logMain('INFO ', 'main', `session log dir: ${sessionDir}`)
-  logMain('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node}`)
-
-  // Load persisted preferences (window bounds + UI panel sizes) before the
-  // first window is created so the restored size/position is applied at
-  // construction time rather than as a post-show resize flash.
+  // Load persisted preferences (window bounds, UI panel sizes, debug
+  // toggle) BEFORE we decide whether to spin up the cross-layer logger
+  // — debug mode is gated on `prefs.debug.enabled` and the snapshot
+  // taken here is what every subsequent component reads.
   await loadPreferences()
+  startupDebugEnabled = prefs.debug.enabled === true
+
+  // Initialise the cross-layer file logger only when the user has opted
+  // in via Preferences. When off, `logMain` / `logRendererLine` / the
+  // backend's `silverdaw::log::*` calls all become silent no-ops — so
+  // a normal-use session never writes a `.logs/` directory.
+  if (startupDebugEnabled) {
+    // `<repo>` in dev, `userData` in a packaged install — same logic as
+    // before so dev iteration drops logs alongside the source tree.
+    const repoRoot = !app.isPackaged
+      ? pathResolve(__dirname, '..', '..', '..')
+      : pathResolve(app.getPath('userData'))
+    const sessionDir = initLogs(repoRoot)
+    logMain('INFO ', 'main', `session log dir: ${sessionDir}`)
+    logMain('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node}`)
+  } else {
+    console.log('[main] debug logging disabled (Preferences > Enable Debugging is off)')
+  }
 
   // Hide the native application menu — we render our own in HTML.
   Menu.setApplicationMenu(null)
@@ -890,6 +1001,149 @@ app.whenReady().then(async () => {
     prefs.ui = { ...prefs.ui, ...partial }
     schedulePrefsSave()
   })
+
+  // ─── Debug preferences ──────────────────────────────────────────────────
+  // `startupDebugEnabled` is the value sampled at launch and used for
+  // logger init + menu visibility. `prefs.debug.enabled` is the live
+  // persisted value that may differ if the user has toggled it during
+  // this session — the change takes effect on next launch.
+
+  ipcMain.handle('debug:getStartupEnabled', () => startupDebugEnabled)
+  ipcMain.handle('debug:getEnabled', () => prefs.debug.enabled === true)
+  ipcMain.on('debug:setEnabled', (_evt, value: unknown) => {
+    const next = value === true
+    if (prefs.debug.enabled === next) return
+    prefs.debug = { ...prefs.debug, enabled: next }
+    schedulePrefsSave()
+  })
+
+  // ─── Project file lifecycle ─────────────────────────────────────────────
+  // Helpers used by the renderer to drive Save / Save As / Open menus. Main
+  // owns the native OS dialog plus the `lastProjectPath` preference so the
+  // app can auto-reopen the last project on launch.
+
+  ipcMain.handle('project:getLastPath', () => prefs.lastProjectPath)
+
+  ipcMain.on('project:setLastPath', (_evt, value: unknown) => {
+    if (value === null) {
+      prefs.lastProjectPath = null
+    } else if (typeof value === 'string' && value.length > 0) {
+      prefs.lastProjectPath = value
+    } else {
+      return
+    }
+    schedulePrefsSave()
+  })
+
+  ipcMain.handle('project:fileExists', async (_evt, value: unknown): Promise<boolean> => {
+    if (typeof value !== 'string' || value.length === 0) return false
+    try {
+      await readFile(value, { encoding: null, flag: 'r' })
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('project:chooseOpen', async (): Promise<string | null> => {
+    if (!mainWindow) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Open Silverdaw Project',
+      filters: [{ name: 'Silverdaw project', extensions: ['silverdaw'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle(
+    'project:chooseSaveAs',
+    async (_evt, defaultName: unknown): Promise<string | null> => {
+      if (!mainWindow) return null
+      const suggested =
+        typeof defaultName === 'string' && defaultName.length > 0 ? defaultName : 'Untitled'
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Save Silverdaw Project',
+        defaultPath: `${suggested}.silverdaw`,
+        filters: [{ name: 'Silverdaw project', extensions: ['silverdaw'] }]
+      })
+      if (result.canceled || !result.filePath) return null
+      return result.filePath
+    }
+  )
+
+  /**
+   * Pre-register every audio path referenced by `<filePath="...">`
+   * attributes inside the supplied `.silverdaw` XML file. Called by the
+   * renderer right before it fires `PROJECT_LOAD` (both for the
+   * user-driven File > Open flow and the auto-open-last-project on
+   * launch). Without this the renderer's post-load
+   * `audio:readMetadata` calls — fired to refresh cover art on the
+   * library cards — get rejected by the allow-list, leaving every
+   * library card with a generic icon.
+   *
+   * The path-validation rules inside `registerIssuedPath` still apply
+   * (absolute path + known audio extension), so a malicious file can't
+   * smuggle e.g. `C:\Windows\notepad.exe` onto the read whitelist.
+   *
+   * Returns true if the project file was readable; per-path
+   * registration failures are silent (the renderer will surface them
+   * later as missing-file toasts when the backend tries to load them).
+   */
+  ipcMain.handle('project:prepareOpen', async (_evt, filePath: unknown): Promise<boolean> => {
+    if (typeof filePath !== 'string' || filePath.length === 0) return false
+    if (extname(filePath).toLowerCase() !== '.silverdaw') return false
+    try {
+      const content = await readFile(filePath, 'utf8')
+      // juce::XmlElement serialises ValueTree attributes as
+      // `filePath="..."`, escaping standard XML entities only. Decode
+      // the same set on the way back out so paths containing `&`, `<`
+      // etc. round-trip correctly through `registerIssuedPath`'s
+      // canonicalisation.
+      const re = /\bfilePath="([^"]+)"/g
+      let m: RegExpExecArray | null = re.exec(content)
+      while (m !== null) {
+        const decoded = m[1]
+          .replace(/&apos;/g, "'")
+          .replace(/&quot;/g, '"')
+          .replace(/&gt;/g, '>')
+          .replace(/&lt;/g, '<')
+          .replace(/&amp;/g, '&')
+        registerIssuedPath(decoded)
+        m = re.exec(content)
+      }
+      return true
+    } catch (err) {
+      console.warn('[project:prepareOpen] could not read project file:', filePath, err)
+      return false
+    }
+  })
+
+  // Pick the WebSocket port the backend will listen on. When the dev
+  // env var is set we honour it as-is (developer intent); otherwise we
+  // probe a small range starting at the default port so a leftover
+  // Silverdaw process holding 8765 doesn't lock new instances out of
+  // launching. The renderer fetches whatever we settle on via
+  // `bridge:getPort` so all three processes agree.
+  if (!bridgePortEnvOverridden) {
+    const free = await findFreeBridgePort(DEFAULT_BRIDGE_PORT, 20)
+    if (free === null) {
+      const msg =
+        `Could not find a free TCP port for the audio engine in the range ` +
+        `${DEFAULT_BRIDGE_PORT}–${DEFAULT_BRIDGE_PORT + 19}. ` +
+        `Close any other running Silverdaw windows and try again.`
+      // Surface to the user via a native dialog because the renderer
+      // window doesn't exist yet; then exit so the broken launch
+      // doesn't leave an idle Electron in the taskbar.
+      dialog.showErrorBox('Unable to start Silverdaw', msg)
+      app.exit(1)
+      return
+    }
+    if (free !== bridgePort) {
+      console.log(`[main] port ${bridgePort} busy; using ${free} instead`)
+    }
+    bridgePort = free
+  }
 
   // Create the window first so the user sees a frame immediately; defer
   // backend-process spawn to the next tick so it doesn't contend with the

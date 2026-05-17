@@ -35,7 +35,12 @@
       },
       "console": "integratedTerminal",
       "outputCapture": "std",
-      "skipFiles": ["<node_internals>/**"]
+      "skipFiles": ["<node_internals>/**"],
+      // Always rebuild the Debug backend before launching the renderer.
+      // Without this an F5 launch picks up whatever stale exe sits in
+      // `backend/build/SilverdawBackend_artefacts/Debug/`, which can be
+      // wildly out of date with the protocol the renderer expects.
+      "preLaunchTask": "backend: build"
     },
     // Renderer process (Chromium side) — attach via remote debugging port.
     {

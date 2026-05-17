@@ -3,6 +3,9 @@ import {
   isBridgeInboundType,
   isClipAckPayload,
   isPlayheadUpdatePayload,
+  isProjectLoadFailedPayload,
+  isProjectRenamedPayload,
+  isProjectSavedPayload,
   isProjectStatePayload,
   isReadyPayload,
   isTrackAddedPayload,
@@ -20,7 +23,10 @@ describe('isBridgeInboundType', () => {
       'CLIP_ADD_FAILED',
       'TRACK_ADDED',
       'TRACK_REMOVED',
-      'TRACK_GAIN_APPLIED'
+      'TRACK_GAIN_APPLIED',
+      'PROJECT_SAVED',
+      'PROJECT_LOAD_FAILED',
+      'PROJECT_RENAMED'
     ]) {
       expect(isBridgeInboundType(t)).toBe(true)
     }
@@ -129,13 +135,22 @@ describe('isTrackGainAppliedPayload', () => {
 })
 
 describe('isProjectStatePayload', () => {
+  const base = { filePath: null as string | null, name: 'Untitled' }
+
   it('accepts an empty project', () => {
-    expect(isProjectStatePayload({ tracks: [] })).toBe(true)
+    expect(isProjectStatePayload({ ...base, tracks: [] })).toBe(true)
+  })
+
+  it('accepts a project with filePath and reset flag', () => {
+    expect(
+      isProjectStatePayload({ filePath: '/p/x.silverdaw', name: 'x', reset: true, tracks: [] })
+    ).toBe(true)
   })
 
   it('accepts tracks with clips', () => {
     expect(
       isProjectStatePayload({
+        ...base,
         tracks: [
           {
             id: 't1',
@@ -147,23 +162,68 @@ describe('isProjectStatePayload', () => {
     ).toBe(true)
   })
 
+  it('rejects missing name or wrong-typed filePath', () => {
+    expect(isProjectStatePayload({ filePath: null, tracks: [] })).toBe(false)
+    expect(isProjectStatePayload({ name: 'x', tracks: [] })).toBe(false)
+    expect(isProjectStatePayload({ filePath: 123, name: 'x', tracks: [] })).toBe(false)
+  })
+
   it('rejects missing or wrong-typed track fields', () => {
     expect(isProjectStatePayload({})).toBe(false)
-    expect(isProjectStatePayload({ tracks: [{ id: 't1', clips: [] }] })).toBe(false)
-    expect(isProjectStatePayload({ tracks: [{ id: 't1', gain: '1.0', clips: [] }] })).toBe(false)
-    expect(isProjectStatePayload({ tracks: [{ id: 't1', gain: 1.0 }] })).toBe(false)
+    expect(isProjectStatePayload({ ...base, tracks: [{ id: 't1', clips: [] }] })).toBe(false)
+    expect(
+      isProjectStatePayload({ ...base, tracks: [{ id: 't1', gain: '1.0', clips: [] }] })
+    ).toBe(false)
+    expect(isProjectStatePayload({ ...base, tracks: [{ id: 't1', gain: 1.0 }] })).toBe(false)
   })
 
   it('rejects malformed clip entries', () => {
     expect(
       isProjectStatePayload({
+        ...base,
         tracks: [{ id: 't1', gain: 1.0, clips: [{ id: 'c1', filePath: '/p', offsetMs: 0 }] }]
       })
     ).toBe(false)
     expect(
       isProjectStatePayload({
+        ...base,
         tracks: [{ id: 't1', gain: 1.0, clips: [{ filePath: '/p', offsetMs: 0, durationMs: 1 }] }]
       })
     ).toBe(false)
+  })
+})
+
+describe('isProjectSavedPayload', () => {
+  it('accepts ok and failure shapes', () => {
+    expect(isProjectSavedPayload({ filePath: '/p.silverdaw', ok: true })).toBe(true)
+    expect(isProjectSavedPayload({ filePath: '/p.silverdaw', ok: false, error: 'oops' })).toBe(true)
+  })
+
+  it('rejects missing fields and wrong types', () => {
+    expect(isProjectSavedPayload({ filePath: '/p', ok: 'yes' })).toBe(false)
+    expect(isProjectSavedPayload({ ok: true })).toBe(false)
+    expect(isProjectSavedPayload({ filePath: '/p', ok: false, error: 123 })).toBe(false)
+  })
+})
+
+describe('isProjectLoadFailedPayload', () => {
+  it('accepts a well-shaped payload', () => {
+    expect(isProjectLoadFailedPayload({ filePath: '/p.silverdaw', error: 'bad' })).toBe(true)
+  })
+
+  it('rejects missing fields', () => {
+    expect(isProjectLoadFailedPayload({ filePath: '/p' })).toBe(false)
+    expect(isProjectLoadFailedPayload({ error: 'bad' })).toBe(false)
+  })
+})
+
+describe('isProjectRenamedPayload', () => {
+  it('accepts a well-shaped payload', () => {
+    expect(isProjectRenamedPayload({ name: 'My Mix', ok: true })).toBe(true)
+  })
+
+  it('rejects wrong-typed fields', () => {
+    expect(isProjectRenamedPayload({ name: 'x' })).toBe(false)
+    expect(isProjectRenamedPayload({ name: 1, ok: true })).toBe(false)
   })
 })

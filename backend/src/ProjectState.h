@@ -35,7 +35,18 @@ namespace silverdaw
 class ProjectState
 {
   public:
+    /** Default name applied to a freshly-constructed project. */
+    static const juce::String kDefaultName;
+
     ProjectState();
+
+    // ─── Project metadata ──────────────────────────────────────────────
+
+    /** User-facing project name; "Untitled" until renamed or loaded. */
+    juce::String getName() const;
+
+    /** Update the project's name. Empty / blank inputs are coerced to `kDefaultName`. */
+    void setName(const juce::String& name);
 
     // ─── Tracks ────────────────────────────────────────────────────────
 
@@ -85,14 +96,41 @@ class ProjectState
     // ─── Serialisation ─────────────────────────────────────────────────
 
     /**
-     * Snapshot the whole tree as a JSON-shaped `juce::var` ready to be
-     * placed in a `PROJECT_STATE` envelope payload. Structure:
+     * Snapshot the project's tracks as a `juce::var` array of track
+     * objects, ready to drop into a PROJECT_STATE envelope as its
+     * `tracks` field. Caller composes the wrapping envelope (file path,
+     * project name, reset flag) in `Main.cpp::buildProjectStateEnvelope`.
      *
-     *   { tracks: [ { id, gain, clips: [ { id, filePath, offsetMs } ] } ] }
+     * Each track:
+     *   { id, gain, clips: [ { id, filePath, offsetMs, durationMs } ] }
      */
-    juce::var toJson() const;
+    juce::var tracksAsJson() const;
 
-    /** Access the shared undo manager (Phase 6 will surface this in the UI). */
+    /**
+     * Read-only access to the underlying `ValueTree`. Used by serialisation
+     * (`ProjectFile::save`) and tests that need to assert structural shape.
+     * The returned reference is stable for the lifetime of `ProjectState`.
+     */
+    const juce::ValueTree& getTree() const noexcept
+    {
+        return root;
+    }
+
+    /**
+     * Replace this project's contents with `newTree`. The supplied tree
+     * must have type `PROJECT` (the root element produced by `getTree`).
+     *
+     * Properties and children of the existing root are dropped first;
+     * `root`'s node identity is preserved so any future listeners stay
+     * attached. The undo history is cleared because undo is meaningless
+     * across a project load.
+     *
+     * Returns `juce::Result::ok()` on success, or a failure result with
+     * a user-displayable message when validation fails.
+     */
+    juce::Result replaceTree(const juce::ValueTree& newTree);
+
+    /** Access the shared undo manager (Phase 7 will surface this in the UI). */
     juce::UndoManager& getUndoManager() noexcept
     {
         return undoManager;
@@ -111,6 +149,7 @@ class ProjectState
     static const juce::Identifier kTrack;
     static const juce::Identifier kClip;
     static const juce::Identifier kId;
+    static const juce::Identifier kName;
     static const juce::Identifier kGain;
     static const juce::Identifier kFilePath;
     static const juce::Identifier kOffsetMs;

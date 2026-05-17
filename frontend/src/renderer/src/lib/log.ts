@@ -31,8 +31,30 @@ interface LogEntry {
   timestamp: number
 }
 
+/**
+ * Master gate for the renderer-side logger. False until `setLogEnabled`
+ * is called with `true` — which `App.vue` does once at mount, only when
+ * the startup-snapshot debug flag is on. While disabled, `enqueue` is a
+ * fast no-op so production sessions don't pay the IPC / serialisation
+ * cost for log lines that would never be written to disk anyway.
+ */
+let enabled = false
+
 const queue: LogEntry[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Toggle the renderer logger on/off. Called once at app mount. */
+export function setLogEnabled(value: boolean): void {
+  enabled = value
+  if (!enabled) {
+    // Drop anything already queued — they'd never flush meaningfully.
+    queue.length = 0
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+  }
+}
 
 function flush(): void {
   flushTimer = null
@@ -53,6 +75,7 @@ function flush(): void {
 }
 
 function enqueue(level: LogLevel, tag: string, message: string): void {
+  if (!enabled) return
   queue.push({ level, tag, message, timestamp: Date.now() })
   if (!flushTimer) flushTimer = setTimeout(flush, 50)
 }

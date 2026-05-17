@@ -7,12 +7,30 @@ const juce::Identifier ProjectState::kProject{"PROJECT"};
 const juce::Identifier ProjectState::kTrack{"TRACK"};
 const juce::Identifier ProjectState::kClip{"CLIP"};
 const juce::Identifier ProjectState::kId{"id"};
+const juce::Identifier ProjectState::kName{"name"};
 const juce::Identifier ProjectState::kGain{"gain"};
 const juce::Identifier ProjectState::kFilePath{"filePath"};
 const juce::Identifier ProjectState::kOffsetMs{"offsetMs"};
 const juce::Identifier ProjectState::kDurationMs{"durationMs"};
 
-ProjectState::ProjectState() : root(kProject) {}
+const juce::String ProjectState::kDefaultName{"Untitled"};
+
+ProjectState::ProjectState() : root(kProject)
+{
+    root.setProperty(kName, kDefaultName, nullptr);
+}
+
+juce::String ProjectState::getName() const
+{
+    const auto stored = root.getProperty(kName, kDefaultName).toString().trim();
+    return stored.isEmpty() ? kDefaultName : stored;
+}
+
+void ProjectState::setName(const juce::String& name)
+{
+    const auto trimmed = name.trim();
+    root.setProperty(kName, trimmed.isEmpty() ? kDefaultName : trimmed, &undoManager);
+}
 
 juce::ValueTree ProjectState::findTrack(const juce::String& trackId) const
 {
@@ -198,9 +216,8 @@ juce::String ProjectState::getClipFilePath(const juce::String& clipId) const
     return clip.getProperty(kFilePath).toString();
 }
 
-juce::var ProjectState::toJson() const
+juce::var ProjectState::tracksAsJson() const
 {
-    auto* tracksArrayObj = new juce::DynamicObject();
     juce::Array<juce::var> tracksArray;
 
     for (int t = 0; t < root.getNumChildren(); ++t)
@@ -234,8 +251,23 @@ juce::var ProjectState::toJson() const
         tracksArray.add(juce::var(trackObj));
     }
 
-    tracksArrayObj->setProperty("tracks", tracksArray);
-    return {tracksArrayObj};
+    return tracksArray;
+}
+
+juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
+{
+    if (!newTree.isValid() || !newTree.hasType(kProject))
+    {
+        return juce::Result::fail("Expected root <PROJECT> element");
+    }
+    // Wipe current contents but keep `root`'s node identity so any
+    // listeners that get attached later survive a load. Undo history is
+    // dropped because undo across a project load makes no sense.
+    root.removeAllChildren(nullptr);
+    root.removeAllProperties(nullptr);
+    root.copyPropertiesAndChildrenFrom(newTree, nullptr);
+    undoManager.clearUndoHistory();
+    return juce::Result::ok();
 }
 
 } // namespace silverdaw

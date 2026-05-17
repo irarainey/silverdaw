@@ -147,8 +147,46 @@ const api = {
    */
   openExternal: (url: string): void => {
     ipcRenderer.send('app:openExternal', url)
+  },
+  // ─── Project file lifecycle ──────────────────────────────────────────────
+  /** Absolute path of the most recently saved/loaded project, or null. */
+  getLastProjectPath: (): Promise<string | null> => ipcRenderer.invoke('project:getLastPath'),
+  /** Persist the most recently saved/loaded project path (or null to clear). */
+  setLastProjectPath: (value: string | null): void => {
+    ipcRenderer.send('project:setLastPath', value)
+  },
+  /** Resolve to true iff `path` exists and is readable. */
+  projectFileExists: (path: string): Promise<boolean> =>
+    ipcRenderer.invoke('project:fileExists', path),
+  /** Show the OS open dialog; resolves to the chosen path or null on cancel. */
+  chooseProjectOpen: (): Promise<string | null> => ipcRenderer.invoke('project:chooseOpen'),
+  /** Show the OS save-as dialog; `defaultName` seeds the suggested filename. */
+  chooseProjectSaveAs: (defaultName: string): Promise<string | null> =>
+    ipcRenderer.invoke('project:chooseSaveAs', defaultName),
+  /**
+   * Tell main that a `.silverdaw` file is about to be loaded. Main reads
+   * the project XML and pre-registers every referenced audio path in
+   * its `audio:readFile` / `audio:readMetadata` allow-list so the
+   * renderer can refresh cover art on the library cards after load
+   * without each path being rejected as untrusted.
+   */
+  prepareProjectOpen: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('project:prepareOpen', filePath),
+  // ─── Debug toggle ──────────────────────────────────────────────────────
+  /**
+   * Resolve the debug flag sampled at startup. This is the value that
+   * gates the Debug menu and the cross-layer file logger for the
+   * lifetime of the current process — toggling the preference in the
+   * Preferences dialog only takes effect on the NEXT launch.
+   */
+  getStartupDebugEnabled: (): Promise<boolean> => ipcRenderer.invoke('debug:getStartupEnabled'),
+  /** Read the currently-saved debug flag (may differ from the startup snapshot). */
+  getDebugEnabled: (): Promise<boolean> => ipcRenderer.invoke('debug:getEnabled'),
+  /** Persist a new debug flag value. Takes effect on the next launch. */
+  setDebugEnabled: (value: boolean): void => {
+    ipcRenderer.send('debug:setEnabled', value)
   }
-} as const
+}as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)
 

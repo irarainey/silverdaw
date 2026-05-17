@@ -111,6 +111,27 @@ export const useLibraryStore = defineStore('library', {
 
   actions: {
     /**
+     * Drop every library item. Called by `projectStore` when a
+     * PROJECT_STATE with `reset=true` arrives (PROJECT_LOAD /
+     * PROJECT_NEW) — the new project's library catalogue is rebuilt
+     * fresh as part of applying the snapshot.
+     */
+    clear(): void {
+      // Revoke cover-art URLs so the underlying Blobs are GC-eligible.
+      for (const item of this.items) {
+        if (item.coverArtUrl) {
+          try {
+            URL.revokeObjectURL(item.coverArtUrl)
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      this.items = []
+      log.info('library', 'cleared')
+    },
+
+    /**
      * Add a decoded audio file to the library. If a file with the same
      * `filePath` is already present, returns the existing item's id rather
      * than creating a duplicate.
@@ -218,7 +239,7 @@ export const useLibraryStore = defineStore('library', {
       // wrapped Blob URL is the only handle the rest of the app sees.
       const { coverArt, ...rest } = metadata
       item.metadata = rest
-      if (coverArt && coverArt.data.byteLength > 0) {
+      if (coverArt && coverArt.data && (coverArt.data as ArrayBuffer).byteLength > 0) {
         const blob = new Blob([coverArt.data], { type: coverArt.mimeType })
         item.coverArtUrl = URL.createObjectURL(blob)
       }

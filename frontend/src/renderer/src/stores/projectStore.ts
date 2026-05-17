@@ -110,13 +110,28 @@ interface ProjectState {
    * the renderer to redraw.
    */
   peaksRevision: number
+
+  // ─── Project file identity ───────────────────────────────────────────────
+  /**
+   * Absolute path of the currently-loaded `.silverdaw` file, or null if
+   * the project hasn't been saved yet (newly-created or fresh launch
+   * with no last project on disk).
+   */
+  currentFilePath: string | null
+  /** User-facing project name. `Untitled` for an unsaved project. */
+  projectName: string
 }
+
+/** Default name shown in the title bar before a project is named or loaded. */
+export const DEFAULT_PROJECT_NAME = 'Untitled'
 
 export const useProjectStore = defineStore('project', {
   state: (): ProjectState => ({
     tracks: [],
     clips: {},
-    peaksRevision: 0
+    peaksRevision: 0,
+    currentFilePath: null,
+    projectName: DEFAULT_PROJECT_NAME
   }),
 
   getters: {
@@ -519,9 +534,26 @@ export const useProjectStore = defineStore('project', {
     applyProjectStateSnapshot(snapshot: ProjectStatePayload): void {
       log.info(
         'project',
-        `applyProjectStateSnapshot tracks=${snapshot.tracks.length} clips=${snapshot.tracks.reduce((n, t) => n + t.clips.length, 0)}`
+        `applyProjectStateSnapshot tracks=${snapshot.tracks.length} clips=${snapshot.tracks.reduce((n, t) => n + t.clips.length, 0)} reset=${snapshot.reset === true} path=${snapshot.filePath ?? 'null'} name=${snapshot.name}`
       )
+      // Adopt the project identity fields up front so any code that reads
+      // them during the snapshot apply (e.g. the title bar) sees the
+      // post-load values.
+      this.currentFilePath = snapshot.filePath
+      this.projectName = snapshot.name?.trim() ? snapshot.name : DEFAULT_PROJECT_NAME
+
       const library = useLibraryStore()
+      // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the
+      // renderer's optimistic mirror must be wiped before re-applying so
+      // we don't carry stale tracks/clips/library items from the
+      // previous project. The connect-time path leaves `reset` falsy
+      // and the snapshot is treated as additive (see comment below).
+      if (snapshot.reset === true) {
+        this.tracks = []
+        this.clips = {}
+        this.peaksRevision++
+        library.clear()
+      }
       // Collect ids of clips that still need peaks after reconciliation so
       // we can fire WAVEFORM_REQUESTs at the end in one pass.
       const clipsNeedingPeaks: string[] = []
@@ -629,6 +661,51 @@ export const useProjectStore = defineStore('project', {
       for (const clipId of clipsNeedingPeaks) {
         sendBridge('WAVEFORM_REQUEST', { clipId })
       }
+    },
+
+    // ─── Project file lifecycle (Phase 3) ──────────────────────────────────
+
+    /** Send PROJECT_NEW; backend wipes its state and broadcasts a fresh reset snapshot. */
+    requestNewProject(): void {
+      log.info('project', 'requestNewProject')
+      sendBridge('PROJECT_NEW')
+    },
+
+    /**
+     * Send PROJECT_SAVE if we have a current path, otherwise fall through
+     * to PROJECT_SAVE_AS via the OS dialog. The dialog flow runs in
+     * `App.vue::handleMenuAction` because it owns the IPC context.
+     */
+    requestSave(): boolean {
+      if (!this.currentFilePath) return false
+      log.info('project', `requestSave path=${this.currentFilePath}`)
+      sendBridge('PROJECT_SAVE', { filePath: this.currentFilePath })
+      return true
+    },
+
+    /** Send PROJECT_SAVE_AS with the path the user picked in the OS dialog. */
+    requestSaveAs(filePath: string): void {
+      log.info('project', `requestSaveAs path=${filePath}`)
+      sendBridge('PROJECT_SAVE_AS', { filePath })
+    },
+
+    /** Send PROJECT_LOAD with the path the user picked in the OS dialog. */
+    requestLoad(filePath: string): void {
+      log.info('project', `requestLoad path=${filePath}`)
+      sendBridge('PROJECT_LOAD', { filePath })
+    },
+
+    /**
+     * Rename the project. Updates the local name optimistically so the
+     * title bar reflects the new value immediately, then notifies the
+     * backend so the change is included in the next save.
+     */
+    requestRename(name: string): void {
+      const trimmed = name.trim()
+      const finalName = trimmed.length > 0 ? trimmed : DEFAULT_PROJECT_NAME
+      this.projectName = finalName
+      sendBridge('PROJECT_RENAME', { name: finalName })
+      log.info('project', `requestRename name=${finalName}`)
     }
   }
 })

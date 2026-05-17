@@ -53,6 +53,7 @@ target_sources(SilverdawBackend PRIVATE
     src/BridgeServer.cpp
     src/Log.cpp
     src/PeaksCache.cpp
+    src/ProjectFile.cpp
     src/ProjectState.cpp
     src/Waveform.cpp)
 

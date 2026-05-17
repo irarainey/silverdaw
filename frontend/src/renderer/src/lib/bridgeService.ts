@@ -26,11 +26,15 @@
 
 import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 import {
   isBridgeInboundType,
   isClipAckPayload,
   isPlayheadUpdatePayload,
+  isProjectLoadFailedPayload,
+  isProjectRenamedPayload,
+  isProjectSavedPayload,
   isProjectStatePayload,
   isReadyPayload,
   isTrackAddedPayload,
@@ -347,6 +351,44 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'PROJECT_SAVED': {
+      const notifications = useNotificationsStore()
+      if (msg.payload.ok) {
+        log.info('bridge', `PROJECT_SAVED path=${msg.payload.filePath}`)
+        // Persist the path as "last project" so the next launch reopens
+        // it. Main owns the preferences file and ignores empty values.
+        window.silverdaw.setLastProjectPath(msg.payload.filePath)
+        notifications.pushInfo('Project saved')
+      } else {
+        log.warn('bridge', `PROJECT_SAVED failed: ${msg.payload.error ?? 'unknown'}`)
+        notifications.pushError(`Save failed: ${msg.payload.error ?? 'unknown error'}`)
+      }
+      break
+    }
+
+    case 'PROJECT_LOAD_FAILED': {
+      log.warn('bridge', `PROJECT_LOAD_FAILED ${msg.payload.filePath}: ${msg.payload.error}`)
+      useNotificationsStore().pushError(
+        `Could not open project: ${msg.payload.error || msg.payload.filePath}`
+      )
+      // Clear the persisted last-path so a failed file doesn't keep
+      // re-failing at every launch. The user can pick it again
+      // explicitly with File > Open.
+      window.silverdaw.setLastProjectPath(null)
+      break
+    }
+
+    case 'PROJECT_RENAMED': {
+      // Renderer already updated `projectName` optimistically in
+      // `requestRename`; this ack just confirms the backend stored the
+      // value. Mirror back in case the backend canonicalised (e.g.
+      // trimmed whitespace) the input.
+      if (msg.payload.ok) {
+        useProjectStore().projectName = msg.payload.name
+      }
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -392,6 +434,12 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isTrackRemovedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_GAIN_APPLIED':
       return isTrackGainAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_SAVED':
+      return isProjectSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_LOAD_FAILED':
+      return isProjectLoadFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_RENAMED':
+      return isProjectRenamedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }
