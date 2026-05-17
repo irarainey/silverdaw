@@ -11,6 +11,7 @@
 #include <csignal>
 #include <iostream>
 #include <juce_events/juce_events.h>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -252,17 +253,24 @@ void produceAndBroadcastPeaks(const juce::String& clipId, const juce::File& file
         return;
     }
     const auto frames = silverdaw::waveform::encodeWaveformFrames(clipId, result);
+
+    // Serialise the chunk-burst across ALL peaks jobs running on the
+    // worker pool. The per-job 2 ms inter-chunk yield is only sufficient
+    // to keep the IXWebSocket I/O loop drained if exactly one job is
+    // sending at a time; with two jobs (e.g. reloading a project that
+    // has two clips, both cache-hits delivered in parallel) the
+    // combined ~40-chunk burst at the doubled rate would starve the
+    // read side and silently freeze inbound traffic — including
+    // TRANSPORT_PLAY clicks the user makes seconds later. The mutex
+    // guarantees only one job is mid-send at any time; the 2 ms yields
+    // inside that job still give the I/O loop room to read.
+    static std::mutex peakBroadcastMutex;
+    std::lock_guard<std::mutex> lock(peakBroadcastMutex);
     for (std::size_t i = 0; i < frames.size(); ++i)
     {
         bridge.broadcastBinary(frames[i]);
         // Yield briefly between chunks so IXWebSocket's per-connection
         // I/O thread can drain reads from the renderer between writes.
-        // Without this, a back-to-back burst of ~16 chunks (e.g. two
-        // clips' peaks on a reconnect) starves the read side for
-        // seconds — every renderer command sent in that window is
-        // silently dropped on the floor. 2 ms × ~8 chunks = ~16 ms of
-        // extra import-to-waveform latency, which is well below the
-        // user-perceptible threshold.
         if (i + 1 < frames.size())
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
