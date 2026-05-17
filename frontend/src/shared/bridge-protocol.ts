@@ -230,6 +230,11 @@ export interface ProjectRenamedPayload {
   ok: boolean
 }
 
+/** Backend notification that the project's dirty flag has transitioned. */
+export interface ProjectDirtyPayload {
+  dirty: boolean
+}
+
 /**
  * Backend notification that a fresh on-disk peaks cache file is ready
  * for `clipId`. The renderer reads the file directly via main's
@@ -261,6 +266,7 @@ export interface BridgeInboundMap {
   PROJECT_SAVED: ProjectSavedPayload
   PROJECT_LOAD_FAILED: ProjectLoadFailedPayload
   PROJECT_RENAMED: ProjectRenamedPayload
+  PROJECT_DIRTY: ProjectDirtyPayload
   WAVEFORM_READY: WaveformReadyPayload
 }
 
@@ -297,6 +303,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PROJECT_SAVED',
   'PROJECT_LOAD_FAILED',
   'PROJECT_RENAMED',
+  'PROJECT_DIRTY',
   'WAVEFORM_READY'
 ])
 
@@ -386,6 +393,11 @@ export function isProjectLoadFailedPayload(value: unknown): value is ProjectLoad
 /** Guard for `ProjectRenamedPayload`. */
 export function isProjectRenamedPayload(value: unknown): value is ProjectRenamedPayload {
   return isPlainObject(value) && typeof value.name === 'string' && typeof value.ok === 'boolean'
+}
+
+/** Guard for `ProjectDirtyPayload`. */
+export function isProjectDirtyPayload(value: unknown): value is ProjectDirtyPayload {
+  return isPlainObject(value) && typeof value.dirty === 'boolean'
 }
 
 /** Guard for `WaveformReadyPayload`. */

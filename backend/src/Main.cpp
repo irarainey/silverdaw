@@ -662,9 +662,12 @@ void handleProjectSave(const juce::var& payload, silverdaw::ProjectState& projec
     if (result.wasOk())
     {
         session.currentPath = filePath;
-        // For Save As, fold the file basename into the project name so
-        // the title bar updates without a separate rename round-trip.
-        if (isSaveAs)
+        // If the project still has its default name (Untitled), fold
+        // the file basename in so the title bar reflects the chosen
+        // filename. Once the user has explicitly renamed the project
+        // to anything else we leave their choice alone — Save / Save
+        // As should never silently overwrite a user-chosen name.
+        if (projectState.getName() == silverdaw::ProjectState::kDefaultName)
         {
             const auto stem = juce::File(filePath).getFileNameWithoutExtension();
             if (stem.isNotEmpty())
@@ -672,6 +675,9 @@ void handleProjectSave(const juce::var& payload, silverdaw::ProjectState& projec
                 projectState.setName(stem);
             }
         }
+        // A successful save makes the in-memory state match disk; clear
+        // dirty. `markClean` fires a PROJECT_DIRTY(false) transition.
+        projectState.markClean();
     }
     bridge.broadcast("PROJECT_SAVED", juce::var(p));
     silverdaw::log::info("project",
@@ -874,6 +880,21 @@ int runBackend(int argc, char* argv[])
         std::cerr << "[bridge] failed to start; exiting\n";
         return 1;
     }
+
+    // Bridge is up — wire ProjectState's dirty-flag transitions through
+    // it as `PROJECT_DIRTY { dirty }` envelopes so the renderer can
+    // surface the unsaved-changes indicator and gate New / Open / Quit.
+    // The callback runs on whichever thread caused the transition;
+    // because every ValueTree mutation we perform happens on the JUCE
+    // message thread (via `dispatchBridgeMessage`), the broadcast also
+    // runs there and `BridgeServer::broadcast` is internally locked.
+    projectState.setDirtyChangedCallback(
+        [&bridge](bool dirty)
+        {
+            auto* p = new juce::DynamicObject();
+            p->setProperty("dirty", dirty);
+            bridge.broadcast("PROJECT_DIRTY", juce::var(p));
+        });
 
     PlayheadEmitter emitter(engine, bridge);
     emitter.startTimerHz(kPlayheadUpdateHz);

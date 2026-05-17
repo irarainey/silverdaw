@@ -29,6 +29,7 @@ import {
   isBridgeInboundType,
   isClipAckPayload,
   isPlayheadUpdatePayload,
+  isProjectDirtyPayload,
   isProjectLoadFailedPayload,
   isProjectRenamedPayload,
   isProjectSavedPayload,
@@ -351,6 +352,10 @@ function dispatch(msg: BridgeInboundMessage): void {
 
     case 'PROJECT_SAVED': {
       const notifications = useNotificationsStore()
+      const project = useProjectStore()
+      // Resolve any outstanding saveAndWait Promise so the
+      // unsaved-changes flow in App.vue can proceed.
+      project.notifySaveAck(msg.payload.ok, msg.payload.error)
       if (msg.payload.ok) {
         log.info('bridge', `PROJECT_SAVED path=${msg.payload.filePath}`)
         // Persist the path as "last project" so the next launch reopens
@@ -384,6 +389,12 @@ function dispatch(msg: BridgeInboundMessage): void {
       if (msg.payload.ok) {
         useProjectStore().projectName = msg.payload.name
       }
+      break
+    }
+
+    case 'PROJECT_DIRTY': {
+      useProjectStore().isDirty = msg.payload.dirty
+      log.debug('bridge', `PROJECT_DIRTY dirty=${msg.payload.dirty}`)
       break
     }
 
@@ -501,6 +512,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectLoadFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_RENAMED':
       return isProjectRenamedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_DIRTY':
+      return isProjectDirtyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'WAVEFORM_READY':
       return isWaveformReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:

@@ -17,7 +17,64 @@ const juce::String ProjectState::kDefaultName{"Untitled"};
 
 ProjectState::ProjectState() : root(kProject)
 {
+    // The initial `name=Untitled` write happens BEFORE we attach the
+    // listener so it doesn't count as a user-initiated edit (it's part
+    // of constructing a clean, empty project).
     root.setProperty(kName, kDefaultName, nullptr);
+    root.addListener(this);
+}
+
+ProjectState::~ProjectState()
+{
+    root.removeListener(this);
+}
+
+void ProjectState::markClean()
+{
+    if (!dirty) return;
+    setDirty(false);
+}
+
+void ProjectState::setDirtyChangedCallback(DirtyChangedCallback callback)
+{
+    onDirtyChanged = std::move(callback);
+}
+
+void ProjectState::setDirty(bool d)
+{
+    if (dirty == d) return;
+    dirty = d;
+    if (onDirtyChanged)
+    {
+        onDirtyChanged(d);
+    }
+}
+
+void ProjectState::valueTreePropertyChanged(juce::ValueTree& /*tree*/,
+                                            const juce::Identifier& /*property*/)
+{
+    if (suppressDirtyTransitions) return;
+    setDirty(true);
+}
+
+void ProjectState::valueTreeChildAdded(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/)
+{
+    if (suppressDirtyTransitions) return;
+    setDirty(true);
+}
+
+void ProjectState::valueTreeChildRemoved(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/,
+                                         int /*index*/)
+{
+    if (suppressDirtyTransitions) return;
+    setDirty(true);
+}
+
+void ProjectState::valueTreeChildOrderChanged(juce::ValueTree& /*parent*/, int /*oldIndex*/,
+                                              int /*newIndex*/)
+{
+    if (suppressDirtyTransitions) return;
+    setDirty(true);
 }
 
 juce::String ProjectState::getName() const
@@ -260,13 +317,20 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
     {
         return juce::Result::fail("Expected root <PROJECT> element");
     }
-    // Wipe current contents but keep `root`'s node identity so any
-    // listeners that get attached later survive a load. Undo history is
-    // dropped because undo across a project load makes no sense.
+    // Suppress dirty transitions while we wipe + re-populate `root` —
+    // those listener callbacks would otherwise produce a misleading
+    // "dirty=true" emission for a freshly-loaded (and therefore clean)
+    // project. We restore the listener and explicitly markClean() at
+    // the end so the renderer sees a single, correct transition.
+    suppressDirtyTransitions = true;
     root.removeAllChildren(nullptr);
     root.removeAllProperties(nullptr);
     root.copyPropertiesAndChildrenFrom(newTree, nullptr);
     undoManager.clearUndoHistory();
+    suppressDirtyTransitions = false;
+    // A load is by definition clean (in-memory state matches disk).
+    // Emit a single dirty=false transition if we were dirty going in.
+    markClean();
     return juce::Result::ok();
 }
 

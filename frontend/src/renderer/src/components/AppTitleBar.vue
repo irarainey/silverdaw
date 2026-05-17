@@ -205,7 +205,12 @@ defineExpose({ startRename })
             :title="renameTooltip"
             @dblclick="startRename"
           >
-            {{ displayName }}
+            <span
+              v-if="project.isDirty"
+              class="mr-1 text-zinc-400"
+              aria-label="Unsaved changes"
+              title="Unsaved changes"
+            >•</span>{{ displayName }}
           </button>
           <!-- Pencil affordance — half-opacity until the user hovers
                the project-name region, then fully visible. Clicking

@@ -74,11 +74,10 @@ function openExternal(url: string): void {
   >
     <div
       v-if="open"
-      class="fixed inset-0 z-1100 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm"
+      class="fixed inset-0 z-1100 flex items-center justify-center bg-black/40"
       role="dialog"
       aria-modal="true"
       aria-labelledby="about-title"
-      @click.self="emit('close')"
     >
       <div
         ref="dialogEl"

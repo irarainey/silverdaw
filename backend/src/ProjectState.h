@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <functional>
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
 
@@ -26,19 +28,54 @@ namespace silverdaw
  * `ProjectState` is the structural truth; `AudioEngine` owns the matching
  * audio-graph nodes and is updated in lockstep by the bridge dispatch
  * handlers. Today the engine has one playable audio source per `clipId`;
- * multi-clip-per-track audio playback is Phase 4 work — but the ValueTree
+ * multi-clip-per-track audio playback is Phase 5 work — but the ValueTree
  * already models the right shape so that future change is wire-compatible.
  *
  * Thread model: all methods run on the JUCE message thread, matching the
  * dispatch site in `Main.cpp::dispatchBridgeMessage`. No locking needed.
+ *
+ * Dirty tracking: a `juce::ValueTree::Listener` flips an internal flag
+ * on every mutation (property change, child add/remove/order). The flag
+ * is cleared by `markClean()` (called after load and successful save),
+ * and `setDirtyChangedCallback` lets `Main.cpp` broadcast PROJECT_DIRTY
+ * envelopes on transitions so the renderer's title bar / unsaved-changes
+ * prompt stay in lockstep with the truth.
  */
-class ProjectState
+class ProjectState : public juce::ValueTree::Listener
 {
   public:
     /** Default name applied to a freshly-constructed project. */
     static const juce::String kDefaultName;
 
+    /** Fired when the dirty flag transitions. Set by `Main.cpp` after the bridge exists. */
+    using DirtyChangedCallback = std::function<void(bool dirty)>;
+
     ProjectState();
+    ~ProjectState() override;
+
+    ProjectState(const ProjectState&) = delete;
+    ProjectState& operator=(const ProjectState&) = delete;
+    ProjectState(ProjectState&&) = delete;
+    ProjectState& operator=(ProjectState&&) = delete;
+
+    // ─── Dirty tracking ────────────────────────────────────────────────
+
+    /** True if the project has been mutated since the last load / save / new. */
+    bool isDirty() const noexcept
+    {
+        return dirty;
+    }
+
+    /**
+     * Reset the dirty flag to false. Called after a successful load,
+     * save, or new-project — at which point the in-memory state matches
+     * the on-disk file (or the blank canvas). Fires the dirty-changed
+     * callback if this is an actual transition.
+     */
+    void markClean();
+
+    /** Register a callback fired on every dirty-flag transition. */
+    void setDirtyChangedCallback(DirtyChangedCallback callback);
 
     // ─── Project metadata ──────────────────────────────────────────────
 
@@ -140,8 +177,27 @@ class ProjectState
     juce::ValueTree findTrack(const juce::String& trackId) const;
     juce::ValueTree findClip(const juce::String& clipId) const;
 
+    void valueTreePropertyChanged(juce::ValueTree& /*tree*/,
+                                  const juce::Identifier& /*property*/) override;
+    void valueTreeChildAdded(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/) override;
+    void valueTreeChildRemoved(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/,
+                               int /*index*/) override;
+    void valueTreeChildOrderChanged(juce::ValueTree& /*parent*/, int /*oldIndex*/,
+                                    int /*newIndex*/) override;
+
+    void setDirty(bool d);
+
     juce::ValueTree root;
     juce::UndoManager undoManager;
+    bool dirty{false};
+    /**
+     * Suppresses listener-driven dirty transitions during bulk
+     * mutations we know don't count as user edits — currently used by
+     * `replaceTree` (a project load is by definition clean) and the
+     * default constructor (the initial `name=Untitled` property write).
+     */
+    bool suppressDirtyTransitions{false};
+    DirtyChangedCallback onDirtyChanged;
 
     // ValueTree identifiers — defined once so typos surface at link time
     // rather than as silent zero-property reads on the audio side.

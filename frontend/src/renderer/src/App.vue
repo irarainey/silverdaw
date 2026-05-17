@@ -9,6 +9,7 @@ import NotificationToasts from '@/components/NotificationToasts.vue'
 import BridgeReadyOverlay from '@/components/BridgeReadyOverlay.vue'
 import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
+import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -26,6 +27,11 @@ const appStore = useAppStore()
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
+// Unsaved-changes prompt state. `pendingAfterSave` is the action to
+// run once the user has either saved or chosen to discard their
+// changes. Set when the prompt opens; cleared when it closes.
+const unsavedPromptOpen = ref(false)
+let pendingAfterDiscard: (() => void) | null = null
 // Template ref to the title bar so menu actions can reach into it
 // (specifically `file.renameProject` → AppTitleBar.startRename()).
 const titleBarRef = ref<InstanceType<typeof AppTitleBar> | null>(null)
@@ -131,6 +137,19 @@ function handleMenuAction(action: string): void {
     preferencesOpen.value = true
     return
   }
+  // Quitting / closing the window must work regardless of bridge
+  // state — the user has to be able to give up on a stuck startup.
+  // `project.isDirty` is reliably false until the bridge has
+  // delivered at least one PROJECT_STATE, so the guard is a no-op
+  // in that case anyway.
+  if (action === 'file.exit') {
+    guardAgainstUnsavedChanges(() => window.silverdaw.menuAction('file.exitConfirmed'))
+    return
+  }
+  if (action === 'app.requestClose') {
+    guardAgainstUnsavedChanges(() => window.silverdaw.menuAction('app.confirmClose'))
+    return
+  }
   // Drop any menu action (incl. keyboard shortcut) that arrives before
   // the bridge has delivered its initial PROJECT_STATE — the visible
   // <BridgeReadyOverlay> swallows mouse clicks but accelerators bypass
@@ -148,18 +167,20 @@ function handleMenuAction(action: string): void {
     return
   }
   if (action === 'file.newProject') {
-    project.requestNewProject()
+    guardAgainstUnsavedChanges(() => project.requestNewProject())
     return
   }
   if (action === 'file.openProject') {
-    void window.silverdaw.chooseProjectOpen().then(async (filePath) => {
-      if (!filePath) return
-      // Same allow-list seeding as the auto-open path. The metadata
-      // refresh fired by `applyProjectStateSnapshot` runs as soon as
-      // the backend echoes PROJECT_STATE, so the paths must be on the
-      // whitelist by that point.
-      await window.silverdaw.prepareProjectOpen(filePath)
-      project.requestLoad(filePath)
+    guardAgainstUnsavedChanges(() => {
+      void window.silverdaw.chooseProjectOpen().then(async (filePath) => {
+        if (!filePath) return
+        // Same allow-list seeding as the auto-open path. The metadata
+        // refresh fired by `applyProjectStateSnapshot` runs as soon as
+        // the backend echoes PROJECT_STATE, so the paths must be on the
+        // whitelist by that point.
+        await window.silverdaw.prepareProjectOpen(filePath)
+        project.requestLoad(filePath)
+      })
     })
     return
   }
@@ -186,6 +207,59 @@ function handleMenuAction(action: string): void {
     void titleBarRef.value?.startRename()
     return
   }
+}
+
+/**
+ * Run `proceed` only after the user has either saved or chosen to
+ * discard the current project's unsaved changes. If the project is
+ * already clean, `proceed` runs immediately.
+ *
+ * Used to gate File > New, File > Open, and the app-close path.
+ */
+function guardAgainstUnsavedChanges(proceed: () => void): void {
+  if (!project.isDirty) {
+    proceed()
+    return
+  }
+  pendingAfterDiscard = proceed
+  unsavedPromptOpen.value = true
+}
+
+/**
+ * User picked "Save" in the unsaved-changes prompt. Save the project
+ * (Save vs Save As depending on whether there's already a path) and,
+ * on a successful ack, run the pending action. On failure or cancel
+ * we don't proceed — the user can retry.
+ */
+async function onUnsavedPromptSave(): Promise<void> {
+  unsavedPromptOpen.value = false
+  const next = pendingAfterDiscard
+  pendingAfterDiscard = null
+  if (!next) return
+
+  let filePath = project.currentFilePath
+  let isSaveAs = false
+  if (!filePath) {
+    isSaveAs = true
+    filePath = await window.silverdaw.chooseProjectSaveAs(project.projectName || 'Untitled')
+    if (!filePath) return // user cancelled the Save As dialog → abort
+  }
+
+  const result = await project.saveAndWait(filePath, isSaveAs)
+  if (!result.ok) return // PROJECT_SAVED reported failure; toast is shown by bridgeService
+  next()
+}
+
+function onUnsavedPromptDiscard(): void {
+  unsavedPromptOpen.value = false
+  const next = pendingAfterDiscard
+  pendingAfterDiscard = null
+  next?.()
+}
+
+function onUnsavedPromptCancel(): void {
+  unsavedPromptOpen.value = false
+  pendingAfterDiscard = null
 }
 </script>
 
@@ -218,6 +292,14 @@ function handleMenuAction(action: string): void {
     <PreferencesDialog
       :open="preferencesOpen"
       @close="preferencesOpen = false"
+    />
+
+    <UnsavedChangesDialog
+      :open="unsavedPromptOpen"
+      :project-name="project.projectName"
+      @save="onUnsavedPromptSave"
+      @discard="onUnsavedPromptDiscard"
+      @cancel="onUnsavedPromptCancel"
     />
   </div>
 </template>

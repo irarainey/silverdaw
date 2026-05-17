@@ -150,6 +150,12 @@ function isAllowedAudioPath(filePath: unknown): filePath is string {
 
 let backendProcess: ChildProcess | null = null
 let mainWindow: BrowserWindow | null = null
+/**
+ * Set to true once the renderer has confirmed (after running its
+ * unsaved-changes guard) that the window can close. The `close` event
+ * handler intercepts the first attempt and waits for this flag.
+ */
+let userConfirmedClose = false
 
 // ─── Backend bridge port ────────────────────────────────────────────────────
 // The JUCE backend listens on `ws://127.0.0.1:<bridgePort>`. The port is
@@ -589,9 +595,17 @@ function createWindow(): void {
   mainWindow.on('move', captureWindowState)
   mainWindow.on('maximize', captureWindowState)
   mainWindow.on('unmaximize', captureWindowState)
-  mainWindow.on('close', () => {
+  mainWindow.on('close', (event) => {
     captureWindowState()
     void flushPrefsSave()
+    // First close attempt: hand control to the renderer so it can
+    // prompt for unsaved changes. The renderer either calls
+    // `app.confirmClose` (we flip `userConfirmedClose` and re-trigger
+    // close, which this branch then lets through) or stays put.
+    if (!userConfirmedClose) {
+      event.preventDefault()
+      mainWindow?.webContents.send('menu:action', 'app.requestClose')
+    }
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -636,9 +650,17 @@ function handleMenuAction(action: string): void {
       console.log('[menu] export mixdown (todo)')
       break
     case 'file.exit':
-      // Destroy every window (skips the renderer's close-event handlers) and
-      // exit hard. app.quit() can occasionally stall when a detached devtools
-      // window or pending IPC keeps the event loop busy.
+      // Run through the renderer's unsaved-changes guard. The renderer
+      // either fires `file.exitConfirmed` (proceed with quit) or stays
+      // on the current project.
+      wc.send('menu:action', action)
+      break
+    case 'file.exitConfirmed':
+    case 'app.confirmClose':
+      // Renderer has cleared the guard. Perform the actual quit /
+      // window close. We mark `userConfirmedClose` so the window's
+      // own close-event handler stops intercepting.
+      userConfirmedClose = true
       BrowserWindow.getAllWindows().forEach((w) => {
         if (!w.isDestroyed()) w.destroy()
       })

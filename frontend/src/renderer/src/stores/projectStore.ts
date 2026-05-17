@@ -120,10 +120,25 @@ interface ProjectState {
   currentFilePath: string | null
   /** User-facing project name. `Untitled` for an unsaved project. */
   projectName: string
+  /**
+   * True when the backend's ValueTree has been mutated since the last
+   * load / save / new. Driven by `PROJECT_DIRTY { dirty }` envelopes
+   * and reset to false on every PROJECT_STATE apply (a fresh snapshot
+   * is by definition clean — see `applyProjectStateSnapshot`).
+   */
+  isDirty: boolean
 }
 
 /** Default name shown in the title bar before a project is named or loaded. */
 export const DEFAULT_PROJECT_NAME = 'Untitled'
+
+/**
+ * Single in-flight resolver for `saveAndWait`. Saves are serialised by
+ * the unsaved-changes modal (which stays open until the ack arrives),
+ * so one slot is enough. Module-level rather than store state because
+ * Promise resolvers aren't serialisable into Pinia's reactivity proxy.
+ */
+let pendingSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
 
 export const useProjectStore = defineStore('project', {
   state: (): ProjectState => ({
@@ -131,7 +146,8 @@ export const useProjectStore = defineStore('project', {
     clips: {},
     peaksRevision: 0,
     currentFilePath: null,
-    projectName: DEFAULT_PROJECT_NAME
+    projectName: DEFAULT_PROJECT_NAME,
+    isDirty: false
   }),
 
   getters: {
@@ -538,9 +554,12 @@ export const useProjectStore = defineStore('project', {
       )
       // Adopt the project identity fields up front so any code that reads
       // them during the snapshot apply (e.g. the title bar) sees the
-      // post-load values.
+      // post-load values. A fresh snapshot is by definition clean — any
+      // mutation made AFTER it lands will flip dirty back to true via
+      // a follow-up PROJECT_DIRTY envelope.
       this.currentFilePath = snapshot.filePath
       this.projectName = snapshot.name?.trim() ? snapshot.name : DEFAULT_PROJECT_NAME
+      this.isDirty = false
 
       const library = useLibraryStore()
       // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the
@@ -687,6 +706,41 @@ export const useProjectStore = defineStore('project', {
     requestSaveAs(filePath: string): void {
       log.info('project', `requestSaveAs path=${filePath}`)
       sendBridge('PROJECT_SAVE_AS', { filePath })
+    },
+
+    /**
+     * Promise-returning save that resolves once the backend acks with
+     * `PROJECT_SAVED`. Used by the unsaved-changes prompt to chain
+     * "save → proceed with New/Open/Quit" deterministically. Failure
+     * results carry an error message; the caller surfaces it.
+     */
+    saveAndWait(filePath: string, isSaveAs: boolean): Promise<{ ok: boolean; error?: string }> {
+      // Resolve any previous outstanding wait (its envelope never came
+      // back — could happen on a backend restart). Bias toward unblocking
+      // the UI rather than waiting forever.
+      if (pendingSaveResolver) pendingSaveResolver({ ok: false, error: 'Superseded by a newer save' })
+      const promise = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        pendingSaveResolver = resolve
+      })
+      if (isSaveAs) {
+        sendBridge('PROJECT_SAVE_AS', { filePath })
+      } else {
+        sendBridge('PROJECT_SAVE', { filePath })
+      }
+      return promise
+    },
+
+    /**
+     * Called by `bridgeService` on every PROJECT_SAVED. Resolves any
+     * outstanding `saveAndWait` so the unsaved-changes flow can
+     * proceed. No-op if no wait is pending (a fire-and-forget save
+     * fired by `requestSave` doesn't open a promise).
+     */
+    notifySaveAck(ok: boolean, error?: string): void {
+      if (pendingSaveResolver) {
+        pendingSaveResolver({ ok, error })
+        pendingSaveResolver = null
+      }
     },
 
     /** Send PROJECT_LOAD with the path the user picked in the OS dialog. */
