@@ -527,7 +527,7 @@ int runBackend(int argc, char* argv[])
     // alone debug runs fall back to `<exe-dir>/../.logs/standalone-...`.
     silverdaw::log::initialise(juce::SystemStats::getEnvironmentVariable("SILVERDAW_LOG_DIR", {}));
 
-    const juce::String banner = "Silverdaw Backend v0.1.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
+    const juce::String banner = "Silverdaw Backend v1.0.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
                                 juce::SystemStats::getCpuVendor() + ")";
     std::cout << banner.toStdString() << '\n';
     silverdaw::log::info("main", banner);

@@ -562,13 +562,9 @@ function handleMenuAction(action: string): void {
       void shell.openExternal('https://github.com/irarainey/silverdaw/issues/new')
       break
     case 'help.about':
-      void dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'About Silverdaw',
-        message: 'Silverdaw',
-        detail: `Version 0.1.0\nElectron ${process.versions.electron}\nNode ${process.versions.node}\nChromium ${process.versions.chrome}`,
-        buttons: ['OK']
-      })
+      // Forwarded to the renderer so the in-app About dialog can render in
+      // the same dark Vue UI rather than the native OS message box.
+      wc.send('menu:action', action)
       break
 
     default:
@@ -634,6 +630,30 @@ app.whenReady().then(async () => {
   // appears in argv or in the renderer's HTML — only the trusted preload
   // bridge can fetch it.
   ipcMain.handle('bridge:getToken', () => bridgeToken)
+
+  // Static app / runtime info for the in-app About dialog. Resolved once at
+  // start; never changes for the lifetime of the process.
+  ipcMain.handle('app:getInfo', () => ({
+    appVersion: app.getVersion(),
+    electron: process.versions.electron,
+    chromium: process.versions.chrome,
+    node: process.versions.node
+  }))
+
+  // Open an external URL in the user's default browser. We only forward
+  // http/https — anything else (file:, data:, custom schemes) is dropped.
+  ipcMain.on('app:openExternal', (_evt, url: unknown) => {
+    if (typeof url !== 'string') return
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return
+    void shell.openExternal(parsed.toString())
+  })
+
 
   // Open an audio file via the OS dialog and stream its bytes back to the renderer.
   // Returns null if the user cancels.

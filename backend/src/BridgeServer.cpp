@@ -267,7 +267,7 @@ bool BridgeServer::checkAuthToken(const juce::var& payload) const
 void BridgeServer::sendReadyTo(ix::WebSocket& webSocket)
 {
     auto* obj = new juce::DynamicObject();
-    obj->setProperty("version", "0.1.0");
+    obj->setProperty("version", "1.0.0");
 
     auto* envelope = new juce::DynamicObject();
     envelope->setProperty("type", juce::String("READY"));

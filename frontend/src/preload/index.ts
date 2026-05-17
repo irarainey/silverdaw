@@ -129,7 +129,25 @@ const api = {
    */
   logBatch: (
     entries: ReadonlyArray<{ level: string; tag: string; message: string; timestamp: number }>
-  ): Promise<void> => ipcRenderer.invoke('log:append-batch', entries)
+  ): Promise<void> => ipcRenderer.invoke('log:append-batch', entries),
+  /**
+   * Fetch static runtime info (app version, Electron / Chromium / Node
+   * versions) for the in-app About dialog. Resolved once by main.
+   */
+  getAppInfo: (): Promise<{
+    appVersion: string
+    electron: string
+    chromium: string
+    node: string
+  }> => ipcRenderer.invoke('app:getInfo'),
+  /**
+   * Open a URL in the user's default browser. Main vets the scheme
+   * (only `https:` and `http:` are passed through) before handing it to
+   * `shell.openExternal`.
+   */
+  openExternal: (url: string): void => {
+    ipcRenderer.send('app:openExternal', url)
+  }
 } as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)

@@ -42,6 +42,13 @@ declare global {
       logBatch(
         entries: ReadonlyArray<{ level: string; tag: string; message: string; timestamp: number }>
       ): Promise<void>
+      getAppInfo(): Promise<{
+        appVersion: string
+        electron: string
+        chromium: string
+        node: string
+      }>
+      openExternal(url: string): void
     }
   }
 }

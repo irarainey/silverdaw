@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppTitleBar from '@/components/AppTitleBar.vue'
 import TimelineView from '@/components/TimelineView.vue'
 import TransportBar from '@/components/TransportBar.vue'
@@ -7,6 +7,7 @@ import LibraryPanel from '@/components/LibraryPanel.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import NotificationToasts from '@/components/NotificationToasts.vue'
 import BridgeReadyOverlay from '@/components/BridgeReadyOverlay.vue'
+import AboutDialog from '@/components/AboutDialog.vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -18,6 +19,8 @@ const project = useProjectStore()
 const transport = useTransportStore()
 const ui = useUiStore()
 const library = useLibraryStore()
+
+const aboutOpen = ref(false)
 
 let unsubscribeMenu: (() => void) | null = null
 
@@ -56,6 +59,14 @@ onBeforeUnmount(() => {
 
 function handleMenuAction(action: string): void {
   log.info('menu', `action ${action}`)
+  // The About dialog must remain reachable even before the bridge has
+  // delivered its first PROJECT_STATE — it doesn't touch project state
+  // and users may want to see version / licence info while diagnosing a
+  // backend-startup problem.
+  if (action === 'help.about') {
+    aboutOpen.value = true
+    return
+  }
   // Drop any menu action (incl. keyboard shortcut) that arrives before
   // the bridge has delivered its initial PROJECT_STATE — the visible
   // <BridgeReadyOverlay> swallows mouse clicks but accelerators bypass
@@ -92,6 +103,11 @@ function handleMenuAction(action: string): void {
     <NotificationToasts />
 
     <BridgeReadyOverlay />
+
+    <AboutDialog
+      :open="aboutOpen"
+      @close="aboutOpen = false"
+    />
   </div>
 </template>
 
