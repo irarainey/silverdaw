@@ -80,6 +80,22 @@ try {
     }
 
     # 3. Bundles + installer (electron-vite + electron-builder) ----------
+    # Kill any running instances of the packaged Silverdaw + backend so
+    # electron-builder can wipe the previous `dist/win-unpacked/` tree.
+    # Electron's multi-process model means a single closed UI window can
+    # leave half a dozen helper processes hanging on to file handles
+    # inside that directory; trying to overwrite produces "cannot delete"
+    # mid-build. Cheap to do unconditionally.
+    Write-Section 'Frontend: stop any running packaged Silverdaw'
+    $stale = Get-Process Silverdaw, SilverdawBackend -ErrorAction SilentlyContinue
+    if ($stale) {
+        $stale | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+        Write-Host ("Stopped {0} process(es)" -f $stale.Count)
+    } else {
+        Write-Host 'No running Silverdaw processes.'
+    }
+
     Write-Section 'Frontend: build bundles + NSIS installer'
     pnpm dist
     if ($LASTEXITCODE -ne 0) { throw "pnpm dist failed (exit $LASTEXITCODE)" }

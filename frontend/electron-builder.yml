@@ -19,13 +19,18 @@ directories:
   output: ../dist
 
 # Asar pack of the Electron app itself. Renderer + main + preload bundles
-# all live under `out/` after `electron-vite build`. The LICENSE +
-# third-party notices go next to the binary so the installed app ships them
-# alongside `Silverdaw.exe` (NSIS section below adds them to the installer
-# wizard's "License" page too).
+# all live under `out/` after `electron-vite build`. The `node_modules`
+# entry pulls in production dependencies (music-metadata + its transitive
+# tree); electron-builder automatically filters dev-only packages using
+# package.json `dependencies` vs `devDependencies`, so the asar stays
+# lean. Without an explicit `node_modules` entry the main bundle's
+# `require('music-metadata')` (and friends like `ieee754` underneath it)
+# fail to resolve in the packaged app — `externalizeDepsPlugin()` in
+# electron-vite keeps those imports as runtime requires.
 files:
   - out/**
   - resources/icons/**
+  - node_modules/**
   - package.json
 
 # The JUCE backend lives outside the renderer bundle. Build it Release first
