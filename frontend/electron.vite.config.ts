@@ -29,6 +29,13 @@ export default defineConfig({
   },
   renderer: {
     root: 'src/renderer',
+    // Serve the icons folder as a Vite public dir so `index.html` can
+    // load the logo before any Vue / Tailwind code has evaluated — the
+    // static splash inside `<div id="app">` needs the image at a
+    // fetchable URL from the very first paint, and the standard
+    // `@resources` alias only works for code that goes through the
+    // module graph.
+    publicDir: resolve(__dirname, 'resources/icons'),
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src/renderer/src'),

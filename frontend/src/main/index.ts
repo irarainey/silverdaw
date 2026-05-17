@@ -586,8 +586,6 @@ function createWindow(): void {
   // now gives us the right "double-click title bar → restore" target.
   if (prefs.window.maximized) mainWindow.maximize()
 
-  mainWindow.show()
-
   // Persist window position / size / maximized state. `resize` and `move`
   // fire continuously while the user drags, so saves are debounced inside
   // `captureWindowState`.
@@ -606,6 +604,16 @@ function createWindow(): void {
       event.preventDefault()
       mainWindow?.webContents.send('menu:action', 'app.requestClose')
     }
+  })
+
+  // Hold the window invisible until index.html has been parsed and the
+  // first paint is ready. Otherwise `show()` reveals a blank zinc-900
+  // pane (the BrowserWindow.backgroundColor) for the few hundred ms
+  // it takes Vite's dev server to deliver index.html — by deferring
+  // until ready-to-show, the very first frame already contains the
+  // static splash inside <div id="app">.
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show()
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {

@@ -20,9 +20,72 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*"
     />
     <title>Silverdaw</title>
+    <style>
+      /*
+        Static splash: visible from the first paint of `index.html` and
+        kept on screen until `createApp(App).mount('#app')` replaces the
+        container's children with the Vue tree. The Vue-side
+        `BridgeReadyOverlay` is styled to match exactly, so the handoff
+        is invisible to the user — they see one consistent loading
+        screen from `BrowserWindow` open through the bridge handshake.
+      */
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #18181b; /* zinc-900 — matches BridgeReadyOverlay + title-bar overlay */
+        color: #e4e4e7;      /* zinc-200 */
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+        z-index: 999;
+      }
+      .splash img {
+        width: 128px;
+        height: 128px;
+        user-select: none;
+        -webkit-user-drag: none;
+      }
+      .splash-spinner {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 2px solid #3f3f46;     /* zinc-700 */
+        border-top-color: #f4f4f5;     /* zinc-100 */
+        animation: splash-spin 800ms linear infinite;
+      }
+      .splash-text {
+        font-size: 13px;
+        font-weight: 500;
+        color: #e4e4e7;
+      }
+      @keyframes splash-spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
   </head>
-  <body class="bg-zinc-900 text-zinc-100">
-    <div id="app"></div>
+  <body>
+    <div id="app">
+      <!--
+        Replaced by Vue's render output when `createApp(App).mount('#app')`
+        runs. Until then, this static markup gives the user something
+        meaningful to look at instead of the empty Electron canvas
+        between window-open and the first React/Vue paint.
+      -->
+      <div class="splash">
+        <img src="/256x256.png" alt="" aria-hidden="true" />
+        <div class="splash-spinner" aria-hidden="true"></div>
+        <div class="splash-text">Loading Silverdaw…</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

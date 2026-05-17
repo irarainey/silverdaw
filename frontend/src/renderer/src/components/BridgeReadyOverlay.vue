@@ -49,7 +49,7 @@ function quit(): void {
   >
     <div
       v-if="!transport.bridgeReady"
-      class="fixed inset-0 z-[1000] flex items-center justify-center bg-zinc-950/85 backdrop-blur-sm"
+      class="fixed inset-0 z-1000 flex items-center justify-center bg-zinc-900"
       role="status"
       aria-live="polite"
       :aria-busy="transport.bridgeFailureMessage === null"
