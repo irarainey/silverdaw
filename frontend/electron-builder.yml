@@ -50,6 +50,11 @@ win:
         - x64
   icon: resources/icons/icon.ico
   artifactName: ${productName}-Setup-${version}.${ext}
+  # Shown in Add/Remove Programs, SmartScreen prompts, and the
+  # uninstaller header. Without this electron-builder falls back to
+  # whatever it can scrape from package.json `author`, which often
+  # leaves the publisher column blank.
+  publisherName: Ira Rainey
 
 nsis:
   oneClick: false

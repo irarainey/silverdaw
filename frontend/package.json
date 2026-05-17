@@ -2,6 +2,9 @@
   "name": "silverdaw",
   "version": "1.0.0",
   "description": "A remix-first DAW",
+  "author": {
+    "name": "Ira Rainey"
+  },
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
