@@ -44,30 +44,4 @@ struct PeaksResult
 PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& formatManager,
                          int peaksPerSecond = kDefaultPeaksPerSecond);
 
-/**
- * Pack a `PeaksResult` into one or more binary `WAVEFORM_DATA` wire
- * frames. A single ~500 KB frame stalls the IXWebSocket I/O loop on
- * Windows (the write monopolises the loop and incoming frames sit
- * unprocessed for ~indefinitely), so we split into ≤32 KB payloads and
- * the renderer accumulates by `(clipId, chunkIndex)`. Even one-chunk
- * payloads use the multi-frame protocol so the renderer only has one
- * code path.
- *
- * Frame layout (each chunk):
- *
- *   | u32 LE: jsonLen | jsonLen bytes UTF-8 JSON header | int16 LE peaks slice |
- *
- * JSON header for every chunk:
- *
- *   { "type":"WAVEFORM_DATA", "clipId":..., "sampleRate":...,
- *     "peaksPerSecond":..., "peakCount":TOTAL, "format":"int16le",
- *     "chunkIndex":N, "chunkCount":M, "chunkOffset":INT16_OFFSET }
- *
- *   - `peakCount` is total peaks across all chunks (so renderer can
- *     pre-allocate before any chunk arrives).
- *   - `chunkOffset` is the int16 element offset within the assembled
- *     buffer where this chunk's payload should be written.
- */
-std::vector<std::string> encodeWaveformFrames(const juce::String& clipId, const PeaksResult& result);
-
 } // namespace silverdaw::waveform

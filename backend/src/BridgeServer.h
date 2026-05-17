@@ -107,16 +107,6 @@ class BridgeServer
      */
     void broadcast(const juce::String& type, const juce::var& payload = juce::var());
 
-    /**
-     * Broadcast a binary frame to all currently authenticated clients.
-     * The frame bytes are sent verbatim — typically the layout produced
-     * by `silverdaw::waveform::encodeWaveformFrame` (length-prefixed JSON
-     * header + raw payload). Used for bulk data planes (waveform peaks
-     * today, stems / previews later) where JSON serialisation cost is
-     * prohibitive.
-     */
-    void broadcastBinary(const std::string& frameBytes);
-
     /** Number of currently-connected WebSocket clients (authenticated or not). */
     std::size_t getClientCount() const;
 

@@ -54,6 +54,11 @@ PeaksCache::PeaksCache()
     }
 }
 
+juce::File PeaksCache::getCacheFilePath(const juce::File& sourceFile, int peaksPerSecond) const
+{
+    return cacheFileFor(sourceFile, peaksPerSecond);
+}
+
 juce::File PeaksCache::cacheFileFor(const juce::File& sourceFile, int peaksPerSecond) const
 {
     // Stable key: full path + mtime + size + peaks/s. Any of those

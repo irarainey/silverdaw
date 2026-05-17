@@ -61,9 +61,7 @@ scripts/                 Dev-shell + clang-tidy helpers (PowerShell)
 
 ## Bridge protocol
 
-The bridge carries two physical frame types:
-
-**Text frames** — JSON control plane:
+The bridge is **text only**. Every envelope is a JSON `{ type, payload }` frame:
 
 ```json
 { "type": "TRANSPORT_PLAY" }
@@ -80,25 +78,16 @@ The bridge carries two physical frame types:
 - After AUTH succeeds the backend sends `PROJECT_STATE` exactly once (full snapshot of tracks +
   clips). The renderer treats itself as an additive mirror of that snapshot.
 
-**Binary frames** — bulk data plane (length-prefixed JSON header + raw bytes):
+**Bulk data goes via disk, never via the socket.** When the backend has new waveform peaks
+ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate }`
+envelope. The cache file at `cachePath` (under `%APPDATA%/Silverdaw/peaks/`) holds the
+peaks themselves; the renderer reads it via main's `peaks:readCacheFile` IPC and parses the
+24-byte header + float32 payload locally. This mirrors how the design plan already treats
+audio files, stems and mixdowns — the WebSocket carries control plane, the filesystem
+carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight text-only path it was
+designed for.
 
-```text
-| u32 LE: jsonHeaderLen | jsonHeaderLen UTF-8 bytes | raw payload |
-```
-
-Today the only binary envelope is `WAVEFORM_DATA`. Header fields:
-
-```json
-{ "type": "WAVEFORM_DATA", "clipId": "...", "sampleRate": 44100, "peaksPerSecond": 200,
-  "peakCount": 63324, "format": "int16le",
-  "chunkIndex": 3, "chunkCount": 8, "chunkOffset": 49152 }
-```
-
-Peaks are int16-quantised and chunked at ≤32 KB per frame with a 2 ms yield between sends,
-which keeps the IXWebSocket I/O loop responsive to renderer → backend reads even during a
-post-reconnect rehydrate that ships many chunks back-to-back.
-
-The full catalogue (text + binary, both directions) lives in
+The full envelope catalogue lives in
 [`frontend/src/shared/bridge-protocol.ts`](frontend/src/shared/bridge-protocol.ts) with TS
 discriminated unions and runtime guards. The renderer dispatches inbound messages in
 [`frontend/src/renderer/src/lib/bridgeService.ts`](frontend/src/renderer/src/lib/bridgeService.ts);

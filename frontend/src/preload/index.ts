@@ -172,6 +172,14 @@ const api = {
    */
   prepareProjectOpen: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke('project:prepareOpen', filePath),
+  /**
+   * Read a peaks-cache file (`<APPDATA>/Silverdaw/peaks/<hash>.peaks`)
+   * by absolute path. Resolves to the raw bytes or null if the path is
+   * outside the cache directory or unreadable. Used by the renderer's
+   * `WAVEFORM_READY` handler — peaks bytes never cross the WebSocket.
+   */
+  readPeaksCacheFile: (cachePath: string): Promise<ArrayBuffer | null> =>
+    ipcRenderer.invoke('peaks:readCacheFile', cachePath),
   // ─── Debug toggle ──────────────────────────────────────────────────────
   /**
    * Resolve the debug flag sampled at startup. This is the value that

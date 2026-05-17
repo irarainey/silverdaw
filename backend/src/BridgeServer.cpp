@@ -320,32 +320,4 @@ std::size_t BridgeServer::getClientCount() const
     return clients.size();
 }
 
-void BridgeServer::broadcastBinary(const std::string& frameBytes)
-{
-    if (!running.load() || frameBytes.empty())
-    {
-        return;
-    }
-    int deliveredTo = 0;
-    int skippedNoAuth = 0;
-    {
-        std::lock_guard<std::mutex> lock(clientsMutex);
-        for (const auto& [_, info] : clients)
-        {
-            if (info.authenticated && info.socket != nullptr)
-            {
-                info.socket->sendBinary(frameBytes);
-                ++deliveredTo;
-            }
-            else
-            {
-                ++skippedNoAuth;
-            }
-        }
-    }
-    silverdaw::log::info("bridge", "broadcastBinary bytes=" + juce::String(static_cast<int>(frameBytes.size())) +
-                                       " delivered=" + juce::String(deliveredTo) +
-                                       " skipped=" + juce::String(skippedNoAuth));
-}
-
 } // namespace silverdaw

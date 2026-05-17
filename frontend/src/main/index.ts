@@ -1120,6 +1120,37 @@ app.whenReady().then(async () => {
     }
   })
 
+  /**
+   * Read a peaks cache file from `%APPDATA%/Silverdaw/peaks/`. The
+   * backend writes peaks to that directory and sends the renderer a
+   * `WAVEFORM_READY { cachePath }` envelope; the renderer fetches the
+   * bytes via this IPC and parses the header + float32 payload locally.
+   *
+   * Path validation: must canonicalise into the peaks cache directory
+   * exactly (no symlinks, no traversal). Anything else is refused —
+   * even a compromised renderer can only read files this main process
+   * actively produced.
+   */
+  const peaksCacheDir = pathResolve(app.getPath('appData'), 'Silverdaw', 'peaks')
+  ipcMain.handle('peaks:readCacheFile', async (_evt, value: unknown): Promise<ArrayBuffer | null> => {
+    if (typeof value !== 'string' || value.length === 0) return null
+    const canonical = pathResolve(value)
+    if (!canonical.toLowerCase().startsWith(peaksCacheDir.toLowerCase() + '\\') &&
+        canonical.toLowerCase() !== peaksCacheDir.toLowerCase()) {
+      console.warn('[peaks:readCacheFile] refused path outside cache dir:', canonical)
+      return null
+    }
+    try {
+      const buf = await readFile(canonical)
+      // Return as a fresh ArrayBuffer so the structured-clone IPC hop
+      // delivers a clean, contiguous buffer to the renderer.
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+    } catch (err) {
+      console.warn('[peaks:readCacheFile] read failed:', canonical, err)
+      return null
+    }
+  })
+
   // Pick the WebSocket port the backend will listen on. When the dev
   // env var is set we honour it as-is (developer intent); otherwise we
   // probe a small range starting at the default port so a leftover

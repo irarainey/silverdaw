@@ -10,7 +10,8 @@ import {
   isReadyPayload,
   isTrackAddedPayload,
   isTrackGainAppliedPayload,
-  isTrackRemovedPayload
+  isTrackRemovedPayload,
+  isWaveformReadyPayload
 } from './bridge-protocol'
 
 describe('isBridgeInboundType', () => {
@@ -26,7 +27,8 @@ describe('isBridgeInboundType', () => {
       'TRACK_GAIN_APPLIED',
       'PROJECT_SAVED',
       'PROJECT_LOAD_FAILED',
-      'PROJECT_RENAMED'
+      'PROJECT_RENAMED',
+      'WAVEFORM_READY'
     ]) {
       expect(isBridgeInboundType(t)).toBe(true)
     }
@@ -225,5 +227,32 @@ describe('isProjectRenamedPayload', () => {
   it('rejects wrong-typed fields', () => {
     expect(isProjectRenamedPayload({ name: 'x' })).toBe(false)
     expect(isProjectRenamedPayload({ name: 1, ok: true })).toBe(false)
+  })
+})
+
+describe('isWaveformReadyPayload', () => {
+  it('accepts a well-shaped payload', () => {
+    expect(
+      isWaveformReadyPayload({
+        clipId: 'c1',
+        cachePath: 'C:/x/y.peaks',
+        peakCount: 1000,
+        peaksPerSecond: 200,
+        sampleRate: 44100
+      })
+    ).toBe(true)
+  })
+
+  it('rejects missing or wrong-typed fields', () => {
+    expect(isWaveformReadyPayload({ clipId: 'c1' })).toBe(false)
+    expect(
+      isWaveformReadyPayload({
+        clipId: 'c1',
+        cachePath: '/x',
+        peakCount: '1000',
+        peaksPerSecond: 200,
+        sampleRate: 44100
+      })
+    ).toBe(false)
   })
 })

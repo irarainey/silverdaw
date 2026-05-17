@@ -55,6 +55,7 @@ declare global {
       chooseProjectOpen(): Promise<string | null>
       chooseProjectSaveAs(defaultName: string): Promise<string | null>
       prepareProjectOpen(filePath: string): Promise<boolean>
+      readPeaksCacheFile(cachePath: string): Promise<ArrayBuffer | null>
       getStartupDebugEnabled(): Promise<boolean>
       getDebugEnabled(): Promise<boolean>
       setDebugEnabled(value: boolean): void

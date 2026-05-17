@@ -230,6 +230,25 @@ export interface ProjectRenamedPayload {
   ok: boolean
 }
 
+/**
+ * Backend notification that a fresh on-disk peaks cache file is ready
+ * for `clipId`. The renderer reads the file directly via main's
+ * `readPeaksCacheFile` IPC — peaks bytes are NOT streamed over the
+ * WebSocket (that approach hit recurring IXWebSocket I/O-loop
+ * starvation issues with concurrent peak deliveries). The cache file
+ * layout is fixed: a 24-byte header followed by `peakCount * 2`
+ * little-endian float32 peak values (`min, max, min, max, …`).
+ */
+export interface WaveformReadyPayload {
+  clipId: string
+  /** Absolute path of the cache file under `%APPDATA%/Silverdaw/peaks/`. */
+  cachePath: string
+  /** Number of (min, max) pairs in the file (NOT bytes, NOT individual floats). */
+  peakCount: number
+  peaksPerSecond: number
+  sampleRate: number
+}
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PROJECT_STATE: ProjectStatePayload
@@ -242,6 +261,7 @@ export interface BridgeInboundMap {
   PROJECT_SAVED: ProjectSavedPayload
   PROJECT_LOAD_FAILED: ProjectLoadFailedPayload
   PROJECT_RENAMED: ProjectRenamedPayload
+  WAVEFORM_READY: WaveformReadyPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -276,7 +296,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_GAIN_APPLIED',
   'PROJECT_SAVED',
   'PROJECT_LOAD_FAILED',
-  'PROJECT_RENAMED'
+  'PROJECT_RENAMED',
+  'WAVEFORM_READY'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -365,6 +386,18 @@ export function isProjectLoadFailedPayload(value: unknown): value is ProjectLoad
 /** Guard for `ProjectRenamedPayload`. */
 export function isProjectRenamedPayload(value: unknown): value is ProjectRenamedPayload {
   return isPlainObject(value) && typeof value.name === 'string' && typeof value.ok === 'boolean'
+}
+
+/** Guard for `WaveformReadyPayload`. */
+export function isWaveformReadyPayload(value: unknown): value is WaveformReadyPayload {
+  return (
+    isPlainObject(value) &&
+    typeof value.clipId === 'string' &&
+    typeof value.cachePath === 'string' &&
+    typeof value.peakCount === 'number' &&
+    typeof value.peaksPerSecond === 'number' &&
+    typeof value.sampleRate === 'number'
+  )
 }
 
 /** Guard for `TrackRemovedPayload`. */

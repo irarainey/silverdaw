@@ -13,16 +13,13 @@
 // messages are validated by `isBridgeInboundType` + the per-arm payload
 // guards before they reach the Pinia stores.
 //
-// Two physical frame types:
-//
-//   - Text frames carry JSON envelopes (control plane: commands, acks,
-//     PROJECT_STATE, PLAYHEAD_UPDATE, …).
-//   - Binary frames carry length-prefixed JSON header + raw bytes payload
-//     (data plane: WAVEFORM_DATA today; stems / previews later). Layout:
-//
-//         | u32 LE: jsonLen | jsonLen UTF-8 bytes | raw bytes |
-//
-//     Demuxed in `dispatchBinaryFrame` below.
+// **Text only.** Every envelope is a JSON `{ type, payload }` text frame.
+// Bulk data (peaks today, stems / previews later) is delivered via the
+// on-disk cache and a small "ready" envelope pointing at the cache path —
+// see `WAVEFORM_READY` and `loadPeaksFromCache` below. Treating the
+// WebSocket as a control plane only sidesteps the IXWebSocket I/O-loop
+// starvation issues we hit when bulk frames competed with control traffic
+// for the same single-threaded loop on Windows.
 
 import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
@@ -40,10 +37,12 @@ import {
   isTrackAddedPayload,
   isTrackGainAppliedPayload,
   isTrackRemovedPayload,
+  isWaveformReadyPayload,
   type BridgeInboundMessage,
   type BridgeInboundType,
   type BridgeOutboundArgs,
-  type BridgeOutboundType
+  type BridgeOutboundType,
+  type WaveformReadyPayload
 } from '@shared/bridge-protocol'
 
 const BRIDGE_HOST = '127.0.0.1'
@@ -161,9 +160,6 @@ export function connect(): void {
 function openSocket(conn: BridgeConnection): void {
   const { url, token } = conn
   const ws = new WebSocket(url)
-  // Binary frames (WAVEFORM_DATA and friends) deliver as ArrayBuffer so
-  // the demuxer can slice them without a Blob -> arrayBuffer round trip.
-  ws.binaryType = 'arraybuffer'
   socket = ws
 
   ws.addEventListener('open', () => {
@@ -194,8 +190,10 @@ function openSocket(conn: BridgeConnection): void {
   })
 
   ws.addEventListener('message', (e) => {
-    if (e.data instanceof ArrayBuffer) {
-      dispatchBinaryFrame(e.data)
+    // Text-only protocol: see file header. Any binary frame here is a
+    // protocol violation and is logged + dropped.
+    if (typeof e.data !== 'string') {
+      console.warn('[bridge] unexpected non-text frame; dropping', e.data)
       return
     }
     let raw: unknown
@@ -389,9 +387,72 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'WAVEFORM_READY': {
+      // Backend has finished writing the peaks cache file. Pull the
+      // bytes from disk via main's IPC and dequantise into the project
+      // store. Bulk data deliberately bypasses the WebSocket — see
+      // file header for the rationale.
+      void loadPeaksFromCache(msg.payload)
+      break
+    }
+
     default:
       assertNever(msg)
   }
+}
+
+/**
+ * Cache-file binary layout (mirrors `backend/src/PeaksCache.cpp::CacheHeader`):
+ *
+ *   bytes  0..3   u32 LE magic       — 0x53445057 ('SDPW')
+ *   bytes  4..7   u32 LE version     — 1
+ *   bytes  8..11  u32 LE peaksPerSec
+ *   bytes 12..15  u32 LE peakCount   — (min, max) pair count
+ *   bytes 16..23  f64 LE sampleRate
+ *   bytes 24..    peakCount * 2 * f32 LE peak values, alternating min, max
+ */
+const PEAKS_FILE_MAGIC = 0x53445057
+const PEAKS_FILE_HEADER_SIZE = 24
+
+async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise<void> {
+  const { clipId, cachePath, peakCount, sampleRate } = payload
+  let buffer: ArrayBuffer | null
+  try {
+    buffer = await window.silverdaw.readPeaksCacheFile(cachePath)
+  } catch (err) {
+    log.warn('bridge', `WAVEFORM_READY read failed clipId=${clipId}: ${String(err)}`)
+    return
+  }
+  if (!buffer) {
+    log.warn('bridge', `WAVEFORM_READY no data clipId=${clipId} cachePath=${cachePath}`)
+    return
+  }
+  if (buffer.byteLength < PEAKS_FILE_HEADER_SIZE) {
+    log.warn('bridge', `WAVEFORM_READY short file clipId=${clipId} bytes=${buffer.byteLength}`)
+    return
+  }
+  const view = new DataView(buffer)
+  const magic = view.getUint32(0, /* littleEndian */ true)
+  if (magic !== PEAKS_FILE_MAGIC) {
+    log.warn('bridge', `WAVEFORM_READY bad magic clipId=${clipId} magic=0x${magic.toString(16)}`)
+    return
+  }
+  const floatCount = peakCount * 2
+  const expectedBytes = PEAKS_FILE_HEADER_SIZE + floatCount * Float32Array.BYTES_PER_ELEMENT
+  if (buffer.byteLength < expectedBytes) {
+    log.warn(
+      'bridge',
+      `WAVEFORM_READY size mismatch clipId=${clipId} got=${buffer.byteLength} expected>=${expectedBytes}`
+    )
+    return
+  }
+  // Slice + copy into a fresh Float32Array so it isn't backed by the
+  // raw IPC buffer (which the Pinia store would otherwise hold for the
+  // lifetime of the clip — multi-MB live retention for every project).
+  const view32 = new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, floatCount)
+  const peaks = new Float32Array(view32)
+  useProjectStore().setClipPeaks(clipId, peaks, sampleRate)
+  log.info('bridge', `WAVEFORM_READY clipId=${clipId} peaks=${peakCount}`)
 }
 
 function assertNever(value: never): never {
@@ -440,6 +501,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectLoadFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_RENAMED':
       return isProjectRenamedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'WAVEFORM_READY':
+      return isWaveformReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }
@@ -452,127 +515,4 @@ function payloadMismatch(type: BridgeInboundType, payload: unknown): null {
 
 function assertNeverType(value: never): never {
   throw new Error(`[bridge] unhandled inbound envelope type: ${String(value)}`)
-}
-
-/**
- * In-flight chunked WAVEFORM_DATA frames keyed by clipId. Each entry
- * pre-allocates an Int16Array sized to the announced total peak count
- * and tracks which chunks have arrived. When the final chunk lands we
- * dequantise to Float32 and call `setClipPeaks` once.
- *
- * Map entries are dropped after assembly; if a later WAVEFORM_DATA for
- * the same clipId arrives (e.g. the user re-imports the same file), a
- * fresh entry is created.
- */
-interface PendingWaveform {
-  peakCount: number
-  sampleRate: number
-  chunkCount: number
-  receivedMask: boolean[]
-  receivedChunks: number
-  buffer: Int16Array
-}
-const pendingWaveforms = new Map<string, PendingWaveform>()
-
-/**
- * Binary frame layout (see file header):
- *
- *   | u32 LE: headerLen | headerLen UTF-8 bytes (JSON) | int16 LE payload slice |
- *
- * Today the only inbound binary envelope is `WAVEFORM_DATA`, which is
- * chunked so a single clip's peaks arrive across N small frames. See
- * `backend/src/Waveform.cpp::encodeWaveformFrames` for the producer
- * side; the multi-frame protocol is what prevents IXWebSocket's I/O
- * loop from stalling on a single oversized binary send.
- */
-function dispatchBinaryFrame(buffer: ArrayBuffer): void {
-  if (buffer.byteLength < 4) {
-    console.warn('[bridge] binary frame too short to contain header length', buffer.byteLength)
-    return
-  }
-  const view = new DataView(buffer)
-  const headerLen = view.getUint32(0, true /* little-endian */)
-  if (headerLen === 0 || headerLen > buffer.byteLength - 4) {
-    console.warn('[bridge] binary frame header length out of range', headerLen, buffer.byteLength)
-    return
-  }
-  const headerBytes = new Uint8Array(buffer, 4, headerLen)
-  let header: unknown
-  try {
-    header = JSON.parse(new TextDecoder().decode(headerBytes))
-  } catch (err) {
-    console.warn('[bridge] binary frame header is not valid JSON', err)
-    return
-  }
-  if (typeof header !== 'object' || header === null) {
-    console.warn('[bridge] binary frame header is not an object', header)
-    return
-  }
-  const h = header as Record<string, unknown>
-  if (h.type !== 'WAVEFORM_DATA') {
-    console.warn('[bridge] unknown binary frame type', h.type)
-    return
-  }
-  if (
-    typeof h.clipId !== 'string' ||
-    typeof h.peakCount !== 'number' ||
-    typeof h.chunkIndex !== 'number' ||
-    typeof h.chunkCount !== 'number' ||
-    typeof h.chunkOffset !== 'number'
-  ) {
-    console.warn('[bridge] WAVEFORM_DATA header missing required fields', h)
-    return
-  }
-  const payloadOffset = 4 + headerLen
-  const payloadBytes = buffer.byteLength - payloadOffset
-  if (payloadBytes % 2 !== 0) {
-    console.warn('[bridge] WAVEFORM_DATA payload not a multiple of 2 bytes', payloadBytes)
-    return
-  }
-  const chunk = new Int16Array(buffer.slice(payloadOffset))
-
-  const clipId = h.clipId
-  const totalInts = h.peakCount * 2
-
-  let pending = pendingWaveforms.get(clipId)
-  // Reset the accumulator if the announced size has changed (e.g. file
-  // re-imported with different length); use the latest header's
-  // metadata.
-  if (!pending || pending.peakCount !== h.peakCount || pending.chunkCount !== h.chunkCount) {
-    pending = {
-      peakCount: h.peakCount,
-      sampleRate: typeof h.sampleRate === 'number' ? h.sampleRate : 0,
-      chunkCount: h.chunkCount,
-      receivedMask: new Array(h.chunkCount).fill(false) as boolean[],
-      receivedChunks: 0,
-      buffer: new Int16Array(totalInts)
-    }
-    pendingWaveforms.set(clipId, pending)
-  }
-
-  if (h.chunkOffset + chunk.length > totalInts) {
-    console.warn('[bridge] WAVEFORM_DATA chunk overruns buffer', h)
-    return
-  }
-  pending.buffer.set(chunk, h.chunkOffset)
-  if (!pending.receivedMask[h.chunkIndex]) {
-    pending.receivedMask[h.chunkIndex] = true
-    pending.receivedChunks++
-  }
-  log.debug(
-    'bridge',
-    `recv WAVEFORM_DATA clipId=${clipId} chunk=${h.chunkIndex + 1}/${h.chunkCount} bytes=${buffer.byteLength}`
-  )
-
-  if (pending.receivedChunks < pending.chunkCount) return
-
-  // All chunks in — dequantise int16 [-32767, 32767] → float32 [-1, 1]
-  // and hand to the project store. The backend clamped before quantising
-  // so we don't need to clamp here.
-  const peaks = new Float32Array(totalInts)
-  const inv = 1 / 32767
-  for (let i = 0; i < totalInts; i++) peaks[i] = pending.buffer[i]! * inv
-  pendingWaveforms.delete(clipId)
-  log.info('bridge', `assembled WAVEFORM_DATA clipId=${clipId} peaks=${peaks.length / 2}`)
-  useProjectStore().setClipPeaks(clipId, peaks, pending.sampleRate)
 }

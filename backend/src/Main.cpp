@@ -11,7 +11,6 @@
 #include <csignal>
 #include <iostream>
 #include <juce_events/juce_events.h>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -220,16 +219,22 @@ std::optional<double> tryGetNumber(const juce::var& payload, const char* key)
 }
 
 /**
- * Compute or load peaks for `filePath` and broadcast a binary
- * `WAVEFORM_DATA` frame to all authenticated clients. Designed to be
- * called from a `juce::ThreadPool` job — does its own disk I/O, never
- * touches the message thread, and uses `BridgeServer::broadcastBinary`
- * which is mutex-guarded so it's safe to call from any thread.
+ * Compute or load peaks for `filePath` and notify clients that a fresh
+ * cache file is on disk via a tiny `WAVEFORM_READY` text envelope. The
+ * renderer reads the on-disk bytes via main's IPC — bulk data never
+ * crosses the WebSocket. This is the architectural counterpart to how
+ * the design plan already treats audio files / stems / mixdowns:
+ * "Disk only: the backend sends file paths; the frontend never receives
+ * raw audio data over the socket."
  *
- * Cache lookup first; on miss, compute + persist. The bridge broadcasts
- * the same wire bytes either way. An empty result (decode failure) is
- * NOT broadcast — silent failure means the renderer keeps drawing the
- * empty placeholder until the user retries or the file becomes readable.
+ * Designed to be called from a `juce::ThreadPool` job — disk I/O only,
+ * never touches the message thread, and `BridgeServer::broadcast` is
+ * mutex-guarded internally.
+ *
+ * Cache lookup first; on miss, compute + persist. An empty result
+ * (decode failure) is NOT broadcast — silent failure means the renderer
+ * keeps drawing the empty placeholder until the user retries or the
+ * file becomes readable.
  */
 void produceAndBroadcastPeaks(const juce::String& clipId, const juce::File& filePath,
                               silverdaw::AudioEngine& engine, const silverdaw::PeaksCache& cache,
@@ -252,31 +257,22 @@ void produceAndBroadcastPeaks(const juce::String& clipId, const juce::File& file
         silverdaw::log::warn("peaksjob", "no peaks produced for clipId=" + clipId);
         return;
     }
-    const auto frames = silverdaw::waveform::encodeWaveformFrames(clipId, result);
 
-    // Serialise the chunk-burst across ALL peaks jobs running on the
-    // worker pool. The per-job 2 ms inter-chunk yield is only sufficient
-    // to keep the IXWebSocket I/O loop drained if exactly one job is
-    // sending at a time; with two jobs (e.g. reloading a project that
-    // has two clips, both cache-hits delivered in parallel) the
-    // combined ~40-chunk burst at the doubled rate would starve the
-    // read side and silently freeze inbound traffic — including
-    // TRANSPORT_PLAY clicks the user makes seconds later. The mutex
-    // guarantees only one job is mid-send at any time; the 2 ms yields
-    // inside that job still give the I/O loop room to read.
-    static std::mutex peakBroadcastMutex;
-    std::lock_guard<std::mutex> lock(peakBroadcastMutex);
-    for (std::size_t i = 0; i < frames.size(); ++i)
-    {
-        bridge.broadcastBinary(frames[i]);
-        // Yield briefly between chunks so IXWebSocket's per-connection
-        // I/O thread can drain reads from the renderer between writes.
-        if (i + 1 < frames.size())
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-    }
-    silverdaw::log::info("peaksjob", "done clipId=" + clipId + " chunks=" + juce::String(static_cast<int>(frames.size())) +
+    // Build a small JSON envelope. `peakCount` is the number of (min,max)
+    // pairs — the renderer reads `peakCount * 2 * sizeof(float)` bytes
+    // from the file after the 24-byte header. Same layout the cache
+    // itself uses (see `PeaksCache.cpp::CacheHeader`).
+    const auto cacheFile = cache.getCacheFilePath(filePath, kPeaksPerSecond);
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("clipId", clipId);
+    obj->setProperty("cachePath", cacheFile.getFullPathName());
+    obj->setProperty("peakCount", static_cast<int>(result.peaks.size() / 2U));
+    obj->setProperty("peaksPerSecond", kPeaksPerSecond);
+    obj->setProperty("sampleRate", result.sampleRate);
+    bridge.broadcast("WAVEFORM_READY", juce::var(obj));
+
+    silverdaw::log::info("peaksjob", "done clipId=" + clipId + " peaks=" +
+                                          juce::String(static_cast<int>(result.peaks.size() / 2U)) +
                                           (fromCache ? " (cache hit)" : " (computed)"));
 }
 

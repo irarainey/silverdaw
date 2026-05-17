@@ -45,6 +45,15 @@ class PeaksCache
      */
     void store(const juce::File& sourceFile, const waveform::PeaksResult& result) const;
 
+    /**
+     * Resolve the absolute on-disk path that the cache uses for
+     * `(sourceFile, peaksPerSecond)`. Used by the bridge to send the
+     * renderer a `WAVEFORM_READY { cachePath }` envelope instead of
+     * streaming the bytes back over the WebSocket. The returned file
+     * may not exist yet — callers must check / produce as needed.
+     */
+    juce::File getCacheFilePath(const juce::File& sourceFile, int peaksPerSecond) const;
+
   private:
     juce::File cacheFileFor(const juce::File& sourceFile, int peaksPerSecond) const;
     juce::File cacheDir;
