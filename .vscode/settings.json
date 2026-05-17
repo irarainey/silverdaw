@@ -98,12 +98,15 @@
   },
 
   // ─── Files / search excludes ─────────────────────────────────────────────
+  // The repo-root `dist/` is shown in full — it holds the packaged
+  // installer + `win-unpacked/` build that we want to be able to inspect
+  // and launch directly even though git ignores its contents.
   "files.exclude": {
     "**/.git": true,
     "**/node_modules": true,
-    "**/dist": true,
     "**/out": true,
-    "backend/build": true
+    "backend/build": true,
+    "frontend/dist": true
   },
   "search.exclude": {
     "**/node_modules": true,

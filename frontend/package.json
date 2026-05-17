@@ -14,7 +14,9 @@
     "lint": "eslint . --ext .ts,.vue",
     "typecheck": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dist": "electron-vite build && electron-builder --win --x64 --config electron-builder.yml",
+    "dist:dir": "electron-vite build && electron-builder --win --x64 --dir --config electron-builder.yml"
   },
   "dependencies": {
     "music-metadata": "^11.12.3",
@@ -30,6 +32,7 @@
     "@typescript-eslint/parser": "^8.0.0",
     "@vitejs/plugin-vue": "^5.1.0",
     "electron": "^31.0.0",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^2.3.0",
     "eslint": "^9.0.0",
     "eslint-plugin-vue": "^9.27.0",
@@ -45,6 +48,7 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron",
+      "electron-winstaller",
       "esbuild"
     ]
   }

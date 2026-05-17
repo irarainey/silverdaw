@@ -321,22 +321,36 @@ function captureWindowState(): void {
 }
 
 function startBackend(): void {
-  // In dev: JUCE's juce_add_console_app outputs to
-  //   <repo>/backend/build/SilverdawBackend_artefacts/<Config>/SilverdawBackend.exe
-  // In a packaged build this path will need to be re-resolved.
   const exeName = process.platform === 'win32' ? 'SilverdawBackend.exe' : 'SilverdawBackend'
-  const buildConfig = process.env['SILVERDAW_BACKEND_CONFIG'] ?? 'Debug'
-  const exePath = join(
-    __dirname,
-    '..',
-    '..',
-    '..',
-    'backend',
-    'build',
-    'SilverdawBackend_artefacts',
-    buildConfig,
-    exeName
-  )
+
+  // Two layouts to handle:
+  //
+  // 1. Dev (`pnpm dev`): `__dirname` is `<repo>/frontend/out/main/`, and the
+  //    JUCE backend lives at
+  //    `<repo>/backend/build/SilverdawBackend_artefacts/<Config>/SilverdawBackend.exe`.
+  //    `SILVERDAW_BACKEND_CONFIG` lets you swap between Debug / Release.
+  //
+  // 2. Packaged installer: `electron-builder` copies the Release backend exe
+  //    (declared as `extraResources` in `electron-builder.yml`) into
+  //    `process.resourcesPath/backend/`. `app.isPackaged` is the canonical
+  //    way to distinguish the two modes.
+  let exePath: string
+  if (app.isPackaged) {
+    exePath = join(process.resourcesPath, 'backend', exeName)
+  } else {
+    const buildConfig = process.env['SILVERDAW_BACKEND_CONFIG'] ?? 'Debug'
+    exePath = join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'backend',
+      'build',
+      'SilverdawBackend_artefacts',
+      buildConfig,
+      exeName
+    )
+  }
 
   backendProcess = spawn(exePath, ['--port', String(bridgePort)], {
     stdio: 'inherit',

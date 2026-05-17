@@ -1,0 +1,64 @@
+# electron-builder packaging configuration for Silverdaw.
+#
+# Produces a Windows NSIS installer (`Silverdaw-Setup-<version>.exe`) and an
+# unpacked app directory under `<repo>/dist/win-unpacked/` for local smoke
+# tests. The JUCE backend exe + the icon set are shipped as `extraResources`
+# so they land in `<install>/resources/` next to the asar archive — see
+# `startBackend()` in `src/main/index.ts` which resolves them from
+# `process.resourcesPath`.
+
+appId: com.silverdaw.app
+productName: Silverdaw
+copyright: Copyright © 2026 Ira Rainey
+
+directories:
+  buildResources: resources
+  # Write installer + win-unpacked into the repo-root `dist/` directory
+  # (gitignored except for `.gitkeep`). Keeps `frontend/` clean of large
+  # binary outputs.
+  output: ../dist
+
+# Asar pack of the Electron app itself. Renderer + main + preload bundles
+# all live under `out/` after `electron-vite build`. The LICENSE +
+# third-party notices go next to the binary so the installed app ships them
+# alongside `Silverdaw.exe` (NSIS section below adds them to the installer
+# wizard's "License" page too).
+files:
+  - out/**
+  - resources/icons/**
+  - package.json
+
+# The JUCE backend lives outside the renderer bundle. Build it Release first
+# (see scripts/Build-Release.ps1) then electron-builder copies the artefact
+# into `process.resourcesPath/backend/` for the packaged app to spawn.
+extraResources:
+  - from: ../backend/build/SilverdawBackend_artefacts/Release
+    to: backend
+    filter:
+      - SilverdawBackend.exe
+  # Ship the AGPL text + third-party notices inside the install so users have
+  # them locally (satisfies AGPL §4 / MIT / BSD attribution obligations).
+  - from: ../LICENSE
+    to: LICENSE
+  - from: ../THIRD_PARTY_LICENSES.md
+    to: THIRD_PARTY_LICENSES.md
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icons/icon.ico
+  artifactName: ${productName}-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Silverdaw
+  installerIcon: resources/icons/icon.ico
+  uninstallerIcon: resources/icons/icon.ico
+  installerHeaderIcon: resources/icons/icon.ico
+  license: ../LICENSE

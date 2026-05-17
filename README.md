@@ -204,6 +204,53 @@ The same commands are also available as Visual Studio Code tasks (`backend: conf
 
 Production builds use `--config Release` for the backend and `pnpm build` for the frontend.
 
+## Packaging a Windows installer
+
+The `scripts/Build-Release.ps1` helper does the whole release pipeline end-to-end:
+
+1. Configures + builds the JUCE backend (`SilverdawBackend.exe`) in **Release**.
+2. Compiles the Electron main / preload / renderer bundles (`electron-vite build`).
+3. Packages an **NSIS installer** with `electron-builder`, bundling the
+   backend exe + icons + `LICENSE` + `THIRD_PARTY_LICENSES.md`.
+
+From the repository root:
+
+```powershell
+pwsh -NoProfile -File scripts/Build-Release.ps1
+```
+
+Outputs land in the repo-root `dist/` directory (gitignored except for a
+`.gitkeep` marker):
+
+- `dist/Silverdaw-Setup-1.0.0.exe` — the NSIS installer (~90 MB). Runs a
+  standard wizard with an AGPL licence page, choose-directory step, and
+  desktop + Start menu shortcuts.
+- `dist/win-unpacked/Silverdaw.exe` — the unpacked app for local smoke
+  testing without going through the installer.
+
+### One-time prerequisite
+
+`electron-builder` extracts a `winCodeSign` archive on first use that contains
+macOS symlinks; Windows refuses to create symlinks unless the process has the
+right privilege. Enable **Developer Mode** once (Settings → System → For
+developers → Developer Mode = On) and re-run the build. The extracted cache is
+reused for every subsequent build, so this is a one-off setup.
+
+You can also iterate on packaging without rebuilding the backend or running a
+fresh `pnpm install` by passing the relevant skip flags:
+
+```powershell
+pwsh -NoProfile -File scripts/Build-Release.ps1 -SkipBackend -SkipFrontendInstall
+```
+
+Or run just the packaging step directly:
+
+```powershell
+cd frontend
+pnpm dist        # full installer
+pnpm dist:dir    # win-unpacked only, no NSIS step
+```
+
 ## Quality gates
 
 - **C++**: `clang-tidy` via `scripts/Invoke-ClangTidy.ps1` (`backend: lint` task), using

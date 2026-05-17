@@ -14,7 +14,12 @@ npm-shrinkwrap.json
 yarn.lock
 
 # Build outputs
-dist/
+# Repo-root dist/ holds packaged installer + win-unpacked output; ignore
+# everything inside it except the .gitkeep marker so the empty dir stays in
+# the tree.
+dist
+dist/*
+!dist/.gitkeep
 out/
 build/
 backend/build/
@@ -39,5 +44,10 @@ cmake-build-*/
 
 # Electron-vite
 .electron-vite/
+# Transient TS-config bundle that electron-vite / Vite emit while loading
+# `electron.vite.config.ts`. Normally unlinked on exit, but a killed build
+# (Ctrl+C, crash) can leave one behind.
+electron.vite.config.*.mjs
+vite.config.*.timestamp-*
 
 lint-output.txt
