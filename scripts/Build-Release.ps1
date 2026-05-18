@@ -97,6 +97,18 @@ try {
     }
 
     Write-Section 'Frontend: build bundles + NSIS installer'
+    # Wipe the previous `dist/` outputs so each release is a clean build —
+    # avoids stale `win-unpacked/` files lingering when source files are
+    # renamed/removed between builds, and guarantees the installer we
+    # ship matches exactly the contents of `out/`. We preserve the
+    # `.gitkeep` marker so the directory stays tracked in git.
+    $distDir = Join-Path $repoRoot 'dist'
+    if (Test-Path $distDir) {
+        Get-ChildItem -LiteralPath $distDir -Force -Exclude '.gitkeep' |
+            Remove-Item -Recurse -Force -ErrorAction Stop
+        Write-Host "Cleared $distDir (preserved .gitkeep)"
+    }
+
     pnpm dist
     if ($LASTEXITCODE -ne 0) { throw "pnpm dist failed (exit $LASTEXITCODE)" }
 }

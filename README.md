@@ -257,14 +257,33 @@ Outputs land in the repo-root `dist/` directory (gitignored except for a
 `.gitkeep` marker):
 
 - `dist/Silverdaw-Setup-1.0.0.exe` — the NSIS installer (~90 MB). Runs a
-  standard wizard with an AGPL licence page, choose-directory step, and
-  desktop + Start menu shortcuts.
+  standard wizard with branded header + sidebar artwork, an AGPL licence page,
+  choose-directory step, and desktop + Start menu shortcuts. The installer
+  also registers `.silverdaw` as a file association so double-clicking a
+  project in Explorer launches Silverdaw and opens it (with a single-instance
+  lock — a running Silverdaw receives the path instead of a second window
+  starting up).
 - `dist/win-unpacked/Silverdaw.exe` — the unpacked app for local smoke
   testing without going through the installer.
 
 The installer is **not** code-signed, so Windows SmartScreen will show an "Unknown publisher"
 warning on first run even though the Publisher field is populated. Code-signing is a separate
 follow-up that requires an Authenticode certificate.
+
+### Installer artwork
+
+`scripts/Build-InstallerArt.py` regenerates the NSIS banner BMPs
+(`installerHeader.bmp`, `installerSidebar.bmp`, `uninstallerSidebar.bmp` —
+the jackdaw logo on black) and the `.silverdaw` document icon
+(`resources/icons/silverdaw-file.ico` — white page + folded corner + logo)
+from `frontend/resources/icons/256x256.png`. Re-run it whenever the source
+logo changes; the outputs are checked into git so the normal release build
+doesn't need Python on the PATH.
+
+```powershell
+pip install Pillow
+python scripts/Build-InstallerArt.py
+```
 
 ### One-time prerequisite
 

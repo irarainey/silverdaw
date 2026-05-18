@@ -37,6 +37,7 @@ let pendingAfterDiscard: (() => void) | null = null
 const titleBarRef = ref<InstanceType<typeof AppTitleBar> | null>(null)
 
 let unsubscribeMenu: (() => void) | null = null
+let unsubscribeOpenFromPath: (() => void) | null = null
 let unregisterShortcuts: (() => void) | null = null
 
 // Mirror the library's "import in flight" flag onto the <body> as a class
@@ -55,6 +56,12 @@ const stopImportingWatcher = watch(
 onMounted(() => {
   log.info('app', 'mounted')
   unsubscribeMenu = window.silverdaw.onMenuAction(handleMenuAction)
+  // Warm-launch hand-offs: a second `Silverdaw.exe <file.silverdaw>`
+  // collapses into this instance via the single-instance lock; main
+  // pushes the path here.
+  unsubscribeOpenFromPath = window.silverdaw.onOpenProjectFromPath((filePath) => {
+    void openProjectByPath(filePath)
+  })
   unregisterShortcuts = registerMenuShortcuts({ debugMode: appStore.debugMode })
   connectBridge()
   startBridgeConnectionTimer()
@@ -104,13 +111,44 @@ const stopBridgeTimerWatcher = watch(
       clearTimeout(bridgeTimer)
       bridgeTimer = null
     }
+    // Cold-launch hand-off from `Silverdaw.exe <file.silverdaw>`. We
+    // can only safely send PROJECT_LOAD after the bridge has delivered
+    // its first PROJECT_STATE; the renderer's menu-action gate enforces
+    // the same rule for File > Open, so we defer the consume call until
+    // here. Fire-and-forget — a `null` return just means the app was
+    // launched normally.
+    if (ready) {
+      void window.silverdaw.consumePendingOpenPath().then((filePath) => {
+        if (filePath) void openProjectByPath(filePath)
+      })
+    }
   }
 )
+
+/**
+ * Shared entry point for both the cold-launch and warm-launch hand-offs
+ * from a `.silverdaw` file association. Runs the same unsaved-changes
+ * guard and allow-list seeding that File > Open uses, then sends
+ * PROJECT_LOAD over the bridge.
+ */
+async function openProjectByPath(filePath: string): Promise<void> {
+  if (!filePath) return
+  if (!transport.bridgeReady) {
+    log.warn('app', `dropped open-from-path ${filePath} (bridge not ready)`)
+    return
+  }
+  guardAgainstUnsavedChanges(async () => {
+    await window.silverdaw.prepareProjectOpen(filePath)
+    project.requestLoad(filePath)
+  })
+}
 
 onBeforeUnmount(() => {
   log.info('app', 'beforeUnmount')
   unsubscribeMenu?.()
   unsubscribeMenu = null
+  unsubscribeOpenFromPath?.()
+  unsubscribeOpenFromPath = null
   unregisterShortcuts?.()
   unregisterShortcuts = null
   disconnectBridge()

@@ -727,6 +727,73 @@ function handleMenuAction(action: string): void {
   }
 }
 
+// ─── .silverdaw file association + single-instance lock ────────────────────
+//
+// When Windows hands us a `.silverdaw` file (double-click in Explorer, or a
+// drag onto the taskbar shortcut), the path arrives as a command-line
+// argument. We support two cases:
+//
+//   1. Cold launch  — first instance of Silverdaw. The path is in
+//      `process.argv`; we stash it on `pendingOpenPath` and the renderer
+//      consumes it once the bridge is ready.
+//   2. Warm launch  — a second invocation while the app is already
+//      running. Without a single-instance lock, Electron would spin up a
+//      second main process (and a second JUCE backend, fighting for the
+//      same port). With the lock, the second instance immediately exits
+//      and the `second-instance` event fires in the first process; we
+//      pull the path out of its argv, focus the window and forward it
+//      to the renderer over `project:openFromPath`.
+//
+// Path extraction is deliberately conservative: only absolute paths whose
+// extension is `.silverdaw` are accepted, so a malicious shortcut can't
+// smuggle in non-project arguments. The renderer still runs the same
+// allow-list seeding (`prepareProjectOpen`) before sending PROJECT_LOAD.
+
+/** Pull the first `.silverdaw` file path out of an argv array, if any.
+ *  argv[0] is the executable; we skip it and ignore Electron CLI flags. */
+function extractProjectPathFromArgv(argv: readonly string[]): string | null {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i]
+    if (!a || a.startsWith('--') || a.startsWith('-')) continue
+    if (!isAbsolute(a)) continue
+    if (extname(a).toLowerCase() !== '.silverdaw') continue
+    if (!existsSync(a)) continue
+    return a
+  }
+  return null
+}
+
+/** Path the renderer should open once the bridge is ready. Captured from
+ *  argv at startup or pushed in by a `second-instance` event. */
+let pendingOpenPath: string | null = extractProjectPathFromArgv(process.argv)
+
+/** Acquire the single-instance lock. If we don't get it, another Silverdaw
+ *  is already running — it will handle our argv via `second-instance` and
+ *  this process should quit immediately. */
+const gotInstanceLock = app.requestSingleInstanceLock()
+if (!gotInstanceLock) {
+  // `app.quit()` is async (it fires `before-quit` first). Calling
+  // `app.exit(0)` instead guarantees we're gone before whenReady has a
+  // chance to fire and double-spawn the backend.
+  app.exit(0)
+}
+
+app.on('second-instance', (_event, argv) => {
+  const filePath = extractProjectPathFromArgv(argv)
+  // Bring the existing window forward regardless of whether a file path
+  // was supplied — the user clicking the taskbar shortcut while the app
+  // is open should focus it.
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  }
+  if (filePath && mainWindow) {
+    // Push directly to the renderer; it runs the same unsaved-changes
+    // guard + prepareProjectOpen + requestLoad flow as File > Open.
+    mainWindow.webContents.send('project:openFromPath', filePath)
+  }
+})
+
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'dark'
 
@@ -1154,6 +1221,19 @@ app.whenReady().then(async () => {
       console.warn('[project:prepareOpen] could not read project file:', filePath, err)
       return false
     }
+  })
+
+  /**
+   * Renderer-side bootstrap calls this once the bridge is ready, asking
+   * main "did the user launch us by double-clicking a .silverdaw file?".
+   * If so we hand back the path (clearing it so a later reload doesn't
+   * re-open the same project) and the renderer drives the normal load
+   * flow. Returns `null` when there's no pending path.
+   */
+  ipcMain.handle('project:consumePendingOpenPath', (): string | null => {
+    const p = pendingOpenPath
+    pendingOpenPath = null
+    return p
   })
 
   /**

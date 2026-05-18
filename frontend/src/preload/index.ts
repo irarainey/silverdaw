@@ -173,6 +173,26 @@ const api = {
   prepareProjectOpen: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke('project:prepareOpen', filePath),
   /**
+   * On startup, ask main whether the user launched Silverdaw by
+   * double-clicking a `.silverdaw` file in Explorer. Resolves to the
+   * absolute path, or `null` if the app was launched normally. Main
+   * clears the slot after returning so a renderer reload won't re-open
+   * the same project.
+   */
+  consumePendingOpenPath: (): Promise<string | null> =>
+    ipcRenderer.invoke('project:consumePendingOpenPath'),
+  /**
+   * Subscribe to "open this project" pushes from main, fired when a
+   * second `Silverdaw.exe <file.silverdaw>` invocation is collapsed
+   * into the running instance by the single-instance lock.
+   * Returns an unsubscribe function.
+   */
+  onOpenProjectFromPath: (handler: (filePath: string) => void): (() => void) => {
+    const listener = (_evt: IpcRendererEvent, filePath: string): void => handler(filePath)
+    ipcRenderer.on('project:openFromPath', listener)
+    return () => ipcRenderer.removeListener('project:openFromPath', listener)
+  },
+  /**
    * Read a peaks-cache file (`<APPDATA>/Silverdaw/peaks/<hash>.peaks`)
    * by absolute path. Resolves to the raw bytes or null if the path is
    * outside the cache directory or unreadable. Used by the renderer's

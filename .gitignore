@@ -51,3 +51,5 @@ electron.vite.config.*.mjs
 vite.config.*.timestamp-*
 
 lint-output.txt
+
+.mypy_cache
