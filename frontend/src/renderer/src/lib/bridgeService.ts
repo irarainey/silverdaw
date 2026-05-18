@@ -28,6 +28,7 @@ import { log } from '@/lib/log'
 import {
   isBridgeInboundType,
   isClipAckPayload,
+  isClipRemovedPayload,
   isPlayheadUpdatePayload,
   isProjectDirtyPayload,
   isProjectLoadFailedPayload,
@@ -347,6 +348,16 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'CLIP_REMOVED': {
+      // Optimistic clip removal already happened on the renderer when
+      // we sent CLIP_REMOVE; this ack just confirms the backend dropped
+      // it too. ok=false means the id was unknown — a diagnostic.
+      if (!msg.payload.ok) {
+        console.warn('[bridge] CLIP_REMOVED ok=false for', msg.payload.clipId)
+      }
+      break
+    }
+
     case 'TRACK_GAIN_APPLIED': {
       // Same shape as TRACK_REMOVED: optimistic update already happened
       // on commit; the ack just confirms the engine accepted it. A
@@ -516,6 +527,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isTrackAddedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_REMOVED':
       return isTrackRemovedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'CLIP_REMOVED':
+      return isClipRemovedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_GAIN_APPLIED':
       return isTrackGainAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_SAVED':

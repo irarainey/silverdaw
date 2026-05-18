@@ -21,6 +21,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
+import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 import { DEFAULT_PX_PER_SECOND, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from '@/lib/timeline/constants'
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
 import { useTimelineScroll } from '@/lib/timeline/useTimelineScroll'
@@ -125,14 +126,71 @@ const {
 // The PixiJS init and all other pointer/drag handlers live in composables.
 onMounted(() => {
   host.value?.addEventListener('wheel', onWheel, { passive: false })
+  host.value?.addEventListener('contextmenu', onContextMenu)
   window.addEventListener('keydown', onZoomKey, { capture: true })
   startPlayheadRaf()
 })
 onBeforeUnmount(() => {
   host.value?.removeEventListener('wheel', onWheel)
+  host.value?.removeEventListener('contextmenu', onContextMenu)
   window.removeEventListener('keydown', onZoomKey, { capture: true })
   stopPlayheadRaf()
 })
+
+// ─── Clip context menu ────────────────────────────────────────────────────
+// Right-click on a clip block opens a floating menu. Hit-testing uses the
+// same world-space `clipHitRegions` array `useDragHandlers` reads — we
+// convert the pointer to world coords by adding the current scroll.
+const contextMenuOpen = ref(false)
+const contextMenuX = ref(0)
+const contextMenuY = ref(0)
+const contextMenuClipId = ref<string | null>(null)
+const contextMenuItems = computed<ClipContextMenuItem[]>(() => [
+  { command: 'clip.delete', label: 'Delete' },
+  // Phase 3+ placeholders — the menu surface is shaped now so the
+  // muscle memory exists; the actions will light up once the
+  // underlying features land.
+  { command: 'clip.warp', label: 'Warp settings…', disabled: true, separatorAbove: true },
+  { command: 'clip.transpose', label: 'Transpose…', disabled: true },
+  { command: 'clip.saveSample', label: 'Save as Sample…', disabled: true }
+])
+
+function onContextMenu(e: MouseEvent): void {
+  if (!host.value) return
+  const rect = host.value.getBoundingClientRect()
+  const worldX = (e.clientX - rect.left) + scrollX.value
+  const worldY = (e.clientY - rect.top) + scrollY.value
+  // Reverse iterate so the visually top-most clip wins on overlap.
+  for (let i = clipHitRegions.length - 1; i >= 0; i--) {
+    const r = clipHitRegions[i]
+    if (!r) continue
+    if (worldX >= r.x && worldX <= r.x + r.w && worldY >= r.y && worldY <= r.y + r.h) {
+      e.preventDefault()
+      contextMenuClipId.value = r.clipId
+      contextMenuX.value = e.clientX
+      contextMenuY.value = e.clientY
+      contextMenuOpen.value = true
+      return
+    }
+  }
+  // Not on a clip — let the browser default contextmenu happen (which
+  // is a no-op in Electron) so we don't accidentally swallow the event
+  // for the rest of the layout.
+}
+
+function onContextMenuCommand(command: string): void {
+  const clipId = contextMenuClipId.value
+  if (!clipId) return
+  if (command === 'clip.delete') {
+    project.removeClip(clipId)
+  }
+  contextMenuClipId.value = null
+}
+
+function onContextMenuClose(): void {
+  contextMenuOpen.value = false
+  contextMenuClipId.value = null
+}
 
 /**
  * Keyboard zoom shortcuts:
@@ -553,5 +611,17 @@ function onHeaderResizePointerUp(e: PointerEvent): void {
     >
       Add a track or open a project to start
     </div>
+
+    <!-- Right-click context menu for clip blocks. Teleported to body
+         so its z-index / positioning are independent of the timeline's
+         transformed children. -->
+    <ClipContextMenu
+      :open="contextMenuOpen"
+      :x="contextMenuX"
+      :y="contextMenuY"
+      :items="contextMenuItems"
+      @close="onContextMenuClose"
+      @command="onContextMenuCommand"
+    />
   </div>
 </template>

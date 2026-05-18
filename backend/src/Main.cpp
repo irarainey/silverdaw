@@ -422,6 +422,26 @@ void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
     bridge.broadcast("TRACK_REMOVED", juce::var(p));
 }
 
+void handleClipRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
+                      silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
+{
+    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    if (clipId.isEmpty())
+    {
+        return;
+    }
+    // Drop the engine's audio source first so the next audio callback
+    // doesn't try to pull from a source that's about to leave the
+    // project tree. `removeClip` is idempotent so calling it for a
+    // clip the engine never had is harmless.
+    engine.removeClip(clipId);
+    const bool existed = projectState.removeClip(clipId);
+    auto* p = new juce::DynamicObject();
+    p->setProperty("clipId", clipId);
+    p->setProperty("ok", existed);
+    bridge.broadcast("CLIP_REMOVED", juce::var(p));
+}
+
 void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                      silverdaw::BridgeServer& bridge)
 {
@@ -740,6 +760,11 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::debug("bridge", "recv CLIP_MOVE clipId=" + payload.getProperty("clipId", "").toString() +
                                             " pos=" + payload.getProperty("positionMs", "").toString());
         handleClipMove(payload, engine, projectState);
+    }
+    else if (type == "CLIP_REMOVE")
+    {
+        silverdaw::log::info("bridge", "recv CLIP_REMOVE clipId=" + payload.getProperty("clipId", "").toString());
+        handleClipRemove(payload, engine, projectState, bridge);
     }
     else if (type == "TRANSPORT_PLAY")
     {

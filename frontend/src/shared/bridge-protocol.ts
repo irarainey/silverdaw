@@ -25,6 +25,13 @@ export interface ClipMovePayload {
   positionMs: number
 }
 
+/** Remove a clip from its track. The backend tears down the clip's
+ *  audio source and drops it from the project ValueTree; the renderer
+ *  optimistically removes it from the store on send. */
+export interface ClipRemovePayload {
+  clipId: string
+}
+
 export interface TrackAddPayload {
   trackId: string
 }
@@ -64,6 +71,7 @@ export interface BridgeOutboundMap {
   AUTH: AuthPayload
   CLIP_ADD: ClipAddPayload
   CLIP_MOVE: ClipMovePayload
+  CLIP_REMOVE: ClipRemovePayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
   TRACK_GAIN: TrackGainPayload
@@ -176,6 +184,14 @@ export interface TrackAddedPayload {
  */
 export interface TrackRemovedPayload {
   trackId: string
+  ok: boolean
+}
+
+/** Backend ack for `CLIP_REMOVE`. `ok=false` means the clip id was
+ *  unknown to the project tree. The renderer logs but doesn't re-add
+ *  the clip — local optimistic removal already happened. */
+export interface ClipRemovedPayload {
+  clipId: string
   ok: boolean
 }
 
@@ -300,6 +316,7 @@ export interface BridgeInboundMap {
   CLIP_ADD_FAILED: ClipAckPayload
   TRACK_ADDED: TrackAddedPayload
   TRACK_REMOVED: TrackRemovedPayload
+  CLIP_REMOVED: ClipRemovedPayload
   TRACK_GAIN_APPLIED: TrackGainAppliedPayload
   PROJECT_SAVED: ProjectSavedPayload
   PROJECT_LOAD_FAILED: ProjectLoadFailedPayload
@@ -337,6 +354,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'CLIP_ADD_FAILED',
   'TRACK_ADDED',
   'TRACK_REMOVED',
+  'CLIP_REMOVED',
   'TRACK_GAIN_APPLIED',
   'PROJECT_SAVED',
   'PROJECT_LOAD_FAILED',
@@ -458,6 +476,11 @@ export function isWaveformReadyPayload(value: unknown): value is WaveformReadyPa
 /** Guard for `TrackRemovedPayload`. */
 export function isTrackRemovedPayload(value: unknown): value is TrackRemovedPayload {
   return isPlainObject(value) && typeof value.trackId === 'string' && typeof value.ok === 'boolean'
+}
+
+/** Guard for `ClipRemovedPayload`. */
+export function isClipRemovedPayload(value: unknown): value is ClipRemovedPayload {
+  return isPlainObject(value) && typeof value.clipId === 'string' && typeof value.ok === 'boolean'
 }
 
 /** Guard for `TrackGainAppliedPayload`. */

@@ -298,6 +298,29 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * Remove a clip from its track. Optimistic — drops the clip from
+     * the renderer's mirror immediately and sends `CLIP_REMOVE` to the
+     * backend; the backend's `CLIP_REMOVED` ack is purely diagnostic.
+     * Track `lengthMs` is left alone so removing the last clip on a
+     * track doesn't collapse the project length out from under the
+     * user; they can edit it explicitly in the transport bar if they
+     * want to shrink.
+     */
+    removeClip(clipId: string): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const track = this.tracks.find((t) => t.id === clip.trackId)
+      if (track) {
+        const idx = track.clipIds.indexOf(clipId)
+        if (idx >= 0) track.clipIds.splice(idx, 1)
+      }
+      delete this.clips[clipId]
+      this.peaksRevision++
+      sendBridge('CLIP_REMOVE', { clipId })
+      log.info('project', `removeClip id=${clipId}`)
+    },
+
+    /**
      * True if placing a clip of `durationMs` length on `trackId` starting at
      * `startMs` would overlap any existing clip on that track. Used by the
      * library drag-drop flow to reject drops onto occupied space.
