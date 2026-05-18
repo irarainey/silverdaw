@@ -114,7 +114,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
   TRACK[id, gain]
     CLIP[id, filePath, offsetMs, inMs, durationMs, colorIndex?]
   LIBRARY
-    ITEM[id, filePath]
+    ITEM[id, filePath, bpm?]
 ```
 
 `CLIP` carries a non-destructive trim window: `offsetMs` is the timeline start,
@@ -123,7 +123,10 @@ how long the clip plays for from that point. Split, duplicate and edge-drag
 trim all manipulate this window without ever re-decoding the source — peaks
 are computed once per file and the renderer windows into them at draw time.
 `colorIndex` is an optional 0..15 per-clip palette override; when absent the
-clip inherits its host track's colour.
+clip inherits its host track's colour. `ITEM.bpm` is the BTrack-detected
+tempo for the library item's source file (see [BPM detection](#bpm-detection)
+below); it's stored once and round-trips through save/load so a reopened
+project doesn't have to re-analyse every imported file.
 
 The view-state properties (`viewScrollX`, `playheadMs`) bypass the dirty-flag listener via a
 `suppressDirtyTransitions` guard inside their setters — scrolling or moving the playhead
@@ -212,6 +215,47 @@ peak values. Versioned so a future format change is detected as a miss rather th
 read; the same layout is what the renderer reads via the `peaks:readCacheFile` IPC.
 
 The cache survives backend restarts.
+
+## BPM detection
+
+Every imported audio file is automatically analysed for tempo. The
+result is shown on the library tile (e.g. `124.37 BPM`) and, on the
+first import into an otherwise-empty project, seeds the project BPM
+so the timeline grid lines up with what you imported.
+
+- **Library**: [BTrack](https://github.com/adamstark/BTrack) (Stark / Davies / Plumbley,
+  Queen Mary University of London) — a causal beat-tracking algorithm with offline
+  tempo estimation. GPL-3.0, compatible with Silverdaw's AGPL-3.0 stance. A patched
+  copy lives at `backend/third_party/btrack/` — see
+  [`PATCHES.md`](backend/third_party/btrack/PATCHES.md) for the two MSVC-compatibility
+  changes (the patches are mechanical: `_USE_MATH_DEFINES` for `M_PI` and a handful of
+  VLA → `std::vector` substitutions).
+- **Resampler**: [libsamplerate](https://github.com/libsndfile/libsamplerate) 0.2.2
+  (BSD-2-Clause), pulled in via FetchContent. Used to one-shot convert decoded mono
+  audio to BTrack's expected 44.1 kHz.
+- **FFT**: [KISS FFT](https://github.com/mborgerding/kissfft) 1.3.0 (BSD), bundled in
+  the BTrack vendor copy. No FFTW dependency.
+
+The detector lives in [`backend/src/BpmDetector.cpp`](backend/src/BpmDetector.cpp) and
+runs on the same `juce::ThreadPool` that produces peaks — kicked off from both the
+`LIBRARY_ADD` and `CLIP_ADD` dispatch handlers (whichever arrives first wins; the
+helper `ensureBpmDetection` is idempotent and won't re-analyse a file the library
+already has a BPM for). Worker thread → decode the file via JUCE → downmix to mono
+→ resample to 44.1 kHz with libsamplerate → feed BTrack frame-by-frame at hop=512 →
+read `getCurrentTempoEstimate()`. Analysis is capped at the first 2 minutes of audio;
+estimates outside `[40, 240]` BPM are dropped as implausible.
+
+When detection finishes the worker `MessageManager::callAsync`s back to the JUCE
+message thread to write `bpm` onto the matching `LIBRARY > ITEM` node and broadcast
+`LIBRARY_ITEM_BPM { itemId, bpm }`. If the project is still at the default 100 BPM
+and this is the *first* library item with a detected BPM, the project BPM is seeded
+too and a `PROJECT_BPM_APPLIED { bpm }` envelope is broadcast — the renderer mirrors
+both into `libraryStore` and `transportStore`.
+
+The renderer shows a floating **import progress dialog** in the bottom-right corner
+that surfaces both stages — "Decoding audio…" (renderer-side) then "Detecting tempo…"
+(backend-side BTrack job) — so the long-tail BPM analysis isn't invisible. The
+OS busy cursor stays in its `progress` state for the same lifespan.
 
 ## Preferences
 
