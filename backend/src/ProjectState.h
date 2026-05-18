@@ -220,6 +220,18 @@ class ProjectState : public juce::ValueTree::Listener
     /** Remove a library item by id. Returns true if it existed. Marks dirty. */
     bool removeLibraryItem(const juce::String& itemId);
 
+    /** Set the detected BPM on a library item. Pass 0.0 to clear.
+     *  Marks the project dirty. Returns true if the item existed. */
+    bool setLibraryItemBpm(const juce::String& itemId, double bpm);
+
+    /** True if a library item is registered for `filePath`. Used by the
+     *  detection scheduler to avoid duplicate work. */
+    bool hasLibraryItemForPath(const juce::String& filePath) const;
+
+    /** Read the BPM on the library item matching `filePath`. Returns 0
+     *  if no item matches or no BPM has been detected yet. */
+    double getLibraryItemBpmForPath(const juce::String& filePath) const;
+
     /** Snapshot the library items as a `juce::var` array of
      *  `{ id, filePath }` objects, ready to drop into a PROJECT_STATE
      *  envelope's `library` field. */

@@ -108,6 +108,7 @@ export async function importAudioIntoTrack(
   // Self-batch this single-file import so the status-bar progress bar
   // still shows for per-track imports (not just library batches).
   library.beginImportBatch(1)
+  const importEntryId = library.beginImport(opened.fileName)
 
   try {
     // Reuse the library's already-decoded data if this file is already
@@ -135,7 +136,18 @@ export async function importAudioIntoTrack(
       library.setItemMetadata(itemId, metadata)
       audio = library.getItem(itemId)
     }
-    if (!audio) return null
+    if (!audio) {
+      library.finishImport(importEntryId, 'failed')
+      return null
+    }
+    // Decoding stage done — transition the progress entry into the
+    // "waiting for BPM" stage. If the item already has a BPM (i.e.
+    // it was deduplicated), close the entry immediately.
+    if (audio.bpm) {
+      library.finishImport(importEntryId, 'done')
+    } else {
+      library.markImportAnalyzing(importEntryId, audio.id)
+    }
 
     const clipId = project.addClipToTrack(
       trackId,
@@ -166,6 +178,7 @@ export async function importAudioIntoTrack(
     return clipId
   } catch (err) {
     console.error('[importAudio] decode failed:', err)
+    library.finishImport(importEntryId, 'failed')
     return null
   } finally {
     library.noteImportFinished()
@@ -188,11 +201,15 @@ export async function importAudioIntoLibrary(opened: {
   data: ArrayBuffer
 }): Promise<string | null> {
   const library = useLibraryStore()
+  const importEntryId = library.beginImport(opened.fileName)
 
   try {
     // Skip the decode entirely if we already have this file in the library.
     const existing = library.items.find((i) => i.filePath === opened.filePath)
-    if (existing) return existing.id
+    if (existing) {
+      library.finishImport(importEntryId, 'done')
+      return existing.id
+    }
 
     const [decoded, metadata] = await Promise.all([
       decodeAudioToPeaks(opened.data),
@@ -209,9 +226,11 @@ export async function importAudioIntoLibrary(opened: {
       playbackFilePath
     })
     library.setItemMetadata(itemId, metadata)
+    library.markImportAnalyzing(importEntryId, itemId)
     return itemId
   } catch (err) {
     console.error('[importAudio] library decode failed:', err)
+    library.finishImport(importEntryId, 'failed')
     return null
   } finally {
     library.noteImportFinished()

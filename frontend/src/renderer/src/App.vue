@@ -7,6 +7,7 @@ import LibraryPanel from '@/components/LibraryPanel.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import NotificationToasts from '@/components/NotificationToasts.vue'
 import BridgeReadyOverlay from '@/components/BridgeReadyOverlay.vue'
+import ImportProgressDialog from '@/components/ImportProgressDialog.vue'
 import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
 import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
@@ -488,6 +489,8 @@ function onUnsavedPromptCancel(): void {
     <StatusBar />
 
     <NotificationToasts />
+
+    <ImportProgressDialog />
 
     <BridgeReadyOverlay />
 

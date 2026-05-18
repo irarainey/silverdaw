@@ -31,6 +31,12 @@ export interface LibraryItem {
    */
   peaks: Float32Array
   /**
+   * Detected BPM (rounded to 2 d.p.) from the backend's BTrack-based
+   * estimator. `undefined` until the worker job finishes. The library
+   * tile shows this once it's populated.
+   */
+  bpm?: number
+  /**
    * Path the JUCE backend should actually load when this item is placed
    * on a track. Equals `filePath` for formats the backend can decode
    * natively (WAV/AIFF/FLAC/Ogg/MP3/WMA). For others (e.g. .m4a on
@@ -61,6 +67,26 @@ export interface LibraryItem {
   coverArtUrl?: string
 }
 
+/**
+ * Per-file import progress entry, surfaced to the UI by the
+ * `ImportProgressDialog`. An entry is created when the renderer starts
+ * decoding/registering a file and removed shortly after the backend's
+ * BPM detection has completed (or the import failed). The user gets a
+ * visible spinner the whole time the system is working on a file —
+ * including the BPM-detection stage, which used to be silent.
+ */
+export type ImportStage = 'decoding' | 'detecting' | 'done' | 'failed'
+export interface ImportEntry {
+  /** Local-only id used to remove the entry; not the library item id
+   *  (which is unknown until `decoding` finishes). */
+  id: string
+  fileName: string
+  stage: ImportStage
+  /** Filled in once the library item exists; lets the BPM-arrived
+   *  event match this entry by itemId. */
+  libraryItemId?: string
+}
+
 interface LibraryState {
   items: LibraryItem[]
   nextItemIndex: number
@@ -72,6 +98,9 @@ interface LibraryState {
   importTotal: number
   /** Number of files in the current batch that have finished. */
   importDone: number
+  /** Currently in-flight import entries, in order of arrival. The
+   *  `ImportProgressDialog` reads this and renders one row per entry. */
+  imports: ImportEntry[]
   /**
    * Id of the library item currently being dragged out (set on `dragstart`,
    * cleared on `dragend`). HTML5's `dataTransfer.getData(...)` returns an
@@ -87,6 +116,7 @@ export const useLibraryStore = defineStore('library', {
     nextItemIndex: 1,
     importTotal: 0,
     importDone: 0,
+    imports: [],
     currentDragItemId: null
   }),
 
@@ -98,9 +128,21 @@ export const useLibraryStore = defineStore('library', {
       return map
     },
 
-    /** True while at least one import is queued or in flight. */
+    /** True while at least one import is queued or in flight — either
+     *  a renderer-side decoding stage or a backend BPM-detection stage.
+     *  Used to drive both the legacy status-bar progress bar and the
+     *  document-wide busy cursor. */
     isImporting(state): boolean {
-      return state.importTotal > 0
+      if (state.importTotal > 0) return true
+      // The per-file `imports` list outlives `importTotal` because BPM
+      // detection runs after the renderer's decode-and-add stage has
+      // already incremented `importDone`. Any entry still in
+      // `decoding` or `detecting` should keep the cursor in its busy
+      // state so the user knows work is in progress.
+      for (const entry of state.imports) {
+        if (entry.stage === 'decoding' || entry.stage === 'detecting') return true
+      }
+      return false
     },
 
     /** Fraction in [0, 1] of the current import batch completed. */
@@ -129,6 +171,7 @@ export const useLibraryStore = defineStore('library', {
         }
       }
       this.items = []
+      this.imports = []
       log.info('library', 'cleared')
     },
 
@@ -313,6 +356,72 @@ export const useLibraryStore = defineStore('library', {
       item.peaks = peaks
       if (sampleRate > 0) item.sampleRate = sampleRate
       log.debug('library', `setItemPeaks id=${itemId} peaks=${peaks.length / 2} sr=${sampleRate}`)
+    },
+
+    /**
+     * Record the BPM detected for `itemId`. Called from the bridge
+     * when a `LIBRARY_ITEM_BPM` envelope arrives (backend has finished
+     * the BTrack analysis on a worker thread). No-op for unknown ids
+     * — the item may have been removed mid-analysis.
+     */
+    setItemBpm(itemId: string, bpm: number): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      if (bpm > 0) {
+        item.bpm = Math.round(bpm * 100) / 100
+      } else {
+        item.bpm = undefined
+      }
+      // The progress entry waiting on this item's BPM detection can now
+      // be finished. Match by libraryItemId; entries without one (e.g.
+      // a library item that was preloaded from a snapshot rather than
+      // a fresh import) won't have a progress row to update.
+      const entry = this.imports.find((e) => e.libraryItemId === itemId)
+      if (entry) {
+        this.finishImport(entry.id, 'done')
+      }
+    },
+
+    /**
+     * Begin tracking a new import (renderer-side decoding stage). Returns
+     * a renderer-local id used to update the entry later. The progress
+     * panel shows the entry from this call until `finishImport` is
+     * called (or the entry expires from inactivity).
+     */
+    beginImport(fileName: string): string {
+      const id = crypto.randomUUID()
+      this.imports.push({ id, fileName, stage: 'decoding' })
+      return id
+    },
+
+    /**
+     * Mark a renderer-side decoding stage as complete; the entry now
+     * waits on the backend's BPM detection. Attach the library item
+     * id so the LIBRARY_ITEM_BPM-arrived handler can find this entry.
+     */
+    markImportAnalyzing(id: string, libraryItemId: string): void {
+      const entry = this.imports.find((e) => e.id === id)
+      if (!entry) return
+      entry.libraryItemId = libraryItemId
+      entry.stage = 'detecting'
+    },
+
+    /**
+     * Mark an entry as finished (done or failed) and schedule its
+     * removal a short delay later so the user gets a brief flash of
+     * "done" before the row disappears. Idempotent.
+     */
+    finishImport(id: string, stage: 'done' | 'failed'): void {
+      const entry = this.imports.find((e) => e.id === id)
+      if (!entry || entry.stage === 'done' || entry.stage === 'failed') return
+      entry.stage = stage
+      // Remove after a short delay so the user gets to see the
+      // "done" / "failed" transition. 1.2 s is long enough to read
+      // and short enough not to clutter the screen.
+      setTimeout(() => {
+        const idx = this.imports.findIndex((e) => e.id === id)
+        if (idx >= 0) this.imports.splice(idx, 1)
+      }, 1200)
     },
 
     /**

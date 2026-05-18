@@ -42,6 +42,51 @@ FetchContent_Declare(IXWebSocket
     GIT_PROGRESS   TRUE)
 FetchContent_MakeAvailable(IXWebSocket)
 
+# ─── libsamplerate ───────────────────────────────────────────────────────
+# BTrack (below) needs a sample-rate converter to resample its onset-
+# detection function. We use the upstream `libsamplerate` library
+# (BSD-2-Clause) fetched at configure time so there's no system
+# dependency to manage on Windows.
+set(LIBSAMPLERATE_GIT_TAG "0.2.2" CACHE STRING "libsamplerate version to fetch")
+set(LIBSAMPLERATE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LIBSAMPLERATE_INSTALL OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+# Newer CMake (>= 4) refuses to build projects whose
+# `cmake_minimum_required` is below 3.5 — libsamplerate 0.2.2 still
+# uses an older floor. This policy override lets it configure with
+# modern CMake without forking the upstream source.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+
+FetchContent_Declare(libsamplerate
+    GIT_REPOSITORY https://github.com/libsndfile/libsamplerate.git
+    GIT_TAG        ${LIBSAMPLERATE_GIT_TAG}
+    GIT_SHALLOW    TRUE
+    GIT_PROGRESS   TRUE)
+FetchContent_MakeAvailable(libsamplerate)
+
+# ─── BTrack (BPM + beat tracking) ────────────────────────────────────────
+# We vendor a patched copy of BTrack under `backend/third_party/btrack/`:
+# the upstream sources use VLAs (a GCC extension MSVC rejects) and rely
+# on the non-portable `M_PI` macro. The patches (documented at the top of
+# `BTrack.cpp`) replace the VLAs with `std::vector` and add
+# `#define _USE_MATH_DEFINES`. The KISS FFT backend is used (BSD-licensed,
+# also vendored) so there's no FFTW dependency.
+set(BTRACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/btrack)
+add_library(btrack_local STATIC
+    ${BTRACK_DIR}/BTrack.cpp
+    ${BTRACK_DIR}/OnsetDetectionFunction.cpp
+    ${BTRACK_DIR}/kiss_fft130/kiss_fft.c)
+target_include_directories(btrack_local PUBLIC
+    ${BTRACK_DIR}
+    ${BTRACK_DIR}/kiss_fft130)
+target_compile_definitions(btrack_local PUBLIC USE_KISS_FFT)
+# Silence MSVC's "unsafe" warnings inside BTrack's third-party code so
+# we don't drown out our own warnings.
+if(MSVC)
+    target_compile_options(btrack_local PRIVATE /W0 /wd4267 /wd4244)
+endif()
+target_link_libraries(btrack_local PRIVATE SampleRate::samplerate)
+
 # ─── Target ──────────────────────────────────────────────────────────────
 juce_add_console_app(SilverdawBackend
     PRODUCT_NAME "Silverdaw Backend"
@@ -50,6 +95,7 @@ juce_add_console_app(SilverdawBackend
 target_sources(SilverdawBackend PRIVATE
     src/Main.cpp
     src/AudioEngine.cpp
+    src/BpmDetector.cpp
     src/BridgeServer.cpp
     src/Log.cpp
     src/PeaksCache.cpp
@@ -74,5 +120,7 @@ target_link_libraries(SilverdawBackend PRIVATE
     juce::juce_audio_processors
     juce::juce_audio_utils
     ixwebsocket
+    btrack_local
+    SampleRate::samplerate
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)

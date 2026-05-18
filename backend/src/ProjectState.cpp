@@ -484,6 +484,56 @@ bool ProjectState::removeLibraryItem(const juce::String& itemId)
     return false;
 }
 
+bool ProjectState::setLibraryItemBpm(const juce::String& itemId, double bpm)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            if (bpm > 0.0)
+            {
+                item.setProperty(kBpm, bpm, nullptr);
+            }
+            else
+            {
+                item.removeProperty(kBpm, nullptr);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ProjectState::hasLibraryItemForPath(const juce::String& filePath) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kFilePath).toString() == filePath) return true;
+    }
+    return false;
+}
+
+double ProjectState::getLibraryItemBpmForPath(const juce::String& filePath) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return 0.0;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kFilePath).toString() == filePath)
+        {
+            return static_cast<double>(item.getProperty(kBpm, 0.0));
+        }
+    }
+    return 0.0;
+}
+
 juce::var ProjectState::libraryAsJson() const
 {
     juce::Array<juce::var> arr;
@@ -497,6 +547,10 @@ juce::var ProjectState::libraryAsJson() const
         obj->setProperty("id", item.getProperty(kId).toString());
         const juce::String filePath = item.getProperty(kFilePath).toString();
         obj->setProperty("filePath", filePath);
+        if (item.hasProperty(kBpm))
+        {
+            obj->setProperty("bpm", static_cast<double>(item.getProperty(kBpm, 0.0)));
+        }
         // Same unresolved-flag pattern as clips so the renderer can
         // grey-out library cards whose source file has gone missing
         // since the project was last saved.

@@ -342,8 +342,17 @@ function onResizePointerUp(): void {
             >
               {{ displayArtist(item) }}
             </div>
-            <div class="mt-auto flex items-center justify-between text-[10px] text-zinc-500">
-              <span class="font-mono tabular-nums">{{ formatDuration(item.durationMs) }}</span>
+            <div class="mt-auto flex items-center justify-between gap-2 text-[10px] text-zinc-500">
+              <span class="flex items-center gap-2 font-mono tabular-nums">
+                <span>{{ formatDuration(item.durationMs) }}</span>
+                <span
+                  v-if="item.bpm"
+                  class="rounded bg-zinc-800 px-1 py-0.5 text-[9px] uppercase tracking-wide text-zinc-300"
+                  title="Detected tempo"
+                >
+                  {{ item.bpm.toFixed(2) }} BPM
+                </span>
+              </span>
               <button
                 type="button"
                 tabindex="-1"

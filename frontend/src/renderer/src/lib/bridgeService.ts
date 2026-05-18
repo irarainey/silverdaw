@@ -23,13 +23,16 @@
 
 import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 import {
   isBridgeInboundType,
   isClipAckPayload,
   isClipRemovedPayload,
+  isLibraryItemBpmPayload,
   isPlayheadUpdatePayload,
+  isProjectBpmAppliedPayload,
   isProjectDirtyPayload,
   isProjectLoadFailedPayload,
   isProjectRenamedPayload,
@@ -430,6 +433,21 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'LIBRARY_ITEM_BPM': {
+      useLibraryStore().setItemBpm(msg.payload.itemId, msg.payload.bpm)
+      log.info('bridge', `LIBRARY_ITEM_BPM itemId=${msg.payload.itemId} bpm=${msg.payload.bpm.toFixed(2)}`)
+      break
+    }
+
+    case 'PROJECT_BPM_APPLIED': {
+      // Backend seeded the project BPM (typically from the first
+      // import). Mirror locally — transportStore.setBpm is local-only,
+      // so no echo back to the bridge.
+      useTransportStore().setBpm(msg.payload.bpm)
+      log.info('bridge', `PROJECT_BPM_APPLIED bpm=${msg.payload.bpm.toFixed(2)}`)
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -541,6 +559,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectDirtyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'WAVEFORM_READY':
       return isWaveformReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'LIBRARY_ITEM_BPM':
+      return isLibraryItemBpmPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_BPM_APPLIED':
+      return isProjectBpmAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

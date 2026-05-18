@@ -1208,6 +1208,12 @@ export const useProjectStore = defineStore('project', {
             playbackFilePath: item.filePath,
             fromSnapshot: true
           })
+          // Hydrate persisted BPM (if the backend has detected one on a
+          // previous session). New imports get their BPM via the
+          // separate LIBRARY_ITEM_BPM envelope.
+          if (typeof item.bpm === 'number' && item.bpm > 0) {
+            library.setItemBpm(libId, item.bpm)
+          }
           // Fetch metadata + decode duration / sample-rate
           // asynchronously so the library card shows cover art + a
           // real duration after reload. Same data path the import

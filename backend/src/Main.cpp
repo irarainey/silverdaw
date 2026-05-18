@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "BpmDetector.h"
 #include "BridgeServer.h"
 #include "Log.h"
 #include "PeaksCache.h"
@@ -276,6 +277,127 @@ void produceAndBroadcastPeaks(const juce::String& clipId, const juce::File& file
                                           (fromCache ? " (cache hit)" : " (computed)"));
 }
 
+/**
+ * Estimate BPM for `filePath` on a worker thread and, on success,
+ * persist it onto the matching library item + broadcast a
+ * `LIBRARY_ITEM_BPM` envelope. Also seeds the project BPM when this is
+ * the first detection on an otherwise-empty project.
+ *
+ * Safe to invoke from a `juce::ThreadPool` job: the actual BPM
+ * computation runs on the worker thread; the ProjectState write and
+ * broadcast are marshalled back onto the JUCE message thread via
+ * `MessageManager::callAsync` so the ValueTree mutation stays
+ * single-threaded.
+ */
+void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
+                     silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                     silverdaw::BridgeServer& bridge)
+{
+    silverdaw::log::info("bpmjob", "start itemId=" + itemId + " file=" + filePath.getFileName());
+    silverdaw::BpmDetector detector;
+    const double bpm = detector.estimateBpm(filePath, engine.getFormatManager());
+    if (bpm <= 0.0)
+    {
+        silverdaw::log::info("bpmjob", "no plausible BPM for itemId=" + itemId);
+        return;
+    }
+    juce::MessageManager::callAsync(
+        [itemId, bpm, &projectState, &bridge]
+        {
+            // Item may have been removed while we were busy.
+            if (!projectState.setLibraryItemBpm(itemId, bpm))
+            {
+                silverdaw::log::warn("bpmjob",
+                                     "library item " + itemId + " gone before BPM applied");
+                return;
+            }
+            auto* p = new juce::DynamicObject();
+            p->setProperty("itemId", itemId);
+            p->setProperty("bpm", bpm);
+            bridge.broadcast("LIBRARY_ITEM_BPM", juce::var(p));
+
+            // First-detection-on-empty-project: seed the project BPM
+            // so the user's first import sets the tempo grid. We only
+            // do this when the project BPM is still the untouched
+            // default (100) AND there's no other library item with a
+            // BPM yet (so importing several files doesn't keep
+            // flipping the tempo to the last-detected value).
+            constexpr double kDefaultProjectBpm = 100.0;
+            if (std::abs(projectState.getBpm() - kDefaultProjectBpm) < 0.001)
+            {
+                const auto& tree = projectState.getTree();
+                const auto library = tree.getChildWithName(juce::Identifier{"LIBRARY"});
+                int countWithBpm = 0;
+                if (library.isValid())
+                {
+                    for (int i = 0; i < library.getNumChildren(); ++i)
+                    {
+                        if (library.getChild(i).hasProperty(juce::Identifier{"bpm"}))
+                        {
+                            ++countWithBpm;
+                        }
+                    }
+                }
+                if (countWithBpm == 1) // i.e. only the one we just set
+                {
+                    projectState.setBpm(bpm);
+                    auto* bpmObj = new juce::DynamicObject();
+                    bpmObj->setProperty("bpm", bpm);
+                    bridge.broadcast("PROJECT_BPM_APPLIED", juce::var(bpmObj));
+                    silverdaw::log::info("bpmjob", "seeded project BPM from first import: " + juce::String(bpm, 2));
+                }
+            }
+        });
+}
+
+/**
+ * Look up the library item id (if any) whose filePath matches
+ * `filePath`, returning empty string if no item exists. Used by both
+ * the LIBRARY_ADD and CLIP_ADD paths to find the right item to attach
+ * a BPM to. (CLIP_ADD's payload doesn't carry the library itemId, so
+ * we re-derive it from the filePath here.)
+ */
+juce::String findLibraryItemIdForPath(const silverdaw::ProjectState& projectState, const juce::String& filePath)
+{
+    const auto& root = projectState.getTree();
+    const auto library = root.getChildWithName(juce::Identifier{"LIBRARY"});
+    if (!library.isValid()) return {};
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(juce::Identifier{"filePath"}).toString() == filePath)
+        {
+            return item.getProperty(juce::Identifier{"id"}).toString();
+        }
+    }
+    return {};
+}
+
+/**
+ * Idempotent BPM-detection scheduler. If the library item for
+ * `filePath` already has a non-zero BPM (or no library item exists),
+ * this is a no-op; otherwise it queues a worker-pool job to run
+ * BTrack on the file and attach the result to the matching item.
+ *
+ * Used by both LIBRARY_ADD (fresh import) and CLIP_ADD (e.g. when a
+ * clip ends up on the timeline without going through a library
+ * round-trip, or when the renderer's library dedupe sidesteps a
+ * LIBRARY_ADD). Belt-and-braces: every imported audio file gets BPM
+ * detected exactly once per (run, file).
+ */
+void ensureBpmDetection(const juce::String& filePath, silverdaw::AudioEngine& engine,
+                        silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                        juce::ThreadPool& peakPool)
+{
+    if (filePath.isEmpty()) return;
+    const juce::String itemId = findLibraryItemIdForPath(projectState, filePath);
+    if (itemId.isEmpty()) return; // No library item to attach BPM to.
+    if (projectState.getLibraryItemBpmForPath(filePath) > 0.0) return; // Already known.
+    peakPool.addJob(
+        [itemId, file = juce::File(filePath), &engine, &projectState, &bridge]
+        { runBpmDetection(itemId, file, engine, projectState, bridge); });
+}
+
 void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                    silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
 {
@@ -356,6 +478,12 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         peakPool.addJob(
             [clipId, file = juce::File(filePath), &engine, &cache, &bridge]
             { produceAndBroadcastPeaks(clipId, file, engine, cache, bridge); });
+        // Also schedule BPM detection for the source file if the
+        // matching library item has no BPM yet. Belt-and-braces: covers
+        // the case where the renderer deduplicates a LIBRARY_ADD (so
+        // detection wouldn't otherwise have a chance to start) and the
+        // case where a clip arrives without a preceding LIBRARY_ADD.
+        ensureBpmDetection(filePath, engine, projectState, bridge, peakPool);
     }
 }
 
@@ -909,6 +1037,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
         silverdaw::log::info("bridge", "recv LIBRARY_ADD itemId=" + itemId);
         projectState.addLibraryItem(itemId, filePath);
+        ensureBpmDetection(filePath, engine, projectState, bridge, peakPool);
     }
     else if (type == "LIBRARY_REMOVE")
     {
