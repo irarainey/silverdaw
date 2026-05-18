@@ -77,6 +77,7 @@ export interface BridgeOutboundMap {
   PROJECT_SAVE_AS: ProjectSaveAsPayload
   PROJECT_LOAD: ProjectLoadPayload
   PROJECT_RENAME: ProjectRenamePayload
+  PROJECT_SET_VIEW: ProjectSetViewPayload
 }
 
 export interface WaveformRequestPayload {
@@ -98,6 +99,14 @@ export interface ProjectSaveAsPayload {
 
 export interface ProjectLoadPayload {
   filePath: string
+}
+
+/** Push the renderer's current horizontal zoom (in pixels-per-second)
+ *  to the backend so it can be persisted as part of the project. The
+ *  backend stores the value on the project root but does NOT mark the
+ *  project dirty — zoom is a view setting, not a meaningful edit. */
+export interface ProjectSetViewPayload {
+  pxPerSecond: number
 }
 
 export type BridgeOutboundType = keyof BridgeOutboundMap
@@ -207,6 +216,12 @@ export interface ProjectStatePayload {
    * `projectStore.applyProjectStateSnapshot`).
    */
   reset?: boolean
+  /**
+   * Horizontal zoom level (px-per-second) persisted with the project.
+   * Optional: omitted on a snapshot for a project that hasn't yet set a
+   * zoom (the renderer keeps its current zoom in that case).
+   */
+  viewPxPerSecond?: number
   tracks: ProjectStateTrack[]
 }
 
@@ -353,6 +368,7 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
   if (value.filePath !== null && typeof value.filePath !== 'string') return false
   if (typeof value.name !== 'string') return false
   if (value.reset !== undefined && typeof value.reset !== 'boolean') return false
+  if (value.viewPxPerSecond !== undefined && typeof value.viewPxPerSecond !== 'number') return false
   if (!Array.isArray(value.tracks)) return false
   for (const t of value.tracks) {
     if (!isPlainObject(t)) return false

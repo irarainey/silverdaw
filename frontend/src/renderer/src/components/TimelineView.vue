@@ -29,6 +29,7 @@ import { useDragHandlers, type ClipHitRegion } from '@/lib/timeline/useDragHandl
 import { useDropZone } from '@/lib/timeline/useDropZone'
 import { useTimelineDrawing } from '@/lib/timeline/useTimelineDrawing'
 import { useScrollbarDrag } from '@/lib/timeline/useScrollbarDrag'
+import { send as sendBridge } from '@/lib/bridgeService'
 
 const project = useProjectStore()
 const transport = useTransportStore()
@@ -177,25 +178,89 @@ watch(headerWidthRef, () => {
   updatePlayhead()
 })
 
+// ─── Zoom persistence ──────────────────────────────────────────────────────
+// `project.viewPxPerSecond` is the backend-authoritative zoom. We watch
+// both directions:
+//
+//   1. backend → renderer:  on PROJECT_STATE the projectStore updates
+//      `viewPxPerSecond`. Apply it locally so a freshly-loaded project
+//      opens at the zoom that was saved with it. Use a guard so we
+//      don't bounce the change back to the backend.
+//   2. renderer → backend:  any wheel zoom that survives a short debounce
+//      gets pushed via `PROJECT_SET_VIEW`. The backend stores it on the
+//      project root (without flipping the dirty flag — zoom isn't a
+//      meaningful edit).
+let suppressZoomEmit = false
+let zoomEmitTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(
+  () => project.viewPxPerSecond,
+  (saved) => {
+    if (saved === null) return
+    if (Math.abs(saved - pxPerSecond.value) < 0.01) return
+    suppressZoomEmit = true
+    geometry.setPxPerSecond(saved)
+    redraw()
+    updatePlayhead()
+    // Drop the guard on the next tick so genuine user wheel zooms still
+    // emit even if they happen immediately after a snapshot apply.
+    requestAnimationFrame(() => {
+      suppressZoomEmit = false
+    })
+  }
+)
+
+watch(pxPerSecond, (next) => {
+  if (suppressZoomEmit) return
+  if (zoomEmitTimer) clearTimeout(zoomEmitTimer)
+  zoomEmitTimer = setTimeout(() => {
+    zoomEmitTimer = null
+    // Skip the round-trip if the value already matches what the backend
+    // told us was persisted — happens during the snapshot-apply path.
+    if (project.viewPxPerSecond !== null && Math.abs(project.viewPxPerSecond - next) < 0.01) return
+    sendBridge('PROJECT_SET_VIEW', { pxPerSecond: next })
+  }, 200)
+})
+
 /**
- * Mouse-wheel zoom. The wheel adjusts horizontal zoom (`pxPerSecond`) using
- * an exponential factor so equal-magnitude wheel deltas give symmetric zoom
- * in / out. Zoom anchors on the time under the pointer so the bar / clip
- * the user is hovering stays fixed on screen. Outside the track-content
- * area (over the header column or scrollbar lanes) the zoom anchors on the
- * left edge of the track area instead.
+ * Wheel handler — dispatches between two intents based on which axis
+ * dominates:
  *
- * Vertical / horizontal scroll is reachable via the scrollbars and (later)
- * other dedicated controls.
+ *   - Horizontal scroll (|deltaX| > |deltaY|) → pan the timeline.
+ *     Trackpads naturally emit deltaX on a two-finger horizontal swipe;
+ *     mouse wheels usually don't, so vertical mouse-wheel still zooms.
+ *   - Vertical scroll → exponential zoom anchored on the pointer's
+ *     current time-position so the bar/clip under the cursor stays
+ *     fixed on screen.
+ *
+ * Holding Shift while scrolling vertically also pans (matches the
+ * convention used by every browser and most DAWs).
  */
 function onWheel(e: WheelEvent): void {
   if (!host.value) return
   e.preventDefault()
-  // Zoom is meaningless until there's something on the timeline. Disabling
-  // it on an empty project also prevents the ruler grid scale shifting
-  // around before the user has any visual reference to anchor it to.
   if (project.tracks.length === 0) return
-  const delta = e.deltaY || e.deltaX
+
+  // Treat as a horizontal pan when the dominant axis is horizontal OR
+  // the user is holding Shift. Both branches consume the event so the
+  // OS-level scroll bubbling doesn't move the page.
+  const absX = Math.abs(e.deltaX)
+  const absY = Math.abs(e.deltaY)
+  const wantsPan = absX > absY || (e.shiftKey && absY > 0)
+  if (wantsPan) {
+    // Use deltaX when it's non-zero (trackpad horizontal swipe); fall
+    // back to deltaY when Shift was the trigger on a vertical wheel.
+    const panBy = absX > 0 ? e.deltaX : e.deltaY
+    if (panBy === 0) return
+    const next = Math.max(0, Math.min(maxScrollX.value, scrollX.value + panBy))
+    if (next === scrollX.value) return
+    scrollX.value = next
+    redraw()
+    updatePlayhead()
+    return
+  }
+
+  const delta = e.deltaY
   if (delta === 0) return
 
   // Exponential zoom factor. ~ ±100 delta per wheel notch on most mice

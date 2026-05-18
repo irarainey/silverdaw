@@ -130,6 +130,20 @@ class ProjectState : public juce::ValueTree::Listener
     /** Returns the backend-stored file path for `clipId`, or empty if unknown. */
     juce::String getClipFilePath(const juce::String& clipId) const;
 
+    // ─── View settings ─────────────────────────────────────────────────
+    //
+    // Project-scoped view state that survives save/load but is NOT
+    // considered a meaningful "edit" — changing the zoom level should
+    // not prompt an unsaved-changes dialog. The setter wraps the
+    // mutation in `suppressDirtyTransitions` so the listener ignores
+    // it; the read path is a plain property read.
+
+    /** Horizontal zoom (pixels per second). Defaults to 60. */
+    double getViewPxPerSecond() const;
+
+    /** Update the persisted zoom level. Does NOT mark the project dirty. */
+    void setViewPxPerSecond(double pxPerSecond);
+
     // ─── Serialisation ─────────────────────────────────────────────────
 
     /**
@@ -210,6 +224,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kFilePath;
     static const juce::Identifier kOffsetMs;
     static const juce::Identifier kDurationMs;
+    static const juce::Identifier kViewPxPerSecond;
 };
 
 } // namespace silverdaw

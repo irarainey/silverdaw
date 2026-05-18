@@ -12,6 +12,7 @@ const juce::Identifier ProjectState::kGain{"gain"};
 const juce::Identifier ProjectState::kFilePath{"filePath"};
 const juce::Identifier ProjectState::kOffsetMs{"offsetMs"};
 const juce::Identifier ProjectState::kDurationMs{"durationMs"};
+const juce::Identifier ProjectState::kViewPxPerSecond{"viewPxPerSecond"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
 
@@ -271,6 +272,25 @@ juce::String ProjectState::getClipFilePath(const juce::String& clipId) const
         return {};
     }
     return clip.getProperty(kFilePath).toString();
+}
+
+double ProjectState::getViewPxPerSecond() const
+{
+    // 60 px/s default matches the renderer's `DEFAULT_PX_PER_SECOND` so
+    // a freshly-created project opens at the same zoom that was used
+    // before this preference existed.
+    return static_cast<double>(root.getProperty(kViewPxPerSecond, 60.0));
+}
+
+void ProjectState::setViewPxPerSecond(double pxPerSecond)
+{
+    // Suppress the dirty-flag transition for this property: changing
+    // zoom should not mark the project as needing a save. The value
+    // still rides along on serialisation because it's a plain property
+    // of the root ValueTree.
+    suppressDirtyTransitions = true;
+    root.setProperty(kViewPxPerSecond, pxPerSecond, nullptr);
+    suppressDirtyTransitions = false;
 }
 
 juce::var ProjectState::tracksAsJson() const

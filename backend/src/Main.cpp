@@ -502,6 +502,7 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         obj->setProperty("reset", true);
     }
     obj->setProperty("tracks", projectState.tracksAsJson());
+    obj->setProperty("viewPxPerSecond", projectState.getViewPxPerSecond());
     return juce::var(obj);
 }
 
@@ -790,6 +791,23 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::info("bridge", "recv PROJECT_RENAME name=" + payload.getProperty("name", "").toString());
         handleProjectRename(payload, projectState, bridge);
+    }
+    else if (type == "PROJECT_SET_VIEW")
+    {
+        // View preferences (zoom level today; pan/scroll position later)
+        // travel with the project so opening a saved file restores the
+        // exact view the user had when they saved. Suppressed from the
+        // dirty-flag listener inside `setViewPxPerSecond` so zoom alone
+        // doesn't prompt an unsaved-changes dialog.
+        const auto pxVar = payload.getProperty("pxPerSecond", juce::var());
+        if (pxVar.isDouble() || pxVar.isInt() || pxVar.isInt64())
+        {
+            const double px = static_cast<double>(pxVar);
+            if (px > 0.0)
+            {
+                projectState.setViewPxPerSecond(px);
+            }
+        }
     }
     else
     {

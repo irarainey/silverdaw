@@ -127,6 +127,15 @@ interface ProjectState {
    * is by definition clean — see `applyProjectStateSnapshot`).
    */
   isDirty: boolean
+  /**
+   * Horizontal zoom (pixels per second) persisted with the project.
+   * Mirrors `viewPxPerSecond` from PROJECT_STATE; the timeline writes
+   * back here when the user wheel-zooms (debounced) so the value
+   * survives File > Save / Load. `null` means "no preference yet —
+   * keep the renderer's current default" (used for the initial connect
+   * snapshot before any zoom has been sent).
+   */
+  viewPxPerSecond: number | null
 }
 
 /** Default name shown in the title bar before a project is named or loaded. */
@@ -147,7 +156,8 @@ export const useProjectStore = defineStore('project', {
     peaksRevision: 0,
     currentFilePath: null,
     projectName: DEFAULT_PROJECT_NAME,
-    isDirty: false
+    isDirty: false,
+    viewPxPerSecond: null
   }),
 
   getters: {
@@ -560,6 +570,13 @@ export const useProjectStore = defineStore('project', {
       this.currentFilePath = snapshot.filePath
       this.projectName = snapshot.name?.trim() ? snapshot.name : DEFAULT_PROJECT_NAME
       this.isDirty = false
+      // Adopt the persisted zoom level (if the backend supplied one) so
+      // the TimelineView watcher in the component can apply it via the
+      // grid-geometry composable.
+      this.viewPxPerSecond =
+        typeof snapshot.viewPxPerSecond === 'number' && snapshot.viewPxPerSecond > 0
+          ? snapshot.viewPxPerSecond
+          : null
 
       const library = useLibraryStore()
       // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the
