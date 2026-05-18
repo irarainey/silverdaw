@@ -6,3 +6,15 @@ allowBuilds:
   # own files. We don't need it (we use Vue 3 directly), and pnpm 11 errors
   # on any unlisted ignored build, so deny it explicitly.
   vue-demi: false
+
+# Use a hoisted (flat) node_modules layout instead of pnpm's default
+# isolated/symlinked layout. electron-builder traverses node_modules at
+# packaging time to copy production deps into the asar; its resolver
+# does not follow pnpm's `.pnpm/<pkg>@<version>/node_modules/<pkg>`
+# symlink topology correctly, so transitive deps (e.g. `ieee754` under
+# `music-metadata`) get silently skipped and the packaged app crashes
+# at launch with "Cannot find package 'ieee754'". Hoisted mode produces
+# an npm-compatible flat tree that electron-builder packs verbatim.
+# As of pnpm 10+, this setting lives here rather than in `.npmrc`.
+nodeLinker: hoisted
+
