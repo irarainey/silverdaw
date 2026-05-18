@@ -112,10 +112,18 @@ the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
   TRACK[id, gain]
-    CLIP[id, filePath, offsetMs, durationMs]
+    CLIP[id, filePath, offsetMs, inMs, durationMs, colorIndex?]
   LIBRARY
     ITEM[id, filePath]
 ```
+
+`CLIP` carries a non-destructive trim window: `offsetMs` is the timeline start,
+`inMs` is where in the source file playback begins (≥ 0), and `durationMs` is
+how long the clip plays for from that point. Split, duplicate and edge-drag
+trim all manipulate this window without ever re-decoding the source — peaks
+are computed once per file and the renderer windows into them at draw time.
+`colorIndex` is an optional 0..15 per-clip palette override; when absent the
+clip inherits its host track's colour.
 
 The view-state properties (`viewScrollX`, `playheadMs`) bypass the dirty-flag listener via a
 `suppressDirtyTransitions` guard inside their setters — scrolling or moving the playhead
@@ -241,8 +249,12 @@ or releasing the modifier between frames switches mode without restarting the dr
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Click + drag on **clip** | Move the clip; start position snaps to the sub-beat grid. |
+| Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
+| Click + drag on **clip body** | Move the clip; start position snaps to the sub-beat grid. Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
+| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge (ms-precise; non-destructive — only the window over the source file changes). |
+| Click on **empty area of a track row** | Select that track (highlighted row border), deselect any clip. |
+| Click on **inter-track gap** / below the last track | Deselect both clip and track. |
 | `←` / `→` | Step the playhead one grid line (sub-beat). |
 | `Alt` + `←` / `→` | Step the playhead by one pixel's worth of time (~16.7 ms at default zoom, finer when zoomed in). |
 | Mouse wheel | Zoom the timeline (anchored on the pointer). |
@@ -253,10 +265,27 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl 0` | Reset zoom to 100% (60 px/s). |
 | `Space` (in transport bar) | Play / pause. |
 | `F2` | Rename project (also activates the title-bar rename input). |
-| **Right-click on a clip** | Open the context menu: **Delete**, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Save as Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
+| `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
+| `D` | Duplicate the selected clip immediately after the original. |
+| `Delete` | Delete the selected clip. |
+| `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
+| `Ctrl + V` | Paste the clipboard clip — on the source track it lands immediately after the source clip; on a different (selected) track it lands at the playhead. A toast appears if the slot is already occupied. |
+| **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Save as Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
 
 The status bar shows the current zoom level (e.g. `🔍 150%`) next to the backend connection
 indicator (plug-and-socket icon + green/grey dot).
+
+### Selection model
+
+A click selects two things at once: the **selected clip** (thick outline) is the target of
+Cut, Copy, Duplicate, Delete, and Split-at-playhead shortcuts; the **selected track**
+(highlighted row border) is the destination of Paste. Clicking a clip selects both the clip
+and its host track. Clicking an empty area of a track row selects just that track. Clicking
+between tracks clears both.
+
+Copy/paste works across tracks: copy a clip on one track, click another track, paste — the
+new clip lands on the destination track at the playhead. Overlap rules are evaluated only
+on the destination; the source-track's clips don't constrain the new clip's placement.
 
 ## Rendering performance
 
