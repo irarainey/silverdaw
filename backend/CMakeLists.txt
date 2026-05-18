@@ -55,6 +55,7 @@ target_sources(SilverdawBackend PRIVATE
     src/PeaksCache.cpp
     src/ProjectFile.cpp
     src/ProjectState.cpp
+    src/ValueTreeJson.cpp
     src/Waveform.cpp)
 
 target_compile_definitions(SilverdawBackend PRIVATE

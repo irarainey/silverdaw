@@ -1199,23 +1199,36 @@ app.whenReady().then(async () => {
     if (extname(filePath).toLowerCase() !== '.silverdaw') return false
     try {
       const content = await readFile(filePath, 'utf8')
-      // juce::XmlElement serialises ValueTree attributes as
-      // `filePath="..."`, escaping standard XML entities only. Decode
-      // the same set on the way back out so paths containing `&`, `<`
-      // etc. round-trip correctly through `registerIssuedPath`'s
-      // canonicalisation.
-      const re = /\bfilePath="([^"]+)"/g
-      let m: RegExpExecArray | null = re.exec(content)
-      while (m !== null) {
-        const decoded = m[1]
-          .replace(/&apos;/g, "'")
-          .replace(/&quot;/g, '"')
-          .replace(/&gt;/g, '>')
-          .replace(/&lt;/g, '<')
-          .replace(/&amp;/g, '&')
-        registerIssuedPath(decoded)
-        m = re.exec(content)
+      // `.silverdaw` files are JSON; the audio paths used by clips
+      // live in `filePath` properties anywhere inside the tree. We
+      // walk the parsed object recursively and register every value
+      // we find under that key. `registerIssuedPath` itself enforces
+      // the absolute-path + audio-extension allow-list, so even a
+      // tampered project file can't smuggle non-audio paths onto the
+      // read whitelist.
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(content)
+      } catch (parseErr) {
+        console.warn('[project:prepareOpen] malformed project JSON:', filePath, parseErr)
+        return false
       }
+      const visit = (node: unknown): void => {
+        if (Array.isArray(node)) {
+          for (const item of node) visit(item)
+          return
+        }
+        if (node !== null && typeof node === 'object') {
+          for (const [k, v] of Object.entries(node)) {
+            if (k === 'filePath' && typeof v === 'string' && v.length > 0) {
+              registerIssuedPath(v)
+            } else {
+              visit(v)
+            }
+          }
+        }
+      }
+      visit(parsed)
       return true
     } catch (err) {
       console.warn('[project:prepareOpen] could not read project file:', filePath, err)

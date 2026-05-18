@@ -18,9 +18,6 @@ namespace silverdaw::ProjectFile
  */
 constexpr int kCurrentSchemaVersion = 1;
 
-/** Top-level XML element wrapping the serialised project. */
-inline constexpr const char* kRootElementName = "SilverdawProject";
-
 /** Result envelope for `load`. `ok=true` means `project` was replaced. */
 struct LoadResult
 {
@@ -34,20 +31,24 @@ struct LoadResult
 /**
  * Serialise `project` to `file` in the current `.silverdaw` format.
  *
- * The on-disk layout is XML:
+ * The on-disk layout is JSON:
  *
- *     <SilverdawProject schemaVersion="1" appVersion="..." savedAt="ISO-8601">
- *       <PROJECT>
- *         <TRACK id="..." gain="..."> ... </TRACK>
- *         ...
- *       </PROJECT>
- *       <!-- Future sibling chunks (Transport, Library, Ui) added here -->
- *     </SilverdawProject>
+ *     {
+ *       "schemaVersion": 1,
+ *       "appVersion": "1.0.0",
+ *       "savedAt": "2026-05-18T11:00:00.000Z",
+ *       "project": { "$type": "PROJECT", ...,
+ *                    "$children": [
+ *                      { "$type": "TRACK", "id": "...", "gain": 1.0,
+ *                        "$children": [ ... ] },
+ *                      ...
+ *                    ] }
+ *     }
  *
  * Future state extensions (transport position, library catalogue, UI
- * layout) are added as additional sibling elements under
- * `<SilverdawProject>` so the project node itself stays a verbatim
- * `juce::ValueTree::toXml` payload that can be migrated independently.
+ * layout) are added as additional sibling keys under the root object
+ * (e.g. `"transport": { ... }`) so the project node itself stays a
+ * verbatim `ValueTree → JSON` payload that can be migrated independently.
  *
  * Returns `juce::Result::ok()` on success or a `juce::Result::fail()`
  * carrying a user-displayable error string. Existing file contents are
@@ -60,11 +61,11 @@ juce::Result save(const juce::File& file, const ProjectState& project);
  * success.
  *
  * On failure `project` is left untouched and `LoadResult::error`
- * describes why (missing file, malformed XML, wrong root element, or a
- * schema newer than this build can read). The XML loader ignores any
- * attributes / child elements it does not recognise, so a file written
- * by a newer build is still loadable as long as its `schemaVersion`
- * does not exceed `kCurrentSchemaVersion`.
+ * describes why (missing file, malformed JSON, missing `project` key,
+ * or a schema newer than this build can read). The JSON loader ignores
+ * any extra keys it does not recognise, so a file written by a newer
+ * build is still loadable as long as its `schemaVersion` does not
+ * exceed `kCurrentSchemaVersion`.
  */
 LoadResult load(const juce::File& file, ProjectState& project);
 

@@ -237,6 +237,12 @@ The recommended dev path is **F5** in VS Code with the `Silverdaw (Dev)` launch 
 selected — it has a `preLaunchTask: "backend: build"` so the Debug backend is always rebuilt
 before the renderer starts.
 
+`backend/build/` is the Debug cache used by VS Code; `backend/build-release/` is the Release
+cache used by `scripts/Build-Release.ps1`. They're kept separate so a release build doesn't
+reconfigure the Debug cache out from under your dev session (Ninja is single-config — sharing
+one directory means whichever configure ran last silently wins, and `cmake --build … --config`
+flags are ignored).
+
 ## Packaging a Windows installer
 
 The `scripts/Build-Release.ps1` helper does the whole release pipeline end-to-end:

@@ -8,7 +8,7 @@
     Runs the three release phases in order, aborting on the first failure:
 
       1. Configure + build the JUCE backend in Release.
-         Output: backend/build/SilverdawBackend_artefacts/Release/SilverdawBackend.exe
+         Output: backend/build-release/SilverdawBackend_artefacts/Release/SilverdawBackend.exe
 
       2. Compile the Electron main / preload / renderer bundles.
          Output: frontend/out/{main,preload,renderer}
@@ -53,15 +53,22 @@ function Write-Section([string]$Title) {
 
 # 1. Backend ---------------------------------------------------------------
 if (-not $SkipBackend) {
+    # Release builds get their own CMake build directory so we never
+    # clobber the Debug cache that VS Code's `backend: build` task
+    # relies on. Ninja is a single-config generator — sharing a build
+    # dir with Debug means whichever configure ran last wins, and the
+    # other config silently gets the wrong artefact.
+    $backendBuildDir = Join-Path $backendDir 'build-release'
+
     Write-Section 'Backend: configure (Release)'
-    & $devShell "cmake -S `"$backendDir`" -B `"$backendDir/build`" -G Ninja -DCMAKE_BUILD_TYPE=Release"
+    & $devShell "cmake -S `"$backendDir`" -B `"$backendBuildDir`" -G Ninja -DCMAKE_BUILD_TYPE=Release"
     if ($LASTEXITCODE -ne 0) { throw "Backend configure failed (exit $LASTEXITCODE)" }
 
     Write-Section 'Backend: build (Release)'
-    & $devShell "cmake --build `"$backendDir/build`" --config Release --parallel"
+    & $devShell "cmake --build `"$backendBuildDir`" --parallel"
     if ($LASTEXITCODE -ne 0) { throw "Backend build failed (exit $LASTEXITCODE)" }
 
-    $backendExe = Join-Path $backendDir 'build\SilverdawBackend_artefacts\Release\SilverdawBackend.exe'
+    $backendExe = Join-Path $backendBuildDir 'SilverdawBackend_artefacts\Release\SilverdawBackend.exe'
     if (-not (Test-Path $backendExe)) {
         throw "Backend exe not found at $backendExe after a successful build"
     }

@@ -23,6 +23,7 @@ dist/*
 out/
 build/
 backend/build/
+backend/build-release/
 *.exe
 *.pdb
 *.ilk

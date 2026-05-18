@@ -34,10 +34,12 @@ files:
   - package.json
 
 # The JUCE backend lives outside the renderer bundle. Build it Release first
-# (see scripts/Build-Release.ps1) then electron-builder copies the artefact
-# into `process.resourcesPath/backend/` for the packaged app to spawn.
+# (see scripts/Build-Release.ps1, which uses its own `backend/build-release/`
+# directory so the Debug cache that VS Code uses isn't clobbered) then
+# electron-builder copies the artefact into `process.resourcesPath/backend/`
+# for the packaged app to spawn.
 extraResources:
-  - from: ../backend/build/SilverdawBackend_artefacts/Release
+  - from: ../backend/build-release/SilverdawBackend_artefacts/Release
     to: backend
     filter:
       - SilverdawBackend.exe

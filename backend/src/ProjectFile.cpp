@@ -1,14 +1,17 @@
 #include "ProjectFile.h"
 
+#include "ValueTreeJson.h"
+
 namespace silverdaw::ProjectFile
 {
 
 namespace
 {
 
-constexpr const char* kSchemaVersionAttr = "schemaVersion";
-constexpr const char* kAppVersionAttr = "appVersion";
-constexpr const char* kSavedAtAttr = "savedAt";
+constexpr const char* kSchemaVersionKey = "schemaVersion";
+constexpr const char* kAppVersionKey = "appVersion";
+constexpr const char* kSavedAtKey = "savedAt";
+constexpr const char* kProjectKey = "project";
 constexpr const char* kAppVersionValue = "1.0.0";
 
 /** ISO-8601 (millisecond precision, UTC) timestamp for `savedAt`. */
@@ -27,21 +30,21 @@ juce::Result save(const juce::File& file, const ProjectState& project)
         return juce::Result::fail("Project state has no valid root");
     }
 
-    // Build the outer wrapper: <SilverdawProject schemaVersion=... appVersion=... savedAt=...>
-    juce::XmlElement root(kRootElementName);
-    root.setAttribute(kSchemaVersionAttr, kCurrentSchemaVersion);
-    root.setAttribute(kAppVersionAttr, kAppVersionValue);
-    root.setAttribute(kSavedAtAttr, isoTimestampNowUtc());
+    // Build the outer wrapper:
+    //   { schemaVersion, appVersion, savedAt, project: <tree-as-json> }
+    auto* rootObj = new juce::DynamicObject();
+    rootObj->setProperty(kSchemaVersionKey, kCurrentSchemaVersion);
+    rootObj->setProperty(kAppVersionKey, kAppVersionValue);
+    rootObj->setProperty(kSavedAtKey, isoTimestampNowUtc());
 
-    // The PROJECT ValueTree is serialised verbatim and attached as the
-    // first child. Future state extensions (transport, library, UI) go
-    // alongside it as siblings, each in its own element.
-    auto projectXml = projectTree.createXml();
-    if (projectXml == nullptr)
+    const auto projectVar = ValueTreeJson::toVar(projectTree);
+    if (projectVar.isVoid())
     {
-        return juce::Result::fail("Failed to serialise project tree to XML");
+        return juce::Result::fail("Failed to serialise project tree to JSON");
     }
-    root.addChildElement(projectXml.release());
+    rootObj->setProperty(kProjectKey, projectVar);
+
+    const juce::var rootVar(rootObj);
 
     const auto& target = file.getFullPathName();
     if (target.isEmpty())
@@ -62,15 +65,16 @@ juce::Result save(const juce::File& file, const ProjectState& project)
         return juce::Result::fail("Cannot create temp file " + tempFile.getFullPathName());
     }
 
-    juce::XmlElement::TextFormat format;
-    format.addDefaultHeader = true;
-    format.newLineChars = "\n";
-    const auto xmlString = root.toString(format);
+    // Multi-line pretty-printed JSON so the file diffs cleanly in git
+    // and is comfortable to inspect by hand. We leave `maxDecimalPlaces`
+    // at JUCE's default (15) so `offsetMs` / `durationMs` round-trip
+    // through `juce::JSON` without lossy truncation.
+    const auto jsonString = juce::JSON::toString(rootVar);
 
-    if (!tempFile.replaceWithText(xmlString))
+    if (!tempFile.replaceWithText(jsonString))
     {
         tempFile.deleteFile();
-        return juce::Result::fail("Failed to write project XML to " + tempFile.getFullPathName());
+        return juce::Result::fail("Failed to write project JSON to " + tempFile.getFullPathName());
     }
 
     if (file.existsAsFile())
@@ -98,28 +102,36 @@ LoadResult load(const juce::File& file, ProjectState& project)
         return result;
     }
 
-    juce::XmlDocument doc(file);
-    auto root = doc.getDocumentElement();
-    if (root == nullptr)
+    const auto jsonText = file.loadFileAsString();
+    if (jsonText.isEmpty())
     {
-        result.error = "Malformed project file: " + doc.getLastParseError();
+        result.error = "Project file is empty: " + file.getFullPathName();
         return result;
     }
 
-    if (!root->hasTagName(kRootElementName))
+    juce::var rootVar;
+    const auto parseResult = juce::JSON::parse(jsonText, rootVar);
+    if (parseResult.failed())
     {
-        result.error = juce::String("Not a Silverdaw project file (root element <")
-                       + root->getTagName() + "> expected <" + kRootElementName + ">)";
+        result.error = "Malformed project file: " + parseResult.getErrorMessage();
+        return result;
+    }
+
+    auto* rootObj = rootVar.getDynamicObject();
+    if (rootObj == nullptr)
+    {
+        result.error = "Project file is not a JSON object";
         return result;
     }
 
     // Schema version gating. A file from a newer build of Silverdaw is
     // refused; an older version falls through to the migration path
     // (no migrations exist yet — v1 is the only format).
-    result.schemaVersion = root->getIntAttribute(kSchemaVersionAttr, 0);
+    const auto schemaVar = rootObj->getProperty(kSchemaVersionKey);
+    result.schemaVersion = static_cast<int>(schemaVar);
     if (result.schemaVersion <= 0)
     {
-        result.error = "Project file is missing a valid schemaVersion attribute";
+        result.error = "Project file is missing a valid schemaVersion";
         return result;
     }
     if (result.schemaVersion > kCurrentSchemaVersion)
@@ -130,20 +142,20 @@ LoadResult load(const juce::File& file, ProjectState& project)
         return result;
     }
 
-    // Find the PROJECT element. `getChildByName` returns nullptr if missing.
-    // Unknown sibling elements (future Transport / Library / Ui chunks) are
-    // ignored at this stage — they get their own loader hooks in later todos.
-    const auto* projectXml = root->getChildByName("PROJECT");
-    if (projectXml == nullptr)
+    // Find the "project" sub-object. Unknown sibling keys (future
+    // transport / library / UI chunks) are ignored at this stage —
+    // they get their own loader hooks in later todos.
+    const auto projectVar = rootObj->getProperty(kProjectKey);
+    if (!projectVar.isObject())
     {
-        result.error = "Project file has no <PROJECT> element";
+        result.error = "Project file has no \"project\" object";
         return result;
     }
 
-    auto projectTree = juce::ValueTree::fromXml(*projectXml);
+    auto projectTree = ValueTreeJson::fromVar(projectVar);
     if (!projectTree.isValid())
     {
-        result.error = "Failed to decode <PROJECT> element as a ValueTree";
+        result.error = "Failed to decode \"project\" object as a ValueTree";
         return result;
     }
 
@@ -159,3 +171,4 @@ LoadResult load(const juce::File& file, ProjectState& project)
 }
 
 } // namespace silverdaw::ProjectFile
+
