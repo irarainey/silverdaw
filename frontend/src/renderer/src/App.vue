@@ -14,7 +14,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
-import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
+import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
 import { useAppStore } from '@/stores/appStore'
@@ -63,6 +63,7 @@ onMounted(() => {
     void openProjectByPath(filePath)
   })
   unregisterShortcuts = registerMenuShortcuts({ debugMode: appStore.debugMode })
+  window.addEventListener('keydown', onTransportKey, { capture: true })
   connectBridge()
   startBridgeConnectionTimer()
   // Pull persisted panel sizes from the main-process preferences file so
@@ -71,6 +72,58 @@ onMounted(() => {
   // tween rather than a jarring jump.)
   void ui.hydrate()
 })
+
+// ─── Transport keyboard shortcuts ─────────────────────────────────────────
+// Arrow Left / Arrow Right step the playhead back / forward to the
+// adjacent grid line (sub-beat — 16th-note in 4/4, matching the
+// timeline's finest grid division). Skipped while focus is in any
+// editable field so arrows still move the text cursor in the rename
+// input, numeric BPM/length inputs, etc.
+//
+// Step size = 60 000 / bpm / SUBDIVISIONS_PER_BEAT, so a tempo change
+// automatically rescales the step. SUBDIVISIONS_PER_BEAT is duplicated
+// here from `@/lib/timeline/constants` because importing the whole
+// timeline module just for one constant would pull in the PixiJS-aware
+// drawing graph; the value (4) hasn't moved since project inception
+// and is the canonical 16th-note resolution.
+const SUB_BEATS_PER_BEAT = 4
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  return target.isContentEditable
+}
+
+function onTransportKey(e: KeyboardEvent): void {
+  // Don't fight text fields, and don't trigger before the bridge is up
+  // (no point sending TRANSPORT_SEEK that the backend would just drop).
+  if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return
+  if (isEditableTarget(e.target)) return
+  if (!transport.bridgeReady) return
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+
+  const bpm = transport.bpm
+  if (!Number.isFinite(bpm) || bpm <= 0) return
+  const msPerSub = 60_000 / bpm / SUB_BEATS_PER_BEAT
+  const cur = transport.positionMs
+  // Subtracting 1 ms before flooring guarantees that pressing ← while
+  // already sitting exactly on a grid line lands on the previous one
+  // (not the current one); similarly + msPerSub after flooring forces
+  // → to advance past the current line even when `cur` is on a
+  // boundary.
+  const target =
+    e.key === 'ArrowLeft'
+      ? Math.max(0, Math.floor((cur - 1) / msPerSub) * msPerSub)
+      : (Math.floor(cur / msPerSub) + 1) * msPerSub
+  if (target === cur) return
+
+  e.preventDefault()
+  e.stopPropagation()
+  transport.setPosition(target)
+  sendBridge('TRANSPORT_SEEK', { positionMs: target })
+  log.debug('transport', `arrow-seek to ${target}ms (msPerSub=${msPerSub.toFixed(2)})`)
+}
 
 // ─── Initial bridge-connection timeout ────────────────────────────────
 // Without this the BridgeReadyOverlay can sit on screen forever if the
@@ -151,6 +204,7 @@ onBeforeUnmount(() => {
   unsubscribeOpenFromPath = null
   unregisterShortcuts?.()
   unregisterShortcuts = null
+  window.removeEventListener('keydown', onTransportKey, { capture: true })
   disconnectBridge()
   stopImportingWatcher()
   stopBridgeTimerWatcher()
