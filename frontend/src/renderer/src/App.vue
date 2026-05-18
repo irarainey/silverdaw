@@ -105,10 +105,35 @@ function isEditableTarget(target: EventTarget | null): boolean {
 function onTransportKey(e: KeyboardEvent): void {
   // Don't fight text fields, and don't trigger before the bridge is up
   // (no point sending TRANSPORT_SEEK that the backend would just drop).
-  if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return
+  if (e.ctrlKey || e.metaKey || e.shiftKey) return
   if (isEditableTarget(e.target)) return
   if (!transport.bridgeReady) return
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+
+  // Alt + Arrow: fine-grained step (one pixel's worth of time at the
+  // current zoom). Use this when placing the playhead exactly inside a
+  // clip waveform for a future split. At default zoom (60 px/s) that's
+  // ~16.7 ms; at max zoom (480 px/s) it's ~2 ms. Always at least 1 ms.
+  // Bare Arrow: grid step (sub-beat / 16th note).
+  const direction = e.key === 'ArrowLeft' ? -1 : 1
+  if (e.altKey) {
+    const pxPerSec = project.viewPxPerSecond ?? 60
+    const msPerPx = Math.max(1, 1000 / pxPerSec)
+    const reported = transport.positionMs
+    const base =
+      lastArrowSeekMs !== null && Math.abs(reported - lastArrowSeekMs) < 1
+        ? lastArrowSeekMs
+        : reported
+    const target = Math.max(0, base + direction * msPerPx)
+    if (target === reported) return
+    e.preventDefault()
+    e.stopPropagation()
+    lastArrowSeekMs = target
+    transport.setPosition(target)
+    sendBridge('TRANSPORT_SEEK', { positionMs: target })
+    log.debug('transport', `alt-arrow-seek to ${target.toFixed(2)}ms (${msPerPx.toFixed(2)}ms/px step)`)
+    return
+  }
 
   const bpm = transport.bpm
   if (!Number.isFinite(bpm) || bpm <= 0) return
@@ -127,7 +152,7 @@ function onTransportKey(e: KeyboardEvent): void {
       : reported
 
   const target =
-    e.key === 'ArrowLeft'
+    direction < 0
       ? Math.max(0, Math.floor((base - 1e-6) / msPerSub) * msPerSub)
       : (Math.floor(base / msPerSub + 1e-6) + 1) * msPerSub
   if (target === reported) return

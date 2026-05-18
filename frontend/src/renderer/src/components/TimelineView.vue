@@ -471,7 +471,7 @@ function onHeaderResizePointerUp(e: PointerEvent): void {
       v-if="project.tracks.length === 0"
       class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-zinc-600"
     >
-      Add a track to start
+      Add a track or open a project to start
     </div>
   </div>
 </template>

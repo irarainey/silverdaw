@@ -674,6 +674,17 @@ function createWindow(): void {
     }
   })
 
+  // Block any in-page navigation. The renderer is a single-page app
+  // (only `index.html` is ever loaded) and we don't want Chromium's
+  // default Alt+Left / Alt+Right history bindings hijacking the
+  // playhead fine-step shortcut. `will-navigate` fires after the page
+  // keyboard handlers have already had a crack at the event, so the
+  // renderer's `onTransportKey` still sees Alt+Arrow normally; we
+  // just stop the page from actually navigating away.
+  mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
+  })
+
   // In a dev session, auto-open DevTools when the user has explicitly
   // enabled debug mode in Preferences. Packaged builds never auto-open —
   // there's the Debug menu's "Toggle Developer Tools" for that — and an

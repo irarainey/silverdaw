@@ -80,7 +80,18 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   let clipGrabOffsetMs = 0
 
   // ─── Pixel ↔ ms helpers ──────────────────────────────────────────────
-  function pointerToSnappedMs(clientX: number): number | null {
+  /**
+   * Convert a pointer client-x to a timeline-ms position, either snapped
+   * to the sub-beat grid (Alt key NOT held — default behaviour for
+   * click-to-seek and playhead drag) or rounded to the nearest whole
+   * millisecond when the user is holding Alt. The latter is the
+   * finest meaningful resolution for seeking and future clip-split
+   * operations — at the maximum zoom of 480 px/sec, 1 ms ≈ 0.5 px,
+   * which is sub-pixel and below human-perception threshold either
+   * way. Returns null when the pointer is outside the track-content
+   * area.
+   */
+  function pointerToMs(clientX: number, fineMode: boolean): number | null {
     const a = app.value
     if (!host.value || !a) return null
     const rect = host.value.getBoundingClientRect()
@@ -89,6 +100,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (x < geometry.headerWidth() || x > rightEdge) return null
     const trackLocalX = x - geometry.headerWidth()
     const rawMs = ((scrollX.value + trackLocalX) / geometry.pxPerSecond.value) * 1000
+    if (fineMode) {
+      // Whole-millisecond resolution. Caller (Alt-modifier seek) wants
+      // sample-accurate placement, not grid-snap.
+      return Math.max(0, Math.round(rawMs))
+    }
     const snap = geometry.msPerSubBeat()
     return Math.max(0, Math.round(rawMs / snap) * snap)
   }
@@ -172,7 +188,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     // ribbon" in every other DAW so users already expect this.
     if (y >= RULER_HEIGHT) return
 
-    const ms = pointerToSnappedMs(e.clientX)
+    const ms = pointerToMs(e.clientX, e.altKey)
     if (ms === null) return
 
     isDraggingPlayhead.value = true
@@ -185,7 +201,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
 
   function onPlayheadPointerMove(e: PointerEvent): void {
     if (!isDraggingPlayhead.value) return
-    const ms = pointerToSnappedMs(e.clientX)
+    // Honour Alt LIVE — the user can toggle fine mode mid-drag by
+    // pressing / releasing the key without restarting the drag.
+    const ms = pointerToMs(e.clientX, e.altKey)
     if (ms === null) return
     if (ms === transport.positionMs) return
     seekTo(ms)
