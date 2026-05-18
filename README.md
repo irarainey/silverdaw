@@ -107,15 +107,26 @@ the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
 
 ## Project state model
 
-`ProjectState` (C++) wraps a `juce::ValueTree`
-(`PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs] > TRACK[id, gain] > CLIP[id, filePath, offsetMs, durationMs]`)
-plus a shared `UndoManager`. It's the structural source of truth; the audio graph in
-`AudioEngine` is updated in lockstep by the bridge dispatch handlers.
+`ProjectState` (C++) wraps a `juce::ValueTree`:
+
+```text
+PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
+  TRACK[id, gain]
+    CLIP[id, filePath, offsetMs, durationMs]
+  LIBRARY
+    ITEM[id, filePath]
+```
 
 The view-state properties (`viewScrollX`, `playheadMs`) bypass the dirty-flag listener via a
 `suppressDirtyTransitions` guard inside their setters — scrolling or moving the playhead
 doesn't prompt an unsaved-changes dialog. Everything else (BPM, project length, view zoom,
-clip moves, gain changes, etc.) marks the project dirty as a normal property edit.
+clip add/move/remove, gain changes, library import/remove, etc.) marks the project dirty as
+a normal property edit.
+
+The `LIBRARY` sub-tree carries the user's imported-but-not-yet-placed samples so the catalogue
+survives save / load. Only the stable `(id, filePath)` pair is persisted — cover art, ID3
+tags, peaks and the playable bytes are re-fetched on load via the existing
+`audio:readMetadata` IPC and the peaks cache.
 
 **Save / load** is via `.silverdaw` files — a versioned JSON serialisation. A small outer
 object carries `schemaVersion`, `appVersion`, and an ISO `savedAt` timestamp; the `project`
@@ -125,6 +136,19 @@ field holds the entire `PROJECT` `ValueTree` mapped through
 rename) and forward-compatible load (unknown keys are ignored). On save, the current engine
 playhead position is captured into `playheadMs` so reopening the project resumes where the
 user left off. Logic lives in [`backend/src/ProjectFile.cpp`](backend/src/ProjectFile.cpp).
+
+**Missing files** — on every `tracksAsJson` / `libraryAsJson` call, the backend stat()s each
+referenced source path. Anything that's gone gets an `unresolved: true` flag in the
+`PROJECT_STATE` snapshot. The renderer:
+
+- Draws affected clips in a muted grey fill + red border so they're visibly broken.
+- Auto-pops the **RelinkDialog** listing each missing clip with a *Locate file…* button. Each
+  successful pick emits `CLIP_RELINK { clipId, filePath }`; the backend updates the project
+  tree and re-creates the engine source, then rebroadcasts `PROJECT_STATE` which clears the
+  `unresolved` flag on the relinked clip.
+- Surfaces a single info toast summarising the count.
+- Lets the user re-enter the relink flow later via the **Relink…** entry on the clip's
+  right-click menu (only visible when the clip is unresolved).
 
 **Dirty tracking** is driven by a `juce::ValueTree::Listener` on `ProjectState` that flips an
 internal flag on every mutation. The flag is cleared by `markClean()` (called after load + a
@@ -229,6 +253,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl 0` | Reset zoom to 100% (60 px/s). |
 | `Space` (in transport bar) | Play / pause. |
 | `F2` | Rename project (also activates the title-bar rename input). |
+| **Right-click on a clip** | Open the context menu: **Delete**, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Save as Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
 
 The status bar shows the current zoom level (e.g. `🔍 150%`) next to the backend connection
 indicator (plug-and-socket icon + green/grey dot).
