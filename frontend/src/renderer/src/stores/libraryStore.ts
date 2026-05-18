@@ -9,6 +9,7 @@
 
 import { defineStore } from 'pinia'
 import { useProjectStore } from '@/stores/projectStore'
+import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 
 export interface LibraryItem {
@@ -145,11 +146,36 @@ export const useLibraryStore = defineStore('library', {
       peaks: Float32Array
       /** Optional override; defaults to `filePath`. */
       playbackFilePath?: string
+      /** When true, the item is being reconstructed from a
+       *  PROJECT_STATE snapshot and we must NOT echo a LIBRARY_ADD
+       *  back to the backend (we're applying the backend's truth,
+       *  not creating a new entry). */
+      fromSnapshot?: boolean
+      /** Specific id to use (snapshot path). Auto-minted when omitted
+       *  on a user-driven import. */
+      id?: string
     }): string {
       const existing = this.items.find((i) => i.filePath === audio.filePath)
       if (existing) return existing.id
 
-      const id = `l${this.nextItemIndex++}`
+      // Snapshot path passes the persisted id so the renderer ↔
+      // backend id space stays in sync across reloads. User-driven
+      // adds auto-mint a fresh id; we still bump `nextItemIndex`
+      // past any explicit id we adopt so future auto-mints don't
+      // collide.
+      let id: string
+      if (typeof audio.id === 'string' && audio.id.length > 0) {
+        id = audio.id
+        const m = /^l(\d+)$/.exec(id)
+        if (m) {
+          const n = Number(m[1])
+          if (Number.isFinite(n) && n >= this.nextItemIndex) {
+            this.nextItemIndex = n + 1
+          }
+        }
+      } else {
+        id = `l${this.nextItemIndex++}`
+      }
       this.items.push({
         id,
         filePath: audio.filePath,
@@ -164,6 +190,13 @@ export const useLibraryStore = defineStore('library', {
         'library',
         `addItem id=${id} file=${audio.fileName} sr=${audio.sampleRate} ch=${audio.channelCount} ms=${audio.durationMs}`
       )
+      // Persist user-driven library additions to the project so the
+      // catalogue survives save/load. Snapshot-driven adds (called
+      // from `applyProjectStateSnapshot`) skip this — we're already
+      // mirroring the backend's truth, not creating new state.
+      if (audio.fromSnapshot !== true) {
+        sendBridge('LIBRARY_ADD', { itemId: id, filePath: audio.filePath })
+      }
       return id
     },
 
@@ -185,6 +218,7 @@ export const useLibraryStore = defineStore('library', {
       }
       revokeItemCoverArt(this.items[idx])
       this.items.splice(idx, 1)
+      sendBridge('LIBRARY_REMOVE', { itemId })
       log.info('library', `removeItem id=${itemId}`)
       return true
     },

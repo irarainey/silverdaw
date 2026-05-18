@@ -179,6 +179,27 @@ class ProjectState : public juce::ValueTree::Listener
     /** Update the persisted project length. Marks dirty. */
     void setProjectLengthMs(double lengthMs);
 
+    // ─── Library catalogue ─────────────────────────────────────────────
+    //
+    // Items the user has imported into the library — independently of
+    // whether they've been dragged onto a track yet. Persisted with
+    // the project so re-opening it restores the full catalogue, not
+    // just the items referenced by an active clip. Cover art / ID3
+    // metadata is NOT stored here (renderer re-extracts it on load
+    // via the existing `audio:readMetadata` IPC) — only the stable
+    // `(id, filePath)` pair the backend needs to know about.
+
+    /** Add (or update the file path of) a library item. Marks dirty. */
+    bool addLibraryItem(const juce::String& itemId, const juce::String& filePath);
+
+    /** Remove a library item by id. Returns true if it existed. Marks dirty. */
+    bool removeLibraryItem(const juce::String& itemId);
+
+    /** Snapshot the library items as a `juce::var` array of
+     *  `{ id, filePath }` objects, ready to drop into a PROJECT_STATE
+     *  envelope's `library` field. */
+    juce::var libraryAsJson() const;
+
     // ─── Serialisation ─────────────────────────────────────────────────
 
     /**
@@ -264,6 +285,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kPlayheadMs;
     static const juce::Identifier kBpm;
     static const juce::Identifier kProjectLengthMs;
+    static const juce::Identifier kLibrary;
+    static const juce::Identifier kLibraryItem;
 };
 
 } // namespace silverdaw

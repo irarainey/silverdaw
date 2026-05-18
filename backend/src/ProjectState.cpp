@@ -17,6 +17,8 @@ const juce::Identifier ProjectState::kViewScrollX{"viewScrollX"};
 const juce::Identifier ProjectState::kPlayheadMs{"playheadMs"};
 const juce::Identifier ProjectState::kBpm{"bpm"};
 const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
+const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
+const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
 
@@ -355,6 +357,75 @@ void ProjectState::setProjectLengthMs(double lengthMs)
     // Length is a meaningful edit (the user explicitly chose this
     // length via the transport bar).
     root.setProperty(kProjectLengthMs, lengthMs, nullptr);
+}
+
+bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String& filePath)
+{
+    if (itemId.isEmpty() || filePath.isEmpty()) return false;
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid())
+    {
+        library = juce::ValueTree(kLibrary);
+        root.appendChild(library, nullptr);
+    }
+    // If an item with the same id already exists, just update its
+    // filePath — covers the relink-from-library case and is more
+    // forgiving than a hard-fail.
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            item.setProperty(kFilePath, filePath, nullptr);
+            return true;
+        }
+    }
+    juce::ValueTree item(kLibraryItem);
+    item.setProperty(kId, itemId, nullptr);
+    item.setProperty(kFilePath, filePath, nullptr);
+    library.appendChild(item, nullptr);
+    return true;
+}
+
+bool ProjectState::removeLibraryItem(const juce::String& itemId)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = library.getNumChildren() - 1; i >= 0; --i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            library.removeChild(item, nullptr);
+            return true;
+        }
+    }
+    return false;
+}
+
+juce::var ProjectState::libraryAsJson() const
+{
+    juce::Array<juce::var> arr;
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return juce::var(arr);
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (!item.hasType(kLibraryItem)) continue;
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("id", item.getProperty(kId).toString());
+        const juce::String filePath = item.getProperty(kFilePath).toString();
+        obj->setProperty("filePath", filePath);
+        // Same unresolved-flag pattern as clips so the renderer can
+        // grey-out library cards whose source file has gone missing
+        // since the project was last saved.
+        if (filePath.isEmpty() || !juce::File(filePath).existsAsFile())
+        {
+            obj->setProperty("unresolved", true);
+        }
+        arr.add(juce::var(obj));
+    }
+    return juce::var(arr);
 }
 
 juce::var ProjectState::tracksAsJson() const

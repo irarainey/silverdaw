@@ -522,6 +522,7 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         obj->setProperty("reset", true);
     }
     obj->setProperty("tracks", projectState.tracksAsJson());
+    obj->setProperty("library", projectState.libraryAsJson());
     obj->setProperty("viewPxPerSecond", projectState.getViewPxPerSecond());
     obj->setProperty("viewScrollX", projectState.getViewScrollX());
     obj->setProperty("playheadMs", projectState.getPlayheadMs());
@@ -822,6 +823,19 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::info("bridge", "recv CLIP_RELINK clipId=" + payload.getProperty("clipId", "").toString() +
                                             " path=" + payload.getProperty("filePath", "").toString());
         handleClipRelink(payload, engine, projectState, bridge, session);
+    }
+    else if (type == "LIBRARY_ADD")
+    {
+        const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
+        const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+        silverdaw::log::info("bridge", "recv LIBRARY_ADD itemId=" + itemId);
+        projectState.addLibraryItem(itemId, filePath);
+    }
+    else if (type == "LIBRARY_REMOVE")
+    {
+        const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
+        silverdaw::log::info("bridge", "recv LIBRARY_REMOVE itemId=" + itemId);
+        projectState.removeLibraryItem(itemId);
     }
     else if (type == "TRANSPORT_PLAY")
     {

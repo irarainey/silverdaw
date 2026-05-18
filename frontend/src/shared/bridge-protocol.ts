@@ -42,6 +42,19 @@ export interface ClipRelinkPayload {
   filePath: string
 }
 
+/** Register a library item with the backend so it's persisted with
+ *  the project. Cover art / ID3 metadata stays renderer-side — only
+ *  the stable `(id, filePath)` pair travels here. */
+export interface LibraryAddPayload {
+  itemId: string
+  filePath: string
+}
+
+/** Drop a library item from the persisted catalogue. */
+export interface LibraryRemovePayload {
+  itemId: string
+}
+
 export interface TrackAddPayload {
   trackId: string
 }
@@ -83,6 +96,8 @@ export interface BridgeOutboundMap {
   CLIP_MOVE: ClipMovePayload
   CLIP_REMOVE: ClipRemovePayload
   CLIP_RELINK: ClipRelinkPayload
+  LIBRARY_ADD: LibraryAddPayload
+  LIBRARY_REMOVE: LibraryRemovePayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
   TRACK_GAIN: TrackGainPayload
@@ -276,7 +291,22 @@ export interface ProjectStatePayload {
   bpm?: number
   /** User-set project length (ms) persisted with the project. */
   projectLengthMs?: number
+  /**
+   * Library catalogue persisted with the project. Each entry is the
+   * `(id, filePath)` pair the renderer originally created the item
+   * with, plus an optional `unresolved` flag mirroring the clip path
+   * — set when the file is no longer on disk. Cover art / ID3
+   * metadata is NOT in here; the renderer re-fetches it on load via
+   * the existing `audio:readMetadata` IPC.
+   */
+  library?: ProjectStateLibraryItem[]
   tracks: ProjectStateTrack[]
+}
+
+export interface ProjectStateLibraryItem {
+  id: string
+  filePath: string
+  unresolved?: boolean
 }
 
 export interface ProjectSavedPayload {
@@ -429,6 +459,14 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
   if (value.playheadMs !== undefined && typeof value.playheadMs !== 'number') return false
   if (value.bpm !== undefined && typeof value.bpm !== 'number') return false
   if (value.projectLengthMs !== undefined && typeof value.projectLengthMs !== 'number') return false
+  if (value.library !== undefined) {
+    if (!Array.isArray(value.library)) return false
+    for (const item of value.library) {
+      if (!isPlainObject(item)) return false
+      if (typeof item.id !== 'string' || typeof item.filePath !== 'string') return false
+      if (item.unresolved !== undefined && typeof item.unresolved !== 'boolean') return false
+    }
+  }
   if (!Array.isArray(value.tracks)) return false
   for (const t of value.tracks) {
     if (!isPlainObject(t)) return false

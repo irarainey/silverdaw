@@ -658,6 +658,37 @@ export const useProjectStore = defineStore('project', {
         this.peaksRevision++
         library.clear()
       }
+
+      // Hydrate persisted library entries BEFORE the clip-driven path
+      // below runs — clips that point at the same filePath will then
+      // see the existing item and skip the duplicate-add branch. We
+      // pass `fromSnapshot: true` so the libraryStore doesn't echo
+      // these adds back as LIBRARY_ADD envelopes.
+      if (snapshot.library) {
+        for (const item of snapshot.library) {
+          if (library.items.some((i) => i.filePath === item.filePath)) continue
+          const libId = library.addItem({
+            id: item.id,
+            filePath: item.filePath,
+            fileName: filePathToBasename(item.filePath),
+            durationMs: 0,
+            sampleRate: 0,
+            channelCount: 0,
+            peaks: new Float32Array(0),
+            playbackFilePath: item.filePath,
+            fromSnapshot: true
+          })
+          // Fetch metadata + decode duration / sample-rate
+          // asynchronously so the library card shows cover art + a
+          // real duration after reload. Same data path the import
+          // flow uses.
+          void window.silverdaw
+            .readAudioMetadata(item.filePath)
+            .then((metadata) => library.setItemMetadata(libId, metadata))
+            .catch((err) => log.warn('library', `readAudioMetadata failed for ${item.filePath}: ${String(err)}`))
+        }
+      }
+
       // Collect ids of clips that still need peaks after reconciliation so
       // we can fire WAVEFORM_REQUESTs at the end in one pass.
       const clipsNeedingPeaks: string[] = []
@@ -700,7 +731,12 @@ export const useProjectStore = defineStore('project', {
               sampleRate: 0,
               channelCount: 0,
               peaks: new Float32Array(0),
-              playbackFilePath: c.filePath
+              playbackFilePath: c.filePath,
+              // Reconstructed from a backend snapshot — don't echo a
+              // LIBRARY_ADD back; the backend already has this item
+              // implicitly via the clip's filePath, and an explicit
+              // add would force the dirty flag on every connect.
+              fromSnapshot: true
             })
             // Fetch ID3 / Vorbis / iTunes tags asynchronously so the
             // library card shows the cover art + title after reload
