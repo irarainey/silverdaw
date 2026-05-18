@@ -132,39 +132,28 @@ onBeforeUnmount(() => {
   stopPlayheadRaf()
 })
 
-// ─── Smooth playhead interpolation (RAF) ──────────────────────────────────
-// The backend ticks `PLAYHEAD_UPDATE` at 60 Hz which is the same cadence
-// as a typical display, but Timer-driven jitter on the JUCE message
-// thread can stall a couple of frames in a row (especially when the
-// message thread is also encoding/sending other envelopes). We side-
-// step it by driving the visual playhead from `requestAnimationFrame`,
-// interpolating between the last known backend position and now() while
-// playing. On every backend update we re-anchor; while paused we just
-// mirror the backend value. The result feels glassy-smooth at the
-// display's refresh rate (often 120/144 Hz) and is resilient to a
-// dropped envelope.
+// ─── Playhead paint loop (RAF) ────────────────────────────────────────────
+// We paint the playhead from `requestAnimationFrame` rather than from a
+// `watch(transport.positionMs)`:
+//   - It batches per-frame work to the display's vsync, avoiding wasted
+//     paints when several backend updates land in the same frame.
+//   - The cached playhead Graphics + O(1) `applyScroll` make the per-
+//     frame cost trivial, so running it every RAF tick is cheap.
+//
+// We do NOT extrapolate the position locally between backend updates.
+// Earlier attempts to do so introduced "playhead lies about where audio
+// is" bugs (jumping forward by the pause duration on Play after a seek,
+// or snapping backward when the first backend update arrived). The
+// playhead now strictly mirrors `transport.positionMs`, which itself
+// reflects the audio engine's authoritative position. A 60 Hz backend
+// cadence is well above the visual smoothness threshold for a DAW
+// timeline, so the trade-off is favourable.
 let rafId: number | null = null
-let anchorPosMs = 0
-let anchorWallMs = 0
-let lastBackendPos = -1
 
 function startPlayheadRaf(): void {
-  anchorPosMs = transport.positionMs
-  anchorWallMs = performance.now()
-  lastBackendPos = transport.positionMs
   const tick = (): void => {
     rafId = requestAnimationFrame(tick)
-    // If the backend pushed a new position (or we changed play state),
-    // re-anchor so the interpolation tracks reality.
-    if (transport.positionMs !== lastBackendPos) {
-      anchorPosMs = transport.positionMs
-      anchorWallMs = performance.now()
-      lastBackendPos = transport.positionMs
-    }
-    const target = transport.isPlaying
-      ? anchorPosMs + (performance.now() - anchorWallMs)
-      : transport.positionMs
-    setDisplayPositionMs(target)
+    setDisplayPositionMs(transport.positionMs)
     updatePlayhead()
   }
   rafId = requestAnimationFrame(tick)

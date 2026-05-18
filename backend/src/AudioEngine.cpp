@@ -275,12 +275,49 @@ void AudioEngine::setPositionMs(double ms)
                                    ? static_cast<juce::int64>(clampedMs * sr / 1000.0)
                                    : static_cast<juce::int64>(0);
     master.setPositionSamples(masterSamples);
+
+    // Per-track seek: also invalidate the read-ahead prefetch. JUCE's
+    // `BufferingAudioSource` only flushes its cached samples when the
+    // new position is OUTSIDE the cached range, so a backward seek of
+    // less than the buffer's worth of audio (~0.7 s at 32 768 samples /
+    // 48 kHz) can leave the stale tail in place. The next audio
+    // callback would then play a moment of pre-seek audio before the
+    // background prefetch catches up — exactly the "doesn't play at
+    // the correct position" bug.
+    //
+    // Path:
+    //   - Paused:  mark `prefetchDirty` and arm the debounce timer.
+    //              ~150 ms after the last seek (whether by mouse drag
+    //              or single click) the buffering source is rebuilt in
+    //              the background, so the user's subsequent Play click
+    //              is just a master-gate flip — no synchronous rebuild
+    //              cost on the play path. This is the same pattern
+    //              `setClipOffsetMs` uses for paused-move + Play.
+    //   - Playing: rebuild immediately. There's a brief block-sized
+    //              silence while the new source primes, but that's
+    //              still better than audibly playing the wrong audio.
+    const bool playing = master.isPlaying();
     for (auto& [id, track] : tracks)
     {
-        if (track->transportSource != nullptr)
+        if (track->transportSource == nullptr) continue;
+        // Update the position first so the rebuild (or the next play()
+        // flush) picks up the new master position via trackSeekSecondsFor.
+        track->transportSource->setPosition(trackSeekSecondsFor(*track, masterSamples));
+        if (playing)
         {
-            track->transportSource->setPosition(trackSeekSecondsFor(*track, masterSamples));
+            rebuildTrackPrefetch(*track);
         }
+        else
+        {
+            track->prefetchDirty = true;
+        }
+    }
+    if (!playing)
+    {
+        // Arm the debounce timer once for the whole tracks map; it'll
+        // call `flushDirtyRebuilds` from the message thread once the
+        // user has stopped seeking for ~150 ms.
+        rebuildTimer.startTimer(kRebuildDebounceMs);
     }
     silverdaw::log::info("engine", "setPositionMs " + juce::String(clampedMs));
 }
@@ -353,21 +390,21 @@ double AudioEngine::getPositionMs() const
     {
         return 0.0;
     }
+    // Report the master's "next read position" raw — i.e. where the
+    // engine will pull from on the next audio callback. This is also
+    // the position playback will resume from after a pause / seek, so
+    // a click-to-seek at X and then Play visibly starts from X.
+    //
+    // The audible playback (what leaves the speakers) lags this value
+    // by the device's output buffer latency, typically ~10-30 ms on
+    // Windows WASAPI shared mode and effectively zero on ASIO. We don't
+    // subtract that latency here because doing so introduces a visible
+    // jump backward at the moment of pressing Play (paused position is
+    // raw; playing would suddenly become compensated) and shifts the
+    // click-to-seek target left of where the user clicked. The slight
+    // visual lead is preferable to either of those discontinuities.
     const auto pos = master.getPositionSamples();
-    // `master.getPositionSamples()` is the audio thread's "next read
-    // position" — i.e. the sample that will be pulled FROM the source on
-    // the next callback, not the sample currently leaving the speakers.
-    // Subtract the device's output latency so the reported position
-    // matches what the user actually hears. Without this the visual
-    // playhead leads the audible playback by the device buffer size
-    // (typically ~10-30 ms on Windows WASAPI).
-    juce::int64 latencySamples = 0;
-    if (auto* device = deviceManager.getCurrentAudioDevice())
-    {
-        latencySamples = static_cast<juce::int64>(device->getOutputLatencyInSamples());
-    }
-    const auto audible = juce::jmax(static_cast<juce::int64>(0), pos - latencySamples);
-    return (static_cast<double>(audible) / sr) * 1000.0;
+    return (static_cast<double>(pos) / sr) * 1000.0;
 }
 
 double AudioEngine::getClipDurationMs(const juce::String& clipId) const
