@@ -70,7 +70,7 @@ const pixi = usePixiApp({
 })
 
 const { isDraggingPlayhead } = useDragHandlers({
-  host, app: pixi.app, scrollX, showScrollbar, geometry,
+  host, app: pixi.app, scrollX, scrollY, showScrollbar, geometry,
   getClipHitRegions: () => clipHitRegions,
   onClipMoved: () => { redraw(); updatePlayhead() },
   onPlayheadMoved: () => { updatePlayhead() }
@@ -84,6 +84,7 @@ const { dropPreview } = useDropZone({
 const drawing = useTimelineDrawing({
   app: pixi.app,
   rulerLayer: pixi.rulerLayer,
+  rulerTicksLayer: pixi.rulerTicksLayer,
   tracksLayer: pixi.tracksLayer,
   headersLayer: pixi.headersLayer,
   playheadLayer: pixi.playheadLayer,
@@ -97,6 +98,8 @@ const drawing = useTimelineDrawing({
 })
 redraw = drawing.redraw
 updatePlayhead = drawing.updatePlayhead
+const applyScroll = drawing.applyScroll
+const setDisplayPositionMs = drawing.setDisplayPositionMs
 
 // Template refs for the two scrollbar lanes. Declared here (rather than
 // inside `useScrollbarDrag`) so the `ref="scrollbarTrack"` /
@@ -111,7 +114,10 @@ const {
 } = useScrollbarDrag({
   scrollX, maxScrollX, trackAreaWidth, thumbWidthPx, showScrollbar, scrollbarTrack,
   scrollY, maxScrollY, vLaneHeight, vThumbHeightPx, vScrollbarTrack,
-  onScroll: () => { redraw(); updatePlayhead() }
+  // Scrollbar drag is now O(1): just translate the world layers.
+  // `applyScroll` internally calls `updatePlayhead` so the head re-pins
+  // to the right viewport x.
+  onScroll: () => { applyScroll() }
 })
 
 // Mouse-wheel zoom is attached directly to the host so we can
@@ -119,14 +125,59 @@ const {
 // The PixiJS init and all other pointer/drag handlers live in composables.
 onMounted(() => {
   host.value?.addEventListener('wheel', onWheel, { passive: false })
+  startPlayheadRaf()
 })
 onBeforeUnmount(() => {
   host.value?.removeEventListener('wheel', onWheel)
+  stopPlayheadRaf()
 })
+
+// ─── Smooth playhead interpolation (RAF) ──────────────────────────────────
+// The backend ticks `PLAYHEAD_UPDATE` at 60 Hz which is the same cadence
+// as a typical display, but Timer-driven jitter on the JUCE message
+// thread can stall a couple of frames in a row (especially when the
+// message thread is also encoding/sending other envelopes). We side-
+// step it by driving the visual playhead from `requestAnimationFrame`,
+// interpolating between the last known backend position and now() while
+// playing. On every backend update we re-anchor; while paused we just
+// mirror the backend value. The result feels glassy-smooth at the
+// display's refresh rate (often 120/144 Hz) and is resilient to a
+// dropped envelope.
+let rafId: number | null = null
+let anchorPosMs = 0
+let anchorWallMs = 0
+let lastBackendPos = -1
+
+function startPlayheadRaf(): void {
+  anchorPosMs = transport.positionMs
+  anchorWallMs = performance.now()
+  lastBackendPos = transport.positionMs
+  const tick = (): void => {
+    rafId = requestAnimationFrame(tick)
+    // If the backend pushed a new position (or we changed play state),
+    // re-anchor so the interpolation tracks reality.
+    if (transport.positionMs !== lastBackendPos) {
+      anchorPosMs = transport.positionMs
+      anchorWallMs = performance.now()
+      lastBackendPos = transport.positionMs
+    }
+    const target = transport.isPlaying
+      ? anchorPosMs + (performance.now() - anchorWallMs)
+      : transport.positionMs
+    setDisplayPositionMs(target)
+    updatePlayhead()
+  }
+  rafId = requestAnimationFrame(tick)
+}
+
+function stopPlayheadRaf(): void {
+  if (rafId !== null) cancelAnimationFrame(rafId)
+  rafId = null
+}
 
 // ─── Watches that trigger repaints ────────────────────────────────────────
 
-// Track / clip count changed → repaint (new row stack or new waveform).
+// Track / clip count changed → full repaint (new row stack or waveform).
 watch(
   () => [project.tracks.length, Object.keys(project.clips).length] as const,
   () => {
@@ -143,23 +194,26 @@ watch(
   () => redraw()
 )
 
-// Playhead moves at 60 Hz from the backend. Also reset scroll on rewind
-// to 0 (Stop / Back-to-Start), regardless of whether play was active.
+// Play/Stop and rewind handling. The RAF loop above takes care of the
+// per-frame playhead motion during play; this watcher only handles the
+// edge transitions: rewind-to-zero resets scroll, and a play-state
+// change re-anchors the RAF interpolator (the next RAF tick will pick
+// up the new `transport.positionMs`).
 watch(
   () => [transport.isPlaying, transport.positionMs] as const,
   ([, pos], prev) => {
     const prevPos = prev?.[1] ?? 0
     if (pos === 0 && prevPos !== 0 && scrollX.value !== 0) {
       scrollX.value = 0
-      redraw()
+      applyScroll()
     }
-    updatePlayhead()
   }
 )
 
-// Project length changed → re-clamp scroll and repaint.
+// Project length changed → re-clamp scroll. Translation only; no redraw
+// needed because clip content didn't change.
 watch([maxScrollX, maxScrollY], () => {
-  if (clampScroll()) redraw()
+  if (clampScroll()) applyScroll()
 })
 
 // BPM is editable from the transport bar; the ruler ticks, grid lines and
@@ -255,8 +309,7 @@ function onWheel(e: WheelEvent): void {
     const next = Math.max(0, Math.min(maxScrollX.value, scrollX.value + panBy))
     if (next === scrollX.value) return
     scrollX.value = next
-    redraw()
-    updatePlayhead()
+    applyScroll()
     return
   }
 

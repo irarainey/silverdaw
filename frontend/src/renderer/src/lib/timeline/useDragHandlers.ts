@@ -23,7 +23,12 @@ import { log } from '@/lib/log'
 import { RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from './constants'
 import type { GridGeometry } from './useGridGeometry'
 
-/** Viewport-space rectangle of a single drawn clip block. */
+/**
+ * World-space rectangle of a single drawn clip block. `x` / `y` are in
+ * absolute timeline-content coordinates; the hit-test below converts to
+ * viewport space using the current `scrollX/Y` so we can keep the
+ * regions stable across scroll without redrawing.
+ */
 export interface ClipHitRegion {
   clipId: string
   x: number
@@ -41,6 +46,7 @@ export interface DragHandlersOptions {
   host: Ref<HTMLElement | null>
   app: Readonly<Ref<Application | null>>
   scrollX: Ref<number>
+  scrollY: Ref<number>
   showScrollbar: ComputedRef<boolean>
   geometry: GridGeometry
   /** Returns the latest clip-hit-regions array (populated by drawClip). */
@@ -58,6 +64,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     host,
     app,
     scrollX,
+    scrollY,
     showScrollbar,
     geometry,
     getClipHitRegions,
@@ -110,14 +117,16 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   function hitTestClip(clientX: number, clientY: number): ClipHitRegion | null {
     if (!host.value) return null
     const rect = host.value.getBoundingClientRect()
-    const x = clientX - rect.left
-    const y = clientY - rect.top
+    // Convert pointer to WORLD coordinates by adding the current scroll.
+    // The hit regions are stored in world coords by `drawClip`.
+    const worldX = (clientX - rect.left) + scrollX.value
+    const worldY = (clientY - rect.top) + scrollY.value
     const regions = getClipHitRegions()
     // Iterate in reverse so the top-most drawn clip wins if any overlap.
     for (let i = regions.length - 1; i >= 0; i--) {
       const r = regions[i]
       if (!r) continue
-      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r
+      if (worldX >= r.x && worldX <= r.x + r.w && worldY >= r.y && worldY <= r.y + r.h) return r
     }
     return null
   }

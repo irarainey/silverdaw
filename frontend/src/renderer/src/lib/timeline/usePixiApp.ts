@@ -24,9 +24,17 @@ export interface PixiApp {
   isReady: Ref<boolean>
   /** PixiJS Application instance (null until ready). */
   app: ShallowRef<Application | null>
+  /** Static ruler chrome — bg + header-corner. Never translated. */
   rulerLayer: ShallowRef<Container | null>
+  /** Ruler tick lines + bar/beat labels. Translated by `-scrollX` only. */
+  rulerTicksLayer: ShallowRef<Container | null>
+  /** Track-area content (row bgs, grid, clip blocks + waveforms + filename
+   *  labels). Translated by `-scrollX, -scrollY`. */
   tracksLayer: ShallowRef<Container | null>
+  /** Header column chrome (column bg, per-track header bgs, divider).
+   *  Never translated — sits visually pinned over the track area's left edge. */
   headersLayer: ShallowRef<Container | null>
+  /** Playhead Graphics, built once and re-positioned via `.x`. */
   playheadLayer: ShallowRef<Container | null>
   /** PixiJS constructors. Null until ready; used by the drawing code. */
   GraphicsCtor: ShallowRef<typeof Graphics | null>
@@ -57,6 +65,7 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
   const isReady = ref(false)
   const app = shallowRef<Application | null>(null)
   const rulerLayer = shallowRef<Container | null>(null)
+  const rulerTicksLayer = shallowRef<Container | null>(null)
   const tracksLayer = shallowRef<Container | null>(null)
   const headersLayer = shallowRef<Container | null>(null)
   const playheadLayer = shallowRef<Container | null>(null)
@@ -116,6 +125,7 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
     }
 
     rulerLayer.value = new pixi.Container()
+    rulerTicksLayer.value = new pixi.Container()
     tracksLayer.value = new pixi.Container()
     // Headers drawn after tracks so the divider sits above scrolled clip
     // content (future).
@@ -123,8 +133,17 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
     // Playhead above everything so it stays visible over clips + headers.
     playheadLayer.value = new pixi.Container()
 
+    // Z-order:
+    //   rulerLayer        — static ruler bg + corner (under everything below)
+    //   tracksLayer       — translated world content (row bgs, grid, clips)
+    //   rulerTicksLayer   — translated ruler ticks/labels, on top of tracks
+    //                       so they overlay the (potentially scrolled-up)
+    //                       row backgrounds at y < RULER_HEIGHT
+    //   headersLayer      — track-header column, pinned, masks scrolled rows
+    //   playheadLayer     — the playhead, on top of everything
     instance.stage.addChild(rulerLayer.value)
     instance.stage.addChild(tracksLayer.value)
+    instance.stage.addChild(rulerTicksLayer.value)
     instance.stage.addChild(headersLayer.value)
     instance.stage.addChild(playheadLayer.value)
 
@@ -156,6 +175,7 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
     app.value?.destroy(true, { children: true, texture: true })
     app.value = null
     rulerLayer.value = null
+    rulerTicksLayer.value = null
     tracksLayer.value = null
     headersLayer.value = null
     playheadLayer.value = null
@@ -166,6 +186,7 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
     isReady,
     app,
     rulerLayer,
+    rulerTicksLayer,
     tracksLayer,
     headersLayer,
     playheadLayer,

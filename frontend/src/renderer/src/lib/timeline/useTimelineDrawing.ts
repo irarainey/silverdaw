@@ -44,6 +44,7 @@ export interface TimelineDrawingOptions {
   // ─── Pixi handles (from `usePixiApp`) ─────────────────────────────────
   app: ShallowRef<Application | null>
   rulerLayer: ShallowRef<Container | null>
+  rulerTicksLayer: ShallowRef<Container | null>
   tracksLayer: ShallowRef<Container | null>
   headersLayer: ShallowRef<Container | null>
   playheadLayer: ShallowRef<Container | null>
@@ -73,10 +74,32 @@ export interface TimelineDrawingOptions {
 }
 
 export interface TimelineDrawing {
-  /** Full repaint: ruler + tracks + clips + header divider. */
+  /**
+   * Full repaint of all content. Call when project content, zoom, BPM,
+   * or viewport size changes. NOT called per playback frame — scroll is
+   * handled by `applyScroll` which is O(1).
+   */
   redraw: () => void
-  /** Repaint just the playhead layer (and the drop-preview ghost). */
+  /**
+   * O(1) layer-translation update. Call whenever `scrollX` or `scrollY`
+   * changes; no Pixi nodes are rebuilt. The world content (clips, grid,
+   * row backgrounds, ruler ticks) is drawn in absolute world coordinates
+   * and the relevant Containers are translated by `-scrollX` / `-scrollY`.
+   */
+  applyScroll: () => void
+  /**
+   * Update the playhead position (cached Graphics, just sets `.x`) and
+   * — if needed — auto-scroll to keep the playhead visible. Cheap: no
+   * Graphics allocation, no clip iteration.
+   */
   updatePlayhead: () => void
+  /**
+   * Position used by `updatePlayhead` for visual drawing. Defaults to
+   * `transport.positionMs` but can be overridden by the RAF interpolation
+   * loop in TimelineView.vue to give sub-frame smoothness between the
+   * backend's 60 Hz updates.
+   */
+  setDisplayPositionMs: (ms: number) => void
 }
 
 export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawing {
@@ -86,6 +109,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
   const {
     app,
     rulerLayer,
+    rulerTicksLayer,
     tracksLayer,
     headersLayer,
     playheadLayer,
@@ -104,14 +128,50 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
   } = opts
   const { pxPerSecond, headerWidth } = geometry
 
+  // Visual playhead position. The renderer-side RAF interpolator writes
+  // here during playback so the visible line is smooth even if backend
+  // PLAYHEAD_UPDATE ticks are jittery. Falls back to `transport.positionMs`
+  // when nobody else has written.
+  let displayPositionMs = 0
+
+  function setDisplayPositionMs(ms: number): void {
+    displayPositionMs = ms
+  }
+
+  /**
+   * Re-translate the world layers to reflect the current scrollX/Y.
+   * Cheap: just three `.x`/`.y` writes plus a playhead position update.
+   * Called from the host on every scrollbar drag / auto-follow tick.
+   */
+  function applyScroll(): void {
+    const tracks = tracksLayer.value
+    const rulerTicks = rulerTicksLayer.value
+    if (!tracks || !rulerTicks) return
+    // Round to integer pixels so per-pixel sub-pixel sampling doesn't
+    // make the ruler ticks shimmer. `tracksLayer` carries both row bgs
+    // (which look fine at fractional offsets) and the clip waveforms
+    // (which DON'T because each pixel column is a 1 px line); rounding
+    // keeps them crisp during auto-follow.
+    const sx = Math.round(scrollX.value)
+    const sy = Math.round(scrollY.value)
+    tracks.x = -sx
+    tracks.y = -sy
+    rulerTicks.x = -sx
+    // Playhead lives in viewport coords; recompute its x because scroll
+    // changed.
+    updatePlayhead()
+  }
+
   function redraw(): void {
     const a = app.value
     const ruler = rulerLayer.value
+    const rulerTicks = rulerTicksLayer.value
     const tracks = tracksLayer.value
     const headers = headersLayer.value
-    if (!a || !ruler || !tracks || !headers) return
+    if (!a || !ruler || !rulerTicks || !tracks || !headers) return
 
     ruler.removeChildren()
+    rulerTicks.removeChildren()
     tracks.removeChildren()
     headers.removeChildren()
     clipHitRegions.length = 0
@@ -122,9 +182,17 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // devicePixelRatio.
     const width = a.renderer.screen.width
 
-    drawRuler(width)
+    drawRulerChrome(width)
+    drawRulerTicks(width)
     drawTracks(width)
     drawHeaderDivider()
+
+    // After a full redraw the world layers may need to be re-translated
+    // — particularly on initial mount where `applyScroll` hadn't yet
+    // been called by anyone.
+    tracks.x = -Math.round(scrollX.value)
+    tracks.y = -Math.round(scrollY.value)
+    rulerTicks.x = -Math.round(scrollX.value)
   }
 
   /**
@@ -149,13 +217,15 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     headers.addChild(divider)
   }
 
-  function drawRuler(width: number): void {
+  /**
+   * Ruler background + header corner. Lives on the non-translated
+   * `rulerLayer` so it stays pinned regardless of scroll.
+   */
+  function drawRulerChrome(width: number): void {
     const ruler = rulerLayer.value
     const G = GraphicsCtor.value
-    const T = TextCtor.value
     if (!ruler || !G) return
 
-    // Ruler stops short of the vertical scrollbar lane on the right.
     const rightEdge = width - SCROLLBAR_WIDTH
 
     const bg = new G()
@@ -165,23 +235,49 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       .stroke({ color: RULER_TICK, width: 1, alpha: 0.6 })
     ruler.addChild(bg)
 
-    // Iterate quarter-beat (sub) indices in content-space, drawing into
-    // one of three Graphics buckets by tier so each tier can have its
-    // own stroke style applied in a single call.
+    // Header column corner — pinned, sits in the ruler row above the
+    // track header column. Drawn on the static `rulerLayer` so it
+    // stays put when the user scrolls horizontally.
+    const headerCorner = new G()
+    headerCorner.rect(0, 0, headerWidth(), RULER_HEIGHT).fill(TRACK_HEADER_BG)
+    ruler.addChild(headerCorner)
+  }
+
+  /**
+   * Bar/beat/sub tick lines + bar-number labels. Drawn in WORLD
+   * coordinates on `rulerTicksLayer`, which is translated by
+   * `-scrollX` so the ticks pan with the timeline content for free.
+   */
+  function drawRulerTicks(width: number): void {
+    const rulerTicks = rulerTicksLayer.value
+    const G = GraphicsCtor.value
+    const T = TextCtor.value
+    if (!rulerTicks || !G) return
+
+    if (project.tracks.length === 0) return
+
+    const rightEdge = width - SCROLLBAR_WIDTH
+
     const pxPerBeat = (60 / transport.bpm) * pxPerSecond.value
     const pxPerSub = pxPerBeat / SUBDIVISIONS_PER_BEAT
     const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
 
-    const firstSub = Math.max(0, Math.floor(scrollX.value / pxPerSub))
-    const lastSub = Math.ceil((scrollX.value + (rightEdge - headerWidth())) / pxPerSub)
+    // Generate ticks for the full visible-at-current-scroll range plus
+    // a generous margin so a quick auto-follow scroll doesn't reveal
+    // empty space. `viewWidth` is the visible track-content width.
+    const viewWidth = rightEdge - headerWidth()
+    const sx = scrollX.value
+    const firstSub = Math.max(0, Math.floor((sx - viewWidth) / pxPerSub))
+    const lastSub = Math.ceil((sx + viewWidth * 2) / pxPerSub)
 
     const subTicks = new G()
     const beatTicks = new G()
     const barTicks = new G()
 
     for (let s = firstSub; s <= lastSub; s++) {
-      const x = headerWidth() + s * pxPerSub - scrollX.value + 0.5
-      if (x < headerWidth() || x > rightEdge) continue
+      // World x: header offset + tick position. The layer translation
+      // by `-scrollX` handles the on-screen positioning.
+      const x = headerWidth() + s * pxPerSub + 0.5
       const isBar = s % subsPerBar === 0
       const isBeat = s % SUBDIVISIONS_PER_BEAT === 0
       const tickH = isBar ? 14 : isBeat ? 10 : 5
@@ -191,19 +287,16 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     subTicks.stroke({ color: GRID_SUB, width: 1, alpha: 0.9 })
     beatTicks.stroke({ color: GRID_BEAT, width: 1, alpha: 0.95 })
     barTicks.stroke({ color: GRID_BAR, width: 1, alpha: 1.0 })
-    ruler.addChild(subTicks)
-    ruler.addChild(beatTicks)
-    ruler.addChild(barTicks)
+    rulerTicks.addChild(subTicks)
+    rulerTicks.addChild(beatTicks)
+    rulerTicks.addChild(barTicks)
 
     // Bar-number labels centred above each bar line. Bars are 0-indexed,
-    // so the first bar line (t=0) is labelled "0" and each subsequent
-    // bar line increments by one — matching the Bar.Beat.Sub display in
-    // the transport bar.
+    // so the first bar line (t=0) is labelled "0".
     if (T) {
       const startSub = Math.ceil(firstSub / subsPerBar) * subsPerBar
       for (let s = startSub; s <= lastSub; s += subsPerBar) {
-        const x = headerWidth() + s * pxPerSub - scrollX.value + 0.5
-        if (x < headerWidth() || x > rightEdge) continue
+        const x = headerWidth() + s * pxPerSub + 0.5
         const barNumber = s / subsPerBar
         const label = new T({
           text: String(barNumber),
@@ -213,34 +306,24 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
             fill: RULER_LABEL_HINT
           }
         })
-        // Centre the digits horizontally on the bar line.
         label.x = Math.round(x - label.width / 2)
         label.y = 0
-        ruler.addChild(label)
+        rulerTicks.addChild(label)
       }
     }
-
-    // Header column background sits in the ruler row too.
-    const headerCorner = new G()
-    headerCorner.rect(0, 0, headerWidth(), RULER_HEIGHT).fill(TRACK_HEADER_BG)
-    ruler.addChild(headerCorner)
   }
 
   /**
-   * Full-height vertical grid lines spanning the track area. Same musical
-   * subdivisions as `drawRuler` (bar / beat / sub-beat) so the ruler
-   * ticks and the grid stay visually aligned, allowing items to be placed
-   * at quarter-beat resolution later. Drawn on `tracksLayer` between the
-   * row backgrounds and the clip blocks so clips obscure the grid where
-   * they sit on top of it.
+   * Full-height vertical grid lines spanning the track area. Drawn in
+   * WORLD coordinates on `tracksLayer`, so they pan with scrollX for
+   * free (and scrollY-translate with the row backgrounds; the ruler
+   * chrome on top hides any bleed into the ruler row).
    */
   function drawGrid(width: number): void {
     const tracks = tracksLayer.value
     const G = GraphicsCtor.value
     if (!tracks || !G) return
 
-    // Don't draw a grid on an empty timeline — it just adds visual noise
-    // to the empty-state. The grid reappears when the first track is added.
     if (project.tracks.length === 0) return
 
     const rightEdge = width - SCROLLBAR_WIDTH
@@ -253,16 +336,17 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const pxPerSub = pxPerBeat / SUBDIVISIONS_PER_BEAT
     const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
 
-    const firstSub = Math.max(0, Math.floor(scrollX.value / pxPerSub))
-    const lastSub = Math.ceil((scrollX.value + (rightEdge - gridLeft)) / pxPerSub)
+    const viewWidth = rightEdge - gridLeft
+    const sx = scrollX.value
+    const firstSub = Math.max(0, Math.floor((sx - viewWidth) / pxPerSub))
+    const lastSub = Math.ceil((sx + viewWidth * 2) / pxPerSub)
 
     const subLines = new G()
     const beatLines = new G()
     const barLines = new G()
 
     for (let s = firstSub; s <= lastSub; s++) {
-      const x = gridLeft + s * pxPerSub - scrollX.value + 0.5
-      if (x < gridLeft || x > rightEdge) continue
+      const x = gridLeft + s * pxPerSub + 0.5
       const isBar = s % subsPerBar === 0
       const isBeat = s % SUBDIVISIONS_PER_BEAT === 0
       const target = isBar ? barLines : isBeat ? beatLines : subLines
@@ -284,116 +368,122 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const G = GraphicsCtor.value
     if (!a || !tracksL || !headers || !G) return
 
-    // Track rows live in the area between the ruler and the horizontal
-    // scrollbar lane and to the left of the vertical scrollbar lane.
     const rightEdge = width - SCROLLBAR_WIDTH
     const visibleBottom = RULER_HEIGHT + trackAreaHeight.value
 
-    // Full-height track-header column fill: ensures the left strip reads
-    // as a continuous `zinc-900` panel (matching the TransportBar) even
-    // when there are no tracks or the track list doesn't fill the
-    // viewport. The per-row header rectangles drawn below sit on top of
-    // this, so the colour is identical either way.
+    // Header column bg lives on the (non-translated) headers layer so it
+    // stays pinned over the left strip while tracks scroll horizontally
+    // underneath. `addChildAt(_, 0)` keeps it under the per-track header
+    // rectangles drawn below.
     const headerColumnBg = new G()
     headerColumnBg
       .rect(0, RULER_HEIGHT, headerWidth(), a.renderer.screen.height - RULER_HEIGHT)
       .fill(TRACK_HEADER_BG)
-    tracksL.addChild(headerColumnBg)
+    headers.addChildAt(headerColumnBg, 0)
 
-    // Pass 1: row backgrounds + headers. Collect visible rows so we can
-    // do a second pass for clips AFTER the grid is drawn, ensuring clip
-    // blocks visually sit on top of the grid lines.
+    // Pass 1: row backgrounds (world y) + per-track header rectangles
+    // (viewport y so they stay visually aligned with the row but are
+    // drawn on a non-translated layer).
     const tracks = project.tracks
-    const visibleRows: { track: (typeof tracks)[number]; y: number }[] = []
+    // Generous horizontal cull bounds in world space so scroll-without-
+    // redraw never reveals empty rows: extend by one viewport width
+    // on each side.
+    const viewWidth = rightEdge - headerWidth()
+    const worldLeft = scrollX.value - viewWidth
+    const worldRight = scrollX.value + viewWidth * 2
+    const visibleRows: { track: (typeof tracks)[number]; worldY: number }[] = []
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i]
       if (!track) continue
-      const y = RULER_HEIGHT + i * (TRACK_HEIGHT + TRACK_GAP) - scrollY.value
+      const worldY = RULER_HEIGHT + i * (TRACK_HEIGHT + TRACK_GAP)
+      const viewportY = worldY - scrollY.value
 
       // Cull rows that are entirely outside the visible track area.
-      if (y + TRACK_HEIGHT <= RULER_HEIGHT) continue
-      if (y >= visibleBottom) break
+      if (viewportY + TRACK_HEIGHT <= RULER_HEIGHT) continue
+      if (viewportY >= visibleBottom) break
 
-      // Row background (clipped to the track area on the right so it
-      // doesn't bleed under the vertical scrollbar lane).
+      // Row background — drawn in world coords. Spans from x=0 (so it
+      // continues under the header column for visual continuity) to a
+      // wide world x; the header column bg above masks the left edge.
       const rowBg = new G()
-      rowBg.rect(0, y, rightEdge, TRACK_HEIGHT).fill(TRACK_BG)
+      rowBg.rect(0, worldY, worldRight, TRACK_HEIGHT).fill(TRACK_BG)
       tracksL.addChild(rowBg)
 
-      // Track header.
+      // Per-track header — drawn on the static headers layer in
+      // viewport coords so it doesn't scroll horizontally.
       const header = new G()
-      header.rect(0, y, headerWidth(), TRACK_HEIGHT).fill(TRACK_HEADER_BG)
+      header.rect(0, viewportY, headerWidth(), TRACK_HEIGHT).fill(TRACK_HEADER_BG)
       header
-        .moveTo(headerWidth() - 0.5, y)
-        .lineTo(headerWidth() - 0.5, y + TRACK_HEIGHT)
+        .moveTo(headerWidth() - 0.5, viewportY)
+        .lineTo(headerWidth() - 0.5, viewportY + TRACK_HEIGHT)
         .stroke({ color: RULER_TICK, width: 1, alpha: 0.6 })
       headers.addChild(header)
 
-      visibleRows.push({ track, y })
+      visibleRows.push({ track, worldY })
     }
 
-    // Grid lines: drawn after row backgrounds and across the full visible
-    // track area (even past the last row) so the time grid always fills
-    // the canvas vertically. Must come BEFORE clip drawing below so clips
-    // overlay the grid.
+    // Grid lines after row bgs so clips overlay both.
     drawGrid(width)
 
     // Pass 2: clips.
-    for (const { track, y } of visibleRows) {
-      // Modular index is always in-bounds; the non-null assertion is for
-      // noUncheckedIndexedAccess.
+    for (const { track, worldY } of visibleRows) {
       const palette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
       for (const clipId of track.clipIds) {
         const clip = project.clips[clipId]
         if (!clip) continue
-        drawClip(clip, y, palette)
+        drawClip(clip, worldY, palette, worldLeft, worldRight)
       }
     }
   }
 
-  function drawClip(clip: Clip, rowY: number, palette: (typeof TRACK_PALETTE)[number]): void {
-    const a = app.value
+  function drawClip(
+    clip: Clip,
+    rowWorldY: number,
+    palette: (typeof TRACK_PALETTE)[number],
+    worldLeft: number,
+    worldRight: number
+  ): void {
     const tracksL = tracksLayer.value
     const G = GraphicsCtor.value
-    if (!a || !tracksL || !G) return
+    if (!tracksL || !G) return
 
-    const viewportWidthPx = a.renderer.screen.width - SCROLLBAR_WIDTH
     const absX = headerWidth() + (clip.startMs / 1000) * pxPerSecond.value
     const w = (clip.durationMs / 1000) * pxPerSecond.value
-    const x = absX - scrollX.value
 
-    // Cull entirely off-screen clips so we don't waste CPU on their waveform.
-    if (x + w < headerWidth() || x > viewportWidthPx) return
+    // Generous world-space cull: anything entirely outside the current
+    // viewport plus one viewport's worth of margin on each side is
+    // skipped. The margin keeps scroll-without-redraw smooth — by the
+    // time scroll has moved a viewport width, the next user action
+    // (zoom, content change) will trigger a fresh redraw.
+    if (absX + w < worldLeft || absX > worldRight) return
 
     const padding = 4
-    const innerY = rowY + padding
+    const innerY = rowWorldY + padding
     const innerH = TRACK_HEIGHT - padding * 2
     const midY = innerY + innerH / 2
 
     // Clip block + border (palette-coloured).
     const block = new G()
     block
-      .roundRect(x, innerY, w, innerH, 4)
+      .roundRect(absX, innerY, w, innerH, 4)
       .fill({ color: palette.fill, alpha: 0.85 })
       .stroke({ color: palette.border, width: 1, alpha: 0.9 })
     tracksL.addChild(block)
 
-    // Record the viewport-space rectangle so pointer-down can hit-test
-    // for drag-to-move. The visible region (after culling) is enough.
-    clipHitRegions.push({ clipId: clip.id, x, y: innerY, w, h: innerH })
+    // Hit region in WORLD coordinates — useDragHandlers converts to
+    // viewport space at test time using the current scrollX/Y.
+    clipHitRegions.push({ clipId: clip.id, x: absX, y: innerY, w, h: innerH })
 
-    // Waveform. Only iterate the visible pixel range so very long clips
-    // don't tank the framerate when zooming or scrolling.
+    // Waveform — iterate full clip width once. We're no longer redrawn
+    // on every scroll tick, so this is a redraw-time cost, not a
+    // per-frame one.
     const wave = new G()
     const peaks = clip.peaks
     const peakCount = peaks.length / 2
     const samplesPerPixel = Math.max(1, peakCount / w)
     const half = innerH / 2 - 2
 
-    const pxStart = Math.max(0, Math.floor(headerWidth() - x))
-    const pxEnd = Math.min(w, Math.ceil(viewportWidthPx - x))
-
-    for (let px = pxStart; px < pxEnd; px++) {
+    for (let px = 0; px < w; px++) {
       const startIdx = Math.floor(px * samplesPerPixel)
       const endIdx = Math.min(peakCount, Math.floor((px + 1) * samplesPerPixel))
       if (startIdx >= peakCount) break
@@ -401,37 +491,22 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       let min = 0
       let max = 0
       for (let i = startIdx; i < endIdx; i++) {
-        // Peaks are written in [min, max] pairs by computePeaks(); the
-        // bounds check above guarantees both indices are in range.
         const lo = peaks[i * 2]!
         const hi = peaks[i * 2 + 1]!
         if (lo < min) min = lo
         if (hi > max) max = hi
       }
 
-      // Skip silent columns (single-pixel-wide minimum to keep continuity).
       const yTop = midY + max * -half
       const yBot = midY + min * -half
-      wave.moveTo(x + px + 0.5, yTop).lineTo(x + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
+      wave.moveTo(absX + px + 0.5, yTop).lineTo(absX + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
     }
     wave.stroke({ color: palette.wave, width: 1, alpha: 0.95 })
     tracksL.addChild(wave)
 
-    // Filename header strip in the top-left of the clip. Sized to fit
-    // the filename but capped by the clip width, and skipped entirely
-    // if the clip is too narrow to be useful. Drawn last so it overlays
-    // the waveform near the top edge.
-    drawClipHeader(clip, x, innerY, w, palette)
+    drawClipHeader(clip, absX, innerY, w, palette)
   }
 
-  /**
-   * Draw the clip's filename in a coloured strip pinned to its top-left
-   * corner. The strip's width is the lesser of the clip's full width and
-   * whatever fits the filename plus padding, so short filenames don't
-   * span unnecessarily wide. The label is truncated with an ellipsis if
-   * even that doesn't fit. Character-width is approximated rather than
-   * measured to keep per-clip cost flat.
-   */
   function drawClipHeader(
     clip: Clip,
     clipX: number,
@@ -449,7 +524,6 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const FONT_SIZE = 10
     const APPROX_CHAR_W = 5.5
 
-    // A clip narrower than this can't usefully show even an ellipsis.
     if (clipW < 20) return
 
     const maxChars = Math.max(1, Math.floor((clipW - PAD_X * 2) / APPROX_CHAR_W))
@@ -458,8 +532,6 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         ? clip.fileName.slice(0, Math.max(1, maxChars - 1)) + '…'
         : clip.fileName
 
-    // Header background: same colour as the clip border so it blends
-    // with the outline. Width caps at the clip's own width.
     const desiredW = Math.min(clipW, text.length * APPROX_CHAR_W + PAD_X * 2)
     const headerBg = new G()
     headerBg
@@ -472,7 +544,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       style: {
         fontFamily: 'system-ui, -apple-system, sans-serif',
         fontSize: FONT_SIZE,
-        fill: 0x09090b // zinc-950, high contrast against the bright header
+        fill: 0x09090b
       }
     })
     label.x = Math.round(clipX + PAD_X)
@@ -480,33 +552,61 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     tracksL.addChild(label)
   }
 
+  // ─── Cached playhead Graphics ──────────────────────────────────────────
+  // The playhead is a vertical line with two small triangular heads.
+  // Built once and only re-positioned via `.x` on each `updatePlayhead`
+  // call — this is the single biggest per-frame win because we used to
+  // rebuild + re-stroke + re-fill every tick.
+
+  let playheadGfx: Graphics | null = null
+  let playheadDrawnHeight = -1
+
+  function ensurePlayheadGfx(bottomY: number): Graphics | null {
+    const G = GraphicsCtor.value
+    const playhead = playheadLayer.value
+    if (!G || !playhead) return null
+    if (playheadGfx && playheadDrawnHeight === bottomY) return playheadGfx
+    // Heights changed (track count, viewport resize) → rebuild geometry.
+    if (playheadGfx) {
+      playhead.removeChild(playheadGfx)
+      playheadGfx.destroy()
+    }
+    const g = new G()
+    // Draw at local x=0; translate the Graphics' `.x` to position.
+    g.moveTo(0.5, 0)
+      .lineTo(0.5, bottomY)
+      .stroke({ color: PLAYHEAD, width: 1, alpha: 0.9 })
+    const headW = 8
+    g.poly([-headW / 2, 0, headW / 2, 0, 0, headW]).fill({ color: PLAYHEAD, alpha: 0.95 })
+    g.poly([-headW / 2, bottomY, headW / 2, bottomY, 0, bottomY - headW]).fill({
+      color: PLAYHEAD,
+      alpha: 0.95
+    })
+    playhead.addChildAt(g, 0)
+    playheadGfx = g
+    playheadDrawnHeight = bottomY
+    return g
+  }
+
   /**
-   * Draw / move the playhead. Cheap to call every frame because we just
-   * recreate one Graphics on the dedicated layer rather than rebuilding
-   * the whole scene. Position is read from `transport.positionMs`
-   * (mirrored from the backend's PLAYHEAD_UPDATE messages at 60 Hz).
-   *
-   * Also runs the auto-scroll logic: while playing, once the playhead
-   * reaches the horizontal centre of the visible timeline, the content
-   * scrolls so the playhead stays pinned at the centre.
+   * Update the playhead position and run auto-follow. Cheap: no Graphics
+   * allocation, no clip iteration. The playhead itself is cached
+   * (`playheadGfx`); we just write `.x` per call. Auto-follow uses
+   * `applyScroll` (an O(1) layer translation) instead of `redraw()`.
    */
   function updatePlayhead(): void {
     const a = app.value
     const playhead = playheadLayer.value
-    const G = GraphicsCtor.value
-    if (!a || !playhead || !G) return
+    if (!a || !playhead) return
 
     const width = a.renderer.screen.width - SCROLLBAR_WIDTH
-    const absX = headerWidth() + (transport.positionMs / 1000) * pxPerSecond.value
+    const posMs = displayPositionMs || transport.positionMs
+    const absX = headerWidth() + (posMs / 1000) * pxPerSecond.value
 
-    // Auto-follow during playback OR while the user is dragging the
-    // playhead: once the head crosses the viewport midpoint, scroll the
-    // content so it stays pinned at the centre. `clampScroll()` will cap
-    // `scrollX` at the end of the timeline content, so once the scroll
-    // has reached the end the head naturally continues toward the right
-    // edge. Playback follow is gated on the user's `followPlayback`
-    // preference; playhead drag always follows because the user is
-    // actively positioning.
+    // Auto-follow: while playing (and the user wants follow) OR while
+    // the user is dragging the playhead, scroll the world to keep the
+    // playhead near the centre of the visible area. NOTE: no `redraw()`
+    // — `applyScroll` just translates the world layers.
     const shouldFollow =
       (transport.isPlaying && ui.followPlayback) || isDraggingPlayhead.value
     if (shouldFollow) {
@@ -515,60 +615,61 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       if (Math.abs(desired - scrollX.value) > 0.5) {
         scrollX.value = desired
         clampScroll()
-        redraw()
+        // Translate world layers — cheap.
+        const tracks = tracksLayer.value
+        const rulerTicks = rulerTicksLayer.value
+        if (tracks) {
+          tracks.x = -Math.round(scrollX.value)
+          tracks.y = -Math.round(scrollY.value)
+        }
+        if (rulerTicks) rulerTicks.x = -Math.round(scrollX.value)
       }
     }
 
-    playhead.removeChildren()
+    // Reset the drop-preview ghost. We allocate it per frame only when
+    // a drop is active (rare), so no caching needed.
+    if (dropPreview.value) {
+      removeDropPreviewGfx()
+      drawDropPreview()
+    } else {
+      removeDropPreviewGfx()
+    }
 
-    const trackN = project.tracks.length
-    if (trackN === 0) {
-      // No tracks → nothing to draw, including no drop ghost.
+    if (project.tracks.length === 0) {
+      // Nothing to point at → hide the playhead.
+      if (playheadGfx) playheadGfx.visible = false
       return
     }
 
-    const x = absX - scrollX.value
-    const playheadOnScreen = x >= headerWidth() && x <= width
+    const viewportX = absX - scrollX.value
+    const onScreen = viewportX >= headerWidth() && viewportX <= width
 
-    if (playheadOnScreen) {
-      // Line spans the ruler + exactly the visible track rows, clipped
-      // to the bottom of the visible track area so it never crosses
-      // into the horizontal-scrollbar lane.
-      const tracksHeight = tracksContentHeight.value
-      const bottomY = Math.min(
-        RULER_HEIGHT + trackAreaHeight.value,
-        RULER_HEIGHT + tracksHeight - scrollY.value
-      )
-
-      const g = new G()
-
-      // Vertical line.
-      g.moveTo(x + 0.5, 0)
-        .lineTo(x + 0.5, bottomY)
-        .stroke({ color: PLAYHEAD, width: 1, alpha: 0.9 })
-
-      // Small triangular heads at each end so the playhead is easy to
-      // spot. Top: points down into the ruler. Bottom: points up from
-      // the end of the visible track area (or the project end if it's
-      // higher up).
-      const headW = 8
-      g.poly([x - headW / 2, 0, x + headW / 2, 0, x, headW]).fill({
-        color: PLAYHEAD,
-        alpha: 0.95
-      })
-      g.poly([x - headW / 2, bottomY, x + headW / 2, bottomY, x, bottomY - headW]).fill({
-        color: PLAYHEAD,
-        alpha: 0.95
-      })
-
-      playhead.addChild(g)
+    if (!onScreen) {
+      if (playheadGfx) playheadGfx.visible = false
+      return
     }
 
-    // Drop-preview ghost — drawn on top of the playhead regardless of
-    // whether the playhead itself is currently visible. Shown while a
-    // library item is being dragged over a valid track row; green for
-    // "OK to drop", red for "would overlap".
-    if (dropPreview.value) drawDropPreview()
+    const tracksHeight = tracksContentHeight.value
+    const bottomY = Math.min(
+      RULER_HEIGHT + trackAreaHeight.value,
+      RULER_HEIGHT + tracksHeight - scrollY.value
+    )
+    const g = ensurePlayheadGfx(bottomY)
+    if (!g) return
+    g.visible = true
+    g.x = viewportX
+  }
+
+  // Drop preview ghost — kept on the playhead layer; rebuilt per frame
+  // when active (which is rare) and removed otherwise. Tracking the
+  // child separately so the playhead Graphics isn't disturbed.
+  let dropPreviewGfx: Graphics | null = null
+  function removeDropPreviewGfx(): void {
+    const playhead = playheadLayer.value
+    if (!playhead || !dropPreviewGfx) return
+    playhead.removeChild(dropPreviewGfx)
+    dropPreviewGfx.destroy()
+    dropPreviewGfx = null
   }
 
   /**
@@ -625,7 +726,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       alpha: 0.9
     })
     playhead.addChild(g)
+    dropPreviewGfx = g
   }
 
-  return { redraw, updatePlayhead }
+  return { redraw, applyScroll, updatePlayhead, setDisplayPositionMs }
 }
