@@ -481,35 +481,53 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // viewport space at test time using the current scrollX/Y.
     clipHitRegions.push({ clipId: clip.id, x: absX, y: innerY, w, h: innerH })
 
-    // Waveform — iterate full clip width once. We're no longer redrawn
-    // on every scroll tick, so this is a redraw-time cost, not a
-    // per-frame one.
+    // Waveform — iterate the clip's pixel range once. Map each pixel
+    // proportionally onto the peak-index space so the rendering stays
+    // time-accurate at both ends of the zoom range:
+    //
+    //   - Zoomed OUT (peakCount ≥ w):  multiple peaks per pixel → take
+    //     the min/max over the covered range (visual decimation).
+    //   - Zoomed IN  (peakCount < w):  multiple pixels per peak → each
+    //     pixel reads the single peak whose time it falls into, which
+    //     produces a horizontally-stretched envelope. The previous
+    //     algorithm clamped `samplesPerPixel` to 1, which incorrectly
+    //     spaced peaks 1 px apart regardless of width — causing the
+    //     waveform to "drift" leftward off its clip block at high
+    //     zoom.
     const wave = new G()
     const peaks = clip.peaks
     const peakCount = peaks.length / 2
-    const samplesPerPixel = Math.max(1, peakCount / w)
     const half = innerH / 2 - 2
 
-    for (let px = 0; px < w; px++) {
-      const startIdx = Math.floor(px * samplesPerPixel)
-      const endIdx = Math.min(peakCount, Math.floor((px + 1) * samplesPerPixel))
-      if (startIdx >= peakCount) break
+    if (peakCount > 0 && w > 0) {
+      const peaksPerPixel = peakCount / w
+      for (let px = 0; px < w; px++) {
+        const startIdx = Math.floor(px * peaksPerPixel)
+        // Always read at least one peak per pixel — when zoomed in
+        // (peaksPerPixel < 1) consecutive pixels would otherwise share
+        // the same `startIdx` AND `endIdx`, producing no draw.
+        const endIdx = Math.min(
+          peakCount,
+          Math.max(startIdx + 1, Math.ceil((px + 1) * peaksPerPixel))
+        )
+        if (startIdx >= peakCount) break
 
-      let min = 0
-      let max = 0
-      for (let i = startIdx; i < endIdx; i++) {
-        const lo = peaks[i * 2]!
-        const hi = peaks[i * 2 + 1]!
-        if (lo < min) min = lo
-        if (hi > max) max = hi
+        let min = 0
+        let max = 0
+        for (let i = startIdx; i < endIdx; i++) {
+          const lo = peaks[i * 2]!
+          const hi = peaks[i * 2 + 1]!
+          if (lo < min) min = lo
+          if (hi > max) max = hi
+        }
+
+        const yTop = midY + max * -half
+        const yBot = midY + min * -half
+        wave.moveTo(absX + px + 0.5, yTop).lineTo(absX + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
       }
-
-      const yTop = midY + max * -half
-      const yBot = midY + min * -half
-      wave.moveTo(absX + px + 0.5, yTop).lineTo(absX + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
+      wave.stroke({ color: palette.wave, width: 1, alpha: 0.95 })
+      tracksL.addChild(wave)
     }
-    wave.stroke({ color: palette.wave, width: 1, alpha: 0.95 })
-    tracksL.addChild(wave)
 
     drawClipHeader(clip, absX, innerY, w, palette)
   }
