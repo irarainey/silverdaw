@@ -11,6 +11,7 @@
 
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
+import { useAppStore } from '@/stores/appStore'
 
 export type NotificationKind = 'error' | 'info'
 
@@ -36,11 +37,19 @@ export const useNotificationsStore = defineStore('notifications', {
      * Push a new toast and schedule its auto-dismiss. `ttlMs` of `0` (or
      * negative) keeps the toast on screen until `dismiss()` is called
      * explicitly — only useful for fatal errors, which we don't have yet.
+     *
+     * When the user has disabled toasts in Preferences the item is NOT
+     * appended to the visible list, but the event is still written to
+     * the renderer log so debugging information isn't lost.
      */
     push(kind: NotificationKind, message: string, ttlMs: number = DEFAULT_TTL_MS): number {
       const id = this.nextId++
-      this.items.push({ id, kind, message })
       log[kind === 'error' ? 'warn' : 'info']('notify', `${kind}: ${message}`)
+      const appStore = useAppStore()
+      if (!appStore.toastsEnabled) {
+        return id
+      }
+      this.items.push({ id, kind, message })
       if (ttlMs > 0) {
         setTimeout(() => this.dismiss(id), ttlMs)
       }

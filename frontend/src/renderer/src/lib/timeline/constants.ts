@@ -7,7 +7,7 @@
 // drawing code uses identical values.
 
 // ─── Layout (pixels) ────────────────────────────────────────────────────────
-export const TRACK_HEIGHT = 96
+export const TRACK_HEIGHT = 120
 export const TRACK_GAP = 4
 export const RULER_HEIGHT = 28
 // Reserved width of the vertical scrollbar lane and height of the

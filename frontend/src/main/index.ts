@@ -271,10 +271,44 @@ interface DebugPrefs {
   enabled: boolean
 }
 
+/** Toast-notification visibility. `enabled=false` silences every toast
+ *  the renderer would otherwise pop — the underlying event is still
+ *  written to the log when debug mode is on, so nothing is lost. */
+interface ToastPrefs {
+  enabled: boolean
+}
+
+/**
+ * Persisted default directories for OS open / save dialogs.
+ *
+ *   - `defaultProjectDir` is the directory the project Open / Save As
+ *     dialogs land in **every time**. The user explicitly asked for the
+ *     pref to win over any per-session "last opened" tracking so files
+ *     stay in one predictable place.
+ *
+ *   - `defaultClipDir` is the directory the audio-file open dialogs land
+ *     in on the **first** open of each session. After the user picks a
+ *     file, the in-memory `currentClipDir` slot is updated to that
+ *     file's directory so subsequent opens follow the user's browse —
+ *     but on next launch we reset back to this pref.
+ *
+ * Both paths are validated cheaply on use (`mkdir -p` for the project
+ * dir; falls back to home dir if either string is empty). They never
+ * affect the path-allow-list applied to `audio:readFile` etc. — that
+ * remains driven solely by paths the user picked through a vetted
+ * channel.
+ */
+interface PathPrefs {
+  defaultProjectDir: string
+  defaultClipDir: string
+}
+
 interface Preferences {
   window: WindowPrefs
   ui: UiPrefs
   debug: DebugPrefs
+  toasts: ToastPrefs
+  paths: PathPrefs
   /**
    * Absolute path of the most-recently saved or loaded `.silverdaw`
    * project. Read on startup to decide whether to auto-open the last
@@ -283,16 +317,55 @@ interface Preferences {
   lastProjectPath: string | null
 }
 
-const DEFAULT_PREFS: Preferences = {
+/**
+ * Build the default preferences object. The path defaults need
+ * `app.getPath` (only available after `app.whenReady`) so we resolve
+ * them lazily the first time we need them rather than at module load.
+ */
+function buildDefaultPrefs(): Preferences {
+  const home = app.getPath('home')
+  // Default to <Music>/Silverdaw so projects live alongside the audio
+  // files most users will be importing from. Falls back to <home>/Silverdaw
+  // if the OS can't resolve a Music folder (e.g. headless / sandboxed env).
+  let musicDir = ''
+  try {
+    musicDir = app.getPath('music')
+  } catch {
+    musicDir = ''
+  }
+  const defaultProjectDir = musicDir ? join(musicDir, 'Silverdaw') : join(home, 'Silverdaw')
+  // Clip dialogs land in the OS Music folder by default; if that's not
+  // available we fall back to the project folder so a fresh install never
+  // points at a non-existent path.
+  const defaultClipDir = musicDir || defaultProjectDir
+  return {
+    window: { width: 1400, height: 900, maximized: false },
+    ui: { trackHeaderWidth: 175, libraryPanelHeight: 180 },
+    debug: { enabled: false },
+    toasts: { enabled: true },
+    paths: { defaultProjectDir, defaultClipDir },
+    lastProjectPath: null
+  }
+}
+
+let prefs: Preferences = {
   window: { width: 1400, height: 900, maximized: false },
   ui: { trackHeaderWidth: 175, libraryPanelHeight: 180 },
   debug: { enabled: false },
+  toasts: { enabled: true },
+  paths: { defaultProjectDir: '', defaultClipDir: '' },
   lastProjectPath: null
 }
-
-let prefs: Preferences = structuredClone(DEFAULT_PREFS)
 let prefsPath = ''
 let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Working clip directory for the current session. Initialised from
+ * `prefs.paths.defaultClipDir` once `app.whenReady` has resolved, then
+ * updated to the directory of whichever clip the user most recently
+ * picked. NOT persisted — each launch starts at the configured default.
+ */
+let currentClipDir = ''
 
 /**
  * Snapshot of `prefs.debug.enabled` sampled once at startup, AFTER
@@ -309,22 +382,48 @@ function getPrefsPath(): string {
   return prefsPath
 }
 
+/** Update the in-memory `currentClipDir` to the parent folder of
+ *  `pickedFile`. Called after every audio open-dialog success so the
+ *  next dialog opens where the user just was. */
+function rememberClipDir(pickedFile: string): void {
+  if (!pickedFile) return
+  const dir = dirname(pickedFile)
+  if (dir && dir !== currentClipDir) currentClipDir = dir
+}
+
 async function loadPreferences(): Promise<void> {
+  const defaults = buildDefaultPrefs()
+  prefs = structuredClone(defaults)
   try {
     const raw = await readFile(getPrefsPath(), 'utf8')
     // Empty file = no prefs yet (e.g. atomic-write was interrupted, or a
     // brand-new install before the first save). Treat the same as ENOENT
     // so we don't spam stderr with a SyntaxError on every startup.
     if (raw.trim().length === 0) {
+      seedSessionPaths()
+      await ensureProjectDirExists()
       return
     }
     const parsed = JSON.parse(raw) as Partial<Preferences>
-    // Merge over defaults so newly-added keys get sane values on first run
-    // after an upgrade.
+    // Merge over defaults so newly-added keys get sane values on first
+    // run after an upgrade. Path strings fall back to the computed
+    // defaults if the saved value is empty / non-string.
+    const savedPaths = (parsed.paths ?? {}) as Partial<PathPrefs>
     prefs = {
-      window: { ...DEFAULT_PREFS.window, ...(parsed.window ?? {}) },
-      ui: { ...DEFAULT_PREFS.ui, ...(parsed.ui ?? {}) },
-      debug: { ...DEFAULT_PREFS.debug, ...(parsed.debug ?? {}) },
+      window: { ...defaults.window, ...(parsed.window ?? {}) },
+      ui: { ...defaults.ui, ...(parsed.ui ?? {}) },
+      debug: { ...defaults.debug, ...(parsed.debug ?? {}) },
+      toasts: { ...defaults.toasts, ...(parsed.toasts ?? {}) },
+      paths: {
+        defaultProjectDir:
+          typeof savedPaths.defaultProjectDir === 'string' && savedPaths.defaultProjectDir.length > 0
+            ? savedPaths.defaultProjectDir
+            : defaults.paths.defaultProjectDir,
+        defaultClipDir:
+          typeof savedPaths.defaultClipDir === 'string' && savedPaths.defaultClipDir.length > 0
+            ? savedPaths.defaultClipDir
+            : defaults.paths.defaultClipDir
+      },
       lastProjectPath:
         typeof parsed.lastProjectPath === 'string' && parsed.lastProjectPath.length > 0
           ? parsed.lastProjectPath
@@ -337,7 +436,27 @@ async function loadPreferences(): Promise<void> {
     if (code !== 'ENOENT') {
       console.warn('[prefs] load failed, using defaults:', err)
     }
-    prefs = structuredClone(DEFAULT_PREFS)
+  }
+  seedSessionPaths()
+  await ensureProjectDirExists()
+}
+
+/** Initialise the in-memory `currentClipDir` from the persisted pref. */
+function seedSessionPaths(): void {
+  currentClipDir = prefs.paths.defaultClipDir || prefs.paths.defaultProjectDir
+}
+
+/** Create `paths.defaultProjectDir` if it doesn't yet exist so the
+ *  project Save / Open dialogs always have a real directory to land in.
+ *  Silent on failure — the dialog will just fall back to the user's
+ *  home directory if Electron can't open the configured path. */
+async function ensureProjectDirExists(): Promise<void> {
+  const dir = prefs.paths.defaultProjectDir
+  if (!dir) return
+  try {
+    await mkdir(dir, { recursive: true })
+  } catch (err) {
+    console.warn('[prefs] could not create default project dir', dir, err)
   }
 }
 
@@ -890,11 +1009,13 @@ app.whenReady().then(async () => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Add Track from File',
+      defaultPath: currentClipDir || undefined,
       filters: [{ name: 'Audio files', extensions: [...AUDIO_FILE_EXTENSIONS] }],
       properties: ['openFile']
     })
     if (result.canceled || result.filePaths.length === 0) return null
     const filePath = result.filePaths[0]
+    rememberClipDir(filePath)
     const buf = await readFile(filePath)
     // Copy into a plain ArrayBuffer so it survives the IPC boundary cleanly.
     const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
@@ -910,10 +1031,12 @@ app.whenReady().then(async () => {
     if (!mainWindow) return []
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Import Audio into Library',
+      defaultPath: currentClipDir || undefined,
       filters: [{ name: 'Audio files', extensions: [...AUDIO_FILE_EXTENSIONS] }],
       properties: ['openFile', 'multiSelections']
     })
     if (result.canceled || result.filePaths.length === 0) return []
+    rememberClipDir(result.filePaths[0])
     const out: { filePath: string; fileName: string; data: ArrayBuffer }[] = []
     for (const filePath of result.filePaths) {
       try {
@@ -1121,6 +1244,65 @@ app.whenReady().then(async () => {
     schedulePrefsSave()
   })
 
+  // ─── Quality-of-life preferences (toasts, default paths) ────────────────
+  // Used by the Preferences dialog. The renderer reads everything in one
+  // round-trip and writes back partial updates as the user changes them.
+  ipcMain.handle('prefs:getQol', () => ({
+    toasts: { ...prefs.toasts },
+    paths: { ...prefs.paths }
+  }))
+
+  ipcMain.on('prefs:setQol', (_evt, partial: unknown) => {
+    if (!partial || typeof partial !== 'object') return
+    const p = partial as {
+      toasts?: Partial<ToastPrefs>
+      paths?: Partial<PathPrefs>
+    }
+    if (p.toasts && typeof p.toasts.enabled === 'boolean') {
+      prefs.toasts = { ...prefs.toasts, enabled: p.toasts.enabled }
+    }
+    if (p.paths) {
+      const nextPaths: PathPrefs = { ...prefs.paths }
+      if (typeof p.paths.defaultProjectDir === 'string' && p.paths.defaultProjectDir.length > 0) {
+        nextPaths.defaultProjectDir = p.paths.defaultProjectDir
+      }
+      if (typeof p.paths.defaultClipDir === 'string' && p.paths.defaultClipDir.length > 0) {
+        nextPaths.defaultClipDir = p.paths.defaultClipDir
+        // Reset the in-memory session pointer too — the user's
+        // intuition is "I changed the default, now use it" rather than
+        // "use it on next launch".
+        currentClipDir = p.paths.defaultClipDir
+      }
+      prefs.paths = nextPaths
+      // Make sure the new project dir is on disk — same reasoning as
+      // the startup ensure call. Fire-and-forget; failures just leave
+      // the dialog to fall back to the home folder.
+      void ensureProjectDirExists()
+    }
+    schedulePrefsSave()
+  })
+
+  /**
+   * Show an OS folder-picker dialog. `defaultPath` seeds the starting
+   * directory; both args are optional. Returns the chosen absolute
+   * path or `null` if the user cancelled. Used by the Preferences
+   * dialog's "Change…" buttons for the two default-paths fields.
+   */
+  ipcMain.handle(
+    'prefs:chooseDirectory',
+    async (_evt, args: unknown): Promise<string | null> => {
+      if (!mainWindow) return null
+      const a = (args ?? {}) as { title?: string; defaultPath?: string }
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: typeof a.title === 'string' ? a.title : 'Choose folder',
+        defaultPath: typeof a.defaultPath === 'string' ? a.defaultPath : undefined,
+        properties: ['openDirectory', 'createDirectory']
+      })
+      if (result.canceled || result.filePaths.length === 0) return null
+      return result.filePaths[0]
+    }
+  )
+
   // ─── Project file lifecycle ─────────────────────────────────────────────
   // Helpers used by the renderer to drive Save / Save As / Open menus. Main
   // owns the native OS dialog plus the `lastProjectPath` preference so the
@@ -1153,6 +1335,7 @@ app.whenReady().then(async () => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Open Silverdaw Project',
+      defaultPath: prefs.paths.defaultProjectDir || undefined,
       filters: [{ name: 'Silverdaw project', extensions: ['silverdaw'] }],
       properties: ['openFile']
     })
@@ -1166,9 +1349,15 @@ app.whenReady().then(async () => {
       if (!mainWindow) return null
       const suggested =
         typeof defaultName === 'string' && defaultName.length > 0 ? defaultName : 'Untitled'
+      // Seed the save dialog inside the configured project folder so the
+      // user lands in the right place by default, but keep the filename
+      // suggestion intact.
+      const defaultPath = prefs.paths.defaultProjectDir
+        ? join(prefs.paths.defaultProjectDir, `${suggested}.silverdaw`)
+        : `${suggested}.silverdaw`
       const result = await dialog.showSaveDialog(mainWindow, {
         title: 'Save Silverdaw Project',
-        defaultPath: `${suggested}.silverdaw`,
+        defaultPath,
         filters: [{ name: 'Silverdaw project', extensions: ['silverdaw'] }]
       })
       if (result.canceled || !result.filePath) return null

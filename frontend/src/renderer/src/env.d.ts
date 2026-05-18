@@ -61,6 +61,15 @@ declare global {
       getStartupDebugEnabled(): Promise<boolean>
       getDebugEnabled(): Promise<boolean>
       setDebugEnabled(value: boolean): void
+      getQolPrefs(): Promise<{
+        toasts: { enabled: boolean }
+        paths: { defaultProjectDir: string; defaultClipDir: string }
+      }>
+      setQolPrefs(partial: {
+        toasts?: { enabled?: boolean }
+        paths?: { defaultProjectDir?: string; defaultClipDir?: string }
+      }): void
+      chooseDirectory(args: { title?: string; defaultPath?: string }): Promise<string | null>
     }
   }
 }

@@ -1,37 +1,72 @@
 <script setup lang="ts">
-// Preferences dialog. Currently exposes a single option — "Enable
-// Debugging" — that gates the Debug menu and the cross-layer file
-// logger. Changes are persisted immediately to `preferences.json` but
-// only take effect on the next launch (the startup snapshot is what the
-// rest of the UI reads from); the dialog surfaces that contract
-// explicitly so the user isn't confused when the Debug menu doesn't
-// appear immediately after toggling.
+// Preferences dialog. Transactional: changes are held locally until the
+// user clicks Save. Cancel (and Esc) discard pending edits.
+//
+// Sections:
+//   - Interface  → toast notification visibility (applied immediately on Save).
+//   - Paths      → default project / clip directories used by the OS
+//                  open / save dialogs (applied immediately on Save).
+//   - Developer  → cross-layer debug logging + Debug menu (next launch).
 
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { useAppStore } from '@/stores/appStore'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
+const appStore = useAppStore()
+
 const dialogEl = ref<HTMLDivElement | null>(null)
+
+// Working copies — edited freely; not persisted until Save.
 const debugEnabled = ref(false)
+const toastsEnabled = ref(true)
+const defaultProjectDir = ref('')
+const defaultClipDir = ref('')
+
+// Snapshot of the values when the dialog opened, used to:
+//   1. Detect whether anything actually changed (Save no-ops if not).
+//   2. Show the "Restart required" notice when debug differs.
 const initialDebug = ref(false)
+const initialToasts = ref(true)
+const initialProjectDir = ref('')
+const initialClipDir = ref('')
+
+const hasChanges = computed(
+  () =>
+    debugEnabled.value !== initialDebug.value ||
+    toastsEnabled.value !== initialToasts.value ||
+    defaultProjectDir.value !== initialProjectDir.value ||
+    defaultClipDir.value !== initialClipDir.value
+)
 
 async function loadCurrent(): Promise<void> {
   try {
-    const v = await window.silverdaw.getDebugEnabled()
-    debugEnabled.value = v
-    initialDebug.value = v
+    const [debugVal, qol] = await Promise.all([
+      window.silverdaw.getDebugEnabled(),
+      window.silverdaw.getQolPrefs()
+    ])
+    debugEnabled.value = debugVal
+    toastsEnabled.value = qol.toasts.enabled
+    defaultProjectDir.value = qol.paths.defaultProjectDir
+    defaultClipDir.value = qol.paths.defaultClipDir
   } catch {
     debugEnabled.value = false
-    initialDebug.value = false
+    toastsEnabled.value = true
+    defaultProjectDir.value = ''
+    defaultClipDir.value = ''
   }
+  initialDebug.value = debugEnabled.value
+  initialToasts.value = toastsEnabled.value
+  initialProjectDir.value = defaultProjectDir.value
+  initialClipDir.value = defaultClipDir.value
 }
 
 function onKeyDown(e: KeyboardEvent): void {
   if (!props.open) return
   if (e.key === 'Escape') {
     e.preventDefault()
-    emit('close')
+    onCancel()
   }
 }
 
@@ -52,12 +87,57 @@ watch(
   }
 )
 
-function toggleDebug(value: boolean): void {
-  debugEnabled.value = value
-  // Persist immediately; the value only takes effect on next launch but
-  // we don't want the user to forget to save — the dialog acts as a
-  // settings panel rather than a transactional form.
-  window.silverdaw.setDebugEnabled(value)
+async function chooseProjectDir(): Promise<void> {
+  const picked = await window.silverdaw.chooseDirectory({
+    title: 'Default project folder',
+    defaultPath: defaultProjectDir.value || undefined
+  })
+  if (picked) defaultProjectDir.value = picked
+}
+
+async function chooseClipDir(): Promise<void> {
+  const picked = await window.silverdaw.chooseDirectory({
+    title: 'Default clip folder',
+    defaultPath: defaultClipDir.value || undefined
+  })
+  if (picked) defaultClipDir.value = picked
+}
+
+function onCancel(): void {
+  // Discard pending edits — `loadCurrent` will repopulate the refs the
+  // next time the dialog opens.
+  emit('close')
+}
+
+function onSave(): void {
+  // Only push the deltas main needs to know about. The toast toggle is
+  // also mirrored into the appStore so the change is visible to
+  // `notificationsStore.push` without a re-hydrate.
+  const qolPatch: {
+    toasts?: { enabled: boolean }
+    paths?: { defaultProjectDir?: string; defaultClipDir?: string }
+  } = {}
+  if (toastsEnabled.value !== initialToasts.value) {
+    qolPatch.toasts = { enabled: toastsEnabled.value }
+    appStore.setToastsEnabled(toastsEnabled.value)
+  }
+  const pathsPatch: { defaultProjectDir?: string; defaultClipDir?: string } = {}
+  if (defaultProjectDir.value !== initialProjectDir.value && defaultProjectDir.value.length > 0) {
+    pathsPatch.defaultProjectDir = defaultProjectDir.value
+  }
+  if (defaultClipDir.value !== initialClipDir.value && defaultClipDir.value.length > 0) {
+    pathsPatch.defaultClipDir = defaultClipDir.value
+  }
+  if (Object.keys(pathsPatch).length > 0) {
+    qolPatch.paths = pathsPatch
+  }
+  if (Object.keys(qolPatch).length > 0) {
+    window.silverdaw.setQolPrefs(qolPatch)
+  }
+  if (debugEnabled.value !== initialDebug.value) {
+    window.silverdaw.setDebugEnabled(debugEnabled.value)
+  }
+  emit('close')
 }
 </script>
 
@@ -80,7 +160,7 @@ function toggleDebug(value: boolean): void {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex w-[min(460px,92vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="flex w-[min(520px,92vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
       >
         <!-- Header -->
         <div class="border-b border-zinc-800 px-6 py-4">
@@ -93,17 +173,92 @@ function toggleDebug(value: boolean): void {
         </div>
 
         <!-- Body -->
-        <div class="px-6 py-5 text-xs leading-relaxed">
+        <div class="space-y-6 px-6 py-5 text-xs leading-relaxed">
+          <!-- Interface -->
+          <section>
+            <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+              Interface
+            </h2>
+            <label class="flex cursor-pointer items-start gap-3">
+              <input
+                v-model="toastsEnabled"
+                type="checkbox"
+                class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+              >
+              <span class="flex-1">
+                <span class="block font-medium text-zinc-200">Show toast notifications</span>
+                <span class="mt-0.5 block text-zinc-500">
+                  Pop transient feedback (errors, save confirmations) in the
+                  bottom-right corner. Turn off for a quieter UI; events are
+                  still written to the log when debugging is enabled.
+                </span>
+              </span>
+            </label>
+          </section>
+
+          <!-- Paths -->
+          <section>
+            <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+              Default paths
+            </h2>
+            <div class="space-y-3">
+              <div>
+                <div class="mb-1 font-medium text-zinc-200">
+                  Project folder
+                </div>
+                <p class="mb-1.5 text-zinc-500">
+                  Used by Save, Save As, and Open for every project file.
+                </p>
+                <div class="flex items-center gap-2">
+                  <code
+                    class="flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
+                    :title="defaultProjectDir"
+                  >{{ defaultProjectDir || '(home)' }}</code>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded bg-zinc-700 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                    @click="chooseProjectDir"
+                  >
+                    Change…
+                  </button>
+                </div>
+              </div>
+              <div>
+                <div class="mb-1 font-medium text-zinc-200">
+                  Clip folder
+                </div>
+                <p class="mb-1.5 text-zinc-500">
+                  Starting folder for "Add Track from File" and library
+                  import. The most recent folder you browsed to is reused
+                  for the rest of the session.
+                </p>
+                <div class="flex items-center gap-2">
+                  <code
+                    class="flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
+                    :title="defaultClipDir"
+                  >{{ defaultClipDir || '(home)' }}</code>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded bg-zinc-700 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                    @click="chooseClipDir"
+                  >
+                    Change…
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Developer -->
           <section>
             <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
               Developer
             </h2>
             <label class="flex cursor-pointer items-start gap-3">
               <input
+                v-model="debugEnabled"
                 type="checkbox"
                 class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
-                :checked="debugEnabled"
-                @change="toggleDebug(($event.target as HTMLInputElement).checked)"
               >
               <span class="flex-1">
                 <span class="block font-medium text-zinc-200">Enable Debugging</span>
@@ -115,24 +270,32 @@ function toggleDebug(value: boolean): void {
                 </span>
               </span>
             </label>
-          </section>
 
-          <p
-            v-if="debugEnabled !== initialDebug"
-            class="mt-4 rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-amber-200"
-          >
-            Restart Silverdaw to apply changes.
-          </p>
+            <p
+              v-if="debugEnabled !== initialDebug"
+              class="mt-3 rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-amber-200"
+            >
+              Restart Silverdaw to apply changes.
+            </p>
+          </section>
         </div>
 
         <!-- Footer -->
-        <div class="flex justify-end border-t border-zinc-800 bg-zinc-900/60 px-5 py-2">
+        <div class="flex justify-end gap-2 border-t border-zinc-800 bg-zinc-900/60 px-5 py-2">
           <button
             type="button"
-            class="rounded bg-zinc-700 px-4 py-1 text-xs font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none"
-            @click="emit('close')"
+            class="rounded bg-zinc-800 px-4 py-1 text-xs font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            @click="onCancel"
           >
-            Close
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="rounded bg-sky-600 px-4 py-1 text-xs font-medium text-zinc-100 enabled:hover:bg-sky-500 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="!hasChanges"
+            @click="onSave"
+          >
+            Save
           </button>
         </div>
       </div>

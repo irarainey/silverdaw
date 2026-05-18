@@ -18,6 +18,7 @@ import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoTrack } from '@/lib/importAudio'
+import { RULER_HEIGHT, TRACK_GAP, TRACK_HEIGHT } from '@/lib/timeline/constants'
 
 withDefaults(defineProps<{ scrollY?: number }>(), { scrollY: 0 })
 
@@ -80,10 +81,9 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
   }
 }
 
-// Keep in sync with TimelineView.vue layout constants.
-const RULER_HEIGHT = 28
-const TRACK_HEIGHT = 96
-const TRACK_GAP = 4
+// Layout constants (RULER_HEIGHT / TRACK_HEIGHT / TRACK_GAP) are imported
+// above from `@/lib/timeline/constants` so the column stays aligned with
+// the PixiJS-drawn rows regardless of any future height tweaks.
 </script>
 
 <template>

@@ -213,7 +213,38 @@ const api = {
   /** Persist a new debug flag value. Takes effect on the next launch. */
   setDebugEnabled: (value: boolean): void => {
     ipcRenderer.send('debug:setEnabled', value)
-  }
+  },
+  // ─── Quality-of-life preferences ───────────────────────────────────────
+  /**
+   * Fetch the current QoL preferences (toast visibility + default
+   * project / clip directories). Returned shape mirrors the on-disk
+   * sub-trees: `{ toasts: { enabled }, paths: { defaultProjectDir, defaultClipDir } }`.
+   */
+  getQolPrefs: (): Promise<{
+    toasts: { enabled: boolean }
+    paths: { defaultProjectDir: string; defaultClipDir: string }
+  }> => ipcRenderer.invoke('prefs:getQol'),
+  /**
+   * Persist one or more QoL preferences. Pass any subset of the keys
+   * shown above; absent keys are left unchanged. Changes are written
+   * back to `preferences.json` (debounced) and take effect immediately —
+   * unlike the debug flag, none of the QoL settings need a restart.
+   */
+  setQolPrefs: (partial: {
+    toasts?: { enabled?: boolean }
+    paths?: { defaultProjectDir?: string; defaultClipDir?: string }
+  }): void => {
+    ipcRenderer.send('prefs:setQol', partial)
+  },
+  /**
+   * Show an OS folder-picker dialog. Returns the absolute path the user
+   * picked, or `null` if they cancelled. Used by the Preferences dialog
+   * "Change…" buttons next to each path field.
+   */
+  chooseDirectory: (args: {
+    title?: string
+    defaultPath?: string
+  }): Promise<string | null> => ipcRenderer.invoke('prefs:chooseDirectory', args)
 }as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)
