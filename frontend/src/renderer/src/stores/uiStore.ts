@@ -13,6 +13,13 @@ interface UiState {
   /** Continuous-follow auto-scroll during playback. When false the
    *  viewport stays put and the playhead can run off the right edge. */
   followPlayback: boolean
+  /** Live horizontal-zoom value (px per second). NOT persisted to
+   *  preferences.json — this just mirrors `geometry.pxPerSecond` from
+   *  the timeline so other components (e.g. StatusBar) can show the
+   *  current zoom without reaching into the timeline composable. The
+   *  per-project zoom is persisted separately via
+   *  `projectStore.viewPxPerSecond`. */
+  zoomPxPerSecond: number
   /** True once `hydrate()` has read the saved values from main. */
   hydrated: boolean
 }
@@ -74,6 +81,7 @@ export const useUiStore = defineStore('ui', {
     trackHeaderWidth: DEFAULTS.trackHeaderWidth,
     libraryPanelHeight: DEFAULTS.libraryPanelHeight,
     followPlayback: DEFAULTS.followPlayback,
+    zoomPxPerSecond: 60,
     hydrated: false
   }),
 
@@ -119,6 +127,14 @@ export const useUiStore = defineStore('ui', {
       if (this.followPlayback === value) return
       this.followPlayback = value
       if (this.hydrated) schedulePush({ followPlayback: value })
+    },
+
+    /** Update the live zoom mirror. Renderer-only — not persisted to
+     *  preferences (per-project zoom lives in `projectStore.viewPxPerSecond`). */
+    setZoomPxPerSecond(value: number): void {
+      if (!Number.isFinite(value) || value <= 0) return
+      if (this.zoomPxPerSecond === value) return
+      this.zoomPxPerSecond = value
     }
   }
 })

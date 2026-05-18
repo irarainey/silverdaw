@@ -288,13 +288,10 @@ double ProjectState::getViewPxPerSecond() const
 
 void ProjectState::setViewPxPerSecond(double pxPerSecond)
 {
-    // Suppress the dirty-flag transition for this property: changing
-    // zoom should not mark the project as needing a save. The value
-    // still rides along on serialisation because it's a plain property
-    // of the root ValueTree.
-    suppressDirtyTransitions = true;
+    // Zoom changes mark the project dirty. The user explicitly asked
+    // for this so a zoomed view that hasn't been saved prompts the
+    // usual unsaved-changes guard.
     root.setProperty(kViewPxPerSecond, pxPerSecond, nullptr);
-    suppressDirtyTransitions = false;
 }
 
 double ProjectState::getViewScrollX() const

@@ -21,7 +21,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
-import { SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from '@/lib/timeline/constants'
+import { DEFAULT_PX_PER_SECOND, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from '@/lib/timeline/constants'
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
 import { useTimelineScroll } from '@/lib/timeline/useTimelineScroll'
 import { usePixiApp } from '@/lib/timeline/usePixiApp'
@@ -125,12 +125,81 @@ const {
 // The PixiJS init and all other pointer/drag handlers live in composables.
 onMounted(() => {
   host.value?.addEventListener('wheel', onWheel, { passive: false })
+  window.addEventListener('keydown', onZoomKey, { capture: true })
   startPlayheadRaf()
 })
 onBeforeUnmount(() => {
   host.value?.removeEventListener('wheel', onWheel)
+  window.removeEventListener('keydown', onZoomKey, { capture: true })
   stopPlayheadRaf()
 })
+
+/**
+ * Keyboard zoom shortcuts:
+ *   Ctrl + (= / + / numpad +)  → zoom in 20%
+ *   Ctrl - (- / numpad -)      → zoom out 20%
+ *   Ctrl 0                     → reset to DEFAULT_PX_PER_SECOND
+ *
+ * Anchors on the current playhead position when on-screen, otherwise
+ * on the viewport centre. `preventDefault` is called so Chromium's
+ * built-in page-zoom shortcut doesn't fire — we don't want the whole
+ * UI to scale, just the timeline grid.
+ */
+function onZoomKey(e: KeyboardEvent): void {
+  if (!(e.ctrlKey || e.metaKey)) return
+  if (e.altKey || e.shiftKey) {
+    // Shift+Ctrl+= is sometimes used for "force capital plus" but we
+    // accept either; reject Alt though so we don't clash with future
+    // accelerators.
+    if (e.altKey) return
+  }
+  // Don't fight text fields — Ctrl+= in an input should do nothing
+  // (the input's own handlers can take over).
+  const target = e.target
+  if (target instanceof HTMLElement) {
+    const tag = target.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return
+  }
+
+  let factor = 1
+  if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
+    factor = 1.2
+  } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
+    factor = 1 / 1.2
+  } else if (e.key === '0' || e.code === 'Numpad0' || e.code === 'Digit0') {
+    factor = 0 // sentinel for "reset to default"
+  } else {
+    return
+  }
+
+  e.preventDefault()
+  e.stopPropagation()
+
+  const prev = pxPerSecond.value
+  const next = geometry.setPxPerSecond(factor === 0 ? DEFAULT_PX_PER_SECOND : prev * factor)
+  if (next === prev) return
+
+  // Anchor on the playhead position (in viewport pixels) when visible,
+  // otherwise on the viewport centre. Same re-pin math as the wheel
+  // handler: solve for scrollX so the anchor world-time stays at the
+  // same on-screen pixel after the zoom.
+  const a = pixi.app.value
+  if (!a) return
+  const width = a.renderer.screen.width - SCROLLBAR_WIDTH
+  const absPlayheadX = headerWidth() + (transport.positionMs / 1000) * prev
+  const viewportPlayheadX = absPlayheadX - scrollX.value
+  const anchorX =
+    viewportPlayheadX >= headerWidth() && viewportPlayheadX <= width
+      ? viewportPlayheadX
+      : headerWidth() + (width - headerWidth()) / 2
+  const trackLocalX = anchorX - headerWidth()
+  const timeAtAnchorSec = (scrollX.value + trackLocalX) / prev
+  const newScroll = timeAtAnchorSec * next - trackLocalX
+  scrollX.value = Math.max(0, Math.min(maxScrollX.value, newScroll))
+
+  redraw()
+  updatePlayhead()
+}
 
 // ─── Playhead paint loop (RAF) ────────────────────────────────────────────
 // We paint the playhead from `requestAnimationFrame` rather than from a
@@ -269,15 +338,26 @@ watch(
   }
 )
 
-watch(pxPerSecond, (next) => {
-  if (suppressZoomEmit) return
-  if (zoomEmitTimer) clearTimeout(zoomEmitTimer)
-  zoomEmitTimer = setTimeout(() => {
-    zoomEmitTimer = null
-    if (project.viewPxPerSecond !== null && Math.abs(project.viewPxPerSecond - next) < 0.01) return
-    sendBridge('PROJECT_SET_VIEW', { pxPerSecond: next })
-  }, 200)
-})
+watch(
+  pxPerSecond,
+  (next) => {
+    // Mirror to the uiStore so the StatusBar (and any other consumer)
+    // can show the current zoom without reaching into the timeline
+    // composable.
+    ui.setZoomPxPerSecond(next)
+    if (suppressZoomEmit) return
+    if (zoomEmitTimer) clearTimeout(zoomEmitTimer)
+    zoomEmitTimer = setTimeout(() => {
+      zoomEmitTimer = null
+      if (project.viewPxPerSecond !== null && Math.abs(project.viewPxPerSecond - next) < 0.01) return
+      sendBridge('PROJECT_SET_VIEW', { pxPerSecond: next })
+    }, 200)
+  },
+  // `immediate` so the StatusBar gets the initial value at mount; the
+  // debounced send still waits 200 ms, and the guard below catches the
+  // "no change vs. backend" case so we don't spuriously emit.
+  { immediate: true }
+)
 
 watch(scrollX, (next) => {
   if (suppressScrollEmit) return
