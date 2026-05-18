@@ -1,9 +1,9 @@
 """Generate NSIS installer banners and the .silverdaw file-type icon.
 
 Outputs (relative to repo root):
-  frontend/resources/installerHeader.bmp     150x57   logo on black
-  frontend/resources/installerSidebar.bmp    164x314  logo on black
-  frontend/resources/uninstallerSidebar.bmp  164x314  logo on black
+  frontend/resources/installerHeader.bmp     150x57   logo on white
+  frontend/resources/installerSidebar.bmp    164x314  logo on black→grey gradient
+  frontend/resources/uninstallerSidebar.bmp  164x314  logo on black→grey gradient
   frontend/resources/icons/silverdaw-file.ico  multi-resolution
 
 Run from any working directory:
@@ -34,7 +34,37 @@ def _load_logo_rgba() -> Image.Image:
             r, g, b, a = px[x, y]
             if r >= 240 and g >= 240 and b >= 240:
                 px[x, y] = (r, g, b, 0)
+    # Crop to the actual visible content so callers can centre the bird,
+    # not the (much larger) PNG canvas with its transparent padding.
+    bbox = img.getbbox()
+    if bbox is not None:
+        img = img.crop(bbox)
     return img
+
+
+def _make_gradient_banner(size: tuple[int, int],
+                          top: tuple[int, int, int],
+                          bottom: tuple[int, int, int],
+                          logo: Image.Image,
+                          logo_height_ratio: float) -> Image.Image:
+    """Vertical gradient `top` → `bottom`, with the logo centred on top."""
+    w, h = size
+    canvas = Image.new("RGB", (w, h))
+    px = canvas.load()
+    for y in range(h):
+        t = y / max(1, h - 1)
+        r = round(top[0] + (bottom[0] - top[0]) * t)
+        g = round(top[1] + (bottom[1] - top[1]) * t)
+        b = round(top[2] + (bottom[2] - top[2]) * t)
+        for x in range(w):
+            px[x, y] = (r, g, b)
+    logo_h = int(h * logo_height_ratio)
+    logo_w = int(logo.width * (logo_h / logo.height))
+    resized = logo.resize((logo_w, logo_h), Image.LANCZOS)
+    x = (w - logo_w) // 2
+    y = (h - logo_h) // 2
+    canvas.paste(resized, (x, y), resized)
+    return canvas
 
 
 def _make_banner(size: tuple[int, int], bg: tuple[int, int, int],
@@ -60,19 +90,27 @@ def _make_banner(size: tuple[int, int], bg: tuple[int, int, int],
 
 def _make_file_icon(logo: Image.Image, size: int) -> Image.Image:
     """Render a white document shape with a folded top-right corner and the
-    jackdaw logo centred in the lower portion. Returns an RGBA image of the
-    requested square size."""
+    jackdaw logo centred in the lower portion. The page is drawn as a
+    portrait rectangle (taller than wide, like Windows' own .docx / .txt
+    icons) centred inside a transparent square canvas of the requested
+    size."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Document outline: occupies most of the canvas with a small margin so the
-    # folded corner has room to breathe.
-    margin = max(1, size // 20)
-    fold = max(2, size // 4)
-    left, top = margin, margin
-    right, bottom = size - margin - 1, size - margin - 1
+    # Page geometry: portrait aspect ratio ~5:7 to match the shell's
+    # built-in document icons (notepad, docx, etc., which are noticeably
+    # taller than wide). Centre the rectangle inside the square canvas.
+    page_w = int(size * 0.66)
+    page_h = int(size * 0.92)
+    left = (size - page_w) // 2
+    top = (size - page_h) // 2
+    right = left + page_w - 1
+    bottom = top + page_h - 1
 
-    # Polygon for the page with a folded top-right corner.
+    # Folded corner: ~22% of the page width keeps the fold readable at
+    # 16 px while staying subtle at 256 px.
+    fold = max(2, int(page_w * 0.22))
+
     page = [
         (left, top),
         (right - fold, top),
@@ -80,12 +118,9 @@ def _make_file_icon(logo: Image.Image, size: int) -> Image.Image:
         (right, bottom),
         (left, bottom),
     ]
-    # Light grey border, white fill.
     border = (180, 184, 190, 255)
     draw.polygon(page, fill=(255, 255, 255, 255), outline=border)
 
-    # The triangular fold itself, drawn with a slight shadow so it reads as
-    # a real piece of paper rather than a printed corner.
     fold_tri = [
         (right - fold, top),
         (right - fold, top + fold),
@@ -93,14 +128,14 @@ def _make_file_icon(logo: Image.Image, size: int) -> Image.Image:
     ]
     draw.polygon(fold_tri, fill=(232, 235, 240, 255), outline=border)
 
-    # Logo: scale to fit the lower ~62% of the page width, centred.
-    logo_target_w = int((right - left) * 0.78)
+    # Logo: scale to ~55% of the page width and centre it on the page.
+    # The fold is small enough relative to the page that true geometric
+    # centring still leaves the logo clear of it.
+    logo_target_w = int(page_w * 0.55)
     logo_target_h = int(logo.height * (logo_target_w / logo.width))
     resized = logo.resize((logo_target_w, logo_target_h), Image.LANCZOS)
-    lx = (size - logo_target_w) // 2
-    # Bias the logo downward so it sits below the folded corner instead of
-    # colliding with it.
-    ly = top + fold // 2 + int((bottom - top - fold // 2 - logo_target_h) * 0.55)
+    lx = left + (page_w - logo_target_w) // 2
+    ly = top + (page_h - logo_target_h) // 2
     img.paste(resized, (lx, ly), resized)
     return img
 
@@ -110,12 +145,24 @@ def main() -> None:
         raise SystemExit(f"missing source logo: {SOURCE_LOGO}")
     logo = _load_logo_rgba()
 
-    black = (0, 0, 0)
+    white = (255, 255, 255)
 
-    header = _make_banner((150, 57), black, logo, logo_height_ratio=0.85)
+    # Header banner (top of every wizard page) sits next to a white title
+    # bar in MUI2 — a black background would clash visually, so we keep
+    # the header on white. The sidebar is a standalone full-height panel
+    # on the Welcome / Finish pages, where a black backdrop reads as a
+    # branded splash rather than a clash.
+    header = _make_banner((150, 57), white, logo, logo_height_ratio=0.62)
     header.save(RES_DIR / "installerHeader.bmp", "BMP")
 
-    sidebar = _make_banner((164, 314), black, logo, logo_height_ratio=0.55)
+    # Sidebar uses a vertical gradient from black at the top down to a
+    # mid-grey at the bottom so the panel feels softer next to the white
+    # wizard area. Logo sits centred on the gradient.
+    sidebar_top = (0, 0, 0)
+    sidebar_bottom = (96, 96, 96)
+    sidebar = _make_gradient_banner(
+        (164, 314), sidebar_top, sidebar_bottom, logo, logo_height_ratio=0.36
+    )
     sidebar.save(RES_DIR / "installerSidebar.bmp", "BMP")
     sidebar.save(RES_DIR / "uninstallerSidebar.bmp", "BMP")
 
