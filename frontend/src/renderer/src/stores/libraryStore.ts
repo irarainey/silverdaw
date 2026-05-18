@@ -277,6 +277,27 @@ export const useLibraryStore = defineStore('library', {
         const blob = new Blob([coverArt.data], { type: coverArt.mimeType })
         item.coverArtUrl = URL.createObjectURL(blob)
       }
+
+      // Backfill auto-named tracks. If a track is hosting exactly one
+      // clip whose file matches this library item, and the track's
+      // current name is the basename of that file (i.e. the
+      // auto-assigned fallback from `addClipToTrack` /
+      // `applyProjectStateSnapshot`), promote it to the freshly-loaded
+      // title. User-renamed tracks are skipped because their name no
+      // longer matches the basename pattern.
+      const title = rest.title?.trim()
+      if (title && title.length > 0) {
+        const project = useProjectStore()
+        const fileBase = item.fileName.replace(/\.[^.]+$/, '')
+        for (const track of project.tracks) {
+          if (track.clipIds.length !== 1) continue
+          const clip = project.clips[track.clipIds[0]!]
+          if (!clip || clip.filePath !== item.filePath) continue
+          if (track.name === fileBase || track.name === item.fileName) {
+            track.name = title
+          }
+        }
+      }
     },
 
     /**

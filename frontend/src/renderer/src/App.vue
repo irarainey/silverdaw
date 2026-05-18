@@ -376,6 +376,44 @@ function handleMenuAction(action: string): void {
     void titleBarRef.value?.startRename()
     return
   }
+  if (action === 'edit.splitAtPlayhead') {
+    // Split every clip whose timeline window straddles the current
+    // playhead. Same logic as the 'S' accelerator inside the timeline
+    // host — duplicated here so the menu item works even when the
+    // canvas doesn't have keyboard focus.
+    const atMs = transport.positionMs
+    const candidateIds = Object.values(project.clips)
+      .filter((c) => atMs > c.startMs && atMs < c.startMs + c.durationMs)
+      .map((c) => c.id)
+    for (const id of candidateIds) {
+      project.splitClipAt(id, atMs)
+    }
+    return
+  }
+  if (action === 'edit.cut') {
+    project.cutSelectedClip()
+    return
+  }
+  if (action === 'edit.copy') {
+    project.copySelectedClip()
+    return
+  }
+  if (action === 'edit.paste') {
+    project.pasteClipAtPlayhead(transport.positionMs)
+    return
+  }
+  if (action === 'edit.duplicateClip') {
+    if (project.selectedClipId) {
+      project.duplicateClip(project.selectedClipId)
+    }
+    return
+  }
+  if (action === 'edit.deleteClip') {
+    if (project.selectedClipId) {
+      project.removeClip(project.selectedClipId)
+    }
+    return
+  }
 }
 
 /**

@@ -17,11 +17,30 @@
 import { onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Application } from 'pixi.js'
 import { useProjectStore } from '@/stores/projectStore'
+import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from './constants'
+import { RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH, TRACK_HEIGHT, TRACK_GAP } from './constants'
 import type { GridGeometry } from './useGridGeometry'
+
+/** Edge-zone width in PIXELS for trim-vs-move hit detection. A click
+ *  within this many pixels of a clip's left/right edge enters trim
+ *  mode; anything further in is a move drag. Chosen so a careful user
+ *  can still grab the body of a narrow clip without accidentally
+ *  trimming. */
+const TRIM_EDGE_PX = 8
+
+/** Minimum clip length, ms. A trim drag can't shrink below this. */
+const MIN_CLIP_MS = 50
+
+/** Pointer-movement threshold (px) above which a clip pointerdown
+ *  transitions from "potential click → seek" to "actual drag". Below
+ *  the threshold, releasing the mouse counts as a click and seeks the
+ *  playhead to that ms position. 3 px matches the OS-typical
+ *  click-tolerance and is small enough that an intentional drag is
+ *  detected almost instantly. */
+const DRAG_THRESHOLD_PX = 3
 
 /**
  * World-space rectangle of a single drawn clip block. `x` / `y` are in
@@ -40,6 +59,12 @@ export interface ClipHitRegion {
 export interface DragHandlers {
   /** True while the user is dragging the playhead (used for auto-follow). */
   isDraggingPlayhead: Ref<boolean>
+  /**
+   * CSS cursor name to apply to the timeline host. Updates live as the
+   * pointer hovers a clip's edge (`ew-resize`) vs body (`default`) so
+   * the user gets feedback about the available action without clicking.
+   */
+  hoverCursor: Ref<'default' | 'ew-resize'>
 }
 
 export interface DragHandlersOptions {
@@ -59,6 +84,7 @@ export interface DragHandlersOptions {
 
 export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   const project = useProjectStore()
+  const library = useLibraryStore()
   const transport = useTransportStore()
   const {
     host,
@@ -73,11 +99,33 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   } = opts
 
   const isDraggingPlayhead = ref(false)
+  const hoverCursor = ref<'default' | 'ew-resize'>('default')
   // Active clip-drag state. `clipGrabOffsetMs` is the ms inside the clip
   // where the user originally clicked, so the clip's leading edge follows
   // the cursor minus that grab offset (then snaps to grid).
   let draggedClipId: string | null = null
   let clipGrabOffsetMs = 0
+  // Active trim-drag state. Captured at pointerdown so we can compute
+  // each move-delta against the original clip geometry, not the
+  // already-mutated values.
+  let trimClipId: string | null = null
+  let trimEdge: 'left' | 'right' | null = null
+  let trimOrigStartMs = 0
+  let trimOrigInMs = 0
+  let trimOrigDurationMs = 0
+  let trimSourceDurationMs = 0
+  let trimPointerStartMs = 0
+
+  // Pending-drag state. A pointerdown on a clip enters this state
+  // first; only once the cursor moves more than DRAG_THRESHOLD_PX do
+  // we commit to either a move or trim drag. If the user releases the
+  // mouse before crossing the threshold the gesture is treated as a
+  // click → seek to that ms position.
+  let pendingDragClipId: string | null = null
+  let pendingDragEdge: 'left' | 'right' | null = null
+  let pendingDragStartX = 0
+  let pendingDragStartY = 0
+  let pendingDragStartMs = 0
 
   // ─── Pixel ↔ ms helpers ──────────────────────────────────────────────
   /**
@@ -147,6 +195,64 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     return null
   }
 
+  /**
+   * Returns 'left' or 'right' if the pointer is within `TRIM_EDGE_PX`
+   * of the clip's corresponding edge in screen-space; null otherwise.
+   * Edge zones are computed in pixels (not ms) so they stay
+   * comfortable to hit regardless of clip duration / zoom level.
+   * Very narrow clips degrade gracefully: if the body would be less
+   * than 2 px wide, the right edge wins (you can still trim a tiny
+   * clip, but moving it requires zooming in first).
+   */
+  function hitTestClipEdge(clientX: number, region: ClipHitRegion): 'left' | 'right' | null {
+    if (!host.value) return null
+    const rect = host.value.getBoundingClientRect()
+    const worldX = (clientX - rect.left) + scrollX.value
+    const leftDist = worldX - region.x
+    const rightDist = region.x + region.w - worldX
+    // Cap the edge zone at a third of the clip width so a tiny clip
+    // doesn't become "all edge" (impossible to move). For very wide
+    // clips the cap never kicks in.
+    const edge = Math.min(TRIM_EDGE_PX, region.w / 3)
+    if (leftDist <= edge) return 'left'
+    if (rightDist <= edge) return 'right'
+    return null
+  }
+
+  /** Source-file duration for a clip's underlying audio in ms. Used to
+   *  clamp the right-edge trim so we can't ask the engine to play
+   *  beyond the file's end. Falls back to the clip's current `inMs +
+   *  durationMs` (i.e. assume "we're already at the end") if the
+   *  library doesn't know about it yet — defensive: that gives the
+   *  user no extra right-stretch room until library metadata loads. */
+  function getSourceDurationMs(clip: { filePath: string; inMs: number; durationMs: number }): number {
+    const item = library.items.find((i) => i.filePath === clip.filePath)
+    if (item && item.durationMs > 0) return item.durationMs
+    // Peaks fallback: same PEAKS_PER_SECOND constant as the renderer.
+    return clip.inMs + clip.durationMs
+  }
+
+  /** Which track row the pointer's clientY currently lies inside, or
+   *  null if the pointer is in the ruler band, in the inter-track gap
+   *  between rows, or below the last row. Used by clip drag to allow
+   *  cross-track moves: as the cursor moves into a different row,
+   *  moveClip is called with the new trackId so the clip re-parents. */
+  function pointerToTrackId(clientY: number): string | null {
+    if (!host.value) return null
+    const rect = host.value.getBoundingClientRect()
+    const y = clientY - rect.top
+    if (y < RULER_HEIGHT) return null
+    const contentY = y + scrollY.value - RULER_HEIGHT
+    const slot = TRACK_HEIGHT + TRACK_GAP
+    const trackIndex = Math.floor(contentY / slot)
+    if (trackIndex < 0 || trackIndex >= project.tracks.length) return null
+    const yWithinSlot = contentY - trackIndex * slot
+    // Pointer in the inter-track gap: no decisive answer — keep the
+    // current track (caller sees `null`).
+    if (yWithinSlot >= TRACK_HEIGHT) return null
+    return project.tracks[trackIndex]?.id ?? null
+  }
+
   // ─── Pointer event handlers ──────────────────────────────────────────
   function onPointerDown(e: PointerEvent): void {
     if (e.button !== 0) return
@@ -161,24 +267,50 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const bottomLimit = a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
     if (y > bottomLimit) return
 
-    // Clip drag takes priority anywhere in the track rows — if pointer
-    // lands on a clip block, start a clip drag.
+    // Clip-hit branch — defer drag vs click decision until pointer-move
+    // crosses the threshold. A static click (no move) on the clip body
+    // seeks the playhead to that ms position; a click on an edge does
+    // the same (you'd have to move to actually trim). This means clicks
+    // anywhere on a clip act as seek points without sacrificing drag
+    // affordance.
     const hit = hitTestClip(e.clientX, e.clientY)
     if (hit) {
       const clip = project.clips[hit.clipId]
       if (clip) {
         const pointerMs = pointerToRawMs(e.clientX)
         if (pointerMs !== null) {
-          draggedClipId = clip.id
-          clipGrabOffsetMs = pointerMs - clip.startMs
-          log.info('drag', `clip drag start id=${clip.id} from=${clip.startMs}ms`)
-          window.addEventListener('pointermove', onClipPointerMove)
-          window.addEventListener('pointerup', onClipPointerUp)
-          window.addEventListener('pointercancel', onClipPointerUp)
+          // Clip click — select both the clip and its host track so
+          // a subsequent paste lands on this track. Selecting the
+          // track at the same time means "the obvious target" matches
+          // what the user just clicked on.
+          project.selectClip(clip.id)
+          project.selectTrack(clip.trackId)
+          pendingDragClipId = clip.id
+          pendingDragEdge = hitTestClipEdge(e.clientX, hit)
+          pendingDragStartX = e.clientX
+          pendingDragStartY = e.clientY
+          pendingDragStartMs = pointerMs
+          window.addEventListener('pointermove', onPendingPointerMove)
+          window.addEventListener('pointerup', onPendingPointerUp)
+          window.addEventListener('pointercancel', onPendingPointerUp)
           e.preventDefault()
           return
         }
       }
+    }
+
+    // Pointer landed somewhere in the track area but not on a clip.
+    // Decide whether it was inside a track row (→ select that track
+    // and clear clip selection) or in an inter-track gap / below the
+    // last row (→ clear both selections).
+    const rowTrackId = pointerToTrackId(e.clientY)
+    if (rowTrackId !== null) {
+      project.selectClip(null)
+      project.selectTrack(rowTrackId)
+    } else if (y >= RULER_HEIGHT) {
+      // In the track area but in a gap / below the last row.
+      project.selectClip(null)
+      project.selectTrack(null)
     }
 
     // Playhead seek is constrained to the ruler band. Clicking in the
@@ -227,9 +359,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const rawStartMs = pointerMs - clipGrabOffsetMs
     // Alt = fine drag (1 ms resolution, no grid snap). Read per move so
     // the user can flip in and out of fine mode without restarting the
-    // drag. Releasing the drag at an unsnapped position keeps the
-    // clip exactly where the pointer was — the next plain drag will
-    // re-snap relative to the new position.
+    // drag.
     let target: number
     if (e.altKey) {
       target = Math.max(0, Math.round(rawStartMs))
@@ -237,8 +367,14 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       const snap = geometry.msPerSubBeat()
       target = Math.max(0, Math.round(rawStartMs / snap) * snap)
     }
-    if (target === clip.startMs) return
-    project.moveClip(clip.id, target)
+    // Cross-track move: pass the trackId the cursor is currently over.
+    // moveClip applies its own gap-clamp + collision-free placement on
+    // the destination track and re-parents the clip if the trackId
+    // differs from its current host. When the cursor is in an
+    // inter-track gap (or in the ruler band), `pointerToTrackId`
+    // returns null and we keep the clip on its current track.
+    const destTrackId = pointerToTrackId(e.clientY) ?? clip.trackId
+    project.moveClip(clip.id, target, destTrackId)
     onClipMoved()
   }
 
@@ -252,6 +388,156 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointercancel', onClipPointerUp)
   }
 
+  /** Detach the pending-drag listeners. Called from both the "promoted
+   *  to real drag" path and the "released as a click" path. */
+  function clearPendingDrag(): void {
+    pendingDragClipId = null
+    pendingDragEdge = null
+    window.removeEventListener('pointermove', onPendingPointerMove)
+    window.removeEventListener('pointerup', onPendingPointerUp)
+    window.removeEventListener('pointercancel', onPendingPointerUp)
+  }
+
+  function onPendingPointerMove(e: PointerEvent): void {
+    if (pendingDragClipId === null) return
+    const dx = e.clientX - pendingDragStartX
+    const dy = e.clientY - pendingDragStartY
+    if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return
+
+    const clip = project.clips[pendingDragClipId]
+    const edge = pendingDragEdge
+    const startMs = pendingDragStartMs
+    clearPendingDrag()
+    if (!clip) return
+
+    if (edge) {
+      // Threshold crossed in trim mode.
+      trimClipId = clip.id
+      trimEdge = edge
+      trimOrigStartMs = clip.startMs
+      trimOrigInMs = clip.inMs
+      trimOrigDurationMs = clip.durationMs
+      trimSourceDurationMs = getSourceDurationMs(clip)
+      trimPointerStartMs = startMs
+      log.info(
+        'drag',
+        `clip trim start id=${clip.id} edge=${edge} src=${trimSourceDurationMs}ms`
+      )
+      window.addEventListener('pointermove', onTrimPointerMove)
+      window.addEventListener('pointerup', onTrimPointerUp)
+      window.addEventListener('pointercancel', onTrimPointerUp)
+      // Replay the current move so the first delta is applied immediately.
+      onTrimPointerMove(e)
+      return
+    }
+
+    // Threshold crossed in move mode.
+    draggedClipId = clip.id
+    clipGrabOffsetMs = startMs - clip.startMs
+    log.info('drag', `clip drag start id=${clip.id} from=${clip.startMs}ms`)
+    window.addEventListener('pointermove', onClipPointerMove)
+    window.addEventListener('pointerup', onClipPointerUp)
+    window.addEventListener('pointercancel', onClipPointerUp)
+    onClipPointerMove(e)
+  }
+
+  /** Pointer released before the drag threshold was crossed — treat as
+   *  a click on the clip and seek the playhead to the click's ms
+   *  position. Snaps to the grid unless Alt is held (consistent with
+   *  the ruler seek). */
+  function onPendingPointerUp(e: PointerEvent): void {
+    if (pendingDragClipId === null) return
+    clearPendingDrag()
+    const ms = pointerToMs(e.clientX, e.altKey)
+    if (ms !== null) seekTo(ms)
+  }
+
+  function onTrimPointerMove(e: PointerEvent): void {
+    if (trimClipId === null || trimEdge === null) return
+    const clip = project.clips[trimClipId]
+    if (!clip) return
+    const pointerMs = pointerToRawMs(e.clientX)
+    if (pointerMs === null) return
+    // Round pointer delta to whole milliseconds — the user asked for
+    // ms-precision trim, not grid snap.
+    const deltaMs = Math.round(pointerMs - trimPointerStartMs)
+
+    if (trimEdge === 'left') {
+      // Left-edge trim: dragging right (positive delta) shrinks from
+      // the left — `startMs` moves right by delta, `inMs` increases by
+      // delta, `durationMs` decreases by delta. Constraints:
+      //   - inMs >= 0   (can't read before the start of the source)
+      //   - durationMs >= MIN_CLIP_MS
+      // Both reduce to clamping `delta` into a permitted range.
+      const minDelta = -trimOrigInMs
+      const maxDelta = trimOrigDurationMs - MIN_CLIP_MS
+      const clamped = Math.max(minDelta, Math.min(maxDelta, deltaMs))
+      const newStartMs = trimOrigStartMs + clamped
+      const newInMs = trimOrigInMs + clamped
+      const newDurationMs = trimOrigDurationMs - clamped
+      if (
+        newStartMs === clip.startMs &&
+        newInMs === clip.inMs &&
+        newDurationMs === clip.durationMs
+      ) {
+        return
+      }
+      project.trimClip(clip.id, newStartMs, newInMs, newDurationMs)
+    } else {
+      // Right-edge trim: positive delta grows the clip from the right,
+      // negative shrinks it. `startMs` and `inMs` stay put.
+      // Constraints:
+      //   - durationMs >= MIN_CLIP_MS
+      //   - inMs + durationMs <= sourceDurationMs
+      const minDelta = MIN_CLIP_MS - trimOrigDurationMs
+      const maxDelta = trimSourceDurationMs - (trimOrigInMs + trimOrigDurationMs)
+      const clamped = Math.max(minDelta, Math.min(maxDelta, deltaMs))
+      const newDurationMs = trimOrigDurationMs + clamped
+      if (newDurationMs === clip.durationMs) return
+      project.trimClip(clip.id, trimOrigStartMs, trimOrigInMs, newDurationMs)
+    }
+    onClipMoved()
+  }
+
+  function onTrimPointerUp(_e: PointerEvent): void {
+    if (trimClipId === null) return
+    const clip = project.clips[trimClipId]
+    log.info(
+      'drag',
+      `clip trim end id=${trimClipId} edge=${trimEdge} -> start=${clip?.startMs ?? '?'}ms in=${clip?.inMs ?? '?'}ms dur=${clip?.durationMs ?? '?'}ms`
+    )
+    trimClipId = null
+    trimEdge = null
+    window.removeEventListener('pointermove', onTrimPointerMove)
+    window.removeEventListener('pointerup', onTrimPointerUp)
+    window.removeEventListener('pointercancel', onTrimPointerUp)
+  }
+
+  /** Track cursor hover state so the host can show `ew-resize` over
+   *  clip edges. Skipped while any drag is active to keep the cursor
+   *  stable mid-drag. */
+  function onHostPointerMove(e: PointerEvent): void {
+    if (
+      draggedClipId !== null ||
+      trimClipId !== null ||
+      isDraggingPlayhead.value
+    ) {
+      return
+    }
+    const hit = hitTestClip(e.clientX, e.clientY)
+    if (!hit) {
+      if (hoverCursor.value !== 'default') hoverCursor.value = 'default'
+      return
+    }
+    const edge = hitTestClipEdge(e.clientX, hit)
+    const next = edge ? 'ew-resize' : 'default'
+    if (hoverCursor.value !== next) hoverCursor.value = next
+  }
+
+  function onHostPointerLeave(): void {
+    if (hoverCursor.value !== 'default') hoverCursor.value = 'default'
+  }
+
   // Attach `pointerdown` once the host element is available. Using a
   // `watch` rather than `onMounted` keeps us safe if the host ref is
   // populated asynchronously (template ref under a v-if etc.).
@@ -259,7 +545,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     host,
     (el, prev) => {
       prev?.removeEventListener('pointerdown', onPointerDown)
+      prev?.removeEventListener('pointermove', onHostPointerMove)
+      prev?.removeEventListener('pointerleave', onHostPointerLeave)
       el?.addEventListener('pointerdown', onPointerDown)
+      el?.addEventListener('pointermove', onHostPointerMove)
+      el?.addEventListener('pointerleave', onHostPointerLeave)
     },
     { immediate: true }
   )
@@ -267,13 +557,21 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   onBeforeUnmount(() => {
     stopHostWatch()
     host.value?.removeEventListener('pointerdown', onPointerDown)
+    host.value?.removeEventListener('pointermove', onHostPointerMove)
+    host.value?.removeEventListener('pointerleave', onHostPointerLeave)
     window.removeEventListener('pointermove', onPlayheadPointerMove)
     window.removeEventListener('pointerup', onPlayheadPointerUp)
     window.removeEventListener('pointercancel', onPlayheadPointerUp)
     window.removeEventListener('pointermove', onClipPointerMove)
     window.removeEventListener('pointerup', onClipPointerUp)
     window.removeEventListener('pointercancel', onClipPointerUp)
+    window.removeEventListener('pointermove', onTrimPointerMove)
+    window.removeEventListener('pointerup', onTrimPointerUp)
+    window.removeEventListener('pointercancel', onTrimPointerUp)
+    window.removeEventListener('pointermove', onPendingPointerMove)
+    window.removeEventListener('pointerup', onPendingPointerUp)
+    window.removeEventListener('pointercancel', onPendingPointerUp)
   })
 
-  return { isDraggingPlayhead }
+  return { isDraggingPlayhead, hoverCursor }
 }

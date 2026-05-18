@@ -38,7 +38,17 @@ const TEXT_EDIT_ACTIONS: ReadonlySet<string> = new Set([
   'edit.redo',
   'edit.cut',
   'edit.copy',
-  'edit.paste'
+  'edit.paste',
+  // 'S' (no modifiers) opens Split-at-Playhead. Defer to native text
+  // input when the user is typing — they almost certainly mean the
+  // letter, not the global accelerator.
+  'edit.splitAtPlayhead',
+  // 'D' (no modifiers) duplicates the selected clip — same rationale.
+  'edit.duplicateClip',
+  // Delete key — defer to native when a text input has focus so
+  // pressing Delete inside the project rename field removes the
+  // character under the cursor rather than the selected clip.
+  'edit.deleteClip'
 ])
 
 function parseAccelerator(accel: string): ParsedAccelerator | null {

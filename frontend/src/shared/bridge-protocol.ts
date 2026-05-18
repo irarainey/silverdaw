@@ -18,11 +18,47 @@ export interface ClipAddPayload {
   clipId: string
   filePath: string
   positionMs: number
+  /** Optional trim window: where in the source file to start reading.
+   *  Used by split / duplicate to mint clips that share the underlying
+   *  audio with the original. Omit (or send 0) for a whole-file clip. */
+  inMs?: number
+  /** Optional trim window: how long this clip plays for, starting at
+   *  `inMs` inside the source file. Omit (or send 0) to play to the
+   *  natural end of the source. */
+  durationMs?: number
+  /** Optional 0..15 palette index. Omit to inherit the host track's
+   *  colour. Used by duplicate / split so the copy carries the
+   *  original's per-clip colour. */
+  colorIndex?: number
 }
 
 export interface ClipMovePayload {
   clipId: string
   positionMs: number
+  /** Optional cross-track move — when present and different from the
+   *  clip's current host track, the backend re-parents the clip's
+   *  ValueTree node under this track. The audio engine doesn't care
+   *  about tracks (each clip is its own playable source) so there's no
+   *  AudioEngine call; only ProjectState changes. */
+  trackId?: string
+}
+
+/** Atomic three-field trim update. Sent by edge-drag trim (and split,
+ *  for the original clip). All three fields are required because a
+ *  partial update would briefly let the audio thread observe an
+ *  inconsistent `(start, in, duration)` triple. */
+export interface ClipTrimPayload {
+  clipId: string
+  startMs: number
+  inMs: number
+  durationMs: number
+}
+
+/** Update a clip's per-clip colour override. A negative value clears
+ *  the override so the clip re-inherits its track's palette colour. */
+export interface ClipColorPayload {
+  clipId: string
+  colorIndex: number
 }
 
 /** Remove a clip from its track. The backend tears down the clip's
@@ -94,6 +130,8 @@ export interface BridgeOutboundMap {
   AUTH: AuthPayload
   CLIP_ADD: ClipAddPayload
   CLIP_MOVE: ClipMovePayload
+  CLIP_TRIM: ClipTrimPayload
+  CLIP_COLOR: ClipColorPayload
   CLIP_REMOVE: ClipRemovePayload
   CLIP_RELINK: ClipRelinkPayload
   LIBRARY_ADD: LibraryAddPayload
@@ -252,6 +290,13 @@ export interface ProjectStateClip {
   filePath: string
   offsetMs: number
   durationMs: number
+  /** Where in the source file this clip starts reading (trim offset).
+   *  Optional for back-compat: pre-trim projects don't carry the field;
+   *  the renderer falls back to 0. */
+  inMs?: number
+  /** Per-clip palette index override (0..15). Absent means the clip
+   *  inherits the host track's colour. */
+  colorIndex?: number
   /** True when the backend's `existsAsFile` check failed for this
    *  clip's `filePath` at load time. Renderer renders it greyed-out
    *  and surfaces a "Locate files…" toast; engine playback skips it. */
@@ -482,6 +527,8 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
       ) {
         return false
       }
+      if (c.inMs !== undefined && typeof c.inMs !== 'number') return false
+      if (c.colorIndex !== undefined && typeof c.colorIndex !== 'number') return false
       if (c.unresolved !== undefined && typeof c.unresolved !== 'boolean') return false
     }
   }

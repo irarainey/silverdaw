@@ -116,13 +116,38 @@ class ProjectState : public juce::ValueTree::Listener
      * unknown or `clipId` already exists anywhere in the tree.
      */
     bool addClip(const juce::String& trackId, const juce::String& clipId, const juce::String& filePath, double offsetMs,
-                 double durationMs);
+                 double durationMs, double inMs = 0.0, int colorIndex = -1);
 
     /** Remove a clip. Returns true if it existed. */
     bool removeClip(const juce::String& clipId);
 
     /** Update a clip's timeline offset. Returns true if the clip existed. */
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
+
+    /** Move a clip to a different host track. The clip's node is
+     *  re-parented in the ValueTree to the new TRACK node; properties
+     *  (offset, in, duration, colour) are preserved. Returns true if
+     *  both the clip and the destination track existed. */
+    bool setClipTrack(const juce::String& clipId, const juce::String& newTrackId);
+
+    /**
+     * Atomically update the trim window (offsetMs / inMs / durationMs)
+     * of `clipId`. Used by edge-drag trim and renderer-side split. All
+     * three writes happen inside one `suppressDirtyTransitions=false`
+     * scope so the project flips dirty exactly once. Returns true if
+     * the clip existed.
+     */
+    bool setClipTrim(const juce::String& clipId, double offsetMs, double inMs, double durationMs);
+
+    /** Update the per-clip colour palette index (0..15). Pass `-1` to
+     *  remove the override and inherit the host track's colour. */
+    bool setClipColorIndex(const juce::String& clipId, int colorIndex);
+
+    /** Read the clip's `inMs` (where in the source file it starts reading). 0 if unknown. */
+    double getClipInMs(const juce::String& clipId) const;
+
+    /** Read the clip's `durationMs`. 0 if unknown. */
+    double getClipDurationMs(const juce::String& clipId) const;
 
     /** Update a clip's source file path. Returns true if the clip
      *  existed. Used by the relink-missing-files flow on load — the
@@ -279,7 +304,9 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kGain;
     static const juce::Identifier kFilePath;
     static const juce::Identifier kOffsetMs;
+    static const juce::Identifier kInMs;
     static const juce::Identifier kDurationMs;
+    static const juce::Identifier kColorIndex;
     static const juce::Identifier kViewPxPerSecond;
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kPlayheadMs;

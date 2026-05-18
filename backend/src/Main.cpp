@@ -295,23 +295,41 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     const double initialOffsetMs =
         (posVar.isDouble() || posVar.isInt() || posVar.isInt64()) ? juce::jmax(0.0, static_cast<double>(posVar)) : 0.0;
 
+    // Optional trim window: split / duplicate send these so the new
+    // clip plays a subset of the source file. Absent (== 0) means
+    // "play the whole file from the start" — the un-trimmed default.
+    const juce::var inVar = payload.getProperty("inMs", juce::var());
+    const double inMs =
+        (inVar.isDouble() || inVar.isInt() || inVar.isInt64()) ? juce::jmax(0.0, static_cast<double>(inVar)) : 0.0;
+    const juce::var durVar = payload.getProperty("durationMs", juce::var());
+    const double payloadDurationMs =
+        (durVar.isDouble() || durVar.isInt() || durVar.isInt64()) ? juce::jmax(0.0, static_cast<double>(durVar)) : 0.0;
+
+    // Optional per-clip colour override. Negative / absent means "inherit
+    // from track" — the renderer-side default. Clamped on the renderer
+    // side; we trust the value here because the bridge wire format is
+    // type-checked.
+    const juce::var colorVar = payload.getProperty("colorIndex", juce::var());
+    const int payloadColorIndex =
+        (colorVar.isInt() || colorVar.isInt64()) ? static_cast<int>(colorVar) : -1;
+
     // Auto-create the parent track in the ValueTree if the renderer didn't
     // (e.g. older clients that never send TRACK_ADD). Idempotent.
     projectState.addTrack(trackId);
 
     juce::String errorMsg;
-    bool ok = engine.addClip(clipId, juce::File(filePath), initialOffsetMs, &errorMsg);
+    bool ok = engine.addClip(clipId, juce::File(filePath), initialOffsetMs, inMs, payloadDurationMs, &errorMsg);
     if (ok)
     {
-        // Mirror the audio change into the structural project state, capturing
-        // the file's duration so PROJECT_STATE on reconnect can rebuild the
-        // clip block geometry without re-reading the file from the renderer.
-        const double durationMs = engine.getClipDurationMs(clipId);
-        if (!projectState.addClip(trackId, clipId, filePath, initialOffsetMs, durationMs))
+        // For un-trimmed clips fall back to the engine-discovered source
+        // duration so PROJECT_STATE on reconnect can rebuild the clip
+        // block geometry without re-reading the file from the renderer.
+        // For trimmed clips (durationMs > 0) trust the renderer.
+        const double effectiveDurationMs =
+            payloadDurationMs > 0.0 ? payloadDurationMs : engine.getClipDurationMs(clipId);
+        if (!projectState.addClip(trackId, clipId, filePath, initialOffsetMs, effectiveDurationMs, inMs,
+                                  payloadColorIndex))
         {
-            // Engine accepted the audio source but ProjectState rejected
-            // (e.g. clipId collided). Roll back the audio side so the two
-            // models can't drift, and report failure to the renderer.
             engine.removeClip(clipId);
             ok = false;
             errorMsg = "duplicate clipId or unknown trackId";
@@ -383,6 +401,46 @@ void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, si
         engine.setClipOffsetMs(clipId, *positionMs);
         projectState.setClipOffsetMs(clipId, *positionMs);
     }
+    // Optional cross-track re-parent. Audio side is unchanged (each
+    // clip is its own playable source) — only ProjectState's tree
+    // moves the CLIP node under a different TRACK.
+    const juce::String newTrackId = payload.getProperty("trackId", juce::var()).toString();
+    if (newTrackId.isNotEmpty())
+    {
+        projectState.setClipTrack(clipId, newTrackId);
+    }
+}
+
+void handleClipTrim(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState)
+{
+    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    if (clipId.isEmpty())
+    {
+        return;
+    }
+    const auto startMs = tryGetNumber(payload, "startMs");
+    const auto inMs = tryGetNumber(payload, "inMs");
+    const auto durationMs = tryGetNumber(payload, "durationMs");
+    if (!startMs.has_value() || !inMs.has_value() || !durationMs.has_value())
+    {
+        return;
+    }
+    engine.setClipTrim(clipId, *startMs, *inMs, *durationMs);
+    projectState.setClipTrim(clipId, *startMs, *inMs, *durationMs);
+}
+
+void handleClipColor(const juce::var& payload, silverdaw::ProjectState& projectState)
+{
+    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    if (clipId.isEmpty())
+    {
+        return;
+    }
+    // colorIndex omitted or negative = clear the per-clip override.
+    const juce::var idxVar = payload.getProperty("colorIndex", juce::var());
+    const int colorIndex =
+        (idxVar.isInt() || idxVar.isInt64()) ? static_cast<int>(idxVar) : -1;
+    projectState.setClipColorIndex(clipId, colorIndex);
 }
 
 void handleTrackAdd(const juce::var& payload, silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
@@ -553,6 +611,8 @@ void handleClipRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
     // against the new file. Walk the tree to find the clip's offset.
     engine.removeClip(clipId);
     double clipOffsetMs = 0.0;
+    double clipInMs = 0.0;
+    double clipDurationMs = 0.0;
     bool foundClip = false;
     const auto& root = projectState.getTree();
     for (int t = 0; t < root.getNumChildren() && !foundClip; ++t)
@@ -564,6 +624,8 @@ void handleClipRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
             if (clip.getProperty("id").toString() == clipId)
             {
                 clipOffsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
+                clipInMs = static_cast<double>(clip.getProperty("inMs", 0.0));
+                clipDurationMs = static_cast<double>(clip.getProperty("durationMs", 0.0));
                 foundClip = true;
                 break;
             }
@@ -571,7 +633,8 @@ void handleClipRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
     }
 
     juce::String err;
-    const bool added = engine.addClip(clipId, juce::File(filePath), clipOffsetMs, &err);
+    const bool added =
+        engine.addClip(clipId, juce::File(filePath), clipOffsetMs, clipInMs, clipDurationMs, &err);
     silverdaw::log::info("project", "CLIP_RELINK clipId=" + clipId + " ok=" + juce::String(added ? 1 : 0) +
                                         (added ? "" : " err=" + err));
 
@@ -610,12 +673,14 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, const silverdaw::P
             const juce::String clipId = clip.getProperty("id").toString();
             const juce::String filePath = clip.getProperty("filePath").toString();
             const double offsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
+            const double inMs = static_cast<double>(clip.getProperty("inMs", 0.0));
+            const double durationMs = static_cast<double>(clip.getProperty("durationMs", 0.0));
             if (clipId.isEmpty() || filePath.isEmpty())
             {
                 continue;
             }
             juce::String err;
-            if (engine.addClip(clipId, juce::File(filePath), offsetMs, &err))
+            if (engine.addClip(clipId, juce::File(filePath), offsetMs, inMs, durationMs, &err))
             {
                 ++rebuilt;
             }
@@ -812,6 +877,20 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::debug("bridge", "recv CLIP_MOVE clipId=" + payload.getProperty("clipId", "").toString() +
                                             " pos=" + payload.getProperty("positionMs", "").toString());
         handleClipMove(payload, engine, projectState);
+    }
+    else if (type == "CLIP_TRIM")
+    {
+        silverdaw::log::debug("bridge", "recv CLIP_TRIM clipId=" + payload.getProperty("clipId", "").toString() +
+                                            " start=" + payload.getProperty("startMs", "").toString() +
+                                            " in=" + payload.getProperty("inMs", "").toString() +
+                                            " dur=" + payload.getProperty("durationMs", "").toString());
+        handleClipTrim(payload, engine, projectState);
+    }
+    else if (type == "CLIP_COLOR")
+    {
+        silverdaw::log::debug("bridge", "recv CLIP_COLOR clipId=" + payload.getProperty("clipId", "").toString() +
+                                            " idx=" + payload.getProperty("colorIndex", "").toString());
+        handleClipColor(payload, projectState);
     }
     else if (type == "CLIP_REMOVE")
     {

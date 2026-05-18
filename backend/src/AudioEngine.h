@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -33,6 +34,7 @@ class OffsetSource : public juce::PositionableAudioSource
   public:
     explicit OffsetSource(juce::PositionableAudioSource* child) : child(child) {}
 
+    /** Where in the master timeline this clip starts playing. */
     void setOffsetSamples(juce::int64 samples)
     {
         offsetSamples.store(juce::jmax(static_cast<juce::int64>(0), samples));
@@ -40,6 +42,31 @@ class OffsetSource : public juce::PositionableAudioSource
     juce::int64 getOffsetSamples() const
     {
         return offsetSamples.load();
+    }
+
+    /** Where in the SOURCE FILE this clip starts reading (the `inMs`
+     *  field in `ProjectState`). Lets a trimmed clip skip the leading
+     *  audio of the source without re-decoding. */
+    void setInSourceSamples(juce::int64 samples)
+    {
+        inSourceSamples.store(juce::jmax(static_cast<juce::int64>(0), samples));
+    }
+    juce::int64 getInSourceSamples() const
+    {
+        return inSourceSamples.load();
+    }
+
+    /** How many samples this clip plays for from `inSourceSamples`
+     *  onward. Anything beyond `[offsetSamples, offsetSamples + clipDurationSamples)`
+     *  on the master timeline emits silence. Zero is treated as
+     *  "play to end of source" — used for legacy un-trimmed clips. */
+    void setClipDurationSamples(juce::int64 samples)
+    {
+        clipDurationSamples.store(juce::jmax(static_cast<juce::int64>(0), samples));
+    }
+    juce::int64 getClipDurationSamples() const
+    {
+        return clipDurationSamples.load();
     }
 
     void prepareToPlay(int blockSize, double sampleRate) override
@@ -68,38 +95,54 @@ class OffsetSource : public juce::PositionableAudioSource
 
         const juce::int64 startPos = position.load(std::memory_order_relaxed);
         const juce::int64 endPos = startPos + info.numSamples;
-        const juce::int64 off = offsetSamples.load();
+        const juce::int64 clipStart = offsetSamples.load();
+        const juce::int64 dur = clipDurationSamples.load();
+        // `clipEnd = INT64_MAX` when `dur == 0`, so an un-trimmed clip
+        // plays to the end of the source (existing behaviour).
+        const juce::int64 clipEnd =
+            dur > 0 ? clipStart + dur : std::numeric_limits<juce::int64>::max();
+        const juce::int64 inSrc = inSourceSamples.load();
 
-        if (endPos <= off)
+        if (endPos <= clipStart || startPos >= clipEnd)
         {
-            // Entirely before the offset: emit silence.
+            // Entirely outside the clip window: emit silence.
             info.clearActiveBufferRegion();
             position.store(endPos, std::memory_order_relaxed);
             return;
         }
 
-        if (startPos >= off)
+        // Split the block into [silent leading | audible middle | silent trailing].
+        const juce::int64 audibleStart = juce::jmax(startPos, clipStart);
+        const juce::int64 audibleEnd = juce::jmin(endPos, clipEnd);
+        const int silentLeading = static_cast<int>(audibleStart - startPos);
+        const int audibleSamples = static_cast<int>(audibleEnd - audibleStart);
+        const int silentTrailing = info.numSamples - silentLeading - audibleSamples;
+
+        if (silentLeading > 0)
         {
-            // Entirely past the offset: forward to the child.
-            child->setNextReadPosition(startPos - off);
-            child->getNextAudioBlock(info);
-            position.store(endPos, std::memory_order_relaxed);
-            return;
+            juce::AudioSourceChannelInfo lead = info;
+            lead.numSamples = silentLeading;
+            lead.clearActiveBufferRegion();
         }
 
-        // Block straddles the offset: silent leading section + audible tail.
-        const int silentSamples = static_cast<int>(off - startPos);
-        const int audibleSamples = info.numSamples - silentSamples;
+        if (audibleSamples > 0)
+        {
+            juce::AudioSourceChannelInfo audible = info;
+            audible.startSample += silentLeading;
+            audible.numSamples = audibleSamples;
+            // Read from the source at: how-far-into-the-clip + in-source-offset.
+            const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
+            child->setNextReadPosition(sourcePos);
+            child->getNextAudioBlock(audible);
+        }
 
-        juce::AudioSourceChannelInfo silentInfo = info;
-        silentInfo.numSamples = silentSamples;
-        silentInfo.clearActiveBufferRegion();
-
-        juce::AudioSourceChannelInfo audibleInfo = info;
-        audibleInfo.startSample += silentSamples;
-        audibleInfo.numSamples = audibleSamples;
-        child->setNextReadPosition(0);
-        child->getNextAudioBlock(audibleInfo);
+        if (silentTrailing > 0)
+        {
+            juce::AudioSourceChannelInfo trail = info;
+            trail.startSample += silentLeading + audibleSamples;
+            trail.numSamples = silentTrailing;
+            trail.clearActiveBufferRegion();
+        }
 
         position.store(endPos, std::memory_order_relaxed);
     }
@@ -108,9 +151,13 @@ class OffsetSource : public juce::PositionableAudioSource
     {
         position.store(newPosition, std::memory_order_relaxed);
         const juce::int64 off = offsetSamples.load();
+        const juce::int64 inSrc = inSourceSamples.load();
         if (child != nullptr)
         {
-            child->setNextReadPosition(newPosition >= off ? newPosition - off : 0);
+            // Match the read-position offset the next getNextAudioBlock
+            // call will use, so a seek immediately followed by a pull
+            // produces aligned audio (no half-block of stale samples).
+            child->setNextReadPosition(newPosition >= off ? (newPosition - off) + inSrc : inSrc);
         }
     }
 
@@ -150,6 +197,8 @@ class OffsetSource : public juce::PositionableAudioSource
     // synchronise with the position value.
     std::atomic<juce::int64> position{0};
     std::atomic<juce::int64> offsetSamples{0};
+    std::atomic<juce::int64> inSourceSamples{0};
+    std::atomic<juce::int64> clipDurationSamples{0};
 };
 
 /**
@@ -306,6 +355,7 @@ class AudioEngine
      * On failure, `outError` (if non-null) is populated with a short diagnostic.
      */
     bool addClip(const juce::String& clipId, const juce::File& filePath, double initialOffsetMs = 0.0,
+                 double inMs = 0.0, double clipDurationMs = 0.0,
                  juce::String* outError = nullptr);
 
     /** Remove the playable source with the given clip id. Returns true if it existed. */
@@ -351,6 +401,15 @@ class AudioEngine
      * Returns true if the clip existed.
      */
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
+
+    /**
+     * Atomically update a clip's trim window — used by edge-drag trim,
+     * split, and duplicate. All three fields are applied together so a
+     * trim that simultaneously moves `startMs` and `inMs` doesn't
+     * desynchronise the audible playback for one block. Returns true
+     * if the clip existed.
+     */
+    bool setClipTrim(const juce::String& clipId, double startMs, double inMs, double clipDurationMs);
 
     /** True if any track is currently playing. */
     bool isPlaying() const;

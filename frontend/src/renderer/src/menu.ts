@@ -62,6 +62,10 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Copy', action: 'edit.copy', accelerator: 'Ctrl+C' },
         { label: 'Paste', action: 'edit.paste', accelerator: 'Ctrl+V' },
         SEP,
+        { label: 'Split Clip at Playhead', action: 'edit.splitAtPlayhead', accelerator: 'S' },
+        { label: 'Duplicate Clip', action: 'edit.duplicateClip', accelerator: 'D' },
+        { label: 'Delete Clip', action: 'edit.deleteClip', accelerator: 'Delete' },
+        SEP,
         { label: 'Preferences...', action: 'edit.preferences' }
       ]
     },

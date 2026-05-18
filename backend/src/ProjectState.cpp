@@ -11,7 +11,9 @@ const juce::Identifier ProjectState::kName{"name"};
 const juce::Identifier ProjectState::kGain{"gain"};
 const juce::Identifier ProjectState::kFilePath{"filePath"};
 const juce::Identifier ProjectState::kOffsetMs{"offsetMs"};
+const juce::Identifier ProjectState::kInMs{"inMs"};
 const juce::Identifier ProjectState::kDurationMs{"durationMs"};
+const juce::Identifier ProjectState::kColorIndex{"colorIndex"};
 const juce::Identifier ProjectState::kViewPxPerSecond{"viewPxPerSecond"};
 const juce::Identifier ProjectState::kViewScrollX{"viewScrollX"};
 const juce::Identifier ProjectState::kPlayheadMs{"playheadMs"};
@@ -213,7 +215,7 @@ juce::StringArray ProjectState::getTrackClipIds(const juce::String& trackId) con
 // order is a load-bearing wire-protocol convention; swapping is silenced.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool ProjectState::addClip(const juce::String& trackId, const juce::String& clipId, const juce::String& filePath,
-                           double offsetMs, double durationMs)
+                           double offsetMs, double durationMs, double inMs, int colorIndex)
 {
     if (trackId.isEmpty() || clipId.isEmpty())
     {
@@ -232,7 +234,12 @@ bool ProjectState::addClip(const juce::String& trackId, const juce::String& clip
     clip.setProperty(kId, clipId, &undoManager);
     clip.setProperty(kFilePath, filePath, &undoManager);
     clip.setProperty(kOffsetMs, offsetMs, &undoManager);
+    clip.setProperty(kInMs, inMs, &undoManager);
     clip.setProperty(kDurationMs, durationMs, &undoManager);
+    if (colorIndex >= 0)
+    {
+        clip.setProperty(kColorIndex, colorIndex, &undoManager);
+    }
     track.appendChild(clip, &undoManager);
     return true;
 }
@@ -257,6 +264,80 @@ bool ProjectState::setClipOffsetMs(const juce::String& clipId, double offsetMs)
         return false;
     }
     clip.setProperty(kOffsetMs, offsetMs, &undoManager);
+    return true;
+}
+
+bool ProjectState::setClipTrack(const juce::String& clipId, const juce::String& newTrackId)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    auto destTrack = findTrack(newTrackId);
+    if (!destTrack.isValid())
+    {
+        return false;
+    }
+    auto oldParent = clip.getParent();
+    if (oldParent == destTrack)
+    {
+        return true; // already on the destination track
+    }
+    // ValueTree nodes can only have one parent; removeChild +
+    // appendChild on the same ValueTree object preserves the node
+    // (including its sub-properties).
+    oldParent.removeChild(clip, &undoManager);
+    destTrack.appendChild(clip, &undoManager);
+    return true;
+}
+
+bool ProjectState::setClipTrim(const juce::String& clipId, double offsetMs, double inMs, double durationMs)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    // Three writes on the same clip node coalesce into a single dirty
+    // transition because `setDirty(true)` is a no-op when already true.
+    clip.setProperty(kOffsetMs, offsetMs, &undoManager);
+    clip.setProperty(kInMs, inMs, &undoManager);
+    clip.setProperty(kDurationMs, durationMs, &undoManager);
+    return true;
+}
+
+double ProjectState::getClipInMs(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return 0.0;
+    return static_cast<double>(clip.getProperty(kInMs, 0.0));
+}
+
+double ProjectState::getClipDurationMs(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return 0.0;
+    return static_cast<double>(clip.getProperty(kDurationMs, 0.0));
+}
+
+bool ProjectState::setClipColorIndex(const juce::String& clipId, int colorIndex)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    if (colorIndex < 0)
+    {
+        // Negative = remove the per-clip override and inherit the
+        // host-track colour at render time.
+        clip.removeProperty(kColorIndex, &undoManager);
+    }
+    else
+    {
+        clip.setProperty(kColorIndex, colorIndex, &undoManager);
+    }
     return true;
 }
 
@@ -457,7 +538,15 @@ juce::var ProjectState::tracksAsJson() const
             const juce::String filePath = clip.getProperty(kFilePath).toString();
             clipObj->setProperty("filePath", filePath);
             clipObj->setProperty("offsetMs", static_cast<double>(clip.getProperty(kOffsetMs, 0.0)));
+            clipObj->setProperty("inMs", static_cast<double>(clip.getProperty(kInMs, 0.0)));
             clipObj->setProperty("durationMs", static_cast<double>(clip.getProperty(kDurationMs, 0.0)));
+            // Only emit `colorIndex` when explicitly set so the renderer
+            // can distinguish "inherit from track" (property absent)
+            // from "user picked a colour".
+            if (clip.hasProperty(kColorIndex))
+            {
+                clipObj->setProperty("colorIndex", static_cast<int>(clip.getProperty(kColorIndex, -1)));
+            }
             // Flag clips whose source file is missing from disk so the
             // renderer can render them greyed-out and prompt the user
             // to relink. We test by path: an empty path is also treated

@@ -15,7 +15,8 @@
 
 import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics, Text } from 'pixi.js'
-import { useProjectStore, type Clip, TRACK_PALETTE } from '@/stores/projectStore'
+import { useProjectStore, type Clip, TRACK_PALETTE, PEAKS_PER_SECOND } from '@/stores/projectStore'
+import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import {
@@ -104,6 +105,7 @@ export interface TimelineDrawing {
 
 export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawing {
   const project = useProjectStore()
+  const library = useLibraryStore()
   const transport = useTransportStore()
   const ui = useUiStore()
   const {
@@ -416,6 +418,19 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       rowBg.rect(0, worldY, worldRowRight, TRACK_HEIGHT).fill(TRACK_BG)
       tracksL.addChild(rowBg)
 
+      // Selected-track highlight — a 2 px inset border in the
+      // palette's accent colour around the row. Drawn after the bg
+      // so it overlays the row colour but before the grid + clips so
+      // they still draw on top.
+      if (project.selectedTrackId === track.id) {
+        const palette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
+        const highlight = new G()
+        highlight
+          .rect(1, worldY + 1, worldRowRight - 2, TRACK_HEIGHT - 2)
+          .stroke({ color: palette.border, width: 2, alpha: 0.9 })
+        tracksL.addChild(highlight)
+      }
+
       // Per-track header — drawn on the static headers layer in
       // viewport coords so it doesn't scroll horizontally.
       const header = new G()
@@ -434,10 +449,15 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     // Pass 2: clips.
     for (const { track, worldY } of visibleRows) {
-      const palette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
+      const trackPalette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
       for (const clipId of track.clipIds) {
         const clip = project.clips[clipId]
         if (!clip) continue
+        // Per-clip colour override wins over the track's palette entry.
+        const palette =
+          typeof clip.colorIndex === 'number'
+            ? TRACK_PALETTE[clip.colorIndex % TRACK_PALETTE.length]!
+            : trackPalette
         drawClip(clip, worldY, palette, worldLeft, worldRight)
       }
     }
@@ -479,12 +499,20 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const fillAlpha = clip.unresolved ? 0.5 : 0.85
     const borderAlpha = clip.unresolved ? 0.85 : 0.9
 
+    // Selected clips get a noticeably thicker border so the user can
+    // see at a glance which clip Cut / Copy would act on. The colour
+    // stays the palette border (slightly brighter) so the selection
+    // doesn't conflict with the unresolved-red warning.
+    const isSelected = project.selectedClipId === clip.id
+    const borderWidth = isSelected ? 3 : 1
+    const effectiveBorderAlpha = isSelected ? 1.0 : borderAlpha
+
     // Clip block + border (palette-coloured; muted when unresolved).
     const block = new G()
     block
       .roundRect(absX, innerY, w, innerH, 4)
       .fill({ color: fillColour, alpha: fillAlpha })
-      .stroke({ color: borderColour, width: 1, alpha: borderAlpha })
+      .stroke({ color: borderColour, width: borderWidth, alpha: effectiveBorderAlpha })
     tracksL.addChild(block)
 
     // Hit region in WORLD coordinates — useDragHandlers converts to
@@ -510,17 +538,27 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const half = innerH / 2 - 2
 
     if (peakCount > 0 && w > 0) {
-      const peaksPerPixel = peakCount / w
+      // Peaks are at a constant PEAKS_PER_SECOND rate over the SOURCE
+      // file; the clip may be a trimmed window. Convert the clip's
+      // `[inMs, inMs + durationMs]` ms-window into peak indices and
+      // distribute those across the clip's pixel width.
+      const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * PEAKS_PER_SECOND))
+      const endPeak = Math.min(
+        peakCount,
+        Math.max(startPeak + 1, Math.ceil(((clip.inMs + clip.durationMs) / 1000) * PEAKS_PER_SECOND))
+      )
+      const windowSize = endPeak - startPeak
+      const peaksPerPixel = windowSize / w
       for (let px = 0; px < w; px++) {
-        const startIdx = Math.floor(px * peaksPerPixel)
+        const startIdx = startPeak + Math.floor(px * peaksPerPixel)
         // Always read at least one peak per pixel — when zoomed in
         // (peaksPerPixel < 1) consecutive pixels would otherwise share
         // the same `startIdx` AND `endIdx`, producing no draw.
         const endIdx = Math.min(
-          peakCount,
-          Math.max(startIdx + 1, Math.ceil((px + 1) * peaksPerPixel))
+          endPeak,
+          Math.max(startIdx + 1, startPeak + Math.ceil((px + 1) * peaksPerPixel))
         )
-        if (startIdx >= peakCount) break
+        if (startIdx >= endPeak) break
 
         let min = 0
         let max = 0
@@ -561,11 +599,19 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     if (clipW < 20) return
 
+    // Prefer the ID3 / Vorbis tag title from the matching library item;
+    // fall back to the clip's filename only when no title was found
+    // (or hasn't loaded yet — metadata fetches are async on snapshot
+    // reload). Library lookup is by filePath because the library may
+    // have generated a different `id` than the clip.
+    const libItem = library.items.find((i) => i.filePath === clip.filePath)
+    const displayName = libItem ? libraryItemDisplayName(libItem) : clip.fileName
+
     const maxChars = Math.max(1, Math.floor((clipW - PAD_X * 2) / APPROX_CHAR_W))
     const text =
-      clip.fileName.length > maxChars
-        ? clip.fileName.slice(0, Math.max(1, maxChars - 1)) + '…'
-        : clip.fileName
+      displayName.length > maxChars
+        ? displayName.slice(0, Math.max(1, maxChars - 1)) + '…'
+        : displayName
 
     const desiredW = Math.min(clipW, text.length * APPROX_CHAR_W + PAD_X * 2)
     const headerBg = new G()

@@ -17,7 +17,7 @@
 // pointer handling lives in `useScrollbarDrag`.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useProjectStore } from '@/stores/projectStore'
+import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
@@ -70,7 +70,7 @@ const pixi = usePixiApp({
   onReady: () => { redraw(); updatePlayhead() }
 })
 
-const { isDraggingPlayhead } = useDragHandlers({
+const { isDraggingPlayhead, hoverCursor } = useDragHandlers({
   host, app: pixi.app, scrollX, scrollY, showScrollbar, geometry,
   getClipHitRegions: () => clipHitRegions,
   onClipMoved: () => { redraw(); updatePlayhead() },
@@ -152,6 +152,28 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     items.push({ command: 'clip.relink', label: 'Relink…' })
   }
   items.push({ command: 'clip.delete', label: 'Delete' })
+  items.push({ command: 'clip.duplicate', label: 'Duplicate', separatorAbove: true })
+  items.push({ command: 'clip.split', label: 'Split at playhead' })
+  // Colour picker — inline 4×8 swatch grid bound to the 16-entry
+  // TRACK_PALETTE. Picking a swatch sends `CLIP_COLOR` via
+  // setClipColor; the selected outline reflects either the clip's
+  // override or the host track's inherited colour as a hint.
+  if (clip) {
+    const track = project.tracks.find((t) => t.id === clip.trackId)
+    const selected =
+      typeof clip.colorIndex === 'number'
+        ? clip.colorIndex
+        : track
+          ? track.colorIndex
+          : undefined
+    items.push({
+      command: 'clip.color',
+      label: 'Colour',
+      separatorAbove: true,
+      swatches: TRACK_PALETTE.map((p) => ({ cssHex: p.cssHex, label: p.id })),
+      selectedSwatch: selected
+    })
+  }
   // Phase 3+ placeholders — the menu surface is shaped now so the
   // muscle memory exists; the actions will light up once the
   // underlying features land.
@@ -189,6 +211,13 @@ function onContextMenuCommand(command: string): void {
   if (!clipId) return
   if (command === 'clip.delete') {
     project.removeClip(clipId)
+  } else if (command === 'clip.duplicate') {
+    project.duplicateClip(clipId)
+  } else if (command === 'clip.split') {
+    project.splitClipAt(clipId, transport.positionMs)
+  } else if (command.startsWith('clip.color:')) {
+    const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
+    if (Number.isFinite(idx)) project.setClipColor(clipId, idx)
   } else if (command === 'clip.relink') {
     const clip = project.clips[clipId]
     if (clip) {
@@ -553,6 +582,7 @@ function onHeaderResizePointerUp(e: PointerEvent): void {
     <div
       ref="host"
       class="absolute inset-0"
+      :style="{ cursor: hoverCursor }"
     />
 
     <!-- HTML overlay for track headers (name + M/S/X buttons). -->

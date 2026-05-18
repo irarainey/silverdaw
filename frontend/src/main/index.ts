@@ -823,15 +823,35 @@ function handleMenuAction(action: string): void {
       wc.redo()
       break
     case 'edit.cut':
-      wc.cut()
+      // Forward to renderer so it can target the selected clip. The
+      // renderer falls back to `wc.cut()` if there's nothing to cut at
+      // the clip level — keeps native text-field cut working from the
+      // menu UI too.
+      wc.send('menu:action', action)
       break
     case 'edit.copy':
-      wc.copy()
+      wc.send('menu:action', action)
       break
     case 'edit.paste':
-      wc.paste()
+      wc.send('menu:action', action)
       break
     case 'edit.preferences':
+      wc.send('menu:action', action)
+      break
+    case 'edit.splitAtPlayhead':
+      // Forwarded to the renderer, which walks every clip whose
+      // timeline window straddles the current playhead and splits
+      // each at that position.
+      wc.send('menu:action', action)
+      break
+    case 'edit.duplicateClip':
+      // Forwarded to the renderer, which duplicates the currently-
+      // selected clip immediately after the original on the same track.
+      wc.send('menu:action', action)
+      break
+    case 'edit.deleteClip':
+      // Forwarded to the renderer, which removes the currently-selected
+      // clip from its track.
       wc.send('menu:action', action)
       break
 

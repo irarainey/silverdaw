@@ -16,6 +16,14 @@ export interface ClipContextMenuItem {
   disabled?: boolean
   /** Visual rule below the previous item. */
   separatorAbove?: boolean
+  /** When provided, the item renders as a label above an inline grid
+   *  of colour swatches instead of a clickable row. Picking a swatch
+   *  fires `command` with the chosen palette index appended to the
+   *  string: e.g. `clip.color:3`. The currently-selected swatch (when
+   *  `selectedSwatch` matches its index) is highlighted. */
+  swatches?: ReadonlyArray<{ cssHex: string; label?: string }>
+  /** Palette index to outline as the current selection inside `swatches`. */
+  selectedSwatch?: number
 }
 
 const props = defineProps<{
@@ -83,7 +91,16 @@ function onBackdropPointer(e: PointerEvent): void {
 
 function onItemClick(item: ClipContextMenuItem): void {
   if (item.disabled) return
+  if (item.swatches) return
   emit('command', item.command)
+  emit('close')
+}
+
+function onSwatchClick(item: ClipContextMenuItem, index: number): void {
+  // Encode the swatch index into the command string so the host's
+  // existing `onContextMenuCommand` switch can fan out on a single
+  // parameter without us adding a separate emit channel.
+  emit('command', `${item.command}:${index}`)
   emit('close')
 }
 
@@ -121,7 +138,32 @@ onBeforeUnmount(() => {
             v-if="item.separatorAbove && i > 0"
             class="my-1 h-px bg-zinc-800"
           />
+          <div
+            v-if="item.swatches"
+            class="px-3 py-1.5"
+          >
+            <div class="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">
+              {{ item.label }}
+            </div>
+            <div class="grid grid-cols-8 gap-1">
+              <button
+                v-for="(s, idx) in item.swatches"
+                :key="idx"
+                type="button"
+                class="h-4 w-4 rounded-sm border transition-transform hover:scale-110"
+                :class="
+                  item.selectedSwatch === idx
+                    ? 'border-zinc-100 ring-1 ring-zinc-100'
+                    : 'border-zinc-700 hover:border-zinc-400'
+                "
+                :style="{ backgroundColor: s.cssHex }"
+                :title="s.label"
+                @click="onSwatchClick(item, idx)"
+              />
+            </div>
+          </div>
           <button
+            v-else
             type="button"
             role="menuitem"
             class="flex w-full items-center px-3 py-1.5 text-left transition-colors"

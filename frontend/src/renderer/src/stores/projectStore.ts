@@ -15,7 +15,10 @@ import type { ProjectStatePayload } from '@shared/bridge-protocol'
 
 export interface Clip {
   readonly id: string
-  readonly trackId: string
+  /** Host track id. Mutable because clips can be dragged between
+   *  tracks; updated in lockstep with the `CLIP_MOVE { trackId }`
+   *  envelope so the backend's ValueTree re-parents the clip node. */
+  trackId: string
   readonly filePath: string
   /**
    * Path the *backend* loads for playback. Differs from `filePath` only
@@ -28,7 +31,14 @@ export interface Clip {
   readonly fileName: string
   /** Offset from the timeline origin (ms). Mutable so clips can be dragged. */
   startMs: number
-  readonly durationMs: number
+  /** Where inside the source file this clip begins reading (the
+   *  non-destructive trim window's left edge). Mutable because
+   *  left-edge trim shifts both `startMs` and `inMs` together. Defaults
+   *  to 0 for newly-imported clips that haven't been trimmed. */
+  inMs: number
+  /** How long this clip plays from `inMs` onward (ms). Mutable so
+   *  edge-drag trim can shrink it from either side. */
+  durationMs: number
   /** Backend-reported sample rate. May be 0 for placeholder clips until WAVEFORM_DATA arrives. */
   sampleRate: number
   readonly channelCount: number
@@ -43,6 +53,10 @@ export interface Clip {
    *  greyed-out and the relink toast lists it. Mutable so a successful
    *  `CLIP_RELINK` can clear it on the next PROJECT_STATE. */
   unresolved: boolean
+  /** Per-clip colour-palette override (0..15). When undefined the clip
+   *  inherits the host track's `colorIndex`. Set via right-click →
+   *  Colour. */
+  colorIndex?: number
 }
 
 export interface Track {
@@ -145,6 +159,38 @@ interface ProjectState {
   /** Persisted horizontal scroll position (px). Same `null` semantics
    *  as `viewPxPerSecond`. */
   viewScrollX: number | null
+
+  /** Currently selected clip id (UI-only — not persisted, not sent to
+   *  the backend). Used to render a thicker outline on the selected
+   *  clip and to identify the target of Cut / Copy. `null` when
+   *  nothing is selected. */
+  selectedClipId: string | null
+
+  /** Currently selected track id (UI-only). The selected track is the
+   *  paste target — `pasteClipAtPlayhead` places the new clip on this
+   *  track when set, falling back to the clipboard's source track
+   *  otherwise. Drawn with a highlighted row border. */
+  selectedTrackId: string | null
+
+  /** Local cut / copy buffer. Holds the minimum data needed to mint a
+   *  fresh clip via `pasteClipAtPlayhead`. Renderer-only — cleared on
+   *  project load / new. */
+  clipboardClip: ClipboardEntry | null
+}
+
+/** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
+export interface ClipboardEntry {
+  sourceTrackId: string
+  /** Original clip's `startMs` on the source track — used by paste to
+   *  compute "right after the source" as the target slot. */
+  sourceStartMs: number
+  /** Original clip's `durationMs` (separate from `durationMs` in case
+   *  we ever support trimmed pastes). Currently equal. */
+  sourceDurationMs: number
+  filePath: string
+  inMs: number
+  durationMs: number
+  colorIndex?: number
 }
 
 /** Default name shown in the title bar before a project is named or loaded. */
@@ -158,6 +204,66 @@ export const DEFAULT_PROJECT_NAME = 'Untitled'
  */
 let pendingSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
 
+/**
+ * Return the position closest to `desiredStartMs` on `trackId` where a
+ * clip of `durationMs` fits without overlapping any existing clip
+ * (excluding the one identified by `excludeClipId`, which is the
+ * dragged clip itself). The track timeline is decomposed into free
+ * gaps; for each gap that can hold the clip we compute the closest
+ * valid `startMs` and keep the best one overall.
+ *
+ * Picks the gap whose closest-valid position is nearest the desired
+ * one — this yields "bump against the neighbour" behaviour during
+ * drag (the clip slides up against the wall and stays there as long
+ * as the cursor pushes that way), while still letting the user move
+ * the clip to a different gap by dragging the cursor decisively past
+ * the obstruction. Returns `null` if no gap is big enough.
+ */
+function findClipSlot(
+  state: { tracks: Track[]; clips: Record<string, Clip> },
+  trackId: string,
+  excludeClipId: string,
+  desiredStartMs: number,
+  durationMs: number
+): number | null {
+  const track = state.tracks.find((t) => t.id === trackId)
+  if (!track) return null
+  // Collect occupied intervals (excluding the dragged clip).
+  const intervals: { start: number; end: number }[] = []
+  for (const id of track.clipIds) {
+    if (id === excludeClipId) continue
+    const c = state.clips[id]
+    if (!c) continue
+    intervals.push({ start: c.startMs, end: c.startMs + c.durationMs })
+  }
+  intervals.sort((a, b) => a.start - b.start)
+  // Build complementary "free gaps".
+  const gaps: { start: number; end: number }[] = []
+  let cursor = 0
+  for (const iv of intervals) {
+    if (iv.start > cursor) gaps.push({ start: cursor, end: iv.start })
+    cursor = Math.max(cursor, iv.end)
+  }
+  gaps.push({ start: cursor, end: Number.POSITIVE_INFINITY })
+
+  const desired = Math.max(0, desiredStartMs)
+  let best: number | null = null
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const g of gaps) {
+    const gapLen = g.end - g.start
+    if (gapLen < durationMs) continue
+    const lo = g.start
+    const hi = g.end === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : g.end - durationMs
+    const candidate = Math.min(Math.max(desired, lo), hi)
+    const dist = Math.abs(candidate - desired)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = candidate
+    }
+  }
+  return best
+}
+
 export const useProjectStore = defineStore('project', {
   state: (): ProjectState => ({
     tracks: [],
@@ -167,7 +273,10 @@ export const useProjectStore = defineStore('project', {
     projectName: DEFAULT_PROJECT_NAME,
     isDirty: false,
     viewPxPerSecond: null,
-    viewScrollX: null
+    viewScrollX: null,
+    selectedClipId: null,
+    selectedTrackId: null,
+    clipboardClip: null
   }),
 
   getters: {
@@ -259,6 +368,7 @@ export const useProjectStore = defineStore('project', {
         playbackFilePath: audio.playbackFilePath,
         fileName: audio.fileName,
         startMs,
+        inMs: 0,
         durationMs: audio.durationMs,
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
@@ -286,12 +396,92 @@ export const useProjectStore = defineStore('project', {
      * track's `lengthMs` if the clip now extends past the previous end and
      * notifies the backend so playback respects the new position.
      */
-    moveClip(clipId: string, startMs: number): void {
+    /**
+     * Move an existing clip. Three behaviours are bundled:
+     *
+     *   1. Same-track move with collision prevention. Clips can't
+     *      overlap on a single track, so we find the largest gap
+     *      whose midpoint is closest to the desired position and
+     *      clamp the new `startMs` into that gap. The clip butts
+     *      flush against any neighbour it bumps into — exactly the
+     *      "magnetic edge snap" the user wanted so adjacent clips
+     *      play seamlessly.
+     *
+     *   2. Cross-track move. When `targetTrackId` differs from the
+     *      clip's current host track, we re-parent the clip in the
+     *      ValueTree (via the extended `CLIP_MOVE` envelope) and
+     *      apply the same gap-clamp on the destination track.
+     *
+     *   3. Backward compatibility. Calling without `targetTrackId`
+     *      keeps the existing behaviour from the drag handler.
+     */
+    moveClip(clipId: string, startMs: number, targetTrackId?: string): void {
       const clip = this.clips[clipId]
       if (!clip) return
-      const snapped = Math.max(0, startMs)
-      if (clip.startMs === snapped) return
-      clip.startMs = snapped
+      const destTrackId = targetTrackId ?? clip.trackId
+      const destTrack = this.tracks.find((t) => t.id === destTrackId)
+      if (!destTrack) return
+
+      // Bump-clamp into the gap nearest the desired position.
+      const target = findClipSlot(this, destTrack.id, clipId, startMs, clip.durationMs)
+      if (target === null) return // no gap big enough — keep current position
+
+      const trackChanged = destTrackId !== clip.trackId
+      const positionChanged = clip.startMs !== target
+      if (!trackChanged && !positionChanged) return
+
+      if (trackChanged) {
+        // Remove from old track's clipIds, add to new.
+        const oldTrack = this.tracks.find((t) => t.id === clip.trackId)
+        if (oldTrack) {
+          const idx = oldTrack.clipIds.indexOf(clipId)
+          if (idx >= 0) oldTrack.clipIds.splice(idx, 1)
+        }
+        destTrack.clipIds.push(clipId)
+        clip.trackId = destTrackId
+      }
+      clip.startMs = target
+
+      // Grow the destination track to fit the new clip end.
+      const clipEnd = target + clip.durationMs
+      if (clipEnd > destTrack.lengthMs) destTrack.lengthMs = clipEnd
+
+      // Single CLIP_MOVE envelope carries both the position and
+      // (optionally) the new trackId. Backend re-parents the
+      // ValueTree node in lockstep with the position update.
+      sendBridge('CLIP_MOVE', {
+        clipId: clip.id,
+        positionMs: target,
+        ...(trackChanged ? { trackId: destTrackId } : {})
+      })
+      this.peaksRevision++ // force redraw after track/position change
+      log.debug(
+        'project',
+        `moveClip id=${clipId} -> ${target}ms${trackChanged ? ' track=' + destTrackId : ''}`
+      )
+    },
+
+    /**
+     * Trim a clip non-destructively. Updates `startMs`, `inMs`, and
+     * `durationMs` together — the three fields form an inseparable
+     * window into the underlying source file, so we send them in one
+     * `CLIP_TRIM` envelope (the backend applies all three atomically).
+     *
+     * Caller is responsible for clamping: `inMs >= 0`, `durationMs >=
+     * MIN_CLIP_MS`, `inMs + durationMs <= sourceDurationMs`. We re-clamp
+     * here defensively but trust the caller's math for the dragged-edge
+     * geometry.
+     */
+    trimClip(clipId: string, startMs: number, inMs: number, durationMs: number): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const safeStart = Math.max(0, startMs)
+      const safeIn = Math.max(0, inMs)
+      const safeDur = Math.max(0, durationMs)
+      if (clip.startMs === safeStart && clip.inMs === safeIn && clip.durationMs === safeDur) return
+      clip.startMs = safeStart
+      clip.inMs = safeIn
+      clip.durationMs = safeDur
 
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (track) {
@@ -299,8 +489,152 @@ export const useProjectStore = defineStore('project', {
         if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
       }
 
-      sendBridge('CLIP_MOVE', { clipId: clip.id, positionMs: snapped })
-      log.debug('project', `moveClip id=${clipId} -> ${snapped}ms`)
+      sendBridge('CLIP_TRIM', {
+        clipId: clip.id,
+        startMs: safeStart,
+        inMs: safeIn,
+        durationMs: safeDur
+      })
+      log.debug(
+        'project',
+        `trimClip id=${clipId} start=${safeStart} in=${safeIn} dur=${safeDur}`
+      )
+    },
+
+    /**
+     * Split `clipId` at the given absolute timeline position `atMs`.
+     * The original clip is trimmed to end at `atMs`; a new clip is
+     * minted starting at `atMs` and runs to the original clip's
+     * previous end. Both halves share the same underlying source file
+     * (non-destructive — peaks are reused). Returns the new clip's id
+     * or `null` if the split point falls outside the clip.
+     */
+    splitClipAt(clipId: string, atMs: number): string | null {
+      const clip = this.clips[clipId]
+      if (!clip) return null
+      // Need a strict-interior split: a split exactly at either edge
+      // would mint a zero-length sibling. 1 ms of slack matches the
+      // ms-precision we promised the user.
+      const clipEnd = clip.startMs + clip.durationMs
+      if (atMs <= clip.startMs + 1 || atMs >= clipEnd - 1) return null
+
+      const splitOffsetInClip = atMs - clip.startMs
+      const newClipDurationMs = clip.durationMs - splitOffsetInClip
+      const newClipInMs = clip.inMs + splitOffsetInClip
+      const newClipStartMs = atMs
+
+      // Shrink original first (atomic three-field write).
+      this.trimClip(clipId, clip.startMs, clip.inMs, splitOffsetInClip)
+
+      // Mint the right-hand half as a new clip on the same track,
+      // sharing peaks + sampleRate + channelCount with the original
+      // (cheap — peaks is a shared Float32Array reference).
+      const track = this.tracks.find((t) => t.id === clip.trackId)
+      if (!track) return null
+      const newId = crypto.randomUUID()
+      const right: Clip = {
+        id: newId,
+        trackId: clip.trackId,
+        filePath: clip.filePath,
+        playbackFilePath: clip.playbackFilePath,
+        fileName: clip.fileName,
+        startMs: newClipStartMs,
+        inMs: newClipInMs,
+        durationMs: newClipDurationMs,
+        sampleRate: clip.sampleRate,
+        channelCount: clip.channelCount,
+        peaks: clip.peaks,
+        unresolved: clip.unresolved,
+        colorIndex: clip.colorIndex
+      }
+      this.clips[newId] = right
+      const insertAt = track.clipIds.indexOf(clipId)
+      if (insertAt >= 0) {
+        track.clipIds.splice(insertAt + 1, 0, newId)
+      } else {
+        track.clipIds.push(newId)
+      }
+
+      sendBridge('CLIP_ADD', {
+        trackId: clip.trackId,
+        clipId: newId,
+        filePath: clip.filePath,
+        positionMs: newClipStartMs,
+        inMs: newClipInMs,
+        durationMs: newClipDurationMs,
+        ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
+      })
+      log.info(
+        'project',
+        `splitClipAt id=${clipId} at=${atMs} -> newId=${newId} (in=${newClipInMs} dur=${newClipDurationMs})`
+      )
+      return newId
+    },
+
+    /**
+     * Duplicate `clipId`, placing the new clip immediately after the
+     * original on the same track. Useful for building repeating loop
+     * patterns out of a single trimmed source clip. Returns the new
+     * clip's id, or `null` if the source was unknown.
+     */
+    duplicateClip(clipId: string): string | null {
+      const clip = this.clips[clipId]
+      if (!clip) return null
+      const track = this.tracks.find((t) => t.id === clip.trackId)
+      if (!track) return null
+      const newStartMs = clip.startMs + clip.durationMs
+      // Same no-overlap rule as paste: the duplicate has to fit
+      // directly after the source. If the gap to the next clip is
+      // too small, surface a toast and abort rather than silently
+      // pushing the duplicate somewhere unexpected.
+      for (const id of track.clipIds) {
+        if (id === clipId) continue
+        const c = this.clips[id]
+        if (!c) continue
+        const cEnd = c.startMs + c.durationMs
+        if (newStartMs < cEnd && newStartMs + clip.durationMs > c.startMs) {
+          useNotificationsStore().pushError('Not enough space to duplicate clip after the source clip.')
+          log.info('project', `duplicateClip rejected: overlaps clip ${id}`)
+          return null
+        }
+      }
+      const newId = crypto.randomUUID()
+      const copy: Clip = {
+        id: newId,
+        trackId: clip.trackId,
+        filePath: clip.filePath,
+        playbackFilePath: clip.playbackFilePath,
+        fileName: clip.fileName,
+        startMs: newStartMs,
+        inMs: clip.inMs,
+        durationMs: clip.durationMs,
+        sampleRate: clip.sampleRate,
+        channelCount: clip.channelCount,
+        peaks: clip.peaks,
+        unresolved: clip.unresolved,
+        colorIndex: clip.colorIndex
+      }
+      this.clips[newId] = copy
+      const insertAt = track.clipIds.indexOf(clipId)
+      if (insertAt >= 0) {
+        track.clipIds.splice(insertAt + 1, 0, newId)
+      } else {
+        track.clipIds.push(newId)
+      }
+      const clipEnd = copy.startMs + copy.durationMs
+      if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
+
+      sendBridge('CLIP_ADD', {
+        trackId: clip.trackId,
+        clipId: newId,
+        filePath: clip.filePath,
+        positionMs: newStartMs,
+        inMs: clip.inMs,
+        durationMs: clip.durationMs,
+        ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
+      })
+      log.info('project', `duplicateClip id=${clipId} -> newId=${newId} @${newStartMs}ms`)
+      return newId
     },
 
     /**
@@ -321,9 +655,198 @@ export const useProjectStore = defineStore('project', {
         if (idx >= 0) track.clipIds.splice(idx, 1)
       }
       delete this.clips[clipId]
+      // Removing the selected clip clears the selection — otherwise we'd
+      // be drawing a thicker outline around a non-existent rectangle.
+      if (this.selectedClipId === clipId) this.selectedClipId = null
       this.peaksRevision++
       sendBridge('CLIP_REMOVE', { clipId })
       log.info('project', `removeClip id=${clipId}`)
+    },
+
+    /**
+     * Set (or clear, with `null`) the selected clip. Selection is a
+     * pure UI concept: the timeline draws the chosen clip with a
+     * thicker outline, and Edit > Cut / Copy use it as the target.
+     * Bumps `peaksRevision` so the canvas repaints to reflect the new
+     * outline immediately.
+     */
+    selectClip(clipId: string | null): void {
+      if (this.selectedClipId === clipId) return
+      this.selectedClipId = clipId
+      this.peaksRevision++
+    },
+
+    /**
+     * Set (or clear, with `null`) the selected track. Selection is a
+     * pure UI concept: the timeline draws a highlighted border around
+     * the row, and `pasteClipAtPlayhead` uses it as the destination
+     * track (falling back to the clipboard's source track when no
+     * track is selected). Bumps `peaksRevision` so the highlight
+     * repaints immediately.
+     */
+    selectTrack(trackId: string | null): void {
+      if (this.selectedTrackId === trackId) return
+      this.selectedTrackId = trackId
+      this.peaksRevision++
+    },
+
+    /**
+     * Copy the currently-selected clip to the local clipboard. Stores
+     * just enough metadata to mint a new clip on paste — same source
+     * file, same trim window, same colour. No-op when nothing is
+     * selected. Does NOT mutate the project.
+     */
+    copySelectedClip(): boolean {
+      const id = this.selectedClipId
+      if (!id) return false
+      const clip = this.clips[id]
+      if (!clip) return false
+      this.clipboardClip = {
+        sourceTrackId: clip.trackId,
+        sourceStartMs: clip.startMs,
+        sourceDurationMs: clip.durationMs,
+        filePath: clip.filePath,
+        inMs: clip.inMs,
+        durationMs: clip.durationMs,
+        colorIndex: clip.colorIndex
+      }
+      log.info('project', `copySelectedClip id=${id}`)
+      return true
+    },
+
+    /**
+     * Cut the currently-selected clip — same as Copy, then remove the
+     * clip from its track. The selection moves to "none" because the
+     * source clip no longer exists.
+     */
+    cutSelectedClip(): boolean {
+      const id = this.selectedClipId
+      if (!id) return false
+      if (!this.copySelectedClip()) return false
+      this.removeClip(id)
+      log.info('project', `cutSelectedClip id=${id}`)
+      return true
+    },
+
+    /**
+     * Paste the clipboard clip. Behaviour splits on target track:
+     *
+     *   - Same track as the source: lands immediately after the
+     *     source clip's end position (so repeated Ctrl+V builds a
+     *     back-to-back sequence).
+     *
+     *   - Different track (user selected another row): lands at the
+     *     current playhead position. The "after the source" rule
+     *     doesn't carry across tracks — the user picked the
+     *     destination explicitly, and the playhead is the obvious
+     *     local landing point.
+     *
+     * In either case the slot has to be free on the target track —
+     * we never overwrite or push another clip. If the slot is taken,
+     * the paste is rejected with a toast.
+     */
+    pasteClipAtPlayhead(positionMs?: number): string | null {
+      const cb = this.clipboardClip
+      if (!cb) return null
+      const targetTrackId = this.selectedTrackId ?? cb.sourceTrackId
+      const track = this.tracks.find((t) => t.id === targetTrackId)
+      if (!track) {
+        log.warn('project', `pasteClip: target track ${targetTrackId} no longer exists`)
+        useNotificationsStore().pushError("Can't paste — target track has been removed.")
+        return null
+      }
+      // Position depends on whether we're pasting onto the source
+      // track or a different one.
+      const targetStartMs =
+        targetTrackId === cb.sourceTrackId
+          ? cb.sourceStartMs + cb.sourceDurationMs
+          : Math.max(0, positionMs ?? 0)
+      for (const id of track.clipIds) {
+        const c = this.clips[id]
+        if (!c) continue
+        const cEnd = c.startMs + c.durationMs
+        if (targetStartMs < cEnd && targetStartMs + cb.durationMs > c.startMs) {
+          useNotificationsStore().pushError('Not enough space to paste clip on this track.')
+          log.info(
+            'project',
+            `pasteClip rejected: target=${targetStartMs} dur=${cb.durationMs} overlaps clip ${id} on ${targetTrackId}`
+          )
+          return null
+        }
+      }
+      const newId = crypto.randomUUID()
+      const startMs = targetStartMs
+      const fileName = filePathToDisplayName(cb.filePath)
+      const placeholder: Clip = {
+        id: newId,
+        trackId: track.id,
+        filePath: cb.filePath,
+        playbackFilePath: cb.filePath,
+        fileName,
+        startMs,
+        inMs: cb.inMs,
+        durationMs: cb.durationMs,
+        sampleRate: 0,
+        channelCount: 0,
+        peaks: new Float32Array(0),
+        unresolved: false,
+        colorIndex: cb.colorIndex
+      }
+      const peakSource = Object.values(this.clips).find(
+        (c) => c.filePath === cb.filePath && c.peaks.length > 0
+      )
+      if (peakSource) {
+        placeholder.peaks = peakSource.peaks
+        placeholder.sampleRate = peakSource.sampleRate
+      }
+      this.clips[newId] = placeholder
+      track.clipIds.push(newId)
+      const clipEnd = startMs + cb.durationMs
+      if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
+      this.selectedClipId = newId
+      this.peaksRevision++
+
+      sendBridge('CLIP_ADD', {
+        trackId: track.id,
+        clipId: newId,
+        filePath: cb.filePath,
+        positionMs: startMs,
+        inMs: cb.inMs,
+        durationMs: cb.durationMs,
+        ...(cb.colorIndex !== undefined ? { colorIndex: cb.colorIndex } : {})
+      })
+      log.info('project', `pasteClip newId=${newId} @${startMs}ms`)
+      return newId
+    },
+
+    /**
+     * Set or clear a clip's per-clip colour override. `colorIndex`
+     * must be in `0..TRACK_PALETTE.length-1`; pass `null` to clear
+     * the override so the clip re-inherits its host track's colour.
+     * Sent over the bridge as `CLIP_COLOR` so the choice persists with
+     * the project.
+     */
+    setClipColor(clipId: string, colorIndex: number | null): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      if (colorIndex === null) {
+        if (clip.colorIndex === undefined) return
+        clip.colorIndex = undefined
+        // Reuse the generic redraw counter so the timeline repaints the
+        // clip with its new (inherited) palette colour. The name is
+        // historical — it's now the "anything-non-positional changed"
+        // signal the canvas listens to.
+        this.peaksRevision++
+        sendBridge('CLIP_COLOR', { clipId, colorIndex: -1 })
+        log.info('project', `setClipColor id=${clipId} -> inherit`)
+        return
+      }
+      const clamped = Math.max(0, Math.min(TRACK_PALETTE.length - 1, Math.round(colorIndex)))
+      if (clip.colorIndex === clamped) return
+      clip.colorIndex = clamped
+      this.peaksRevision++
+      sendBridge('CLIP_COLOR', { clipId, colorIndex: clamped })
+      log.info('project', `setClipColor id=${clipId} -> ${clamped}`)
     },
 
     /** Re-point an unresolved clip at a replacement file. The backend
@@ -426,7 +949,11 @@ export const useProjectStore = defineStore('project', {
 
       const track = this.tracks[idx]
       if (!track) return
-      for (const clipId of track.clipIds) delete this.clips[clipId]
+      for (const clipId of track.clipIds) {
+        delete this.clips[clipId]
+        if (this.selectedClipId === clipId) this.selectedClipId = null
+      }
+      if (this.selectedTrackId === trackId) this.selectedTrackId = null
       this.tracks.splice(idx, 1)
 
       sendBridge('TRACK_REMOVE', { trackId })
@@ -655,6 +1182,9 @@ export const useProjectStore = defineStore('project', {
       if (snapshot.reset === true) {
         this.tracks = []
         this.clips = {}
+        this.selectedClipId = null
+        this.selectedTrackId = null
+        this.clipboardClip = null
         this.peaksRevision++
         library.clear()
       }
@@ -750,7 +1280,10 @@ export const useProjectStore = defineStore('project', {
           const existing = this.clips[c.id]
           if (existing) {
             existing.startMs = offset
+            existing.inMs = Math.max(0, c.inMs ?? 0)
+            existing.durationMs = Math.max(0, c.durationMs)
             existing.unresolved = c.unresolved === true
+            existing.colorIndex = typeof c.colorIndex === 'number' ? c.colorIndex : undefined
             if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
             continue
           }
@@ -765,11 +1298,13 @@ export const useProjectStore = defineStore('project', {
             playbackFilePath: c.filePath,
             fileName,
             startMs: offset,
+            inMs: Math.max(0, c.inMs ?? 0),
             durationMs: Math.max(0, c.durationMs),
             sampleRate: 0,
             channelCount: 0,
             peaks: new Float32Array(0),
-            unresolved: c.unresolved === true
+            unresolved: c.unresolved === true,
+            colorIndex: typeof c.colorIndex === 'number' ? c.colorIndex : undefined
           }
           this.clips[c.id] = placeholder
           track.clipIds.push(c.id)

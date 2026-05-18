@@ -61,10 +61,11 @@ double AudioEngine::trackSeekSecondsFor(const Track& track, juce::int64 masterSa
 }
 
 bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath, double initialOffsetMs,
-                          juce::String* outError)
+                          double inMs, double clipDurationMs, juce::String* outError)
 {
-    silverdaw::log::info("engine", "addClip id=" + clipId + " offsetMs=" + juce::String(initialOffsetMs) + " path=" +
-                                        filePath.getFileName());
+    silverdaw::log::info("engine", "addClip id=" + clipId + " offsetMs=" + juce::String(initialOffsetMs) +
+                                        " inMs=" + juce::String(inMs) + " durMs=" + juce::String(clipDurationMs) +
+                                        " path=" + filePath.getFileName());
     if (!filePath.existsAsFile())
     {
         const auto msg = "file does not exist: " + filePath.getFullPathName();
@@ -124,6 +125,16 @@ bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath
     const double clampedInitialMs = juce::jmax(0.0, initialOffsetMs);
     track->offsetSource->setOffsetSamples(
         static_cast<juce::int64>(clampedInitialMs * track->sampleRate / 1000.0));
+    // Initial trim window: where in the source file to start reading, and
+    // how long the clip plays for. Defaults of 0 mean "from the start"
+    // and "to the end of the source" respectively — un-trimmed legacy
+    // behaviour.
+    const double clampedInMs = juce::jmax(0.0, inMs);
+    track->offsetSource->setInSourceSamples(
+        static_cast<juce::int64>(clampedInMs * track->sampleRate / 1000.0));
+    const double clampedDurMs = juce::jmax(0.0, clipDurationMs);
+    track->offsetSource->setClipDurationSamples(
+        static_cast<juce::int64>(clampedDurMs * track->sampleRate / 1000.0));
 
     track->transportSource = std::make_unique<juce::AudioTransportSource>();
     track->transportSource->setSource(track->offsetSource.get(),
@@ -371,6 +382,50 @@ bool AudioEngine::setClipOffsetMs(const juce::String& clipId, double offsetMs)
         // By the time they click Play the rebuilt BufferingAudioSource
         // has had time to fill its ring, and `play()` is just a master
         // gate flip — no synchronous rebuild on the play click.
+        track->prefetchDirty = true;
+        rebuildTimer.startTimer(kRebuildDebounceMs);
+    }
+
+    return true;
+}
+
+bool AudioEngine::setClipTrim(const juce::String& clipId, double startMs, double inMs, double clipDurationMs)
+{
+    auto it = tracks.find(clipId);
+    if (it == tracks.end())
+    {
+        return false;
+    }
+
+    auto& track = it->second;
+    if (track->offsetSource == nullptr || track->transportSource == nullptr)
+    {
+        return false;
+    }
+
+    const double sr = track->sampleRate;
+    const auto offsetSamples =
+        static_cast<juce::int64>(juce::jmax(0.0, startMs) * sr / 1000.0);
+    const auto inSampleOffset =
+        static_cast<juce::int64>(juce::jmax(0.0, inMs) * sr / 1000.0);
+    const auto durSamples =
+        static_cast<juce::int64>(juce::jmax(0.0, clipDurationMs) * sr / 1000.0);
+
+    // Atomic writes — the next audio block sees all three new values
+    // together because the OffsetSource reads them within a single
+    // `getNextAudioBlock` invocation.
+    track->offsetSource->setOffsetSamples(offsetSamples);
+    track->offsetSource->setInSourceSamples(inSampleOffset);
+    track->offsetSource->setClipDurationSamples(durSamples);
+
+    // Same rebuild discipline as `setClipOffsetMs`: during playback we
+    // must drop the stale prefetch; while paused we debounce.
+    if (master.isPlaying())
+    {
+        rebuildTrackPrefetch(*track);
+    }
+    else
+    {
         track->prefetchDirty = true;
         rebuildTimer.startTimer(kRebuildDebounceMs);
     }
