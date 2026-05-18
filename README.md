@@ -52,8 +52,9 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
     BridgeServer.*       IXWebSocket loopback server + AUTH + text-frame broadcast
     Main.cpp             Entry point, message dispatch, PlayheadEmitter, peaks ThreadPool
     PeaksCache.*         Disk-backed peaks cache (%APPDATA%/Silverdaw/peaks/)
-    ProjectFile.*        .silverdaw XML save / load (versioned ValueTree serialisation)
+    ProjectFile.*        .silverdaw JSON save / load (versioned ValueTree serialisation)
     ProjectState.*       juce::ValueTree wrapper + UndoManager + dirty tracking
+    ValueTreeJson.*      Generic juce::ValueTree ↔ juce::var converter (used by ProjectFile)
     Waveform.*           Min/max peak computation
   CMakeLists.txt         FetchContent for JUCE + IXWebSocket
 frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
@@ -107,14 +108,23 @@ the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
 ## Project state model
 
 `ProjectState` (C++) wraps a `juce::ValueTree`
-(`PROJECT[name] > TRACK[id, gain] > CLIP[id, filePath, offsetMs, durationMs]`) plus a shared
-`UndoManager`. It's the structural source of truth; the audio graph in `AudioEngine` is updated
-in lockstep by the bridge dispatch handlers.
+(`PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs] > TRACK[id, gain] > CLIP[id, filePath, offsetMs, durationMs]`)
+plus a shared `UndoManager`. It's the structural source of truth; the audio graph in
+`AudioEngine` is updated in lockstep by the bridge dispatch handlers.
 
-**Save / load** is via `.silverdaw` files — a versioned XML serialisation of the ValueTree, with
-a small wrapping element carrying `schemaVersion`, `appVersion`, and an ISO `savedAt` timestamp.
-Atomic save (write `<file>.tmp` then rename) and forward-compatible load (unknown attributes /
-sibling elements are ignored). Logic lives in [`backend/src/ProjectFile.cpp`](backend/src/ProjectFile.cpp).
+The view-state properties (`viewScrollX`, `playheadMs`) bypass the dirty-flag listener via a
+`suppressDirtyTransitions` guard inside their setters — scrolling or moving the playhead
+doesn't prompt an unsaved-changes dialog. Everything else (BPM, project length, view zoom,
+clip moves, gain changes, etc.) marks the project dirty as a normal property edit.
+
+**Save / load** is via `.silverdaw` files — a versioned JSON serialisation. A small outer
+object carries `schemaVersion`, `appVersion`, and an ISO `savedAt` timestamp; the `project`
+field holds the entire `PROJECT` `ValueTree` mapped through
+[`ValueTreeJson`](backend/src/ValueTreeJson.h) (each node becomes
+`{ "$type": "TRACK", id: "...", $children: [ … ] }`). Atomic save (write `<file>.tmp` then
+rename) and forward-compatible load (unknown keys are ignored). On save, the current engine
+playhead position is captured into `playheadMs` so reopening the project resumes where the
+user left off. Logic lives in [`backend/src/ProjectFile.cpp`](backend/src/ProjectFile.cpp).
 
 **Dirty tracking** is driven by a `juce::ValueTree::Listener` on `ProjectState` that flips an
 internal flag on every mutation. The flag is cleared by `markClean()` (called after load + a
@@ -175,15 +185,77 @@ The cache survives backend restarts.
 
 User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`:
 
-- Window bounds + maximised state
-- Panel sizes (track-header column width, library panel height)
-- Last opened project path (for future Recent Projects MRU)
+- Window bounds + maximised state.
+- Panel sizes (track-header column width, library panel height).
+- **Follow playback** — continuous-follow auto-scroll. When on, the timeline scrolls so the
+  playhead stays near the centre of the viewport during playback (default). Off pins the
+  view in place. Toggleable in the transport bar (chevron-in-circle icon) and the
+  Preferences dialog.
+- **Show toast notifications** — pop transient feedback (errors, save acks) in the
+  bottom-right. Off silences them; the underlying events still go to the log when debug
+  mode is enabled.
+- **Default project folder** — used as the starting directory for File → Save / Save As /
+  Open. Defaults to `<home>/Music/Silverdaw/`, which is created on first launch.
+- **Default clip folder** — starting directory for Add Track from File / library Import.
+  Defaults to `<home>/Music/`. After every successful open it remembers the folder you
+  browsed to **for the rest of the session**; on next launch it resets to this default.
+- Last opened project path (for future Recent Projects MRU).
 - **Enable Debugging** — gates the visibility of the **Debug** menu (Toggle Developer Tools)
   and the entire cross-layer file logger. Off by default. When on, the next launch writes a
   per-session `<repo>/.logs/<ISO-timestamp>/{main,backend,renderer}.log` triple with aligned
   millisecond timestamps so post-mortem analysis is one `cat *.log | sort` away.
 
-Toggled via the in-app **Edit → Preferences…** dialog; takes effect on next launch.
+Toggled via the in-app **Edit → Preferences…** dialog. QoL settings take effect on **Save**;
+the **Enable Debugging** toggle requires a restart and the dialog surfaces that explicitly.
+
+## Keyboard & mouse reference
+
+The timeline accepts the following inputs. Modifiers behave **live** during drags — pressing
+or releasing the modifier between frames switches mode without restarting the drag.
+
+| Input | Effect |
+|---|---|
+| Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
+| `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
+| Click + drag on **clip** | Move the clip; start position snaps to the sub-beat grid. |
+| `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
+| `←` / `→` | Step the playhead one grid line (sub-beat). |
+| `Alt` + `←` / `→` | Step the playhead by one pixel's worth of time (~16.7 ms at default zoom, finer when zoomed in). |
+| Mouse wheel | Zoom the timeline (anchored on the pointer). |
+| Two-finger horizontal swipe (trackpad) | Pan left/right. |
+| `Shift` + mouse wheel | Pan left/right. |
+| `Ctrl +` / `Ctrl =` | Zoom in 20% (anchored on the playhead). |
+| `Ctrl -` | Zoom out 20%. |
+| `Ctrl 0` | Reset zoom to 100% (60 px/s). |
+| `Space` (in transport bar) | Play / pause. |
+| `F2` | Rename project (also activates the title-bar rename input). |
+
+The status bar shows the current zoom level (e.g. `🔍 150%`) next to the backend connection
+indicator (plug-and-socket icon + green/grey dot).
+
+## Rendering performance
+
+The timeline canvas is PixiJS. All world-space content (clip blocks, waveforms, grid lines,
+ruler ticks) is drawn once at absolute world coordinates into a `tracksLayer` / `rulerTicksLayer`,
+which are then translated by `-scrollX` / `-scrollY` on every scroll change. The result: scroll
+and auto-follow during playback are O(1) layer translations — no clip iteration, no Graphics
+allocation. A full repaint (`redraw()`) only fires on content change: track add/remove, clip
+move, peaks arrival, zoom, BPM, project length, header-column resize.
+
+The playhead Graphics is built once (vertical line + two triangular heads at local x = 0)
+and re-positioned via `.x = viewportX` on every `requestAnimationFrame` tick. The visual
+position mirrors `transport.positionMs` directly (no client-side interpolation), so the audio
+engine's authoritative position is always what the user sees — no jumps on seek + play.
+
+Auto-follow during playback uses a smooth catch-up:
+
+- If the playhead is **before** the viewport centre (e.g. after the user clicks back to an
+  earlier point), scroll holds — the playhead drifts right naturally until it reaches the
+  centre, then normal follow takes over.
+- If the playhead is **past** the viewport centre, scroll catches up at
+  `max(3 × playback_rate, 5 × gap)` px / second. Large gaps close in ~½ second; once settled
+  at steady-state the catch-up rate is 3× playback so the playhead visibly drifts within the
+  scrolling waveform (matches Ableton-style follow).
 
 ## Prerequisites
 
