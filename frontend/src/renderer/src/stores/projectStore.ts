@@ -38,6 +38,11 @@ export interface Clip {
    * until a `WAVEFORM_DATA` binary frame fills them in.
    */
   peaks: Float32Array
+  /** True when the backend's `existsAsFile` check failed for this
+   *  clip's source path at load time. The drawing code renders it
+   *  greyed-out and the relink toast lists it. Mutable so a successful
+   *  `CLIP_RELINK` can clear it on the next PROJECT_STATE. */
+  unresolved: boolean
 }
 
 export interface Track {
@@ -257,7 +262,8 @@ export const useProjectStore = defineStore('project', {
         durationMs: audio.durationMs,
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
-        peaks: audio.peaks
+        peaks: audio.peaks,
+        unresolved: false
       }
       this.clips[clipId] = clip
       track.clipIds.push(clipId)
@@ -318,6 +324,17 @@ export const useProjectStore = defineStore('project', {
       this.peaksRevision++
       sendBridge('CLIP_REMOVE', { clipId })
       log.info('project', `removeClip id=${clipId}`)
+    },
+
+    /** Re-point an unresolved clip at a replacement file. The backend
+     *  updates the clip's filePath in the project tree, recreates the
+     *  audio source, and broadcasts a fresh PROJECT_STATE which will
+     *  clear `unresolved` for this clip on the next snapshot apply. */
+    relinkClip(clipId: string, filePath: string): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      sendBridge('CLIP_RELINK', { clipId, filePath })
+      log.info('project', `relinkClip id=${clipId} -> ${filePath}`)
     },
 
     /**
@@ -697,6 +714,7 @@ export const useProjectStore = defineStore('project', {
           const existing = this.clips[c.id]
           if (existing) {
             existing.startMs = offset
+            existing.unresolved = c.unresolved === true
             if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
             continue
           }
@@ -714,11 +732,15 @@ export const useProjectStore = defineStore('project', {
             durationMs: Math.max(0, c.durationMs),
             sampleRate: 0,
             channelCount: 0,
-            peaks: new Float32Array(0)
+            peaks: new Float32Array(0),
+            unresolved: c.unresolved === true
           }
           this.clips[c.id] = placeholder
           track.clipIds.push(c.id)
-          clipsNeedingPeaks.push(c.id)
+          // Unresolved clips can't produce peaks (the file is gone)
+          // so don't request them — saves a futile round-trip and a
+          // backend warn log per missing clip.
+          if (!placeholder.unresolved) clipsNeedingPeaks.push(c.id)
           const clipEnd = placeholder.startMs + placeholder.durationMs
           if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
           if (track.clipIds.length === 1 && /^Track \d+$/.test(track.name)) {

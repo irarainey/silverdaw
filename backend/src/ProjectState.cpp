@@ -258,6 +258,17 @@ bool ProjectState::setClipOffsetMs(const juce::String& clipId, double offsetMs)
     return true;
 }
 
+bool ProjectState::setClipFilePath(const juce::String& clipId, const juce::String& filePath)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    clip.setProperty(kFilePath, filePath, &undoManager);
+    return true;
+}
+
 juce::String ProjectState::getClipTrackId(const juce::String& clipId) const
 {
     const auto clip = findClip(clipId);
@@ -372,9 +383,20 @@ juce::var ProjectState::tracksAsJson() const
             }
             auto* clipObj = new juce::DynamicObject();
             clipObj->setProperty("id", clip.getProperty(kId).toString());
-            clipObj->setProperty("filePath", clip.getProperty(kFilePath).toString());
+            const juce::String filePath = clip.getProperty(kFilePath).toString();
+            clipObj->setProperty("filePath", filePath);
             clipObj->setProperty("offsetMs", static_cast<double>(clip.getProperty(kOffsetMs, 0.0)));
             clipObj->setProperty("durationMs", static_cast<double>(clip.getProperty(kDurationMs, 0.0)));
+            // Flag clips whose source file is missing from disk so the
+            // renderer can render them greyed-out and prompt the user
+            // to relink. We test by path: an empty path is also treated
+            // as unresolved (defensive — shouldn't happen, but covers
+            // the edge case).
+            const bool unresolved = filePath.isEmpty() || !juce::File(filePath).existsAsFile();
+            if (unresolved)
+            {
+                clipObj->setProperty("unresolved", true);
+            }
             clipsArray.add(juce::var(clipObj));
         }
         trackObj->setProperty("clips", clipsArray);

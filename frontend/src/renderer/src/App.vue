@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppTitleBar from '@/components/AppTitleBar.vue'
 import TimelineView from '@/components/TimelineView.vue'
 import TransportBar from '@/components/TransportBar.vue'
@@ -10,10 +10,12 @@ import BridgeReadyOverlay from '@/components/BridgeReadyOverlay.vue'
 import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
 import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
+import RelinkDialog from '@/components/RelinkDialog.vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
@@ -23,10 +25,12 @@ const project = useProjectStore()
 const transport = useTransportStore()
 const ui = useUiStore()
 const library = useLibraryStore()
+const notifications = useNotificationsStore()
 const appStore = useAppStore()
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
+const relinkDialogOpen = ref(false)
 // Unsaved-changes prompt state. `pendingAfterSave` is the action to
 // run once the user has either saved or chosen to discard their
 // changes. Set when the prompt opens; cleared when it closes.
@@ -51,6 +55,38 @@ const stopImportingWatcher = watch(
     document.body.classList.toggle('is-importing', busy)
   },
   { immediate: true }
+)
+
+// ─── Missing-file detection ────────────────────────────────────────────
+// Watch the set of unresolved clip ids — when it transitions from empty
+// to non-empty (i.e. a project just loaded with missing files), pop
+// the RelinkDialog and a single toast. We watch on id-string so the
+// dialog doesn't bounce open every time a clip property changes; it
+// only re-opens when NEW unresolved clips appear.
+const unresolvedClipIds = computed(() =>
+  Object.values(project.clips)
+    .filter((c) => c.unresolved)
+    .map((c) => c.id)
+    .sort()
+    .join('|')
+)
+const stopUnresolvedWatch = watch(
+  unresolvedClipIds,
+  (next, prev) => {
+    if (!next || next === prev) return
+    const ids = next.split('|').filter((s) => s.length > 0)
+    if (ids.length === 0) return
+    // Only auto-open / toast when this is a fresh set that wasn't
+    // there before (or has grown).
+    const prevIds = (prev ?? '').split('|').filter((s) => s.length > 0)
+    const isNew = ids.some((id) => !prevIds.includes(id))
+    if (!isNew) return
+    relinkDialogOpen.value = true
+    notifications.push(
+      'error',
+      `${ids.length} ${ids.length === 1 ? 'audio file is' : 'audio files are'} missing — locate or relink them to play.`
+    )
+  }
 )
 
 onMounted(() => {
@@ -248,6 +284,7 @@ onBeforeUnmount(() => {
   disconnectBridge()
   stopImportingWatcher()
   stopBridgeTimerWatcher()
+  stopUnresolvedWatch()
   if (bridgeTimer) {
     clearTimeout(bridgeTimer)
     bridgeTimer = null
@@ -432,6 +469,11 @@ function onUnsavedPromptCancel(): void {
       @save="onUnsavedPromptSave"
       @discard="onUnsavedPromptDiscard"
       @cancel="onUnsavedPromptCancel"
+    />
+
+    <RelinkDialog
+      :open="relinkDialogOpen"
+      @close="relinkDialogOpen = false"
     />
   </div>
 </template>

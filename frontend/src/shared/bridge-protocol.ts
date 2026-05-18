@@ -32,6 +32,16 @@ export interface ClipRemovePayload {
   clipId: string
 }
 
+/** Re-point a clip at a new source file. Used by the relink flow after
+ *  a project loads with missing files: the user picks a replacement in
+ *  an OS dialog and the renderer emits one of these per relinked clip.
+ *  The backend updates the clip's filePath in the project tree and
+ *  re-creates the engine source. */
+export interface ClipRelinkPayload {
+  clipId: string
+  filePath: string
+}
+
 export interface TrackAddPayload {
   trackId: string
 }
@@ -72,6 +82,7 @@ export interface BridgeOutboundMap {
   CLIP_ADD: ClipAddPayload
   CLIP_MOVE: ClipMovePayload
   CLIP_REMOVE: ClipRemovePayload
+  CLIP_RELINK: ClipRelinkPayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
   TRACK_GAIN: TrackGainPayload
@@ -226,6 +237,10 @@ export interface ProjectStateClip {
   filePath: string
   offsetMs: number
   durationMs: number
+  /** True when the backend's `existsAsFile` check failed for this
+   *  clip's `filePath` at load time. Renderer renders it greyed-out
+   *  and surfaces a "Locate files…" toast; engine playback skips it. */
+  unresolved?: boolean
 }
 
 export interface ProjectStateTrack {
@@ -429,6 +444,7 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
       ) {
         return false
       }
+      if (c.unresolved !== undefined && typeof c.unresolved !== 'boolean') return false
     }
   }
   return true

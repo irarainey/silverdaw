@@ -145,15 +145,21 @@ const contextMenuOpen = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 const contextMenuClipId = ref<string | null>(null)
-const contextMenuItems = computed<ClipContextMenuItem[]>(() => [
-  { command: 'clip.delete', label: 'Delete' },
+const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
+  const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
+  const items: ClipContextMenuItem[] = []
+  if (clip?.unresolved) {
+    items.push({ command: 'clip.relink', label: 'Relink…' })
+  }
+  items.push({ command: 'clip.delete', label: 'Delete' })
   // Phase 3+ placeholders — the menu surface is shaped now so the
   // muscle memory exists; the actions will light up once the
   // underlying features land.
-  { command: 'clip.warp', label: 'Warp settings…', disabled: true, separatorAbove: true },
-  { command: 'clip.transpose', label: 'Transpose…', disabled: true },
-  { command: 'clip.saveSample', label: 'Save as Sample…', disabled: true }
-])
+  items.push({ command: 'clip.warp', label: 'Warp settings…', disabled: true, separatorAbove: true })
+  items.push({ command: 'clip.transpose', label: 'Transpose…', disabled: true })
+  items.push({ command: 'clip.saveSample', label: 'Save as Sample…', disabled: true })
+  return items
+})
 
 function onContextMenu(e: MouseEvent): void {
   if (!host.value) return
@@ -183,6 +189,17 @@ function onContextMenuCommand(command: string): void {
   if (!clipId) return
   if (command === 'clip.delete') {
     project.removeClip(clipId)
+  } else if (command === 'clip.relink') {
+    const clip = project.clips[clipId]
+    if (clip) {
+      const slash = Math.max(clip.filePath.lastIndexOf('\\'), clip.filePath.lastIndexOf('/'))
+      const defaultPath = slash > 0 ? clip.filePath.slice(0, slash) : undefined
+      void window.silverdaw
+        .chooseAudioFile({ title: `Locate ${clip.fileName}`, defaultPath })
+        .then((picked) => {
+          if (picked) project.relinkClip(clipId, picked)
+        })
+    }
   }
   contextMenuClipId.value = null
 }

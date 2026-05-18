@@ -26,6 +26,7 @@ declare global {
       menuAction(action: string): void
       openAudioFile(): Promise<OpenedAudioFile | null>
       openAudioFiles(): Promise<OpenedAudioFile[]>
+      chooseAudioFile(args: { title?: string; defaultPath?: string }): Promise<string | null>
       readAudioFile(filePath: string): Promise<OpenedAudioFile | null>
       readAudioMetadata(filePath: string): Promise<AudioMetadata | null>
       getPathForFile(file: File): string

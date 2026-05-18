@@ -21,6 +21,17 @@ const api = {
    */
   openAudioFiles: (): Promise<OpenedAudioFile[]> => ipcRenderer.invoke('audio:openMany'),
   /**
+   * Show an OS audio-file picker and return ONLY the chosen path
+   * (no bytes loaded). Used by the relink-missing-files flow: the
+   * backend re-creates the clip's source against the picked path, so
+   * the renderer never needs the bytes. Resolves to `null` if the
+   * user cancels.
+   */
+  chooseAudioFile: (args: {
+    title?: string
+    defaultPath?: string
+  }): Promise<string | null> => ipcRenderer.invoke('audio:chooseFile', args),
+  /**
    * Read an audio file by absolute filesystem path. Used after an OS
    * drag-drop, where the path comes from `getPathForFile(file)`.
    * Resolves to `null` if the read fails.

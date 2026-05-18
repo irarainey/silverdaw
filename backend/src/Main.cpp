@@ -530,6 +530,57 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     return juce::var(obj);
 }
 
+void handleClipRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
+                      silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                      const ProjectSession& session)
+{
+    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    if (clipId.isEmpty() || filePath.isEmpty())
+    {
+        return;
+    }
+
+    if (!projectState.setClipFilePath(clipId, filePath))
+    {
+        silverdaw::log::warn("project", "CLIP_RELINK unknown clipId=" + clipId);
+        return;
+    }
+
+    // Drop any stale audio source (it'll have failed to load on the
+    // original `rebuildEngineFromProject` pass) and re-create it
+    // against the new file. Walk the tree to find the clip's offset.
+    engine.removeClip(clipId);
+    double clipOffsetMs = 0.0;
+    bool foundClip = false;
+    const auto& root = projectState.getTree();
+    for (int t = 0; t < root.getNumChildren() && !foundClip; ++t)
+    {
+        const auto track = root.getChild(t);
+        for (int c = 0; c < track.getNumChildren(); ++c)
+        {
+            const auto clip = track.getChild(c);
+            if (clip.getProperty("id").toString() == clipId)
+            {
+                clipOffsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
+                foundClip = true;
+                break;
+            }
+        }
+    }
+
+    juce::String err;
+    const bool added = engine.addClip(clipId, juce::File(filePath), clipOffsetMs, &err);
+    silverdaw::log::info("project", "CLIP_RELINK clipId=" + clipId + " ok=" + juce::String(added ? 1 : 0) +
+                                        (added ? "" : " err=" + err));
+
+    // Re-broadcast PROJECT_STATE so the renderer learns the new
+    // filePath + clears the unresolved flag for this clip. Cheap: the
+    // tree is small and the renderer's `applyProjectStateSnapshot` is
+    // additive when `reset` is omitted.
+    bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, false));
+}
+
 /**
  * Replace the engine's playable sources with one per clip described in
  * `projectState`. Caller is responsible for first dropping every clip
@@ -765,6 +816,12 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::info("bridge", "recv CLIP_REMOVE clipId=" + payload.getProperty("clipId", "").toString());
         handleClipRemove(payload, engine, projectState, bridge);
+    }
+    else if (type == "CLIP_RELINK")
+    {
+        silverdaw::log::info("bridge", "recv CLIP_RELINK clipId=" + payload.getProperty("clipId", "").toString() +
+                                            " path=" + payload.getProperty("filePath", "").toString());
+        handleClipRelink(payload, engine, projectState, bridge, session);
     }
     else if (type == "TRANSPORT_PLAY")
     {

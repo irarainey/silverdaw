@@ -1066,6 +1066,35 @@ app.whenReady().then(async () => {
     return out
   })
 
+  // Show the OS audio-file picker but return only the chosen path —
+  // no bytes are read, no allow-list registration happens here. Used
+  // by the relink-missing-files flow where the bytes will be loaded
+  // by the BACKEND when it re-creates the clip's audio source, not by
+  // the renderer. The file's parent directory is added to the path
+  // allow-list so the subsequent `audio:readMetadata` for cover-art
+  // refresh works without a separate registerDroppedPath round-trip.
+  ipcMain.handle(
+    'audio:chooseFile',
+    async (_evt, args: unknown): Promise<string | null> => {
+      if (!mainWindow) return null
+      const a = (args ?? {}) as { title?: string; defaultPath?: string }
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: typeof a.title === 'string' ? a.title : 'Locate audio file',
+        defaultPath:
+          typeof a.defaultPath === 'string' && a.defaultPath.length > 0
+            ? a.defaultPath
+            : currentClipDir || undefined,
+        filters: [{ name: 'Audio files', extensions: [...AUDIO_FILE_EXTENSIONS] }],
+        properties: ['openFile']
+      })
+      if (result.canceled || result.filePaths.length === 0) return null
+      const picked = result.filePaths[0]
+      rememberClipDir(picked)
+      registerIssuedPath(picked)
+      return picked
+    }
+  )
+
   // Renderer reports a path it obtained from an OS drag-drop via
   // `webUtils.getPathForFile`. The path is added to the allow-list so the
   // follow-up `audio:readFile` / `audio:readMetadata` calls will pass the

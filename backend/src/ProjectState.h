@@ -124,6 +124,13 @@ class ProjectState : public juce::ValueTree::Listener
     /** Update a clip's timeline offset. Returns true if the clip existed. */
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
 
+    /** Update a clip's source file path. Returns true if the clip
+     *  existed. Used by the relink-missing-files flow on load — the
+     *  user picks a replacement file in an OS dialog and the renderer
+     *  emits CLIP_RELINK so we can re-create the engine's audio source
+     *  against the new path. */
+    bool setClipFilePath(const juce::String& clipId, const juce::String& filePath);
+
     /** Returns the trackId owning `clipId`, or empty string if not found. */
     juce::String getClipTrackId(const juce::String& clipId) const;
 

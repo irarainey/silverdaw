@@ -469,12 +469,22 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const innerH = TRACK_HEIGHT - padding * 2
     const midY = innerY + innerH / 2
 
-    // Clip block + border (palette-coloured).
+    // Unresolved clips (source file missing on disk) render in muted
+    // greys with a dashed red border so they're visibly broken at a
+    // glance; clicking through to the toast's Locate-files… affordance
+    // is how the user repairs them.
+    const fillColour = clip.unresolved ? 0x3f3f46 : palette.fill // zinc-700 vs palette
+    const borderColour = clip.unresolved ? 0xef4444 : palette.border // red-500 vs palette
+    const waveColour = clip.unresolved ? 0x71717a : palette.wave // zinc-500 vs palette
+    const fillAlpha = clip.unresolved ? 0.5 : 0.85
+    const borderAlpha = clip.unresolved ? 0.85 : 0.9
+
+    // Clip block + border (palette-coloured; muted when unresolved).
     const block = new G()
     block
       .roundRect(absX, innerY, w, innerH, 4)
-      .fill({ color: palette.fill, alpha: 0.85 })
-      .stroke({ color: palette.border, width: 1, alpha: 0.9 })
+      .fill({ color: fillColour, alpha: fillAlpha })
+      .stroke({ color: borderColour, width: 1, alpha: borderAlpha })
     tracksL.addChild(block)
 
     // Hit region in WORLD coordinates — useDragHandlers converts to
@@ -525,7 +535,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         const yBot = midY + min * -half
         wave.moveTo(absX + px + 0.5, yTop).lineTo(absX + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
       }
-      wave.stroke({ color: palette.wave, width: 1, alpha: 0.95 })
+      wave.stroke({ color: waveColour, width: 1, alpha: 0.95 })
       tracksL.addChild(wave)
     }
 
