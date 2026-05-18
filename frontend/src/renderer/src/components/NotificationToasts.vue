@@ -24,7 +24,7 @@ const notifications = useNotificationsStore()
       <div
         v-for="n in notifications.items"
         :key="n.id"
-        class="pointer-events-auto flex items-start gap-3 rounded border bg-zinc-950/95 px-4 py-3 shadow-lg backdrop-blur"
+        class="pointer-events-auto flex items-start gap-3 rounded-lg border bg-zinc-950/95 px-4 py-3 shadow-lg backdrop-blur"
         :class="n.kind === 'error'
           ? 'border-red-500/60 text-red-100'
           : 'border-zinc-700 text-zinc-100'
