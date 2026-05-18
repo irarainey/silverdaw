@@ -225,10 +225,20 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (pointerMs === null) return
 
     const rawStartMs = pointerMs - clipGrabOffsetMs
-    const snap = geometry.msPerSubBeat()
-    const snapped = Math.max(0, Math.round(rawStartMs / snap) * snap)
-    if (snapped === clip.startMs) return
-    project.moveClip(clip.id, snapped)
+    // Alt = fine drag (1 ms resolution, no grid snap). Read per move so
+    // the user can flip in and out of fine mode without restarting the
+    // drag. Releasing the drag at an unsnapped position keeps the
+    // clip exactly where the pointer was — the next plain drag will
+    // re-snap relative to the new position.
+    let target: number
+    if (e.altKey) {
+      target = Math.max(0, Math.round(rawStartMs))
+    } else {
+      const snap = geometry.msPerSubBeat()
+      target = Math.max(0, Math.round(rawStartMs / snap) * snap)
+    }
+    if (target === clip.startMs) return
+    project.moveClip(clip.id, target)
     onClipMoved()
   }
 
