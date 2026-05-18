@@ -5,7 +5,19 @@ import { resolve } from 'node:path'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      // Bundle `music-metadata` (the main process's only npm-published
+      // runtime dep) into `out/main/index.js` instead of leaving it as
+      // a runtime `require()`. electron-builder's production-dependency
+      // walker has flaky support for pnpm's node_modules topology —
+      // even in `nodeLinker: hoisted` mode it silently drops transitive
+      // deps (we hit it with `ieee754` under `token-types` under
+      // `music-metadata`), producing a packaged app that crashes on
+      // launch with "Cannot find package '<x>'". Inlining the dep + its
+      // entire tree side-steps the walker entirely. Pure-JS deps only;
+      // anything native would need to stay external.
+      externalizeDepsPlugin({ exclude: ['music-metadata'] })
+    ],
     build: {
       outDir: 'out/main'
     }
