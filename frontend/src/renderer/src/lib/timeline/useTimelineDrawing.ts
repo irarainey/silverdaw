@@ -17,6 +17,7 @@ import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics, Text } from 'pixi.js'
 import { useProjectStore, type Clip, TRACK_PALETTE } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useUiStore } from '@/stores/uiStore'
 import {
   GRID_BAR,
   GRID_BEAT,
@@ -81,6 +82,7 @@ export interface TimelineDrawing {
 export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawing {
   const project = useProjectStore()
   const transport = useTransportStore()
+  const ui = useUiStore()
   const {
     app,
     rulerLayer,
@@ -502,8 +504,12 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // content so it stays pinned at the centre. `clampScroll()` will cap
     // `scrollX` at the end of the timeline content, so once the scroll
     // has reached the end the head naturally continues toward the right
-    // edge.
-    if (transport.isPlaying || isDraggingPlayhead.value) {
+    // edge. Playback follow is gated on the user's `followPlayback`
+    // preference; playhead drag always follows because the user is
+    // actively positioning.
+    const shouldFollow =
+      (transport.isPlaying && ui.followPlayback) || isDraggingPlayhead.value
+    if (shouldFollow) {
       const viewportCentre = headerWidth() + (width - headerWidth()) / 2
       const desired = Math.max(0, absX - viewportCentre)
       if (Math.abs(desired - scrollX.value) > 0.5) {

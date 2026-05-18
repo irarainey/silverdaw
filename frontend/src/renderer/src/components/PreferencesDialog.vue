@@ -10,17 +10,20 @@
 
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
+import { useUiStore } from '@/stores/uiStore'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const appStore = useAppStore()
+const ui = useUiStore()
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 
 // Working copies — edited freely; not persisted until Save.
 const debugEnabled = ref(false)
 const toastsEnabled = ref(true)
+const followPlayback = ref(true)
 const defaultProjectDir = ref('')
 const defaultClipDir = ref('')
 
@@ -29,6 +32,7 @@ const defaultClipDir = ref('')
 //   2. Show the "Restart required" notice when debug differs.
 const initialDebug = ref(false)
 const initialToasts = ref(true)
+const initialFollow = ref(true)
 const initialProjectDir = ref('')
 const initialClipDir = ref('')
 
@@ -36,6 +40,7 @@ const hasChanges = computed(
   () =>
     debugEnabled.value !== initialDebug.value ||
     toastsEnabled.value !== initialToasts.value ||
+    followPlayback.value !== initialFollow.value ||
     defaultProjectDir.value !== initialProjectDir.value ||
     defaultClipDir.value !== initialClipDir.value
 )
@@ -56,8 +61,13 @@ async function loadCurrent(): Promise<void> {
     defaultProjectDir.value = ''
     defaultClipDir.value = ''
   }
+  // `followPlayback` lives in the UI prefs sub-tree (alongside panel
+  // sizes) and is mirrored into the uiStore on startup — read it from
+  // there directly so we don't need a second IPC round-trip.
+  followPlayback.value = ui.followPlayback
   initialDebug.value = debugEnabled.value
   initialToasts.value = toastsEnabled.value
+  initialFollow.value = followPlayback.value
   initialProjectDir.value = defaultProjectDir.value
   initialClipDir.value = defaultClipDir.value
 }
@@ -137,6 +147,11 @@ function onSave(): void {
   if (debugEnabled.value !== initialDebug.value) {
     window.silverdaw.setDebugEnabled(debugEnabled.value)
   }
+  if (followPlayback.value !== initialFollow.value) {
+    // Goes through the uiStore so the transport-bar toggle stays in
+    // sync and the new value is persisted via the usual UI prefs path.
+    ui.setFollowPlayback(followPlayback.value)
+  }
   emit('close')
 }
 </script>
@@ -191,6 +206,22 @@ function onSave(): void {
                   Pop transient feedback (errors, save confirmations) in the
                   bottom-right corner. Turn off for a quieter UI; events are
                   still written to the log when debugging is enabled.
+                </span>
+              </span>
+            </label>
+            <label class="mt-3 flex cursor-pointer items-start gap-3">
+              <input
+                v-model="followPlayback"
+                type="checkbox"
+                class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+              >
+              <span class="flex-1">
+                <span class="block font-medium text-zinc-200">Follow playback</span>
+                <span class="mt-0.5 block text-zinc-500">
+                  Scroll the timeline during playback so the playhead stays
+                  centred in the viewport. Turn off if you want the view to
+                  stay still while playing. Can also be toggled from the
+                  transport bar.
                 </span>
               </span>
             </label>

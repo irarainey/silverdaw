@@ -257,6 +257,10 @@ interface WindowPrefs {
 interface UiPrefs {
   trackHeaderWidth: number
   libraryPanelHeight: number
+  /** When true, the timeline scrolls during playback so the playhead
+   *  stays pinned near the centre of the viewport. When false, the
+   *  view stays still and the playhead can run off the right edge. */
+  followPlayback: boolean
 }
 
 /**
@@ -340,7 +344,7 @@ function buildDefaultPrefs(): Preferences {
   const defaultClipDir = musicDir || defaultProjectDir
   return {
     window: { width: 1400, height: 900, maximized: false },
-    ui: { trackHeaderWidth: 175, libraryPanelHeight: 180 },
+    ui: { trackHeaderWidth: 175, libraryPanelHeight: 180, followPlayback: true },
     debug: { enabled: false },
     toasts: { enabled: true },
     paths: { defaultProjectDir, defaultClipDir },
@@ -350,7 +354,7 @@ function buildDefaultPrefs(): Preferences {
 
 let prefs: Preferences = {
   window: { width: 1400, height: 900, maximized: false },
-  ui: { trackHeaderWidth: 175, libraryPanelHeight: 180 },
+  ui: { trackHeaderWidth: 175, libraryPanelHeight: 180, followPlayback: true },
   debug: { enabled: false },
   toasts: { enabled: true },
   paths: { defaultProjectDir: '', defaultClipDir: '' },

@@ -10,6 +10,9 @@ import { defineStore } from 'pinia'
 interface UiState {
   trackHeaderWidth: number
   libraryPanelHeight: number
+  /** Continuous-follow auto-scroll during playback. When false the
+   *  viewport stays put and the playhead can run off the right edge. */
+  followPlayback: boolean
   /** True once `hydrate()` has read the saved values from main. */
   hydrated: boolean
 }
@@ -17,7 +20,8 @@ interface UiState {
 // Must match `DEFAULT_PREFS.ui` in src/main/index.ts.
 const DEFAULTS = {
   trackHeaderWidth: 175,
-  libraryPanelHeight: 180
+  libraryPanelHeight: 180,
+  followPlayback: true
 } as const
 
 // Clamps mirror the resize-handle clamps in the components, but applied
@@ -39,14 +43,22 @@ function clampLibraryHeight(n: number): number {
 }
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null
-let pendingPush: { trackHeaderWidth?: number; libraryPanelHeight?: number } = {}
+let pendingPush: {
+  trackHeaderWidth?: number
+  libraryPanelHeight?: number
+  followPlayback?: boolean
+} = {}
 
 /**
  * Debounced push of UI preference changes back to main. Resize handles
  * fire continuously while dragged, so we coalesce ~150 ms of changes into
  * a single IPC + disk write.
  */
-function schedulePush(partial: { trackHeaderWidth?: number; libraryPanelHeight?: number }): void {
+function schedulePush(partial: {
+  trackHeaderWidth?: number
+  libraryPanelHeight?: number
+  followPlayback?: boolean
+}): void {
   pendingPush = { ...pendingPush, ...partial }
   if (pushTimer) return
   pushTimer = setTimeout(() => {
@@ -61,6 +73,7 @@ export const useUiStore = defineStore('ui', {
   state: (): UiState => ({
     trackHeaderWidth: DEFAULTS.trackHeaderWidth,
     libraryPanelHeight: DEFAULTS.libraryPanelHeight,
+    followPlayback: DEFAULTS.followPlayback,
     hydrated: false
   }),
 
@@ -75,6 +88,8 @@ export const useUiStore = defineStore('ui', {
         const saved = await window.silverdaw.getUiPreferences()
         this.trackHeaderWidth = clampHeaderWidth(saved.trackHeaderWidth)
         this.libraryPanelHeight = clampLibraryHeight(saved.libraryPanelHeight)
+        this.followPlayback =
+          typeof saved.followPlayback === 'boolean' ? saved.followPlayback : DEFAULTS.followPlayback
       } catch (err) {
         console.warn('[uiStore] hydrate failed, using defaults:', err)
       } finally {
@@ -96,6 +111,14 @@ export const useUiStore = defineStore('ui', {
       if (next === this.libraryPanelHeight) return
       this.libraryPanelHeight = next
       if (this.hydrated) schedulePush({ libraryPanelHeight: next })
+    },
+
+    /** Toggle follow-playback. Persists immediately (no debounce needed
+     *  since it's a click, not a continuous resize). */
+    setFollowPlayback(value: boolean): void {
+      if (this.followPlayback === value) return
+      this.followPlayback = value
+      if (this.hydrated) schedulePush({ followPlayback: value })
     }
   }
 })

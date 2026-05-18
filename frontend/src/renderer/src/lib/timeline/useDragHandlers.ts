@@ -20,7 +20,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from './constants'
+import { RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from './constants'
 import type { GridGeometry } from './useGridGeometry'
 
 /** Viewport-space rectangle of a single drawn clip block. */
@@ -136,7 +136,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const bottomLimit = a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
     if (y > bottomLimit) return
 
-    // Clip drag takes priority — if pointer is on a clip block, drag it.
+    // Clip drag takes priority anywhere in the track rows — if pointer
+    // lands on a clip block, start a clip drag.
     const hit = hitTestClip(e.clientX, e.clientY)
     if (hit) {
       const clip = project.clips[hit.clipId]
@@ -154,6 +155,13 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
         }
       }
     }
+
+    // Playhead seek is constrained to the ruler band. Clicking in the
+    // empty area of a track row no longer moves the playhead — it would
+    // otherwise be too easy to lose your position while trying to click
+    // near (but not on) a clip. The ruler is the canonical "timeline
+    // ribbon" in every other DAW so users already expect this.
+    if (y >= RULER_HEIGHT) return
 
     const ms = pointerToSnappedMs(e.clientX)
     if (ms === null) return

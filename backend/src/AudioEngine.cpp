@@ -353,7 +353,21 @@ double AudioEngine::getPositionMs() const
     {
         return 0.0;
     }
-    return (static_cast<double>(master.getPositionSamples()) / sr) * 1000.0;
+    const auto pos = master.getPositionSamples();
+    // `master.getPositionSamples()` is the audio thread's "next read
+    // position" — i.e. the sample that will be pulled FROM the source on
+    // the next callback, not the sample currently leaving the speakers.
+    // Subtract the device's output latency so the reported position
+    // matches what the user actually hears. Without this the visual
+    // playhead leads the audible playback by the device buffer size
+    // (typically ~10-30 ms on Windows WASAPI).
+    juce::int64 latencySamples = 0;
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+    {
+        latencySamples = static_cast<juce::int64>(device->getOutputLatencyInSamples());
+    }
+    const auto audible = juce::jmax(static_cast<juce::int64>(0), pos - latencySamples);
+    return (static_cast<double>(audible) / sr) * 1000.0;
 }
 
 double AudioEngine::getClipDurationMs(const juce::String& clipId) const

@@ -6,12 +6,14 @@
 import { computed, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
 
 const project = useProjectStore()
 const transport = useTransportStore()
+const ui = useUiStore()
 
 const positionDisplay = computed(() => formatTime(transport.positionMs))
 
@@ -163,6 +165,11 @@ function onSkipForward(): void {
   log.info('transport', `click skip-forward -> ${end}ms`)
   sendBridge('TRANSPORT_SEEK', { positionMs: end })
 }
+
+function onToggleFollow(): void {
+  ui.setFollowPlayback(!ui.followPlayback)
+  log.info('transport', `follow playback=${ui.followPlayback}`)
+}
 </script>
 
 <template>
@@ -228,6 +235,34 @@ function onSkipForward(): void {
           class="h-5 w-5"
         >
           <path d="M16 5h2v14h-2V5zM4 5l11 7-11 7V5z" />
+        </svg>
+      </button>
+      <div class="mx-1 h-7 w-px bg-zinc-800" />
+      <button
+        type="button"
+        class="rounded p-2 hover:bg-zinc-800"
+        :class="ui.followPlayback ? 'text-blue-400 hover:text-blue-300' : 'text-zinc-500 hover:text-zinc-300'"
+        :title="ui.followPlayback ? 'Follow playback (on) — timeline scrolls with the playhead' : 'Follow playback (off) — timeline stays put during playback'"
+        @click="onToggleFollow"
+      >
+        <!-- Right-arrow chevron inside a circle: when on, the chevron is
+             active; when off, the icon is dimmed. -->
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="h-5 w-5"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="9"
+          />
+          <path d="M10 8l5 4-5 4V8z" />
         </svg>
       </button>
     </div>

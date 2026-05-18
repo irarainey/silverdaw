@@ -63,4 +63,7 @@ export interface AudioMetadata {
 export interface UiPreferences {
   trackHeaderWidth: number
   libraryPanelHeight: number
+
+  /** Continuous-follow auto-scroll during playback (default true). */
+  followPlayback: boolean
 }
