@@ -440,6 +440,12 @@ function startBackend(): void {
 
   backendProcess = spawn(exePath, ['--port', String(bridgePort)], {
     stdio: 'inherit',
+    // Suppress the console window Windows would otherwise create for
+    // any console-subsystem child (`juce_add_console_app` produces one).
+    // In dev (`pnpm dev`) the backend's stdio still flows into the
+    // parent terminal because it inherits the pipes; in a packaged
+    // install the parent has no console, so there's nothing to lose.
+    windowsHide: true,
     // Forward `SILVERDAW_BRIDGE_TOKEN` via the spawn env (NOT via argv —
     // command-line arguments are visible in the OS process table). The
     // backend's `resolveBridgeToken()` reads the same env var and
