@@ -88,6 +88,13 @@ onMounted(() => {
 // and is the canonical 16th-note resolution.
 const SUB_BEATS_PER_BEAT = 4
 
+// Last position the arrow-step shortcut asked the backend to seek to.
+// Used as the basis for the NEXT arrow press when the backend's reported
+// position has rounded to slightly less than the floating-point target —
+// otherwise repeated presses get stuck oscillating between adjacent
+// grid lines because of sub-millisecond round-trip error.
+let lastArrowSeekMs: number | null = null
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
   const tag = target.tagName
@@ -106,20 +113,28 @@ function onTransportKey(e: KeyboardEvent): void {
   const bpm = transport.bpm
   if (!Number.isFinite(bpm) || bpm <= 0) return
   const msPerSub = 60_000 / bpm / SUB_BEATS_PER_BEAT
-  const cur = transport.positionMs
-  // Subtracting 1 ms before flooring guarantees that pressing ← while
-  // already sitting exactly on a grid line lands on the previous one
-  // (not the current one); similarly + msPerSub after flooring forces
-  // → to advance past the current line even when `cur` is on a
-  // boundary.
+
+  // If our last arrow-seek target is still essentially the current
+  // position (the backend's ack will have rounded by a sub-millisecond
+  // at non-integer-rate BPMs), compute the next step from THAT exact
+  // value rather than the rounded one. Without this, repeated arrow
+  // presses can get pinned to the same grid line as floor() keeps
+  // rounding the reported position to the previous bucket index.
+  const reported = transport.positionMs
+  const base =
+    lastArrowSeekMs !== null && Math.abs(reported - lastArrowSeekMs) < 1
+      ? lastArrowSeekMs
+      : reported
+
   const target =
     e.key === 'ArrowLeft'
-      ? Math.max(0, Math.floor((cur - 1) / msPerSub) * msPerSub)
-      : (Math.floor(cur / msPerSub) + 1) * msPerSub
-  if (target === cur) return
+      ? Math.max(0, Math.floor((base - 1e-6) / msPerSub) * msPerSub)
+      : (Math.floor(base / msPerSub + 1e-6) + 1) * msPerSub
+  if (target === reported) return
 
   e.preventDefault()
   e.stopPropagation()
+  lastArrowSeekMs = target
   transport.setPosition(target)
   sendBridge('TRANSPORT_SEEK', { positionMs: target })
   log.debug('transport', `arrow-seek to ${target}ms (msPerSub=${msPerSub.toFixed(2)})`)

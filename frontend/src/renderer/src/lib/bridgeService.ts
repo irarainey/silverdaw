@@ -296,7 +296,19 @@ function dispatch(msg: BridgeInboundMessage): void {
       // already-paused backend). Local intent is authoritative until
       // we add a dedicated TRANSPORT_STATE event for backend-driven
       // transitions (end-of-project auto-stop, error-pause, …).
-      useTransportStore().setPosition(msg.payload.positionMs)
+      //
+      // Squelch sample-rounding noise: when we optimistically set a
+      // seek position (click on ruler, ←/→ arrow), the backend rounds
+      // the ms to integer samples and reports back a value that's
+      // typically < 0.05 ms different. Accepting that ack would snap
+      // the visual playhead by a sub-pixel, which reads as flicker
+      // under repeated arrow presses. Anything within 2 ms of the
+      // local value is treated as "no new information" and dropped;
+      // genuine playback advances (backend ticks 60 Hz → ~16 ms steps)
+      // sail through this gate easily.
+      const t = useTransportStore()
+      if (Math.abs(msg.payload.positionMs - t.positionMs) < 2) break
+      t.setPosition(msg.payload.positionMs)
       break
     }
 

@@ -133,6 +133,11 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
   // PLAYHEAD_UPDATE ticks are jittery. Falls back to `transport.positionMs`
   // when nobody else has written.
   let displayPositionMs = 0
+  // Wall-clock timestamp of the previous `updatePlayhead` call. Used by
+  // the auto-follow catch-up logic to step the scroll by a time-based
+  // amount (so the feel is identical at 60 Hz / 120 Hz / variable
+  // refresh rates and during dropped frames).
+  let lastUpdateMs = 0
 
   function setDisplayPositionMs(ms: number): void {
     displayPositionMs = ms
@@ -607,15 +612,48 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // the user is dragging the playhead, scroll the world to keep the
     // playhead near the centre of the visible area. NOTE: no `redraw()`
     // — `applyScroll` just translates the world layers.
+    //
+    // Smoothness rules — applied uniformly to playback follow AND
+    // click-to-seek / drag:
+    //   - desired <= scrollX (target lands BEFORE the centre, e.g. the
+    //     user moved to an earlier point): hold the scroll where it is.
+    //     The playhead just draws at its viewport position and, during
+    //     playback, advances naturally until it reaches the centre.
+    //     Avoids the jarring backward teleport.
+    //   - desired > scrollX: ease in over a wall-clock duration. The
+    //     catch-up rate is intentionally only a few times the playback
+    //     rate so the playhead VISIBLY drifts toward the centre rather
+    //     than appearing locked to the waveform.
     const shouldFollow =
       (transport.isPlaying && ui.followPlayback) || isDraggingPlayhead.value
+    const now = performance.now()
+    const dtSec = lastUpdateMs === 0 ? 0 : Math.min(0.1, (now - lastUpdateMs) / 1000)
+    lastUpdateMs = now
     if (shouldFollow) {
       const viewportCentre = headerWidth() + (width - headerWidth()) / 2
       const desired = Math.max(0, absX - viewportCentre)
-      if (Math.abs(desired - scrollX.value) > 0.5) {
-        scrollX.value = desired
+      let nextScroll: number | null = null
+      if (desired > scrollX.value) {
+        const gap = desired - scrollX.value
+        if (gap > 0.5) {
+          // Catch-up speed mixes a steady "approach rate" (3× playback,
+          // so the playhead visibly drifts within the waveform at a
+          // 2/3 ratio of leftward motion) with a gap-proportional term
+          // (so a large initial offset closes in ~half a second). The
+          // `min(gap, ...)` cap prevents overshoot.
+          const audioPxPerSec = pxPerSecond.value
+          const approachPxPerSec = audioPxPerSec * 3
+          const proportionalPxPerSec = gap * 5
+          const ratePxPerSec = Math.max(approachPxPerSec, proportionalPxPerSec)
+          const step = Math.min(gap, ratePxPerSec * dtSec)
+          if (step > 0) nextScroll = scrollX.value + step
+        }
+      }
+      // (desired <= scrollX → nextScroll stays null → hold.)
+
+      if (nextScroll !== null) {
+        scrollX.value = nextScroll
         clampScroll()
-        // Translate world layers — cheap.
         const tracks = tracksLayer.value
         const rulerTicks = rulerTicksLayer.value
         if (tracks) {
