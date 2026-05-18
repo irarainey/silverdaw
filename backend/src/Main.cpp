@@ -503,6 +503,10 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     }
     obj->setProperty("tracks", projectState.tracksAsJson());
     obj->setProperty("viewPxPerSecond", projectState.getViewPxPerSecond());
+    obj->setProperty("viewScrollX", projectState.getViewScrollX());
+    obj->setProperty("playheadMs", projectState.getPlayheadMs());
+    obj->setProperty("bpm", projectState.getBpm());
+    obj->setProperty("projectLengthMs", projectState.getProjectLengthMs());
     return juce::var(obj);
 }
 
@@ -625,14 +629,23 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
         engine.removeClip(id);
     }
     rebuildEngineFromProject(engine, projectState);
+    // Restore the persisted playhead position so the user reopens the
+    // project at the same point they left it. `engine.stop()` reset to
+    // 0 above; this puts us back where the project file says.
+    const double persistedPlayhead = projectState.getPlayheadMs();
+    if (persistedPlayhead > 0.0)
+    {
+        engine.setPositionMs(persistedPlayhead);
+    }
     session.currentPath = filePath;
 
     bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, true));
     silverdaw::log::info("project", "PROJECT_LOAD ok path=" + filePath);
 }
 
-void handleProjectSave(const juce::var& payload, silverdaw::ProjectState& projectState,
-                       silverdaw::BridgeServer& bridge, ProjectSession& session, bool isSaveAs)
+void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
+                       silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                       ProjectSession& session, bool isSaveAs)
 {
     juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
     if (filePath.isEmpty())
@@ -651,6 +664,12 @@ void handleProjectSave(const juce::var& payload, silverdaw::ProjectState& projec
         bridge.broadcast("PROJECT_SAVED", juce::var(p));
         return;
     }
+
+    // Capture the engine's current playhead position into the project
+    // tree just before serialisation so the saved file remembers where
+    // the user was. Suppressed from dirty-tracking inside `setPlayheadMs`
+    // — capturing this value is a save-side concern, not a user edit.
+    projectState.setPlayheadMs(engine.getPositionMs());
 
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
     auto* p = new juce::DynamicObject();
@@ -775,12 +794,12 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "PROJECT_SAVE")
     {
         silverdaw::log::info("bridge", "recv PROJECT_SAVE");
-        handleProjectSave(payload, projectState, bridge, session, /*isSaveAs*/ false);
+        handleProjectSave(payload, engine, projectState, bridge, session, /*isSaveAs*/ false);
     }
     else if (type == "PROJECT_SAVE_AS")
     {
         silverdaw::log::info("bridge", "recv PROJECT_SAVE_AS path=" + payload.getProperty("filePath", "").toString());
-        handleProjectSave(payload, projectState, bridge, session, /*isSaveAs*/ true);
+        handleProjectSave(payload, engine, projectState, bridge, session, /*isSaveAs*/ true);
     }
     else if (type == "PROJECT_LOAD")
     {
@@ -794,11 +813,11 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "PROJECT_SET_VIEW")
     {
-        // View preferences (zoom level today; pan/scroll position later)
-        // travel with the project so opening a saved file restores the
-        // exact view the user had when they saved. Suppressed from the
-        // dirty-flag listener inside `setViewPxPerSecond` so zoom alone
-        // doesn't prompt an unsaved-changes dialog.
+        // View preferences (zoom + scroll position) travel with the
+        // project so opening a saved file restores the exact view the
+        // user had when they saved. Suppressed from the dirty-flag
+        // listener inside the setters so view changes don't prompt an
+        // unsaved-changes dialog.
         const auto pxVar = payload.getProperty("pxPerSecond", juce::var());
         if (pxVar.isDouble() || pxVar.isInt() || pxVar.isInt64())
         {
@@ -806,6 +825,38 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             if (px > 0.0)
             {
                 projectState.setViewPxPerSecond(px);
+            }
+        }
+        const auto sxVar = payload.getProperty("scrollX", juce::var());
+        if (sxVar.isDouble() || sxVar.isInt() || sxVar.isInt64())
+        {
+            projectState.setViewScrollX(juce::jmax(0.0, static_cast<double>(sxVar)));
+        }
+    }
+    else if (type == "PROJECT_SET_BPM")
+    {
+        // Tempo edits flip the dirty flag — this is a meaningful change
+        // to the project that the user should be prompted to save.
+        const auto bpmVar = payload.getProperty("bpm", juce::var());
+        if (bpmVar.isDouble() || bpmVar.isInt() || bpmVar.isInt64())
+        {
+            const double bpm = static_cast<double>(bpmVar);
+            if (bpm > 0.0)
+            {
+                projectState.setBpm(bpm);
+            }
+        }
+    }
+    else if (type == "PROJECT_SET_LENGTH")
+    {
+        // Length edits flip the dirty flag (same rationale as BPM).
+        const auto lenVar = payload.getProperty("lengthMs", juce::var());
+        if (lenVar.isDouble() || lenVar.isInt() || lenVar.isInt64())
+        {
+            const double lenMs = static_cast<double>(lenVar);
+            if (lenMs >= 0.0)
+            {
+                projectState.setProjectLengthMs(lenMs);
             }
         }
     }

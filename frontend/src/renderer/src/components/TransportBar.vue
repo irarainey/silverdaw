@@ -15,6 +15,23 @@ const project = useProjectStore()
 const transport = useTransportStore()
 const ui = useUiStore()
 
+// Wrappers that mutate local state AND push the change to the backend
+// so it persists with the project. The wrapped underlying setters are
+// also called by `applyProjectStateSnapshot` (without sending) so the
+// load path round-trips cleanly.
+function applyBpm(bpm: number): void {
+  transport.setBpm(bpm)
+  // `transport.setBpm` clamps to [20, 300]; read back the clamped value.
+  sendBridge('PROJECT_SET_BPM', { bpm: transport.bpm })
+}
+
+function applyProjectLength(ms: number): void {
+  project.setProjectLengthMs(ms)
+  // The setter may clamp upward to fit existing clips; send the final
+  // value so the backend and renderer stay aligned.
+  sendBridge('PROJECT_SET_LENGTH', { lengthMs: project.durationMs })
+}
+
 const positionDisplay = computed(() => formatTime(transport.positionMs))
 
 /**
@@ -41,12 +58,12 @@ watch(
 )
 
 // Editable BPM. Same pattern as length — mirror the store while not focused.
-const bpmInput = ref(transport.bpm.toFixed(1))
+const bpmInput = ref(transport.bpm.toFixed(2))
 const isEditingBpm = ref(false)
 watch(
   () => transport.bpm,
   (bpm) => {
-    if (!isEditingBpm.value) bpmInput.value = bpm.toFixed(1)
+    if (!isEditingBpm.value) bpmInput.value = bpm.toFixed(2)
   }
 )
 
@@ -60,8 +77,7 @@ function onLengthCommit(): void {
     lengthInput.value = formatTime(project.durationMs)
     return
   }
-  project.setProjectLengthMs(ms)
-  // setProjectLengthMs may clamp upwards if a clip extends past `ms`.
+  applyProjectLength(ms)
   lengthInput.value = formatTime(project.durationMs)
 }
 
@@ -93,7 +109,7 @@ function bumpLength(deltaSeconds: number): void {
     ? parseTime(lengthInput.value) ?? project.durationMs
     : project.durationMs
   const next = Math.max(0, base + deltaSeconds * 1000)
-  project.setProjectLengthMs(next)
+  applyProjectLength(next)
   lengthInput.value = formatTime(project.durationMs)
 }
 
@@ -101,17 +117,17 @@ function onBpmCommit(): void {
   isEditingBpm.value = false
   const n = Number(bpmInput.value)
   if (!Number.isFinite(n)) {
-    bpmInput.value = transport.bpm.toFixed(1)
+    bpmInput.value = transport.bpm.toFixed(2)
     return
   }
-  transport.setBpm(n)
-  bpmInput.value = transport.bpm.toFixed(1)
+  applyBpm(n)
+  bpmInput.value = transport.bpm.toFixed(2)
 }
 
 function onBpmKeydown(e: KeyboardEvent): void {
   if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
   else if (e.key === 'Escape') {
-    bpmInput.value = transport.bpm.toFixed(1)
+    bpmInput.value = transport.bpm.toFixed(2)
       ; (e.target as HTMLInputElement).blur()
   }
   else if (e.key === 'ArrowUp') {
@@ -132,8 +148,8 @@ function onBpmKeydown(e: KeyboardEvent): void {
 function bumpBpm(delta: number): void {
   const base = isEditingBpm.value ? Number(bpmInput.value) : transport.bpm
   const start = Number.isFinite(base) ? base : transport.bpm
-  transport.setBpm(start + delta)
-  bpmInput.value = transport.bpm.toFixed(1)
+  applyBpm(start + delta)
+  bpmInput.value = transport.bpm.toFixed(2)
 }
 
 function onSkipBack(): void {
@@ -352,10 +368,10 @@ function onToggleFollow(): void {
               type="number"
               min="20"
               max="300"
-              step="0.1"
+              step="0.01"
               spellcheck="false"
               title="Tempo (20 – 300 BPM). Use ↑/↓ or the spinner to adjust by 1; hold Shift for 10."
-              class="w-12 bg-transparent font-mono text-base tabular-nums text-zinc-100 outline-none focus:text-blue-300 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              class="w-16 bg-transparent font-mono text-base tabular-nums text-zinc-100 outline-none focus:text-blue-300 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               @focus="isEditingBpm = true"
               @blur="onBpmCommit"
               @keydown="onBpmKeydown"

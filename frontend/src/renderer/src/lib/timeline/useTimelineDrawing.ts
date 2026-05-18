@@ -252,6 +252,11 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
    * Bar/beat/sub tick lines + bar-number labels. Drawn in WORLD
    * coordinates on `rulerTicksLayer`, which is translated by
    * `-scrollX` so the ticks pan with the timeline content for free.
+   *
+   * Tick range covers the FULL project duration (plus a small margin)
+   * rather than just the current viewport, because `applyScroll` now
+   * just translates the layer rather than redrawing — so any region
+   * the user could scroll into must already have ticks drawn.
    */
   function drawRulerTicks(width: number): void {
     const rulerTicks = rulerTicksLayer.value
@@ -267,19 +272,18 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const pxPerSub = pxPerBeat / SUBDIVISIONS_PER_BEAT
     const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
 
-    // Generate ticks for the full visible-at-current-scroll range plus
-    // a generous margin so a quick auto-follow scroll doesn't reveal
-    // empty space. `viewWidth` is the visible track-content width.
+    // Cover the whole project plus one viewport-width of margin on the
+    // right so a fresh project (duration ~ 0) still shows a bit of
+    // grid for orientation. Subs are integer indices from 0 upward.
     const viewWidth = rightEdge - headerWidth()
-    const sx = scrollX.value
-    const firstSub = Math.max(0, Math.floor((sx - viewWidth) / pxPerSub))
-    const lastSub = Math.ceil((sx + viewWidth * 2) / pxPerSub)
+    const projectPx = (project.durationMs / 1000) * pxPerSecond.value
+    const lastSub = Math.ceil((projectPx + viewWidth) / pxPerSub)
 
     const subTicks = new G()
     const beatTicks = new G()
     const barTicks = new G()
 
-    for (let s = firstSub; s <= lastSub; s++) {
+    for (let s = 0; s <= lastSub; s++) {
       // World x: header offset + tick position. The layer translation
       // by `-scrollX` handles the on-screen positioning.
       const x = headerWidth() + s * pxPerSub + 0.5
@@ -299,8 +303,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // Bar-number labels centred above each bar line. Bars are 0-indexed,
     // so the first bar line (t=0) is labelled "0".
     if (T) {
-      const startSub = Math.ceil(firstSub / subsPerBar) * subsPerBar
-      for (let s = startSub; s <= lastSub; s += subsPerBar) {
+      for (let s = 0; s <= lastSub; s += subsPerBar) {
         const x = headerWidth() + s * pxPerSub + 0.5
         const barNumber = s / subsPerBar
         const label = new T({
@@ -320,9 +323,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
   /**
    * Full-height vertical grid lines spanning the track area. Drawn in
-   * WORLD coordinates on `tracksLayer`, so they pan with scrollX for
-   * free (and scrollY-translate with the row backgrounds; the ruler
-   * chrome on top hides any bleed into the ruler row).
+   * WORLD coordinates on `tracksLayer`, covering the FULL project
+   * duration so scroll-without-redraw never reveals empty space.
    */
   function drawGrid(width: number): void {
     const tracks = tracksLayer.value
@@ -342,15 +344,14 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
 
     const viewWidth = rightEdge - gridLeft
-    const sx = scrollX.value
-    const firstSub = Math.max(0, Math.floor((sx - viewWidth) / pxPerSub))
-    const lastSub = Math.ceil((sx + viewWidth * 2) / pxPerSub)
+    const projectPx = (project.durationMs / 1000) * pxPerSecond.value
+    const lastSub = Math.ceil((projectPx + viewWidth) / pxPerSub)
 
     const subLines = new G()
     const beatLines = new G()
     const barLines = new G()
 
-    for (let s = firstSub; s <= lastSub; s++) {
+    for (let s = 0; s <= lastSub; s++) {
       const x = gridLeft + s * pxPerSub + 0.5
       const isBar = s % subsPerBar === 0
       const isBeat = s % SUBDIVISIONS_PER_BEAT === 0
@@ -388,14 +389,16 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     // Pass 1: row backgrounds (world y) + per-track header rectangles
     // (viewport y so they stay visually aligned with the row but are
-    // drawn on a non-translated layer).
+    // drawn on a non-translated layer). Row bg + clip cull bounds
+    // extend across the FULL project so a translate-only scroll never
+    // reveals empty rows. One viewport width of margin on the right
+    // covers the "scroll past the end" affordance.
     const tracks = project.tracks
-    // Generous horizontal cull bounds in world space so scroll-without-
-    // redraw never reveals empty rows: extend by one viewport width
-    // on each side.
     const viewWidth = rightEdge - headerWidth()
-    const worldLeft = scrollX.value - viewWidth
-    const worldRight = scrollX.value + viewWidth * 2
+    const projectPx = (project.durationMs / 1000) * pxPerSecond.value
+    const worldRowRight = headerWidth() + projectPx + viewWidth
+    const worldLeft = 0
+    const worldRight = worldRowRight
     const visibleRows: { track: (typeof tracks)[number]; worldY: number }[] = []
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i]
@@ -407,11 +410,10 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       if (viewportY + TRACK_HEIGHT <= RULER_HEIGHT) continue
       if (viewportY >= visibleBottom) break
 
-      // Row background — drawn in world coords. Spans from x=0 (so it
-      // continues under the header column for visual continuity) to a
-      // wide world x; the header column bg above masks the left edge.
+      // Row background — drawn in world coords across the whole
+      // project. The header column bg above masks its left edge.
       const rowBg = new G()
-      rowBg.rect(0, worldY, worldRight, TRACK_HEIGHT).fill(TRACK_BG)
+      rowBg.rect(0, worldY, worldRowRight, TRACK_HEIGHT).fill(TRACK_BG)
       tracksL.addChild(rowBg)
 
       // Per-track header — drawn on the static headers layer in

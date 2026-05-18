@@ -54,8 +54,9 @@ export const useTransportStore = defineStore('transport', {
     setBpm(bpm: number): void {
       // Clamp to a musically sane range. The timeline grid + snap unit
       // both derive from this, so a 0 or negative value would divide by
-      // zero in `MS_PER_SUB_BEAT`.
-      this.bpm = Math.min(300, Math.max(20, Math.round(bpm * 10) / 10))
+      // zero in `MS_PER_SUB_BEAT`. Two-decimal precision lets the user
+      // tap-tempo / fine-tune at sub-1-BPM resolution (e.g. 124.37).
+      this.bpm = Math.min(300, Math.max(20, Math.round(bpm * 100) / 100))
     },
     setConnected(connected: boolean): void {
       this.connected = connected

@@ -133,16 +133,44 @@ class ProjectState : public juce::ValueTree::Listener
     // ─── View settings ─────────────────────────────────────────────────
     //
     // Project-scoped view state that survives save/load but is NOT
-    // considered a meaningful "edit" — changing the zoom level should
-    // not prompt an unsaved-changes dialog. The setter wraps the
-    // mutation in `suppressDirtyTransitions` so the listener ignores
-    // it; the read path is a plain property read.
+    // considered a meaningful "edit" — changing the zoom level or
+    // scroll position should not prompt an unsaved-changes dialog. The
+    // setter wraps the mutation in `suppressDirtyTransitions` so the
+    // listener ignores it; the read path is a plain property read.
 
     /** Horizontal zoom (pixels per second). Defaults to 60. */
     double getViewPxPerSecond() const;
 
     /** Update the persisted zoom level. Does NOT mark the project dirty. */
     void setViewPxPerSecond(double pxPerSecond);
+
+    /** Horizontal scroll position in pixels (renderer-space). Defaults to 0. */
+    double getViewScrollX() const;
+
+    /** Update the persisted scroll position. Does NOT mark the project dirty. */
+    void setViewScrollX(double scrollX);
+
+    /** Persisted playhead position in ms. Defaults to 0. */
+    double getPlayheadMs() const;
+
+    /** Update the persisted playhead position. Does NOT mark the project dirty. */
+    void setPlayheadMs(double playheadMs);
+
+    // ─── Tempo / length (meaningful edits — flip dirty flag) ───────────
+
+    /** Project tempo in BPM. Defaults to 100. */
+    double getBpm() const;
+
+    /** Update the tempo. Marks the project dirty as a normal property edit. */
+    void setBpm(double bpm);
+
+    /** Persisted project length in ms (the user-editable Length field).
+     *  Defaults to 0 — the renderer falls back to the per-track default
+     *  in that case. */
+    double getProjectLengthMs() const;
+
+    /** Update the persisted project length. Marks dirty. */
+    void setProjectLengthMs(double lengthMs);
 
     // ─── Serialisation ─────────────────────────────────────────────────
 
@@ -225,6 +253,10 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kOffsetMs;
     static const juce::Identifier kDurationMs;
     static const juce::Identifier kViewPxPerSecond;
+    static const juce::Identifier kViewScrollX;
+    static const juce::Identifier kPlayheadMs;
+    static const juce::Identifier kBpm;
+    static const juce::Identifier kProjectLengthMs;
 };
 
 } // namespace silverdaw

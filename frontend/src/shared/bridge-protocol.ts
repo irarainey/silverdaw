@@ -78,6 +78,8 @@ export interface BridgeOutboundMap {
   PROJECT_LOAD: ProjectLoadPayload
   PROJECT_RENAME: ProjectRenamePayload
   PROJECT_SET_VIEW: ProjectSetViewPayload
+  PROJECT_SET_BPM: ProjectSetBpmPayload
+  PROJECT_SET_LENGTH: ProjectSetLengthPayload
 }
 
 export interface WaveformRequestPayload {
@@ -102,11 +104,24 @@ export interface ProjectLoadPayload {
 }
 
 /** Push the renderer's current horizontal zoom (in pixels-per-second)
- *  to the backend so it can be persisted as part of the project. The
- *  backend stores the value on the project root but does NOT mark the
- *  project dirty — zoom is a view setting, not a meaningful edit. */
+ *  and/or current scroll position to the backend so they can be
+ *  persisted as part of the project. Either field is optional — the
+ *  scroll-position sender debounces independently from the zoom sender.
+ *  The backend stores both values on the project root but does NOT mark
+ *  the project dirty — view state is not a meaningful edit. */
 export interface ProjectSetViewPayload {
-  pxPerSecond: number
+  pxPerSecond?: number
+  scrollX?: number
+}
+
+/** Tempo edit. Marks the project dirty on the backend. */
+export interface ProjectSetBpmPayload {
+  bpm: number
+}
+
+/** Project-length edit (ms). Marks the project dirty on the backend. */
+export interface ProjectSetLengthPayload {
+  lengthMs: number
 }
 
 export type BridgeOutboundType = keyof BridgeOutboundMap
@@ -222,6 +237,14 @@ export interface ProjectStatePayload {
    * zoom (the renderer keeps its current zoom in that case).
    */
   viewPxPerSecond?: number
+  /** Horizontal scroll position (px) persisted with the project. */
+  viewScrollX?: number
+  /** Last playhead position (ms) persisted with the project. */
+  playheadMs?: number
+  /** Project tempo (BPM) persisted with the project. */
+  bpm?: number
+  /** User-set project length (ms) persisted with the project. */
+  projectLengthMs?: number
   tracks: ProjectStateTrack[]
 }
 
@@ -369,6 +392,10 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
   if (typeof value.name !== 'string') return false
   if (value.reset !== undefined && typeof value.reset !== 'boolean') return false
   if (value.viewPxPerSecond !== undefined && typeof value.viewPxPerSecond !== 'number') return false
+  if (value.viewScrollX !== undefined && typeof value.viewScrollX !== 'number') return false
+  if (value.playheadMs !== undefined && typeof value.playheadMs !== 'number') return false
+  if (value.bpm !== undefined && typeof value.bpm !== 'number') return false
+  if (value.projectLengthMs !== undefined && typeof value.projectLengthMs !== 'number') return false
   if (!Array.isArray(value.tracks)) return false
   for (const t of value.tracks) {
     if (!isPlainObject(t)) return false

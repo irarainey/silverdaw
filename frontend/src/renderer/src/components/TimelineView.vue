@@ -221,20 +221,23 @@ watch(headerWidthRef, () => {
   updatePlayhead()
 })
 
-// ─── Zoom persistence ──────────────────────────────────────────────────────
-// `project.viewPxPerSecond` is the backend-authoritative zoom. We watch
-// both directions:
+// ─── Zoom + scroll persistence ─────────────────────────────────────────────
+// `project.viewPxPerSecond` and `project.viewScrollX` are the backend-
+// authoritative view state. We watch both directions:
 //
 //   1. backend → renderer:  on PROJECT_STATE the projectStore updates
-//      `viewPxPerSecond`. Apply it locally so a freshly-loaded project
-//      opens at the zoom that was saved with it. Use a guard so we
-//      don't bounce the change back to the backend.
-//   2. renderer → backend:  any wheel zoom that survives a short debounce
-//      gets pushed via `PROJECT_SET_VIEW`. The backend stores it on the
-//      project root (without flipping the dirty flag — zoom isn't a
-//      meaningful edit).
+//      `viewPxPerSecond` / `viewScrollX`. Apply them locally so a
+//      freshly-loaded project opens at the zoom AND scroll position
+//      that were saved with it. Guards prevent the change bouncing
+//      back to the backend.
+//   2. renderer → backend:  any wheel zoom OR scroll change that
+//      survives a short debounce gets pushed via `PROJECT_SET_VIEW`.
+//      The backend stores both fields on the project root without
+//      flipping the dirty flag — view state isn't a meaningful edit.
 let suppressZoomEmit = false
+let suppressScrollEmit = false
 let zoomEmitTimer: ReturnType<typeof setTimeout> | null = null
+let scrollEmitTimer: ReturnType<typeof setTimeout> | null = null
 
 watch(
   () => project.viewPxPerSecond,
@@ -245,10 +248,23 @@ watch(
     geometry.setPxPerSecond(saved)
     redraw()
     updatePlayhead()
-    // Drop the guard on the next tick so genuine user wheel zooms still
-    // emit even if they happen immediately after a snapshot apply.
     requestAnimationFrame(() => {
       suppressZoomEmit = false
+    })
+  }
+)
+
+watch(
+  () => project.viewScrollX,
+  (saved) => {
+    if (saved === null) return
+    if (Math.abs(saved - scrollX.value) < 0.5) return
+    suppressScrollEmit = true
+    scrollX.value = saved
+    clampScroll()
+    applyScroll()
+    requestAnimationFrame(() => {
+      suppressScrollEmit = false
     })
   }
 )
@@ -258,12 +274,29 @@ watch(pxPerSecond, (next) => {
   if (zoomEmitTimer) clearTimeout(zoomEmitTimer)
   zoomEmitTimer = setTimeout(() => {
     zoomEmitTimer = null
-    // Skip the round-trip if the value already matches what the backend
-    // told us was persisted — happens during the snapshot-apply path.
     if (project.viewPxPerSecond !== null && Math.abs(project.viewPxPerSecond - next) < 0.01) return
     sendBridge('PROJECT_SET_VIEW', { pxPerSecond: next })
   }, 200)
 })
+
+watch(scrollX, (next) => {
+  if (suppressScrollEmit) return
+  if (scrollEmitTimer) clearTimeout(scrollEmitTimer)
+  scrollEmitTimer = setTimeout(() => {
+    scrollEmitTimer = null
+    if (project.viewScrollX !== null && Math.abs(project.viewScrollX - next) < 0.5) return
+    sendBridge('PROJECT_SET_VIEW', { scrollX: next })
+  }, 200)
+})
+
+// Project length changes also affect grid extent — make sure the grid
+// covers the new duration. (Track / clip count changes already trigger
+// a redraw via the watcher below; this catches the "user edited Length
+// in the transport bar" case where neither count changes.)
+watch(
+  () => project.durationMs,
+  () => redraw()
+)
 
 /**
  * Wheel handler — dispatches between two intents based on which axis

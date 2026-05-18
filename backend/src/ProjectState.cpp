@@ -13,6 +13,10 @@ const juce::Identifier ProjectState::kFilePath{"filePath"};
 const juce::Identifier ProjectState::kOffsetMs{"offsetMs"};
 const juce::Identifier ProjectState::kDurationMs{"durationMs"};
 const juce::Identifier ProjectState::kViewPxPerSecond{"viewPxPerSecond"};
+const juce::Identifier ProjectState::kViewScrollX{"viewScrollX"};
+const juce::Identifier ProjectState::kPlayheadMs{"playheadMs"};
+const juce::Identifier ProjectState::kBpm{"bpm"};
+const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
 
@@ -291,6 +295,58 @@ void ProjectState::setViewPxPerSecond(double pxPerSecond)
     suppressDirtyTransitions = true;
     root.setProperty(kViewPxPerSecond, pxPerSecond, nullptr);
     suppressDirtyTransitions = false;
+}
+
+double ProjectState::getViewScrollX() const
+{
+    return static_cast<double>(root.getProperty(kViewScrollX, 0.0));
+}
+
+void ProjectState::setViewScrollX(double scrollX)
+{
+    // Scroll is a view setting — never marks dirty.
+    suppressDirtyTransitions = true;
+    root.setProperty(kViewScrollX, scrollX, nullptr);
+    suppressDirtyTransitions = false;
+}
+
+double ProjectState::getPlayheadMs() const
+{
+    return static_cast<double>(root.getProperty(kPlayheadMs, 0.0));
+}
+
+void ProjectState::setPlayheadMs(double playheadMs)
+{
+    // Playhead position is a transient transport / view value — never
+    // marks dirty. We capture it on save so an open + close cycle
+    // restores where the user was last looking.
+    suppressDirtyTransitions = true;
+    root.setProperty(kPlayheadMs, playheadMs, nullptr);
+    suppressDirtyTransitions = false;
+}
+
+double ProjectState::getBpm() const
+{
+    return static_cast<double>(root.getProperty(kBpm, 100.0));
+}
+
+void ProjectState::setBpm(double bpm)
+{
+    // Tempo is a meaningful project edit; let the normal dirty-tracking
+    // listener observe the property change.
+    root.setProperty(kBpm, bpm, nullptr);
+}
+
+double ProjectState::getProjectLengthMs() const
+{
+    return static_cast<double>(root.getProperty(kProjectLengthMs, 0.0));
+}
+
+void ProjectState::setProjectLengthMs(double lengthMs)
+{
+    // Length is a meaningful edit (the user explicitly chose this
+    // length via the transport bar).
+    root.setProperty(kProjectLengthMs, lengthMs, nullptr);
 }
 
 juce::var ProjectState::tracksAsJson() const

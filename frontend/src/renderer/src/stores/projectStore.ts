@@ -10,6 +10,7 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { useTransportStore } from '@/stores/transportStore'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 
 export interface Clip {
@@ -136,6 +137,9 @@ interface ProjectState {
    * snapshot before any zoom has been sent).
    */
   viewPxPerSecond: number | null
+  /** Persisted horizontal scroll position (px). Same `null` semantics
+   *  as `viewPxPerSecond`. */
+  viewScrollX: number | null
 }
 
 /** Default name shown in the title bar before a project is named or loaded. */
@@ -157,7 +161,8 @@ export const useProjectStore = defineStore('project', {
     currentFilePath: null,
     projectName: DEFAULT_PROJECT_NAME,
     isDirty: false,
-    viewPxPerSecond: null
+    viewPxPerSecond: null,
+    viewScrollX: null
   }),
 
   getters: {
@@ -562,6 +567,9 @@ export const useProjectStore = defineStore('project', {
         'project',
         `applyProjectStateSnapshot tracks=${snapshot.tracks.length} clips=${snapshot.tracks.reduce((n, t) => n + t.clips.length, 0)} reset=${snapshot.reset === true} path=${snapshot.filePath ?? 'null'} name=${snapshot.name}`
       )
+      // Stashed length applied at the end, after tracks have been
+      // reconciled (the setter writes to each track's lengthMs).
+      let pendingProjectLengthMs: number | null = null
       // Adopt the project identity fields up front so any code that reads
       // them during the snapshot apply (e.g. the title bar) sees the
       // post-load values. A fresh snapshot is by definition clean — any
@@ -577,6 +585,26 @@ export const useProjectStore = defineStore('project', {
         typeof snapshot.viewPxPerSecond === 'number' && snapshot.viewPxPerSecond > 0
           ? snapshot.viewPxPerSecond
           : null
+      this.viewScrollX =
+        typeof snapshot.viewScrollX === 'number' && snapshot.viewScrollX >= 0
+          ? snapshot.viewScrollX
+          : null
+      // BPM, playhead, and project length live on other stores. Apply
+      // them here so a single PROJECT_STATE round-trip restores every
+      // persisted dimension of the project view in one go.
+      if (typeof snapshot.bpm === 'number' && snapshot.bpm > 0) {
+        useTransportStore().setBpm(snapshot.bpm)
+      }
+      if (typeof snapshot.playheadMs === 'number' && snapshot.playheadMs >= 0) {
+        useTransportStore().setPosition(snapshot.playheadMs)
+      }
+      if (typeof snapshot.projectLengthMs === 'number' && snapshot.projectLengthMs > 0) {
+        // Defer to after track reconciliation below so `setProjectLengthMs`
+        // sees the tracks it needs to set the length on. Stash here.
+        pendingProjectLengthMs = snapshot.projectLengthMs
+      } else {
+        pendingProjectLengthMs = null
+      }
 
       const library = useLibraryStore()
       // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the
@@ -696,6 +724,15 @@ export const useProjectStore = defineStore('project', {
       // `setClipPeaks` consumes.
       for (const clipId of clipsNeedingPeaks) {
         sendBridge('WAVEFORM_REQUEST', { clipId })
+      }
+
+      // Apply the persisted project length AFTER track reconciliation —
+      // `setProjectLengthMs` writes to each track's `lengthMs`, so the
+      // tracks have to exist first. The setter clamps upward if a clip
+      // extends past the requested length, so passing a value that
+      // disagrees with the on-disk tracks degrades gracefully.
+      if (pendingProjectLengthMs !== null && this.tracks.length > 0) {
+        this.setProjectLengthMs(pendingProjectLengthMs)
       }
     },
 
