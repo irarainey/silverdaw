@@ -38,26 +38,27 @@ const usages = computed(() => {
 })
 
 const metadataRows = computed(() => {
+  const item = props.item
+  if (!item) return []
   const m = props.item?.metadata
-  if (!m) return []
   return [
-    ['Title', m.title],
-    ['Artist', m.artist],
-    ['Album artist', m.albumArtist],
-    ['Album', m.album],
-    ['Year', formatNumber(m.year)],
-    ['Track', formatPartTotal(m.trackNumber, m.trackTotal)],
-    ['Disc', formatPartTotal(m.discNumber, m.discTotal)],
-    ['Genre', m.genre?.join(', ')],
-    ['Composer', m.composer],
-    ['BPM tag', formatNumber(m.bpm)],
-    ['Key', m.key],
-    ['Comment', m.comment],
-    ['Codec', m.codec],
-    ['Container', m.container],
-    ['Bitrate', typeof m.bitrate === 'number' ? `${Math.round(m.bitrate / 1000)} kbps` : undefined],
-    ['Encoding', typeof m.lossless === 'boolean' ? (m.lossless ? 'Lossless' : 'Lossy') : undefined],
-    ['Tag types', m.tagTypes?.join(', ')]
+    ['Title', m?.title],
+    ['Artist', m?.artist],
+    ['Album artist', m?.albumArtist],
+    ['Album', m?.album],
+    ['Year', formatNumber(m?.year)],
+    ['Track', formatPartTotal(m?.trackNumber, m?.trackTotal)],
+    ['Disc', formatPartTotal(m?.discNumber, m?.discTotal)],
+    ['Genre', m?.genre?.join(', ')],
+    ['Composer', m?.composer],
+    ['BPM tag', formatNumber(m?.bpm)],
+    ['Key', item.key ?? m?.key],
+    ['Comment', m?.comment],
+    ['Codec', m?.codec],
+    ['Container', m?.container],
+    ['Bitrate', typeof m?.bitrate === 'number' ? `${Math.round(m.bitrate / 1000)} kbps` : undefined],
+    ['Encoding', typeof m?.lossless === 'boolean' ? (m.lossless ? 'Lossless' : 'Lossy') : undefined],
+    ['Tag types', m?.tagTypes?.join(', ')]
   ].filter((row): row is [string, string] => typeof row[1] === 'string' && row[1].length > 0)
 })
 

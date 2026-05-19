@@ -89,6 +89,7 @@ export interface LibraryAddPayload {
   sampleRate?: number
   channelCount?: number
   playbackFilePath?: string
+  key?: string
 }
 
 /** Drop a library item from the persisted catalogue. */
@@ -390,6 +391,8 @@ export interface ProjectStateLibraryItem {
   sampleRate?: number
   /** Source channel count. Optional for older saved projects. */
   channelCount?: number
+  /** Detected musical key, e.g. `C minor`. Optional when detection is inconclusive. */
+  key?: string
   /** Detected BPM (rounded to 2 d.p. on disk). Absent until the
    *  backend's BPM detection job finishes for this file. */
   bpm?: number
@@ -605,6 +608,7 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
       if (item.durationMs !== undefined && typeof item.durationMs !== 'number') return false
       if (item.sampleRate !== undefined && typeof item.sampleRate !== 'number') return false
       if (item.channelCount !== undefined && typeof item.channelCount !== 'number') return false
+      if (item.key !== undefined && typeof item.key !== 'string') return false
       if (item.bpm !== undefined && typeof item.bpm !== 'number') return false
       if (item.beats !== undefined) {
         if (!Array.isArray(item.beats)) return false

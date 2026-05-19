@@ -160,7 +160,8 @@ describe('isProjectStatePayload', () => {
             fileName: 'sample.wav',
             durationMs: 1000,
             sampleRate: 44100,
-            channelCount: 2
+            channelCount: 2,
+            key: 'C minor'
           }
         ],
         tracks: [
@@ -213,6 +214,13 @@ describe('isProjectStatePayload', () => {
       isProjectStatePayload({
         ...base,
         library: [{ id: 'l1', filePath: '/sample.wav', sampleRate: '44100' }],
+        tracks: []
+      })
+    ).toBe(false)
+    expect(
+      isProjectStatePayload({
+        ...base,
+        library: [{ id: 'l1', filePath: '/sample.wav', key: 7 }],
         tracks: []
       })
     ).toBe(false)

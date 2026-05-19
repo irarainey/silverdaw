@@ -1312,8 +1312,9 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const int sampleRate = static_cast<int>(payload.getProperty("sampleRate", 0));
         const int channelCount = static_cast<int>(payload.getProperty("channelCount", 0));
         const juce::String playbackPath = payload.getProperty("playbackFilePath", juce::var()).toString();
+        const juce::String key = payload.getProperty("key", juce::var()).toString();
         silverdaw::log::info("bridge", "recv LIBRARY_ADD itemId=" + itemId);
-        projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath);
+        projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath, key);
         ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
     }
     else if (type == "LIBRARY_REMOVE")

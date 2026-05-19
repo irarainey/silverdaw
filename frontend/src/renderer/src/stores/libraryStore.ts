@@ -57,6 +57,8 @@ export interface LibraryItem {
    * rough average.
    */
   variableTempo?: boolean
+  /** Detected musical key, stored as user-facing metadata (e.g. `C minor`). */
+  key?: string
   /**
    * Path the JUCE backend should actually load when this item is placed
    * on a track. Equals `filePath` for formats the backend can decode
@@ -229,6 +231,8 @@ export const useLibraryStore = defineStore('library', {
       peaks: Float32Array
       /** Optional override; defaults to `filePath`. */
       playbackFilePath?: string
+      /** Detected or tagged musical key. */
+      key?: string
       /** When true, the item is being reconstructed from a
        *  PROJECT_STATE snapshot and we must NOT echo a LIBRARY_ADD
        *  back to the backend (we're applying the backend's truth,
@@ -241,6 +245,7 @@ export const useLibraryStore = defineStore('library', {
       const existing = this.items.find((i) => i.filePath === audio.filePath)
       if (existing) {
         this.setItemAudioDetails(existing.id, audio.durationMs, audio.sampleRate, audio.channelCount)
+        if (audio.key && !existing.key) existing.key = audio.key
         return existing.id
       }
 
@@ -270,7 +275,8 @@ export const useLibraryStore = defineStore('library', {
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
         peaks: audio.peaks,
-        playbackFilePath: audio.playbackFilePath ?? audio.filePath
+        playbackFilePath: audio.playbackFilePath ?? audio.filePath,
+        key: audio.key
       })
       log.info(
         'library',
@@ -288,7 +294,8 @@ export const useLibraryStore = defineStore('library', {
           durationMs: audio.durationMs,
           sampleRate: audio.sampleRate,
           channelCount: audio.channelCount,
-          playbackFilePath: audio.playbackFilePath
+          playbackFilePath: audio.playbackFilePath,
+          key: audio.key
         })
       }
       return id
@@ -384,6 +391,8 @@ export const useLibraryStore = defineStore('library', {
       // multi-megabyte ArrayBuffer inside Vue's reactivity proxy. The
       // wrapped Blob URL is the only handle the rest of the app sees.
       const { coverArt, ...rest } = metadata
+      if (item.key && !rest.key) rest.key = item.key
+      if (!item.key && rest.key) item.key = rest.key
       item.metadata = rest
       this.setItemAudioDetails(
         itemId,

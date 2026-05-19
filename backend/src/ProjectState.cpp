@@ -29,6 +29,7 @@ const juce::Identifier ProjectState::kBeats{"beats"};
 const juce::Identifier ProjectState::kBeatAnchorSec{"beatAnchorSec"};
 const juce::Identifier ProjectState::kPlaybackFilePath{"playbackFilePath"};
 const juce::Identifier ProjectState::kVariableTempo{"variableTempo"};
+const juce::Identifier ProjectState::kKey{"key"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
 
@@ -466,7 +467,7 @@ void ProjectState::setProjectLengthMs(double lengthMs)
 
 bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName,
                                   double durationMs, int sampleRate, int channelCount,
-                                  const juce::String& playbackPath)
+                                  const juce::String& playbackPath, const juce::String& key)
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return false;
     auto library = root.getChildWithName(kLibrary);
@@ -504,6 +505,10 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
             {
                 item.setProperty(kPlaybackFilePath, playbackPath, nullptr);
             }
+            if (key.isNotEmpty())
+            {
+                item.setProperty(kKey, key, nullptr);
+            }
             return true;
         }
     }
@@ -529,6 +534,10 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
     if (playbackPath.isNotEmpty())
     {
         item.setProperty(kPlaybackFilePath, playbackPath, nullptr);
+    }
+    if (key.isNotEmpty())
+    {
+        item.setProperty(kKey, key, nullptr);
     }
     library.appendChild(item, nullptr);
     return true;
@@ -723,6 +732,10 @@ juce::var ProjectState::libraryAsJson() const
         obj->setProperty("durationMs", static_cast<double>(item.getProperty(kDurationMs, 0.0)));
         obj->setProperty("sampleRate", static_cast<int>(item.getProperty(kSampleRate, 0)));
         obj->setProperty("channelCount", static_cast<int>(item.getProperty(kChannelCount, 0)));
+        if (item.hasProperty(kKey))
+        {
+            obj->setProperty("key", item.getProperty(kKey).toString());
+        }
         if (item.hasProperty(kBpm))
         {
             obj->setProperty("bpm", static_cast<double>(item.getProperty(kBpm, 0.0)));

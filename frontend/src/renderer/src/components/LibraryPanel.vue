@@ -297,7 +297,7 @@ function onResizePointerUp(): void {
           v-for="item in library.items"
           :key="item.id"
           draggable="true"
-          class="library-item group relative flex h-20 w-48 max-w-full shrink-0 cursor-grab select-none items-stretch overflow-hidden rounded border border-zinc-700 bg-zinc-950/60 text-left transition-colors hover:border-zinc-500 hover:bg-zinc-950 active:cursor-grabbing"
+          class="library-item group relative flex h-22 w-60 max-w-full shrink-0 cursor-grab select-none items-stretch overflow-hidden rounded border border-zinc-700 bg-zinc-950/60 text-left transition-colors hover:border-zinc-500 hover:bg-zinc-950 active:cursor-grabbing"
           @dragstart="(e) => onItemDragStart(e, item)"
           @dragend="onItemDragEnd"
           @dblclick="openItemInfo(item)"
@@ -339,6 +339,13 @@ function onResizePointerUp(): void {
             <div class="mt-auto flex items-center justify-between gap-2 text-[10px] text-zinc-500">
               <span class="flex items-center gap-2 font-mono tabular-nums">
                 <span>{{ formatDuration(item.durationMs) }}</span>
+                <span
+                  v-if="item.key"
+                  class="whitespace-nowrap rounded bg-zinc-800 px-1 py-0.5 text-[9px] tracking-wide text-zinc-300"
+                  title="Detected key"
+                >
+                  {{ item.key }}
+                </span>
                 <span
                   v-if="item.bpm"
                   class="whitespace-nowrap rounded px-1 py-0.5 text-[9px] uppercase tracking-wide"

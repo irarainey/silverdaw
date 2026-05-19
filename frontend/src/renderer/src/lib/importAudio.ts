@@ -8,7 +8,7 @@
 // Used by `TrackHeaderPanel` (per-track Import button) and any future
 // "import multiple files" / drag-and-drop entry points.
 
-import { decodeAudioToPeaks } from '@/lib/audio'
+import { decodeAudioToPeaks, detectMusicalKey } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useProjectStore } from '@/stores/projectStore'
@@ -39,6 +39,11 @@ function fileExtensionOf(filePath: string): string {
   const dot = filePath.lastIndexOf('.')
   if (dot < 0) return ''
   return filePath.slice(dot).toLowerCase()
+}
+
+function withDetectedKey(metadata: AudioMetadata | null, detectedKey: string | undefined): AudioMetadata | null {
+  if (!detectedKey) return metadata
+  return { ...(metadata ?? {}), key: detectedKey }
 }
 
 /**
@@ -121,6 +126,8 @@ export async function importAudioIntoTrack(
         decodeAudioToPeaks(opened.data),
         window.silverdaw.readAudioMetadata(opened.filePath).catch(() => null)
       ])
+      const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
+      const enrichedMetadata = withDetectedKey(metadata, detectedKey)
       // If the backend can't decode this format natively, write the
       // already-decoded PCM out as a temp WAV and point playback at that.
       const playbackFilePath = await resolvePlaybackPath(opened.filePath, decoded)
@@ -131,9 +138,10 @@ export async function importAudioIntoTrack(
         sampleRate: decoded.sampleRate,
         channelCount: decoded.channelCount,
         peaks: decoded.peaks,
-        playbackFilePath
+        playbackFilePath,
+        key: enrichedMetadata?.key
       })
-      library.setItemMetadata(itemId, metadata)
+      library.setItemMetadata(itemId, enrichedMetadata)
       audio = library.getItem(itemId)
     }
     if (!audio) {
@@ -215,6 +223,8 @@ export async function importAudioIntoLibrary(opened: {
       decodeAudioToPeaks(opened.data),
       window.silverdaw.readAudioMetadata(opened.filePath).catch(() => null)
     ])
+    const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
+    const enrichedMetadata = withDetectedKey(metadata, detectedKey)
     const playbackFilePath = await resolvePlaybackPath(opened.filePath, decoded)
     const itemId = library.addItem({
       filePath: opened.filePath,
@@ -223,9 +233,10 @@ export async function importAudioIntoLibrary(opened: {
       sampleRate: decoded.sampleRate,
       channelCount: decoded.channelCount,
       peaks: decoded.peaks,
-      playbackFilePath
+      playbackFilePath,
+      key: enrichedMetadata?.key
     })
-    library.setItemMetadata(itemId, metadata)
+    library.setItemMetadata(itemId, enrichedMetadata)
     library.markImportAnalyzing(importEntryId, itemId)
     return itemId
   } catch (err) {

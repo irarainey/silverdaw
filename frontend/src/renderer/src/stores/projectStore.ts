@@ -1252,6 +1252,7 @@ export const useProjectStore = defineStore('project', {
             sampleRate: Math.max(0, item.sampleRate ?? 0),
             channelCount: Math.max(0, item.channelCount ?? 0),
             peaks: new Float32Array(0),
+            key: item.key,
             // The decoded-WAV cache is a backend-internal
             // optimisation. The renderer always sends the source
             // `filePath` in CLIP_ADD; the backend swaps in its

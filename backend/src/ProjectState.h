@@ -221,7 +221,7 @@ class ProjectState : public juce::ValueTree::Listener
     /** Add (or update the file path of) a library item. Marks dirty. */
     bool addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName = {},
                         double durationMs = 0.0, int sampleRate = 0, int channelCount = 0,
-                        const juce::String& playbackPath = {});
+                        const juce::String& playbackPath = {}, const juce::String& key = {});
 
     /** Remove a library item by id. Returns true if it existed. Marks dirty. */
     bool removeLibraryItem(const juce::String& itemId);
@@ -366,6 +366,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kBeatAnchorSec;
     static const juce::Identifier kPlaybackFilePath;
     static const juce::Identifier kVariableTempo;
+    static const juce::Identifier kKey;
 };
 
 } // namespace silverdaw

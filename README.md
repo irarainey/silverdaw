@@ -115,7 +115,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
     CLIP[id, filePath, offsetMs, inMs, durationMs, colorIndex?]
   LIBRARY
     ITEM[id, filePath, fileName?, durationMs, sampleRate, channelCount,
-         bpm?, beats?, beatAnchorSec?, playbackFilePath?, variableTempo?]
+         key?, bpm?, beats?, beatAnchorSec?, playbackFilePath?, variableTempo?]
 ```
 
 `CLIP` carries a non-destructive trim window: `offsetMs` is the timeline start,
@@ -139,9 +139,9 @@ import/remove, etc.) still mark the project dirty as normal property edits.
 
 The `LIBRARY` sub-tree carries the user's imported-but-not-yet-placed samples so the catalogue
 survives save / load. Durable library fields are persisted: id, source path, display file name,
-duration, sample rate, channel count, cached playback path, BPM, beat positions, beat anchor and
-variable-tempo flag. Cover art, ID3 tags, waveform peaks and playable bytes are not written into
-the project file; they are re-fetched or served from cache on load.
+duration, sample rate, channel count, detected key, cached playback path, BPM, beat positions,
+beat anchor and variable-tempo flag. Cover art, ID3 tags, waveform peaks and playable bytes are
+not written into the project file; they are re-fetched or served from cache on load.
 
 **Save / load** is via `.silverdaw` files — a versioned JSON serialisation. A small outer
 object carries `schemaVersion`, `appVersion`, and an ISO `savedAt` timestamp; the `project`
