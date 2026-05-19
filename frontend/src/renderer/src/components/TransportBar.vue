@@ -356,6 +356,7 @@ function onToggleFollow(): void {
             <div class="ml-0.5 flex flex-col text-zinc-500">
               <button
                 type="button"
+                data-borderless-button="true"
                 tabindex="-1"
                 :disabled="!lengthEditable"
                 title="Increase length (Shift: +10s)"
@@ -374,6 +375,7 @@ function onToggleFollow(): void {
               </button>
               <button
                 type="button"
+                data-borderless-button="true"
                 tabindex="-1"
                 :disabled="!lengthEditable"
                 title="Decrease length (Shift: -10s)"
@@ -419,6 +421,7 @@ function onToggleFollow(): void {
             <div class="ml-0.5 flex flex-col text-zinc-500">
               <button
                 type="button"
+                data-borderless-button="true"
                 tabindex="-1"
                 :disabled="!timingEditable"
                 title="Increase BPM (Shift: +10)"
@@ -437,6 +440,7 @@ function onToggleFollow(): void {
               </button>
               <button
                 type="button"
+                data-borderless-button="true"
                 tabindex="-1"
                 :disabled="!timingEditable"
                 title="Decrease BPM (Shift: -10)"

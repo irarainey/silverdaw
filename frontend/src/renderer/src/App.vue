@@ -101,7 +101,7 @@ onMounted(() => {
     void openProjectByPath(filePath)
   })
   unregisterShortcuts = registerMenuShortcuts({ debugMode: appStore.debugMode })
-  window.addEventListener('keydown', onTransportKey, { capture: true })
+  window.addEventListener('keydown', onGlobalShortcutKey, { capture: true })
   connectBridge()
   startBridgeConnectionTimer()
   // Pull persisted panel sizes from the main-process preferences file so
@@ -111,7 +111,7 @@ onMounted(() => {
   void ui.hydrate()
 })
 
-// ─── Transport keyboard shortcuts ─────────────────────────────────────────
+// ─── Global keyboard shortcuts ────────────────────────────────────────────
 // Arrow Left / Arrow Right step the playhead back / forward to the
 // adjacent grid line (sub-beat — 16th-note in 4/4, matching the
 // timeline's finest grid division). Skipped while focus is in any
@@ -140,11 +140,50 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.isContentEditable
 }
 
-function onTransportKey(e: KeyboardEvent): void {
+function isShortcutModalOpen(): boolean {
+  return aboutOpen.value || preferencesOpen.value || relinkDialogOpen.value || unsavedPromptOpen.value
+}
+
+function onGlobalShortcutKey(e: KeyboardEvent): void {
   // Don't fight text fields, and don't trigger before the bridge is up
   // (no point sending TRANSPORT_SEEK that the backend would just drop).
   if (isEditableTarget(e.target)) return
+  if (isShortcutModalOpen()) return
   if (!transport.bridgeReady) return
+
+  if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.repeat) return
+    lastArrowSeekMs = null
+    if (transport.isPlaying) {
+      sendBridge('TRANSPORT_PAUSE')
+      transport.setPlaybackState(false)
+      log.info('transport', 'shortcut pause')
+    } else {
+      sendBridge('TRANSPORT_PLAY')
+      transport.setPlaybackState(true)
+      log.info('transport', 'shortcut play')
+    }
+    return
+  }
+
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    let zoomAction: 'in' | 'out' | 'reset' | null = null
+    if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
+      zoomAction = 'in'
+    } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
+      zoomAction = 'out'
+    } else if (e.key === '0' || e.code === 'Numpad0' || e.code === 'Digit0') {
+      zoomAction = 'reset'
+    }
+    if (zoomAction) {
+      e.preventDefault()
+      e.stopPropagation()
+      ui.requestTimelineZoom(zoomAction)
+      return
+    }
+  }
 
   if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
     e.preventDefault()
@@ -331,7 +370,7 @@ onBeforeUnmount(() => {
   unsubscribeOpenFromPath = null
   unregisterShortcuts?.()
   unregisterShortcuts = null
-  window.removeEventListener('keydown', onTransportKey, { capture: true })
+  window.removeEventListener('keydown', onGlobalShortcutKey, { capture: true })
   disconnectBridge()
   stopImportingWatcher()
   stopBridgeTimerWatcher()
@@ -627,5 +666,33 @@ function onUnsavedPromptCancel(): void {
 body.is-importing,
 body.is-importing * {
   cursor: progress !important;
+}
+
+button {
+  border: 1px solid rgb(63 63 70);
+  outline: none;
+}
+
+button:focus,
+button:focus-visible {
+  --tw-ring-shadow: 0 0 #0000 !important;
+  border-color: rgb(14 165 233);
+  box-shadow: inset 0 0 0 1px rgb(14 165 233 / 0.35) !important;
+  outline: none !important;
+}
+
+button:disabled {
+  border-color: rgb(63 63 70 / 0.55);
+}
+
+.titlebar button,
+.titlebar button:focus,
+.titlebar button:focus-visible,
+button[data-borderless-button="true"],
+button[data-borderless-button="true"]:focus,
+button[data-borderless-button="true"]:focus-visible {
+  border: 0;
+  box-shadow: none !important;
+  outline: none !important;
 }
 </style>

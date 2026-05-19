@@ -18,6 +18,7 @@ import {
   DEFAULT_PX_PER_SECOND,
   MAX_PX_PER_SECOND,
   MIN_PX_PER_SECOND,
+  ZOOM_STEP_PX_PER_SECOND,
   SUBDIVISIONS_PER_BEAT,
   TIME_SIG_NUM
 } from './constants'
@@ -65,7 +66,8 @@ export function useGridGeometry(): GridGeometry {
   const msPerSubBeat = (): number => msPerSubBeatAt(transport.bpm, SUBDIVISIONS_PER_BEAT)
 
   function setPxPerSecond(next: number): number {
-    const clamped = Math.min(MAX_PX_PER_SECOND, Math.max(MIN_PX_PER_SECOND, next))
+    const stepped = Math.round(next / ZOOM_STEP_PX_PER_SECOND) * ZOOM_STEP_PX_PER_SECOND
+    const clamped = Math.min(MAX_PX_PER_SECOND, Math.max(MIN_PX_PER_SECOND, stepped))
     pxPerSecond.value = clamped
     return clamped
   }

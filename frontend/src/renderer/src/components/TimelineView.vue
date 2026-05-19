@@ -22,7 +22,13 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
-import { DEFAULT_PX_PER_SECOND, RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from '@/lib/timeline/constants'
+import {
+  DEFAULT_PX_PER_SECOND,
+  RULER_HEIGHT,
+  SCROLLBAR_HEIGHT,
+  SCROLLBAR_WIDTH,
+  ZOOM_STEP_PX_PER_SECOND
+} from '@/lib/timeline/constants'
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
 import { useTimelineScroll } from '@/lib/timeline/useTimelineScroll'
 import { usePixiApp } from '@/lib/timeline/usePixiApp'
@@ -129,14 +135,12 @@ onMounted(() => {
   host.value?.addEventListener('wheel', onWheel, { passive: false })
   host.value?.addEventListener('contextmenu', onContextMenu)
   host.value?.addEventListener('dblclick', onDoubleClick)
-  window.addEventListener('keydown', onZoomKey, { capture: true })
   startPlayheadRaf()
 })
 onBeforeUnmount(() => {
   host.value?.removeEventListener('wheel', onWheel)
   host.value?.removeEventListener('contextmenu', onContextMenu)
   host.value?.removeEventListener('dblclick', onDoubleClick)
-  window.removeEventListener('keydown', onZoomKey, { capture: true })
   stopPlayheadRaf()
 })
 
@@ -291,48 +295,17 @@ function onDoubleClick(e: MouseEvent): void {
 }
 
 /**
- * Keyboard zoom shortcuts:
- *   Ctrl + (= / + / numpad +)  → zoom in 20%
- *   Ctrl - (- / numpad -)      → zoom out 20%
- *   Ctrl 0                     → reset to DEFAULT_PX_PER_SECOND
- *
+ * Apply a global keyboard zoom request from App.vue.
  * Anchors on the current playhead position when on-screen, otherwise
- * on the viewport centre. `preventDefault` is called so Chromium's
- * built-in page-zoom shortcut doesn't fire — we don't want the whole
- * UI to scale, just the timeline grid.
+ * on the viewport centre.
  */
-function onZoomKey(e: KeyboardEvent): void {
-  if (!(e.ctrlKey || e.metaKey)) return
-  if (e.altKey || e.shiftKey) {
-    // Shift+Ctrl+= is sometimes used for "force capital plus" but we
-    // accept either; reject Alt though so we don't clash with future
-    // accelerators.
-    if (e.altKey) return
-  }
-  // Don't fight text fields — Ctrl+= in an input should do nothing
-  // (the input's own handlers can take over).
-  const target = e.target
-  if (target instanceof HTMLElement) {
-    const tag = target.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return
-  }
-
-  let factor = 1
-  if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
-    factor = 1.2
-  } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
-    factor = 1 / 1.2
-  } else if (e.key === '0' || e.code === 'Numpad0' || e.code === 'Digit0') {
-    factor = 0 // sentinel for "reset to default"
-  } else {
-    return
-  }
-
-  e.preventDefault()
-  e.stopPropagation()
-
+function applyKeyboardZoom(action: 'in' | 'out' | 'reset'): void {
   const prev = pxPerSecond.value
-  const next = geometry.setPxPerSecond(factor === 0 ? DEFAULT_PX_PER_SECOND : prev * factor)
+  const next = geometry.setPxPerSecond(
+    action === 'reset'
+      ? DEFAULT_PX_PER_SECOND
+      : prev + (action === 'in' ? ZOOM_STEP_PX_PER_SECOND : -ZOOM_STEP_PX_PER_SECOND)
+  )
   if (next === prev) return
 
   // Anchor on the playhead position (in viewport pixels) when visible,
@@ -356,6 +329,14 @@ function onZoomKey(e: KeyboardEvent): void {
   redraw()
   updatePlayhead()
 }
+
+watch(
+  () => ui.timelineZoomRequest,
+  (request, previous) => {
+    if (!request || request.id === previous?.id) return
+    applyKeyboardZoom(request.action)
+  }
+)
 
 // ─── Playhead paint loop (RAF) ────────────────────────────────────────────
 // We paint the playhead from `requestAnimationFrame` rather than from a
@@ -603,11 +584,10 @@ function onWheel(e: WheelEvent): void {
   const delta = e.deltaY
   if (delta === 0) return
 
-  // Exponential zoom factor. ~ ±100 delta per wheel notch on most mice
-  // gives ~1.16× / 0.86× per notch which feels brisk but controlled.
-  const factor = Math.pow(1.0015, -delta)
   const prev = pxPerSecond.value
-  const next = geometry.setPxPerSecond(prev * factor)
+  const next = geometry.setPxPerSecond(
+    prev + (delta < 0 ? ZOOM_STEP_PX_PER_SECOND : -ZOOM_STEP_PX_PER_SECOND)
+  )
   if (next === prev) return
 
   // Determine the anchor (in track-area-local pixels) and the time it

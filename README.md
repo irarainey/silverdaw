@@ -395,10 +395,10 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Mouse wheel | Zoom the timeline (anchored on the pointer). |
 | Two-finger horizontal swipe (trackpad) | Pan left/right. |
 | `Shift` + mouse wheel | Pan left/right. |
-| `Ctrl +` / `Ctrl =` | Zoom in 20% (anchored on the playhead). |
-| `Ctrl -` | Zoom out 20%. |
+| `Ctrl +` / `Ctrl =` | Zoom in 10% (anchored on the playhead). |
+| `Ctrl -` | Zoom out 10%. |
 | `Ctrl 0` | Reset zoom to 100% (100 px/s). |
-| `Space` (in transport bar) | Play / pause. |
+| `Space` | Play / pause globally unless a text field or modal dialog is active. |
 | `F2` | Rename project (also activates the title-bar rename input). |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
 | `D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |

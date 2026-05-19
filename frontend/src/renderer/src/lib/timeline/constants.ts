@@ -26,6 +26,7 @@ export const SCROLLBAR_WIDTH = 12
 export const DEFAULT_PX_PER_SECOND = 100
 export const MIN_PX_PER_SECOND = 10
 export const MAX_PX_PER_SECOND = 300
+export const ZOOM_STEP_PX_PER_SECOND = 10
 
 // ─── Musical grid ───────────────────────────────────────────────────────────
 // SUBDIVISIONS_PER_BEAT=4 means quarter-beat resolution (i.e. 16th notes

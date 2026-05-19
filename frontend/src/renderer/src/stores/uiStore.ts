@@ -11,6 +11,8 @@ export type TimelineScrollEdge = 'start' | 'end'
 export type TimelineScrollRequest =
   | { edge: TimelineScrollEdge; id: number }
   | { positionMs: number; id: number }
+export type TimelineZoomAction = 'in' | 'out' | 'reset'
+export type TimelineZoomRequest = { action: TimelineZoomAction; id: number }
 
 interface UiState {
   trackHeaderWidth: number
@@ -29,11 +31,14 @@ interface UiState {
   zoomPxPerSecond: number
   /** One-shot request for TimelineView to jump its horizontal scroll. */
   timelineScrollRequest: TimelineScrollRequest | null
+  /** One-shot request for TimelineView to adjust zoom from a global shortcut. */
+  timelineZoomRequest: TimelineZoomRequest | null
   /** True once `hydrate()` has read the saved values from main. */
   hydrated: boolean
 }
 
 let nextTimelineScrollRequestId = 1
+let nextTimelineZoomRequestId = 1
 
 // Must match `DEFAULT_PREFS.ui` in src/main/index.ts.
 const DEFAULTS = {
@@ -98,6 +103,7 @@ export const useUiStore = defineStore('ui', {
     showLibraryTileImages: DEFAULTS.showLibraryTileImages,
     zoomPxPerSecond: 100,
     timelineScrollRequest: null,
+    timelineZoomRequest: null,
     hydrated: false
   }),
 
@@ -176,6 +182,13 @@ export const useUiStore = defineStore('ui', {
       this.timelineScrollRequest = {
         positionMs,
         id: nextTimelineScrollRequestId++
+      }
+    },
+
+    requestTimelineZoom(action: TimelineZoomAction): void {
+      this.timelineZoomRequest = {
+        action,
+        id: nextTimelineZoomRequestId++
       }
     }
   }
