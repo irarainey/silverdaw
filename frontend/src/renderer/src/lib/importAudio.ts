@@ -14,6 +14,7 @@ import { log } from '@/lib/log'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 
 /**
  * File extensions the JUCE backend's `AudioFormatManager` can decode
@@ -44,6 +45,17 @@ function fileExtensionOf(filePath: string): string {
 function withDetectedKey(metadata: AudioMetadata | null, detectedKey: string | undefined): AudioMetadata | null {
   if (!detectedKey) return metadata
   return { ...(metadata ?? {}), key: detectedKey }
+}
+
+function withRedetectedKey(metadata: AudioMetadata | null, detectedKey: string | undefined): AudioMetadata | null {
+  if (metadata == null) return detectedKey ? { key: detectedKey } : metadata
+  const next = { ...metadata }
+  if (detectedKey) {
+    next.key = detectedKey
+  } else {
+    delete next.key
+  }
+  return next
 }
 
 /**
@@ -243,6 +255,72 @@ export async function importAudioIntoLibrary(opened: {
     console.error('[importAudio] library decode failed:', err)
     library.finishImport(importEntryId, 'failed')
     return null
+  } finally {
+    library.noteImportFinished()
+  }
+}
+
+/**
+ * Force-refresh all derived analysis for an existing library item:
+ * renderer-side decode/peaks/key metadata plus backend decoded-WAV cache
+ * and BPM/beat detection. The source file stays the stable identity of the
+ * library item; only derived fields are replaced.
+ */
+export async function reanalyseLibraryItem(itemId: string): Promise<void> {
+  const library = useLibraryStore()
+  const notifications = useNotificationsStore()
+  const item = library.getItem(itemId)
+  if (!item) return
+  const alreadyAnalysing = library.imports.some(
+    (entry) =>
+      entry.libraryItemId === item.id &&
+      (entry.stage === 'decoding' ||
+        entry.stage === 'detectingTempo' ||
+        entry.stage === 'detectingBeats')
+  )
+  if (alreadyAnalysing) return
+
+  library.beginImportBatch(1)
+  const importEntryId = library.beginImport(item.fileName)
+
+  try {
+    const opened = await window.silverdaw.readAudioFile(item.filePath)
+    if (!opened) {
+      library.finishImport(importEntryId, 'failed')
+      notifications.pushError(`Can't reanalyse "${item.fileName}" — source file could not be opened.`)
+      return
+    }
+
+    const [decoded, metadata] = await Promise.all([
+      decodeAudioToPeaks(opened.data),
+      window.silverdaw.readAudioMetadata(item.filePath).catch(() => null)
+    ])
+    const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
+    const enrichedMetadata = withRedetectedKey(metadata, detectedKey)
+    const playbackFilePath = await resolvePlaybackPath(item.filePath, decoded)
+
+    library.setItemAudioDetails(item.id, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
+    library.setItemPeaks(item.id, decoded.peaks, decoded.sampleRate)
+    library.setItemKey(item.id, detectedKey)
+    library.setItemMetadata(item.id, enrichedMetadata)
+    library.clearItemAnalysis(item.id)
+    library.markImportAnalyzing(importEntryId, item.id)
+
+    sendBridge('LIBRARY_REANALYSE', {
+      itemId: item.id,
+      filePath: item.filePath,
+      fileName: item.fileName,
+      durationMs: decoded.durationMs,
+      sampleRate: decoded.sampleRate,
+      channelCount: decoded.channelCount,
+      playbackFilePath,
+      key: detectedKey ?? ''
+    })
+  } catch (err) {
+    console.error('[importAudio] reanalyse failed:', err)
+    log.error('import', `reanalyse failed for ${item.filePath}: ${String(err)}`)
+    library.finishImport(importEntryId, 'failed')
+    notifications.pushError(`Reanalysis failed for "${item.fileName}".`)
   } finally {
     library.noteImportFinished()
   }

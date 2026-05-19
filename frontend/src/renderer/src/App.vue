@@ -358,7 +358,16 @@ function handleMenuAction(action: string): void {
   if (action === 'file.save') {
     // No current path → fall through to Save As so the user gets the
     // OS dialog rather than a confusing silent failure.
-    if (!project.requestSave()) {
+    if (project.currentFilePath) {
+      void project.saveAndWait(project.currentFilePath, false).then((result) => {
+        if (
+          !result.ok &&
+          (result.error?.startsWith('Timed out') || result.error === 'Backend is not connected')
+        ) {
+          notifications.pushError(`Save failed: ${result.error}.`)
+        }
+      })
+    } else {
       handleMenuAction('file.saveAs')
     }
     return
@@ -367,7 +376,15 @@ function handleMenuAction(action: string): void {
     void window.silverdaw
       .chooseProjectSaveAs(project.projectName || 'Untitled')
       .then((filePath) => {
-        if (filePath) project.requestSaveAs(filePath)
+        if (!filePath) return
+        void project.saveAndWait(filePath, true).then((result) => {
+          if (
+            !result.ok &&
+            (result.error?.startsWith('Timed out') || result.error === 'Backend is not connected')
+          ) {
+            notifications.pushError(`Save failed: ${result.error}.`)
+          }
+        })
       })
     return
   }
@@ -473,7 +490,15 @@ async function onUnsavedPromptSave(): Promise<void> {
   }
 
   const result = await project.saveAndWait(filePath, isSaveAs)
-  if (!result.ok) return // PROJECT_SAVED reported failure; toast is shown by bridgeService
+  if (!result.ok) {
+    if (
+      result.error?.startsWith('Timed out') ||
+      result.error === 'Backend is not connected'
+    ) {
+      notifications.pushError(`Save failed: ${result.error}.`)
+    }
+    return // PROJECT_SAVED reported failures are shown by bridgeService
+  }
   next()
 }
 

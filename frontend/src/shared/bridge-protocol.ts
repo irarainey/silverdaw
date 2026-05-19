@@ -97,6 +97,21 @@ export interface LibraryRemovePayload {
   itemId: string
 }
 
+/** Force a full analysis refresh for a library item. The backend
+ *  recreates its decoded-WAV cache and reruns BPM/beat detection; the
+ *  renderer supplies the freshly redetected key and decoded source details. */
+export interface LibraryReanalysePayload {
+  itemId: string
+  filePath: string
+  fileName?: string
+  durationMs?: number
+  sampleRate?: number
+  channelCount?: number
+  playbackFilePath?: string
+  /** Empty string explicitly clears a previous key when detection is inconclusive. */
+  key?: string
+}
+
 export interface TrackAddPayload {
   trackId: string
   /** Initial display name for new tracks. Optional for older clients. */
@@ -149,6 +164,7 @@ export interface BridgeOutboundMap {
   CLIP_RELINK: ClipRelinkPayload
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
+  LIBRARY_REANALYSE: LibraryReanalysePayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
   TRACK_RENAME: TrackRenamePayload

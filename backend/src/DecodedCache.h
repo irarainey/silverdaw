@@ -52,6 +52,13 @@ class DecodedCache
     juce::File ensureDecoded(const juce::File& sourceFile, juce::AudioFormatManager& formatManager) const;
 
     /**
+     * Delete any existing decoded WAV for `sourceFile`, then decode it
+     * again. Used by explicit library reanalysis when the user wants
+     * derived metadata/cache data rebuilt from the current source file.
+     */
+    juce::File recreateDecoded(const juce::File& sourceFile, juce::AudioFormatManager& formatManager) const;
+
+    /**
      * Resolve the absolute on-disk path the cache would use for
      * `sourceFile`. The returned file may not exist; callers can
      * test `existsAsFile()` to see whether `ensureDecoded` has

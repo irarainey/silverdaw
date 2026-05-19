@@ -247,6 +247,15 @@ class ProjectState : public juce::ValueTree::Listener
      *  the item existed. */
     bool setLibraryItemPlaybackPath(const juce::String& itemId, const juce::String& playbackPath);
 
+    /** Replace or clear the detected musical key for a library item.
+     *  Pass an empty string to clear. Marks dirty. Returns true if
+     *  the item existed. */
+    bool setLibraryItemKey(const juce::String& itemId, const juce::String& key);
+
+    /** Clear persisted BPM/beat/variable-tempo fields before a forced
+     *  reanalysis. Marks dirty. Returns true if the item existed. */
+    bool clearLibraryItemAnalysis(const juce::String& itemId);
+
     /** Read the cached-decoded-WAV path for the library item with
      *  `filePath` as its source path. Returns empty string when no
      *  matching item exists or no cache has been written yet. Used

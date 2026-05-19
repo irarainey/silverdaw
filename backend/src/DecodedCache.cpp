@@ -125,4 +125,19 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
     return cachePath;
 }
 
+juce::File DecodedCache::recreateDecoded(const juce::File& sourceFile, juce::AudioFormatManager& formatManager) const
+{
+    const auto cachePath = cacheFileFor(sourceFile);
+    const auto tmpPath = cachePath.withFileExtension(".wav.tmp");
+    if (cachePath.existsAsFile())
+    {
+        cachePath.deleteFile();
+    }
+    if (tmpPath.existsAsFile())
+    {
+        tmpPath.deleteFile();
+    }
+    return ensureDecoded(sourceFile, formatManager);
+}
+
 } // namespace silverdaw

@@ -647,6 +647,48 @@ bool ProjectState::setLibraryItemPlaybackPath(const juce::String& itemId, const 
     return false;
 }
 
+bool ProjectState::setLibraryItemKey(const juce::String& itemId, const juce::String& key)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            if (key.isEmpty())
+            {
+                item.removeProperty(kKey, nullptr);
+            }
+            else
+            {
+                item.setProperty(kKey, key, nullptr);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ProjectState::clearLibraryItemAnalysis(const juce::String& itemId)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            item.removeProperty(kBpm, nullptr);
+            item.removeProperty(kBeats, nullptr);
+            item.removeProperty(kBeatAnchorSec, nullptr);
+            item.removeProperty(kVariableTempo, nullptr);
+            return true;
+        }
+    }
+    return false;
+}
+
 juce::String ProjectState::getLibraryItemPlaybackPathForSource(const juce::String& sourceFilePath) const
 {
     const auto library = root.getChildWithName(kLibrary);

@@ -61,21 +61,18 @@ export interface LibraryItem {
   key?: string
   /**
    * Path the JUCE backend should actually load when this item is placed
-   * on a track. Equals `filePath` for formats the backend can decode
-   * natively (WAV/AIFF/FLAC/Ogg/MP3/WMA). For others (e.g. .m4a on
-   * Windows), the import flow asks main to transcode the decoded PCM to
-   * a temp WAV and stores that path here. UI continues to display the
-   * original `filePath` / `fileName` to the user.
-   */
-  /**
-   * Path the JUCE backend should actually load when this item is placed
-   * on a track. Equals `filePath` for items that haven't been cached
-   * yet, otherwise points at the decoded-WAV cache. Mutable so the
-   * `LIBRARY_ITEM_ANALYSIS` envelope can promote the item from "use
-   * original" to "use cache" once the backend's `DecodedCache` has
-   * finished writing.
+   * on a track. Equals `filePath` for natively-supported formats; for
+   * renderer-only formats (e.g. M4A on Windows), this can point at the
+   * renderer-written temp WAV.
    */
   playbackFilePath: string
+  /**
+   * Backend-created decoded WAV cache path, filled from
+   * `LIBRARY_ITEM_ANALYSIS` or persisted project state. This is displayed
+   * in the info dialog but is not sent back as `CLIP_ADD.filePath`; the
+   * backend substitutes it internally from the source path.
+   */
+  decodedCacheFilePath?: string
   /**
    * ID3 / Vorbis / iTunes / BWF tag info, populated asynchronously by the
    * main process via `audio:readMetadata`. `undefined` while loading,
@@ -319,6 +316,33 @@ export const useLibraryStore = defineStore('library', {
       if (channelCount > 0) item.channelCount = channelCount
     },
 
+    /** Replace or clear the detected musical key for a library item. */
+    setItemKey(itemId: string, key: string | undefined): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      item.key = key
+      if (item.metadata) {
+        if (key) {
+          item.metadata = { ...item.metadata, key }
+        } else {
+          const { key: _key, ...rest } = item.metadata
+          void _key
+          item.metadata = rest
+        }
+      }
+    },
+
+    /** Clear stale tempo/beat metadata while a forced reanalysis is running. */
+    clearItemAnalysis(itemId: string): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      item.bpm = undefined
+      item.beatAnchorSec = undefined
+      item.beats = undefined
+      item.variableTempo = undefined
+      useProjectStore().peaksRevision++
+    },
+
     /**
      * Remove an item from the library. No-op if the item's file is still
      * referenced by any clip on any track — the user must delete those
@@ -469,17 +493,11 @@ export const useLibraryStore = defineStore('library', {
       item.beatAnchorSec = beats.length > 0 ? beatAnchorSec : undefined
       item.beats = beats.length > 0 ? beats.slice() : undefined
       item.variableTempo = variableTempo || undefined
-      // NB: we deliberately ignore the backend's `playbackFilePath`
-      // here. The decoded-WAV cache is a backend-internal
-      // optimisation — the engine substitutes the cached WAV via
-      // `getLibraryItemPlaybackPathForSource` on every CLIP_ADD,
-      // keyed on the original source path. If we overwrote
-      // `item.playbackFilePath` with the cache path, subsequent
-      // `addClipFromLibrary` calls would send the cache path as
-      // `CLIP_ADD.filePath`, breaking the backend's library-item
-      // lookup (which matches on the source `filePath`) and
-      // preventing project-BPM seeding from running.
-      void playbackFilePath
+      // Keep the backend's decoded-WAV cache path separate from
+      // `playbackFilePath`. The renderer still sends the source path
+      // for normal clip adds so the backend can do its library lookup,
+      // but the info dialog can show the actual WAV cache path.
+      item.decodedCacheFilePath = playbackFilePath?.trim() ? playbackFilePath : undefined
       // Bump the project's redraw counter so the timeline repaints
       // with the freshly-arrived beat markers on the matching clips.
       // Done unconditionally — the cost is a single repaint and
@@ -488,8 +506,8 @@ export const useLibraryStore = defineStore('library', {
       // Surface beat detection as its own visible stage in the import
       // progress panel before finishing the entry. The backend produces
       // BPM and beats in a single pass, but the UX reads more clearly
-      // when the user sees two sequential stages ("Detecting tempo…"
-      // → "Detecting beats…" → done). 600 ms is long enough to be
+      // when the user sees two sequential stages ("Analysing tempo…"
+      // → "Analysing beats…" → done). 600 ms is long enough to be
       // noticeable and short enough not to feel artificial.
       const entry = this.imports.find((e) => e.libraryItemId === itemId)
       if (entry && entry.stage !== 'done' && entry.stage !== 'failed') {

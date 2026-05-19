@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
 import type { LibraryItem } from '@/stores/libraryStore'
+import { keyBadgeClass } from '@/lib/keyBadge'
 
 const props = defineProps<{
   open: boolean
@@ -37,6 +38,13 @@ const usages = computed(() => {
   return rows
 })
 
+const displayKey = computed(() => props.item?.key ?? props.item?.metadata?.key)
+const displayDecodedCachePath = computed(() => {
+  const item = props.item
+  if (!item) return 'Not available yet'
+  return item.decodedCacheFilePath ?? 'Not available yet'
+})
+
 const metadataRows = computed(() => {
   const item = props.item
   if (!item) return []
@@ -52,7 +60,6 @@ const metadataRows = computed(() => {
     ['Genre', m?.genre?.join(', ')],
     ['Composer', m?.composer],
     ['BPM tag', formatNumber(m?.bpm)],
-    ['Key', item.key ?? m?.key],
     ['Comment', m?.comment],
     ['Codec', m?.codec],
     ['Container', m?.container],
@@ -179,24 +186,6 @@ function channelLabel(count: number): string {
 
             <dl class="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
               <dt class="text-zinc-500">
-                Library id
-              </dt>
-              <dd class="break-all font-mono text-[11px] text-zinc-300">
-                {{ item.id }}
-              </dd>
-              <dt class="text-zinc-500">
-                File name
-              </dt>
-              <dd class="break-all text-zinc-200">
-                {{ item.fileName }}
-              </dd>
-              <dt class="text-zinc-500">
-                Path
-              </dt>
-              <dd class="break-all font-mono text-[11px] text-zinc-300">
-                {{ item.filePath }}
-              </dd>
-              <dt class="text-zinc-500">
                 Duration
               </dt>
               <dd>{{ formatDuration(item.durationMs) }}</dd>
@@ -221,6 +210,20 @@ function channelLabel(count: number): string {
                 </span>
                 <span v-else>Not analysed</span>
               </dd>
+              <dt
+                v-if="displayKey"
+                class="text-zinc-500"
+              >
+                Detected key
+              </dt>
+              <dd v-if="displayKey">
+                <span
+                  :class="keyBadgeClass(displayKey)"
+                  title="Detected key"
+                >
+                  {{ displayKey }}
+                </span>
+              </dd>
               <dt class="text-zinc-500">
                 Beat markers
               </dt>
@@ -229,12 +232,6 @@ function channelLabel(count: number): string {
                 Beat anchor
               </dt>
               <dd>{{ item.beatAnchorSec !== undefined ? `${item.beatAnchorSec.toFixed(3)} s` : 'None' }}</dd>
-              <dt class="text-zinc-500">
-                Playback file
-              </dt>
-              <dd class="break-all font-mono text-[11px] text-zinc-300">
-                {{ item.playbackFilePath }}
-              </dd>
             </dl>
           </section>
 
@@ -313,6 +310,38 @@ function channelLabel(count: number): string {
             >
               No tag metadata was found for this file.
             </div>
+          </section>
+
+          <section class="mt-5">
+            <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Library details
+            </h3>
+            <dl class="grid grid-cols-[120px_minmax(0,1fr)] gap-x-3 gap-y-1.5 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2">
+              <dt class="text-zinc-500">
+                Library id
+              </dt>
+              <dd class="break-all font-mono text-[11px] text-zinc-300">
+                {{ item.id }}
+              </dd>
+              <dt class="text-zinc-500">
+                File name
+              </dt>
+              <dd class="break-all text-zinc-200">
+                {{ item.fileName }}
+              </dd>
+              <dt class="text-zinc-500">
+                Source file
+              </dt>
+              <dd class="break-all font-mono text-[11px] text-zinc-300">
+                {{ item.filePath }}
+              </dd>
+              <dt class="text-zinc-500">
+                Decoded WAV cache
+              </dt>
+              <dd class="break-all font-mono text-[11px] text-zinc-300">
+                {{ displayDecodedCachePath }}
+              </dd>
+            </dl>
           </section>
         </div>
 

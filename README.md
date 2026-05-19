@@ -267,10 +267,13 @@ The detector lives in [`backend/src/BpmDetector.cpp`](backend/src/BpmDetector.cp
 runs on the same `juce::ThreadPool` that produces peaks — kicked off from both the
 `LIBRARY_ADD` and `CLIP_ADD` dispatch handlers (whichever arrives first wins; the
 helper `ensureBpmDetection` is idempotent and won't re-analyse a file the library
-already has a BPM for). Worker thread → decode the file via JUCE → downmix to mono
-→ resample to 44.1 kHz with libsamplerate → feed BTrack frame-by-frame at hop=512
-recording every `beatDueInCurrentFrame()` event. Analysis is capped at the first 2
-minutes of audio; estimates outside `[40, 240]` BPM are dropped as implausible.
+already has a BPM for). The library tile context menu can also send
+`LIBRARY_REANALYSE`, which clears the current tempo/beat fields, recreates the
+decoded-WAV cache, and reruns detection from the current source file. Worker thread
+→ decode the file via JUCE → downmix to mono → resample to 44.1 kHz with
+libsamplerate → feed BTrack frame-by-frame at hop=512 recording every
+`beatDueInCurrentFrame()` event. Analysis is capped at the first 2 minutes of audio;
+estimates outside `[40, 240]` BPM are dropped as implausible.
 
 The reported BPM is derived from the **median of beat-to-beat intervals** (not from
 BTrack's running tempo estimate, which can drift a fraction of a BPM from the
@@ -280,9 +283,10 @@ checking the spread of per-beat tempo samples (after a short settling period) �
 it's > 5 % of the mean, the library tile shows the amber `~ BPM` warning badge.
 
 When detection finishes the worker `MessageManager::callAsync`s back to the JUCE
-message thread to write `bpm`, `beats`, and `variableTempo` onto the matching
-`LIBRARY > ITEM` node and broadcast `LIBRARY_ITEM_ANALYSIS { itemId, bpm, beats,
-variableTempo }`. If the project has no other clips on tracks yet AND no other
+message thread to write `bpm`, `beats`, `beatAnchorSec`, `variableTempo`, and the
+decoded playback cache path onto the matching `LIBRARY > ITEM` node and broadcast
+`LIBRARY_ITEM_ANALYSIS { itemId, bpm, beatAnchorSec, beats, variableTempo,
+playbackFilePath }`. If the project has no other clips on tracks yet AND no other
 library item has been analysed, the project BPM is seeded too and a
 `PROJECT_BPM_APPLIED { bpm }` envelope is broadcast — the renderer mirrors both
 into `libraryStore` and `transportStore`. The seed runs even for variable-tempo
@@ -327,7 +331,8 @@ Double-click a tile to open a read-only information dialog. The same dialog is a
 from the tile's right-click context menu via **Show information**. The dialog shows file
 details, technical audio details, detected BPM/beat/key metadata, tag metadata, cover art
 and which tracks currently use the library item. The right-click context menu also includes
-**Delete**; it is disabled while the library item is used by any clip.
+**Reanalyse clip**, which refreshes the decoded cache, BPM/beat analysis and musical key,
+and **Delete**, which is disabled while the library item is used by any clip.
 
 ## Preferences
 
@@ -388,7 +393,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl + V` | Paste the clipboard clip — on the source track it lands immediately after the source clip; on a different (selected) track it lands at the playhead. A toast appears if the slot is already occupied. |
 | **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Save as Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
 | Double-click a **library tile** | Open the read-only library item information dialog. |
-| Right-click a **library tile** | Open the library tile context menu with **Show information** and **Delete**. Delete is disabled while the item is in use. |
+| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Reanalyse clip**, and **Delete**. Delete is disabled while the item is in use. |
 
 Clicking **Skip to start** in the transport bar rewinds the playhead and returns the
 timeline's horizontal scroll position to the start.

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// Floating import-progress panel.
+// Floating audio-work progress panel.
 //
-// Sits in the bottom-right corner whenever there are in-flight imports.
-// Replaces the old status-bar progress bar for surfacing import status
+// Sits in the bottom-right corner whenever there are in-flight imports or
+// reanalysis jobs. Replaces the old status-bar progress bar for surfacing status
 // — that bar only ticked on renderer-side decode finish and stayed
 // silent during the (potentially slow) backend BPM-detection stage,
 // which left the user wondering whether anything was still happening.
@@ -26,11 +26,11 @@ const entries = computed(() => library.imports)
 function stageLabel(stage: ImportStage): string {
   switch (stage) {
     case 'decoding':
-      return 'Decoding audio…'
+      return 'Preparing audio…'
     case 'detectingTempo':
-      return 'Detecting tempo…'
+      return 'Analysing tempo…'
     case 'detectingBeats':
-      return 'Detecting beats…'
+      return 'Analysing beats…'
     case 'done':
       return 'Done'
     case 'failed':
@@ -61,7 +61,7 @@ function stageColor(stage: ImportStage): string {
       aria-live="polite"
     >
       <div class="mb-1 px-1 text-[10px] uppercase tracking-wide text-zinc-500">
-        Importing ({{ entries.length }})
+        Processing audio ({{ entries.length }})
       </div>
       <div
         v-for="entry in entries"

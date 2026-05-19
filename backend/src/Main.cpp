@@ -299,7 +299,8 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, silverdaw::ProjectState&
 
 void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                      silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
-                     silverdaw::BridgeServer& bridge, const silverdaw::DecodedCache& decodedCache)
+                     silverdaw::BridgeServer& bridge, const silverdaw::DecodedCache& decodedCache,
+                     bool recreateDecodedCache = false)
 {
     silverdaw::log::info("bpmjob", "start itemId=" + itemId + " file=" + filePath.getFileName());
 
@@ -309,7 +310,9 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
     // engine will use for all subsequent CLIP_ADDs of this file, so
     // the read-ahead thread reads cheap PCM instead of decoding the
     // original on every block.
-    const auto cachedFile = decodedCache.ensureDecoded(filePath, engine.getFormatManager());
+    const auto cachedFile = recreateDecodedCache
+                                ? decodedCache.recreateDecoded(filePath, engine.getFormatManager())
+                                : decodedCache.ensureDecoded(filePath, engine.getFormatManager());
     const juce::String cachedPath = cachedFile.existsAsFile() ? cachedFile.getFullPathName() : juce::String();
 
     // Step 2: analyse the audio. Prefer the cached WAV (it's faster
@@ -328,11 +331,12 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
         // CLIP_ADDs use the cheap WAV. Broadcast a minimal
         // LIBRARY_ITEM_ANALYSIS with zero BPM and empty beats so the
         // renderer knows to update playbackFilePath.
-        if (cachedPath.isNotEmpty())
+        if (cachedPath.isNotEmpty() || recreateDecodedCache)
         {
             juce::MessageManager::callAsync(
                 [itemId, cachedPath, &projectState, &bridge]
                 {
+                    projectState.clearLibraryItemAnalysis(itemId);
                     projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
                     auto* p = new juce::DynamicObject();
                     p->setProperty("itemId", itemId);
@@ -572,6 +576,26 @@ void ensureBpmDetection(const juce::String& filePath, silverdaw::AudioEngine& en
     peakPool.addJob(
         [itemId, file = juce::File(filePath), &engine, &projectState, &bridge, &decodedCache]
         { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache); });
+}
+
+void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& filePath, silverdaw::AudioEngine& engine,
+                              silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                              juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
+{
+    if (itemId.isEmpty() || filePath.isEmpty()) return;
+    {
+        std::lock_guard<std::mutex> lock(bpmJobsMutex);
+        if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())
+        {
+            silverdaw::log::debug("bpmjob", "skip duplicate in-flight reanalysis itemId=" + itemId);
+            return;
+        }
+        bpmJobsInFlight.insert(itemId);
+    }
+    projectState.clearLibraryItemAnalysis(itemId);
+    peakPool.addJob(
+        [itemId, file = juce::File(filePath), &engine, &projectState, &bridge, &decodedCache]
+        { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache, true); });
 }
 
 void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
@@ -1322,6 +1346,24 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
         silverdaw::log::info("bridge", "recv LIBRARY_REMOVE itemId=" + itemId);
         projectState.removeLibraryItem(itemId);
+    }
+    else if (type == "LIBRARY_REANALYSE")
+    {
+        const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
+        const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+        const juce::String fileName = payload.getProperty("fileName", juce::var()).toString();
+        const double durationMs = static_cast<double>(payload.getProperty("durationMs", 0.0));
+        const int sampleRate = static_cast<int>(payload.getProperty("sampleRate", 0));
+        const int channelCount = static_cast<int>(payload.getProperty("channelCount", 0));
+        const juce::String playbackPath = payload.getProperty("playbackFilePath", juce::var()).toString();
+        silverdaw::log::info("bridge", "recv LIBRARY_REANALYSE itemId=" + itemId);
+        projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath);
+        if (payload.hasProperty("key"))
+        {
+            projectState.setLibraryItemKey(itemId, payload.getProperty("key", juce::var()).toString());
+        }
+        const juce::String analysisPath = playbackPath.isNotEmpty() ? playbackPath : filePath;
+        forceLibraryItemAnalysis(itemId, analysisPath, engine, projectState, bridge, peakPool, decodedCache);
     }
     else if (type == "TRANSPORT_PLAY")
     {

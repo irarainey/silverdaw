@@ -15,8 +15,9 @@
 
 import { computed, ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
-import { importAudioIntoLibrary } from '@/lib/importAudio'
+import { importAudioIntoLibrary, reanalyseLibraryItem } from '@/lib/importAudio'
 import { log } from '@/lib/log'
+import { keyBadgeClass } from '@/lib/keyBadge'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 
@@ -49,6 +50,7 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     const inUse = library.isItemInUse(item.id)
     return [
         { command: 'library.info', label: 'Show information' },
+        { command: 'library.reanalyse', label: 'Reanalyse clip', separatorAbove: true },
         {
             command: 'library.delete',
             label: inUse ? 'Delete (in use)' : 'Delete',
@@ -185,6 +187,11 @@ function onContextMenuCommand(command: string): void {
     if (!item) return
     if (command === 'library.info') {
         openItemInfo(item)
+        return
+    }
+    if (command === 'library.reanalyse') {
+        closeItemContextMenu()
+        void reanalyseLibraryItem(item.id)
         return
     }
     if (command === 'library.delete') {
@@ -341,7 +348,7 @@ function onResizePointerUp(): void {
                 <span>{{ formatDuration(item.durationMs) }}</span>
                 <span
                   v-if="item.key"
-                  class="whitespace-nowrap rounded bg-zinc-800 px-1 py-0.5 text-[9px] tracking-wide text-zinc-300"
+                  :class="keyBadgeClass(item.key)"
                   title="Detected key"
                 >
                   {{ item.key }}

@@ -232,6 +232,8 @@ export const DEFAULT_PROJECT_NAME = 'Untitled'
  */
 let pendingSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
 let pendingViewStateSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
+let pendingSaveTimeout: ReturnType<typeof setTimeout> | null = null
+const PENDING_SAVE_TIMEOUT_MS = 10000
 
 /**
  * Return the position closest to `desiredStartMs` on `trackId` where a
@@ -1279,7 +1281,8 @@ export const useProjectStore = defineStore('project', {
               item.bpm,
               anchor,
               persistedBeats,
-              item.variableTempo === true
+              item.variableTempo === true,
+              item.playbackFilePath
             )
           }
           // Fetch tags + technical duration asynchronously so older
@@ -1443,14 +1446,23 @@ export const useProjectStore = defineStore('project', {
     requestSave(): boolean {
       if (!this.currentFilePath) return false
       log.info('project', `requestSave path=${this.currentFilePath}`)
-      sendBridge('PROJECT_SAVE', { filePath: this.currentFilePath, viewScrollX: this.viewScrollX ?? undefined })
+      const sent = sendBridge('PROJECT_SAVE', {
+        filePath: this.currentFilePath,
+        viewScrollX: this.viewScrollX ?? undefined
+      })
+      if (!sent) {
+        useNotificationsStore().pushError('Save failed: backend is not connected.')
+      }
       return true
     },
 
     /** Send PROJECT_SAVE_AS with the path the user picked in the OS dialog. */
     requestSaveAs(filePath: string): void {
       log.info('project', `requestSaveAs path=${filePath}`)
-      sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
+      const sent = sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
+      if (!sent) {
+        useNotificationsStore().pushError('Save failed: backend is not connected.')
+      }
     },
 
     /**
@@ -1464,13 +1476,29 @@ export const useProjectStore = defineStore('project', {
       // back — could happen on a backend restart). Bias toward unblocking
       // the UI rather than waiting forever.
       if (pendingSaveResolver) pendingSaveResolver({ ok: false, error: 'Superseded by a newer save' })
+      if (pendingSaveTimeout) {
+        clearTimeout(pendingSaveTimeout)
+        pendingSaveTimeout = null
+      }
       const promise = new Promise<{ ok: boolean; error?: string }>((resolve) => {
         pendingSaveResolver = resolve
+        pendingSaveTimeout = setTimeout(() => {
+          pendingSaveTimeout = null
+          if (!pendingSaveResolver) return
+          pendingSaveResolver({ ok: false, error: 'Timed out waiting for backend save acknowledgement' })
+          pendingSaveResolver = null
+        }, PENDING_SAVE_TIMEOUT_MS)
       })
-      if (isSaveAs) {
-        sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
-      } else {
-        sendBridge('PROJECT_SAVE', { filePath, viewScrollX: this.viewScrollX ?? undefined })
+      const sent = isSaveAs
+        ? sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
+        : sendBridge('PROJECT_SAVE', { filePath, viewScrollX: this.viewScrollX ?? undefined })
+      if (!sent) {
+        if (pendingSaveTimeout) {
+          clearTimeout(pendingSaveTimeout)
+          pendingSaveTimeout = null
+        }
+        pendingSaveResolver?.({ ok: false, error: 'Backend is not connected' })
+        pendingSaveResolver = null
       }
       return promise
     },
@@ -1482,6 +1510,10 @@ export const useProjectStore = defineStore('project', {
      * fired by `requestSave` doesn't open a promise).
      */
     notifySaveAck(ok: boolean, error?: string): void {
+      if (pendingSaveTimeout) {
+        clearTimeout(pendingSaveTimeout)
+        pendingSaveTimeout = null
+      }
       if (pendingSaveResolver) {
         pendingSaveResolver({ ok, error })
         pendingSaveResolver = null

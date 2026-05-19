@@ -229,13 +229,13 @@ export function disconnect(): void {
   useTransportStore().setConnected(false)
 }
 
-/** Send a typed command to the backend. Drops silently if not connected. */
-export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K>): void {
+/** Send a typed command to the backend. Returns false when the socket is not connected. */
+export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K>): boolean {
   const [type, payload] = args as [K, unknown?]
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     console.warn('[bridge] not connected; dropping', type)
     log.warn('bridge', `not connected; dropping ${type}`)
-    return
+    return false
   }
   const env = payload === undefined ? { type } : { type, payload }
   // PLAYHEAD_UPDATE-style chatter doesn't exist outbound, but TRACK_GAIN
@@ -247,6 +247,7 @@ export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K
     log.debug('bridge', `send ${type}`)
   }
   socket.send(JSON.stringify(env))
+  return true
 }
 
 function scheduleReconnect(): void {
