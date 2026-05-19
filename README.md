@@ -111,10 +111,10 @@ the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
 
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
-  TRACK[id, gain]
+  TRACK[id, name, gain]
     CLIP[id, filePath, offsetMs, inMs, durationMs, colorIndex?]
   LIBRARY
-    ITEM[id, filePath, bpm?, beats?, variableTempo?]
+    ITEM[id, filePath, bpm?, beats?, beatAnchorSec?, playbackFilePath?, variableTempo?]
 ```
 
 `CLIP` carries a non-destructive trim window: `offsetMs` is the timeline start,
@@ -129,11 +129,12 @@ hold the BTrack analysis output (see [BPM & beat detection](#bpm--beat-detection
 below); stored once and round-tripped through save/load so a reopened project
 doesn't have to re-analyse every imported file.
 
-The view-state properties (`viewScrollX`, `playheadMs`) bypass the dirty-flag listener via a
-`suppressDirtyTransitions` guard inside their setters — scrolling or moving the playhead
-doesn't prompt an unsaved-changes dialog. Everything else (BPM, project length, view zoom,
-clip add/move/remove, gain changes, library import/remove, etc.) marks the project dirty as
-a normal property edit.
+Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
+The view-state properties (`viewPxPerSecond`, `viewScrollX`, `playheadMs`) bypass the
+dirty-flag listener via a `suppressDirtyTransitions` guard inside their setters — zooming,
+scrolling, or moving the playhead doesn't prompt an unsaved-changes dialog. Meaningful
+project edits (BPM, project length, clip add/move/remove, gain changes, library
+import/remove, etc.) still mark the project dirty as normal property edits.
 
 The `LIBRARY` sub-tree carries the user's imported-but-not-yet-placed samples so the catalogue
 survives save / load. Only the stable `(id, filePath)` pair is persisted — cover art, ID3
@@ -145,10 +146,12 @@ object carries `schemaVersion`, `appVersion`, and an ISO `savedAt` timestamp; th
 field holds the entire `PROJECT` `ValueTree` mapped through
 [`ValueTreeJson`](backend/src/ValueTreeJson.h) (each node becomes
 `{ "$type": "TRACK", id: "...", $children: [ … ] }`). Atomic save (write `<file>.tmp` then
-rename) and forward-compatible load (unknown keys are ignored). On save, and before leaving a
-clean project, the current timeline scroll position is flushed into `viewScrollX` and the
-current engine playhead position is captured into `playheadMs` so reopening the project resumes
-where the user left off. Logic lives in [`backend/src/ProjectFile.cpp`](backend/src/ProjectFile.cpp).
+rename) and forward-compatible load (unknown keys are ignored). Normal Save / Save As writes
+the full project tree. Before leaving a clean project, the renderer sends
+`PROJECT_SAVE_VIEW_STATE`; the backend updates only `viewScrollX` and `playheadMs` in the
+existing `.silverdaw` file, so view state survives reopen without saving unrelated unsaved
+project edits or changing the dirty flag. Logic lives in
+[`backend/src/ProjectFile.cpp`](backend/src/ProjectFile.cpp).
 
 **Missing files** — on every `tracksAsJson` / `libraryAsJson` call, the backend stat()s each
 referenced source path. Anything that's gone gets an `unresolved: true` flag in the
@@ -168,7 +171,8 @@ internal flag on every mutation. The flag is cleared by `markClean()` (called af
 successful save) and changes are broadcast as `PROJECT_DIRTY { dirty }` envelopes. The renderer
 mirrors it as `projectStore.isDirty`, shows a leading `•` next to the project name in the title
 bar when dirty, and intercepts **File → New / Open / Exit** and the window close button to
-prompt with **Save / Don't save / Cancel** before discarding work.
+prompt with **Save / Don't save / Cancel** before discarding work. When the project is clean,
+those same leave-project paths silently flush view state only.
 
 On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
 
@@ -177,6 +181,8 @@ On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
 - Sends `WAVEFORM_REQUEST` for every clip lacking peaks.
 - Re-fetches embedded metadata (cover art, artist/title) via `audio:readMetadata` IPC for
   reconstructed library items.
+- Restores persisted zoom, horizontal scroll, BPM, project length, and playhead position from
+  the snapshot.
 
 `PROJECT_STATE` is purely additive on the connect path — it never deletes optimistic state the
 user just created, so a race between an early user action and the snapshot arriving doesn't
@@ -489,7 +495,7 @@ follow-up that requires an Authenticode certificate.
 
 `scripts/Build-InstallerArt.py` regenerates the NSIS banner BMPs
 (`installerHeader.bmp`, `installerSidebar.bmp`, `uninstallerSidebar.bmp` —
-the jackdaw logo on black) and the `.silverdaw` document icon
+the Silverdaw logo on black) and the `.silverdaw` document icon
 (`resources/icons/silverdaw-file.ico` — white page + folded corner + logo)
 from `frontend/resources/icons/256x256.png`. Re-run it whenever the source
 logo changes; the outputs are checked into git so the normal release build
