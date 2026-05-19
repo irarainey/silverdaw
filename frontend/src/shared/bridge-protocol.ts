@@ -354,6 +354,13 @@ export interface ProjectStateLibraryItem {
   /** Detected BPM (rounded to 2 d.p. on disk). Absent until the
    *  backend's BPM detection job finishes for this file. */
   bpm?: number
+  /** Detected beat positions in seconds from the start of the source
+   *  file. Absent for items without BPM detection results yet. */
+  beats?: number[]
+  /** True when BTrack's running tempo estimate fluctuated by more than
+   *  ~2 % over the analysis window — the project-BPM seeder skips
+   *  these and the library tile shows a "variable" badge. */
+  variableTempo?: boolean
   unresolved?: boolean
 }
 
@@ -401,12 +408,17 @@ export interface WaveformReadyPayload {
   sampleRate: number
 }
 
-/** Backend notification that BPM detection has completed for a library
- *  item. The renderer mirrors the value on the library item so the
- *  panel can show it on the tile. */
-export interface LibraryItemBpmPayload {
+/** Backend notification that BPM + beat-position detection has completed
+ *  for a library item. `beats` is an array of times (in seconds from
+ *  the start of the source file) at which BTrack detected a beat;
+ *  `variableTempo` is `true` when the running tempo estimate fluctuated
+ *  enough over the analysis window to make a single project-BPM seed
+ *  misleading. */
+export interface LibraryItemAnalysisPayload {
   itemId: string
   bpm: number
+  beats: number[]
+  variableTempo: boolean
 }
 
 /** Backend notification that it just seeded the project BPM (e.g. from
@@ -431,7 +443,7 @@ export interface BridgeInboundMap {
   PROJECT_RENAMED: ProjectRenamedPayload
   PROJECT_DIRTY: ProjectDirtyPayload
   WAVEFORM_READY: WaveformReadyPayload
-  LIBRARY_ITEM_BPM: LibraryItemBpmPayload
+  LIBRARY_ITEM_ANALYSIS: LibraryItemAnalysisPayload
   PROJECT_BPM_APPLIED: ProjectBpmAppliedPayload
 }
 
@@ -471,7 +483,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PROJECT_RENAMED',
   'PROJECT_DIRTY',
   'WAVEFORM_READY',
-  'LIBRARY_ITEM_BPM',
+  'LIBRARY_ITEM_ANALYSIS',
   'PROJECT_BPM_APPLIED'
 ])
 
@@ -532,6 +544,13 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
       if (!isPlainObject(item)) return false
       if (typeof item.id !== 'string' || typeof item.filePath !== 'string') return false
       if (item.bpm !== undefined && typeof item.bpm !== 'number') return false
+      if (item.beats !== undefined) {
+        if (!Array.isArray(item.beats)) return false
+        for (const b of item.beats) {
+          if (typeof b !== 'number') return false
+        }
+      }
+      if (item.variableTempo !== undefined && typeof item.variableTempo !== 'boolean') return false
       if (item.unresolved !== undefined && typeof item.unresolved !== 'boolean') return false
     }
   }
@@ -617,9 +636,15 @@ export function isTrackGainAppliedPayload(value: unknown): value is TrackGainApp
   )
 }
 
-/** Guard for `LibraryItemBpmPayload`. */
-export function isLibraryItemBpmPayload(value: unknown): value is LibraryItemBpmPayload {
-  return isPlainObject(value) && typeof value.itemId === 'string' && typeof value.bpm === 'number'
+/** Guard for `LibraryItemAnalysisPayload`. */
+export function isLibraryItemAnalysisPayload(value: unknown): value is LibraryItemAnalysisPayload {
+  if (!isPlainObject(value)) return false
+  if (typeof value.itemId !== 'string' || typeof value.bpm !== 'number') return false
+  if (!Array.isArray(value.beats)) return false
+  for (const b of value.beats) {
+    if (typeof b !== 'number') return false
+  }
+  return typeof value.variableTempo === 'boolean'
 }
 
 /** Guard for `ProjectBpmAppliedPayload`. */

@@ -18,12 +18,14 @@ export const SCROLLBAR_HEIGHT = 12
 export const SCROLLBAR_WIDTH = 12
 
 // ─── Horizontal zoom (px per second) ────────────────────────────────────────
-// The min/max caps prevent zooming to either a sliver or
-// hundreds-of-pixels-per-second extremes where waveform decimation breaks
-// down.
-export const DEFAULT_PX_PER_SECOND = 60
+// The min/max caps prevent zooming to either a sliver or extreme
+// densities where the per-clip / per-grid-line draw work starts to
+// stall the UI thread. The previous cap of 480 px/s was visibly
+// laggy on longer projects; 300 px/s (3× default) gives plenty of
+// headroom for fine clip edits without that hit.
+export const DEFAULT_PX_PER_SECOND = 100
 export const MIN_PX_PER_SECOND = 10
-export const MAX_PX_PER_SECOND = 480
+export const MAX_PX_PER_SECOND = 300
 
 // ─── Musical grid ───────────────────────────────────────────────────────────
 // SUBDIVISIONS_PER_BEAT=4 means quarter-beat resolution (i.e. 16th notes

@@ -357,25 +357,59 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (pointerMs === null) return
 
     const rawStartMs = pointerMs - clipGrabOffsetMs
-    // Alt = fine drag (1 ms resolution, no grid snap). Read per move so
-    // the user can flip in and out of fine mode without restarting the
-    // drag.
     let target: number
     if (e.altKey) {
+      // Alt = fine drag (1 ms resolution, no snap). Read per move so
+      // the user can flip in and out of fine mode without restarting.
       target = Math.max(0, Math.round(rawStartMs))
     } else {
       const snap = geometry.msPerSubBeat()
-      target = Math.max(0, Math.round(rawStartMs / snap) * snap)
+      // Beat-aware snap: when the clip's source file has detected
+      // beats and at least one of them falls inside the clip's trim
+      // window, snap so that beat lines up with a project sub-beat
+      // (instead of snapping the raw clip edge). The reference beat
+      // is the first detected beat inside the window — usually the
+      // musically meaningful downbeat of the clip.
+      const referenceBeatOffsetMs = firstBeatOffsetMs(clip)
+      if (referenceBeatOffsetMs !== null) {
+        const projectBeat = rawStartMs + referenceBeatOffsetMs
+        const snappedBeat = Math.round(projectBeat / snap) * snap
+        target = Math.max(0, snappedBeat - referenceBeatOffsetMs)
+      } else {
+        // No source beats known — fall back to the legacy edge-snap.
+        target = Math.max(0, Math.round(rawStartMs / snap) * snap)
+      }
     }
-    // Cross-track move: pass the trackId the cursor is currently over.
-    // moveClip applies its own gap-clamp + collision-free placement on
-    // the destination track and re-parents the clip if the trackId
-    // differs from its current host. When the cursor is in an
-    // inter-track gap (or in the ruler band), `pointerToTrackId`
-    // returns null and we keep the clip on its current track.
     const destTrackId = pointerToTrackId(e.clientY) ?? clip.trackId
     project.moveClip(clip.id, target, destTrackId)
     onClipMoved()
+  }
+
+  /** Returns the offset (ms) from the clip's left edge to the first
+   *  source-grid beat inside the clip's window, or null if the clip's
+   *  source file has no detected beats / BPM yet. Uses the *same
+   *  source-global beat grid* as `useTimelineDrawing.drawClip` — both
+   *  views anchor on `beats[0]` and step by `60/sourceBpm`, so the
+   *  snap target is exactly the first drawn marker. */
+  function firstBeatOffsetMs(clip: {
+    filePath: string
+    inMs: number
+    durationMs: number
+  }): number | null {
+    const item = library.items.find((i) => i.filePath === clip.filePath)
+    const beats = item?.beats
+    const sourceBpm = item?.bpm
+    if (!beats || beats.length === 0 || !sourceBpm || sourceBpm <= 0) return null
+    const inMs = clip.inMs
+    const outMs = inMs + clip.durationMs
+    const beatSpacingMs = (60 / sourceBpm) * 1000
+    const universalAnchorMs = beats[0]! * 1000
+    let firstBeatMs =
+      universalAnchorMs +
+      Math.ceil((inMs - universalAnchorMs) / beatSpacingMs) * beatSpacingMs
+    while (firstBeatMs < inMs) firstBeatMs += beatSpacingMs
+    if (firstBeatMs > outMs) return null
+    return firstBeatMs - inMs
   }
 
   function onClipPointerUp(_e: PointerEvent): void {

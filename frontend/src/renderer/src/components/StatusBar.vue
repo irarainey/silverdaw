@@ -19,7 +19,7 @@ const ui = useUiStore()
 // template doesn't have to do arithmetic on a watched getter.
 const importPercent = computed(() => Math.round(library.importFraction * 100))
 
-// Timeline zoom expressed as a percentage of the default (60 px/s = 100%).
+// Timeline zoom expressed as a percentage of the default (100 px/s = 100%).
 // Range: 10/60 ≈ 17% out to 480/60 = 800%. Shown to the nearest whole
 // percent; tooltip carries the raw px/sec for power users.
 const zoomPercent = computed(() => Math.round((ui.zoomPxPerSecond / DEFAULT_PX_PER_SECOND) * 100))

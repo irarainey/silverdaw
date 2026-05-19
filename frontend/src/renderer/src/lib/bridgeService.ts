@@ -30,7 +30,7 @@ import {
   isBridgeInboundType,
   isClipAckPayload,
   isClipRemovedPayload,
-  isLibraryItemBpmPayload,
+  isLibraryItemAnalysisPayload,
   isPlayheadUpdatePayload,
   isProjectBpmAppliedPayload,
   isProjectDirtyPayload,
@@ -433,9 +433,17 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
-    case 'LIBRARY_ITEM_BPM': {
-      useLibraryStore().setItemBpm(msg.payload.itemId, msg.payload.bpm)
-      log.info('bridge', `LIBRARY_ITEM_BPM itemId=${msg.payload.itemId} bpm=${msg.payload.bpm.toFixed(2)}`)
+    case 'LIBRARY_ITEM_ANALYSIS': {
+      useLibraryStore().setItemAnalysis(
+        msg.payload.itemId,
+        msg.payload.bpm,
+        msg.payload.beats,
+        msg.payload.variableTempo
+      )
+      log.info(
+        'bridge',
+        `LIBRARY_ITEM_ANALYSIS itemId=${msg.payload.itemId} bpm=${msg.payload.bpm.toFixed(2)} beats=${msg.payload.beats.length}${msg.payload.variableTempo ? ' variable' : ''}`
+      )
       break
     }
 
@@ -559,8 +567,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectDirtyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'WAVEFORM_READY':
       return isWaveformReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'LIBRARY_ITEM_BPM':
-      return isLibraryItemBpmPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'LIBRARY_ITEM_ANALYSIS':
+      return isLibraryItemAnalysisPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_BPM_APPLIED':
       return isProjectBpmAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:

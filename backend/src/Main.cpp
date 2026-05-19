@@ -295,58 +295,108 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
 {
     silverdaw::log::info("bpmjob", "start itemId=" + itemId + " file=" + filePath.getFileName());
     silverdaw::BpmDetector detector;
-    const double bpm = detector.estimateBpm(filePath, engine.getFormatManager());
-    if (bpm <= 0.0)
+    const silverdaw::BpmAnalysis analysis = detector.analyse(filePath, engine.getFormatManager());
+    if (analysis.bpm <= 0.0)
     {
         silverdaw::log::info("bpmjob", "no plausible BPM for itemId=" + itemId);
         return;
     }
     juce::MessageManager::callAsync(
-        [itemId, bpm, &projectState, &bridge]
+        [itemId, analysis, &projectState, &bridge]
         {
             // Item may have been removed while we were busy.
-            if (!projectState.setLibraryItemBpm(itemId, bpm))
+            if (!projectState.setLibraryItemBpm(itemId, analysis.bpm))
             {
                 silverdaw::log::warn("bpmjob",
                                      "library item " + itemId + " gone before BPM applied");
                 return;
             }
+            projectState.setLibraryItemBeats(itemId, analysis.beatTimesSec);
+            projectState.setLibraryItemVariableTempo(itemId, analysis.variableTempo);
+
+            // Build the analysis envelope. The beats array can run to
+            // a few hundred floats for a long clip (no big deal for
+            // localhost JSON, but worth keeping in mind).
             auto* p = new juce::DynamicObject();
             p->setProperty("itemId", itemId);
-            p->setProperty("bpm", bpm);
-            bridge.broadcast("LIBRARY_ITEM_BPM", juce::var(p));
+            p->setProperty("bpm", analysis.bpm);
+            juce::Array<juce::var> beatArr;
+            beatArr.ensureStorageAllocated(static_cast<int>(analysis.beatTimesSec.size()));
+            for (double t : analysis.beatTimesSec) beatArr.add(juce::var(t));
+            p->setProperty("beats", juce::var(beatArr));
+            p->setProperty("variableTempo", analysis.variableTempo);
+            bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
 
-            // First-detection-on-empty-project: seed the project BPM
-            // so the user's first import sets the tempo grid. We only
-            // do this when the project BPM is still the untouched
-            // default (100) AND there's no other library item with a
-            // BPM yet (so importing several files doesn't keep
-            // flipping the tempo to the last-detected value).
-            constexpr double kDefaultProjectBpm = 100.0;
-            if (std::abs(projectState.getBpm() - kDefaultProjectBpm) < 0.001)
+            // Empty-project seed. The rule:
+            //   - skip when there's already MORE than one clip on the
+            //     timeline (the user has progressed past the
+            //     "just imported the first thing" stage and we
+            //     shouldn't move their grid out from under them);
+            //   - skip when there's already at least one OTHER
+            //     library item whose BPM is known (the seed has
+            //     effectively run on a previous import already);
+            //   - otherwise apply, EVEN IF the detection was flagged
+            //     as variable-tempo. A wobbly estimate is still
+            //     better than the default 100 BPM when the user has
+            //     just imported their first reference loop — and the
+            //     library-tile "~ BPM" badge already warns them
+            //     that the value is approximate. They can edit the
+            //     project tempo manually if they want to refine.
+            //
+            // We deliberately do NOT key off the project BPM being
+            // exactly 100: the user might have changed it manually
+            // before importing, but as long as the project is empty
+            // their first import is still the canonical tempo source.
+            const auto& tree = projectState.getTree();
+            int totalClips = 0;
+            for (int t = 0; t < tree.getNumChildren(); ++t)
             {
-                const auto& tree = projectState.getTree();
-                const auto library = tree.getChildWithName(juce::Identifier{"LIBRARY"});
-                int countWithBpm = 0;
-                if (library.isValid())
+                const auto track = tree.getChild(t);
+                if (!track.hasType(juce::Identifier{"TRACK"})) continue;
+                for (int c = 0; c < track.getNumChildren(); ++c)
                 {
-                    for (int i = 0; i < library.getNumChildren(); ++i)
+                    if (track.getChild(c).hasType(juce::Identifier{"CLIP"}))
                     {
-                        if (library.getChild(i).hasProperty(juce::Identifier{"bpm"}))
-                        {
-                            ++countWithBpm;
-                        }
+                        ++totalClips;
                     }
                 }
-                if (countWithBpm == 1) // i.e. only the one we just set
+            }
+            if (totalClips > 1)
+            {
+                silverdaw::log::info("bpmjob",
+                                     "seed skipped for itemId=" + itemId +
+                                         " (clips already on tracks: " + juce::String(totalClips) + ")");
+                return;
+            }
+            const auto library = tree.getChildWithName(juce::Identifier{"LIBRARY"});
+            int otherItemsWithBpm = 0;
+            if (library.isValid())
+            {
+                for (int i = 0; i < library.getNumChildren(); ++i)
                 {
-                    projectState.setBpm(bpm);
-                    auto* bpmObj = new juce::DynamicObject();
-                    bpmObj->setProperty("bpm", bpm);
-                    bridge.broadcast("PROJECT_BPM_APPLIED", juce::var(bpmObj));
-                    silverdaw::log::info("bpmjob", "seeded project BPM from first import: " + juce::String(bpm, 2));
+                    const auto item = library.getChild(i);
+                    if (item.getProperty(juce::Identifier{"id"}).toString() == itemId) continue;
+                    if (item.hasProperty(juce::Identifier{"bpm"}))
+                    {
+                        ++otherItemsWithBpm;
+                    }
                 }
             }
+            if (otherItemsWithBpm > 0)
+            {
+                silverdaw::log::info("bpmjob",
+                                     "seed skipped for itemId=" + itemId +
+                                         " (other library items already have BPM: " +
+                                         juce::String(otherItemsWithBpm) + ")");
+                return;
+            }
+            projectState.setBpm(analysis.bpm);
+            auto* bpmObj = new juce::DynamicObject();
+            bpmObj->setProperty("bpm", analysis.bpm);
+            bridge.broadcast("PROJECT_BPM_APPLIED", juce::var(bpmObj));
+            silverdaw::log::info("bpmjob", "seeded project BPM from first import: " +
+                                               juce::String(analysis.bpm, 2) +
+                                               (analysis.variableTempo ? " (variable)" : ""));
         });
 }
 

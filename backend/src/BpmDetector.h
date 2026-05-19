@@ -2,21 +2,45 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
+#include <vector>
 
 namespace silverdaw
 {
 
+/** Output of one offline analysis pass. */
+struct BpmAnalysis
+{
+    /** Estimated tempo in BPM. 0 when no plausible tempo was found. */
+    double bpm = 0.0;
+    /** Beat positions in seconds from the start of the source file.
+     *  Empty when `bpm == 0`. Each entry is the time of one detected
+     *  beat — at 120 BPM you'd get ~120 entries for a one-minute clip. */
+    std::vector<double> beatTimesSec;
+    /** True when BTrack's running tempo estimate fluctuated by more
+     *  than ~2 % over the analysis window (after a short settling
+     *  period). Drives the "variable tempo" badge on the library tile;
+     *  the project-BPM seed logic suppresses itself for these files
+     *  so a wobbly groove doesn't pick a misleading project tempo. */
+    bool variableTempo = false;
+};
+
 /**
- * Offline BPM detection using the BTrack algorithm
+ * Offline BPM + beat-position detection using the BTrack algorithm
  * (Stark / Davies / Plumbley, Queen Mary University of London).
  *
  * Workflow:
  *   1. Open the file via the supplied `juce::AudioFormatManager`.
- *   2. Decode in blocks, downmix to mono float, and resample to
- *      BTrack's expected 44.1 kHz with JUCE's CatmullRom interpolator.
- *   3. Feed the mono signal into BTrack frame-by-frame at the
+ *   2. Decode the whole capped range to a single mono float buffer.
+ *   3. Resample to BTrack's expected 44.1 kHz with libsamplerate
+ *      (`src_simple`, one-shot — much simpler than the chunked
+ *      interpolator we tried first and avoids the gotchas with
+ *      JUCE's interpolator returning "input samples consumed").
+ *   4. Feed the mono signal into BTrack frame-by-frame at the
  *      default hop=512 / frame=1024 settings.
- *   4. Return the algorithm's final tempo estimate, clamped into
+ *   5. Record a beat-time entry for every frame where
+ *      `beatDueInCurrentFrame()` fires, plus the running tempo
+ *      estimate sampled at each beat.
+ *   6. Final tempo = `getCurrentTempoEstimate()`, clamped into
  *      `[kMinPlausibleBpm, kMaxPlausibleBpm]`.
  *
  * Designed to run on a background worker thread (the existing peaks
@@ -42,12 +66,14 @@ class BpmDetector
     static constexpr double kMaxAnalysisSeconds = 120.0;
 
     /**
-     * Estimate the BPM of `audioFile`. Returns 0.0 on any failure
-     * (file unreadable, decode error, no plausible tempo detected).
-     * Blocking — call from a worker thread, not the audio or message
-     * thread. `formatManager` must outlive the call.
+     * Run the offline analysis on `audioFile`. Returns a populated
+     * `BpmAnalysis`; an empty result (`bpm == 0`, empty beats) means
+     * the file was unreadable, the decode failed, or no plausible
+     * tempo was detected. Blocking — call from a worker thread, not
+     * the audio or message thread. `formatManager` must outlive the
+     * call.
      */
-    double estimateBpm(const juce::File& audioFile, juce::AudioFormatManager& formatManager);
+    BpmAnalysis analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager);
 };
 
 } // namespace silverdaw

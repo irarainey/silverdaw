@@ -114,7 +114,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
   TRACK[id, gain]
     CLIP[id, filePath, offsetMs, inMs, durationMs, colorIndex?]
   LIBRARY
-    ITEM[id, filePath, bpm?]
+    ITEM[id, filePath, bpm?, beats?, variableTempo?]
 ```
 
 `CLIP` carries a non-destructive trim window: `offsetMs` is the timeline start,
@@ -123,10 +123,11 @@ how long the clip plays for from that point. Split, duplicate and edge-drag
 trim all manipulate this window without ever re-decoding the source — peaks
 are computed once per file and the renderer windows into them at draw time.
 `colorIndex` is an optional 0..15 per-clip palette override; when absent the
-clip inherits its host track's colour. `ITEM.bpm` is the BTrack-detected
-tempo for the library item's source file (see [BPM detection](#bpm-detection)
-below); it's stored once and round-trips through save/load so a reopened
-project doesn't have to re-analyse every imported file.
+clip inherits its host track's colour. `ITEM.bpm` + `ITEM.beats` (an array of
+beat positions in seconds from the start of the source) + `ITEM.variableTempo`
+hold the BTrack analysis output (see [BPM & beat detection](#bpm--beat-detection)
+below); stored once and round-tripped through save/load so a reopened project
+doesn't have to re-analyse every imported file.
 
 The view-state properties (`viewScrollX`, `playheadMs`) bypass the dirty-flag listener via a
 `suppressDirtyTransitions` guard inside their setters — scrolling or moving the playhead
@@ -216,12 +217,14 @@ read; the same layout is what the renderer reads via the `peaks:readCacheFile` I
 
 The cache survives backend restarts.
 
-## BPM detection
+## BPM & beat detection
 
-Every imported audio file is automatically analysed for tempo. The
-result is shown on the library tile (e.g. `124.37 BPM`) and, on the
-first import into an otherwise-empty project, seeds the project BPM
-so the timeline grid lines up with what you imported.
+Every imported audio file is automatically analysed for tempo and beat
+positions. The result is shown on the library tile (e.g. `124.37 BPM`,
+or `~ 124.37 BPM` in amber when the source has a wobbly tempo), drives
+faint vertical beat markers on the clip waveform, and — on the first
+import into a project — seeds the project tempo so the timeline grid
+lines up with the source.
 
 - **Library**: [BTrack](https://github.com/adamstark/BTrack) (Stark / Davies / Plumbley,
   Queen Mary University of London) — a causal beat-tracking algorithm with offline
@@ -241,21 +244,53 @@ runs on the same `juce::ThreadPool` that produces peaks — kicked off from both
 `LIBRARY_ADD` and `CLIP_ADD` dispatch handlers (whichever arrives first wins; the
 helper `ensureBpmDetection` is idempotent and won't re-analyse a file the library
 already has a BPM for). Worker thread → decode the file via JUCE → downmix to mono
-→ resample to 44.1 kHz with libsamplerate → feed BTrack frame-by-frame at hop=512 →
-read `getCurrentTempoEstimate()`. Analysis is capped at the first 2 minutes of audio;
-estimates outside `[40, 240]` BPM are dropped as implausible.
+→ resample to 44.1 kHz with libsamplerate → feed BTrack frame-by-frame at hop=512
+recording every `beatDueInCurrentFrame()` event. Analysis is capped at the first 2
+minutes of audio; estimates outside `[40, 240]` BPM are dropped as implausible.
+
+The reported BPM is derived from the **median of beat-to-beat intervals** (not from
+BTrack's running tempo estimate, which can drift a fraction of a BPM from the
+implied beat spacing). This guarantees the project grid we later seed lines up
+exactly with the source's beats. A `variableTempo` flag is also computed by
+checking the spread of per-beat tempo samples (after a short settling period) — if
+it's > 5 % of the mean, the library tile shows the amber `~ BPM` warning badge.
 
 When detection finishes the worker `MessageManager::callAsync`s back to the JUCE
-message thread to write `bpm` onto the matching `LIBRARY > ITEM` node and broadcast
-`LIBRARY_ITEM_BPM { itemId, bpm }`. If the project is still at the default 100 BPM
-and this is the *first* library item with a detected BPM, the project BPM is seeded
-too and a `PROJECT_BPM_APPLIED { bpm }` envelope is broadcast — the renderer mirrors
-both into `libraryStore` and `transportStore`.
+message thread to write `bpm`, `beats`, and `variableTempo` onto the matching
+`LIBRARY > ITEM` node and broadcast `LIBRARY_ITEM_ANALYSIS { itemId, bpm, beats,
+variableTempo }`. If the project has no other clips on tracks yet AND no other
+library item has been analysed, the project BPM is seeded too and a
+`PROJECT_BPM_APPLIED { bpm }` envelope is broadcast — the renderer mirrors both
+into `libraryStore` and `transportStore`. The seed runs even for variable-tempo
+sources (an approximate tempo is more useful than the default 100); the user can
+fine-tune from the Transport bar afterwards.
 
-The renderer shows a floating **import progress dialog** in the bottom-right corner
-that surfaces both stages — "Decoding audio…" (renderer-side) then "Detecting tempo…"
-(backend-side BTrack job) — so the long-tail BPM analysis isn't invisible. The
-OS busy cursor stays in its `progress` state for the same lifespan.
+### Beat markers and source-beat snap
+
+The renderer overlays faint white vertical lines on every clip at the source's
+detected beats. The markers are **synthesised on a source-global beat grid**
+anchored on `beats[0]` and spaced by `60 / sourceBPM`, not on each raw detected
+position. This makes them survive a split / duplicate / trim without drifting —
+both halves of a split clip share one coordinate system, so the markers stay in
+lockstep across the split point.
+
+Drag-snap on a clip with a known source tempo locks onto the same grid: instead
+of snapping the clip's left edge to the project sub-beat, it snaps the first
+source beat inside the clip's window. With the project BPM seeded to the source
+BPM (the common case), every subsequent marker on the clip then lines up exactly
+with a project grid sub-beat. Drag with `Alt` for the legacy 1 ms unsnapped
+behaviour.
+
+### Import progress dialog
+
+A floating panel in the bottom-right shows each in-flight import with three
+sequential stages so the long-tail analysis isn't invisible:
+
+1. **Decoding audio…** — renderer is decoding the file's bytes.
+2. **Detecting tempo…** — backend's BTrack job (the long stage on long files).
+3. **Detecting beats…** — brief flash (~0.6 s) while the renderer applies the beat array and the markers paint on the clip.
+
+The OS busy cursor stays in its `progress` state through all three stages.
 
 ## Preferences
 
@@ -294,7 +329,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
-| Click + drag on **clip body** | Move the clip; start position snaps to the sub-beat grid. Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
+| Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
 | Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge (ms-precise; non-destructive — only the window over the source file changes). |
 | Click on **empty area of a track row** | Select that track (highlighted row border), deselect any clip. |
@@ -306,7 +341,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Shift` + mouse wheel | Pan left/right. |
 | `Ctrl +` / `Ctrl =` | Zoom in 20% (anchored on the playhead). |
 | `Ctrl -` | Zoom out 20%. |
-| `Ctrl 0` | Reset zoom to 100% (60 px/s). |
+| `Ctrl 0` | Reset zoom to 100% (100 px/s). |
 | `Space` (in transport bar) | Play / pause. |
 | `F2` | Rename project (also activates the title-bar rename input). |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
@@ -317,7 +352,10 @@ or releasing the modifier between frames switches mode without restarting the dr
 | **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Save as Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
 
 The status bar shows the current zoom level (e.g. `🔍 150%`) next to the backend connection
-indicator (plug-and-socket icon + green/grey dot).
+indicator (plug-and-socket icon + green/grey dot). The **Pos**, **Bar**, **Length**, and
+**BPM** readouts in the transport bar are greyed out until the project has at least one
+track — empty-project edits to those fields would have no visible effect, so we hide
+the affordance until it's meaningful.
 
 ### Selection model
 

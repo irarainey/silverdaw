@@ -37,6 +37,20 @@ export interface LibraryItem {
    */
   bpm?: number
   /**
+   * Beat positions in seconds from the start of the source file,
+   * produced by BTrack alongside the BPM estimate. Used to draw beat
+   * markers on the clip waveform and to power source-beat-aware snap
+   * during drag.
+   */
+  beats?: number[]
+  /**
+   * True when BTrack's running tempo estimate fluctuated by more
+   * than ~2 % over the analysis window. The library tile shows a
+   * "variable" badge so the user knows the single BPM number is a
+   * rough average.
+   */
+  variableTempo?: boolean
+  /**
    * Path the JUCE backend should actually load when this item is placed
    * on a track. Equals `filePath` for formats the backend can decode
    * natively (WAV/AIFF/FLAC/Ogg/MP3/WMA). For others (e.g. .m4a on
@@ -75,7 +89,12 @@ export interface LibraryItem {
  * visible spinner the whole time the system is working on a file —
  * including the BPM-detection stage, which used to be silent.
  */
-export type ImportStage = 'decoding' | 'detecting' | 'done' | 'failed'
+export type ImportStage =
+  | 'decoding'
+  | 'detectingTempo'
+  | 'detectingBeats'
+  | 'done'
+  | 'failed'
 export interface ImportEntry {
   /** Local-only id used to remove the entry; not the library item id
    *  (which is unknown until `decoding` finishes). */
@@ -140,7 +159,13 @@ export const useLibraryStore = defineStore('library', {
       // `decoding` or `detecting` should keep the cursor in its busy
       // state so the user knows work is in progress.
       for (const entry of state.imports) {
-        if (entry.stage === 'decoding' || entry.stage === 'detecting') return true
+        if (
+          entry.stage === 'decoding' ||
+          entry.stage === 'detectingTempo' ||
+          entry.stage === 'detectingBeats'
+        ) {
+          return true
+        }
       }
       return false
     },
@@ -359,26 +384,36 @@ export const useLibraryStore = defineStore('library', {
     },
 
     /**
-     * Record the BPM detected for `itemId`. Called from the bridge
-     * when a `LIBRARY_ITEM_BPM` envelope arrives (backend has finished
-     * the BTrack analysis on a worker thread). No-op for unknown ids
-     * — the item may have been removed mid-analysis.
+     * Record the complete BTrack analysis result for `itemId`: BPM,
+     * beat positions (in source-file seconds), and the variable-tempo
+     * flag. Called from the bridge when a `LIBRARY_ITEM_ANALYSIS`
+     * envelope arrives. Also closes any matching in-flight import
+     * progress entry — the BPM/beats arriving is the canonical
+     * "analysis is done" signal.
      */
-    setItemBpm(itemId: string, bpm: number): void {
+    setItemAnalysis(itemId: string, bpm: number, beats: number[], variableTempo: boolean): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
-      if (bpm > 0) {
-        item.bpm = Math.round(bpm * 100) / 100
-      } else {
-        item.bpm = undefined
-      }
-      // The progress entry waiting on this item's BPM detection can now
-      // be finished. Match by libraryItemId; entries without one (e.g.
-      // a library item that was preloaded from a snapshot rather than
-      // a fresh import) won't have a progress row to update.
+      item.bpm = bpm > 0 ? Math.round(bpm * 100) / 100 : undefined
+      item.beats = beats.length > 0 ? beats.slice() : undefined
+      item.variableTempo = variableTempo || undefined
+      // Bump the project's redraw counter so the timeline repaints
+      // with the freshly-arrived beat markers on the matching clips.
+      // Done unconditionally — the cost is a single repaint and
+      // checking for matching clips is cheaper to skip than to do.
+      useProjectStore().peaksRevision++
+      // Surface beat detection as its own visible stage in the import
+      // progress panel before finishing the entry. The backend produces
+      // BPM and beats in a single pass, but the UX reads more clearly
+      // when the user sees two sequential stages ("Detecting tempo…"
+      // → "Detecting beats…" → done). 600 ms is long enough to be
+      // noticeable and short enough not to feel artificial.
       const entry = this.imports.find((e) => e.libraryItemId === itemId)
-      if (entry) {
-        this.finishImport(entry.id, 'done')
+      if (entry && entry.stage !== 'done' && entry.stage !== 'failed') {
+        entry.stage = 'detectingBeats'
+        setTimeout(() => {
+          this.finishImport(entry.id, 'done')
+        }, 600)
       }
     },
 
@@ -397,13 +432,13 @@ export const useLibraryStore = defineStore('library', {
     /**
      * Mark a renderer-side decoding stage as complete; the entry now
      * waits on the backend's BPM detection. Attach the library item
-     * id so the LIBRARY_ITEM_BPM-arrived handler can find this entry.
+     * id so the LIBRARY_ITEM_ANALYSIS-arrived handler can find this entry.
      */
     markImportAnalyzing(id: string, libraryItemId: string): void {
       const entry = this.imports.find((e) => e.id === id)
       if (!entry) return
       entry.libraryItemId = libraryItemId
-      entry.stage = 'detecting'
+      entry.stage = 'detectingTempo'
     },
 
     /**

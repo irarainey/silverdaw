@@ -224,6 +224,16 @@ class ProjectState : public juce::ValueTree::Listener
      *  Marks the project dirty. Returns true if the item existed. */
     bool setLibraryItemBpm(const juce::String& itemId, double bpm);
 
+    /** Set the detected beat positions (seconds from start of source)
+     *  on a library item. Empty array clears them. Marks dirty.
+     *  Returns true if the item existed. */
+    bool setLibraryItemBeats(const juce::String& itemId, const std::vector<double>& beatTimesSec);
+
+    /** Flag (or clear) the library item as having a variable tempo —
+     *  drives the UI badge and suppresses the first-clip project
+     *  BPM seed. Marks dirty. Returns true if the item existed. */
+    bool setLibraryItemVariableTempo(const juce::String& itemId, bool variable);
+
     /** True if a library item is registered for `filePath`. Used by the
      *  detection scheduler to avoid duplicate work. */
     bool hasLibraryItemForPath(const juce::String& filePath) const;
@@ -326,6 +336,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kProjectLengthMs;
     static const juce::Identifier kLibrary;
     static const juce::Identifier kLibraryItem;
+    static const juce::Identifier kBeats;
+    static const juce::Identifier kVariableTempo;
 };
 
 } // namespace silverdaw

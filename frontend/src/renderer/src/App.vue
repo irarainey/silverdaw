@@ -149,7 +149,7 @@ function onTransportKey(e: KeyboardEvent): void {
 
   // Alt + Arrow: fine-grained step (one pixel's worth of time at the
   // current zoom). Use this when placing the playhead exactly inside a
-  // clip waveform for a future split. At default zoom (60 px/s) that's
+  // clip waveform for a future split. At default zoom (100 px/s) that's
   // ~16.7 ms; at max zoom (480 px/s) it's ~2 ms. Always at least 1 ms.
   // Bare Arrow: grid step (sub-beat / 16th note).
   const direction = e.key === 'ArrowLeft' ? -1 : 1

@@ -577,6 +577,52 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       tracksL.addChild(wave)
     }
 
+    // Beat markers — synthesised on a *source-global* beat grid so a
+    // split clip's right half keeps in lockstep with its left half.
+    //
+    // The grid is anchored on the first detected beat (`beats[0]`) and
+    // spaced by `60 / sourceBpm` seconds. Each clip windows that
+    // shared grid by its trim range, finding the smallest synthetic
+    // beat ≥ `inMs` and stepping forward from there. Picking the
+    // first *detected* beat ≥ inMs (the old behaviour) wobbled by a
+    // few ms after a split because BTrack's per-beat timestamps
+    // wander relative to the implied uniform tempo.
+    const libItem = library.items.find((i) => i.filePath === clip.filePath)
+    const beats = libItem?.beats
+    const sourceBpm = libItem?.bpm
+    if (beats && beats.length > 0 && sourceBpm && sourceBpm > 0 && w > 0) {
+      const pxPerMs = pxPerSecond.value / 1000
+      const inMs = clip.inMs
+      const outMs = inMs + clip.durationMs
+      const beatSpacingMs = (60 / sourceBpm) * 1000
+      const universalAnchorMs = beats[0]! * 1000
+      // First synthetic beat ≥ inMs. ceil() can produce a value < inMs
+      // when `(inMs - universalAnchorMs)` is exactly on a beat, so we
+      // bump by spacing once if needed.
+      let firstBeatMs =
+        universalAnchorMs +
+        Math.ceil((inMs - universalAnchorMs) / beatSpacingMs) * beatSpacingMs
+      while (firstBeatMs < inMs) firstBeatMs += beatSpacingMs
+      const minMarkerSpacingPx = 4
+      const markers = new G()
+      let drew = 0
+      let lastMarkerPx = Number.NEGATIVE_INFINITY
+      for (let beatMs = firstBeatMs; beatMs <= outMs; beatMs += beatSpacingMs) {
+        const offsetInClipMs = beatMs - inMs
+        if (offsetInClipMs < 0) continue
+        const x = absX + offsetInClipMs * pxPerMs
+        if (x - lastMarkerPx < minMarkerSpacingPx) continue
+        markers.moveTo(x + 0.5, innerY + 1).lineTo(x + 0.5, innerY + innerH - 1)
+        lastMarkerPx = x
+        ++drew
+        if (beatSpacingMs <= 0) break
+      }
+      if (drew > 0) {
+        markers.stroke({ color: 0xffffff, width: 1, alpha: 0.4 })
+        tracksL.addChild(markers)
+      }
+    }
+
     drawClipHeader(clip, absX, innerY, w, palette)
   }
 

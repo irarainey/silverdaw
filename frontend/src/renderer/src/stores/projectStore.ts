@@ -1208,11 +1208,17 @@ export const useProjectStore = defineStore('project', {
             playbackFilePath: item.filePath,
             fromSnapshot: true
           })
-          // Hydrate persisted BPM (if the backend has detected one on a
-          // previous session). New imports get their BPM via the
-          // separate LIBRARY_ITEM_BPM envelope.
+          // Hydrate persisted analysis results (if the backend has
+          // detected BPM + beats on a previous session). New imports
+          // get the full analysis via the LIBRARY_ITEM_ANALYSIS
+          // envelope when the worker finishes.
           if (typeof item.bpm === 'number' && item.bpm > 0) {
-            library.setItemBpm(libId, item.bpm)
+            library.setItemAnalysis(
+              libId,
+              item.bpm,
+              Array.isArray(item.beats) ? item.beats : [],
+              item.variableTempo === true
+            )
           }
           // Fetch metadata + decode duration / sample-rate
           // asynchronously so the library card shows cover art + a

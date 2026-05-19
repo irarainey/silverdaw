@@ -68,6 +68,15 @@ watch(
 )
 
 const lengthEditable = computed(() => project.tracks.length > 0)
+/**
+ * Pos / Bar / BPM are only meaningful once the user has something
+ * playable in the project. Until then we render them all greyed out
+ * to match the disabled-length affordance — the user doesn't have to
+ * wonder whether tweaking the BPM "did something" on an empty
+ * canvas. Same gate as `lengthEditable` so the four readouts switch
+ * together when the first track lands.
+ */
+const timingEditable = lengthEditable
 
 function onLengthCommit(): void {
   isEditingLength.value = false
@@ -291,13 +300,21 @@ function onToggleFollow(): void {
       >
         <div class="flex flex-col items-start leading-none">
           <span class="text-[9px] uppercase tracking-wide text-zinc-500">Pos</span>
-          <span class="font-mono text-base tabular-nums text-zinc-100">{{ positionDisplay }}</span>
+          <span
+            :class="[
+              'font-mono text-base tabular-nums',
+              timingEditable ? 'text-zinc-100' : 'text-zinc-500'
+            ]"
+          >{{ positionDisplay }}</span>
         </div>
         <div class="h-7 w-px bg-zinc-800" />
         <div class="flex flex-col items-start leading-none">
           <span class="text-[9px] uppercase tracking-wide text-zinc-500">Bar</span>
           <span
-            class="font-mono text-base tabular-nums text-zinc-100"
+            :class="[
+              'font-mono text-base tabular-nums',
+              timingEditable ? 'text-zinc-100' : 'text-zinc-500'
+            ]"
             title="Bar.Beat.Sub"
           >{{
             barPosition
@@ -370,8 +387,9 @@ function onToggleFollow(): void {
               max="300"
               step="0.01"
               spellcheck="false"
-              title="Tempo (20 – 300 BPM). Use ↑/↓ or the spinner to adjust by 1; hold Shift for 10."
-              class="w-16 bg-transparent font-mono text-base tabular-nums text-zinc-100 outline-none focus:text-blue-300 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              :disabled="!timingEditable"
+              :title="timingEditable ? 'Tempo (20 – 300 BPM). Use ↑/↓ or the spinner to adjust by 1; hold Shift for 10.' : 'Add a track to edit project tempo'"
+              class="w-16 bg-transparent font-mono text-base tabular-nums text-zinc-100 outline-none focus:text-blue-300 disabled:cursor-not-allowed disabled:text-zinc-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               @focus="isEditingBpm = true"
               @blur="onBpmCommit"
               @keydown="onBpmKeydown"
@@ -380,8 +398,9 @@ function onToggleFollow(): void {
               <button
                 type="button"
                 tabindex="-1"
+                :disabled="!timingEditable"
                 title="Increase BPM (Shift: +10)"
-                class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100"
+                class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
                 @mousedown.prevent
                 @click="(e) => bumpBpm(e.shiftKey ? 10 : 1)"
               >
@@ -397,8 +416,9 @@ function onToggleFollow(): void {
               <button
                 type="button"
                 tabindex="-1"
+                :disabled="!timingEditable"
                 title="Decrease BPM (Shift: -10)"
-                class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100"
+                class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
                 @mousedown.prevent
                 @click="(e) => bumpBpm(e.shiftKey ? -10 : -1)"
               >

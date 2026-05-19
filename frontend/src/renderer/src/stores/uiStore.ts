@@ -81,7 +81,7 @@ export const useUiStore = defineStore('ui', {
     trackHeaderWidth: DEFAULTS.trackHeaderWidth,
     libraryPanelHeight: DEFAULTS.libraryPanelHeight,
     followPlayback: DEFAULTS.followPlayback,
-    zoomPxPerSecond: 60,
+    zoomPxPerSecond: 100,
     hydrated: false
   }),
 

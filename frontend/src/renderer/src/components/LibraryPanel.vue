@@ -271,20 +271,11 @@ function onResizePointerUp(): void {
       </div>
       <button
         type="button"
-        class="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+        class="rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 transition-colors hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100"
         title="Import audio files into the library"
         @click="onImportClick"
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="currentColor"
-          class="h-3.5 w-3.5"
-          aria-hidden="true"
-        >
-          <path d="M12 3v10.59l3.3-3.3 1.4 1.42L12 17.4l-4.7-5.69 1.4-1.42 3.3 3.3V3h2zM5 19h14v2H5v-2z" />
-        </svg>
-        <span>Import</span>
+        Import
       </button>
     </header>
 
@@ -347,10 +338,22 @@ function onResizePointerUp(): void {
                 <span>{{ formatDuration(item.durationMs) }}</span>
                 <span
                   v-if="item.bpm"
-                  class="rounded bg-zinc-800 px-1 py-0.5 text-[9px] uppercase tracking-wide text-zinc-300"
-                  title="Detected tempo"
+                  class="whitespace-nowrap rounded px-1 py-0.5 text-[9px] uppercase tracking-wide"
+                  :class="
+                    item.variableTempo
+                      ? 'bg-amber-900/60 text-amber-200'
+                      : 'bg-zinc-800 text-zinc-300'
+                  "
+                  :title="
+                    item.variableTempo
+                      ? 'Tempo varies across the file — the BPM shown is a rough average'
+                      : 'Detected tempo'
+                  "
                 >
-                  {{ item.bpm.toFixed(2) }} BPM
+                  <span
+                    v-if="item.variableTempo"
+                    class="mr-0.5"
+                  >~</span>{{ item.bpm.toFixed(2) }} BPM
                 </span>
               </span>
               <button

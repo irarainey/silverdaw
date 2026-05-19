@@ -1,5 +1,7 @@
 #include "ProjectState.h"
 
+#include <vector>
+
 namespace silverdaw
 {
 
@@ -21,6 +23,8 @@ const juce::Identifier ProjectState::kBpm{"bpm"};
 const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
 const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
 const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
+const juce::Identifier ProjectState::kBeats{"beats"};
+const juce::Identifier ProjectState::kVariableTempo{"variableTempo"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
 
@@ -374,10 +378,10 @@ juce::String ProjectState::getClipFilePath(const juce::String& clipId) const
 
 double ProjectState::getViewPxPerSecond() const
 {
-    // 60 px/s default matches the renderer's `DEFAULT_PX_PER_SECOND` so
+    // 100 px/s default matches the renderer's `DEFAULT_PX_PER_SECOND` so
     // a freshly-created project opens at the same zoom that was used
     // before this preference existed.
-    return static_cast<double>(root.getProperty(kViewPxPerSecond, 60.0));
+    return static_cast<double>(root.getProperty(kViewPxPerSecond, 100.0));
 }
 
 void ProjectState::setViewPxPerSecond(double pxPerSecond)
@@ -507,6 +511,59 @@ bool ProjectState::setLibraryItemBpm(const juce::String& itemId, double bpm)
     return false;
 }
 
+bool ProjectState::setLibraryItemBeats(const juce::String& itemId, const std::vector<double>& beatTimesSec)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            if (beatTimesSec.empty())
+            {
+                item.removeProperty(kBeats, nullptr);
+            }
+            else
+            {
+                // Store as a juce::var Array<var>. The downstream
+                // `tracksAsJson` / save path serialises this cleanly
+                // (JUCE's `JSON::toString` walks juce::var arrays
+                // natively).
+                juce::Array<juce::var> arr;
+                arr.ensureStorageAllocated(static_cast<int>(beatTimesSec.size()));
+                for (double t : beatTimesSec) arr.add(juce::var(t));
+                item.setProperty(kBeats, juce::var(arr), nullptr);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ProjectState::setLibraryItemVariableTempo(const juce::String& itemId, bool variable)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            if (variable)
+            {
+                item.setProperty(kVariableTempo, true, nullptr);
+            }
+            else
+            {
+                item.removeProperty(kVariableTempo, nullptr);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 bool ProjectState::hasLibraryItemForPath(const juce::String& filePath) const
 {
     const auto library = root.getChildWithName(kLibrary);
@@ -550,6 +607,17 @@ juce::var ProjectState::libraryAsJson() const
         if (item.hasProperty(kBpm))
         {
             obj->setProperty("bpm", static_cast<double>(item.getProperty(kBpm, 0.0)));
+        }
+        if (item.hasProperty(kBeats))
+        {
+            // Pass the underlying `juce::var` array straight through —
+            // it's already a `juce::var` containing `Array<var>` of
+            // numbers, which `JSON::toString` serialises as `[…]`.
+            obj->setProperty("beats", item.getProperty(kBeats));
+        }
+        if (item.hasProperty(kVariableTempo) && bool(item.getProperty(kVariableTempo)))
+        {
+            obj->setProperty("variableTempo", true);
         }
         // Same unresolved-flag pattern as clips so the renderer can
         // grey-out library cards whose source file has gone missing

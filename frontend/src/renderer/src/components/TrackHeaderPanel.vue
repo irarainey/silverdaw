@@ -246,14 +246,14 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                stroke-width="2.25"
+                stroke-width="2"
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 class="h-3.5 w-3.5"
               >
-                <path d="M12 4v10" />
-                <path d="M8 10l4 4 4-4" />
-                <path d="M5 18h14" />
+                <path d="M9 18V5l12-2v13" />
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="18" cy="16" r="3" />
               </svg>
             </button>
 
