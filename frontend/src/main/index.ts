@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { createServer as createNetServer } from 'node:net'
 import { basename, dirname, extname, isAbsolute, join, resolve as pathResolve } from 'node:path'
@@ -481,6 +481,20 @@ async function flushPrefsSave(): Promise<void> {
     const path = getPrefsPath()
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, JSON.stringify(prefs, null, 2), 'utf8')
+  } catch (err) {
+    console.warn('[prefs] save failed:', err)
+  }
+}
+
+function flushPrefsSaveSync(): void {
+  if (prefsSaveTimer) {
+    clearTimeout(prefsSaveTimer)
+    prefsSaveTimer = null
+  }
+  try {
+    const path = getPrefsPath()
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, JSON.stringify(prefs, null, 2), 'utf8')
   } catch (err) {
     console.warn('[prefs] save failed:', err)
   }
@@ -1286,11 +1300,12 @@ app.whenReady().then(async () => {
   // request. Window bounds are applied by main so they aren't included.
   ipcMain.handle('prefs:getUi', () => prefs.ui)
 
-  // Update one or more UI preference keys. The renderer calls this whenever
-  // the user resizes a panel; main debounces the write to disk.
+  // Update one or more UI preference keys. Explicit Preferences-dialog saves
+  // should be durable immediately; high-frequency window bounds still use the
+  // debounced writer in `captureWindowState`.
   ipcMain.on('prefs:setUi', (_evt, partial: Partial<UiPrefs>) => {
     prefs.ui = { ...prefs.ui, ...partial }
-    schedulePrefsSave()
+    flushPrefsSaveSync()
   })
 
   // ─── Debug preferences ──────────────────────────────────────────────────
@@ -1305,7 +1320,10 @@ app.whenReady().then(async () => {
     const next = value === true
     if (prefs.debug.enabled === next) return
     prefs.debug = { ...prefs.debug, enabled: next }
-    schedulePrefsSave()
+    // Debug logging only takes effect after a restart, so this must
+    // hit disk before the user immediately quits/relaunches. The
+    // debounced async preference writer can be skipped by process exit.
+    flushPrefsSaveSync()
   })
 
   // ─── Quality-of-life preferences (toasts, default paths) ────────────────
@@ -1343,7 +1361,7 @@ app.whenReady().then(async () => {
       // the dialog to fall back to the home folder.
       void ensureProjectDirExists()
     }
-    schedulePrefsSave()
+    flushPrefsSaveSync()
   })
 
   /**
@@ -1382,7 +1400,7 @@ app.whenReady().then(async () => {
     } else {
       return
     }
-    schedulePrefsSave()
+    flushPrefsSaveSync()
   })
 
   ipcMain.handle('project:fileExists', async (_evt, value: unknown): Promise<boolean> => {
@@ -1584,7 +1602,7 @@ app.on('before-quit', () => {
     backendProcess = null
   }
   // Make sure any pending debounced write hits disk before we exit.
-  void flushPrefsSave()
+  flushPrefsSaveSync()
   logMain('INFO ', 'main', 'before-quit')
   closeLogs()
 })

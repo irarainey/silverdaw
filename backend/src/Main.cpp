@@ -13,7 +13,9 @@
 #include <csignal>
 #include <iostream>
 #include <juce_events/juce_events.h>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -38,6 +40,8 @@ namespace
 constexpr int kDefaultBridgePort = 8765;
 constexpr int kMinBridgePort = 1024;
 constexpr int kMaxBridgePort = 65535;
+std::mutex bpmJobsMutex;
+std::set<juce::String> bpmJobsInFlight;
 constexpr int kPlayheadUpdateHz = 60;
 // 4 workers keeps peak computation responsive without burning every core
 // on a giant project import. Each job is disk-bound + a tight scan loop,
@@ -340,6 +344,10 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                     bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
                 });
         }
+        {
+            std::lock_guard<std::mutex> lock(bpmJobsMutex);
+            bpmJobsInFlight.erase(itemId);
+        }
         return;
     }
     juce::MessageManager::callAsync(
@@ -350,6 +358,10 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             {
                 silverdaw::log::warn("bpmjob",
                                      "library item " + itemId + " gone before BPM applied");
+                {
+                    std::lock_guard<std::mutex> lock(bpmJobsMutex);
+                    bpmJobsInFlight.erase(itemId);
+                }
                 return;
             }
             projectState.setLibraryItemBeats(itemId, analysis.beatTimesSec);
@@ -381,6 +393,10 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             // Try to seed the project BPM. The helper checks the
             // gates (must have at least one clip on a track, etc.).
             maybeSeedProjectBpmFor(itemId, projectState, bridge);
+            {
+                std::lock_guard<std::mutex> lock(bpmJobsMutex);
+                bpmJobsInFlight.erase(itemId);
+            }
         });
 }
 
@@ -544,6 +560,15 @@ void ensureBpmDetection(const juce::String& filePath, silverdaw::AudioEngine& en
     const juce::String itemId = findLibraryItemIdForPath(projectState, filePath);
     if (itemId.isEmpty()) return; // No library item to attach BPM to.
     if (projectState.getLibraryItemBpmForPath(filePath) > 0.0) return; // Already known.
+    {
+        std::lock_guard<std::mutex> lock(bpmJobsMutex);
+        if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())
+        {
+            silverdaw::log::debug("bpmjob", "skip duplicate in-flight itemId=" + itemId);
+            return;
+        }
+        bpmJobsInFlight.insert(itemId);
+    }
     peakPool.addJob(
         [itemId, file = juce::File(filePath), &engine, &projectState, &bridge, &decodedCache]
         { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache); });

@@ -87,12 +87,18 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
 
   /**
    * Convert a viewport-local pointer position into a target track index +
-   * snapped start time. Returns null if the pointer falls outside the
-   * scrollable track area, in the inter-track gap, or below the last track.
+   * snapped start time. If the library item has detected source beats, snap
+   * the first beat in the clip to the project grid rather than snapping the
+   * raw clip edge; this matches the behaviour used when moving clips after
+   * they are already on the timeline.
+   *
+   * Returns null if the pointer falls outside the scrollable track area, in
+   * the inter-track gap, or below the last track.
    */
   function pointerToTrackDrop(
     clientX: number,
-    clientY: number
+    clientY: number,
+    item: LibraryItem
   ): { trackIndex: number; startMs: number } | null {
     const a = app.value
     if (!host.value || !a) return null
@@ -118,8 +124,28 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     const trackLocalX = x - geometry.headerWidth()
     const rawMs = ((scrollX.value + trackLocalX) / geometry.pxPerSecond.value) * 1000
     const snap = geometry.msPerSubBeat()
-    const startMs = Math.max(0, Math.round(rawMs / snap) * snap)
+    const referenceBeatOffsetMs = firstSourceBeatOffsetMs(item)
+    const startMs =
+      referenceBeatOffsetMs !== null
+        ? Math.max(0, Math.round((rawMs + referenceBeatOffsetMs) / snap) * snap - referenceBeatOffsetMs)
+        : Math.max(0, Math.round(rawMs / snap) * snap)
     return { trackIndex, startMs }
+  }
+
+  function firstSourceBeatOffsetMs(item: LibraryItem): number | null {
+    const beats = item.beats
+    const sourceBpm = item.bpm
+    const anchorSec = item.beatAnchorSec ?? beats?.[0]
+    if (!beats || beats.length === 0 || !sourceBpm || sourceBpm <= 0 || anchorSec === undefined) {
+      return null
+    }
+    const beatSpacingMs = (60 / sourceBpm) * 1000
+    if (beatSpacingMs <= 0) return null
+    const universalAnchorMs = anchorSec * 1000
+    let firstBeatMs = universalAnchorMs + Math.ceil(-universalAnchorMs / beatSpacingMs) * beatSpacingMs
+    while (firstBeatMs < 0) firstBeatMs += beatSpacingMs
+    if (firstBeatMs > item.durationMs) return null
+    return firstBeatMs
   }
 
   function clearPreview(): void {
@@ -139,8 +165,8 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     e.preventDefault()
     if (!e.dataTransfer) return
 
-    const target = pointerToTrackDrop(e.clientX, e.clientY)
     const item = resolveDragItem(e)
+    const target = item ? pointerToTrackDrop(e.clientX, e.clientY, item) : null
     if (!target || !item) {
       e.dataTransfer.dropEffect = 'none'
       clearPreview()
@@ -201,7 +227,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       return
     }
 
-    const target = pointerToTrackDrop(e.clientX, e.clientY)
+    const target = pointerToTrackDrop(e.clientX, e.clientY, item)
     if (!target) {
       onPreviewChanged()
       return

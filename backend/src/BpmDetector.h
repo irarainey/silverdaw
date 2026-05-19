@@ -58,9 +58,12 @@ class BpmDetector
   public:
     /** Sample rate BTrack was tuned for. */
     static constexpr double kAnalysisSampleRate = 44100.0;
-    /** BTrack hop size. */
-    static constexpr int kHopSize = 512;
-    /** BTrack frame size — twice the hop. */
+    /** BTrack hop size. Smaller than BTrack's default 512 so offline
+     *  beat positions aren't quantised to 11.6 ms steps, but not as
+     *  expensive as a 128-sample hop. */
+    static constexpr int kHopSize = 256;
+    /** BTrack frame size. Keep a 1024-sample spectral window while
+     *  advancing in 128-sample hops for finer timing. */
     static constexpr int kFrameSize = 1024;
     /** Plausibility window for a final estimate. Anything outside is
      *  treated as "didn't detect anything useful" and reported as 0. */
@@ -70,7 +73,7 @@ class BpmDetector
      *  better estimates and the user shouldn't wait for the whole
      *  thing. Two minutes is enough to capture a steady tempo on
      *  music-style material. */
-    static constexpr double kMaxAnalysisSeconds = 120.0;
+    static constexpr double kMaxAnalysisSeconds = 60.0;
 
     /**
      * Run the offline analysis on `audioFile`. Returns a populated
