@@ -235,6 +235,19 @@ class ProjectState : public juce::ValueTree::Listener
      *  Returns true if the item existed. */
     bool setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec);
 
+    /** Set the cached-decoded-WAV path on a library item. Used by
+     *  the backend after `DecodedCache::ensureDecoded` has finished.
+     *  Pass an empty string to clear. Marks dirty. Returns true if
+     *  the item existed. */
+    bool setLibraryItemPlaybackPath(const juce::String& itemId, const juce::String& playbackPath);
+
+    /** Read the cached-decoded-WAV path for the library item with
+     *  `filePath` as its source path. Returns empty string when no
+     *  matching item exists or no cache has been written yet. Used
+     *  by `handleClipAdd` to prefer the cached WAV over the original
+     *  for new clip sources. */
+    juce::String getLibraryItemPlaybackPathForSource(const juce::String& sourceFilePath) const;
+
     /** Flag (or clear) the library item as having a variable tempo —
      *  drives the UI badge and suppresses the first-clip project
      *  BPM seed. Marks dirty. Returns true if the item existed. */
@@ -344,6 +357,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kLibraryItem;
     static const juce::Identifier kBeats;
     static const juce::Identifier kBeatAnchorSec;
+    static const juce::Identifier kPlaybackFilePath;
     static const juce::Identifier kVariableTempo;
 };
 

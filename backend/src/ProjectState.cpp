@@ -25,6 +25,7 @@ const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
 const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
 const juce::Identifier ProjectState::kBeats{"beats"};
 const juce::Identifier ProjectState::kBeatAnchorSec{"beatAnchorSec"};
+const juce::Identifier ProjectState::kPlaybackFilePath{"playbackFilePath"};
 const juce::Identifier ProjectState::kVariableTempo{"variableTempo"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
@@ -554,6 +555,44 @@ bool ProjectState::setLibraryItemBeatAnchor(const juce::String& itemId, double a
     return false;
 }
 
+bool ProjectState::setLibraryItemPlaybackPath(const juce::String& itemId, const juce::String& playbackPath)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            if (playbackPath.isEmpty())
+            {
+                item.removeProperty(kPlaybackFilePath, nullptr);
+            }
+            else
+            {
+                item.setProperty(kPlaybackFilePath, playbackPath, nullptr);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+juce::String ProjectState::getLibraryItemPlaybackPathForSource(const juce::String& sourceFilePath) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return {};
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kFilePath).toString() == sourceFilePath)
+        {
+            return item.getProperty(kPlaybackFilePath, {}).toString();
+        }
+    }
+    return {};
+}
+
 bool ProjectState::setLibraryItemVariableTempo(const juce::String& itemId, bool variable)
 {
     auto library = root.getChildWithName(kLibrary);
@@ -632,6 +671,10 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("beatAnchorSec",
                              static_cast<double>(item.getProperty(kBeatAnchorSec, 0.0)));
+        }
+        if (item.hasProperty(kPlaybackFilePath))
+        {
+            obj->setProperty("playbackFilePath", item.getProperty(kPlaybackFilePath).toString());
         }
         if (item.hasProperty(kVariableTempo) && bool(item.getProperty(kVariableTempo)))
         {

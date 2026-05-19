@@ -97,6 +97,7 @@ target_sources(SilverdawBackend PRIVATE
     src/AudioEngine.cpp
     src/BpmDetector.cpp
     src/BridgeServer.cpp
+    src/DecodedCache.cpp
     src/Log.cpp
     src/PeaksCache.cpp
     src/ProjectFile.cpp

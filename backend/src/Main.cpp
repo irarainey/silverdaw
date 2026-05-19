@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "BpmDetector.h"
 #include "BridgeServer.h"
+#include "DecodedCache.h"
 #include "Log.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
@@ -294,18 +295,55 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, silverdaw::ProjectState&
 
 void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                      silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
-                     silverdaw::BridgeServer& bridge)
+                     silverdaw::BridgeServer& bridge, const silverdaw::DecodedCache& decodedCache)
 {
     silverdaw::log::info("bpmjob", "start itemId=" + itemId + " file=" + filePath.getFileName());
+
+    // Step 1: decode the whole source file into a 16-bit PCM WAV
+    // cache. No-op if a cache entry already exists for this file
+    // (same (path, mtime, size) hash). The cache is what the audio
+    // engine will use for all subsequent CLIP_ADDs of this file, so
+    // the read-ahead thread reads cheap PCM instead of decoding the
+    // original on every block.
+    const auto cachedFile = decodedCache.ensureDecoded(filePath, engine.getFormatManager());
+    const juce::String cachedPath = cachedFile.existsAsFile() ? cachedFile.getFullPathName() : juce::String();
+
+    // Step 2: analyse the audio. Prefer the cached WAV (it's faster
+    // to decode AND identical to what the engine will play, so the
+    // beat times we report will line up perfectly with the audible
+    // beats during playback). Fall back to the original on cache
+    // failure.
+    const juce::File analysisFile = cachedFile.existsAsFile() ? cachedFile : filePath;
     silverdaw::BpmDetector detector;
-    const silverdaw::BpmAnalysis analysis = detector.analyse(filePath, engine.getFormatManager());
+    const silverdaw::BpmAnalysis analysis = detector.analyse(analysisFile, engine.getFormatManager());
     if (analysis.bpm <= 0.0)
     {
         silverdaw::log::info("bpmjob", "no plausible BPM for itemId=" + itemId);
+        // Even if BPM detection didn't produce a usable result, we
+        // still want to surface the decoded-cache path so future
+        // CLIP_ADDs use the cheap WAV. Broadcast a minimal
+        // LIBRARY_ITEM_ANALYSIS with zero BPM and empty beats so the
+        // renderer knows to update playbackFilePath.
+        if (cachedPath.isNotEmpty())
+        {
+            juce::MessageManager::callAsync(
+                [itemId, cachedPath, &projectState, &bridge]
+                {
+                    projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
+                    auto* p = new juce::DynamicObject();
+                    p->setProperty("itemId", itemId);
+                    p->setProperty("bpm", 0.0);
+                    p->setProperty("beatAnchorSec", 0.0);
+                    p->setProperty("beats", juce::var(juce::Array<juce::var>{}));
+                    p->setProperty("variableTempo", false);
+                    p->setProperty("playbackFilePath", cachedPath);
+                    bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
+                });
+        }
         return;
     }
     juce::MessageManager::callAsync(
-        [itemId, analysis, &projectState, &bridge]
+        [itemId, analysis, cachedPath, &projectState, &bridge]
         {
             // Item may have been removed while we were busy.
             if (!projectState.setLibraryItemBpm(itemId, analysis.bpm))
@@ -317,6 +355,10 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             projectState.setLibraryItemBeats(itemId, analysis.beatTimesSec);
             projectState.setLibraryItemBeatAnchor(itemId, analysis.beatAnchorSec);
             projectState.setLibraryItemVariableTempo(itemId, analysis.variableTempo);
+            if (cachedPath.isNotEmpty())
+            {
+                projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
+            }
 
             // Build the analysis envelope. The beats array can run to
             // a few hundred floats for a long clip (no big deal for
@@ -330,6 +372,10 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             for (double t : analysis.beatTimesSec) beatArr.add(juce::var(t));
             p->setProperty("beats", juce::var(beatArr));
             p->setProperty("variableTempo", analysis.variableTempo);
+            if (cachedPath.isNotEmpty())
+            {
+                p->setProperty("playbackFilePath", cachedPath);
+            }
             bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
 
             // Try to seed the project BPM. The helper checks the
@@ -359,23 +405,45 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
 void maybeSeedProjectBpmFor(const juce::String& itemId, silverdaw::ProjectState& projectState,
                             silverdaw::BridgeServer& bridge)
 {
+    silverdaw::log::info("bpmjob", "seed check for itemId=" + itemId);
     const auto& tree = projectState.getTree();
     // Find the library item + its stored BPM. Bail if either is
     // missing — only useful when the analysis has actually landed.
     const auto library = tree.getChildWithName(juce::Identifier{"LIBRARY"});
-    if (!library.isValid()) return;
+    if (!library.isValid())
+    {
+        silverdaw::log::info("bpmjob", "seed skipped (no library tree)");
+        return;
+    }
     double itemBpm = 0.0;
+    bool itemFound = false;
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
         if (item.getProperty(juce::Identifier{"id"}).toString() == itemId)
         {
-            if (!item.hasProperty(juce::Identifier{"bpm"})) return;
+            itemFound = true;
+            if (!item.hasProperty(juce::Identifier{"bpm"}))
+            {
+                silverdaw::log::info("bpmjob",
+                                     "seed skipped for itemId=" + itemId + " (item has no BPM yet)");
+                return;
+            }
             itemBpm = static_cast<double>(item.getProperty(juce::Identifier{"bpm"}, 0.0));
             break;
         }
     }
-    if (itemBpm <= 0.0) return;
+    if (!itemFound)
+    {
+        silverdaw::log::info("bpmjob", "seed skipped — itemId=" + itemId + " not in library tree");
+        return;
+    }
+    if (itemBpm <= 0.0)
+    {
+        silverdaw::log::info("bpmjob",
+                             "seed skipped for itemId=" + itemId + " (itemBpm=0)");
+        return;
+    }
 
     // Gate 1: at least one clip must be on a track. Library-only
     // imports don't seed.
@@ -470,19 +538,20 @@ juce::String findLibraryItemIdForPath(const silverdaw::ProjectState& projectStat
  */
 void ensureBpmDetection(const juce::String& filePath, silverdaw::AudioEngine& engine,
                         silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                        juce::ThreadPool& peakPool)
+                        juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
 {
     if (filePath.isEmpty()) return;
     const juce::String itemId = findLibraryItemIdForPath(projectState, filePath);
     if (itemId.isEmpty()) return; // No library item to attach BPM to.
     if (projectState.getLibraryItemBpmForPath(filePath) > 0.0) return; // Already known.
     peakPool.addJob(
-        [itemId, file = juce::File(filePath), &engine, &projectState, &bridge]
-        { runBpmDetection(itemId, file, engine, projectState, bridge); });
+        [itemId, file = juce::File(filePath), &engine, &projectState, &bridge, &decodedCache]
+        { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache); });
 }
 
 void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
-                   silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
+                   silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                   const silverdaw::DecodedCache& decodedCache)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
@@ -522,8 +591,21 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     // (e.g. older clients that never send TRACK_ADD). Idempotent.
     projectState.addTrack(trackId);
 
+    // Prefer the decoded-WAV cache when one exists for this file —
+    // the audio engine then reads cheap 16-bit PCM instead of
+    // decoding the original on every block. The cache is built
+    // lazily by `runBpmDetection`, so the *first* clip of a new
+    // file still loads the original (until detection completes);
+    // subsequent clips of the same file pick up the cache.
+    juce::String engineFilePath = filePath;
+    const juce::String cachedPath = projectState.getLibraryItemPlaybackPathForSource(filePath);
+    if (cachedPath.isNotEmpty() && juce::File(cachedPath).existsAsFile())
+    {
+        engineFilePath = cachedPath;
+    }
+
     juce::String errorMsg;
-    bool ok = engine.addClip(clipId, juce::File(filePath), initialOffsetMs, inMs, payloadDurationMs, &errorMsg);
+    bool ok = engine.addClip(clipId, juce::File(engineFilePath), initialOffsetMs, inMs, payloadDurationMs, &errorMsg);
     if (ok)
     {
         // For un-trimmed clips fall back to the engine-discovered source
@@ -566,7 +648,9 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         // the case where the renderer deduplicates a LIBRARY_ADD (so
         // detection wouldn't otherwise have a chance to start) and the
         // case where a clip arrives without a preceding LIBRARY_ADD.
-        ensureBpmDetection(filePath, engine, projectState, bridge, peakPool);
+        // The same worker job also writes the decoded-WAV cache for
+        // future clip adds.
+        ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
         // If the matching library item already has a known BPM (e.g.
         // the user imported the file to the library earlier and is
         // only now placing it on a track), re-evaluate the seed
@@ -899,8 +983,18 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, const silverdaw::P
             {
                 continue;
             }
+            // Prefer the cached-decoded WAV when one exists for this
+            // file — same logic as `handleClipAdd`. Falls back to the
+            // original source if the cache hasn't been written yet
+            // (the renderer will re-cache lazily on the next BPM run).
+            juce::String engineFilePath = filePath;
+            const juce::String cachedPath = projectState.getLibraryItemPlaybackPathForSource(filePath);
+            if (cachedPath.isNotEmpty() && juce::File(cachedPath).existsAsFile())
+            {
+                engineFilePath = cachedPath;
+            }
             juce::String err;
-            if (engine.addClip(clipId, juce::File(filePath), offsetMs, inMs, durationMs, &err))
+            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, &err))
             {
                 ++rebuilt;
             }
@@ -1084,13 +1178,14 @@ void handleProjectRename(const juce::var& payload, silverdaw::ProjectState& proj
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache, ProjectSession& session)
+                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                           const silverdaw::DecodedCache& decodedCache, ProjectSession& session)
 {
     if (type == "CLIP_ADD")
     {
         silverdaw::log::info("bridge", "recv CLIP_ADD trackId=" + payload.getProperty("trackId", "").toString() +
                                            " clipId=" + payload.getProperty("clipId", "").toString());
-        handleClipAdd(payload, engine, projectState, bridge, peakPool, cache);
+        handleClipAdd(payload, engine, projectState, bridge, peakPool, cache, decodedCache);
     }
     else if (type == "CLIP_MOVE")
     {
@@ -1129,7 +1224,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
         silverdaw::log::info("bridge", "recv LIBRARY_ADD itemId=" + itemId);
         projectState.addLibraryItem(itemId, filePath);
-        ensureBpmDetection(filePath, engine, projectState, bridge, peakPool);
+        ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
     }
     else if (type == "LIBRARY_REMOVE")
     {
@@ -1304,6 +1399,13 @@ int runBackend(int argc, char* argv[])
     // twice. See `PeaksCache.h` for the on-disk format.
     const silverdaw::PeaksCache peaksCache;
 
+    // Disk-backed cache for fully-decoded audio. Every imported file is
+    // decoded once on the worker pool and written out as a 16-bit PCM
+    // WAV; the engine reads back from the cache for every subsequent
+    // clip-add, which sidesteps the per-clip MP3 / WMA decode cost
+    // entirely. See `DecodedCache.h`.
+    const silverdaw::DecodedCache decodedCache;
+
     if (bridgeToken.isEmpty())
     {
         silverdaw::log::warn("bridge", "no AUTH token set; accepting all loopback clients (debug only)");
@@ -1327,9 +1429,10 @@ int runBackend(int argc, char* argv[])
     // acks (e.g. CLIP_ADDED) without a chicken-and-egg capture problem.
     silverdaw::BridgeServer bridge(
         bridgeToken,
-        [&engine, &projectState, &peakPool, &peaksCache, &session](silverdaw::BridgeServer& self,
-                                                                    const juce::String& type, const juce::var& payload)
-        { dispatchBridgeMessage(type, payload, engine, projectState, self, peakPool, peaksCache, session); },
+        [&engine, &projectState, &peakPool, &peaksCache, &decodedCache, &session](
+            silverdaw::BridgeServer& self, const juce::String& type, const juce::var& payload)
+        { dispatchBridgeMessage(type, payload, engine, projectState, self, peakPool, peaksCache, decodedCache,
+                                session); },
         [&projectState, &session](const silverdaw::BridgeServer::SendToClient& sendToClient)
         {
             // PROJECT_STATE is sent only to the newly-authenticated client,

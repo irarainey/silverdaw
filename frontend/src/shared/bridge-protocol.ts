@@ -361,6 +361,10 @@ export interface ProjectStateLibraryItem {
    *  negative). Used with `bpm` to lay out the synthesised marker
    *  grid robustly against per-beat jitter. */
   beatAnchorSec?: number
+  /** Cache path the backend has decoded this source into. Future
+   *  clips of this file should use this path so the audio engine
+   *  reads cheap PCM instead of decoding the original. */
+  playbackFilePath?: string
   /** True when BTrack's running tempo estimate fluctuated by more than
    *  ~2 % over the analysis window — the project-BPM seeder skips
    *  these and the library tile shows a "variable" badge. */
@@ -427,6 +431,11 @@ export interface LibraryItemAnalysisPayload {
   beatAnchorSec: number
   beats: number[]
   variableTempo: boolean
+  /** Path to the decoded-WAV cache the backend has written for this
+   *  source file. Future clip adds should use this path so the
+   *  audio engine reads cheap PCM instead of decoding MP3 / WMA on
+   *  the read-ahead thread. */
+  playbackFilePath?: string
 }
 
 /** Backend notification that it just seeded the project BPM (e.g. from
@@ -559,6 +568,7 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
         }
       }
       if (item.beatAnchorSec !== undefined && typeof item.beatAnchorSec !== 'number') return false
+      if (item.playbackFilePath !== undefined && typeof item.playbackFilePath !== 'string') return false
       if (item.variableTempo !== undefined && typeof item.variableTempo !== 'boolean') return false
       if (item.unresolved !== undefined && typeof item.unresolved !== 'boolean') return false
     }
@@ -654,7 +664,9 @@ export function isLibraryItemAnalysisPayload(value: unknown): value is LibraryIt
   for (const b of value.beats) {
     if (typeof b !== 'number') return false
   }
-  return typeof value.variableTempo === 'boolean'
+  if (typeof value.variableTempo !== 'boolean') return false
+  if (value.playbackFilePath !== undefined && typeof value.playbackFilePath !== 'string') return false
+  return true
 }
 
 /** Guard for `ProjectBpmAppliedPayload`. */

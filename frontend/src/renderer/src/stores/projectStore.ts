@@ -1205,6 +1205,14 @@ export const useProjectStore = defineStore('project', {
             sampleRate: 0,
             channelCount: 0,
             peaks: new Float32Array(0),
+            // The decoded-WAV cache is a backend-internal
+            // optimisation. The renderer always sends the source
+            // `filePath` in CLIP_ADD; the backend swaps in its
+            // cached WAV on the engine side. So we deliberately do
+            // NOT hydrate `playbackFilePath` from the persisted
+            // cache path here — using it would make the renderer
+            // send the cache path in CLIP_ADD and break the
+            // backend's library-item lookup.
             playbackFilePath: item.filePath,
             fromSnapshot: true
           })
@@ -1214,8 +1222,6 @@ export const useProjectStore = defineStore('project', {
           // envelope when the worker finishes.
           if (typeof item.bpm === 'number' && item.bpm > 0) {
             const persistedBeats = Array.isArray(item.beats) ? item.beats : []
-            // Fall back to `beats[0]` when older saved projects don't
-            // carry the regression-derived anchor.
             const anchor =
               typeof item.beatAnchorSec === 'number'
                 ? item.beatAnchorSec

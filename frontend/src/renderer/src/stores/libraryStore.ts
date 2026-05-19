@@ -65,7 +65,15 @@ export interface LibraryItem {
    * a temp WAV and stores that path here. UI continues to display the
    * original `filePath` / `fileName` to the user.
    */
-  readonly playbackFilePath: string
+  /**
+   * Path the JUCE backend should actually load when this item is placed
+   * on a track. Equals `filePath` for items that haven't been cached
+   * yet, otherwise points at the decoded-WAV cache. Mutable so the
+   * `LIBRARY_ITEM_ANALYSIS` envelope can promote the item from "use
+   * original" to "use cache" once the backend's `DecodedCache` has
+   * finished writing.
+   */
+  playbackFilePath: string
   /**
    * ID3 / Vorbis / iTunes / BWF tag info, populated asynchronously by the
    * main process via `audio:readMetadata`. `undefined` while loading,
@@ -403,7 +411,8 @@ export const useLibraryStore = defineStore('library', {
       bpm: number,
       beatAnchorSec: number,
       beats: number[],
-      variableTempo: boolean
+      variableTempo: boolean,
+      playbackFilePath?: string
     ): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
@@ -416,6 +425,17 @@ export const useLibraryStore = defineStore('library', {
       item.beatAnchorSec = beats.length > 0 ? beatAnchorSec : undefined
       item.beats = beats.length > 0 ? beats.slice() : undefined
       item.variableTempo = variableTempo || undefined
+      // NB: we deliberately ignore the backend's `playbackFilePath`
+      // here. The decoded-WAV cache is a backend-internal
+      // optimisation — the engine substitutes the cached WAV via
+      // `getLibraryItemPlaybackPathForSource` on every CLIP_ADD,
+      // keyed on the original source path. If we overwrote
+      // `item.playbackFilePath` with the cache path, subsequent
+      // `addClipFromLibrary` calls would send the cache path as
+      // `CLIP_ADD.filePath`, breaking the backend's library-item
+      // lookup (which matches on the source `filePath`) and
+      // preventing project-BPM seeding from running.
+      void playbackFilePath
       // Bump the project's redraw counter so the timeline repaints
       // with the freshly-arrived beat markers on the matching clips.
       // Done unconditionally — the cost is a single repaint and

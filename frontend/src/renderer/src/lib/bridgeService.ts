@@ -439,11 +439,12 @@ function dispatch(msg: BridgeInboundMessage): void {
         msg.payload.bpm,
         msg.payload.beatAnchorSec,
         msg.payload.beats,
-        msg.payload.variableTempo
+        msg.payload.variableTempo,
+        msg.payload.playbackFilePath
       )
       log.info(
         'bridge',
-        `LIBRARY_ITEM_ANALYSIS itemId=${msg.payload.itemId} bpm=${msg.payload.bpm.toFixed(2)} anchor=${msg.payload.beatAnchorSec.toFixed(3)}s beats=${msg.payload.beats.length}${msg.payload.variableTempo ? ' variable' : ''}`
+        `LIBRARY_ITEM_ANALYSIS itemId=${msg.payload.itemId} bpm=${msg.payload.bpm.toFixed(2)} anchor=${msg.payload.beatAnchorSec.toFixed(3)}s beats=${msg.payload.beats.length}${msg.payload.variableTempo ? ' variable' : ''}${msg.payload.playbackFilePath ? ' (cached)' : ''}`
       )
       break
     }
