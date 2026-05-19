@@ -5,6 +5,7 @@
 
 import { computed, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
+import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
@@ -12,6 +13,7 @@ import { log } from '@/lib/log'
 import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
 
 const project = useProjectStore()
+const library = useLibraryStore()
 const transport = useTransportStore()
 const ui = useUiStore()
 
@@ -77,6 +79,19 @@ const lengthEditable = computed(() => project.tracks.length > 0)
  * together when the first track lands.
  */
 const timingEditable = lengthEditable
+
+const projectClipCount = computed(() =>
+  project.tracks.reduce((count, track) => count + track.clipIds.length, 0)
+)
+
+const projectBpmPending = computed(() => {
+  if (!timingEditable.value || projectClipCount.value === 0) return false
+  const projectHasAnalysedItem = library.items.some((item) => typeof item.bpm === 'number' && item.bpm > 0)
+  if (projectHasAnalysedItem) return false
+  return library.imports.some(
+    (entry) => entry.stage === 'detectingTempo' || entry.stage === 'detectingBeats'
+  )
+})
 
 function onLengthCommit(): void {
   isEditingLength.value = false
@@ -388,8 +403,13 @@ function onToggleFollow(): void {
               step="0.01"
               spellcheck="false"
               :disabled="!timingEditable"
-              :title="timingEditable ? 'Tempo (20 – 300 BPM). Use ↑/↓ or the spinner to adjust by 1; hold Shift for 10.' : 'Add a track to edit project tempo'"
-              class="w-16 bg-transparent font-mono text-base tabular-nums text-zinc-100 outline-none focus:text-blue-300 disabled:cursor-not-allowed disabled:text-zinc-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              :title="projectBpmPending ? 'Detecting tempo for the first clip…' : timingEditable ? 'Tempo (20 – 300 BPM). Use ↑/↓ or the spinner to adjust by 1; hold Shift for 10.' : 'Add a track to edit project tempo'"
+              :class="[
+                'w-16 rounded bg-transparent font-mono text-base tabular-nums outline-none focus:text-blue-300 disabled:cursor-not-allowed disabled:text-zinc-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+                projectBpmPending
+                  ? 'animate-pulse bg-blue-500/10 px-1 text-blue-200 ring-1 ring-blue-400/40'
+                  : 'text-zinc-100'
+              ]"
               @focus="isEditingBpm = true"
               @blur="onBpmCommit"
               @keydown="onBpmKeydown"
