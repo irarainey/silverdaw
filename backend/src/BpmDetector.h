@@ -12,9 +12,16 @@ struct BpmAnalysis
 {
     /** Estimated tempo in BPM. 0 when no plausible tempo was found. */
     double bpm = 0.0;
-    /** Beat positions in seconds from the start of the source file.
-     *  Empty when `bpm == 0`. Each entry is the time of one detected
-     *  beat — at 120 BPM you'd get ~120 entries for a one-minute clip. */
+    /** Phase of the ideal beat grid: implied time (seconds, can be
+     *  negative) of "beat 0" in the linear-regression fit. The
+     *  renderer uses this with `bpm` to draw a synthetic beat grid
+     *  that's robust to BTrack's per-beat jitter. */
+    double beatAnchorSec = 0.0;
+    /** Beat positions in seconds from the start of the source file —
+     *  the raw per-beat detections, kept so a future "edit beats on
+     *  a clip" tool can use them as starting points for manual
+     *  refinement. May contain outliers; rendering / snap reads the
+     *  `bpm` + `beatAnchorSec` grid instead. */
     std::vector<double> beatTimesSec;
     /** True when BTrack's running tempo estimate fluctuated by more
      *  than ~2 % over the analysis window (after a short settling

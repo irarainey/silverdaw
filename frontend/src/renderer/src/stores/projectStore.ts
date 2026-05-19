@@ -1213,10 +1213,18 @@ export const useProjectStore = defineStore('project', {
           // get the full analysis via the LIBRARY_ITEM_ANALYSIS
           // envelope when the worker finishes.
           if (typeof item.bpm === 'number' && item.bpm > 0) {
+            const persistedBeats = Array.isArray(item.beats) ? item.beats : []
+            // Fall back to `beats[0]` when older saved projects don't
+            // carry the regression-derived anchor.
+            const anchor =
+              typeof item.beatAnchorSec === 'number'
+                ? item.beatAnchorSec
+                : (persistedBeats[0] ?? 0)
             library.setItemAnalysis(
               libId,
               item.bpm,
-              Array.isArray(item.beats) ? item.beats : [],
+              anchor,
+              persistedBeats,
               item.variableTempo === true
             )
           }

@@ -437,12 +437,13 @@ function dispatch(msg: BridgeInboundMessage): void {
       useLibraryStore().setItemAnalysis(
         msg.payload.itemId,
         msg.payload.bpm,
+        msg.payload.beatAnchorSec,
         msg.payload.beats,
         msg.payload.variableTempo
       )
       log.info(
         'bridge',
-        `LIBRARY_ITEM_ANALYSIS itemId=${msg.payload.itemId} bpm=${msg.payload.bpm.toFixed(2)} beats=${msg.payload.beats.length}${msg.payload.variableTempo ? ' variable' : ''}`
+        `LIBRARY_ITEM_ANALYSIS itemId=${msg.payload.itemId} bpm=${msg.payload.bpm.toFixed(2)} anchor=${msg.payload.beatAnchorSec.toFixed(3)}s beats=${msg.payload.beats.length}${msg.payload.variableTempo ? ' variable' : ''}`
       )
       break
     }

@@ -590,12 +590,17 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const libItem = library.items.find((i) => i.filePath === clip.filePath)
     const beats = libItem?.beats
     const sourceBpm = libItem?.bpm
-    if (beats && beats.length > 0 && sourceBpm && sourceBpm > 0 && w > 0) {
+    // Prefer the regression-derived anchor over the first raw
+    // detected beat — it's the implied phase of the ideal beat
+    // grid and is robust to BTrack's per-beat jitter. Older saved
+    // projects without the anchor fall back to `beats[0]`.
+    const anchorSec = libItem?.beatAnchorSec ?? beats?.[0]
+    if (beats && beats.length > 0 && sourceBpm && sourceBpm > 0 && anchorSec !== undefined && w > 0) {
       const pxPerMs = pxPerSecond.value / 1000
       const inMs = clip.inMs
       const outMs = inMs + clip.durationMs
       const beatSpacingMs = (60 / sourceBpm) * 1000
-      const universalAnchorMs = beats[0]! * 1000
+      const universalAnchorMs = anchorSec * 1000
       // First synthetic beat ≥ inMs. ceil() can produce a value < inMs
       // when `(inMs - universalAnchorMs)` is exactly on a beat, so we
       // bump by spacing once if needed.

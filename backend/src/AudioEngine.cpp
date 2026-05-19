@@ -137,8 +137,15 @@ bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath
         static_cast<juce::int64>(clampedDurMs * track->sampleRate / 1000.0));
 
     track->transportSource = std::make_unique<juce::AudioTransportSource>();
+    // 8192 samples (~186 ms at 44.1 kHz) of read-ahead is plenty for
+    // SSD-backed file reads — enough to hide disk-IO latency on a
+    // 60 Hz audio callback without the heavy synchronous initial-fill
+    // cost a 32 768-sample buffer paid every time a clip was added.
+    // Large buffers were biting hard when several duplicates of an
+    // MP3 source landed in quick succession (each addClip blocking
+    // the message thread for ~1 s on a fresh BufferingAudioSource).
     track->transportSource->setSource(track->offsetSource.get(),
-                                      32768,            // read-ahead buffer size in samples
+                                      8192,             // read-ahead buffer size in samples
                                       &readAheadThread, // background reader thread (required when buffer > 0)
                                       track->sampleRate, track->numChannels);
 
@@ -223,22 +230,29 @@ void AudioEngine::rebuildTrackPrefetch(Track& track)
         return;
     }
     const double pos = trackSeekSecondsFor(track, master.getPositionSamples());
-    const bool wasStarted = track.transportSource->isPlaying();
-    silverdaw::log::info("engine", "rebuild prefetch (wasStarted=" + juce::String(wasStarted ? 1 : 0) +
-                                       " pos=" + juce::String(pos) + ")");
-    track.transportSource->stop();
-    track.transportSource->setSource(nullptr, 0, nullptr);
-    track.transportSource->setSource(track.offsetSource.get(), 32768, &readAheadThread, track.sampleRate,
-                                     track.numChannels);
+    silverdaw::log::info("engine", "rebuild prefetch (pos=" + juce::String(pos) + ")");
+    // Just re-seek the existing source chain rather than tearing it
+    // down and recreating it. `AudioTransportSource::setPosition`
+    // forwards to its inner `BufferingAudioSource`, which invalidates
+    // its prefetch buffer and asks the read-ahead thread to refill
+    // from the new position — the side-effect we actually want.
+    //
+    // The previous implementation did
+    //   transportSource->setSource(nullptr, ...)
+    //   transportSource->setSource(newSource, 32 k-sample buffer, …)
+    // which forced a *synchronous* initial fill of the new buffering
+    // source on the message thread. For MP3 inputs that turned into
+    // a ~1 s block per call — multiply by N dirty tracks and the
+    // message thread stalled long enough for WebSocket events to
+    // queue up. The setPosition path is non-blocking; the worst case
+    // is a few audio blocks of silence while the read-ahead catches
+    // up, which is still preferable to the stale-prefetch audio we
+    // were originally trying to prevent.
     track.transportSource->setPosition(pos);
-    if (wasStarted)
-    {
-        track.transportSource->start();
-    }
     track.prefetchDirty = false;
 }
 
-void AudioEngine::flushDirtyRebuilds()
+void AudioEngine::flushAllDirtyRebuildsSync()
 {
     for (auto& [id, track] : tracks)
     {
@@ -249,10 +263,50 @@ void AudioEngine::flushDirtyRebuilds()
     }
 }
 
+void AudioEngine::flushDirtyRebuilds()
+{
+    // Process at most ONE dirty track per call. Each
+    // `rebuildTrackPrefetch` blocks the message thread for hundreds
+    // of ms (sometimes north of a second on MP3 sources) while
+    // JUCE's `BufferingAudioSource` is set up and the read-ahead
+    // thread is asked to fill the initial 32 k-sample buffer. If we
+    // looped through every dirty track in one go, the message
+    // thread would be unresponsive for that × N seconds — long
+    // enough that the user's transport-button clicks queue up in
+    // the WebSocket dispatcher and only fire as a burst at the end
+    // (see the diagnostic trace from the 2026-05-19 session).
+    //
+    // Chunking gives the message thread a chance to drain other
+    // pending events (transport clicks, drag updates, etc.) between
+    // each rebuild. The 10 ms re-arm leaves enough slack for several
+    // queued envelopes to dispatch before the next chunk fires.
+    Track* dirty = nullptr;
+    for (auto& [id, track] : tracks)
+    {
+        if (track->prefetchDirty)
+        {
+            dirty = track.get();
+            break;
+        }
+    }
+    if (dirty == nullptr) return;
+
+    rebuildTrackPrefetch(*dirty);
+
+    for (auto& [id, track] : tracks)
+    {
+        if (track->prefetchDirty)
+        {
+            rebuildTimer.startTimer(10);
+            return;
+        }
+    }
+}
+
 void AudioEngine::play()
 {
     rebuildTimer.stopTimer();
-    flushDirtyRebuilds();
+    flushAllDirtyRebuildsSync();
     master.setPlaying(true);
     silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
                                        " pos=" + juce::String(master.getPositionSamples()) + ")");

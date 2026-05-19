@@ -24,6 +24,7 @@ const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
 const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
 const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
 const juce::Identifier ProjectState::kBeats{"beats"};
+const juce::Identifier ProjectState::kBeatAnchorSec{"beatAnchorSec"};
 const juce::Identifier ProjectState::kVariableTempo{"variableTempo"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
@@ -526,15 +527,27 @@ bool ProjectState::setLibraryItemBeats(const juce::String& itemId, const std::ve
             }
             else
             {
-                // Store as a juce::var Array<var>. The downstream
-                // `tracksAsJson` / save path serialises this cleanly
-                // (JUCE's `JSON::toString` walks juce::var arrays
-                // natively).
                 juce::Array<juce::var> arr;
                 arr.ensureStorageAllocated(static_cast<int>(beatTimesSec.size()));
                 for (double t : beatTimesSec) arr.add(juce::var(t));
                 item.setProperty(kBeats, juce::var(arr), nullptr);
             }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ProjectState::setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            item.setProperty(kBeatAnchorSec, anchorSec, nullptr);
             return true;
         }
     }
@@ -614,6 +627,11 @@ juce::var ProjectState::libraryAsJson() const
             // it's already a `juce::var` containing `Array<var>` of
             // numbers, which `JSON::toString` serialises as `[…]`.
             obj->setProperty("beats", item.getProperty(kBeats));
+        }
+        if (item.hasProperty(kBeatAnchorSec))
+        {
+            obj->setProperty("beatAnchorSec",
+                             static_cast<double>(item.getProperty(kBeatAnchorSec, 0.0)));
         }
         if (item.hasProperty(kVariableTempo) && bool(item.getProperty(kVariableTempo)))
         {

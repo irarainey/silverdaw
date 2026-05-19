@@ -472,7 +472,20 @@ class AudioEngine
     /** Rebuild a track's BufferingAudioSource so a fresh prefetch starts from the current offset. */
     void rebuildTrackPrefetch(Track& track);
 
-    /** Rebuild every track flagged `prefetchDirty`. Runs synchronously on the message thread. */
+    /** Rebuild every track flagged `prefetchDirty` synchronously,
+     *  in one tight loop. Called by `play()` so the very next audio
+     *  block reads from a fresh buffer chain. */
+    void flushAllDirtyRebuildsSync();
+
+    /** Rebuild ONE dirty track and, if more remain, re-arm the
+     *  debounce timer so the next rebuild happens on the next
+     *  message-thread tick. Called from the timer callback —
+     *  chunking the work like this keeps the message thread
+     *  responsive when several tracks need their prefetch buffer
+     *  rebuilt after a drag (each `rebuildTrackPrefetch` blocks the
+     *  message thread for ~1 s while JUCE's BufferingAudioSource is
+     *  initialised, which would otherwise pile up and starve the
+     *  WebSocket dispatcher of CPU time). */
     void flushDirtyRebuilds();
 
     /**

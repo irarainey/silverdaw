@@ -5,6 +5,7 @@
 // backend's first acknowledgement arrives.
 
 import { defineStore } from 'pinia'
+import { log } from '@/lib/log'
 
 interface TransportState {
   isPlaying: boolean
@@ -45,6 +46,10 @@ export const useTransportStore = defineStore('transport', {
 
   actions: {
     setPlaybackState(isPlaying: boolean, positionMs?: number): void {
+      if (this.isPlaying !== isPlaying) {
+        log.info('transport', `playback state -> ${isPlaying ? 'playing' : 'paused'}` +
+          (typeof positionMs === 'number' ? ` @ ${positionMs.toFixed(0)}ms` : ''))
+      }
       this.isPlaying = isPlaying
       if (typeof positionMs === 'number') this.positionMs = positionMs
     },
@@ -52,11 +57,15 @@ export const useTransportStore = defineStore('transport', {
       this.positionMs = positionMs
     },
     setBpm(bpm: number): void {
-      // Clamp to a musically sane range. The timeline grid + snap unit
-      // both derive from this, so a 0 or negative value would divide by
-      // zero in `MS_PER_SUB_BEAT`. Two-decimal precision lets the user
-      // tap-tempo / fine-tune at sub-1-BPM resolution (e.g. 124.37).
-      this.bpm = Math.min(300, Math.max(20, Math.round(bpm * 100) / 100))
+      // Clamp to a musically sane range. The timeline grid + snap
+      // unit both derive from this, so a 0 or negative value would
+      // divide by zero in `MS_PER_SUB_BEAT`. We store the value at
+      // full precision — the UI displays 2 d.p. via `toFixed(2)`,
+      // but the grid math benefits from the extra digits when the
+      // BPM was seeded from a library item with a fractional
+      // tempo (e.g. 124.378). Rounding to 2 d.p. before storing
+      // introduced cumulative drift across long timelines.
+      this.bpm = Math.min(300, Math.max(20, bpm))
     },
     setConnected(connected: boolean): void {
       this.connected = connected

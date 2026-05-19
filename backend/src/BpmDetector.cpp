@@ -96,7 +96,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         srcData.output_frames = static_cast<long>(outFrames);
         srcData.src_ratio = ratio;
         srcData.end_of_input = 1;
-        const int err = src_simple(&srcData, SRC_SINC_FASTEST, 1);
+        const int err = src_simple(&srcData, SRC_SINC_BEST_QUALITY, 1);
         if (err != 0)
         {
             silverdaw::log::warn("bpm", juce::String("src_simple failed: ") + src_strerror(err));
@@ -140,13 +140,24 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
                             " (beats=" + juce::String(static_cast<int>(beatTimes.size())) + ", srcSR=" +
                             juce::String(sourceSampleRate) + ")");
 
-    // Prefer a BPM *derived from the median beat interval* over BTrack's
-    // running tempo estimate. The estimate is updated incrementally and
-    // can be a fraction of a BPM off the true value implied by the beat
-    // positions; using the median interval guarantees the project grid
-    // we later seed lines up with the source beats we report. Median
-    // (rather than mean) is robust to occasional doubled / missed beats.
+    // Prefer a BPM *fit by linear regression to all detected beats*
+    // over BTrack's running tempo estimate. The estimate is updated
+    // incrementally and can be a fraction of a BPM off the true
+    // value implied by the beat positions; a least-squares fit
+    // recovers both the period AND the phase to sub-millisecond
+    // precision, which is what we need for a synthesised marker
+    // grid to stay flush with the actual transients across long
+    // clips and across split / duplicate cycles.
+    //
+    // The fit is robust to occasional outliers (BTrack sometimes
+    // doubles or misses a beat near tempo changes): we start with
+    // the median interval as the period estimate, assign each
+    // detected beat the nearest integer beat-index in that grid,
+    // drop beats whose residual is > 25 % of a period, and re-fit.
+    // Three iterations are enough to converge on a clean fit for
+    // anything but the most erratic material.
     double derivedBpm = bpm;
+    double anchorSec = beatTimes.empty() ? 0.0 : beatTimes.front();
     if (beatTimes.size() >= 6)
     {
         std::vector<double> intervals;
@@ -165,7 +176,49 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
             const double medianInterval = intervals[intervals.size() / 2];
             if (medianInterval > 0.0)
             {
-                derivedBpm = 60.0 / medianInterval;
+                // Initial estimate: anchor at first beat, period = median.
+                double period = medianInterval;
+                double anchor = beatTimes.front();
+                for (int iter = 0; iter < 3; ++iter)
+                {
+                    // Assign each beat the closest integer index in
+                    // the current (anchor, period) grid. Filter out
+                    // beats whose residual is > 25 % of one period
+                    // — those are very likely outliers (missed /
+                    // doubled BTrack events).
+                    std::vector<std::pair<int, double>> kept;
+                    kept.reserve(beatTimes.size());
+                    for (double t : beatTimes)
+                    {
+                        const double n = std::round((t - anchor) / period);
+                        const double predicted = anchor + n * period;
+                        if (std::abs(t - predicted) <= period * 0.25)
+                        {
+                            kept.emplace_back(static_cast<int>(n), t);
+                        }
+                    }
+                    if (kept.size() < 4) break;
+
+                    // Least-squares fit: minimise Σ(t_i - (a + n_i * p))^2.
+                    long double sumN = 0, sumT = 0, sumNN = 0, sumNT = 0;
+                    for (auto& [n, t] : kept)
+                    {
+                        sumN += n;
+                        sumT += t;
+                        sumNN += static_cast<long double>(n) * n;
+                        sumNT += static_cast<long double>(n) * t;
+                    }
+                    const long double K = static_cast<long double>(kept.size());
+                    const long double denom = K * sumNN - sumN * sumN;
+                    if (denom <= 0.0L) break;
+                    const long double newPeriod = (K * sumNT - sumN * sumT) / denom;
+                    const long double newAnchor = (sumT - newPeriod * sumN) / K;
+                    if (newPeriod < 0.05L || newPeriod > 2.0L) break;
+                    period = static_cast<double>(newPeriod);
+                    anchor = static_cast<double>(newAnchor);
+                }
+                derivedBpm = 60.0 / period;
+                anchorSec = anchor;
             }
         }
     }
@@ -215,11 +268,13 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     }
 
     result.bpm = derivedBpm;
+    result.beatAnchorSec = anchorSec;
     result.beatTimesSec = std::move(beatTimes);
     result.variableTempo = variable;
     silverdaw::log::info("bpm", "estimated " + audioFile.getFileName() + " -> " +
-                                    juce::String(derivedBpm, 2) + " BPM" + (variable ? " (variable)" : "") +
-                                    " beats=" + juce::String(static_cast<int>(result.beatTimesSec.size())));
+                                    juce::String(derivedBpm, 4) + " BPM" + (variable ? " (variable)" : "") +
+                                    " anchor=" + juce::String(anchorSec, 4) +
+                                    "s beats=" + juce::String(static_cast<int>(result.beatTimesSec.size())));
     return result;
 }
 

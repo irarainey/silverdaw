@@ -399,11 +399,14 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const item = library.items.find((i) => i.filePath === clip.filePath)
     const beats = item?.beats
     const sourceBpm = item?.bpm
-    if (!beats || beats.length === 0 || !sourceBpm || sourceBpm <= 0) return null
+    const anchorSec = item?.beatAnchorSec ?? beats?.[0]
+    if (!beats || beats.length === 0 || !sourceBpm || sourceBpm <= 0 || anchorSec === undefined) {
+      return null
+    }
     const inMs = clip.inMs
     const outMs = inMs + clip.durationMs
     const beatSpacingMs = (60 / sourceBpm) * 1000
-    const universalAnchorMs = beats[0]! * 1000
+    const universalAnchorMs = anchorSec * 1000
     let firstBeatMs =
       universalAnchorMs +
       Math.ceil((inMs - universalAnchorMs) / beatSpacingMs) * beatSpacingMs

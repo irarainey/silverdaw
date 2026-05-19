@@ -289,6 +289,9 @@ void produceAndBroadcastPeaks(const juce::String& clipId, const juce::File& file
  * `MessageManager::callAsync` so the ValueTree mutation stays
  * single-threaded.
  */
+void maybeSeedProjectBpmFor(const juce::String& itemId, silverdaw::ProjectState& projectState,
+                            silverdaw::BridgeServer& bridge);
+
 void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                      silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                      silverdaw::BridgeServer& bridge)
@@ -312,6 +315,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                 return;
             }
             projectState.setLibraryItemBeats(itemId, analysis.beatTimesSec);
+            projectState.setLibraryItemBeatAnchor(itemId, analysis.beatAnchorSec);
             projectState.setLibraryItemVariableTempo(itemId, analysis.variableTempo);
 
             // Build the analysis envelope. The beats array can run to
@@ -320,6 +324,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             auto* p = new juce::DynamicObject();
             p->setProperty("itemId", itemId);
             p->setProperty("bpm", analysis.bpm);
+            p->setProperty("beatAnchorSec", analysis.beatAnchorSec);
             juce::Array<juce::var> beatArr;
             beatArr.ensureStorageAllocated(static_cast<int>(analysis.beatTimesSec.size()));
             for (double t : analysis.beatTimesSec) beatArr.add(juce::var(t));
@@ -327,77 +332,105 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             p->setProperty("variableTempo", analysis.variableTempo);
             bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
 
-            // Empty-project seed. The rule:
-            //   - skip when there's already MORE than one clip on the
-            //     timeline (the user has progressed past the
-            //     "just imported the first thing" stage and we
-            //     shouldn't move their grid out from under them);
-            //   - skip when there's already at least one OTHER
-            //     library item whose BPM is known (the seed has
-            //     effectively run on a previous import already);
-            //   - otherwise apply, EVEN IF the detection was flagged
-            //     as variable-tempo. A wobbly estimate is still
-            //     better than the default 100 BPM when the user has
-            //     just imported their first reference loop — and the
-            //     library-tile "~ BPM" badge already warns them
-            //     that the value is approximate. They can edit the
-            //     project tempo manually if they want to refine.
-            //
-            // We deliberately do NOT key off the project BPM being
-            // exactly 100: the user might have changed it manually
-            // before importing, but as long as the project is empty
-            // their first import is still the canonical tempo source.
-            const auto& tree = projectState.getTree();
-            int totalClips = 0;
-            for (int t = 0; t < tree.getNumChildren(); ++t)
-            {
-                const auto track = tree.getChild(t);
-                if (!track.hasType(juce::Identifier{"TRACK"})) continue;
-                for (int c = 0; c < track.getNumChildren(); ++c)
-                {
-                    if (track.getChild(c).hasType(juce::Identifier{"CLIP"}))
-                    {
-                        ++totalClips;
-                    }
-                }
-            }
-            if (totalClips > 1)
-            {
-                silverdaw::log::info("bpmjob",
-                                     "seed skipped for itemId=" + itemId +
-                                         " (clips already on tracks: " + juce::String(totalClips) + ")");
-                return;
-            }
-            const auto library = tree.getChildWithName(juce::Identifier{"LIBRARY"});
-            int otherItemsWithBpm = 0;
-            if (library.isValid())
-            {
-                for (int i = 0; i < library.getNumChildren(); ++i)
-                {
-                    const auto item = library.getChild(i);
-                    if (item.getProperty(juce::Identifier{"id"}).toString() == itemId) continue;
-                    if (item.hasProperty(juce::Identifier{"bpm"}))
-                    {
-                        ++otherItemsWithBpm;
-                    }
-                }
-            }
-            if (otherItemsWithBpm > 0)
-            {
-                silverdaw::log::info("bpmjob",
-                                     "seed skipped for itemId=" + itemId +
-                                         " (other library items already have BPM: " +
-                                         juce::String(otherItemsWithBpm) + ")");
-                return;
-            }
-            projectState.setBpm(analysis.bpm);
-            auto* bpmObj = new juce::DynamicObject();
-            bpmObj->setProperty("bpm", analysis.bpm);
-            bridge.broadcast("PROJECT_BPM_APPLIED", juce::var(bpmObj));
-            silverdaw::log::info("bpmjob", "seeded project BPM from first import: " +
-                                               juce::String(analysis.bpm, 2) +
-                                               (analysis.variableTempo ? " (variable)" : ""));
+            // Try to seed the project BPM. The helper checks the
+            // gates (must have at least one clip on a track, etc.).
+            maybeSeedProjectBpmFor(itemId, projectState, bridge);
         });
+}
+
+/**
+ * Try to seed the project BPM from a library item that already has a
+ * detected BPM. Idempotent — safe to call from multiple paths. The
+ * rule:
+ *   - need at least one clip on a track (we don't seed for
+ *     library-only imports; the user might be browsing samples and
+ *     hasn't committed to a tempo yet);
+ *   - skip when there's already at least one OTHER library item
+ *     whose BPM is known (the seed has effectively run on a
+ *     previous import already — don't keep moving the grid);
+ *   - skip when the project BPM has already been seeded from this
+ *     library item (current BPM matches the item's stored BPM).
+ *
+ * Runs unconditionally for variable-tempo items: an approximate
+ * tempo is still better than the default for users dragging their
+ * first reference loop, and the library tile already shows the
+ * `~ BPM` badge to warn them.
+ */
+void maybeSeedProjectBpmFor(const juce::String& itemId, silverdaw::ProjectState& projectState,
+                            silverdaw::BridgeServer& bridge)
+{
+    const auto& tree = projectState.getTree();
+    // Find the library item + its stored BPM. Bail if either is
+    // missing — only useful when the analysis has actually landed.
+    const auto library = tree.getChildWithName(juce::Identifier{"LIBRARY"});
+    if (!library.isValid()) return;
+    double itemBpm = 0.0;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(juce::Identifier{"id"}).toString() == itemId)
+        {
+            if (!item.hasProperty(juce::Identifier{"bpm"})) return;
+            itemBpm = static_cast<double>(item.getProperty(juce::Identifier{"bpm"}, 0.0));
+            break;
+        }
+    }
+    if (itemBpm <= 0.0) return;
+
+    // Gate 1: at least one clip must be on a track. Library-only
+    // imports don't seed.
+    int totalClips = 0;
+    for (int t = 0; t < tree.getNumChildren(); ++t)
+    {
+        const auto track = tree.getChild(t);
+        if (!track.hasType(juce::Identifier{"TRACK"})) continue;
+        for (int c = 0; c < track.getNumChildren(); ++c)
+        {
+            if (track.getChild(c).hasType(juce::Identifier{"CLIP"}))
+            {
+                ++totalClips;
+            }
+        }
+    }
+    if (totalClips < 1)
+    {
+        silverdaw::log::info("bpmjob",
+                             "seed skipped for itemId=" + itemId + " (no clips on tracks yet)");
+        return;
+    }
+
+    // Gate 2: no other library item should already have a BPM (the
+    // seed has effectively run on an earlier import).
+    int otherItemsWithBpm = 0;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(juce::Identifier{"id"}).toString() == itemId) continue;
+        if (item.hasProperty(juce::Identifier{"bpm"}))
+        {
+            ++otherItemsWithBpm;
+        }
+    }
+    if (otherItemsWithBpm > 0)
+    {
+        silverdaw::log::info("bpmjob",
+                             "seed skipped for itemId=" + itemId +
+                                 " (other library items already have BPM: " +
+                                 juce::String(otherItemsWithBpm) + ")");
+        return;
+    }
+
+    // Gate 3: don't re-broadcast if the project BPM is already in sync.
+    if (std::abs(projectState.getBpm() - itemBpm) < 1e-6)
+    {
+        return;
+    }
+
+    projectState.setBpm(itemBpm);
+    auto* bpmObj = new juce::DynamicObject();
+    bpmObj->setProperty("bpm", itemBpm);
+    bridge.broadcast("PROJECT_BPM_APPLIED", juce::var(bpmObj));
+    silverdaw::log::info("bpmjob", "seeded project BPM from " + itemId + ": " + juce::String(itemBpm, 4));
 }
 
 /**
@@ -534,6 +567,15 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         // detection wouldn't otherwise have a chance to start) and the
         // case where a clip arrives without a preceding LIBRARY_ADD.
         ensureBpmDetection(filePath, engine, projectState, bridge, peakPool);
+        // If the matching library item already has a known BPM (e.g.
+        // the user imported the file to the library earlier and is
+        // only now placing it on a track), re-evaluate the seed
+        // gates now that the project has a clip.
+        const juce::String matchedItemId = findLibraryItemIdForPath(projectState, filePath);
+        if (matchedItemId.isNotEmpty())
+        {
+            maybeSeedProjectBpmFor(matchedItemId, projectState, bridge);
+        }
     }
 }
 

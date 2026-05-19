@@ -357,6 +357,10 @@ export interface ProjectStateLibraryItem {
   /** Detected beat positions in seconds from the start of the source
    *  file. Absent for items without BPM detection results yet. */
   beats?: number[]
+  /** Regression-derived "ideal beat 0" anchor (seconds; can be
+   *  negative). Used with `bpm` to lay out the synthesised marker
+   *  grid robustly against per-beat jitter. */
+  beatAnchorSec?: number
   /** True when BTrack's running tempo estimate fluctuated by more than
    *  ~2 % over the analysis window — the project-BPM seeder skips
    *  these and the library tile shows a "variable" badge. */
@@ -417,6 +421,10 @@ export interface WaveformReadyPayload {
 export interface LibraryItemAnalysisPayload {
   itemId: string
   bpm: number
+  /** Regression-derived "ideal beat 0" anchor (seconds, may be
+   *  negative). Renderer-side beat-marker grid uses this for
+   *  phase. */
+  beatAnchorSec: number
   beats: number[]
   variableTempo: boolean
 }
@@ -550,6 +558,7 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
           if (typeof b !== 'number') return false
         }
       }
+      if (item.beatAnchorSec !== undefined && typeof item.beatAnchorSec !== 'number') return false
       if (item.variableTempo !== undefined && typeof item.variableTempo !== 'boolean') return false
       if (item.unresolved !== undefined && typeof item.unresolved !== 'boolean') return false
     }
@@ -640,6 +649,7 @@ export function isTrackGainAppliedPayload(value: unknown): value is TrackGainApp
 export function isLibraryItemAnalysisPayload(value: unknown): value is LibraryItemAnalysisPayload {
   if (!isPlainObject(value)) return false
   if (typeof value.itemId !== 'string' || typeof value.bpm !== 'number') return false
+  if (typeof value.beatAnchorSec !== 'number') return false
   if (!Array.isArray(value.beats)) return false
   for (const b of value.beats) {
     if (typeof b !== 'number') return false

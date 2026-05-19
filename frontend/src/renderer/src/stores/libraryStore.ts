@@ -44,6 +44,13 @@ export interface LibraryItem {
    */
   beats?: number[]
   /**
+   * Regression-derived phase of the ideal beat grid — the implied
+   * "beat 0" time in seconds. Combined with `bpm` to lay out
+   * marker positions robustly against BTrack's per-beat jitter.
+   * Falls back to `beats[0]` when absent (older saved projects).
+   */
+  beatAnchorSec?: number
+  /**
    * True when BTrack's running tempo estimate fluctuated by more
    * than ~2 % over the analysis window. The library tile shows a
    * "variable" badge so the user knows the single BPM number is a
@@ -391,10 +398,22 @@ export const useLibraryStore = defineStore('library', {
      * progress entry — the BPM/beats arriving is the canonical
      * "analysis is done" signal.
      */
-    setItemAnalysis(itemId: string, bpm: number, beats: number[], variableTempo: boolean): void {
+    setItemAnalysis(
+      itemId: string,
+      bpm: number,
+      beatAnchorSec: number,
+      beats: number[],
+      variableTempo: boolean
+    ): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
-      item.bpm = bpm > 0 ? Math.round(bpm * 100) / 100 : undefined
+      // Store BPM at full precision. The 2-decimal rounding the
+      // library tile uses for display happens at format-time
+      // (`item.bpm.toFixed(2)`); using the rounded value in the
+      // math would introduce a fractional-BPM drift that compounds
+      // across many beat / loop boundaries.
+      item.bpm = bpm > 0 ? bpm : undefined
+      item.beatAnchorSec = beats.length > 0 ? beatAnchorSec : undefined
       item.beats = beats.length > 0 ? beats.slice() : undefined
       item.variableTempo = variableTempo || undefined
       // Bump the project's redraw counter so the timeline repaints
