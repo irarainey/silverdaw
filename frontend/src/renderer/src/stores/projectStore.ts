@@ -203,6 +203,7 @@ export const DEFAULT_PROJECT_NAME = 'Untitled'
  * Promise resolvers aren't serialisable into Pinia's reactivity proxy.
  */
 let pendingSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
+let pendingViewStateSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
 
 /**
  * Return the position closest to `desiredStartMs` on `trackId` where a
@@ -1402,14 +1403,14 @@ export const useProjectStore = defineStore('project', {
     requestSave(): boolean {
       if (!this.currentFilePath) return false
       log.info('project', `requestSave path=${this.currentFilePath}`)
-      sendBridge('PROJECT_SAVE', { filePath: this.currentFilePath })
+      sendBridge('PROJECT_SAVE', { filePath: this.currentFilePath, viewScrollX: this.viewScrollX ?? undefined })
       return true
     },
 
     /** Send PROJECT_SAVE_AS with the path the user picked in the OS dialog. */
     requestSaveAs(filePath: string): void {
       log.info('project', `requestSaveAs path=${filePath}`)
-      sendBridge('PROJECT_SAVE_AS', { filePath })
+      sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
     },
 
     /**
@@ -1427,9 +1428,9 @@ export const useProjectStore = defineStore('project', {
         pendingSaveResolver = resolve
       })
       if (isSaveAs) {
-        sendBridge('PROJECT_SAVE_AS', { filePath })
+        sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
       } else {
-        sendBridge('PROJECT_SAVE', { filePath })
+        sendBridge('PROJECT_SAVE', { filePath, viewScrollX: this.viewScrollX ?? undefined })
       }
       return promise
     },
@@ -1444,6 +1445,28 @@ export const useProjectStore = defineStore('project', {
       if (pendingSaveResolver) {
         pendingSaveResolver({ ok, error })
         pendingSaveResolver = null
+      }
+    },
+
+    saveViewStateAndWait(): Promise<{ ok: boolean; error?: string }> {
+      if (!this.currentFilePath) return Promise.resolve({ ok: true })
+      if (pendingViewStateSaveResolver) {
+        pendingViewStateSaveResolver({ ok: false, error: 'Superseded by a newer view-state save' })
+      }
+      const promise = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        pendingViewStateSaveResolver = resolve
+      })
+      sendBridge('PROJECT_SAVE_VIEW_STATE', {
+        filePath: this.currentFilePath,
+        viewScrollX: this.viewScrollX ?? 0
+      })
+      return promise
+    },
+
+    notifyViewStateSaveAck(ok: boolean, error?: string): void {
+      if (pendingViewStateSaveResolver) {
+        pendingViewStateSaveResolver({ ok, error })
+        pendingViewStateSaveResolver = null
       }
     },
 

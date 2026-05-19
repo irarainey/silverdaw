@@ -155,6 +155,7 @@ export interface BridgeOutboundMap {
   PROJECT_NEW: undefined
   PROJECT_SAVE: ProjectSavePayload
   PROJECT_SAVE_AS: ProjectSaveAsPayload
+  PROJECT_SAVE_VIEW_STATE: ProjectSaveViewStatePayload
   PROJECT_LOAD: ProjectLoadPayload
   PROJECT_RENAME: ProjectRenamePayload
   PROJECT_SET_VIEW: ProjectSetViewPayload
@@ -173,10 +174,19 @@ export interface WaveformRequestPayload {
  */
 export interface ProjectSavePayload {
   filePath?: string
+  /** Latest horizontal scroll position from the renderer, flushed before save. */
+  viewScrollX?: number
 }
 
 export interface ProjectSaveAsPayload {
   filePath: string
+  /** Latest horizontal scroll position from the renderer, flushed before save. */
+  viewScrollX?: number
+}
+
+export interface ProjectSaveViewStatePayload {
+  filePath: string
+  viewScrollX: number
 }
 
 export interface ProjectLoadPayload {
@@ -279,6 +289,12 @@ export interface TrackGainAppliedPayload {
   /** Linear gain actually applied on the backend. */
   gain: number
   ok: boolean
+}
+
+export interface ProjectViewStateSavedPayload {
+  filePath: string
+  ok: boolean
+  error?: string
 }
 
 /**
@@ -466,6 +482,7 @@ export interface BridgeInboundMap {
   CLIP_REMOVED: ClipRemovedPayload
   TRACK_GAIN_APPLIED: TrackGainAppliedPayload
   PROJECT_SAVED: ProjectSavedPayload
+  PROJECT_VIEW_STATE_SAVED: ProjectViewStateSavedPayload
   PROJECT_LOAD_FAILED: ProjectLoadFailedPayload
   PROJECT_RENAMED: ProjectRenamedPayload
   PROJECT_DIRTY: ProjectDirtyPayload
@@ -506,6 +523,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'CLIP_REMOVED',
   'TRACK_GAIN_APPLIED',
   'PROJECT_SAVED',
+  'PROJECT_VIEW_STATE_SAVED',
   'PROJECT_LOAD_FAILED',
   'PROJECT_RENAMED',
   'PROJECT_DIRTY',
@@ -609,6 +627,15 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
 
 /** Guard for `ProjectSavedPayload`. */
 export function isProjectSavedPayload(value: unknown): value is ProjectSavedPayload {
+  return (
+    isPlainObject(value) &&
+    typeof value.filePath === 'string' &&
+    typeof value.ok === 'boolean' &&
+    (value.error === undefined || typeof value.error === 'string')
+  )
+}
+
+export function isProjectViewStateSavedPayload(value: unknown): value is ProjectViewStateSavedPayload {
   return (
     isPlainObject(value) &&
     typeof value.filePath === 'string' &&

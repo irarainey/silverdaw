@@ -57,6 +57,14 @@ struct LoadResult
 juce::Result save(const juce::File& file, const ProjectState& project);
 
 /**
+ * Update only the persisted view-state fields in an existing `.silverdaw`
+ * file. This is used when leaving a clean project: scroll/playhead should
+ * survive the next open, but must not save unrelated unsaved project edits
+ * or flip the dirty flag.
+ */
+juce::Result saveViewState(const juce::File& file, double viewScrollX, double playheadMs);
+
+/**
  * Load a `.silverdaw` file from disk, replacing `project`'s contents on
  * success.
  *

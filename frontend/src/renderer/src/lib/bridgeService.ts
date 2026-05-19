@@ -38,6 +38,7 @@ import {
   isProjectRenamedPayload,
   isProjectSavedPayload,
   isProjectStatePayload,
+  isProjectViewStateSavedPayload,
   isReadyPayload,
   isTrackAddedPayload,
   isTrackGainAppliedPayload,
@@ -274,19 +275,10 @@ function dispatch(msg: BridgeInboundMessage): void {
       // after AUTH. The renderer reconciles its optimistic state against
       // it — see `projectStore.applyProjectStateSnapshot` for semantics.
       useProjectStore().applyProjectStateSnapshot(msg.payload)
-      // The backend's master clock is persistent across renderer reloads
-      // (the JUCE process keeps running). Without this, a renderer Ctrl-R
-      // would rejoin at whatever position the backend was last at —
-      // confusing because the user expects a reload to "start fresh".
-      // Reset locally first so the UI snaps to 0 immediately, then ask
-      // the backend to zero its master clock so subsequent
-      // PLAYHEAD_UPDATEs agree.
-      const t = useTransportStore()
-      t.setPlaybackState(false, 0)
-      send('TRANSPORT_STOP')
+      useTransportStore().setPlaybackState(false)
       // Unblock the UI now that we have an authoritative snapshot and
       // the renderer's optimistic state is reconciled.
-      t.setBridgeReady(true)
+      useTransportStore().setBridgeReady(true)
       break
     }
 
@@ -391,6 +383,14 @@ function dispatch(msg: BridgeInboundMessage): void {
       } else {
         log.warn('bridge', `PROJECT_SAVED failed: ${msg.payload.error ?? 'unknown'}`)
         notifications.pushError(`Save failed: ${msg.payload.error ?? 'unknown error'}`)
+      }
+      break
+    }
+
+    case 'PROJECT_VIEW_STATE_SAVED': {
+      useProjectStore().notifyViewStateSaveAck(msg.payload.ok, msg.payload.error)
+      if (!msg.payload.ok) {
+        log.warn('bridge', `PROJECT_VIEW_STATE_SAVED failed: ${msg.payload.error ?? 'unknown'}`)
       }
       break
     }
@@ -561,6 +561,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isTrackGainAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_SAVED':
       return isProjectSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_VIEW_STATE_SAVED':
+      return isProjectViewStateSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_LOAD_FAILED':
       return isProjectLoadFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_RENAMED':

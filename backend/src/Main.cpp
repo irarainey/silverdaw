@@ -1158,6 +1158,12 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
         return;
     }
 
+    const auto scrollX = tryGetNumber(payload, "viewScrollX");
+    if (scrollX.has_value())
+    {
+        projectState.setViewScrollX(juce::jmax(0.0, *scrollX));
+    }
+
     // Capture the engine's current playhead position into the project
     // tree just before serialisation so the saved file remembers where
     // the user was. Suppressed from dirty-tracking inside `setPlayheadMs`
@@ -1202,6 +1208,43 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
         // new filePath + name without waiting on a rename ack.
         bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, false));
     }
+}
+
+void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine& engine,
+                                silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                                const ProjectSession& session)
+{
+    juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    if (filePath.isEmpty())
+    {
+        filePath = session.currentPath;
+    }
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("filePath", filePath);
+    if (filePath.isEmpty())
+    {
+        p->setProperty("ok", false);
+        p->setProperty("error", juce::String("No project path for view-state save"));
+        bridge.broadcast("PROJECT_VIEW_STATE_SAVED", juce::var(p));
+        return;
+    }
+
+    const double scrollX = juce::jmax(0.0, tryGetNumber(payload, "viewScrollX").value_or(projectState.getViewScrollX()));
+    const double playheadMs = juce::jmax(0.0, engine.getPositionMs());
+    projectState.setViewScrollX(scrollX);
+    projectState.setPlayheadMs(playheadMs);
+
+    const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), scrollX, playheadMs);
+    p->setProperty("ok", result.wasOk());
+    if (!result.wasOk())
+    {
+        p->setProperty("error", result.getErrorMessage());
+    }
+    bridge.broadcast("PROJECT_VIEW_STATE_SAVED", juce::var(p));
+    silverdaw::log::info("project",
+                         juce::String("PROJECT_SAVE_VIEW_STATE ") +
+                             (result.wasOk() ? "ok" : "fail: " + result.getErrorMessage()) + " path=" + filePath);
 }
 
 void handleProjectRename(const juce::var& payload, silverdaw::ProjectState& projectState,
@@ -1288,6 +1331,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::info("bridge", "recv TRANSPORT_STOP");
         engine.stop();
+        projectState.setPlayheadMs(0.0);
     }
     else if (type == "TRANSPORT_SEEK")
     {
@@ -1296,6 +1340,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         if (positionMs.has_value())
         {
             engine.setPositionMs(*positionMs);
+            projectState.setPlayheadMs(juce::jmax(0.0, *positionMs));
         }
     }
     else if (type == "TRACK_ADD")
@@ -1338,6 +1383,11 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::info("bridge", "recv PROJECT_SAVE_AS path=" + payload.getProperty("filePath", "").toString());
         handleProjectSave(payload, engine, projectState, bridge, session, /*isSaveAs*/ true);
+    }
+    else if (type == "PROJECT_SAVE_VIEW_STATE")
+    {
+        silverdaw::log::info("bridge", "recv PROJECT_SAVE_VIEW_STATE");
+        handleProjectSaveViewState(payload, engine, projectState, bridge, session);
     }
     else if (type == "PROJECT_LOAD")
     {

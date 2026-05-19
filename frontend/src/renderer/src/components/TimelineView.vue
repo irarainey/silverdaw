@@ -356,25 +356,13 @@ watch(
   () => redraw()
 )
 
-// Play/Stop and rewind handling. The RAF loop above takes care of the
-// per-frame playhead motion during play; this watcher only handles the
-// edge transitions: rewind-to-zero resets scroll, and a play-state
-// change re-anchors the RAF interpolator (the next RAF tick will pick
-// up the new `transport.positionMs`).
-watch(
-  () => [transport.isPlaying, transport.positionMs] as const,
-  ([, pos], prev) => {
-    const prevPos = prev?.[1] ?? 0
-    if (pos === 0 && prevPos !== 0 && scrollX.value !== 0) {
-      scrollX.value = 0
-      applyScroll()
-    }
-  }
-)
-
 // Project length changed → re-clamp scroll. Translation only; no redraw
 // needed because clip content didn't change.
 watch([maxScrollX, maxScrollY], () => {
+  if (pendingSavedScrollX !== null) {
+    applySavedScrollX(pendingSavedScrollX)
+    if (pendingSavedScrollX !== null) return
+  }
   if (clampScroll()) applyScroll()
 })
 
@@ -411,6 +399,23 @@ let suppressZoomEmit = false
 let suppressScrollEmit = false
 let zoomEmitTimer: ReturnType<typeof setTimeout> | null = null
 let scrollEmitTimer: ReturnType<typeof setTimeout> | null = null
+let pendingSavedScrollX: number | null = null
+
+function applySavedScrollX(saved: number): void {
+  if (saved > 0 && maxScrollX.value <= 0) {
+    pendingSavedScrollX = saved
+    return
+  }
+  pendingSavedScrollX = null
+  const clamped = Math.max(0, Math.min(maxScrollX.value, saved))
+  if (Math.abs(clamped - scrollX.value) < 0.5) return
+  suppressScrollEmit = true
+  scrollX.value = clamped
+  applyScroll()
+  requestAnimationFrame(() => {
+    suppressScrollEmit = false
+  })
+}
 
 watch(
   () => project.viewPxPerSecond,
@@ -431,14 +436,7 @@ watch(
   () => project.viewScrollX,
   (saved) => {
     if (saved === null) return
-    if (Math.abs(saved - scrollX.value) < 0.5) return
-    suppressScrollEmit = true
-    scrollX.value = saved
-    clampScroll()
-    applyScroll()
-    requestAnimationFrame(() => {
-      suppressScrollEmit = false
-    })
+    applySavedScrollX(saved)
   }
 )
 
@@ -463,15 +461,19 @@ watch(
   { immediate: true }
 )
 
-watch(scrollX, (next) => {
-  if (suppressScrollEmit) return
-  if (scrollEmitTimer) clearTimeout(scrollEmitTimer)
-  scrollEmitTimer = setTimeout(() => {
-    scrollEmitTimer = null
-    if (project.viewScrollX !== null && Math.abs(project.viewScrollX - next) < 0.5) return
-    sendBridge('PROJECT_SET_VIEW', { scrollX: next })
-  }, 200)
-})
+watch(
+  scrollX,
+  (next) => {
+    if (suppressScrollEmit) return
+    project.viewScrollX = next
+    if (scrollEmitTimer) clearTimeout(scrollEmitTimer)
+    scrollEmitTimer = setTimeout(() => {
+      scrollEmitTimer = null
+      sendBridge('PROJECT_SET_VIEW', { scrollX: next })
+    }, 200)
+  },
+  { flush: 'sync' }
+)
 
 // Project length changes also affect grid extent — make sure the grid
 // covers the new duration. (Track / clip count changes already trigger

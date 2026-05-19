@@ -145,9 +145,10 @@ object carries `schemaVersion`, `appVersion`, and an ISO `savedAt` timestamp; th
 field holds the entire `PROJECT` `ValueTree` mapped through
 [`ValueTreeJson`](backend/src/ValueTreeJson.h) (each node becomes
 `{ "$type": "TRACK", id: "...", $children: [ … ] }`). Atomic save (write `<file>.tmp` then
-rename) and forward-compatible load (unknown keys are ignored). On save, the current engine
-playhead position is captured into `playheadMs` so reopening the project resumes where the
-user left off. Logic lives in [`backend/src/ProjectFile.cpp`](backend/src/ProjectFile.cpp).
+rename) and forward-compatible load (unknown keys are ignored). On save, and before leaving a
+clean project, the current timeline scroll position is flushed into `viewScrollX` and the
+current engine playhead position is captured into `playheadMs` so reopening the project resumes
+where the user left off. Logic lives in [`backend/src/ProjectFile.cpp`](backend/src/ProjectFile.cpp).
 
 **Missing files** — on every `tracksAsJson` / `libraryAsJson` call, the backend stat()s each
 referenced source path. Anything that's gone gets an `unresolved: true` flag in the
@@ -543,4 +544,3 @@ users.
 Third-party components (JUCE, IXWebSocket, Electron, Vue, etc.) retain their
 own licences; see [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for the
 attribution notices required by those licences.
-

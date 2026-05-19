@@ -20,6 +20,44 @@ juce::String isoTimestampNowUtc()
     return juce::Time::getCurrentTime().toISO8601(true);
 }
 
+juce::Result writeProjectJsonAtomically(const juce::File& file, const juce::var& rootVar)
+{
+    const auto& target = file.getFullPathName();
+    if (target.isEmpty())
+    {
+        return juce::Result::fail("Save target path is empty");
+    }
+
+    const juce::File tempFile = file.getSiblingFile(file.getFileName() + ".tmp");
+    if (tempFile.existsAsFile())
+    {
+        tempFile.deleteFile();
+    }
+
+    if (!tempFile.create().wasOk())
+    {
+        return juce::Result::fail("Cannot create temp file " + tempFile.getFullPathName());
+    }
+
+    const auto jsonString = juce::JSON::toString(rootVar);
+    if (!tempFile.replaceWithText(jsonString))
+    {
+        tempFile.deleteFile();
+        return juce::Result::fail("Failed to write project JSON to " + tempFile.getFullPathName());
+    }
+
+    if (file.existsAsFile())
+    {
+        file.deleteFile();
+    }
+    if (!tempFile.moveFileTo(file))
+    {
+        return juce::Result::fail("Failed to rename temp file to " + file.getFullPathName());
+    }
+
+    return juce::Result::ok();
+}
+
 } // namespace
 
 juce::Result save(const juce::File& file, const ProjectState& project)
@@ -44,52 +82,42 @@ juce::Result save(const juce::File& file, const ProjectState& project)
     }
     rootObj->setProperty(kProjectKey, projectVar);
 
-    const juce::var rootVar(rootObj);
+    return writeProjectJsonAtomically(file, juce::var(rootObj));
+}
 
-    const auto& target = file.getFullPathName();
-    if (target.isEmpty())
+juce::Result saveViewState(const juce::File& file, double viewScrollX, double playheadMs)
+{
+    if (!file.existsAsFile())
     {
-        return juce::Result::fail("Save target path is empty");
+        return juce::Result::fail("File does not exist: " + file.getFullPathName());
     }
 
-    // Write to a sibling temp file then rename, so a partial write can
-    // never destroy the previous good copy on disk.
-    const juce::File tempFile = file.getSiblingFile(file.getFileName() + ".tmp");
-    if (tempFile.existsAsFile())
+    juce::var rootVar;
+    const auto parseResult = juce::JSON::parse(file.loadFileAsString(), rootVar);
+    if (parseResult.failed())
     {
-        tempFile.deleteFile();
+        return juce::Result::fail("Malformed project file: " + parseResult.getErrorMessage());
     }
 
-    if (!tempFile.create().wasOk())
+    auto* rootObj = rootVar.getDynamicObject();
+    if (rootObj == nullptr)
     {
-        return juce::Result::fail("Cannot create temp file " + tempFile.getFullPathName());
+        return juce::Result::fail("Project file is not a JSON object");
     }
 
-    // Multi-line pretty-printed JSON so the file diffs cleanly in git
-    // and is comfortable to inspect by hand. We leave `maxDecimalPlaces`
-    // at JUCE's default (15) so `offsetMs` / `durationMs` round-trip
-    // through `juce::JSON` without lossy truncation.
-    const auto jsonString = juce::JSON::toString(rootVar);
-
-    if (!tempFile.replaceWithText(jsonString))
+    auto projectVar = rootObj->getProperty(kProjectKey);
+    auto* projectObj = projectVar.getDynamicObject();
+    if (projectObj == nullptr)
     {
-        tempFile.deleteFile();
-        return juce::Result::fail("Failed to write project JSON to " + tempFile.getFullPathName());
+        return juce::Result::fail("Project file has no \"project\" object");
     }
 
-    if (file.existsAsFile())
-    {
-        file.deleteFile();
-    }
-    if (!tempFile.moveFileTo(file))
-    {
-        // Leave the temp file behind for diagnostics; the previous good
-        // copy (if any) was already deleted, which is unfortunate, but
-        // the user can recover by renaming the .tmp manually.
-        return juce::Result::fail("Failed to rename temp file to " + file.getFullPathName());
-    }
+    rootObj->setProperty(kSavedAtKey, isoTimestampNowUtc());
+    projectObj->setProperty("viewScrollX", juce::jmax(0.0, viewScrollX));
+    projectObj->setProperty("playheadMs", juce::jmax(0.0, playheadMs));
+    rootObj->setProperty(kProjectKey, projectVar);
 
-    return juce::Result::ok();
+    return writeProjectJsonAtomically(file, rootVar);
 }
 
 LoadResult load(const juce::File& file, ProjectState& project)

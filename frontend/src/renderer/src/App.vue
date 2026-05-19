@@ -44,6 +44,7 @@ const titleBarRef = ref<InstanceType<typeof AppTitleBar> | null>(null)
 let unsubscribeMenu: (() => void) | null = null
 let unsubscribeOpenFromPath: (() => void) | null = null
 let unregisterShortcuts: (() => void) | null = null
+let cleanViewStateSave: Promise<void> | null = null
 
 // Mirror the library's "import in flight" flag onto the <body> as a class
 // so the global CSS rule (see <style> below) can swap the OS cursor to the
@@ -420,17 +421,35 @@ function handleMenuAction(action: string): void {
 /**
  * Run `proceed` only after the user has either saved or chosen to
  * discard the current project's unsaved changes. If the project is
- * already clean, `proceed` runs immediately.
+ * already clean, first flush view-only state (scroll/playhead) to disk
+ * without opening the unsaved-changes prompt.
  *
  * Used to gate File > New, File > Open, and the app-close path.
  */
 function guardAgainstUnsavedChanges(proceed: () => void): void {
   if (!project.isDirty) {
-    proceed()
+    void persistCleanViewState().then(proceed)
     return
   }
   pendingAfterDiscard = proceed
   unsavedPromptOpen.value = true
+}
+
+async function persistCleanViewState(): Promise<void> {
+  if (!transport.bridgeReady || !project.currentFilePath || cleanViewStateSave) {
+    return cleanViewStateSave ?? Promise.resolve()
+  }
+  cleanViewStateSave = project
+    .saveViewStateAndWait()
+    .then((result) => {
+      if (!result.ok) {
+        log.warn('project', `view-state save failed: ${result.error ?? 'unknown error'}`)
+      }
+    })
+    .finally(() => {
+      cleanViewStateSave = null
+    })
+  return cleanViewStateSave
 }
 
 /**

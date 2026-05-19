@@ -404,10 +404,10 @@ double ProjectState::getViewPxPerSecond() const
 
 void ProjectState::setViewPxPerSecond(double pxPerSecond)
 {
-    // Zoom changes mark the project dirty. The user explicitly asked
-    // for this so a zoomed view that hasn't been saved prompts the
-    // usual unsaved-changes guard.
+    // Zoom is view state, same as scroll — never marks dirty.
+    suppressDirtyTransitions = true;
     root.setProperty(kViewPxPerSecond, pxPerSecond, nullptr);
+    suppressDirtyTransitions = false;
 }
 
 double ProjectState::getViewScrollX() const
@@ -431,8 +431,8 @@ double ProjectState::getPlayheadMs() const
 void ProjectState::setPlayheadMs(double playheadMs)
 {
     // Playhead position is a transient transport / view value — never
-    // marks dirty. We capture it on save so an open + close cycle
-    // restores where the user was last looking.
+    // marks dirty. Seeks/stops mirror into this property, and save
+    // captures the current engine position immediately before writing.
     suppressDirtyTransitions = true;
     root.setProperty(kPlayheadMs, playheadMs, nullptr);
     suppressDirtyTransitions = false;
