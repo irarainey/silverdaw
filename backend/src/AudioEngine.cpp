@@ -61,7 +61,7 @@ double AudioEngine::trackSeekSecondsFor(const Track& track, juce::int64 masterSa
 }
 
 bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath, double initialOffsetMs,
-                          double inMs, double clipDurationMs, juce::String* outError)
+                          double inMs, double clipDurationMs, float initialGain, juce::String* outError)
 {
     silverdaw::log::info("engine", "addClip id=" + clipId + " offsetMs=" + juce::String(initialOffsetMs) +
                                         " inMs=" + juce::String(inMs) + " durMs=" + juce::String(clipDurationMs) +
@@ -148,6 +148,7 @@ bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath
                                       8192,             // read-ahead buffer size in samples
                                       &readAheadThread, // background reader thread (required when buffer > 0)
                                       track->sampleRate, track->numChannels);
+    track->transportSource->setGain(juce::jlimit(0.0F, 4.0F, initialGain));
 
     // Per-track transports are kept in the "started" state for their entire
     // lifetime in the engine. The master clock is the single play/pause gate;

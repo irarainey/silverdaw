@@ -351,11 +351,13 @@ class AudioEngine
      * an existing source with the same id. `initialOffsetMs` is the clip's
      * starting position on the global timeline (passed atomically with
      * the load so the clip never briefly plays at offset 0 before the
-     * intended offset is applied). Returns true on success.
+     * intended offset is applied). `initialGain` is applied before the clip
+     * enters the mixer so muted / solo-silenced clips never leak a block of
+     * audio at unity gain. Returns true on success.
      * On failure, `outError` (if non-null) is populated with a short diagnostic.
      */
     bool addClip(const juce::String& clipId, const juce::File& filePath, double initialOffsetMs = 0.0,
-                 double inMs = 0.0, double clipDurationMs = 0.0,
+                 double inMs = 0.0, double clipDurationMs = 0.0, float initialGain = 1.0F,
                  juce::String* outError = nullptr);
 
     /** Remove the playable source with the given clip id. Returns true if it existed. */

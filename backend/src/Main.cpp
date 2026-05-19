@@ -654,7 +654,8 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     }
 
     juce::String errorMsg;
-    bool ok = engine.addClip(clipId, juce::File(engineFilePath), initialOffsetMs, inMs, payloadDurationMs, &errorMsg);
+    bool ok = engine.addClip(clipId, juce::File(engineFilePath), initialOffsetMs, inMs, payloadDurationMs,
+                             projectState.getTrackGain(trackId), &errorMsg);
     if (ok)
     {
         // For un-trimmed clips fall back to the engine-discovered source
@@ -664,11 +665,15 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         const double effectiveDurationMs =
             payloadDurationMs > 0.0 ? payloadDurationMs : engine.getClipDurationMs(clipId);
         if (!projectState.addClip(trackId, clipId, filePath, initialOffsetMs, effectiveDurationMs, inMs,
-                                  payloadColorIndex))
+                                   payloadColorIndex))
         {
             engine.removeClip(clipId);
             ok = false;
             errorMsg = "duplicate clipId or unknown trackId";
+        }
+        else
+        {
+            engine.setClipGain(clipId, projectState.getTrackGain(trackId));
         }
     }
 
@@ -754,13 +759,16 @@ void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, si
         engine.setClipOffsetMs(clipId, *positionMs);
         projectState.setClipOffsetMs(clipId, *positionMs);
     }
-    // Optional cross-track re-parent. Audio side is unchanged (each
-    // clip is its own playable source) — only ProjectState's tree
-    // moves the CLIP node under a different TRACK.
+    // Optional cross-track re-parent. Each clip is its own playable source,
+    // so the move updates ProjectState and reapplies the destination track's
+    // effective gain to keep mute / solo audibility correct.
     const juce::String newTrackId = payload.getProperty("trackId", juce::var()).toString();
     if (newTrackId.isNotEmpty())
     {
-        projectState.setClipTrack(clipId, newTrackId);
+        if (projectState.setClipTrack(clipId, newTrackId))
+        {
+            engine.setClipGain(clipId, projectState.getTrackGain(newTrackId));
+        }
     }
 }
 
@@ -984,6 +992,7 @@ void handleClipRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
     double clipOffsetMs = 0.0;
     double clipInMs = 0.0;
     double clipDurationMs = 0.0;
+    float clipGain = 1.0F;
     bool foundClip = false;
     const auto& root = projectState.getTree();
     for (int t = 0; t < root.getNumChildren() && !foundClip; ++t)
@@ -997,6 +1006,7 @@ void handleClipRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
                 clipOffsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
                 clipInMs = static_cast<double>(clip.getProperty("inMs", 0.0));
                 clipDurationMs = static_cast<double>(clip.getProperty("durationMs", 0.0));
+                clipGain = static_cast<float>(static_cast<double>(track.getProperty("gain", 1.0)));
                 foundClip = true;
                 break;
             }
@@ -1005,7 +1015,11 @@ void handleClipRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
 
     juce::String err;
     const bool added =
-        engine.addClip(clipId, juce::File(filePath), clipOffsetMs, clipInMs, clipDurationMs, &err);
+        engine.addClip(clipId, juce::File(filePath), clipOffsetMs, clipInMs, clipDurationMs, clipGain, &err);
+    if (added)
+    {
+        engine.setClipGain(clipId, clipGain);
+    }
     silverdaw::log::info("project", "CLIP_RELINK clipId=" + clipId + " ok=" + juce::String(added ? 1 : 0) +
                                         (added ? "" : " err=" + err));
 
@@ -1061,7 +1075,8 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, const silverdaw::P
                 engineFilePath = cachedPath;
             }
             juce::String err;
-            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, &err))
+            const auto trackGain = static_cast<float>(static_cast<double>(track.getProperty("gain", 1.0)));
+            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, trackGain, &err))
             {
                 ++rebuilt;
             }

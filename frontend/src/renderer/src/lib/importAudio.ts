@@ -194,6 +194,8 @@ export async function importAudioIntoTrack(
       filePath: audio.playbackFilePath,
       positionMs: resolvedStartMs
     })
+    const track = project.tracks.find((candidate) => candidate.id === trackId)
+    if (track) project.pushTrackGain(track)
 
     return clipId
   } catch (err) {

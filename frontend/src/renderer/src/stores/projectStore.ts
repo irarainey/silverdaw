@@ -493,6 +493,7 @@ export const useProjectStore = defineStore('project', {
         positionMs: target,
         ...(trackChanged ? { trackId: destTrackId } : {})
       })
+      if (trackChanged) this.pushTrackGain(destTrack)
       this.peaksRevision++ // force redraw after track/position change
       log.debug(
         'project',
@@ -603,6 +604,7 @@ export const useProjectStore = defineStore('project', {
         durationMs: newClipDurationMs,
         ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
       })
+      this.pushTrackGain(track)
       log.info(
         'project',
         `splitClipAt id=${clipId} at=${atMs} -> newId=${newId} (in=${newClipInMs} dur=${newClipDurationMs})`
@@ -678,6 +680,7 @@ export const useProjectStore = defineStore('project', {
         durationMs: clip.durationMs,
         ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
       })
+      this.pushTrackGain(track)
       log.info('project', `duplicateClip id=${clipId} -> newId=${newId} @${newStartMs}ms`)
       return newId
     },
@@ -864,6 +867,7 @@ export const useProjectStore = defineStore('project', {
         durationMs: cb.durationMs,
         ...(cb.colorIndex !== undefined ? { colorIndex: cb.colorIndex } : {})
       })
+      this.pushTrackGain(track)
       log.info('project', `pasteClip newId=${newId} @${startMs}ms`)
       return newId
     },
@@ -966,6 +970,7 @@ export const useProjectStore = defineStore('project', {
         filePath: libraryItem.playbackFilePath ?? libraryItem.filePath,
         positionMs: snapped
       })
+      this.pushTrackGain(track)
       log.info('project', `addClipFromLibrary track=${trackId} clip=${clipId} pos=${snapped}ms`)
       return clipId
     },
