@@ -351,6 +351,8 @@ User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`
   playhead stays near the centre of the viewport during playback (default). Off pins the
   view in place. Toggleable in the transport bar (chevron-in-circle icon) and the
   Preferences dialog.
+- **Show images on library tiles** — controls whether library tiles show embedded cover
+  art or the fallback audio icon. Off makes the library tiles text-only.
 - **Show toast notifications** — pop transient feedback (errors, save acks) in the
   bottom-right. Off silences them; the underlying events still go to the log when debug
   mode is enabled.

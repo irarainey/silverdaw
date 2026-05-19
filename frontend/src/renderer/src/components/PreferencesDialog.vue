@@ -24,6 +24,7 @@ const dialogEl = ref<HTMLDivElement | null>(null)
 const debugEnabled = ref(false)
 const toastsEnabled = ref(true)
 const followPlayback = ref(true)
+const showLibraryTileImages = ref(true)
 const defaultProjectDir = ref('')
 const defaultClipDir = ref('')
 
@@ -33,6 +34,7 @@ const defaultClipDir = ref('')
 const initialDebug = ref(false)
 const initialToasts = ref(true)
 const initialFollow = ref(true)
+const initialShowLibraryTileImages = ref(true)
 const initialProjectDir = ref('')
 const initialClipDir = ref('')
 
@@ -41,6 +43,7 @@ const hasChanges = computed(
     debugEnabled.value !== initialDebug.value ||
     toastsEnabled.value !== initialToasts.value ||
     followPlayback.value !== initialFollow.value ||
+    showLibraryTileImages.value !== initialShowLibraryTileImages.value ||
     defaultProjectDir.value !== initialProjectDir.value ||
     defaultClipDir.value !== initialClipDir.value
 )
@@ -65,9 +68,11 @@ async function loadCurrent(): Promise<void> {
   // sizes) and is mirrored into the uiStore on startup — read it from
   // there directly so we don't need a second IPC round-trip.
   followPlayback.value = ui.followPlayback
+  showLibraryTileImages.value = ui.showLibraryTileImages
   initialDebug.value = debugEnabled.value
   initialToasts.value = toastsEnabled.value
   initialFollow.value = followPlayback.value
+  initialShowLibraryTileImages.value = showLibraryTileImages.value
   initialProjectDir.value = defaultProjectDir.value
   initialClipDir.value = defaultClipDir.value
 }
@@ -152,6 +157,9 @@ function onSave(): void {
     // sync and the new value is persisted via the usual UI prefs path.
     ui.setFollowPlayback(followPlayback.value)
   }
+  if (showLibraryTileImages.value !== initialShowLibraryTileImages.value) {
+    ui.setShowLibraryTileImages(showLibraryTileImages.value)
+  }
   emit('close')
 }
 </script>
@@ -222,6 +230,20 @@ function onSave(): void {
                   centred in the viewport. Turn off if you want the view to
                   stay still while playing. Can also be toggled from the
                   transport bar.
+                </span>
+              </span>
+            </label>
+            <label class="mt-3 flex cursor-pointer items-start gap-3">
+              <input
+                v-model="showLibraryTileImages"
+                type="checkbox"
+                class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+              >
+              <span class="flex-1">
+                <span class="block font-medium text-zinc-200">Show images on library tiles</span>
+                <span class="mt-0.5 block text-zinc-500">
+                  Display embedded cover art, or the fallback audio icon, on
+                  each library tile. Turn off for a denser text-only library.
                 </span>
               </span>
             </label>

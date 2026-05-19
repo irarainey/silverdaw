@@ -18,6 +18,8 @@ interface UiState {
   /** Continuous-follow auto-scroll during playback. When false the
    *  viewport stays put and the playhead can run off the right edge. */
   followPlayback: boolean
+  /** Show cover art / fallback thumbnails on library tiles. */
+  showLibraryTileImages: boolean
   /** Live horizontal-zoom value (px per second). NOT persisted to
    *  preferences.json — this just mirrors `geometry.pxPerSecond` from
    *  the timeline so other components (e.g. StatusBar) can show the
@@ -37,7 +39,8 @@ let nextTimelineScrollRequestId = 1
 const DEFAULTS = {
   trackHeaderWidth: 175,
   libraryPanelHeight: 180,
-  followPlayback: true
+  followPlayback: true,
+  showLibraryTileImages: true
 } as const
 
 // Clamps mirror the resize-handle clamps in the components, but applied
@@ -63,6 +66,7 @@ let pendingPush: {
   trackHeaderWidth?: number
   libraryPanelHeight?: number
   followPlayback?: boolean
+  showLibraryTileImages?: boolean
 } = {}
 
 /**
@@ -74,6 +78,7 @@ function schedulePush(partial: {
   trackHeaderWidth?: number
   libraryPanelHeight?: number
   followPlayback?: boolean
+  showLibraryTileImages?: boolean
 }): void {
   pendingPush = { ...pendingPush, ...partial }
   if (pushTimer) return
@@ -90,6 +95,7 @@ export const useUiStore = defineStore('ui', {
     trackHeaderWidth: DEFAULTS.trackHeaderWidth,
     libraryPanelHeight: DEFAULTS.libraryPanelHeight,
     followPlayback: DEFAULTS.followPlayback,
+    showLibraryTileImages: DEFAULTS.showLibraryTileImages,
     zoomPxPerSecond: 100,
     timelineScrollRequest: null,
     hydrated: false
@@ -108,6 +114,10 @@ export const useUiStore = defineStore('ui', {
         this.libraryPanelHeight = clampLibraryHeight(saved.libraryPanelHeight)
         this.followPlayback =
           typeof saved.followPlayback === 'boolean' ? saved.followPlayback : DEFAULTS.followPlayback
+        this.showLibraryTileImages =
+          typeof saved.showLibraryTileImages === 'boolean'
+            ? saved.showLibraryTileImages
+            : DEFAULTS.showLibraryTileImages
       } catch (err) {
         console.warn('[uiStore] hydrate failed, using defaults:', err)
       } finally {
@@ -137,6 +147,13 @@ export const useUiStore = defineStore('ui', {
       if (this.followPlayback === value) return
       this.followPlayback = value
       if (this.hydrated) schedulePush({ followPlayback: value })
+    },
+
+    /** Toggle cover art / fallback thumbnails on library tiles. */
+    setShowLibraryTileImages(value: boolean): void {
+      if (this.showLibraryTileImages === value) return
+      this.showLibraryTileImages = value
+      if (this.hydrated) schedulePush({ showLibraryTileImages: value })
     },
 
     /** Update the live zoom mirror. Renderer-only — not persisted to

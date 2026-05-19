@@ -72,4 +72,7 @@ export interface UiPreferences {
 
   /** Continuous-follow auto-scroll during playback (default true). */
   followPlayback: boolean
+
+  /** Show cover art / fallback thumbnails on library tiles (default true). */
+  showLibraryTileImages: boolean
 }

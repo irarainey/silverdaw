@@ -264,6 +264,8 @@ interface UiPrefs {
    *  stays pinned near the centre of the viewport. When false, the
    *  view stays still and the playhead can run off the right edge. */
   followPlayback: boolean
+  /** When true, library tiles include cover art or a fallback icon. */
+  showLibraryTileImages: boolean
 }
 
 /**
@@ -347,7 +349,12 @@ function buildDefaultPrefs(): Preferences {
   const defaultClipDir = musicDir || defaultProjectDir
   return {
     window: { width: 1400, height: 900, maximized: false },
-    ui: { trackHeaderWidth: 175, libraryPanelHeight: 180, followPlayback: true },
+    ui: {
+      trackHeaderWidth: 175,
+      libraryPanelHeight: 180,
+      followPlayback: true,
+      showLibraryTileImages: true
+    },
     debug: { enabled: false },
     toasts: { enabled: true },
     paths: { defaultProjectDir, defaultClipDir },
@@ -357,7 +364,12 @@ function buildDefaultPrefs(): Preferences {
 
 let prefs: Preferences = {
   window: { width: 1400, height: 900, maximized: false },
-  ui: { trackHeaderWidth: 175, libraryPanelHeight: 180, followPlayback: true },
+  ui: {
+    trackHeaderWidth: 175,
+    libraryPanelHeight: 180,
+    followPlayback: true,
+    showLibraryTileImages: true
+  },
   debug: { enabled: false },
   toasts: { enabled: true },
   paths: { defaultProjectDir: '', defaultClipDir: '' },

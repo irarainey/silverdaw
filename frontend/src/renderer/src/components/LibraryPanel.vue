@@ -15,6 +15,7 @@
 
 import { computed, ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoLibrary, reanalyseLibraryItem } from '@/lib/importAudio'
 import { log } from '@/lib/log'
 import { keyBadgeClass } from '@/lib/keyBadge'
@@ -31,6 +32,7 @@ const emit = defineEmits<{
 }>()
 
 const library = useLibraryStore()
+const ui = useUiStore()
 
 // True while an OS drag is hovering over the panel — used to highlight the
 // drop zone. We track depth to handle nested dragenter/dragleave correctly.
@@ -312,6 +314,7 @@ function onResizePointerUp(): void {
         >
           <!-- Cover art thumbnail (or fallback) on the left edge. -->
           <div
+            v-if="ui.showLibraryTileImages"
             class="flex h-full w-15 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
           >
             <img
