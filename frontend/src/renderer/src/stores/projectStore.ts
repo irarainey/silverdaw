@@ -176,6 +176,9 @@ interface ProjectState {
    *  fresh clip via `pasteClipAtPlayhead`. Renderer-only — cleared on
    *  project load / new. */
   clipboardClip: ClipboardEntry | null
+
+  /** Source clip id -> last duplicated clip id for repeated duplicate commands. */
+  duplicateTailBySource: Record<string, string>
 }
 
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
@@ -277,7 +280,8 @@ export const useProjectStore = defineStore('project', {
     viewScrollX: null,
     selectedClipId: null,
     selectedTrackId: null,
-    clipboardClip: null
+    clipboardClip: null,
+    duplicateTailBySource: {}
   }),
 
   getters: {
@@ -573,29 +577,34 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Duplicate `clipId`, placing the new clip immediately after the
-     * original on the same track. Useful for building repeating loop
-     * patterns out of a single trimmed source clip. Returns the new
-     * clip's id, or `null` if the source was unknown.
+     * Duplicate `clipId` on its track. Repeated duplicate commands from
+     * the same source clip append after the last duplicate in that chain
+     * while leaving the original selected, so the user can build repeated
+     * loop patterns without manually selecting each new copy.
      */
     duplicateClip(clipId: string): string | null {
       const clip = this.clips[clipId]
       if (!clip) return null
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (!track) return null
-      const newStartMs = clip.startMs + clip.durationMs
-      // Same no-overlap rule as paste: the duplicate has to fit
-      // directly after the source. If the gap to the next clip is
-      // too small, surface a toast and abort rather than silently
-      // pushing the duplicate somewhere unexpected.
+      const trackedTailId = this.duplicateTailBySource[clipId]
+      const trackedTail = trackedTailId ? this.clips[trackedTailId] : null
+      const tail =
+        trackedTail && trackedTail.trackId === clip.trackId && track.clipIds.includes(trackedTail.id)
+          ? trackedTail
+          : clip
+      const newStartMs = tail.startMs + tail.durationMs
+      // The duplicate must fit immediately after the current tail. We do
+      // not search other gaps because repeated Duplicate is an append
+      // gesture; if something blocks the chain, tell the user.
       for (const id of track.clipIds) {
-        if (id === clipId) continue
+        if (id === clipId || id === tail.id) continue
         const c = this.clips[id]
         if (!c) continue
         const cEnd = c.startMs + c.durationMs
         if (newStartMs < cEnd && newStartMs + clip.durationMs > c.startMs) {
-          useNotificationsStore().pushError('Not enough space to duplicate clip after the source clip.')
-          log.info('project', `duplicateClip rejected: overlaps clip ${id}`)
+          useNotificationsStore().pushError('Not enough space to duplicate clip after the last duplicate.')
+          log.info('project', `duplicateClip rejected: source=${clipId} tail=${tail.id} overlaps clip ${id}`)
           return null
         }
       }
@@ -616,12 +625,13 @@ export const useProjectStore = defineStore('project', {
         colorIndex: clip.colorIndex
       }
       this.clips[newId] = copy
-      const insertAt = track.clipIds.indexOf(clipId)
+      const insertAt = track.clipIds.indexOf(tail.id)
       if (insertAt >= 0) {
         track.clipIds.splice(insertAt + 1, 0, newId)
       } else {
         track.clipIds.push(newId)
       }
+      this.duplicateTailBySource[clipId] = newId
       const clipEnd = copy.startMs + copy.durationMs
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
 
@@ -656,6 +666,10 @@ export const useProjectStore = defineStore('project', {
         if (idx >= 0) track.clipIds.splice(idx, 1)
       }
       delete this.clips[clipId]
+      delete this.duplicateTailBySource[clipId]
+      for (const [sourceId, tailId] of Object.entries(this.duplicateTailBySource)) {
+        if (tailId === clipId) delete this.duplicateTailBySource[sourceId]
+      }
       // Removing the selected clip clears the selection — otherwise we'd
       // be drawing a thicker outline around a non-existent rectangle.
       if (this.selectedClipId === clipId) this.selectedClipId = null
@@ -952,6 +966,10 @@ export const useProjectStore = defineStore('project', {
       if (!track) return
       for (const clipId of track.clipIds) {
         delete this.clips[clipId]
+        delete this.duplicateTailBySource[clipId]
+        for (const [sourceId, tailId] of Object.entries(this.duplicateTailBySource)) {
+          if (tailId === clipId) delete this.duplicateTailBySource[sourceId]
+        }
         if (this.selectedClipId === clipId) this.selectedClipId = null
       }
       if (this.selectedTrackId === trackId) this.selectedTrackId = null
@@ -1188,6 +1206,7 @@ export const useProjectStore = defineStore('project', {
         this.selectedClipId = null
         this.selectedTrackId = null
         this.clipboardClip = null
+        this.duplicateTailBySource = {}
         this.peaksRevision++
         library.clear()
       }
