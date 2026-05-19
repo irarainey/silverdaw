@@ -124,11 +124,12 @@ how long the clip plays for from that point. Split, duplicate and edge-drag
 trim all manipulate this window without ever re-decoding the source — peaks
 are computed once per file and the renderer windows into them at draw time.
 `colorIndex` is an optional 0..15 per-clip palette override; when absent the
-clip inherits its host track's colour. `ITEM.bpm` + `ITEM.beats` (an array of
-beat positions in seconds from the start of the source) + `ITEM.variableTempo`
-hold the BTrack analysis output (see [BPM & beat detection](#bpm--beat-detection)
-below); stored once and round-tripped through save/load so a reopened project
-doesn't have to re-analyse every imported file.
+clip inherits its host track's colour. `ITEM.key` holds the renderer's detected
+musical key. `ITEM.bpm` + `ITEM.beats` (an array of beat positions in seconds
+from the start of the source) + `ITEM.variableTempo` hold the BTrack analysis
+output (see [Audio analysis](#audio-analysis) below). The durable library fields
+are stored once and round-tripped through save/load so a reopened project doesn't
+have to re-analyse every imported file.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
 The view-state properties (`viewPxPerSecond`, `viewScrollX`, `playheadMs`) bypass the
@@ -181,8 +182,9 @@ On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
 - Reconstructs any track / clip / library item the backend knows but it doesn't (e.g. after a
   renderer reload).
 - Sends `WAVEFORM_REQUEST` for every clip lacking peaks.
-- Re-fetches embedded metadata (cover art, artist/title) via `audio:readMetadata` IPC for
-  reconstructed library items.
+- Re-fetches embedded metadata and technical file metadata via `audio:readMetadata` IPC for
+  reconstructed library items. Older projects that predate persisted library duration fall
+  back to a renderer decode if metadata cannot provide a duration.
 - Restores persisted zoom, horizontal scroll, BPM, project length, and playhead position from
   the snapshot.
 
@@ -226,14 +228,27 @@ read; the same layout is what the renderer reads via the `peaks:readCacheFile` I
 
 The cache survives backend restarts.
 
-## BPM & beat detection
+## Audio analysis
 
-Every imported audio file is automatically analysed for tempo and beat
-positions. The result is shown on the library tile (e.g. `124.37 BPM`,
-or `~ 124.37 BPM` in amber when the source has a wobbly tempo), drives
-faint vertical beat markers on the clip waveform, and — on the first
-import into a project — seeds the project tempo so the timeline grid
-lines up with the source.
+Every imported audio file is automatically analysed for musical key, tempo and
+beat positions. The key and BPM are shown on the library tile. A stable-tempo
+file shows a badge such as `124.37 BPM`; a variable-tempo file shows an amber
+`~ 124.37 BPM` badge. Beat analysis drives faint vertical beat markers on the
+clip waveform and — on the first import into a project — seeds the project
+tempo so the timeline grid lines up with the source.
+
+### Key detection
+
+Key detection runs in the renderer immediately after Web Audio decodes the file.
+`detectMusicalKey` in [`audio.ts`](frontend/src/renderer/src/lib/audio.ts)
+downmixes up to the first 120 seconds, builds a chroma profile with Goertzel
+magnitude sampling, and compares that profile against major/minor key templates.
+If the top candidate is not clearly ahead of the next candidate, the key is left
+unset. Detected keys use display casing such as `Bb minor`, are merged into the
+library item's metadata, are shown on the tile and in the info dialog, and are
+persisted as `LIBRARY > ITEM.key`.
+
+### BPM and beat detection
 
 - **Library**: [BTrack](https://github.com/adamstark/BTrack) (Stark / Davies / Plumbley,
   Queen Mary University of London) — a causal beat-tracking algorithm with offline
@@ -301,6 +316,19 @@ sequential stages so the long-tail analysis isn't invisible:
 
 The OS busy cursor stays in its `progress` state through all three stages.
 
+## Library panel
+
+The bottom library panel stores imported audio files as draggable tiles. Tiles wrap to
+the available width and the panel scrolls vertically when there are more tiles than fit;
+it does not expose a horizontal scrollbar. Each tile shows duration, detected key and
+detected BPM when those fields are available.
+
+Double-click a tile to open a read-only information dialog. The same dialog is available
+from the tile's right-click context menu via **Show information**. The dialog shows file
+details, technical audio details, detected BPM/beat/key metadata, tag metadata, cover art
+and which tracks currently use the library item. The right-click context menu also includes
+**Delete**; it is disabled while the library item is used by any clip.
+
 ## Preferences
 
 User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`:
@@ -354,11 +382,16 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Space` (in transport bar) | Play / pause. |
 | `F2` | Rename project (also activates the title-bar rename input). |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
-| `D` | Duplicate the selected clip immediately after the original. |
+| `D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |
 | `Delete` | Delete the selected clip. |
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip — on the source track it lands immediately after the source clip; on a different (selected) track it lands at the playhead. A toast appears if the slot is already occupied. |
 | **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Save as Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
+| Double-click a **library tile** | Open the read-only library item information dialog. |
+| Right-click a **library tile** | Open the library tile context menu with **Show information** and **Delete**. Delete is disabled while the item is in use. |
+
+Clicking **Skip to start** in the transport bar rewinds the playhead and returns the
+timeline's horizontal scroll position to the start.
 
 The status bar shows the current zoom level (e.g. `🔍 150%`) next to the backend connection
 indicator (plug-and-socket icon + green/grey dot). The **Pos**, **Bar**, **Length**, and
