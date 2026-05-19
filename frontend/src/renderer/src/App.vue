@@ -149,7 +149,9 @@ function onTransportKey(e: KeyboardEvent): void {
   if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
     e.preventDefault()
     e.stopPropagation()
-    project.addMarkerAt(transport.positionMs)
+    const msPerSub = 60_000 / transport.bpm / SUB_BEATS_PER_BEAT
+    const snappedMs = Math.max(0, Math.round(transport.positionMs / msPerSub) * msPerSub)
+    project.toggleMarkerAt(snappedMs)
     return
   }
 

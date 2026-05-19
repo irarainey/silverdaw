@@ -287,12 +287,7 @@ function onDoubleClick(e: MouseEvent): void {
   const snappedMs = pointerToSnappedRulerMs(e)
   if (snappedMs === null) return
   e.preventDefault()
-  const existing = project.markers.find((marker) => Math.abs(marker.positionMs - snappedMs) < 1)
-  if (existing) {
-    project.removeMarker(existing.id)
-  } else {
-    project.addMarkerAt(snappedMs)
-  }
+  project.toggleMarkerAt(snappedMs)
 }
 
 /**

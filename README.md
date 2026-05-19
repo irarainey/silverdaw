@@ -85,9 +85,10 @@ The bridge is **text only**. Every envelope is a JSON `{ type, payload }` frame:
   `{ "type": "AUTH", "payload": { "token": "<hex>" } }` — the renderer fetches the token from
   Electron main (it's a per-session random string passed via `SILVERDAW_BRIDGE_TOKEN` env var on
   backend spawn). Wrong / missing token closes the socket.
-- After AUTH succeeds the backend sends `PROJECT_STATE` exactly once (full snapshot: tracks +
-  clips + file path + project name). The renderer treats it as the canonical truth; on a load
-  (`reset=true`) it wipes optimistic local state first, on the connect path it merges additively.
+- After AUTH succeeds the backend sends `PROJECT_STATE` exactly once (full snapshot: tracks,
+  clips, library, markers, file path and project name). The renderer treats it as the canonical
+  truth; on a load (`reset=true`) it wipes optimistic local state first, on the connect path it
+  merges additively.
 
 **Bulk data goes via disk, never via the socket.** When the backend has fresh waveform peaks
 ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate }`
@@ -116,6 +117,8 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
   LIBRARY
     ITEM[id, filePath, fileName?, durationMs, sampleRate, channelCount,
          key?, bpm?, beats?, beatAnchorSec?, playbackFilePath?, variableTempo?]
+  MARKERS
+    MARKER[id, positionMs]
 ```
 
 `CLIP` carries a non-destructive trim window: `offsetMs` is the timeline start,
@@ -129,14 +132,17 @@ musical key. `ITEM.bpm` + `ITEM.beats` (an array of beat positions in seconds
 from the start of the source) + `ITEM.variableTempo` hold the BTrack analysis
 output (see [Audio analysis](#audio-analysis) below). The durable library fields
 are stored once and round-tripped through save/load so a reopened project doesn't
-have to re-analyse every imported file.
+have to re-analyse every imported file. Timeline markers are stored as `MARKER`
+children with absolute project positions in milliseconds, round-trip through
+`PROJECT_STATE`, and mark the project dirty when added, moved or removed.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
 The view-state properties (`viewPxPerSecond`, `viewScrollX`, `playheadMs`) bypass the
 dirty-flag listener via a `suppressDirtyTransitions` guard inside their setters — zooming,
 scrolling, or moving the playhead doesn't prompt an unsaved-changes dialog. Meaningful
-project edits (BPM, project length, clip add/move/remove, gain changes, library
-import/remove, etc.) still mark the project dirty as normal property edits.
+project edits (BPM, project length, marker add/move/remove, clip add/move/remove,
+gain changes, library import/remove, etc.) still mark the project dirty as normal
+property edits.
 
 The `LIBRARY` sub-tree carries the user's imported-but-not-yet-placed samples so the catalogue
 survives save / load. Durable library fields are persisted: id, source path, display file name,
@@ -185,8 +191,8 @@ On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
 - Re-fetches embedded metadata and technical file metadata via `audio:readMetadata` IPC for
   reconstructed library items. Older projects that predate persisted library duration fall
   back to a renderer decode if metadata cannot provide a duration.
-- Restores persisted zoom, horizontal scroll, BPM, project length, and playhead position from
-  the snapshot.
+- Restores persisted zoom, horizontal scroll, BPM, project length, playhead position, and
+  timeline markers from the snapshot.
 
 `PROJECT_STATE` is purely additive on the connect path — it never deletes optimistic state the
 user just created, so a race between an early user action and the snapshot arriving doesn't
@@ -309,14 +315,15 @@ BPM (the common case), every subsequent marker on the clip then lines up exactly
 with a project grid sub-beat. Drag with `Alt` for the legacy 1 ms unsnapped
 behaviour.
 
-### Import progress dialog
+### Processing progress panel
 
-A floating panel in the bottom-right shows each in-flight import with three
-sequential stages so the long-tail analysis isn't invisible:
+A floating panel in the bottom-right shows each in-flight import or reanalysis
+job with three sequential stages so the long-tail analysis isn't invisible:
 
-1. **Decoding audio…** — renderer is decoding the file's bytes.
-2. **Detecting tempo…** — backend's BTrack job (the long stage on long files).
-3. **Detecting beats…** — brief flash (~0.6 s) while the renderer applies the beat array and the markers paint on the clip.
+1. **Preparing audio…** — renderer is decoding the file's bytes.
+2. **Analysing tempo…** — backend's BTrack job (the long stage on long files).
+3. **Analysing beats…** — brief flash while the renderer applies the beat array
+   and the markers paint on the clip.
 
 The OS busy cursor stays in its `progress` state through all three stages.
 
@@ -370,8 +377,8 @@ or releasing the modifier between frames switches mode without restarting the dr
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Double-click on **ruler** | Add a marker at the nearest grid point, or delete the marker already at that point. |
-| Drag a **marker** | Move the marker, snapping it to the timeline grid. |
+| Double-click on **ruler** | Toggle a marker at the nearest grid point. There can only be one marker on a grid point. |
+| Drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
@@ -380,9 +387,9 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Click on **inter-track gap** / below the last track | Deselect both clip and track. |
 | `←` / `→` | Step the playhead one grid line (sub-beat). |
 | `Alt` + `←` / `→` | Step the playhead by one pixel's worth of time (~16.7 ms at default zoom, finer when zoomed in). |
-| `M` | Place a marker at the playhead. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
-| `Ctrl` + `←` / `→` | Move the playhead to the previous or next marker. |
-| `Ctrl` + `Shift` + `←` / `→` | Skip to the start or end of the project. |
+| `M` | Toggle a marker at the nearest grid point to the playhead. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
+| `Ctrl` + `←` / `→` | Move the playhead to the previous or next marker, scrolling the timeline if needed. |
+| `Ctrl` + `Shift` + `←` / `→` | Skip to the start or end of the project and jump the timeline viewport there. |
 | Mouse wheel | Zoom the timeline (anchored on the pointer). |
 | Two-finger horizontal swipe (trackpad) | Pan left/right. |
 | `Shift` + mouse wheel | Pan left/right. |
@@ -401,7 +408,8 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Right-click a **library tile** | Open the library tile context menu with **Show information**, **Reanalyse clip**, and **Delete**. Delete is disabled while the item is in use. |
 
 Clicking **Skip to start** in the transport bar rewinds the playhead and returns the
-timeline's horizontal scroll position to the start.
+timeline's horizontal scroll position to the start. **Skip to end** and the matching
+keyboard shortcut seek to the project end and jump the viewport to the right edge.
 
 The status bar shows the current zoom level (e.g. `🔍 150%`) next to the backend connection
 indicator (plug-and-socket icon + green/grey dot). The **Pos**, **Bar**, **Length**, and

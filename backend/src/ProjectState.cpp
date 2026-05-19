@@ -844,6 +844,12 @@ bool ProjectState::addMarker(const juce::String& markerId, double positionMs)
     for (int i = 0; i < markers.getNumChildren(); ++i)
     {
         auto marker = markers.getChild(i);
+        const double markerPositionMs = static_cast<double>(marker.getProperty(kPositionMs, 0.0));
+        if (marker.hasType(kMarker) && std::abs(markerPositionMs - positionMs) < 0.5
+            && marker.getProperty(kId).toString() != markerId)
+        {
+            return true;
+        }
         if (marker.hasType(kMarker) && marker.getProperty(kId).toString() == markerId)
         {
             marker.setProperty(kPositionMs, positionMs, nullptr);
@@ -874,9 +880,15 @@ bool ProjectState::moveMarker(const juce::String& markerId, double positionMs)
     for (int i = 0; i < markers.getNumChildren(); ++i)
     {
         auto marker = markers.getChild(i);
+        const double markerPositionMs = static_cast<double>(marker.getProperty(kPositionMs, 0.0));
+        if (marker.hasType(kMarker) && std::abs(markerPositionMs - positionMs) < 0.5
+            && marker.getProperty(kId).toString() != markerId)
+        {
+            return false;
+        }
         if (marker.hasType(kMarker) && marker.getProperty(kId).toString() == markerId)
         {
-            const double current = static_cast<double>(marker.getProperty(kPositionMs, 0.0));
+            const double current = markerPositionMs;
             if (std::abs(current - positionMs) < 0.01)
             {
                 return true;

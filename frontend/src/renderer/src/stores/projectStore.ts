@@ -1475,6 +1475,13 @@ export const useProjectStore = defineStore('project', {
       return true
     },
 
+    toggleMarkerAt(positionMs: number): boolean {
+      const safePositionMs = Math.max(0, Math.round(positionMs))
+      const existing = this.markers.find((marker) => Math.abs(marker.positionMs - safePositionMs) < 1)
+      if (existing) return this.removeMarker(existing.id)
+      return this.addMarkerAt(safePositionMs)
+    },
+
     removeMarker(markerId: string): boolean {
       const index = this.markers.findIndex((marker) => marker.id === markerId)
       if (index < 0) return false
@@ -1492,6 +1499,8 @@ export const useProjectStore = defineStore('project', {
       if (!marker) return false
       const safePositionMs = Math.max(0, Math.round(positionMs))
       if (Math.abs(marker.positionMs - safePositionMs) < 1) return true
+      const existing = this.markers.find((m) => m.id !== markerId && Math.abs(m.positionMs - safePositionMs) < 1)
+      if (existing) return false
       marker.positionMs = safePositionMs
       this.markers.sort((a, b) => a.positionMs - b.positionMs)
       const sent = sendBridge('PROJECT_MARKER_MOVE', {
