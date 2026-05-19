@@ -179,6 +179,8 @@ function bumpBpm(delta: number): void {
 function onSkipBack(): void {
   // Stop + rewind for now; Skip-back behaves like Stop until we have markers.
   log.info('transport', 'click skip-back')
+  project.viewScrollX = 0
+  sendBridge('PROJECT_SET_VIEW', { scrollX: 0 })
   sendBridge('TRANSPORT_STOP')
 }
 

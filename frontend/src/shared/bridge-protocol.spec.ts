@@ -153,6 +153,16 @@ describe('isProjectStatePayload', () => {
     expect(
       isProjectStatePayload({
         ...base,
+        library: [
+          {
+            id: 'l1',
+            filePath: '/sample.wav',
+            fileName: 'sample.wav',
+            durationMs: 1000,
+            sampleRate: 44100,
+            channelCount: 2
+          }
+        ],
         tracks: [
           {
             id: 't1',
@@ -190,6 +200,20 @@ describe('isProjectStatePayload', () => {
       isProjectStatePayload({
         ...base,
         tracks: [{ id: 't1', gain: 1.0, clips: [{ filePath: '/p', offsetMs: 0, durationMs: 1 }] }]
+      })
+    ).toBe(false)
+    expect(
+      isProjectStatePayload({
+        ...base,
+        library: [{ id: 'l1', filePath: '/sample.wav', durationMs: '1000' }],
+        tracks: []
+      })
+    ).toBe(false)
+    expect(
+      isProjectStatePayload({
+        ...base,
+        library: [{ id: 'l1', filePath: '/sample.wav', sampleRate: '44100' }],
+        tracks: []
       })
     ).toBe(false)
   })

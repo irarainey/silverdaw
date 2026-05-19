@@ -215,10 +215,13 @@ class ProjectState : public juce::ValueTree::Listener
     // just the items referenced by an active clip. Cover art / ID3
     // metadata is NOT stored here (renderer re-extracts it on load
     // via the existing `audio:readMetadata` IPC) — only the stable
-    // `(id, filePath)` pair the backend needs to know about.
+    // `(id, filePath, fileName, duration, format details)` fields the
+    // backend needs to know about.
 
     /** Add (or update the file path of) a library item. Marks dirty. */
-    bool addLibraryItem(const juce::String& itemId, const juce::String& filePath);
+    bool addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName = {},
+                        double durationMs = 0.0, int sampleRate = 0, int channelCount = 0,
+                        const juce::String& playbackPath = {});
 
     /** Remove a library item by id. Returns true if it existed. Marks dirty. */
     bool removeLibraryItem(const juce::String& itemId);
@@ -264,9 +267,8 @@ class ProjectState : public juce::ValueTree::Listener
      *  if no item matches or no BPM has been detected yet. */
     double getLibraryItemBpmForPath(const juce::String& filePath) const;
 
-    /** Snapshot the library items as a `juce::var` array of
-     *  `{ id, filePath }` objects, ready to drop into a PROJECT_STATE
-     *  envelope's `library` field. */
+    /** Snapshot the persisted library items, ready to drop into a
+     *  PROJECT_STATE envelope's `library` field. */
     juce::var libraryAsJson() const;
 
     // ─── Serialisation ─────────────────────────────────────────────────
@@ -350,6 +352,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kOffsetMs;
     static const juce::Identifier kInMs;
     static const juce::Identifier kDurationMs;
+    static const juce::Identifier kSampleRate;
+    static const juce::Identifier kChannelCount;
     static const juce::Identifier kColorIndex;
     static const juce::Identifier kViewPxPerSecond;
     static const juce::Identifier kViewScrollX;

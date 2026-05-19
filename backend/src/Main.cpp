@@ -1307,8 +1307,13 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
         const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+        const juce::String fileName = payload.getProperty("fileName", juce::var()).toString();
+        const double durationMs = static_cast<double>(payload.getProperty("durationMs", 0.0));
+        const int sampleRate = static_cast<int>(payload.getProperty("sampleRate", 0));
+        const int channelCount = static_cast<int>(payload.getProperty("channelCount", 0));
+        const juce::String playbackPath = payload.getProperty("playbackFilePath", juce::var()).toString();
         silverdaw::log::info("bridge", "recv LIBRARY_ADD itemId=" + itemId);
-        projectState.addLibraryItem(itemId, filePath);
+        projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath);
         ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
     }
     else if (type == "LIBRARY_REMOVE")

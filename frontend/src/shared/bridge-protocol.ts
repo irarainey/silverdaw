@@ -78,12 +78,17 @@ export interface ClipRelinkPayload {
   filePath: string
 }
 
-/** Register a library item with the backend so it's persisted with
- *  the project. Cover art / ID3 metadata stays renderer-side — only
- *  the stable `(id, filePath)` pair travels here. */
+/** Register a library item with the backend so its durable fields are
+ *  persisted with the project. Volatile renderer-only data such as
+ *  waveform peaks and object URLs is rebuilt on demand. */
 export interface LibraryAddPayload {
   itemId: string
   filePath: string
+  fileName?: string
+  durationMs?: number
+  sampleRate?: number
+  channelCount?: number
+  playbackFilePath?: string
 }
 
 /** Drop a library item from the persisted catalogue. */
@@ -365,10 +370,10 @@ export interface ProjectStatePayload {
   /**
    * Library catalogue persisted with the project. Each entry is the
    * `(id, filePath)` pair the renderer originally created the item
-   * with, plus an optional `unresolved` flag mirroring the clip path
-   * — set when the file is no longer on disk. Cover art / ID3
-   * metadata is NOT in here; the renderer re-fetches it on load via
-   * the existing `audio:readMetadata` IPC.
+   * with, plus decoded duration and an optional `unresolved` flag
+   * mirroring the clip path — set when the file is no longer on disk.
+   * Cover art / ID3 metadata is NOT in here; the renderer re-fetches
+   * it on load via the existing `audio:readMetadata` IPC.
    */
   library?: ProjectStateLibraryItem[]
   tracks: ProjectStateTrack[]
@@ -377,6 +382,14 @@ export interface ProjectStatePayload {
 export interface ProjectStateLibraryItem {
   id: string
   filePath: string
+  /** Display file name captured when the item entered the library. */
+  fileName?: string
+  /** Source duration in milliseconds. Optional for older saved projects. */
+  durationMs?: number
+  /** Source sample rate. Optional for older saved projects. */
+  sampleRate?: number
+  /** Source channel count. Optional for older saved projects. */
+  channelCount?: number
   /** Detected BPM (rounded to 2 d.p. on disk). Absent until the
    *  backend's BPM detection job finishes for this file. */
   bpm?: number
@@ -588,6 +601,10 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
     for (const item of value.library) {
       if (!isPlainObject(item)) return false
       if (typeof item.id !== 'string' || typeof item.filePath !== 'string') return false
+      if (item.fileName !== undefined && typeof item.fileName !== 'string') return false
+      if (item.durationMs !== undefined && typeof item.durationMs !== 'number') return false
+      if (item.sampleRate !== undefined && typeof item.sampleRate !== 'number') return false
+      if (item.channelCount !== undefined && typeof item.channelCount !== 'number') return false
       if (item.bpm !== undefined && typeof item.bpm !== 'number') return false
       if (item.beats !== undefined) {
         if (!Array.isArray(item.beats)) return false

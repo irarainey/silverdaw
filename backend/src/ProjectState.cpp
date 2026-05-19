@@ -15,6 +15,8 @@ const juce::Identifier ProjectState::kFilePath{"filePath"};
 const juce::Identifier ProjectState::kOffsetMs{"offsetMs"};
 const juce::Identifier ProjectState::kInMs{"inMs"};
 const juce::Identifier ProjectState::kDurationMs{"durationMs"};
+const juce::Identifier ProjectState::kSampleRate{"sampleRate"};
+const juce::Identifier ProjectState::kChannelCount{"channelCount"};
 const juce::Identifier ProjectState::kColorIndex{"colorIndex"};
 const juce::Identifier ProjectState::kViewPxPerSecond{"viewPxPerSecond"};
 const juce::Identifier ProjectState::kViewScrollX{"viewScrollX"};
@@ -462,7 +464,9 @@ void ProjectState::setProjectLengthMs(double lengthMs)
     root.setProperty(kProjectLengthMs, lengthMs, nullptr);
 }
 
-bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String& filePath)
+bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName,
+                                  double durationMs, int sampleRate, int channelCount,
+                                  const juce::String& playbackPath)
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return false;
     auto library = root.getChildWithName(kLibrary);
@@ -480,12 +484,52 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
         if (item.getProperty(kId).toString() == itemId)
         {
             item.setProperty(kFilePath, filePath, nullptr);
+            if (fileName.isNotEmpty())
+            {
+                item.setProperty(kName, fileName, nullptr);
+            }
+            if (durationMs > 0.0)
+            {
+                item.setProperty(kDurationMs, durationMs, nullptr);
+            }
+            if (sampleRate > 0)
+            {
+                item.setProperty(kSampleRate, sampleRate, nullptr);
+            }
+            if (channelCount > 0)
+            {
+                item.setProperty(kChannelCount, channelCount, nullptr);
+            }
+            if (playbackPath.isNotEmpty())
+            {
+                item.setProperty(kPlaybackFilePath, playbackPath, nullptr);
+            }
             return true;
         }
     }
     juce::ValueTree item(kLibraryItem);
     item.setProperty(kId, itemId, nullptr);
     item.setProperty(kFilePath, filePath, nullptr);
+    if (fileName.isNotEmpty())
+    {
+        item.setProperty(kName, fileName, nullptr);
+    }
+    if (durationMs > 0.0)
+    {
+        item.setProperty(kDurationMs, durationMs, nullptr);
+    }
+    if (sampleRate > 0)
+    {
+        item.setProperty(kSampleRate, sampleRate, nullptr);
+    }
+    if (channelCount > 0)
+    {
+        item.setProperty(kChannelCount, channelCount, nullptr);
+    }
+    if (playbackPath.isNotEmpty())
+    {
+        item.setProperty(kPlaybackFilePath, playbackPath, nullptr);
+    }
     library.appendChild(item, nullptr);
     return true;
 }
@@ -672,6 +716,13 @@ juce::var ProjectState::libraryAsJson() const
         obj->setProperty("id", item.getProperty(kId).toString());
         const juce::String filePath = item.getProperty(kFilePath).toString();
         obj->setProperty("filePath", filePath);
+        if (item.hasProperty(kName))
+        {
+            obj->setProperty("fileName", item.getProperty(kName).toString());
+        }
+        obj->setProperty("durationMs", static_cast<double>(item.getProperty(kDurationMs, 0.0)));
+        obj->setProperty("sampleRate", static_cast<int>(item.getProperty(kSampleRate, 0)));
+        obj->setProperty("channelCount", static_cast<int>(item.getProperty(kChannelCount, 0)));
         if (item.hasProperty(kBpm))
         {
             obj->setProperty("bpm", static_cast<double>(item.getProperty(kBpm, 0.0)));

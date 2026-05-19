@@ -70,6 +70,9 @@ function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
   if (format.codec) out.codec = format.codec
   if (format.container) out.container = format.container
   if (typeof format.bitrate === 'number') out.bitrate = format.bitrate
+  if (typeof format.duration === 'number') out.durationMs = format.duration * 1000
+  if (typeof format.sampleRate === 'number') out.sampleRate = format.sampleRate
+  if (typeof format.numberOfChannels === 'number') out.channelCount = format.numberOfChannels
   if (typeof format.lossless === 'boolean') out.lossless = format.lossless
   if (format.tagTypes && format.tagTypes.length > 0) out.tagTypes = [...format.tagTypes]
   const cover = pickCoverArt(common.picture)
@@ -1169,7 +1172,7 @@ app.whenReady().then(async () => {
       return null
     }
     try {
-      const meta = await parseFile(filePath, { duration: false, skipCovers: false })
+      const meta = await parseFile(filePath, { duration: true, skipCovers: false })
       return normalizeMetadata(meta)
     } catch (err) {
       console.warn('[audio:readMetadata] failed for', filePath, err)

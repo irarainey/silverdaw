@@ -5,7 +5,7 @@
 // the backend state driven by `PROJECT_STATE` / `TRACK_ADDED` / etc.
 
 import { defineStore } from 'pinia'
-import { PEAKS_PER_SECOND } from '@/lib/audio'
+import { decodeAudioToPeaks, PEAKS_PER_SECOND } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useNotificationsStore } from '@/stores/notificationsStore'
@@ -80,6 +80,31 @@ export interface Track {
 
 /** Default visible length of a new empty track — 10 minutes. */
 export const DEFAULT_TRACK_LENGTH_MS = 10 * 60 * 1000
+
+async function refreshLibraryItemMedia(itemId: string, filePath: string): Promise<void> {
+  const library = useLibraryStore()
+  try {
+    const metadata = await window.silverdaw.readAudioMetadata(filePath)
+    library.setItemMetadata(itemId, metadata)
+  } catch (err) {
+    log.warn('library', `readAudioMetadata failed for ${filePath}: ${String(err)}`)
+  }
+
+  const item = library.getItem(itemId)
+  if (!item || item.durationMs > 0) return
+
+  try {
+    const opened = await window.silverdaw.readAudioFile(filePath)
+    if (!opened) return
+    const decoded = await decodeAudioToPeaks(opened.data)
+    library.setItemAudioDetails(itemId, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
+    if (item.peaks.length === 0) {
+      library.setItemPeaks(itemId, decoded.peaks, decoded.sampleRate)
+    }
+  } catch (err) {
+    log.warn('library', `readAudioFile/decode failed for ${filePath}: ${String(err)}`)
+  }
+}
 
 /**
  * Fixed 16-entry palette presented in the track-header colour picker. Each
@@ -1222,10 +1247,10 @@ export const useProjectStore = defineStore('project', {
           const libId = library.addItem({
             id: item.id,
             filePath: item.filePath,
-            fileName: filePathToBasename(item.filePath),
-            durationMs: 0,
-            sampleRate: 0,
-            channelCount: 0,
+            fileName: item.fileName?.trim() ? item.fileName : filePathToBasename(item.filePath),
+            durationMs: Math.max(0, item.durationMs ?? 0),
+            sampleRate: Math.max(0, item.sampleRate ?? 0),
+            channelCount: Math.max(0, item.channelCount ?? 0),
             peaks: new Float32Array(0),
             // The decoded-WAV cache is a backend-internal
             // optimisation. The renderer always sends the source
@@ -1256,14 +1281,10 @@ export const useProjectStore = defineStore('project', {
               item.variableTempo === true
             )
           }
-          // Fetch metadata + decode duration / sample-rate
-          // asynchronously so the library card shows cover art + a
-          // real duration after reload. Same data path the import
-          // flow uses.
-          void window.silverdaw
-            .readAudioMetadata(item.filePath)
-            .then((metadata) => library.setItemMetadata(libId, metadata))
-            .catch((err) => log.warn('library', `readAudioMetadata failed for ${item.filePath}: ${String(err)}`))
+          // Fetch tags + technical duration asynchronously so older
+          // project files that predate persisted library duration still
+          // repaint their tiles with the real length after reload.
+          void refreshLibraryItemMedia(libId, item.filePath)
         }
       }
 
@@ -1322,14 +1343,13 @@ export const useProjectStore = defineStore('project', {
               // add would force the dirty flag on every connect.
               fromSnapshot: true
             })
-            // Fetch ID3 / Vorbis / iTunes tags asynchronously so the
-            // library card shows the cover art + title after reload
-            // (same data path the import flow uses). Fire-and-forget;
-            // failures degrade silently to "no metadata".
-            void window.silverdaw
-              .readAudioMetadata(c.filePath)
-              .then((metadata) => library.setItemMetadata(libId, metadata))
-              .catch((err) => log.warn('library', `readAudioMetadata failed for ${c.filePath}: ${String(err)}`))
+            // Fetch tags + technical duration asynchronously so the
+            // library card shows cover art, title and real length after
+            // reload. Fire-and-forget; failures leave the placeholder
+            // details in place.
+            void refreshLibraryItemMedia(libId, c.filePath)
+          } else if (existingLib.durationMs <= 0 && c.durationMs > 0) {
+            library.setItemAudioDetails(existingLib.id, c.durationMs, 0, 0)
           }
           const existing = this.clips[c.id]
           if (existing) {

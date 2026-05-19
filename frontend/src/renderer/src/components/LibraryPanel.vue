@@ -17,6 +17,8 @@ import { computed, ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { importAudioIntoLibrary } from '@/lib/importAudio'
 import { log } from '@/lib/log'
+import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
+import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 
 const props = defineProps<{
     /** Current panel height in CSS pixels (excluding the resize handle). */
@@ -32,9 +34,29 @@ const library = useLibraryStore()
 // True while an OS drag is hovering over the panel — used to highlight the
 // drop zone. We track depth to handle nested dragenter/dragleave correctly.
 const isDragOver = ref(false)
+const infoItemId = ref<string | null>(null)
+const contextMenu = ref<{ itemId: string; x: number; y: number } | null>(null)
 let dragDepth = 0
 
 const itemCount = computed(() => library.items.length)
+const infoItem = computed(() => library.items.find((item) => item.id === infoItemId.value) ?? null)
+const contextMenuItem = computed(() =>
+    contextMenu.value ? library.items.find((item) => item.id === contextMenu.value?.itemId) ?? null : null
+)
+const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
+    const item = contextMenuItem.value
+    if (!item) return []
+    const inUse = library.isItemInUse(item.id)
+    return [
+        { command: 'library.info', label: 'Show information' },
+        {
+            command: 'library.delete',
+            label: inUse ? 'Delete (in use)' : 'Delete',
+            disabled: inUse,
+            separatorAbove: true
+        }
+    ]
+})
 
 async function onImportClick(): Promise<void> {
     log.info('library', 'import-button click')
@@ -137,6 +159,40 @@ function onItemDragEnd(): void {
     library.setDragItem(null)
 }
 
+function openItemInfo(item: LibraryItem): void {
+    closeItemContextMenu()
+    infoItemId.value = item.id
+}
+
+function closeItemInfo(): void {
+    infoItemId.value = null
+}
+
+function openItemContextMenu(e: MouseEvent, item: LibraryItem): void {
+    contextMenu.value = {
+        itemId: item.id,
+        x: e.clientX,
+        y: e.clientY
+    }
+}
+
+function closeItemContextMenu(): void {
+    contextMenu.value = null
+}
+
+function onContextMenuCommand(command: string): void {
+    const item = contextMenuItem.value
+    if (!item) return
+    if (command === 'library.info') {
+        openItemInfo(item)
+        return
+    }
+    if (command === 'library.delete') {
+        const removed = library.removeItem(item.id)
+        if (removed && infoItemId.value === item.id) closeItemInfo()
+    }
+}
+
 function formatDuration(ms: number): string {
     const total = Math.max(0, Math.floor(ms / 1000))
     const m = Math.floor(total / 60)
@@ -147,9 +203,7 @@ function formatDuration(ms: number): string {
 // ─── Metadata display helpers ─────────────────────────────────────
 // Cards show the track title on the top line (falling back to the file
 // name) and the artist on a second muted line when tags are present. The
-// full metadata payload (album, BPM, key, codec, bitrate, sample rate,
-// tag versions, …) is exposed via the `title` attribute so hovering
-// surfaces everything without cluttering the grid.
+// full metadata payload is shown in LibraryItemInfoDialog.
 
 function displayTitle(item: LibraryItem): string {
     return item.metadata?.title ?? item.fileName
@@ -157,58 +211,6 @@ function displayTitle(item: LibraryItem): string {
 
 function displayArtist(item: LibraryItem): string {
     return item.metadata?.artist ?? ''
-}
-
-function channelLabel(count: number): string {
-    if (count === 1) return 'Mono'
-    if (count === 2) return 'Stereo'
-    return `${count} ch`
-}
-
-function buildTooltip(item: LibraryItem): string {
-    const lines: string[] = [item.filePath]
-    const m = item.metadata
-    if (m) {
-        const tagLines: string[] = []
-        if (m.title) tagLines.push(`Title: ${m.title}`)
-        if (m.artist) tagLines.push(`Artist: ${m.artist}`)
-        if (m.albumArtist && m.albumArtist !== m.artist)
-            tagLines.push(`Album artist: ${m.albumArtist}`)
-        if (m.album) {
-            tagLines.push(m.year ? `Album: ${m.album} (${m.year})` : `Album: ${m.album}`)
-        } else if (m.year) {
-            tagLines.push(`Year: ${m.year}`)
-        }
-        if (typeof m.trackNumber === 'number') {
-            tagLines.push(
-                `Track: ${m.trackNumber}${m.trackTotal ? ' of ' + m.trackTotal : ''}`
-            )
-        }
-        if (typeof m.discNumber === 'number') {
-            tagLines.push(
-                `Disc: ${m.discNumber}${m.discTotal ? ' of ' + m.discTotal : ''}`
-            )
-        }
-        if (m.genre && m.genre.length > 0) tagLines.push(`Genre: ${m.genre.join(', ')}`)
-        if (m.composer) tagLines.push(`Composer: ${m.composer}`)
-        if (typeof m.bpm === 'number') tagLines.push(`BPM: ${m.bpm}`)
-        if (m.key) tagLines.push(`Key: ${m.key}`)
-        if (tagLines.length > 0) {
-            lines.push('')
-            lines.push(...tagLines)
-        }
-    }
-    // Technical line is always shown so users can compare files at a glance.
-    const tech: string[] = []
-    if (m?.codec) tech.push(m.codec)
-    if (typeof m?.bitrate === 'number') tech.push(`${Math.round(m.bitrate / 1000)} kbps`)
-    tech.push(`${(item.sampleRate / 1000).toFixed(1)} kHz`)
-    tech.push(channelLabel(item.channelCount))
-    if (m && typeof m.lossless === 'boolean') tech.push(m.lossless ? 'Lossless' : 'Lossy')
-    lines.push('')
-    lines.push(tech.join(' · '))
-    if (m?.tagTypes && m.tagTypes.length > 0) lines.push(`Tags: ${m.tagTypes.join(', ')}`)
-    return lines.join('\n')
 }
 
 // ─── Resize handle (top edge of the panel) ────────────────────────────────
@@ -296,9 +298,10 @@ function onResizePointerUp(): void {
           :key="item.id"
           draggable="true"
           class="library-item group relative flex h-20 w-48 shrink-0 cursor-grab select-none items-stretch overflow-hidden rounded border border-zinc-700 bg-zinc-950/60 text-left transition-colors hover:border-zinc-500 hover:bg-zinc-950 active:cursor-grabbing"
-          :title="buildTooltip(item)"
           @dragstart="(e) => onItemDragStart(e, item)"
           @dragend="onItemDragEnd"
+          @dblclick="openItemInfo(item)"
+          @contextmenu.prevent="(e) => openItemContextMenu(e, item)"
         >
           <!-- Cover art thumbnail (or fallback) on the left edge. -->
           <div
@@ -364,6 +367,7 @@ function onResizePointerUp(): void {
                 :title="library.isItemInUse(item.id) ? 'In use \u2014 remove the clip from the track first' : 'Remove from library'"
                 @click="library.removeItem(item.id)"
                 @mousedown.stop
+                @contextmenu.stop.prevent
                 @dragstart.stop.prevent
               >
                 <svg
@@ -391,6 +395,19 @@ function onResizePointerUp(): void {
         Drop audio files to add them to the library
       </div>
     </div>
+    <LibraryItemInfoDialog
+      :open="infoItem !== null"
+      :item="infoItem"
+      @close="closeItemInfo"
+    />
+    <ClipContextMenu
+      :open="contextMenu !== null"
+      :x="contextMenu?.x ?? 0"
+      :y="contextMenu?.y ?? 0"
+      :items="contextMenuItems"
+      @close="closeItemContextMenu"
+      @command="onContextMenuCommand"
+    />
   </section>
 </template>
 

@@ -1,7 +1,7 @@
 // Library — a project-wide pool of imported audio files that can be
-// dragged onto tracks. Items live in the renderer only (not pushed to the
-// backend) until they're placed on a track, at which point the normal
-// CLIP_ADD flow runs in `projectStore.addClipFromLibrary`.
+// dragged onto tracks. The renderer owns decoded peaks / metadata, while the
+// backend stores the durable catalogue fields needed to rebuild tiles after
+// save/load.
 //
 // Items are decoded once on import and the resulting peaks / metadata are
 // reused for every clip dragged out, so dropping the same sample onto five
@@ -16,14 +16,14 @@ export interface LibraryItem {
   readonly id: string
   readonly filePath: string
   readonly fileName: string
-  readonly durationMs: number
+  durationMs: number
   /**
    * Sample rate of the source file. May be 0 for placeholder items
    * reconstructed from PROJECT_STATE before WAVEFORM_DATA arrives; gets
    * filled in by `setItemPeaks`.
    */
   sampleRate: number
-  readonly channelCount: number
+  channelCount: number
   /**
    * Alternating min/max float pairs at PEAKS_PER_SECOND resolution. May
    * be an empty array for placeholder items reconstructed from
@@ -239,7 +239,10 @@ export const useLibraryStore = defineStore('library', {
       id?: string
     }): string {
       const existing = this.items.find((i) => i.filePath === audio.filePath)
-      if (existing) return existing.id
+      if (existing) {
+        this.setItemAudioDetails(existing.id, audio.durationMs, audio.sampleRate, audio.channelCount)
+        return existing.id
+      }
 
       // Snapshot path passes the persisted id so the renderer ↔
       // backend id space stays in sync across reloads. User-driven
@@ -278,9 +281,35 @@ export const useLibraryStore = defineStore('library', {
       // from `applyProjectStateSnapshot`) skip this — we're already
       // mirroring the backend's truth, not creating new state.
       if (audio.fromSnapshot !== true) {
-        sendBridge('LIBRARY_ADD', { itemId: id, filePath: audio.filePath })
+        sendBridge('LIBRARY_ADD', {
+          itemId: id,
+          filePath: audio.filePath,
+          fileName: audio.fileName,
+          durationMs: audio.durationMs,
+          sampleRate: audio.sampleRate,
+          channelCount: audio.channelCount,
+          playbackFilePath: audio.playbackFilePath
+        })
       }
       return id
+    },
+
+    /**
+     * Fill in decoded audio details for a library item reconstructed from
+     * saved project state. Older project files may only have clip duration,
+     * so this lets the reload path backfill the tile without re-importing.
+     */
+    setItemAudioDetails(
+      itemId: string,
+      durationMs: number,
+      sampleRate: number,
+      channelCount: number
+    ): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      if (durationMs > 0) item.durationMs = durationMs
+      if (sampleRate > 0) item.sampleRate = sampleRate
+      if (channelCount > 0) item.channelCount = channelCount
     },
 
     /**
@@ -356,6 +385,12 @@ export const useLibraryStore = defineStore('library', {
       // wrapped Blob URL is the only handle the rest of the app sees.
       const { coverArt, ...rest } = metadata
       item.metadata = rest
+      this.setItemAudioDetails(
+        itemId,
+        rest.durationMs ?? 0,
+        rest.sampleRate ?? 0,
+        rest.channelCount ?? 0
+      )
       if (coverArt && coverArt.data && (coverArt.data as ArrayBuffer).byteLength > 0) {
         const blob = new Blob([coverArt.data], { type: coverArt.mimeType })
         item.coverArtUrl = URL.createObjectURL(blob)

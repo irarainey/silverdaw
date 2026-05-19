@@ -38,6 +38,12 @@ export interface AudioMetadata {
   container?: string
   /** Average bitrate in bits per second. */
   bitrate?: number
+  /** Parsed source duration in milliseconds, when the container exposes it. */
+  durationMs?: number
+  /** Parsed source sample rate, when available. */
+  sampleRate?: number
+  /** Parsed source channel count, when available. */
+  channelCount?: number
   lossless?: boolean
   /** Tag types found, e.g. `['ID3v2.3']`. */
   tagTypes?: string[]
