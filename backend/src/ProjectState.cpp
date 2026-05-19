@@ -1,5 +1,6 @@
 #include "ProjectState.h"
 
+#include <cmath>
 #include <vector>
 
 namespace silverdaw
@@ -25,6 +26,9 @@ const juce::Identifier ProjectState::kBpm{"bpm"};
 const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
 const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
 const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
+const juce::Identifier ProjectState::kMarkers{"MARKERS"};
+const juce::Identifier ProjectState::kMarker{"MARKER"};
+const juce::Identifier ProjectState::kPositionMs{"positionMs"};
 const juce::Identifier ProjectState::kBeats{"beats"};
 const juce::Identifier ProjectState::kBeatAnchorSec{"beatAnchorSec"};
 const juce::Identifier ProjectState::kPlaybackFilePath{"playbackFilePath"};
@@ -812,6 +816,129 @@ juce::var ProjectState::libraryAsJson() const
         arr.add(juce::var(obj));
     }
     return juce::var(arr);
+}
+
+bool ProjectState::addMarker(const juce::String& markerId, double positionMs)
+{
+    if (markerId.isEmpty() || positionMs < 0.0)
+    {
+        return false;
+    }
+
+    juce::ValueTree markers;
+    for (int i = 0; i < root.getNumChildren(); ++i)
+    {
+        const auto child = root.getChild(i);
+        if (child.hasType(kMarkers))
+        {
+            markers = child;
+            break;
+        }
+    }
+    if (!markers.isValid())
+    {
+        markers = juce::ValueTree(kMarkers);
+        root.addChild(markers, -1, nullptr);
+    }
+
+    for (int i = 0; i < markers.getNumChildren(); ++i)
+    {
+        auto marker = markers.getChild(i);
+        if (marker.hasType(kMarker) && marker.getProperty(kId).toString() == markerId)
+        {
+            marker.setProperty(kPositionMs, positionMs, nullptr);
+            return true;
+        }
+    }
+
+    juce::ValueTree marker(kMarker);
+    marker.setProperty(kId, markerId, nullptr);
+    marker.setProperty(kPositionMs, positionMs, nullptr);
+    markers.addChild(marker, -1, nullptr);
+    return true;
+}
+
+bool ProjectState::moveMarker(const juce::String& markerId, double positionMs)
+{
+    if (markerId.isEmpty() || positionMs < 0.0)
+    {
+        return false;
+    }
+
+    auto markers = root.getChildWithName(kMarkers);
+    if (!markers.isValid())
+    {
+        return false;
+    }
+
+    for (int i = 0; i < markers.getNumChildren(); ++i)
+    {
+        auto marker = markers.getChild(i);
+        if (marker.hasType(kMarker) && marker.getProperty(kId).toString() == markerId)
+        {
+            const double current = static_cast<double>(marker.getProperty(kPositionMs, 0.0));
+            if (std::abs(current - positionMs) < 0.01)
+            {
+                return true;
+            }
+            marker.setProperty(kPositionMs, positionMs, nullptr);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ProjectState::removeMarker(const juce::String& markerId)
+{
+    if (markerId.isEmpty())
+    {
+        return false;
+    }
+
+    auto markers = root.getChildWithName(kMarkers);
+    if (!markers.isValid())
+    {
+        return false;
+    }
+
+    for (int i = markers.getNumChildren() - 1; i >= 0; --i)
+    {
+        auto marker = markers.getChild(i);
+        if (marker.hasType(kMarker) && marker.getProperty(kId).toString() == markerId)
+        {
+            markers.removeChild(marker, nullptr);
+            return true;
+        }
+    }
+    return false;
+}
+
+juce::var ProjectState::markersAsJson() const
+{
+    juce::Array<juce::var> markersArray;
+
+    for (int i = 0; i < root.getNumChildren(); ++i)
+    {
+        const auto markers = root.getChild(i);
+        if (!markers.hasType(kMarkers))
+        {
+            continue;
+        }
+        for (int m = 0; m < markers.getNumChildren(); ++m)
+        {
+            const auto marker = markers.getChild(m);
+            if (!marker.hasType(kMarker))
+            {
+                continue;
+            }
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty("id", marker.getProperty(kId).toString());
+            obj->setProperty("positionMs", static_cast<double>(marker.getProperty(kPositionMs, 0.0)));
+            markersArray.add(juce::var(obj));
+        }
+    }
+
+    return juce::var(markersArray);
 }
 
 juce::var ProjectState::tracksAsJson() const

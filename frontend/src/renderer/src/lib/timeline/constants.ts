@@ -54,3 +54,4 @@ export const GRID_BEAT = 0x52525b // zinc-600
 export const GRID_SUB = 0x3f3f46 // zinc-700
 
 export const PLAYHEAD = 0xef4444 // red-500
+export const MARKER = 0x10b981 // emerald-500

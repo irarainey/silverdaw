@@ -23,6 +23,7 @@ import {
   GRID_BAR,
   GRID_BEAT,
   GRID_SUB,
+  MARKER,
   PLAYHEAD,
   RULER_BG,
   RULER_HEIGHT,
@@ -191,6 +192,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     drawRulerChrome(width)
     drawRulerTicks(width)
+    drawMarkers()
     drawTracks(width)
     drawHeaderDivider()
 
@@ -200,6 +202,33 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     tracks.x = -Math.round(scrollX.value)
     tracks.y = -Math.round(scrollY.value)
     rulerTicks.x = -Math.round(scrollX.value)
+  }
+
+  function drawMarkers(): void {
+    const rulerTicks = rulerTicksLayer.value
+    const G = GraphicsCtor.value
+    if (!rulerTicks || !G || project.markers.length === 0) return
+
+    const markerW = 10
+    const markerTop = 3
+    const markerBottom = 15
+    const markers = new G()
+    for (const marker of project.markers) {
+      const x = headerWidth() + (marker.positionMs / 1000) * pxPerSecond.value
+      markers.poly([
+        x - markerW / 2,
+        markerTop,
+        x + markerW / 2,
+        markerTop,
+        x,
+        markerBottom
+      ]).fill({ color: MARKER, alpha: 0.95 })
+      markers
+        .moveTo(x + 0.5, markerBottom)
+        .lineTo(x + 0.5, RULER_HEIGHT - 1)
+    }
+    markers.stroke({ color: MARKER, width: 1, alpha: 0.8 })
+    rulerTicks.addChild(markers)
   }
 
   /**

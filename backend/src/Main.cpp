@@ -951,6 +951,7 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     }
     obj->setProperty("tracks", projectState.tracksAsJson());
     obj->setProperty("library", projectState.libraryAsJson());
+    obj->setProperty("markers", projectState.markersAsJson());
     obj->setProperty("viewPxPerSecond", projectState.getViewPxPerSecond());
     obj->setProperty("viewScrollX", projectState.getViewScrollX());
     obj->setProperty("playheadMs", projectState.getPlayheadMs());
@@ -1494,6 +1495,40 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             {
                 projectState.setProjectLengthMs(lenMs);
             }
+        }
+    }
+    else if (type == "PROJECT_MARKER_ADD")
+    {
+        const auto markerId = payload.getProperty("markerId", juce::var()).toString();
+        const auto posVar = payload.getProperty("positionMs", juce::var());
+        if (!markerId.isEmpty() && (posVar.isDouble() || posVar.isInt() || posVar.isInt64()))
+        {
+            const double positionMs = static_cast<double>(posVar);
+            if (positionMs >= 0.0)
+            {
+                projectState.addMarker(markerId, positionMs);
+            }
+        }
+    }
+    else if (type == "PROJECT_MARKER_MOVE")
+    {
+        const auto markerId = payload.getProperty("markerId", juce::var()).toString();
+        const auto posVar = payload.getProperty("positionMs", juce::var());
+        if (!markerId.isEmpty() && (posVar.isDouble() || posVar.isInt() || posVar.isInt64()))
+        {
+            const double positionMs = static_cast<double>(posVar);
+            if (positionMs >= 0.0)
+            {
+                projectState.moveMarker(markerId, positionMs);
+            }
+        }
+    }
+    else if (type == "PROJECT_MARKER_REMOVE")
+    {
+        const auto markerId = payload.getProperty("markerId", juce::var()).toString();
+        if (markerId.isNotEmpty())
+        {
+            projectState.removeMarker(markerId);
         }
     }
     else

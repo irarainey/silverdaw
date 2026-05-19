@@ -143,9 +143,56 @@ function isEditableTarget(target: EventTarget | null): boolean {
 function onTransportKey(e: KeyboardEvent): void {
   // Don't fight text fields, and don't trigger before the bridge is up
   // (no point sending TRANSPORT_SEEK that the backend would just drop).
-  if (e.ctrlKey || e.metaKey || e.shiftKey) return
   if (isEditableTarget(e.target)) return
   if (!transport.bridgeReady) return
+
+  if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault()
+    e.stopPropagation()
+    project.addMarkerAt(transport.positionMs)
+    return
+  }
+
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    e.preventDefault()
+    e.stopPropagation()
+    lastArrowSeekMs = null
+    if (e.key === 'ArrowLeft') {
+      ui.requestTimelineScroll('start')
+      sendBridge('TRANSPORT_STOP')
+      log.info('transport', 'shortcut skip-back')
+      return
+    }
+
+    const end = project.durationMs
+    if (!Number.isFinite(end) || end <= 0) return
+    ui.requestTimelineScroll('end')
+    transport.setPosition(end)
+    sendBridge('TRANSPORT_SEEK', { positionMs: end })
+    log.info('transport', `shortcut skip-forward -> ${end}ms`)
+    return
+  }
+
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    e.preventDefault()
+    e.stopPropagation()
+    const direction = e.key === 'ArrowLeft' ? -1 : 1
+    if (project.markers.length === 0) return
+    const current = transport.positionMs
+    const targetMarker =
+      direction < 0
+        ? [...project.markers].reverse().find((marker) => marker.positionMs < current - 1)
+        : project.markers.find((marker) => marker.positionMs > current + 1)
+    if (!targetMarker) return
+    lastArrowSeekMs = targetMarker.positionMs
+    ui.requestTimelineScrollToPosition(targetMarker.positionMs)
+    transport.setPosition(targetMarker.positionMs)
+    sendBridge('TRANSPORT_SEEK', { positionMs: targetMarker.positionMs })
+    log.debug('transport', `marker-seek to ${targetMarker.positionMs}ms`)
+    return
+  }
+
+  if (e.ctrlKey || e.metaKey || e.shiftKey) return
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
 
   // Alt + Arrow: fine-grained step (one pixel's worth of time at the

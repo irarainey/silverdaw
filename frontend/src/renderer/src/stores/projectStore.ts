@@ -59,6 +59,11 @@ export interface Clip {
   colorIndex?: number
 }
 
+export interface Marker {
+  readonly id: string
+  positionMs: number
+}
+
 export interface Track {
   readonly id: string
   name: string
@@ -146,6 +151,7 @@ export const TRACK_PALETTE: readonly TrackPaletteEntry[] = [
 interface ProjectState {
   tracks: Track[]
   clips: Record<string, Clip>
+  markers: Marker[]
   /**
    * Incremented whenever any clip's peaks change. Provides a single
    * shallow-reactive signal that consumers (e.g. the Pixi timeline
@@ -299,6 +305,7 @@ export const useProjectStore = defineStore('project', {
   state: (): ProjectState => ({
     tracks: [],
     clips: {},
+    markers: [],
     peaksRevision: 0,
     currentFilePath: null,
     projectName: DEFAULT_PROJECT_NAME,
@@ -1220,7 +1227,6 @@ export const useProjectStore = defineStore('project', {
       } else {
         pendingProjectLengthMs = null
       }
-
       const library = useLibraryStore()
       // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the
       // renderer's optimistic mirror must be wiped before re-applying so
@@ -1230,6 +1236,7 @@ export const useProjectStore = defineStore('project', {
       if (snapshot.reset === true) {
         this.tracks = []
         this.clips = {}
+        this.markers = []
         this.selectedClipId = null
         this.selectedTrackId = null
         this.clipboardClip = null
@@ -1237,6 +1244,13 @@ export const useProjectStore = defineStore('project', {
         this.peaksRevision++
         library.clear()
       }
+
+      this.markers = Array.isArray(snapshot.markers)
+        ? snapshot.markers
+            .filter((marker) => marker.positionMs >= 0)
+            .map((marker) => ({ id: marker.id, positionMs: marker.positionMs }))
+            .sort((a, b) => a.positionMs - b.positionMs)
+        : []
 
       // Hydrate persisted library entries BEFORE the clip-driven path
       // below runs — clips that point at the same filePath will then
@@ -1436,6 +1450,58 @@ export const useProjectStore = defineStore('project', {
     requestNewProject(): void {
       log.info('project', 'requestNewProject')
       sendBridge('PROJECT_NEW')
+    },
+
+    addMarkerAt(positionMs: number): boolean {
+      const safePositionMs = Math.max(0, Math.floor(positionMs))
+      const existing = this.markers.find((marker) => Math.abs(marker.positionMs - safePositionMs) < 1)
+      if (existing) return false
+
+      const marker: Marker = {
+        id: crypto.randomUUID(),
+        positionMs: safePositionMs
+      }
+      this.markers.push(marker)
+      this.markers.sort((a, b) => a.positionMs - b.positionMs)
+
+      const sent = sendBridge('PROJECT_MARKER_ADD', {
+        markerId: marker.id,
+        positionMs: marker.positionMs
+      })
+      if (!sent) {
+        useNotificationsStore().pushError('Marker was added locally, but the backend is not connected.')
+      }
+      log.info('project', `addMarkerAt id=${marker.id} position=${marker.positionMs}`)
+      return true
+    },
+
+    removeMarker(markerId: string): boolean {
+      const index = this.markers.findIndex((marker) => marker.id === markerId)
+      if (index < 0) return false
+      const [marker] = this.markers.splice(index, 1)
+      const sent = sendBridge('PROJECT_MARKER_REMOVE', { markerId })
+      if (!sent) {
+        useNotificationsStore().pushError('Marker was removed locally, but the backend is not connected.')
+      }
+      log.info('project', `removeMarker id=${markerId} position=${marker?.positionMs ?? '?'}`)
+      return true
+    },
+
+    moveMarker(markerId: string, positionMs: number): boolean {
+      const marker = this.markers.find((m) => m.id === markerId)
+      if (!marker) return false
+      const safePositionMs = Math.max(0, Math.round(positionMs))
+      if (Math.abs(marker.positionMs - safePositionMs) < 1) return true
+      marker.positionMs = safePositionMs
+      this.markers.sort((a, b) => a.positionMs - b.positionMs)
+      const sent = sendBridge('PROJECT_MARKER_MOVE', {
+        markerId,
+        positionMs: safePositionMs
+      })
+      if (!sent) {
+        useNotificationsStore().pushError('Marker was moved locally, but the backend is not connected.')
+      }
+      return true
     },
 
     /**

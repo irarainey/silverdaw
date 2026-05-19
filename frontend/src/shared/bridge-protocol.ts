@@ -183,6 +183,9 @@ export interface BridgeOutboundMap {
   PROJECT_SET_VIEW: ProjectSetViewPayload
   PROJECT_SET_BPM: ProjectSetBpmPayload
   PROJECT_SET_LENGTH: ProjectSetLengthPayload
+  PROJECT_MARKER_ADD: ProjectMarkerAddPayload
+  PROJECT_MARKER_MOVE: ProjectMarkerMovePayload
+  PROJECT_MARKER_REMOVE: ProjectMarkerRemovePayload
 }
 
 export interface WaveformRequestPayload {
@@ -234,6 +237,23 @@ export interface ProjectSetBpmPayload {
 /** Project-length edit (ms). Marks the project dirty on the backend. */
 export interface ProjectSetLengthPayload {
   lengthMs: number
+}
+
+/** Add a timeline marker at an absolute project position in milliseconds. */
+export interface ProjectMarkerAddPayload {
+  markerId: string
+  positionMs: number
+}
+
+/** Move an existing timeline marker to a new absolute project position. */
+export interface ProjectMarkerMovePayload {
+  markerId: string
+  positionMs: number
+}
+
+/** Remove an existing timeline marker. */
+export interface ProjectMarkerRemovePayload {
+  markerId: string
 }
 
 export type BridgeOutboundType = keyof BridgeOutboundMap
@@ -384,6 +404,8 @@ export interface ProjectStatePayload {
   bpm?: number
   /** User-set project length (ms) persisted with the project. */
   projectLengthMs?: number
+  /** User-created timeline markers. */
+  markers?: ProjectStateMarker[]
   /**
    * Library catalogue persisted with the project. Each entry is the
    * `(id, filePath)` pair the renderer originally created the item
@@ -394,6 +416,11 @@ export interface ProjectStatePayload {
    */
   library?: ProjectStateLibraryItem[]
   tracks: ProjectStateTrack[]
+}
+
+export interface ProjectStateMarker {
+  id: string
+  positionMs: number
 }
 
 export interface ProjectStateLibraryItem {
@@ -615,6 +642,13 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
   if (value.playheadMs !== undefined && typeof value.playheadMs !== 'number') return false
   if (value.bpm !== undefined && typeof value.bpm !== 'number') return false
   if (value.projectLengthMs !== undefined && typeof value.projectLengthMs !== 'number') return false
+  if (value.markers !== undefined) {
+    if (!Array.isArray(value.markers)) return false
+    for (const marker of value.markers) {
+      if (!isPlainObject(marker)) return false
+      if (typeof marker.id !== 'string' || typeof marker.positionMs !== 'number') return false
+    }
+  }
   if (value.library !== undefined) {
     if (!Array.isArray(value.library)) return false
     for (const item of value.library) {

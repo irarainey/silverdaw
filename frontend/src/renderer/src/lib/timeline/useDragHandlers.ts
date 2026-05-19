@@ -69,7 +69,7 @@ export interface DragHandlers {
    * pointer hovers a clip's edge (`ew-resize`) vs body (`default`) so
    * the user gets feedback about the available action without clicking.
    */
-  hoverCursor: Ref<'default' | 'ew-resize'>
+  hoverCursor: Ref<'default' | 'ew-resize' | 'grab' | 'grabbing'>
 }
 
 export interface DragHandlersOptions {
@@ -84,6 +84,8 @@ export interface DragHandlersOptions {
   getClipHitRegions: () => readonly ClipHitRegion[]
   /** Fires after a clip's `startMs` was updated so the component can repaint. */
   onClipMoved: () => void
+  /** Fires after a marker's position was updated so the component can repaint. */
+  onMarkerMoved: () => void
   /** Fires after the playhead position was updated. */
   onPlayheadMoved: () => void
 }
@@ -108,11 +110,12 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     geometry,
     getClipHitRegions,
     onClipMoved,
+    onMarkerMoved,
     onPlayheadMoved
   } = opts
 
   const isDraggingPlayhead = ref(false)
-  const hoverCursor = ref<'default' | 'ew-resize'>('default')
+  const hoverCursor = ref<'default' | 'ew-resize' | 'grab' | 'grabbing'>('default')
   // Active clip-drag state. `clipGrabOffsetMs` is the ms inside the clip
   // where the user originally clicked, so the clip's leading edge follows
   // the cursor minus that grab offset (then snaps to grid).
@@ -141,6 +144,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   let pendingDragStartX = 0
   let pendingDragStartY = 0
   let pendingDragStartMs = 0
+  let draggedMarkerId: string | null = null
 
   // ─── Pixel ↔ ms helpers ──────────────────────────────────────────────
   /**
@@ -266,6 +270,26 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     return null
   }
 
+  function hitTestMarker(clientX: number, clientY: number): string | null {
+    const a = app.value
+    if (!host.value || !a) return null
+    const rect = host.value.getBoundingClientRect()
+    const x = clientX - rect.left
+    const y = clientY - rect.top
+    const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
+    if (y < 0 || y > RULER_HEIGHT || x < geometry.headerWidth() || x > rightEdge) return null
+
+    const worldX = x + scrollX.value
+    const hitHalfWidth = 7
+    for (let i = project.markers.length - 1; i >= 0; i--) {
+      const marker = project.markers[i]
+      if (!marker) continue
+      const markerX = geometry.headerWidth() + (marker.positionMs / 1000) * geometry.pxPerSecond.value
+      if (Math.abs(worldX - markerX) <= hitHalfWidth) return marker.id
+    }
+    return null
+  }
+
   /**
    * Returns 'left' or 'right' if the pointer is within `TRIM_EDGE_PX`
    * of the clip's corresponding edge in screen-space; null otherwise.
@@ -337,6 +361,17 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const y = e.clientY - rect.top
     const bottomLimit = a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
     if (y > bottomLimit) return
+
+    const markerId = hitTestMarker(e.clientX, e.clientY)
+    if (markerId) {
+      draggedMarkerId = markerId
+      hoverCursor.value = 'grabbing'
+      window.addEventListener('pointermove', onMarkerPointerMove)
+      window.addEventListener('pointerup', onMarkerPointerUp)
+      window.addEventListener('pointercancel', onMarkerPointerUp)
+      e.preventDefault()
+      return
+    }
 
     // Clip-hit branch — defer drag vs click decision until pointer-move
     // crosses the threshold. A static click (no move) on the clip body
@@ -418,6 +453,26 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointermove', onPlayheadPointerMove)
     window.removeEventListener('pointerup', onPlayheadPointerUp)
     window.removeEventListener('pointercancel', onPlayheadPointerUp)
+  }
+
+  function onMarkerPointerMove(e: PointerEvent): void {
+    if (draggedMarkerId === null) return
+    const pointerMs = pointerToRawMsClamped(e.clientX)
+    if (pointerMs === null) return
+    const snap = geometry.msPerSubBeat()
+    const target = Math.max(0, Math.round(pointerMs / snap) * snap)
+    project.moveMarker(draggedMarkerId, target)
+    onMarkerMoved()
+  }
+
+  function onMarkerPointerUp(_e: PointerEvent): void {
+    if (draggedMarkerId === null) return
+    log.info('drag', `marker drag end id=${draggedMarkerId}`)
+    draggedMarkerId = null
+    hoverCursor.value = 'default'
+    window.removeEventListener('pointermove', onMarkerPointerMove)
+    window.removeEventListener('pointerup', onMarkerPointerUp)
+    window.removeEventListener('pointercancel', onMarkerPointerUp)
   }
 
   function applyClipDrag(pointer: ClipDragPointer): void {
@@ -637,8 +692,13 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (
       draggedClipId !== null ||
       trimClipId !== null ||
+      draggedMarkerId !== null ||
       isDraggingPlayhead.value
     ) {
+      return
+    }
+    if (hitTestMarker(e.clientX, e.clientY)) {
+      if (hoverCursor.value !== 'grab') hoverCursor.value = 'grab'
       return
     }
     const hit = hitTestClip(e.clientX, e.clientY)
@@ -679,6 +739,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointermove', onPlayheadPointerMove)
     window.removeEventListener('pointerup', onPlayheadPointerUp)
     window.removeEventListener('pointercancel', onPlayheadPointerUp)
+    window.removeEventListener('pointermove', onMarkerPointerMove)
+    window.removeEventListener('pointerup', onMarkerPointerUp)
+    window.removeEventListener('pointercancel', onMarkerPointerUp)
     window.removeEventListener('pointermove', onClipPointerMove)
     window.removeEventListener('pointerup', onClipPointerUp)
     window.removeEventListener('pointercancel', onClipPointerUp)

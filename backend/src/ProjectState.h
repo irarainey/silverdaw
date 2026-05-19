@@ -280,6 +280,20 @@ class ProjectState : public juce::ValueTree::Listener
      *  PROJECT_STATE envelope's `library` field. */
     juce::var libraryAsJson() const;
 
+    // ─── Timeline markers ──────────────────────────────────────────────
+
+    /** Add a timeline marker at an absolute project position in ms. Marks dirty. */
+    bool addMarker(const juce::String& markerId, double positionMs);
+
+    /** Move an existing timeline marker. Returns false when no marker matches. */
+    bool moveMarker(const juce::String& markerId, double positionMs);
+
+    /** Remove an existing timeline marker. Returns false when no marker matches. */
+    bool removeMarker(const juce::String& markerId);
+
+    /** Snapshot persisted timeline markers for PROJECT_STATE. */
+    juce::var markersAsJson() const;
+
     // ─── Serialisation ─────────────────────────────────────────────────
 
     /**
@@ -371,6 +385,9 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kProjectLengthMs;
     static const juce::Identifier kLibrary;
     static const juce::Identifier kLibraryItem;
+    static const juce::Identifier kMarkers;
+    static const juce::Identifier kMarker;
+    static const juce::Identifier kPositionMs;
     static const juce::Identifier kBeats;
     static const juce::Identifier kBeatAnchorSec;
     static const juce::Identifier kPlaybackFilePath;

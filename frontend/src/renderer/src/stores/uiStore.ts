@@ -7,6 +7,11 @@
 
 import { defineStore } from 'pinia'
 
+export type TimelineScrollEdge = 'start' | 'end'
+export type TimelineScrollRequest =
+  | { edge: TimelineScrollEdge; id: number }
+  | { positionMs: number; id: number }
+
 interface UiState {
   trackHeaderWidth: number
   libraryPanelHeight: number
@@ -20,9 +25,13 @@ interface UiState {
    *  per-project zoom is persisted separately via
    *  `projectStore.viewPxPerSecond`. */
   zoomPxPerSecond: number
+  /** One-shot request for TimelineView to jump its horizontal scroll. */
+  timelineScrollRequest: TimelineScrollRequest | null
   /** True once `hydrate()` has read the saved values from main. */
   hydrated: boolean
 }
+
+let nextTimelineScrollRequestId = 1
 
 // Must match `DEFAULT_PREFS.ui` in src/main/index.ts.
 const DEFAULTS = {
@@ -82,6 +91,7 @@ export const useUiStore = defineStore('ui', {
     libraryPanelHeight: DEFAULTS.libraryPanelHeight,
     followPlayback: DEFAULTS.followPlayback,
     zoomPxPerSecond: 100,
+    timelineScrollRequest: null,
     hydrated: false
   }),
 
@@ -135,6 +145,21 @@ export const useUiStore = defineStore('ui', {
       if (!Number.isFinite(value) || value <= 0) return
       if (this.zoomPxPerSecond === value) return
       this.zoomPxPerSecond = value
+    },
+
+    requestTimelineScroll(edge: TimelineScrollEdge): void {
+      this.timelineScrollRequest = {
+        edge,
+        id: nextTimelineScrollRequestId++
+      }
+    },
+
+    requestTimelineScrollToPosition(positionMs: number): void {
+      if (!Number.isFinite(positionMs) || positionMs < 0) return
+      this.timelineScrollRequest = {
+        positionMs,
+        id: nextTimelineScrollRequestId++
+      }
     }
   }
 })

@@ -370,6 +370,8 @@ or releasing the modifier between frames switches mode without restarting the dr
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
+| Double-click on **ruler** | Add a marker at the nearest grid point, or delete the marker already at that point. |
+| Drag a **marker** | Move the marker, snapping it to the timeline grid. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
@@ -378,6 +380,9 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Click on **inter-track gap** / below the last track | Deselect both clip and track. |
 | `←` / `→` | Step the playhead one grid line (sub-beat). |
 | `Alt` + `←` / `→` | Step the playhead by one pixel's worth of time (~16.7 ms at default zoom, finer when zoomed in). |
+| `M` | Place a marker at the playhead. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
+| `Ctrl` + `←` / `→` | Move the playhead to the previous or next marker. |
+| `Ctrl` + `Shift` + `←` / `→` | Skip to the start or end of the project. |
 | Mouse wheel | Zoom the timeline (anchored on the pointer). |
 | Two-finger horizontal swipe (trackpad) | Pan left/right. |
 | `Shift` + mouse wheel | Pan left/right. |

@@ -153,6 +153,7 @@ describe('isProjectStatePayload', () => {
     expect(
       isProjectStatePayload({
         ...base,
+        markers: [{ id: 'm1', positionMs: 1250 }],
         library: [
           {
             id: 'l1',
@@ -224,6 +225,8 @@ describe('isProjectStatePayload', () => {
         tracks: []
       })
     ).toBe(false)
+    expect(isProjectStatePayload({ ...base, markers: [{ id: 'm1' }], tracks: [] })).toBe(false)
+    expect(isProjectStatePayload({ ...base, markers: [{ id: 'm1', positionMs: '1000' }], tracks: [] })).toBe(false)
   })
 })
 

@@ -22,7 +22,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
-import { DEFAULT_PX_PER_SECOND, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from '@/lib/timeline/constants'
+import { DEFAULT_PX_PER_SECOND, RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from '@/lib/timeline/constants'
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
 import { useTimelineScroll } from '@/lib/timeline/useTimelineScroll'
 import { usePixiApp } from '@/lib/timeline/usePixiApp'
@@ -74,6 +74,7 @@ const { isDraggingPlayhead, hoverCursor } = useDragHandlers({
   host, app: pixi.app, scrollX, scrollY, maxScrollX, showScrollbar, geometry,
   getClipHitRegions: () => clipHitRegions,
   onClipMoved: () => { redraw(); updatePlayhead() },
+  onMarkerMoved: () => { redraw(); updatePlayhead() },
   onPlayheadMoved: () => { updatePlayhead() }
 })
 
@@ -127,12 +128,14 @@ const {
 onMounted(() => {
   host.value?.addEventListener('wheel', onWheel, { passive: false })
   host.value?.addEventListener('contextmenu', onContextMenu)
+  host.value?.addEventListener('dblclick', onDoubleClick)
   window.addEventListener('keydown', onZoomKey, { capture: true })
   startPlayheadRaf()
 })
 onBeforeUnmount(() => {
   host.value?.removeEventListener('wheel', onWheel)
   host.value?.removeEventListener('contextmenu', onContextMenu)
+  host.value?.removeEventListener('dblclick', onDoubleClick)
   window.removeEventListener('keydown', onZoomKey, { capture: true })
   stopPlayheadRaf()
 })
@@ -236,6 +239,60 @@ function onContextMenuCommand(command: string): void {
 function onContextMenuClose(): void {
   contextMenuOpen.value = false
   contextMenuClipId.value = null
+}
+
+function markerAtPointer(e: MouseEvent): string | null {
+  if (!host.value) return null
+  const a = pixi.app.value
+  if (!a) return null
+  const rect = host.value.getBoundingClientRect()
+  const x = e.clientX - rect.left
+  const y = e.clientY - rect.top
+  const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
+  if (y < 0 || y > RULER_HEIGHT || x < headerWidth() || x > rightEdge) return null
+  const worldX = x + scrollX.value
+  const hitHalfWidth = 7
+  for (let i = project.markers.length - 1; i >= 0; i--) {
+    const marker = project.markers[i]
+    if (!marker) continue
+    const markerX = headerWidth() + (marker.positionMs / 1000) * pxPerSecond.value
+    if (Math.abs(worldX - markerX) <= hitHalfWidth) return marker.id
+  }
+  return null
+}
+
+function pointerToSnappedRulerMs(e: MouseEvent): number | null {
+  if (!host.value) return null
+  const a = pixi.app.value
+  if (!a) return null
+  const rect = host.value.getBoundingClientRect()
+  const x = e.clientX - rect.left
+  const y = e.clientY - rect.top
+  const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
+  if (y < 0 || y > RULER_HEIGHT || x < headerWidth() || x > rightEdge) return null
+  const rawMs = ((scrollX.value + x - headerWidth()) / pxPerSecond.value) * 1000
+  const snap = geometry.msPerSubBeat()
+  return Math.max(0, Math.round(rawMs / snap) * snap)
+}
+
+function onDoubleClick(e: MouseEvent): void {
+  if (e.button !== 0) return
+  const markerId = markerAtPointer(e)
+  if (markerId) {
+    e.preventDefault()
+    project.removeMarker(markerId)
+    return
+  }
+
+  const snappedMs = pointerToSnappedRulerMs(e)
+  if (snappedMs === null) return
+  e.preventDefault()
+  const existing = project.markers.find((marker) => Math.abs(marker.positionMs - snappedMs) < 1)
+  if (existing) {
+    project.removeMarker(existing.id)
+  } else {
+    project.addMarkerAt(snappedMs)
+  }
 }
 
 /**
@@ -356,6 +413,11 @@ watch(
   () => redraw()
 )
 
+watch(
+  () => project.markers.map((marker) => `${marker.id}:${marker.positionMs}`).join('|'),
+  () => redraw()
+)
+
 // Project length changed → re-clamp scroll. Translation only; no redraw
 // needed because clip content didn't change.
 watch([maxScrollX, maxScrollY], () => {
@@ -437,6 +499,28 @@ watch(
   (saved) => {
     if (saved === null) return
     applySavedScrollX(saved)
+  }
+)
+
+watch(
+  () => ui.timelineScrollRequest,
+  (request) => {
+    if (!request) return
+    let next: number
+    if ('edge' in request) {
+      next = request.edge === 'start' ? 0 : maxScrollX.value
+    } else {
+      const targetX = (request.positionMs / 1000) * pxPerSecond.value
+      const margin = 24
+      const visibleLeft = scrollX.value + margin
+      const visibleRight = scrollX.value + trackAreaWidth.value - margin
+      if (targetX >= visibleLeft && targetX <= visibleRight) return
+      next = targetX < visibleLeft ? targetX - margin : targetX - trackAreaWidth.value + margin
+      next = Math.max(0, Math.min(maxScrollX.value, next))
+    }
+    if (Math.abs(next - scrollX.value) < 0.5) return
+    scrollX.value = next
+    applyScroll()
   }
 )
 
