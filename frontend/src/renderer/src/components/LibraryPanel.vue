@@ -281,8 +281,8 @@ function onResizePointerUp(): void {
       </button>
     </header>
 
-    <!-- Body. Either an empty-state hint or a horizontal-scrolling row of cards. -->
-    <div class="relative flex-1 overflow-auto p-2">
+    <!-- Body. Tiles wrap to the available width; only vertical overflow scrolls. -->
+    <div class="library-panel-body relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2">
       <div
         v-if="library.items.length === 0"
         class="flex h-full w-full items-center justify-center text-xs text-zinc-500"
@@ -291,13 +291,13 @@ function onResizePointerUp(): void {
       </div>
       <div
         v-else
-        class="flex flex-wrap gap-2"
+        class="flex w-full min-w-0 flex-wrap content-start gap-2"
       >
         <div
           v-for="item in library.items"
           :key="item.id"
           draggable="true"
-          class="library-item group relative flex h-20 w-48 shrink-0 cursor-grab select-none items-stretch overflow-hidden rounded border border-zinc-700 bg-zinc-950/60 text-left transition-colors hover:border-zinc-500 hover:bg-zinc-950 active:cursor-grabbing"
+          class="library-item group relative flex h-20 w-48 max-w-full shrink-0 cursor-grab select-none items-stretch overflow-hidden rounded border border-zinc-700 bg-zinc-950/60 text-left transition-colors hover:border-zinc-500 hover:bg-zinc-950 active:cursor-grabbing"
           @dragstart="(e) => onItemDragStart(e, item)"
           @dragend="onItemDragEnd"
           @dblclick="openItemInfo(item)"
@@ -415,5 +415,28 @@ function onResizePointerUp(): void {
 .library-item {
     /* Hide the default text-cursor on drag and give the card a subtle shadow on hover. */
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+.library-panel-body {
+    scrollbar-color: rgb(113 113 122) rgb(24 24 27 / 0.8);
+    scrollbar-width: thin;
+}
+
+.library-panel-body::-webkit-scrollbar {
+    width: 12px;
+}
+
+.library-panel-body::-webkit-scrollbar-track {
+    background: rgb(24 24 27 / 0.8);
+}
+
+.library-panel-body::-webkit-scrollbar-thumb {
+    background-color: rgb(113 113 122);
+    border: 3px solid rgb(24 24 27 / 0.8);
+    border-radius: 9999px;
+}
+
+.library-panel-body::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(161 161 170);
 }
 </style>
