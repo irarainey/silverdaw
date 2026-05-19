@@ -106,7 +106,7 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
         -->
     <button
       type="button"
-      class="pointer-events-auto absolute left-0 right-0 top-0 flex items-center justify-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+      class="pointer-events-auto absolute left-0 right-0 top-0 flex items-center justify-center gap-1.5 bg-zinc-900 text-[11px] font-medium uppercase tracking-wide text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
       :style="{ height: RULER_HEIGHT + 'px' }"
       title="Add a new track"
       @click="project.addTrack()"
