@@ -779,7 +779,13 @@ void handleTrackAdd(const juce::var& payload, silverdaw::ProjectState& projectSt
     {
         return;
     }
+    const bool existed = projectState.hasTrack(trackId);
     const bool ok = projectState.addTrack(trackId);
+    const juce::String name = payload.getProperty("name", juce::var()).toString();
+    if (ok && !existed && name.trim().isNotEmpty())
+    {
+        projectState.setTrackName(trackId, name);
+    }
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
     p->setProperty("ok", ok);
@@ -807,6 +813,17 @@ void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
     p->setProperty("trackId", trackId);
     p->setProperty("ok", existed);
     bridge.broadcast("TRACK_REMOVED", juce::var(p));
+}
+
+void handleTrackRename(const juce::var& payload, silverdaw::ProjectState& projectState)
+{
+    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    const juce::String name = payload.getProperty("name", juce::var()).toString();
+    if (trackId.isEmpty() || name.trim().isEmpty())
+    {
+        return;
+    }
+    projectState.setTrackName(trackId, name);
 }
 
 void handleClipRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
@@ -1290,6 +1307,11 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::info("bridge", "recv TRACK_REMOVE trackId=" + payload.getProperty("trackId", "").toString());
         handleTrackRemove(payload, engine, projectState, bridge);
+    }
+    else if (type == "TRACK_RENAME")
+    {
+        silverdaw::log::info("bridge", "recv TRACK_RENAME trackId=" + payload.getProperty("trackId", "").toString());
+        handleTrackRename(payload, projectState);
     }
     else if (type == "TRACK_GAIN")
     {

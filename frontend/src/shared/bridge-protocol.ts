@@ -93,10 +93,17 @@ export interface LibraryRemovePayload {
 
 export interface TrackAddPayload {
   trackId: string
+  /** Initial display name for new tracks. Optional for older clients. */
+  name?: string
 }
 
 export interface TrackRemovePayload {
   trackId: string
+}
+
+export interface TrackRenamePayload {
+  trackId: string
+  name: string
 }
 
 export interface TrackGainPayload {
@@ -138,6 +145,7 @@ export interface BridgeOutboundMap {
   LIBRARY_REMOVE: LibraryRemovePayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
+  TRACK_RENAME: TrackRenamePayload
   TRACK_GAIN: TrackGainPayload
   TRANSPORT_PLAY: undefined
   TRANSPORT_PAUSE: undefined
@@ -305,6 +313,8 @@ export interface ProjectStateClip {
 
 export interface ProjectStateTrack {
   id: string
+  /** Persisted user-facing track name. Optional for projects saved before this field existed. */
+  name?: string
   gain: number
   clips: ProjectStateClip[]
 }
@@ -577,6 +587,7 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
   for (const t of value.tracks) {
     if (!isPlainObject(t)) return false
     if (typeof t.id !== 'string' || typeof t.gain !== 'number') return false
+    if (t.name !== undefined && typeof t.name !== 'string') return false
     if (!Array.isArray(t.clips)) return false
     for (const c of t.clips) {
       if (!isPlainObject(c)) return false

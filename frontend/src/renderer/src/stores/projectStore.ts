@@ -332,7 +332,7 @@ export const useProjectStore = defineStore('project', {
       // Inform the backend so it can record the structural track in its
       // ValueTree. The renderer doesn't wait for the ack — `TRACK_ADDED`
       // is purely diagnostic (the renderer already shows the track).
-      sendBridge('TRACK_ADD', { trackId })
+      sendBridge('TRACK_ADD', { trackId, name: track.name })
       log.info('project', `addTrack id=${trackId}`)
       return trackId
     },
@@ -1074,7 +1074,9 @@ export const useProjectStore = defineStore('project', {
       if (!t) return
       const trimmed = name.trim()
       if (trimmed.length === 0) return
+      if (t.name === trimmed) return
       t.name = trimmed
+      sendBridge('TRACK_RENAME', { trackId, name: trimmed })
       log.info('project', `setTrackName id=${trackId} name="${trimmed}"`)
     },
 
@@ -1257,9 +1259,10 @@ export const useProjectStore = defineStore('project', {
         let track = this.tracks.find((x) => x.id === t.id)
         if (!track) {
           const index = this.tracks.length
+          const persistedName = t.name?.trim()
           track = {
             id: t.id,
-            name: `Track ${index + 1}`,
+            name: persistedName && persistedName.length > 0 ? persistedName : `Track ${index + 1}`,
             clipIds: [],
             muted: false,
             soloed: false,
@@ -1268,6 +1271,11 @@ export const useProjectStore = defineStore('project', {
             lengthMs: DEFAULT_TRACK_LENGTH_MS
           }
           this.tracks.push(track)
+        } else {
+          const persistedName = t.name?.trim()
+          if (persistedName && persistedName.length > 0) {
+            track.name = persistedName
+          }
         }
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)

@@ -19,7 +19,7 @@ namespace silverdaw
  * Tree shape:
  *
  *     PROJECT
- *       TRACK (id="t1", gain=1.0)
+ *       TRACK (id="t1", name="Drums", gain=1.0)
  *         CLIP (id="c1", filePath="...", offsetMs=0.0)
  *         CLIP (id="c2", filePath="...", offsetMs=4000.0)
  *       TRACK (id="t2", gain=0.7)
@@ -102,6 +102,9 @@ class ProjectState : public juce::ValueTree::Listener
 
     /** Per-track linear gain (0 = silent, 1 = unity). 1.0 if unknown. */
     float getTrackGain(const juce::String& trackId) const;
+
+    /** Set a track's user-facing name. Blank names are rejected. */
+    bool setTrackName(const juce::String& trackId, const juce::String& name);
 
     /** Set per-track gain. Returns true if the track existed. */
     bool setTrackGain(const juce::String& trackId, float gain);
@@ -275,7 +278,7 @@ class ProjectState : public juce::ValueTree::Listener
      * project name, reset flag) in `Main.cpp::buildProjectStateEnvelope`.
      *
      * Each track:
-     *   { id, gain, clips: [ { id, filePath, offsetMs, durationMs } ] }
+     *   { id, name, gain, clips: [ { id, filePath, offsetMs, durationMs } ] }
      */
     juce::var tracksAsJson() const;
 

@@ -71,7 +71,7 @@ const pixi = usePixiApp({
 })
 
 const { isDraggingPlayhead, hoverCursor } = useDragHandlers({
-  host, app: pixi.app, scrollX, scrollY, showScrollbar, geometry,
+  host, app: pixi.app, scrollX, scrollY, maxScrollX, showScrollbar, geometry,
   getClipHitRegions: () => clipHitRegions,
   onClipMoved: () => { redraw(); updatePlayhead() },
   onPlayheadMoved: () => { updatePlayhead() }

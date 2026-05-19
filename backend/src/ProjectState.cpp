@@ -186,6 +186,22 @@ float ProjectState::getTrackGain(const juce::String& trackId) const
     return static_cast<float>(static_cast<double>(track.getProperty(kGain, 1.0)));
 }
 
+bool ProjectState::setTrackName(const juce::String& trackId, const juce::String& name)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid())
+    {
+        return false;
+    }
+    const auto trimmed = name.trim();
+    if (trimmed.isEmpty())
+    {
+        return false;
+    }
+    track.setProperty(kName, trimmed, &undoManager);
+    return true;
+}
+
 bool ProjectState::setTrackGain(const juce::String& trackId, float gain)
 {
     auto track = findTrack(trackId);
@@ -706,6 +722,7 @@ juce::var ProjectState::tracksAsJson() const
 
         auto* trackObj = new juce::DynamicObject();
         trackObj->setProperty("id", track.getProperty(kId).toString());
+        trackObj->setProperty("name", track.getProperty(kName).toString());
         trackObj->setProperty("gain", static_cast<double>(track.getProperty(kGain, 1.0)));
 
         juce::Array<juce::var> clipsArray;

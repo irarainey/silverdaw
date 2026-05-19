@@ -42,6 +42,11 @@ const MIN_CLIP_MS = 50
  *  detected almost instantly. */
 const DRAG_THRESHOLD_PX = 3
 
+/** Horizontal edge zone used to auto-scroll while dragging a clip. */
+const CLIP_AUTOSCROLL_EDGE_PX = 72
+/** Maximum horizontal auto-scroll speed, in pixels per animation frame. */
+const CLIP_AUTOSCROLL_MAX_PX_PER_FRAME = 42
+
 /**
  * World-space rectangle of a single drawn clip block. `x` / `y` are in
  * absolute timeline-content coordinates; the hit-test below converts to
@@ -72,6 +77,7 @@ export interface DragHandlersOptions {
   app: Readonly<Ref<Application | null>>
   scrollX: Ref<number>
   scrollY: Ref<number>
+  maxScrollX: ComputedRef<number>
   showScrollbar: ComputedRef<boolean>
   geometry: GridGeometry
   /** Returns the latest clip-hit-regions array (populated by drawClip). */
@@ -80,6 +86,12 @@ export interface DragHandlersOptions {
   onClipMoved: () => void
   /** Fires after the playhead position was updated. */
   onPlayheadMoved: () => void
+}
+
+interface ClipDragPointer {
+  clientX: number
+  clientY: number
+  altKey: boolean
 }
 
 export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
@@ -91,6 +103,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     app,
     scrollX,
     scrollY,
+    maxScrollX,
     showScrollbar,
     geometry,
     getClipHitRegions,
@@ -105,6 +118,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   // the cursor minus that grab offset (then snaps to grid).
   let draggedClipId: string | null = null
   let clipGrabOffsetMs = 0
+  let latestClipDragPointer: ClipDragPointer | null = null
+  let clipAutoScrollFrame: number | null = null
   // Active trim-drag state. Captured at pointerdown so we can compute
   // each move-delta against the original clip geometry, not the
   // already-mutated values.
@@ -170,6 +185,62 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
     if (x < geometry.headerWidth() || x > rightEdge) return null
     return ((scrollX.value + x - geometry.headerWidth()) / geometry.pxPerSecond.value) * 1000
+  }
+
+  function pointerToRawMsClamped(clientX: number): number | null {
+    const a = app.value
+    if (!host.value || !a) return null
+    const rect = host.value.getBoundingClientRect()
+    const x = clientX - rect.left
+    const leftEdge = geometry.headerWidth()
+    const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
+    const clampedX = Math.max(leftEdge, Math.min(rightEdge, x))
+    return ((scrollX.value + clampedX - geometry.headerWidth()) / geometry.pxPerSecond.value) * 1000
+  }
+
+  function clipAutoScrollDelta(clientX: number): number {
+    const a = app.value
+    if (!host.value || !a || maxScrollX.value <= 0) return 0
+    const rect = host.value.getBoundingClientRect()
+    const x = clientX - rect.left
+    const leftEdge = geometry.headerWidth()
+    const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
+    if (x < leftEdge + CLIP_AUTOSCROLL_EDGE_PX) {
+      const pressure = Math.min(1, (leftEdge + CLIP_AUTOSCROLL_EDGE_PX - x) / CLIP_AUTOSCROLL_EDGE_PX)
+      return -Math.ceil(CLIP_AUTOSCROLL_MAX_PX_PER_FRAME * pressure)
+    }
+    if (x > rightEdge - CLIP_AUTOSCROLL_EDGE_PX) {
+      const pressure = Math.min(1, (x - (rightEdge - CLIP_AUTOSCROLL_EDGE_PX)) / CLIP_AUTOSCROLL_EDGE_PX)
+      return Math.ceil(CLIP_AUTOSCROLL_MAX_PX_PER_FRAME * pressure)
+    }
+    return 0
+  }
+
+  function startClipAutoScroll(pointer: ClipDragPointer): void {
+    latestClipDragPointer = pointer
+    if (clipAutoScrollFrame !== null) return
+    clipAutoScrollFrame = window.requestAnimationFrame(runClipAutoScroll)
+  }
+
+  function stopClipAutoScroll(): void {
+    latestClipDragPointer = null
+    if (clipAutoScrollFrame !== null) {
+      window.cancelAnimationFrame(clipAutoScrollFrame)
+      clipAutoScrollFrame = null
+    }
+  }
+
+  function runClipAutoScroll(): void {
+    clipAutoScrollFrame = null
+    if (draggedClipId === null || latestClipDragPointer === null) return
+    const delta = clipAutoScrollDelta(latestClipDragPointer.clientX)
+    if (delta === 0) return
+    const next = Math.max(0, Math.min(maxScrollX.value, scrollX.value + delta))
+    if (next === scrollX.value) return
+    scrollX.value = next
+    applyClipDrag(latestClipDragPointer)
+    onClipMoved()
+    clipAutoScrollFrame = window.requestAnimationFrame(runClipAutoScroll)
   }
 
   function seekTo(positionMs: number): void {
@@ -349,16 +420,16 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointercancel', onPlayheadPointerUp)
   }
 
-  function onClipPointerMove(e: PointerEvent): void {
+  function applyClipDrag(pointer: ClipDragPointer): void {
     if (draggedClipId === null) return
     const clip = project.clips[draggedClipId]
     if (!clip) return
-    const pointerMs = pointerToRawMs(e.clientX)
+    const pointerMs = pointerToRawMsClamped(pointer.clientX)
     if (pointerMs === null) return
 
     const rawStartMs = pointerMs - clipGrabOffsetMs
     let target: number
-    if (e.altKey) {
+    if (pointer.altKey) {
       // Alt = fine drag (1 ms resolution, no snap). Read per move so
       // the user can flip in and out of fine mode without restarting.
       target = Math.max(0, Math.round(rawStartMs))
@@ -380,9 +451,17 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
         target = Math.max(0, Math.round(rawStartMs / snap) * snap)
       }
     }
-    const destTrackId = pointerToTrackId(e.clientY) ?? clip.trackId
+    const destTrackId = pointerToTrackId(pointer.clientY) ?? clip.trackId
     project.moveClip(clip.id, target, destTrackId)
+  }
+
+  function onClipPointerMove(e: PointerEvent): void {
+    const pointer = { clientX: e.clientX, clientY: e.clientY, altKey: e.altKey }
+    latestClipDragPointer = pointer
+    applyClipDrag(pointer)
     onClipMoved()
+    if (clipAutoScrollDelta(e.clientX) !== 0) startClipAutoScroll(pointer)
+    else stopClipAutoScroll()
   }
 
   /** Returns the offset (ms) from the clip's left edge to the first
@@ -420,6 +499,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const endClip = project.clips[draggedClipId]
     log.info('drag', `clip drag end id=${draggedClipId} to=${endClip?.startMs ?? '?'}ms`)
     draggedClipId = null
+    stopClipAutoScroll()
     window.removeEventListener('pointermove', onClipPointerMove)
     window.removeEventListener('pointerup', onClipPointerUp)
     window.removeEventListener('pointercancel', onClipPointerUp)
@@ -608,6 +688,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointermove', onPendingPointerMove)
     window.removeEventListener('pointerup', onPendingPointerUp)
     window.removeEventListener('pointercancel', onPendingPointerUp)
+    stopClipAutoScroll()
   })
 
   return { isDraggingPlayhead, hoverCursor }
