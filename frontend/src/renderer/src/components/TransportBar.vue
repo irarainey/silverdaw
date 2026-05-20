@@ -316,7 +316,7 @@ function onToggleFollow(): void {
     <!-- Right: Timing box (position / bar / length / BPM). -->
     <div class="flex flex-1 justify-end">
       <div
-        class="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950/40 px-2 py-1"
+        class="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950/40 py-1 pl-3 pr-2"
         title="Timing"
       >
         <div class="flex flex-col items-start leading-none">
@@ -342,7 +342,7 @@ function onToggleFollow(): void {
           }}</span>
         </div>
         <div class="h-7 w-px bg-zinc-800" />
-        <div class="flex flex-col items-start leading-none">
+        <div class="-mr-1 flex flex-col items-start leading-none">
           <span class="text-[9px] uppercase tracking-wide text-zinc-500">Length</span>
           <div class="flex items-center">
             <input
@@ -352,12 +352,12 @@ function onToggleFollow(): void {
               spellcheck="false"
               :disabled="!lengthEditable"
               :title="lengthEditable ? 'Project length (mm:ss or h:mm:ss). Use ↑/↓ or the spinner to adjust by 1s; hold Shift for 10s.' : 'Add a track to edit project length'"
-              class="w-12 bg-transparent font-mono text-base tabular-nums text-zinc-100 outline-none focus:text-blue-300 disabled:cursor-not-allowed disabled:text-zinc-500"
+              class="w-[5ch] bg-transparent font-mono text-base tabular-nums text-zinc-100 outline-none focus:text-blue-300 disabled:cursor-not-allowed disabled:text-zinc-500"
               @focus="isEditingLength = true"
               @blur="onLengthCommit"
               @keydown="onLengthKeydown"
             >
-            <div class="ml-0.5 flex flex-col text-zinc-500">
+            <div class="ml-1 flex flex-col text-zinc-500">
               <button
                 type="button"
                 data-borderless-button="true"
@@ -413,7 +413,7 @@ function onToggleFollow(): void {
               :disabled="!timingEditable"
               :title="projectBpmPending ? 'Detecting tempo for the first clip…' : timingEditable ? 'Tempo (20 – 300 BPM). Use ↑/↓ or the spinner to adjust by 1; hold Shift for 10.' : 'Add a track to edit project tempo'"
               :class="[
-                'w-16 rounded bg-transparent font-mono text-base tabular-nums outline-none focus:text-blue-300 disabled:cursor-not-allowed disabled:text-zinc-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+                'w-[6ch] rounded bg-transparent font-mono text-base tabular-nums outline-none focus:text-blue-300 disabled:cursor-not-allowed disabled:text-zinc-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
                 projectBpmPending
                   ? 'animate-pulse bg-blue-500/10 px-1 text-blue-200 ring-1 ring-blue-400/40'
                   : 'text-zinc-100'
@@ -422,7 +422,7 @@ function onToggleFollow(): void {
               @blur="onBpmCommit"
               @keydown="onBpmKeydown"
             >
-            <div class="ml-0.5 flex flex-col text-zinc-500">
+            <div class="ml-1 flex flex-col text-zinc-500">
               <button
                 type="button"
                 data-borderless-button="true"

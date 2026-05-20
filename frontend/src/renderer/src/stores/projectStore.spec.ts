@@ -307,6 +307,7 @@ describe('projectStore', () => {
     expect(project.clips[clipId ?? '']).toMatchObject({
       libraryItemId: 'l2',
       fileName: 'Vocal chop',
+      name: 'Vocal chop',
       inMs: 2_000,
       durationMs: 1_500
     })
@@ -317,6 +318,10 @@ describe('projectStore', () => {
       positionMs: 3_000,
       inMs: 2_000,
       durationMs: 1_500
+    })
+    expect(sendMock).toHaveBeenCalledWith('CLIP_RENAME', {
+      clipId,
+      name: 'Vocal chop'
     })
   })
 })

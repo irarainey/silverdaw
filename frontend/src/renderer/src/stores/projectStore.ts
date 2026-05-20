@@ -1040,12 +1040,13 @@ export const useProjectStore = defineStore('project', {
           : libraryItem.durationMs
       if (this.wouldClipOverlap(trackId, snapped, clipDurationMs)) return null
 
+      const inheritedName = libraryItem.name?.trim() || ''
       const clipId = this.addClipToTrack(
         trackId,
         {
           libraryItemId: libraryItem.id,
           filePath: libraryItem.filePath,
-          fileName: libraryItem.name?.trim() || libraryItem.fileName,
+          fileName: inheritedName || libraryItem.fileName,
           durationMs: clipDurationMs,
           sampleRate: libraryItem.sampleRate,
           channelCount: libraryItem.channelCount,
@@ -1065,6 +1066,11 @@ export const useProjectStore = defineStore('project', {
         ...(clipInMs > 0 || libraryItem.kind === 'saved-clip' ? { inMs: clipInMs } : {}),
         ...(libraryItem.kind === 'saved-clip' ? { durationMs: clipDurationMs } : {})
       })
+      if (inheritedName) {
+        const newClip = this.clips[clipId]
+        if (newClip) newClip.name = inheritedName
+        sendBridge('CLIP_RENAME', { clipId, name: inheritedName })
+      }
       this.pushTrackGain(track)
       log.info('project', `addClipFromLibrary track=${trackId} clip=${clipId} pos=${snapped}ms`)
       return clipId
