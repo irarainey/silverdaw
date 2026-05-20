@@ -69,6 +69,26 @@ scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
 .github/instructions/    Copilot/AI agent guidance per file type
 ```
 
+## Current status and roadmap
+
+Silverdaw currently supports the core arrangement workflow:
+
+- Import audio into a project-scoped library and drag it onto the timeline.
+- Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
+- Move clips across tracks with grid snapping, source-beat snapping and `Alt` bypass.
+- Analyse imported audio for key, BPM, beat positions and variable-tempo status.
+- Save and reopen `.silverdaw` projects with tracks, clips, library items, markers,
+  view state and dirty-state prompts.
+- Relink missing source files after loading a project.
+- Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
+  file association.
+
+The main remaining roadmap areas are warp / pitch shifting, region selection, sample
+creation from clip ranges, library search / tags / list view, ffmpeg-backed decoding for
+unsupported formats, mixer / effects / automation, mixdown export, stem separation, loop
+slicing, a fine-clip editor, autosave / recovery, recent projects and CI / backend test
+coverage.
+
 ## Bridge protocol
 
 The bridge is **text only**. Every envelope is a JSON `{ type, payload }` frame:
