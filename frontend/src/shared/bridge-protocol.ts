@@ -205,6 +205,12 @@ export interface BridgeOutboundMap {
   PROJECT_MARKER_ADD: ProjectMarkerAddPayload
   PROJECT_MARKER_MOVE: ProjectMarkerMovePayload
   PROJECT_MARKER_REMOVE: ProjectMarkerRemovePayload
+  PREVIEW_LOAD: PreviewLoadPayload
+  PREVIEW_UNLOAD: undefined
+  PREVIEW_PLAY: undefined
+  PREVIEW_PAUSE: undefined
+  PREVIEW_STOP: undefined
+  PREVIEW_SEEK: PreviewSeekPayload
 }
 
 export interface WaveformRequestPayload {
@@ -273,6 +279,22 @@ export interface ProjectMarkerMovePayload {
 /** Remove an existing timeline marker. */
 export interface ProjectMarkerRemovePayload {
   markerId: string
+}
+
+/** Start a preview voice on a library item, optionally windowed to a
+ *  selection. `inMs` and `durationMs` are in milliseconds relative to the
+ *  source file; `durationMs = 0` (or omitted) plays from `inMs` to the
+ *  end of the source. */
+export interface PreviewLoadPayload {
+  libraryItemId: string
+  inMs?: number
+  durationMs?: number
+}
+
+/** Seek within the currently loaded preview window. `positionMs` is
+ *  relative to the window start (0..durationMs). */
+export interface PreviewSeekPayload {
+  positionMs: number
 }
 
 export type BridgeOutboundType = keyof BridgeOutboundMap
@@ -571,6 +593,31 @@ export interface ProjectBpmAppliedPayload {
   bpm: number
 }
 
+/** Broadcast on every preview load/play/pause/stop/unload transition. */
+export interface PreviewStatePayload {
+  /** Echoed back from the most recent PREVIEW_LOAD; absent on unload. */
+  libraryItemId?: string
+  isPlaying: boolean
+  isLoaded: boolean
+  durationMs: number
+  /** Monotonic counter. Increments on every load/unload; the renderer
+   *  uses it to discard stale state for a preview the user has already
+   *  closed. */
+  generation: number
+}
+
+/** Preview-position tick while the preview transport is playing. */
+export interface PreviewPositionPayload {
+  positionMs: number
+  isPlaying: boolean
+  generation: number
+}
+
+/** Broadcast when the preview reaches the end of its selection window. */
+export interface PreviewEndedPayload {
+  generation: number
+}
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PROJECT_STATE: ProjectStatePayload
@@ -589,6 +636,9 @@ export interface BridgeInboundMap {
   WAVEFORM_READY: WaveformReadyPayload
   LIBRARY_ITEM_ANALYSIS: LibraryItemAnalysisPayload
   PROJECT_BPM_APPLIED: ProjectBpmAppliedPayload
+  PREVIEW_STATE: PreviewStatePayload
+  PREVIEW_POSITION: PreviewPositionPayload
+  PREVIEW_ENDED: PreviewEndedPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -629,7 +679,10 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PROJECT_DIRTY',
   'WAVEFORM_READY',
   'LIBRARY_ITEM_ANALYSIS',
-  'PROJECT_BPM_APPLIED'
+  'PROJECT_BPM_APPLIED',
+  'PREVIEW_STATE',
+  'PREVIEW_POSITION',
+  'PREVIEW_ENDED'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -833,4 +886,30 @@ export function isLibraryItemAnalysisPayload(value: unknown): value is LibraryIt
 /** Guard for `ProjectBpmAppliedPayload`. */
 export function isProjectBpmAppliedPayload(value: unknown): value is ProjectBpmAppliedPayload {
   return isPlainObject(value) && typeof value.bpm === 'number'
+}
+
+/** Guard for `PreviewStatePayload`. */
+export function isPreviewStatePayload(value: unknown): value is PreviewStatePayload {
+  if (!isPlainObject(value)) return false
+  if (typeof value.isPlaying !== 'boolean') return false
+  if (typeof value.isLoaded !== 'boolean') return false
+  if (typeof value.durationMs !== 'number') return false
+  if (typeof value.generation !== 'number') return false
+  if (value.libraryItemId !== undefined && typeof value.libraryItemId !== 'string') return false
+  return true
+}
+
+/** Guard for `PreviewPositionPayload`. */
+export function isPreviewPositionPayload(value: unknown): value is PreviewPositionPayload {
+  return (
+    isPlainObject(value) &&
+    typeof value.positionMs === 'number' &&
+    typeof value.isPlaying === 'boolean' &&
+    typeof value.generation === 'number'
+  )
+}
+
+/** Guard for `PreviewEndedPayload`. */
+export function isPreviewEndedPayload(value: unknown): value is PreviewEndedPayload {
+  return isPlainObject(value) && typeof value.generation === 'number'
 }

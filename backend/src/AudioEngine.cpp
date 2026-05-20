@@ -30,7 +30,10 @@ juce::String AudioEngine::initialise()
 
     if (err.isEmpty())
     {
-        sourcePlayer.setSource(&master);
+        // Top mixer = project master + preview voice. The preview voice
+        // is added lazily on loadPreview().
+        topMixer.addInputSource(&master, false);
+        sourcePlayer.setSource(&topMixer);
         deviceManager.addAudioCallback(&sourcePlayer);
     }
 
@@ -41,8 +44,10 @@ void AudioEngine::shutdown()
 {
     rebuildTimer.stopTimer();
     stop();
+    unloadPreview();
     deviceManager.removeAudioCallback(&sourcePlayer);
     sourcePlayer.setSource(nullptr);
+    topMixer.removeAllInputs();
     mixer.removeAllInputs();
     tracks.clear();
     deviceManager.closeAudioDevice();
@@ -530,6 +535,131 @@ double AudioEngine::getClipDurationMs(const juce::String& clipId) const
         return 0.0;
     }
     return (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0;
+}
+
+// -----------------------------------------------------------------------------
+// Preview voice
+// -----------------------------------------------------------------------------
+
+bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double durationMs,
+                              juce::String* outError)
+{
+    // Always start from a clean slate. unloadPreview() handles the case
+    // where nothing is currently loaded.
+    unloadPreview();
+
+    if (!filePath.existsAsFile())
+    {
+        if (outError != nullptr) *outError = "file does not exist: " + filePath.getFullPathName();
+        return false;
+    }
+
+    auto* reader = formatManager.createReaderFor(filePath);
+    if (reader == nullptr)
+    {
+        if (outError != nullptr) *outError = "could not decode: " + filePath.getFullPathName();
+        return false;
+    }
+
+    preview.sampleRate = reader->sampleRate > 0.0 ? reader->sampleRate : 44100.0;
+    preview.sourceDurationMs =
+        (static_cast<double>(reader->lengthInSamples) / preview.sampleRate) * 1000.0;
+    preview.inMs = juce::jmax(0.0, juce::jmin(inMs, preview.sourceDurationMs));
+    const double remaining = juce::jmax(0.0, preview.sourceDurationMs - preview.inMs);
+    preview.durationMs = durationMs > 0.0 ? juce::jmin(durationMs, remaining) : remaining;
+
+    preview.readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, /*deleteReader=*/true);
+
+    preview.offsetSource = std::make_unique<OffsetSource>(preview.readerSource.get());
+    preview.offsetSource->setOffsetSamples(0);
+    preview.offsetSource->setInSourceSamples(
+        static_cast<juce::int64>((preview.inMs / 1000.0) * preview.sampleRate));
+    preview.offsetSource->setClipDurationSamples(
+        static_cast<juce::int64>((preview.durationMs / 1000.0) * preview.sampleRate));
+
+    preview.transportSource = std::make_unique<juce::AudioTransportSource>();
+    preview.transportSource->setSource(preview.offsetSource.get(), /*readAheadBufferSize=*/32768,
+                                       &readAheadThread, preview.sampleRate);
+    preview.transportSource->setPosition(0.0);
+
+    topMixer.addInputSource(preview.transportSource.get(), false);
+    previewGeneration.fetch_add(1, std::memory_order_acq_rel);
+    silverdaw::log::info("preview", "loaded " + filePath.getFullPathName().toStdString()
+                                        + " inMs=" + std::to_string(preview.inMs)
+                                        + " durationMs=" + std::to_string(preview.durationMs));
+    return true;
+}
+
+void AudioEngine::unloadPreview()
+{
+    if (preview.transportSource == nullptr) return;
+    preview.transportSource->stop();
+    topMixer.removeInputSource(preview.transportSource.get());
+    preview.transportSource->setSource(nullptr);
+    preview.transportSource.reset();
+    preview.offsetSource.reset();
+    preview.readerSource.reset();
+    preview.inMs = 0.0;
+    preview.durationMs = 0.0;
+    preview.sourceDurationMs = 0.0;
+    previewGeneration.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void AudioEngine::playPreview()
+{
+    if (preview.transportSource == nullptr) return;
+    // If the playhead is at or past the end of the window, restart from 0.
+    if (getPreviewPositionMs() >= preview.durationMs - 1.0)
+    {
+        preview.transportSource->setPosition(0.0);
+    }
+    preview.transportSource->start();
+}
+
+void AudioEngine::pausePreview()
+{
+    if (preview.transportSource == nullptr) return;
+    preview.transportSource->stop();
+}
+
+void AudioEngine::stopPreview()
+{
+    if (preview.transportSource == nullptr) return;
+    preview.transportSource->stop();
+    preview.transportSource->setPosition(0.0);
+}
+
+void AudioEngine::setPreviewPositionMs(double ms)
+{
+    if (preview.transportSource == nullptr) return;
+    const double clamped = juce::jlimit(0.0, juce::jmax(0.0, preview.durationMs), ms);
+    preview.transportSource->setPosition(clamped / 1000.0);
+}
+
+double AudioEngine::getPreviewPositionMs() const
+{
+    if (preview.transportSource == nullptr) return 0.0;
+    return preview.transportSource->getCurrentPosition() * 1000.0;
+}
+
+double AudioEngine::getPreviewDurationMs() const
+{
+    return preview.durationMs;
+}
+
+bool AudioEngine::isPreviewPlaying() const
+{
+    return preview.transportSource != nullptr && preview.transportSource->isPlaying();
+}
+
+bool AudioEngine::isPreviewLoaded() const
+{
+    return preview.transportSource != nullptr;
+}
+
+juce::int64 AudioEngine::getPreviewGeneration() const
+{
+    return previewGeneration.load(std::memory_order_acquire);
 }
 
 } // namespace silverdaw

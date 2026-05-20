@@ -21,6 +21,7 @@ import { log } from '@/lib/log'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
+import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 
 const props = defineProps<{
     /** Current panel height in CSS pixels (excluding the resize handle). */
@@ -38,6 +39,7 @@ const ui = useUiStore()
 // drop zone. We track depth to handle nested dragenter/dragleave correctly.
 const isDragOver = ref(false)
 const infoItemId = ref<string | null>(null)
+const editorItemId = ref<string | null>(null)
 const contextMenu = ref<{ itemId: string; x: number; y: number } | null>(null)
 let dragDepth = 0
 
@@ -115,6 +117,7 @@ onBeforeUnmount(() => {
 
 const itemCount = computed(() => library.items.length)
 const infoItem = computed(() => library.items.find((item) => item.id === infoItemId.value) ?? null)
+const editorItem = computed(() => library.items.find((item) => item.id === editorItemId.value) ?? null)
 const contextMenuItem = computed(() =>
     contextMenu.value ? library.items.find((item) => item.id === contextMenu.value?.itemId) ?? null : null
 )
@@ -131,6 +134,7 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     if (!item) return []
     const inUse = library.isItemInUse(item.id)
     const items: ClipContextMenuItem[] = [
+        { command: 'library.edit', label: 'Open in editor…' },
         { command: 'library.info', label: 'Show information' },
         { command: 'library.rename', label: 'Rename…', separatorAbove: true }
     ]
@@ -258,6 +262,15 @@ function closeItemInfo(): void {
     infoItemId.value = null
 }
 
+function openItemEditor(item: LibraryItem): void {
+    closeItemContextMenu()
+    editorItemId.value = item.id
+}
+
+function closeItemEditor(): void {
+    editorItemId.value = null
+}
+
 function openItemContextMenu(e: MouseEvent, item: LibraryItem): void {
     contextMenu.value = {
         itemId: item.id,
@@ -273,6 +286,10 @@ function closeItemContextMenu(): void {
 function onContextMenuCommand(command: string): void {
     const item = contextMenuItem.value
     if (!item) return
+    if (command === 'library.edit') {
+        openItemEditor(item)
+        return
+    }
     if (command === 'library.info') {
         openItemInfo(item)
         return
@@ -436,7 +453,7 @@ function onResizePointerUp(): void {
             class="library-item group relative flex h-22 cursor-grab select-none items-stretch overflow-hidden bg-zinc-950/60 text-left transition-colors hover:bg-zinc-900 active:cursor-grabbing"
             @dragstart="(e) => onItemDragStart(e, source)"
             @dragend="onItemDragEnd"
-            @dblclick="openItemInfo(source)"
+            @dblclick="openItemEditor(source)"
             @contextmenu.prevent="(e) => openItemContextMenu(e, source)"
           >
             <!-- Cover art thumbnail (or fallback) on the left edge. -->
@@ -584,7 +601,7 @@ function onResizePointerUp(): void {
                 class="saved-clip group flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
                 @dragstart="(e) => onItemDragStart(e, item)"
                 @dragend="onItemDragEnd"
-                @dblclick="openItemInfo(item)"
+                @dblclick="openItemEditor(item)"
                 @contextmenu.prevent="(e) => openItemContextMenu(e, item)"
               >
                 <span
@@ -663,7 +680,7 @@ function onResizePointerUp(): void {
             class="saved-clip group flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
             @dragstart="(e) => onItemDragStart(e, item)"
             @dragend="onItemDragEnd"
-            @dblclick="openItemInfo(item)"
+            @dblclick="openItemEditor(item)"
             @contextmenu.prevent="(e) => openItemContextMenu(e, item)"
           >
             <span
@@ -717,6 +734,11 @@ function onResizePointerUp(): void {
       :item="infoItem"
       @close="closeItemInfo"
     />
+    <ClipEditorDialog
+      :open="editorItem !== null"
+      :item="editorItem"
+      @close="closeItemEditor"
+    />
     <ClipContextMenu
       :open="contextMenu !== null"
       :x="contextMenu?.x ?? 0"
@@ -757,3 +779,4 @@ function onResizePointerUp(): void {
     background-color: rgb(161 161 170);
 }
 </style>
+

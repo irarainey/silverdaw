@@ -141,7 +141,13 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 function isShortcutModalOpen(): boolean {
-  return aboutOpen.value || preferencesOpen.value || relinkDialogOpen.value || unsavedPromptOpen.value
+  return (
+    aboutOpen.value ||
+    preferencesOpen.value ||
+    relinkDialogOpen.value ||
+    unsavedPromptOpen.value ||
+    ui.clipEditorOpen
+  )
 }
 
 function onGlobalShortcutKey(e: KeyboardEvent): void {

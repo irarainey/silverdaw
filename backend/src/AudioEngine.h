@@ -419,11 +419,66 @@ class AudioEngine
     /** Master playhead position in milliseconds (uses the first track as clock). */
     double getPositionMs() const;
 
-    /**
-     * Duration of the clip's underlying file in milliseconds. Returns 0
-     * if the clip doesn't exist or its reader is unavailable.
+    /** Duration of the clip's underlying file in milliseconds. Returns 0
+     *  if the clip doesn't exist or its reader is unavailable.
      */
     double getClipDurationMs(const juce::String& clipId) const;
+
+    // -------------------------------------------------------------------
+    // Preview voice — an independent playback path used by the Clip
+    // Editor dialog. Plays a single audio file, optionally windowed to a
+    // [inMs, inMs + durationMs] selection. Its own play/pause is
+    // independent of the project transport, but `loadPreview()` /
+    // `playPreview()` callers are expected to pause the project
+    // transport first when they want exclusive playback.
+    // -------------------------------------------------------------------
+
+    /** Open `filePath`, build the preview source chain, and attach it to
+     *  the top mixer. `inMs` is where in the source the selection starts;
+     *  `durationMs` is the selection length (0 = play to end of source).
+     *  Returns true on success and increments the preview generation.
+     */
+    bool loadPreview(const juce::File& filePath, double inMs, double durationMs,
+                     juce::String* outError = nullptr);
+
+    /** Detach the preview source from the top mixer and release its
+     *  reader. Increments the preview generation so any in-flight async
+     *  state targeting the old preview is discarded. Safe to call when
+     *  no preview is loaded.
+     */
+    void unloadPreview();
+
+    /** Start preview playback. No-op if no preview is loaded. */
+    void playPreview();
+
+    /** Pause preview playback (position retained). */
+    void pausePreview();
+
+    /** Stop preview playback and seek to the start of the window. */
+    void stopPreview();
+
+    /** Seek within the preview window. `ms` is relative to the window
+     *  start (0..durationMs).
+     */
+    void setPreviewPositionMs(double ms);
+
+    /** Current preview position relative to the window start (ms). */
+    double getPreviewPositionMs() const;
+
+    /** Preview window length in ms (mirrors the argument to loadPreview). */
+    double getPreviewDurationMs() const;
+
+    /** True if the preview transport is currently playing. */
+    bool isPreviewPlaying() const;
+
+    /** True if a preview source is currently loaded. */
+    bool isPreviewLoaded() const;
+
+    /** Monotonic counter incremented on every load/unload. Used by the
+     *  bridge layer to discard stale state broadcasts after the user
+     *  has closed and re-opened the editor.
+     */
+    juce::int64 getPreviewGeneration() const;
 
     /**
      * Access to the engine's `AudioFormatManager`. Used by the waveform
@@ -517,10 +572,12 @@ class AudioEngine
     juce::AudioDeviceManager deviceManager;
     juce::AudioSourcePlayer sourcePlayer;
     juce::MixerAudioSource mixer;
-    // MasterClockSource wraps the mixer; the source player is wired to it
-    // so the audio thread sees `master → mixer → tracks`. Constructed
-    // after `mixer` so the reference is valid; declaration order matters.
+    // MasterClockSource wraps the mixer; the top mixer in turn mixes the
+    // master (project tracks) with the preview voice so the Clip Editor
+    // can play in parallel with — or in place of — the project transport.
+    // Construction order: mixer → master → topMixer (refs the others).
     MasterClockSource master{mixer};
+    juce::MixerAudioSource topMixer;
     juce::AudioFormatManager formatManager;
 
     // Background thread used by each track's read-ahead buffer so file I/O
@@ -528,6 +585,23 @@ class AudioEngine
     juce::TimeSliceThread readAheadThread{"silverdaw-readahead"};
 
     std::unordered_map<juce::String, std::unique_ptr<Track>> tracks; // keyed by clipId
+
+    // Preview voice — single playable file, windowed by an OffsetSource
+    // configured with offsetSamples=0, inSourceSamples=inMs, and
+    // clipDurationSamples=durationMs. Mutated only on the message thread;
+    // the audio thread reads atomics on `previewTransport`.
+    struct Preview
+    {
+        std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
+        std::unique_ptr<OffsetSource> offsetSource;
+        std::unique_ptr<juce::AudioTransportSource> transportSource;
+        double sampleRate = 44100.0;
+        double inMs = 0.0;
+        double durationMs = 0.0;
+        double sourceDurationMs = 0.0;
+    };
+    Preview preview;
+    std::atomic<juce::int64> previewGeneration{0};
 };
 
 } // namespace silverdaw

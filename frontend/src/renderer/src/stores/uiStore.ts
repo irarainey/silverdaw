@@ -33,6 +33,10 @@ interface UiState {
   timelineScrollRequest: TimelineScrollRequest | null
   /** One-shot request for TimelineView to adjust zoom from a global shortcut. */
   timelineZoomRequest: TimelineZoomRequest | null
+  /** True while the Clip Editor preview dialog is open. Global keyboard
+   *  shortcuts (Space play/pause etc.) should defer to the dialog while
+   *  this is set. */
+  clipEditorOpen: boolean
   /** True once `hydrate()` has read the saved values from main. */
   hydrated: boolean
 }
@@ -104,6 +108,7 @@ export const useUiStore = defineStore('ui', {
     zoomPxPerSecond: 100,
     timelineScrollRequest: null,
     timelineZoomRequest: null,
+    clipEditorOpen: false,
     hydrated: false
   }),
 

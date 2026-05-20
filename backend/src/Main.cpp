@@ -194,6 +194,37 @@ class PlayheadEmitter : public juce::Timer
             bridge.broadcast("PLAYHEAD_UPDATE", payload);
             lastPosMs = posMs;
         }
+
+        // Preview voice — independent of the project transport. Broadcast
+        // position while playing, and detect end-of-window here (the
+        // OffsetSource emits silence past durationMs but the transport
+        // keeps "playing"; we explicitly stop and notify).
+        const bool previewPlaying = engine.isPreviewPlaying();
+        const double previewPos = engine.getPreviewPositionMs();
+        const double previewDur = engine.getPreviewDurationMs();
+        if (previewPlaying && previewDur > 0.0 && previewPos >= previewDur)
+        {
+            engine.stopPreview();
+            auto* endedObj = new juce::DynamicObject();
+            endedObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
+            bridge.broadcast("PREVIEW_ENDED", juce::var(endedObj));
+            auto* stateObj = new juce::DynamicObject();
+            stateObj->setProperty("isPlaying", false);
+            stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
+            stateObj->setProperty("durationMs", previewDur);
+            stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
+            bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+            lastPreviewPosMs = 0.0;
+        }
+        else if (previewPlaying || previewPos != lastPreviewPosMs)
+        {
+            previewPayloadObject->setProperty("positionMs", previewPos);
+            previewPayloadObject->setProperty("isPlaying", previewPlaying);
+            previewPayloadObject->setProperty(
+                "generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
+            bridge.broadcast("PREVIEW_POSITION", previewPayload);
+            lastPreviewPosMs = previewPos;
+        }
     }
 
   private:
@@ -204,6 +235,9 @@ class PlayheadEmitter : public juce::Timer
     juce::DynamicObject::Ptr payloadObject;
     juce::var payload;
     double lastPosMs = -1.0;
+    juce::DynamicObject::Ptr previewPayloadObject{new juce::DynamicObject()};
+    juce::var previewPayload{previewPayloadObject.get()};
+    double lastPreviewPosMs = -1.0;
 };
 
 /**
@@ -1556,6 +1590,94 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         {
             engine.setPositionMs(*positionMs);
             projectState.setPlayheadMs(juce::jmax(0.0, *positionMs));
+        }
+    }
+    else if (type == "PREVIEW_LOAD")
+    {
+        const juce::String libraryItemId = payload.getProperty("libraryItemId", juce::var()).toString();
+        const double inMs = static_cast<double>(payload.getProperty("inMs", 0.0));
+        const double durationMs = static_cast<double>(payload.getProperty("durationMs", 0.0));
+        silverdaw::log::info("bridge", "recv PREVIEW_LOAD libraryItemId=" + libraryItemId +
+                                            " inMs=" + juce::String(inMs) +
+                                            " durationMs=" + juce::String(durationMs));
+        const juce::String sourcePath = projectState.getLibraryItemFilePath(libraryItemId);
+        if (sourcePath.isEmpty())
+        {
+            silverdaw::log::warn("preview", "PREVIEW_LOAD unknown libraryItemId=" + libraryItemId);
+        }
+        else
+        {
+            // Prefer the decoded WAV cache (same resolver as timeline) so a
+            // compressed source still previews promptly. Falls back to the
+            // source path when no cache is available yet.
+            const juce::String playbackPath = resolveEnginePlaybackPath(sourcePath, projectState, decodedCache);
+            juce::String err;
+            if (!engine.loadPreview(juce::File(playbackPath), inMs, durationMs, &err))
+            {
+                silverdaw::log::warn("preview", "PREVIEW_LOAD failed: " + err.toStdString());
+            }
+            auto* stateObj = new juce::DynamicObject();
+            stateObj->setProperty("libraryItemId", libraryItemId);
+            stateObj->setProperty("isPlaying", false);
+            stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
+            stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
+            stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
+            bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+        }
+    }
+    else if (type == "PREVIEW_UNLOAD")
+    {
+        silverdaw::log::info("bridge", "recv PREVIEW_UNLOAD");
+        engine.unloadPreview();
+        auto* stateObj = new juce::DynamicObject();
+        stateObj->setProperty("isPlaying", false);
+        stateObj->setProperty("isLoaded", false);
+        stateObj->setProperty("durationMs", 0.0);
+        stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
+        bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+    }
+    else if (type == "PREVIEW_PLAY")
+    {
+        silverdaw::log::info("bridge", "recv PREVIEW_PLAY");
+        // The Clip Editor owns playback exclusively while open — pause the
+        // project transport so the user doesn't hear both at once.
+        if (engine.isPlaying()) engine.pause();
+        engine.playPreview();
+        auto* stateObj = new juce::DynamicObject();
+        stateObj->setProperty("isPlaying", engine.isPreviewPlaying());
+        stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
+        stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
+        stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
+        bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+    }
+    else if (type == "PREVIEW_PAUSE")
+    {
+        silverdaw::log::info("bridge", "recv PREVIEW_PAUSE");
+        engine.pausePreview();
+        auto* stateObj = new juce::DynamicObject();
+        stateObj->setProperty("isPlaying", false);
+        stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
+        stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
+        stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
+        bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+    }
+    else if (type == "PREVIEW_STOP")
+    {
+        silverdaw::log::info("bridge", "recv PREVIEW_STOP");
+        engine.stopPreview();
+        auto* stateObj = new juce::DynamicObject();
+        stateObj->setProperty("isPlaying", false);
+        stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
+        stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
+        stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
+        bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+    }
+    else if (type == "PREVIEW_SEEK")
+    {
+        const auto positionMs = tryGetNumber(payload, "positionMs");
+        if (positionMs.has_value())
+        {
+            engine.setPreviewPositionMs(*positionMs);
         }
     }
     else if (type == "TRACK_ADD")

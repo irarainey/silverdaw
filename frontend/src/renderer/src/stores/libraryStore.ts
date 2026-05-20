@@ -462,6 +462,120 @@ export const useLibraryStore = defineStore('library', {
     },
 
     /**
+     * Variant of `addSavedClipFromTimelineClip` that takes an explicit
+     * source library item id and selection window — used by the Clip
+     * Editor's "Save as new clip" action. Returns the new saved-clip
+     * id, or the id of an existing matching saved-clip if one already
+     * has the same source / inMs / durationMs.
+     */
+    addSavedClipFromSelection(
+      sourceItemId: string,
+      inMs: number,
+      durationMs: number,
+      name?: string
+    ): string | null {
+      const source = this.items.find((i) => i.id === sourceItemId)
+      if (!source) {
+        log.warn('library', `addSavedClipFromSelection unknown source=${sourceItemId}`)
+        return null
+      }
+      const trimIn = Math.max(0, Math.floor(inMs))
+      const trimDur = Math.max(0, Math.floor(durationMs))
+      if (trimDur <= 0) {
+        log.warn('library', `addSavedClipFromSelection refused zero-duration source=${sourceItemId}`)
+        return null
+      }
+      const existing = this.items.find(
+        (item) =>
+          item.kind === 'saved-clip' &&
+          item.derivedFrom?.sourceItemId === sourceItemId &&
+          item.derivedFrom?.inMs === trimIn &&
+          item.derivedFrom?.durationMs === trimDur
+      )
+      if (existing) return existing.id
+
+      const trimmed = name?.trim()
+      const finalName =
+        trimmed && trimmed.length > 0 ? trimmed : buildSavedClipName(source, trimIn, trimDur)
+      const itemId = this.addItem({
+        kind: 'saved-clip',
+        name: finalName,
+        filePath: source.filePath,
+        fileName: source.fileName,
+        durationMs: trimDur,
+        sampleRate: source.sampleRate,
+        channelCount: source.channelCount,
+        peaks: source.peaks,
+        playbackFilePath: source.playbackFilePath,
+        key: source.key,
+        derivedFrom: {
+          sourceItemId,
+          sourceClipId: '',
+          inMs: trimIn,
+          durationMs: trimDur
+        }
+      })
+      if (itemId) {
+        const item = this.items.find((i) => i.id === itemId)
+        if (item) {
+          if (source.decodedCacheFilePath) item.decodedCacheFilePath = source.decodedCacheFilePath
+          if (source.bpm !== undefined) item.bpm = source.bpm
+          if (source.beats !== undefined) item.beats = source.beats.slice()
+          if (source.beatAnchorSec !== undefined) item.beatAnchorSec = source.beatAnchorSec
+          if (source.variableTempo !== undefined) item.variableTempo = source.variableTempo
+        }
+        if (source.collapsed) this.setItemCollapsed(source.id, false)
+      }
+      return itemId || null
+    },
+
+    /**
+     * Update the trim window of an existing saved-clip library item.
+     * Refuses (returns false) if the saved-clip is currently referenced
+     * by any timeline clip — those clips own their own trim windows and
+     * silently rewriting the source-of-truth would corrupt them. The
+     * caller is expected to surface a "Save as new clip" hint instead.
+     */
+    updateSavedClipTrim(itemId: string, inMs: number, durationMs: number): boolean {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return false
+      if (item.kind !== 'saved-clip') return false
+      const project = useProjectStore()
+      for (const id in project.clips) {
+        if (project.clips[id]?.libraryItemId === itemId) {
+          log.warn('library', `updateSavedClipTrim refused (in use) id=${itemId}`)
+          return false
+        }
+      }
+      const trimIn = Math.max(0, Math.floor(inMs))
+      const trimDur = Math.max(0, Math.floor(durationMs))
+      if (trimDur <= 0) return false
+      const next = item.derivedFrom
+        ? { ...item.derivedFrom, inMs: trimIn, durationMs: trimDur }
+        : { sourceItemId: '', sourceClipId: '', inMs: trimIn, durationMs: trimDur }
+      item.derivedFrom = next
+      item.durationMs = trimDur
+      sendBridge('LIBRARY_ADD', {
+        itemId: item.id,
+        filePath: item.filePath,
+        kind: item.kind,
+        name: item.name,
+        fileName: item.fileName,
+        durationMs: item.durationMs,
+        sampleRate: item.sampleRate,
+        channelCount: item.channelCount,
+        key: item.key,
+        sourceItemId: next.sourceItemId,
+        sourceClipId: next.sourceClipId,
+        sourceInMs: next.inMs,
+        sourceDurationMs: next.durationMs,
+        collapsed: item.collapsed
+      })
+      log.info('library', `updateSavedClipTrim id=${itemId} in=${trimIn} dur=${trimDur}`)
+      return true
+    },
+
+    /**
      * Rename a library item. Blank names are coerced to undefined so the
      * tile falls back to the source-file name. Persisted to the backend
      * via a fresh `LIBRARY_ADD` envelope; the backend treats matching ids

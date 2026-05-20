@@ -25,6 +25,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { usePreviewStore } from '@/stores/previewStore'
 import { log } from '@/lib/log'
 import {
   isBridgeInboundType,
@@ -32,6 +33,9 @@ import {
   isClipRemovedPayload,
   isLibraryItemAnalysisPayload,
   isPlayheadUpdatePayload,
+  isPreviewEndedPayload,
+  isPreviewPositionPayload,
+  isPreviewStatePayload,
   isProjectBpmAppliedPayload,
   isProjectDirtyPayload,
   isProjectLoadFailedPayload,
@@ -262,8 +266,9 @@ function scheduleReconnect(): void {
 function dispatch(msg: BridgeInboundMessage): void {
   // Exhaustive on `BridgeInboundType`: adding a new arm to `BridgeInboundMap`
   // without a matching case here is a TypeScript error via `assertNever`.
-  // Skip PLAYHEAD_UPDATE — it fires 60 Hz and would drown the log.
-  if (msg.type !== 'PLAYHEAD_UPDATE') {
+  // Skip PLAYHEAD_UPDATE — it fires 60 Hz and would drown the log. Same
+  // for PREVIEW_POSITION while the editor dialog is open.
+  if (msg.type !== 'PLAYHEAD_UPDATE' && msg.type !== 'PREVIEW_POSITION') {
     log.info('bridge', `recv ${msg.type}`)
   }
   switch (msg.type) {
@@ -459,6 +464,21 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'PREVIEW_STATE': {
+      usePreviewStore().applyState(msg.payload)
+      break
+    }
+
+    case 'PREVIEW_POSITION': {
+      usePreviewStore().applyPosition(msg.payload)
+      break
+    }
+
+    case 'PREVIEW_ENDED': {
+      usePreviewStore().applyEnded(msg.payload)
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -576,6 +596,12 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isLibraryItemAnalysisPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_BPM_APPLIED':
       return isProjectBpmAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PREVIEW_STATE':
+      return isPreviewStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PREVIEW_POSITION':
+      return isPreviewPositionPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PREVIEW_ENDED':
+      return isPreviewEndedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

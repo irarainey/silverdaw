@@ -5,6 +5,9 @@ import {
   isClipAckPayload,
   isLibraryItemAnalysisPayload,
   isPlayheadUpdatePayload,
+  isPreviewEndedPayload,
+  isPreviewPositionPayload,
+  isPreviewStatePayload,
   isProjectBpmAppliedPayload,
   isProjectDirtyPayload,
   isProjectLoadFailedPayload,
@@ -37,7 +40,10 @@ const INBOUND_TYPES = {
   PROJECT_DIRTY: true,
   WAVEFORM_READY: true,
   LIBRARY_ITEM_ANALYSIS: true,
-  PROJECT_BPM_APPLIED: true
+  PROJECT_BPM_APPLIED: true,
+  PREVIEW_STATE: true,
+  PREVIEW_POSITION: true,
+  PREVIEW_ENDED: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {
@@ -452,5 +458,46 @@ describe('isProjectBpmAppliedPayload', () => {
   it('rejects missing or wrong-typed BPM', () => {
     expect(isProjectBpmAppliedPayload({})).toBe(false)
     expect(isProjectBpmAppliedPayload({ bpm: '124.5' })).toBe(false)
+  })
+})
+
+describe('isPreviewStatePayload', () => {
+  it('accepts a fully populated payload', () => {
+    expect(
+      isPreviewStatePayload({
+        libraryItemId: 'lib1',
+        isPlaying: false,
+        isLoaded: true,
+        durationMs: 1_000,
+        generation: 3
+      })
+    ).toBe(true)
+  })
+  it('accepts payload without libraryItemId', () => {
+    expect(
+      isPreviewStatePayload({ isPlaying: false, isLoaded: false, durationMs: 0, generation: 1 })
+    ).toBe(true)
+  })
+  it('rejects wrong-typed fields', () => {
+    expect(isPreviewStatePayload({ isPlaying: 'no', isLoaded: true, durationMs: 0, generation: 1 })).toBe(false)
+    expect(isPreviewStatePayload({ isPlaying: false, isLoaded: true, durationMs: '0', generation: 1 })).toBe(false)
+  })
+})
+
+describe('isPreviewPositionPayload', () => {
+  it('accepts a populated payload', () => {
+    expect(isPreviewPositionPayload({ positionMs: 250, isPlaying: true, generation: 1 })).toBe(true)
+  })
+  it('rejects missing fields', () => {
+    expect(isPreviewPositionPayload({ positionMs: 250 })).toBe(false)
+  })
+})
+
+describe('isPreviewEndedPayload', () => {
+  it('accepts a generation number', () => {
+    expect(isPreviewEndedPayload({ generation: 2 })).toBe(true)
+  })
+  it('rejects non-numeric generation', () => {
+    expect(isPreviewEndedPayload({ generation: '2' })).toBe(false)
   })
 })

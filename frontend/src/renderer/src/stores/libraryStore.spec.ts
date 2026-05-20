@@ -326,4 +326,103 @@ describe('libraryStore', () => {
       'fallback.wav'
     )
   })
+
+  it('saves a selection as a new saved-clip and deduplicates identical windows', () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    sendMock.mockClear()
+
+    const id1 = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000, 'My slice')
+    const id2 = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000, 'My slice')
+
+    expect(id1).toBeTruthy()
+    expect(id2).toBe(id1)
+    const saved = library.items.find((i) => i.id === id1)
+    expect(saved).toMatchObject({
+      kind: 'saved-clip',
+      name: 'My slice',
+      durationMs: 2_000,
+      derivedFrom: { sourceItemId: sourceId, inMs: 1_000, durationMs: 2_000 }
+    })
+  })
+
+  it('updates a saved-clip trim window when no timeline clips reference it', () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)
+    sendMock.mockClear()
+
+    const ok = library.updateSavedClipTrim(savedId!, 1_500, 3_000)
+
+    expect(ok).toBe(true)
+    expect(library.items.find((i) => i.id === savedId)).toMatchObject({
+      durationMs: 3_000,
+      derivedFrom: { inMs: 1_500, durationMs: 3_000 }
+    })
+    expect(sendMock).toHaveBeenCalledWith(
+      'LIBRARY_ADD',
+      expect.objectContaining({
+        itemId: savedId,
+        sourceInMs: 1_500,
+        sourceDurationMs: 3_000,
+        durationMs: 3_000
+      })
+    )
+  })
+
+  it('refuses to update saved-clip trim when a timeline clip references it', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const trackId = project.addTrack()
+    project.addClipFromLibrary(
+      trackId,
+      {
+        id: savedId,
+        kind: 'saved-clip',
+        filePath: 'C:\\audio\\source.wav',
+        fileName: 'source.wav',
+        durationMs: 2_000,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1]),
+        derivedFrom: { sourceItemId: sourceId!, sourceClipId: '', inMs: 1_000, durationMs: 2_000 }
+      },
+      0
+    )
+    sendMock.mockClear()
+
+    const ok = library.updateSavedClipTrim(savedId, 1_500, 3_000)
+
+    expect(ok).toBe(false)
+    expect(library.items.find((i) => i.id === savedId)).toMatchObject({
+      durationMs: 2_000,
+      derivedFrom: { inMs: 1_000, durationMs: 2_000 }
+    })
+  })
 })
