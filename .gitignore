@@ -35,6 +35,9 @@ backend/build-release/
 Thumbs.db
 *.log
 .cache/
+coverage/
+frontend/coverage/
+backend/build-coverage/
 # Cross-layer dev logs (see backend/src/Log.h, frontend main + renderer logger)
 .logs/
 

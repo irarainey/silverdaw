@@ -87,14 +87,16 @@ if(MSVC)
 endif()
 target_link_libraries(btrack_local PRIVATE SampleRate::samplerate)
 
-# ─── Target ──────────────────────────────────────────────────────────────
-juce_add_console_app(SilverdawBackend
-    PRODUCT_NAME "Silverdaw Backend"
-    COMPANY_NAME "Silverdaw")
+option(SILVERDAW_BUILD_TESTS "Build backend unit tests" OFF)
+option(SILVERDAW_ENABLE_COVERAGE "Instrument backend unit tests for code coverage" OFF)
 
-target_sources(SilverdawBackend PRIVATE
-    src/Main.cpp
+if(SILVERDAW_ENABLE_COVERAGE AND NOT SILVERDAW_BUILD_TESTS)
+    message(FATAL_ERROR "SILVERDAW_ENABLE_COVERAGE requires SILVERDAW_BUILD_TESTS=ON")
+endif()
+
+add_library(silverdaw_backend_core STATIC
     src/AudioEngine.cpp
+    src/BridgeAuth.cpp
     src/BpmDetector.cpp
     src/BridgeServer.cpp
     src/DecodedCache.cpp
@@ -105,13 +107,16 @@ target_sources(SilverdawBackend PRIVATE
     src/ValueTreeJson.cpp
     src/Waveform.cpp)
 
-target_compile_definitions(SilverdawBackend PRIVATE
+target_compile_definitions(silverdaw_backend_core PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_USE_WINDOWS_MEDIA_FORMAT=1
     JUCE_STANDALONE_APPLICATION=1)
 
-target_link_libraries(SilverdawBackend PRIVATE
+target_include_directories(silverdaw_backend_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+target_link_libraries(silverdaw_backend_core PUBLIC
     juce::juce_core
     juce::juce_events
     juce::juce_data_structures
@@ -125,3 +130,98 @@ target_link_libraries(SilverdawBackend PRIVATE
     SampleRate::samplerate
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
+
+if(SILVERDAW_ENABLE_COVERAGE)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(silverdaw_backend_core PRIVATE
+            -O0 -g -fprofile-instr-generate -fcoverage-mapping)
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(silverdaw_backend_core PRIVATE
+            -O0 -g --coverage)
+    else()
+        message(FATAL_ERROR
+            "Backend coverage requires a Clang or GNU compiler. "
+            "The current compiler is ${CMAKE_CXX_COMPILER_ID}.")
+    endif()
+endif()
+
+# ─── Target ──────────────────────────────────────────────────────────────
+juce_add_console_app(SilverdawBackend
+    PRODUCT_NAME "Silverdaw Backend"
+    COMPANY_NAME "Silverdaw")
+
+target_sources(SilverdawBackend PRIVATE
+    src/Main.cpp)
+
+target_link_libraries(SilverdawBackend PRIVATE
+    silverdaw_backend_core)
+
+if(SILVERDAW_BUILD_TESTS)
+    enable_testing()
+
+    add_executable(SilverdawBackendTests
+        tests/BackendTests.cpp)
+    target_link_libraries(SilverdawBackendTests PRIVATE
+        silverdaw_backend_core)
+
+    if(SILVERDAW_ENABLE_COVERAGE)
+        set(SILVERDAW_BACKEND_COVERAGE_DIR ${CMAKE_BINARY_DIR}/coverage)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            target_compile_options(SilverdawBackendTests PRIVATE
+                -O0 -g -fprofile-instr-generate -fcoverage-mapping)
+            target_link_options(SilverdawBackendTests PRIVATE
+                -fprofile-instr-generate -fcoverage-mapping)
+            find_program(LLVM_PROFDATA_EXE llvm-profdata)
+            find_program(LLVM_COV_EXE llvm-cov)
+            if(LLVM_PROFDATA_EXE AND LLVM_COV_EXE)
+                add_custom_target(SilverdawBackendCoverage
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${SILVERDAW_BACKEND_COVERAGE_DIR}/html
+                    COMMAND ${CMAKE_COMMAND} -E env
+                        LLVM_PROFILE_FILE=${SILVERDAW_BACKEND_COVERAGE_DIR}/backend.profraw
+                        $<TARGET_FILE:SilverdawBackendTests>
+                    COMMAND ${LLVM_PROFDATA_EXE} merge -sparse
+                        ${SILVERDAW_BACKEND_COVERAGE_DIR}/backend.profraw
+                        -o ${SILVERDAW_BACKEND_COVERAGE_DIR}/backend.profdata
+                    COMMAND ${LLVM_COV_EXE} report
+                        $<TARGET_FILE:SilverdawBackendTests>
+                        -instr-profile=${SILVERDAW_BACKEND_COVERAGE_DIR}/backend.profdata
+                        "-ignore-filename-regex=.*[/\\\\](_deps|third_party|tests)[/\\\\].*"
+                    COMMAND ${LLVM_COV_EXE} show
+                        $<TARGET_FILE:SilverdawBackendTests>
+                        -instr-profile=${SILVERDAW_BACKEND_COVERAGE_DIR}/backend.profdata
+                        -format=html
+                        -output-dir=${SILVERDAW_BACKEND_COVERAGE_DIR}/html
+                        "-ignore-filename-regex=.*[/\\\\](_deps|third_party|tests)[/\\\\].*"
+                    DEPENDS SilverdawBackendTests
+                    COMMENT "Running backend tests with LLVM coverage")
+            else()
+                message(WARNING "llvm-profdata and llvm-cov are required for SilverdawBackendCoverage")
+            endif()
+        elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            target_compile_options(SilverdawBackendTests PRIVATE
+                -O0 -g --coverage)
+            target_link_options(SilverdawBackendTests PRIVATE
+                --coverage)
+            find_program(GCOVR_EXE gcovr)
+            if(GCOVR_EXE)
+                add_custom_target(SilverdawBackendCoverage
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${SILVERDAW_BACKEND_COVERAGE_DIR}
+                    COMMAND $<TARGET_FILE:SilverdawBackendTests>
+                    COMMAND ${GCOVR_EXE}
+                        -r ${CMAKE_CURRENT_SOURCE_DIR}
+                        --filter ${CMAKE_CURRENT_SOURCE_DIR}/src
+                        --exclude ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+                        --exclude ${CMAKE_CURRENT_SOURCE_DIR}/tests
+                        --txt
+                        --html-details
+                        -o ${SILVERDAW_BACKEND_COVERAGE_DIR}/index.html
+                    DEPENDS SilverdawBackendTests
+                    COMMENT "Running backend tests with gcovr coverage")
+            else()
+                message(WARNING "gcovr is required for SilverdawBackendCoverage")
+            endif()
+        endif()
+    endif()
+
+    add_test(NAME SilverdawBackendTests COMMAND SilverdawBackendTests)
+endif()

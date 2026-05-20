@@ -608,11 +608,28 @@ pnpm dist:dir    # win-unpacked only, no NSIS step
 
 - **C++**: `clang-tidy` via `scripts/Invoke-ClangTidy.ps1` (`backend: lint` task), using
   `backend/.clang-tidy` (enables `modernize-*`, `bugprone-*`, `performance-*`,
-  `readability-*`). Format with `clang-format` (`backend/.clang-format`).
+  `readability-*`). Format with `clang-format` (`backend/.clang-format`). Backend unit
+  tests are gated behind `-DSILVERDAW_BUILD_TESTS=ON`:
+
+  ```powershell
+  pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+    "cmake -S backend -B backend/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSILVERDAW_BUILD_TESTS=ON"
+  pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+    "cmake --build backend/build --target SilverdawBackendTests --config Debug --parallel"
+  pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+    "ctest --test-dir backend/build --output-on-failure"
+  ```
+  Backend coverage is available for Clang / GNU builds with
+  `-DSILVERDAW_ENABLE_COVERAGE=ON`. It adds a `SilverdawBackendCoverage`
+  target that runs the backend unit tests and writes reports under the
+  build directory's `coverage/` folder. MSVC builds still run the tests,
+  but do not provide native coverage reports through this CMake target.
 - **TypeScript / Vue**: `pnpm typecheck` (vue-tsc + tsc --noEmit), `pnpm lint` (ESLint flat
   config with `eslint-plugin-vue` and `@typescript-eslint`).
-- **Tests**: `pnpm test` runs Vitest over the shared bridge-protocol guards and music-time
-  helpers (49 tests at time of writing).
+- **Tests**: `pnpm test` runs Vitest over the shared bridge-protocol guards,
+  music-time helpers and Pinia stores. `pnpm test:coverage` runs the same
+  suite with V8 coverage and writes text, HTML, lcov and JSON-summary reports
+  under `frontend/coverage/`.
 
 ## License
 

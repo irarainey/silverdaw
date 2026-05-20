@@ -32,6 +32,9 @@ class PeaksCache
     /** Resolve and create the cache directory under user app data. Idempotent. */
     PeaksCache();
 
+    /** Resolve and create a caller-supplied cache directory. Intended for tests. */
+    explicit PeaksCache(const juce::File& cacheDirectory);
+
     /**
      * Read a cached entry. Returns an empty `PeaksResult` if the entry
      * is missing or fails validation.

@@ -1,35 +1,48 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isClipRemovedPayload,
   isBridgeInboundType,
   isClipAckPayload,
+  isLibraryItemAnalysisPayload,
   isPlayheadUpdatePayload,
+  isProjectBpmAppliedPayload,
+  isProjectDirtyPayload,
   isProjectLoadFailedPayload,
   isProjectRenamedPayload,
   isProjectSavedPayload,
+  isProjectViewStateSavedPayload,
   isProjectStatePayload,
   isReadyPayload,
   isTrackAddedPayload,
   isTrackGainAppliedPayload,
   isTrackRemovedPayload,
-  isWaveformReadyPayload
+  isWaveformReadyPayload,
+  type BridgeInboundType
 } from './bridge-protocol'
+
+const INBOUND_TYPES = {
+  READY: true,
+  PROJECT_STATE: true,
+  PLAYHEAD_UPDATE: true,
+  CLIP_ADDED: true,
+  CLIP_ADD_FAILED: true,
+  TRACK_ADDED: true,
+  TRACK_REMOVED: true,
+  CLIP_REMOVED: true,
+  TRACK_GAIN_APPLIED: true,
+  PROJECT_SAVED: true,
+  PROJECT_VIEW_STATE_SAVED: true,
+  PROJECT_LOAD_FAILED: true,
+  PROJECT_RENAMED: true,
+  PROJECT_DIRTY: true,
+  WAVEFORM_READY: true,
+  LIBRARY_ITEM_ANALYSIS: true,
+  PROJECT_BPM_APPLIED: true
+} satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {
   it('accepts every inbound type', () => {
-    for (const t of [
-      'READY',
-      'PROJECT_STATE',
-      'PLAYHEAD_UPDATE',
-      'CLIP_ADDED',
-      'CLIP_ADD_FAILED',
-      'TRACK_ADDED',
-      'TRACK_REMOVED',
-      'TRACK_GAIN_APPLIED',
-      'PROJECT_SAVED',
-      'PROJECT_LOAD_FAILED',
-      'PROJECT_RENAMED',
-      'WAVEFORM_READY'
-    ]) {
+    for (const t of Object.keys(INBOUND_TYPES)) {
       expect(isBridgeInboundType(t)).toBe(true)
     }
   })
@@ -162,14 +175,30 @@ describe('isProjectStatePayload', () => {
             durationMs: 1000,
             sampleRate: 44100,
             channelCount: 2,
-            key: 'C minor'
+            key: 'C minor',
+            bpm: 124.5,
+            beats: [0.25, 0.75],
+            beatAnchorSec: 0.25,
+            playbackFilePath: '/cache/sample.wav',
+            variableTempo: true,
+            unresolved: false
           }
         ],
         tracks: [
           {
             id: 't1',
             gain: 1.0,
-            clips: [{ id: 'c1', filePath: '/p', offsetMs: 0, durationMs: 1000 }]
+            clips: [
+              {
+                id: 'c1',
+                filePath: '/p',
+                offsetMs: 0,
+                inMs: 25,
+                durationMs: 1000,
+                colorIndex: 4,
+                unresolved: true
+              }
+            ]
           }
         ]
       })
@@ -225,6 +254,32 @@ describe('isProjectStatePayload', () => {
         tracks: []
       })
     ).toBe(false)
+    expect(
+      isProjectStatePayload({
+        ...base,
+        library: [{ id: 'l1', filePath: '/sample.wav', beats: [0.1, 'bad'] }],
+        tracks: []
+      })
+    ).toBe(false)
+    expect(
+      isProjectStatePayload({
+        ...base,
+        library: [{ id: 'l1', filePath: '/sample.wav', variableTempo: 'yes' }],
+        tracks: []
+      })
+    ).toBe(false)
+    expect(
+      isProjectStatePayload({
+        ...base,
+        tracks: [
+          {
+            id: 't1',
+            gain: 1.0,
+            clips: [{ id: 'c1', filePath: '/p', offsetMs: 0, durationMs: 1, unresolved: 'yes' }]
+          }
+        ]
+      })
+    ).toBe(false)
     expect(isProjectStatePayload({ ...base, markers: [{ id: 'm1' }], tracks: [] })).toBe(false)
     expect(isProjectStatePayload({ ...base, markers: [{ id: 'm1', positionMs: '1000' }], tracks: [] })).toBe(false)
   })
@@ -240,6 +295,21 @@ describe('isProjectSavedPayload', () => {
     expect(isProjectSavedPayload({ filePath: '/p', ok: 'yes' })).toBe(false)
     expect(isProjectSavedPayload({ ok: true })).toBe(false)
     expect(isProjectSavedPayload({ filePath: '/p', ok: false, error: 123 })).toBe(false)
+  })
+})
+
+describe('isProjectViewStateSavedPayload', () => {
+  it('accepts ok and failure shapes', () => {
+    expect(isProjectViewStateSavedPayload({ filePath: '/p.silverdaw', ok: true })).toBe(true)
+    expect(
+      isProjectViewStateSavedPayload({ filePath: '/p.silverdaw', ok: false, error: 'oops' })
+    ).toBe(true)
+  })
+
+  it('rejects missing fields and wrong types', () => {
+    expect(isProjectViewStateSavedPayload({ filePath: '/p', ok: 'yes' })).toBe(false)
+    expect(isProjectViewStateSavedPayload({ ok: true })).toBe(false)
+    expect(isProjectViewStateSavedPayload({ filePath: '/p', ok: false, error: 123 })).toBe(false)
   })
 })
 
@@ -289,5 +359,78 @@ describe('isWaveformReadyPayload', () => {
         sampleRate: 44100
       })
     ).toBe(false)
+  })
+})
+
+describe('isClipRemovedPayload', () => {
+  it('accepts a well-shaped payload', () => {
+    expect(isClipRemovedPayload({ clipId: 'c1', ok: true })).toBe(true)
+    expect(isClipRemovedPayload({ clipId: 'c1', ok: false })).toBe(true)
+  })
+
+  it('rejects missing or wrong-typed fields', () => {
+    expect(isClipRemovedPayload({ clipId: 'c1' })).toBe(false)
+    expect(isClipRemovedPayload({ ok: true })).toBe(false)
+    expect(isClipRemovedPayload({ clipId: 1, ok: true })).toBe(false)
+  })
+})
+
+describe('isProjectDirtyPayload', () => {
+  it('accepts a well-shaped payload', () => {
+    expect(isProjectDirtyPayload({ dirty: true })).toBe(true)
+    expect(isProjectDirtyPayload({ dirty: false })).toBe(true)
+  })
+
+  it('rejects missing or wrong-typed fields', () => {
+    expect(isProjectDirtyPayload({})).toBe(false)
+    expect(isProjectDirtyPayload({ dirty: 'yes' })).toBe(false)
+  })
+})
+
+describe('isLibraryItemAnalysisPayload', () => {
+  it('accepts a complete analysis payload', () => {
+    expect(
+      isLibraryItemAnalysisPayload({
+        itemId: 'l1',
+        bpm: 124.5,
+        beatAnchorSec: 0.25,
+        beats: [0.25, 0.75],
+        variableTempo: false,
+        playbackFilePath: '/cache/source.wav'
+      })
+    ).toBe(true)
+  })
+
+  it('rejects malformed beat arrays and optional fields', () => {
+    expect(
+      isLibraryItemAnalysisPayload({
+        itemId: 'l1',
+        bpm: 124.5,
+        beatAnchorSec: 0.25,
+        beats: [0.25, 'bad'],
+        variableTempo: false
+      })
+    ).toBe(false)
+    expect(
+      isLibraryItemAnalysisPayload({
+        itemId: 'l1',
+        bpm: 124.5,
+        beatAnchorSec: 0.25,
+        beats: [0.25],
+        variableTempo: false,
+        playbackFilePath: 123
+      })
+    ).toBe(false)
+  })
+})
+
+describe('isProjectBpmAppliedPayload', () => {
+  it('accepts a numeric BPM', () => {
+    expect(isProjectBpmAppliedPayload({ bpm: 124.5 })).toBe(true)
+  })
+
+  it('rejects missing or wrong-typed BPM', () => {
+    expect(isProjectBpmAppliedPayload({})).toBe(false)
+    expect(isProjectBpmAppliedPayload({ bpm: '124.5' })).toBe(false)
   })
 })

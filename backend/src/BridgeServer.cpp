@@ -1,4 +1,5 @@
 #include "BridgeServer.h"
+#include "BridgeAuth.h"
 #include "Log.h"
 
 #include <iostream>
@@ -244,24 +245,7 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
 
 bool BridgeServer::checkAuthToken(const juce::var& payload) const
 {
-    if (expectedToken.isEmpty())
-    {
-        return true;
-    }
-    const juce::String token = payload.getProperty("token", juce::var()).toString();
-    // Length check first short-circuits the per-char loop on the common
-    // mismatch case while still letting the inner loop run constant-time
-    // on matching-length inputs (defence against trivial timing attacks).
-    if (token.length() != expectedToken.length())
-    {
-        return false;
-    }
-    int diff = 0;
-    for (int i = 0; i < expectedToken.length(); ++i)
-    {
-        diff |= static_cast<int>(expectedToken[i]) ^ static_cast<int>(token[i]);
-    }
-    return diff == 0;
+    return bridge_auth::isTokenValid(expectedToken, payload);
 }
 
 void BridgeServer::sendReadyTo(ix::WebSocket& webSocket)

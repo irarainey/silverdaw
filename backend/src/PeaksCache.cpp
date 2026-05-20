@@ -54,6 +54,16 @@ PeaksCache::PeaksCache()
     }
 }
 
+PeaksCache::PeaksCache(const juce::File& cacheDirectory) : cacheDir(cacheDirectory)
+{
+    const auto created = cacheDir.createDirectory();
+    if (!created.wasOk())
+    {
+        std::cerr << "[peakscache] failed to create cache dir " << cacheDir.getFullPathName().toStdString() << ": "
+                  << created.getErrorMessage().toStdString() << '\n';
+    }
+}
+
 juce::File PeaksCache::getCacheFilePath(const juce::File& sourceFile, int peaksPerSecond) const
 {
     return cacheFileFor(sourceFile, peaksPerSecond);

@@ -1,0 +1,251 @@
+import { createPinia, setActivePinia } from 'pinia'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useLibraryStore, libraryItemDisplayName } from './libraryStore'
+import { useProjectStore } from './projectStore'
+
+const sendMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bridgeService', () => ({
+  send: sendMock
+}))
+
+vi.mock('@/lib/log', () => ({
+  log: {
+    debug: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn()
+  }
+}))
+
+vi.mock('@/lib/audio', () => ({
+  PEAKS_PER_SECOND: 200,
+  decodeAudioToPeaks: vi.fn()
+}))
+
+let uuidCounter = 0
+const createObjectURLMock = vi.fn(() => 'blob:cover')
+const revokeObjectURLMock = vi.fn()
+
+function stubGlobals(): void {
+  uuidCounter = 0
+  vi.stubGlobal('crypto', {
+    randomUUID: vi.fn(() => `uuid-${++uuidCounter}`)
+  })
+  vi.stubGlobal('URL', {
+    createObjectURL: createObjectURLMock,
+    revokeObjectURL: revokeObjectURLMock
+  })
+}
+
+describe('libraryStore', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    setActivePinia(createPinia())
+    sendMock.mockClear()
+    createObjectURLMock.mockClear()
+    revokeObjectURLMock.mockClear()
+    stubGlobals()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('adds user-driven library items and de-duplicates by source path', () => {
+    const library = useLibraryStore()
+
+    const id = library.addItem({
+      filePath: 'C:\\audio\\loop.wav',
+      fileName: 'loop.wav',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      key: 'A minor'
+    })
+    const duplicateId = library.addItem({
+      filePath: 'C:\\audio\\loop.wav',
+      fileName: 'loop-renamed.wav',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 1,
+      peaks: new Float32Array(),
+      key: 'C major'
+    })
+
+    expect(id).toBe('l1')
+    expect(duplicateId).toBe(id)
+    expect(library.items).toHaveLength(1)
+    expect(library.items[0]).toMatchObject({
+      id,
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 1,
+      key: 'A minor'
+    })
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ADD', {
+      itemId: 'l1',
+      filePath: 'C:\\audio\\loop.wav',
+      fileName: 'loop.wav',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      playbackFilePath: undefined,
+      key: 'A minor'
+    })
+  })
+
+  it('hydrates snapshot items without echoing them to the backend', () => {
+    const library = useLibraryStore()
+
+    const snapshotId = library.addItem({
+      id: 'l7',
+      filePath: 'C:\\audio\\saved.wav',
+      fileName: 'saved.wav',
+      durationMs: 4_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      fromSnapshot: true
+    })
+    const nextId = library.addItem({
+      filePath: 'C:\\audio\\new.wav',
+      fileName: 'new.wav',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+
+    expect(snapshotId).toBe('l7')
+    expect(nextId).toBe('l8')
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ADD', expect.objectContaining({ itemId: 'l8' }))
+  })
+
+  it('stores analysis results, bumps redraw state, and completes progress entries', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const itemId = library.addItem({
+      filePath: 'C:\\audio\\analysis.wav',
+      fileName: 'analysis.wav',
+      durationMs: 4_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      fromSnapshot: true
+    })
+    const importId = library.beginImport('analysis.wav')
+    library.markImportAnalyzing(importId, itemId)
+
+    library.setItemAnalysis(itemId, 124.5678, 0.25, [0.25, 0.75], true, 'C:\\cache\\analysis.wav')
+
+    expect(library.items[0]).toMatchObject({
+      bpm: 124.5678,
+      beatAnchorSec: 0.25,
+      beats: [0.25, 0.75],
+      variableTempo: true,
+      decodedCacheFilePath: 'C:\\cache\\analysis.wav'
+    })
+    expect(project.peaksRevision).toBe(1)
+    expect(library.imports[0]?.stage).toBe('detectingBeats')
+
+    vi.advanceTimersByTime(600)
+    expect(library.imports[0]?.stage).toBe('done')
+    vi.advanceTimersByTime(1200)
+    expect(library.imports).toHaveLength(0)
+  })
+
+  it('refuses to remove in-use items and removes unused items with cleanup', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const usedItemId = library.addItem({
+      filePath: 'C:\\audio\\used.wav',
+      fileName: 'used.wav',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      fromSnapshot: true
+    })
+    const unusedItemId = library.addItem({
+      filePath: 'C:\\audio\\unused.wav',
+      fileName: 'unused.wav',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      fromSnapshot: true
+    })
+    const trackId = project.addTrack()
+    project.addClipToTrack(
+      trackId,
+      {
+        filePath: 'C:\\audio\\used.wav',
+        fileName: 'used.wav',
+        durationMs: 1_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+    library.items[1]!.coverArtUrl = 'blob:cover'
+    sendMock.mockClear()
+
+    expect(library.removeItem(usedItemId)).toBe(false)
+    expect(library.items.map((item) => item.id)).toContain(usedItemId)
+    expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_REMOVE', expect.anything())
+
+    expect(library.removeItem(unusedItemId)).toBe(true)
+    expect(library.items.map((item) => item.id)).not.toContain(unusedItemId)
+    expect(revokeObjectURLMock).toHaveBeenCalledWith('blob:cover')
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: unusedItemId })
+  })
+
+  it('normalises metadata and display names', () => {
+    const library = useLibraryStore()
+    const itemId = library.addItem({
+      filePath: 'C:\\audio\\tagged.wav',
+      fileName: 'tagged.wav',
+      durationMs: 0,
+      sampleRate: 0,
+      channelCount: 0,
+      peaks: new Float32Array(),
+      key: 'D minor',
+      fromSnapshot: true
+    })
+
+    library.setItemMetadata(itemId, {
+      title: 'Tagged Title',
+      artist: 'Artist',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      coverArt: {
+        data: new ArrayBuffer(4),
+        mimeType: 'image/png'
+      }
+    })
+
+    expect(library.items[0]).toMatchObject({
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      coverArtUrl: 'blob:cover',
+      metadata: {
+        title: 'Tagged Title',
+        artist: 'Artist',
+        key: 'D minor'
+      }
+    })
+    expect(createObjectURLMock).toHaveBeenCalledTimes(1)
+    expect(libraryItemDisplayName(library.items[0]!)).toBe('Tagged Title')
+    expect(libraryItemDisplayName({ fileName: 'fallback.wav', metadata: { title: '   ' } })).toBe(
+      'fallback.wav'
+    )
+  })
+})
