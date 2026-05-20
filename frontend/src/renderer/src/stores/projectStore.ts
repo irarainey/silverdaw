@@ -12,6 +12,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
+import type { LibraryItem } from '@/stores/libraryStore'
 
 export interface Clip {
   readonly id: string
@@ -19,13 +20,22 @@ export interface Clip {
    *  tracks; updated in lockstep with the `CLIP_MOVE { trackId }`
    *  envelope so the backend's ValueTree re-parents the clip node. */
   trackId: string
+  /** Source library item this clip plays from. The single source of
+   *  truth for the underlying audio file — clips never carry a
+   *  filesystem path. `filePath` / `fileName` / `peaks` below are
+   *  cached copies sourced from the library item at creation time
+   *  for cheap rendering lookups; PROJECT_STATE refreshes them when
+   *  the library item is relinked. */
+  libraryItemId: string
+  /** Cached source-file path (== library item filePath at the time
+   *  this clip was created). Read-only convenience for the drawing
+   *  / drag / save code paths that don't want a library lookup on
+   *  every access. */
   readonly filePath: string
   /**
-   * Path the *backend* loads for playback. Differs from `filePath` only
-   * when the source format isn't natively decodable by JUCE
-   * (e.g. AAC / M4A on Windows) and we hand the engine a transcoded
-   * temp WAV instead. Used to match `CLIP_ADDED` / `CLIP_ADD_FAILED`
-   * acks back to the originating clip in the renderer.
+   * Cached backend-loadable path (== library item playbackFilePath).
+   * Used to match `CLIP_ADDED` / `CLIP_ADD_FAILED` acks back to the
+   * originating clip in the renderer.
    */
   readonly playbackFilePath?: string
   readonly fileName: string
@@ -48,15 +58,21 @@ export interface Clip {
    * until a `WAVEFORM_DATA` binary frame fills them in.
    */
   peaks: Float32Array
-  /** True when the backend's `existsAsFile` check failed for this
-   *  clip's source path at load time. The drawing code renders it
-   *  greyed-out and the relink toast lists it. Mutable so a successful
-   *  `CLIP_RELINK` can clear it on the next PROJECT_STATE. */
+  /** True when the library item's source file no longer exists on
+   *  disk. The drawing code renders the clip greyed-out and the
+   *  relink toast lists it. Mutable so a successful relink can
+   *  clear it on the next PROJECT_STATE. */
   unresolved: boolean
   /** Per-clip colour-palette override (0..15). When undefined the clip
    *  inherits the host track's `colorIndex`. Set via right-click →
    *  Colour. */
   colorIndex?: number
+  /** User-facing display name override. Set via double-click on the
+   *  clip header in the timeline. When set, this name is shown on the
+   *  clip and used as the default name when saving the clip to the
+   *  library. Undefined means fall back to the library item title /
+   *  filename. */
+  name?: string
 }
 
 export interface Marker {
@@ -221,10 +237,12 @@ export interface ClipboardEntry {
   /** Original clip's `durationMs` (separate from `durationMs` in case
    *  we ever support trimmed pastes). Currently equal. */
   sourceDurationMs: number
+  libraryItemId: string
   filePath: string
   inMs: number
   durationMs: number
   colorIndex?: number
+  name?: string
 }
 
 /** Default name shown in the title bar before a project is named or loaded. */
@@ -385,6 +403,7 @@ export const useProjectStore = defineStore('project', {
     addClipToTrack(
       trackId: string,
       audio: {
+        libraryItemId: string
         filePath: string
         fileName: string
         durationMs: number
@@ -393,6 +412,8 @@ export const useProjectStore = defineStore('project', {
         peaks: Float32Array
         /** Optional backend-loadable path; falls back to `filePath`. */
         playbackFilePath?: string
+        /** Optional source-file trim window for reusable saved clips. */
+        inMs?: number
       },
       startMs = 0
     ): string | null {
@@ -403,11 +424,12 @@ export const useProjectStore = defineStore('project', {
       const clip: Clip = {
         id: clipId,
         trackId,
+        libraryItemId: audio.libraryItemId,
         filePath: audio.filePath,
         playbackFilePath: audio.playbackFilePath,
         fileName: audio.fileName,
         startMs,
-        inMs: 0,
+        inMs: Math.max(0, audio.inMs ?? 0),
         durationMs: audio.durationMs,
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
@@ -575,6 +597,7 @@ export const useProjectStore = defineStore('project', {
       const right: Clip = {
         id: newId,
         trackId: clip.trackId,
+        libraryItemId: clip.libraryItemId,
         filePath: clip.filePath,
         playbackFilePath: clip.playbackFilePath,
         fileName: clip.fileName,
@@ -585,7 +608,8 @@ export const useProjectStore = defineStore('project', {
         channelCount: clip.channelCount,
         peaks: clip.peaks,
         unresolved: clip.unresolved,
-        colorIndex: clip.colorIndex
+        colorIndex: clip.colorIndex,
+        name: clip.name
       }
       this.clips[newId] = right
       const insertAt = track.clipIds.indexOf(clipId)
@@ -598,13 +622,16 @@ export const useProjectStore = defineStore('project', {
       sendBridge('CLIP_ADD', {
         trackId: clip.trackId,
         clipId: newId,
-        filePath: clip.filePath,
+        libraryItemId: clip.libraryItemId,
         positionMs: newClipStartMs,
         inMs: newClipInMs,
         durationMs: newClipDurationMs,
         ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
       })
       this.pushTrackGain(track)
+      if (clip.name) {
+        sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
+      }
       log.info(
         'project',
         `splitClipAt id=${clipId} at=${atMs} -> newId=${newId} (in=${newClipInMs} dur=${newClipDurationMs})`
@@ -648,6 +675,7 @@ export const useProjectStore = defineStore('project', {
       const copy: Clip = {
         id: newId,
         trackId: clip.trackId,
+        libraryItemId: clip.libraryItemId,
         filePath: clip.filePath,
         playbackFilePath: clip.playbackFilePath,
         fileName: clip.fileName,
@@ -658,7 +686,8 @@ export const useProjectStore = defineStore('project', {
         channelCount: clip.channelCount,
         peaks: clip.peaks,
         unresolved: clip.unresolved,
-        colorIndex: clip.colorIndex
+        colorIndex: clip.colorIndex,
+        name: clip.name
       }
       this.clips[newId] = copy
       const insertAt = track.clipIds.indexOf(tail.id)
@@ -674,13 +703,16 @@ export const useProjectStore = defineStore('project', {
       sendBridge('CLIP_ADD', {
         trackId: clip.trackId,
         clipId: newId,
-        filePath: clip.filePath,
+        libraryItemId: clip.libraryItemId,
         positionMs: newStartMs,
         inMs: clip.inMs,
         durationMs: clip.durationMs,
         ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
       })
       this.pushTrackGain(track)
+      if (clip.name) {
+        sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
+      }
       log.info('project', `duplicateClip id=${clipId} -> newId=${newId} @${newStartMs}ms`)
       return newId
     },
@@ -757,10 +789,12 @@ export const useProjectStore = defineStore('project', {
         sourceTrackId: clip.trackId,
         sourceStartMs: clip.startMs,
         sourceDurationMs: clip.durationMs,
+        libraryItemId: clip.libraryItemId,
         filePath: clip.filePath,
         inMs: clip.inMs,
         durationMs: clip.durationMs,
-        colorIndex: clip.colorIndex
+        colorIndex: clip.colorIndex,
+        name: clip.name
       }
       log.info('project', `copySelectedClip id=${id}`)
       return true
@@ -832,6 +866,7 @@ export const useProjectStore = defineStore('project', {
       const placeholder: Clip = {
         id: newId,
         trackId: track.id,
+        libraryItemId: cb.libraryItemId,
         filePath: cb.filePath,
         playbackFilePath: cb.filePath,
         fileName,
@@ -842,10 +877,11 @@ export const useProjectStore = defineStore('project', {
         channelCount: 0,
         peaks: new Float32Array(0),
         unresolved: false,
-        colorIndex: cb.colorIndex
+        colorIndex: cb.colorIndex,
+        name: cb.name
       }
       const peakSource = Object.values(this.clips).find(
-        (c) => c.filePath === cb.filePath && c.peaks.length > 0
+        (c) => c.libraryItemId === cb.libraryItemId && c.peaks.length > 0
       )
       if (peakSource) {
         placeholder.peaks = peakSource.peaks
@@ -861,13 +897,16 @@ export const useProjectStore = defineStore('project', {
       sendBridge('CLIP_ADD', {
         trackId: track.id,
         clipId: newId,
-        filePath: cb.filePath,
+        libraryItemId: cb.libraryItemId,
         positionMs: startMs,
         inMs: cb.inMs,
         durationMs: cb.durationMs,
         ...(cb.colorIndex !== undefined ? { colorIndex: cb.colorIndex } : {})
       })
       this.pushTrackGain(track)
+      if (cb.name) {
+        sendBridge('CLIP_RENAME', { clipId: newId, name: cb.name })
+      }
       log.info('project', `pasteClip newId=${newId} @${startMs}ms`)
       return newId
     },
@@ -902,15 +941,45 @@ export const useProjectStore = defineStore('project', {
       log.info('project', `setClipColor id=${clipId} -> ${clamped}`)
     },
 
-    /** Re-point an unresolved clip at a replacement file. The backend
-     *  updates the clip's filePath in the project tree, recreates the
-     *  audio source, and broadcasts a fresh PROJECT_STATE which will
-     *  clear `unresolved` for this clip on the next snapshot apply. */
-    relinkClip(clipId: string, filePath: string): void {
+    /** Re-point an unresolved library item at a replacement source
+     *  file. Every clip that references the library item picks up the
+     *  new file automatically — the user relinks once per library
+     *  item, not once per clip. */
+    relinkLibraryItem(itemId: string, filePath: string): void {
+      sendBridge('LIBRARY_ITEM_RELINK', { itemId, filePath })
+      log.info('project', `relinkLibraryItem id=${itemId} -> ${filePath}`)
+    },
+
+    /**
+     * Set or clear a clip's user-facing display name override. Blank
+     * input clears the override and the clip falls back to its library
+     * item title / filename. Sent over the bridge as `CLIP_RENAME` so
+     * the rename persists with the project.
+     */
+    renameClip(clipId: string, name: string): boolean {
       const clip = this.clips[clipId]
-      if (!clip) return
-      sendBridge('CLIP_RELINK', { clipId, filePath })
-      log.info('project', `relinkClip id=${clipId} -> ${filePath}`)
+      if (!clip) return false
+      const trimmed = name.trim()
+      const nextName = trimmed.length > 0 ? trimmed : undefined
+      if (clip.name === nextName) return false
+      clip.name = nextName
+      // Bump the redraw counter so the timeline repaints the clip's
+      // header label without waiting for the next position/peak change.
+      this.peaksRevision++
+      sendBridge('CLIP_RENAME', { clipId, name: nextName ?? '' })
+      log.info('project', `renameClip id=${clipId} -> ${nextName ?? '<cleared>'}`)
+      return true
+    },
+
+    /** Promote the selected timeline clip window into a reusable library saved clip. */
+    saveClipToLibrary(clipId: string): string | null {
+      const clip = this.clips[clipId]
+      if (!clip) return null
+      const itemId = useLibraryStore().addSavedClipFromTimelineClip(clip)
+      if (itemId) {
+        log.info('project', `saveClipToLibrary clip=${clipId} item=${itemId}`)
+      }
+      return itemId
     },
 
     /**
@@ -945,6 +1014,7 @@ export const useProjectStore = defineStore('project', {
     addClipFromLibrary(
       trackId: string,
       libraryItem: {
+        id: string
         filePath: string
         fileName: string
         durationMs: number
@@ -953,22 +1023,47 @@ export const useProjectStore = defineStore('project', {
         peaks: Float32Array
         /** Optional backend-loadable path; falls back to `filePath`. */
         playbackFilePath?: string
+        kind?: LibraryItem['kind']
+        name?: string
+        derivedFrom?: LibraryItem['derivedFrom']
       },
       startMs: number
     ): string | null {
       const track = this.tracks.find((t) => t.id === trackId)
       if (!track) return null
       const snapped = Math.max(0, Math.floor(startMs))
-      if (this.wouldClipOverlap(trackId, snapped, libraryItem.durationMs)) return null
+      const clipInMs =
+        libraryItem.kind === 'saved-clip' ? Math.max(0, libraryItem.derivedFrom?.inMs ?? 0) : 0
+      const clipDurationMs =
+        libraryItem.kind === 'saved-clip'
+          ? Math.max(0, libraryItem.derivedFrom?.durationMs ?? libraryItem.durationMs)
+          : libraryItem.durationMs
+      if (this.wouldClipOverlap(trackId, snapped, clipDurationMs)) return null
 
-      const clipId = this.addClipToTrack(trackId, libraryItem, snapped)
+      const clipId = this.addClipToTrack(
+        trackId,
+        {
+          libraryItemId: libraryItem.id,
+          filePath: libraryItem.filePath,
+          fileName: libraryItem.name?.trim() || libraryItem.fileName,
+          durationMs: clipDurationMs,
+          sampleRate: libraryItem.sampleRate,
+          channelCount: libraryItem.channelCount,
+          peaks: libraryItem.peaks,
+          playbackFilePath: libraryItem.playbackFilePath,
+          inMs: clipInMs
+        },
+        snapped
+      )
       if (!clipId) return null
 
       sendBridge('CLIP_ADD', {
         trackId,
         clipId,
-        filePath: libraryItem.playbackFilePath ?? libraryItem.filePath,
-        positionMs: snapped
+        libraryItemId: libraryItem.id,
+        positionMs: snapped,
+        ...(clipInMs > 0 || libraryItem.kind === 'saved-clip' ? { inMs: clipInMs } : {}),
+        ...(libraryItem.kind === 'saved-clip' ? { durationMs: clipDurationMs } : {})
       })
       this.pushTrackGain(track)
       log.info('project', `addClipFromLibrary track=${trackId} clip=${clipId} pos=${snapped}ms`)
@@ -1180,9 +1275,12 @@ export const useProjectStore = defineStore('project', {
       this.peaksRevision++
       // Also refresh the matching library item's peaks (and sample
       // rate) so the library card shows the waveform after a reload.
-      // The two never disagree because both are keyed off `filePath`.
+      // Prefer the whole-file source row because saved clips can share
+      // the same filePath with their parent.
       const lib = useLibraryStore()
-      const item = lib.items.find((i) => i.filePath === clip.filePath)
+      const item =
+        lib.items.find((i) => i.kind === 'audio-file' && i.filePath === clip.filePath) ??
+        lib.items.find((i) => i.filePath === clip.filePath)
       if (item && item.peaks.length === 0) {
         lib.setItemPeaks(item.id, peaks, sampleRate)
       }
@@ -1264,9 +1362,11 @@ export const useProjectStore = defineStore('project', {
       // these adds back as LIBRARY_ADD envelopes.
       if (snapshot.library) {
         for (const item of snapshot.library) {
-          if (library.items.some((i) => i.filePath === item.filePath)) continue
+          if (library.items.some((i) => i.id === item.id)) continue
           const libId = library.addItem({
             id: item.id,
+            kind: item.kind ?? 'audio-file',
+            name: item.name,
             filePath: item.filePath,
             fileName: item.fileName?.trim() ? item.fileName : filePathToBasename(item.filePath),
             durationMs: Math.max(0, item.durationMs ?? 0),
@@ -1283,6 +1383,16 @@ export const useProjectStore = defineStore('project', {
             // send the cache path in CLIP_ADD and break the
             // backend's library-item lookup.
             playbackFilePath: item.filePath,
+            derivedFrom:
+              item.kind === 'saved-clip'
+                ? {
+                    sourceItemId: item.sourceItemId,
+                    sourceClipId: item.sourceClipId,
+                    inMs: Math.max(0, item.sourceInMs ?? 0),
+                    durationMs: Math.max(0, item.sourceDurationMs ?? item.durationMs ?? 0)
+                  }
+                : undefined,
+            collapsed: item.collapsed === true ? true : undefined,
             fromSnapshot: true
           })
           // Hydrate persisted analysis results (if the backend has
@@ -1307,7 +1417,9 @@ export const useProjectStore = defineStore('project', {
           // Fetch tags + technical duration asynchronously so older
           // project files that predate persisted library duration still
           // repaint their tiles with the real length after reload.
-          void refreshLibraryItemMedia(libId, item.filePath)
+          if ((item.kind ?? 'audio-file') === 'audio-file') {
+            void refreshLibraryItemMedia(libId, item.filePath)
+          }
         }
       }
 
@@ -1343,37 +1455,20 @@ export const useProjectStore = defineStore('project', {
         }
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)
-          // Ensure a library entry exists for this clip's source file. The
-          // library is otherwise renderer-only state and would be empty
-          // after a reload; we rebuild it from the backend-known clip
-          // filePaths so dragging the same sample to another track still
-          // works post-reload. Peaks fill in once WAVEFORM_DATA arrives;
-          // sampleRate / channelCount aren't known at this point and stay
-          // 0 until then.
-          const existingLib = library.items.find((i) => i.filePath === c.filePath)
-          if (!existingLib) {
-            const libId = library.addItem({
-              filePath: c.filePath,
-              fileName: filePathToBasename(c.filePath),
-              durationMs: Math.max(0, c.durationMs),
-              sampleRate: 0,
-              channelCount: 0,
-              peaks: new Float32Array(0),
-              playbackFilePath: c.filePath,
-              // Reconstructed from a backend snapshot — don't echo a
-              // LIBRARY_ADD back; the backend already has this item
-              // implicitly via the clip's filePath, and an explicit
-              // add would force the dirty flag on every connect.
-              fromSnapshot: true
-            })
-            // Fetch tags + technical duration asynchronously so the
-            // library card shows cover art, title and real length after
-            // reload. Fire-and-forget; failures leave the placeholder
-            // details in place.
-            void refreshLibraryItemMedia(libId, c.filePath)
-          } else if (existingLib.durationMs <= 0 && c.durationMs > 0) {
-            library.setItemAudioDetails(existingLib.id, c.durationMs, 0, 0)
+          // Resolve the clip's source via its library item id (the
+          // single source of truth). The library was hydrated earlier
+          // in this snapshot apply so the lookup should succeed; if a
+          // clip somehow points at an unknown library item we skip it
+          // rather than minting a phantom library entry.
+          const libItem = library.items.find((i) => i.id === c.libraryItemId)
+          if (!libItem) {
+            log.warn(
+              'project',
+              `skip clip ${c.id} — unknown libraryItemId=${c.libraryItemId}`
+            )
+            continue
           }
+          const clipFilePath = libItem.filePath
           const existing = this.clips[c.id]
           if (existing) {
             existing.startMs = offset
@@ -1381,27 +1476,30 @@ export const useProjectStore = defineStore('project', {
             existing.durationMs = Math.max(0, c.durationMs)
             existing.unresolved = c.unresolved === true
             existing.colorIndex = typeof c.colorIndex === 'number' ? c.colorIndex : undefined
+            existing.name = typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined
             if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
             continue
           }
           // Reconstruct a placeholder clip the renderer can draw at the
           // correct timeline position and width. Waveform peaks are
           // requested separately below.
-          const fileName = filePathToDisplayName(c.filePath)
+          const fileName = filePathToDisplayName(clipFilePath)
           const placeholder: Clip = {
             id: c.id,
             trackId: t.id,
-            filePath: c.filePath,
-            playbackFilePath: c.filePath,
+            libraryItemId: c.libraryItemId,
+            filePath: clipFilePath,
+            playbackFilePath: libItem.playbackFilePath,
             fileName,
             startMs: offset,
             inMs: Math.max(0, c.inMs ?? 0),
             durationMs: Math.max(0, c.durationMs),
-            sampleRate: 0,
-            channelCount: 0,
-            peaks: new Float32Array(0),
+            sampleRate: libItem.sampleRate,
+            channelCount: libItem.channelCount,
+            peaks: libItem.peaks.length > 0 ? libItem.peaks : new Float32Array(0),
             unresolved: c.unresolved === true,
-            colorIndex: typeof c.colorIndex === 'number' ? c.colorIndex : undefined
+            colorIndex: typeof c.colorIndex === 'number' ? c.colorIndex : undefined,
+            name: typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined
           }
           this.clips[c.id] = placeholder
           track.clipIds.push(c.id)

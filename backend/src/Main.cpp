@@ -536,7 +536,8 @@ juce::String findLibraryItemIdForPath(const silverdaw::ProjectState& projectStat
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(juce::Identifier{"filePath"}).toString() == filePath)
+        if (item.getProperty(juce::Identifier{"kind"}, "audio-file").toString() == "audio-file"
+            && item.getProperty(juce::Identifier{"filePath"}).toString() == filePath)
         {
             return item.getProperty(juce::Identifier{"id"}).toString();
         }
@@ -598,15 +599,126 @@ void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& fi
         { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache, true); });
 }
 
+/**
+ * Resolve the on-disk path the audio engine should read for `sourceFilePath`.
+ * Always prefers the decoded-WAV cache so the audio thread reads cheap
+ * 16-bit PCM instead of decoding the original (which is painfully slow
+ * for compressed formats like MP3 and breaks the read-ahead-buffer's
+ * latency-hiding contract at clip boundaries).
+ *
+ * Resolution order:
+ *   1. The DecodedCache's expected path for this source — if the file
+ *      exists on disk, use it. This wins even when ProjectState's
+ *      stored `playbackFilePath` is stale (e.g. an upsert wrote the
+ *      original source path back onto a previously-cached entry).
+ *   2. The ProjectState-stored `playbackFilePath`, but ONLY if it
+ *      already points at a `.wav`. Anything else is treated as a
+ *      missing cache to avoid loading the original compressed file
+ *      via this back door.
+ *   3. The original source path as a last-resort fallback. The caller
+ *      should ALSO schedule a decode job so the cache is ready for
+ *      subsequent clips of the same source.
+ *
+ * Also keeps `ProjectState` in sync: if we found a cache on disk that
+ * the stored `playbackFilePath` doesn't reflect, we overwrite it so the
+ * persisted project picks the right path on the next save and so
+ * libraryAsJson reports the correct path to the renderer.
+ */
+juce::String resolveEnginePlaybackPath(const juce::String& sourceFilePath,
+                                       silverdaw::ProjectState& projectState,
+                                       const silverdaw::DecodedCache& decodedCache)
+{
+    if (sourceFilePath.isEmpty()) return sourceFilePath;
+    const juce::File source(sourceFilePath);
+    if (!source.existsAsFile()) return sourceFilePath;
+
+    const auto cacheFile = decodedCache.getCacheFilePath(source);
+    if (cacheFile.existsAsFile())
+    {
+        const auto cachePath = cacheFile.getFullPathName();
+        const auto stored = projectState.getLibraryItemPlaybackPathForSource(sourceFilePath);
+        if (stored != cachePath)
+        {
+            const auto itemId = findLibraryItemIdForPath(projectState, sourceFilePath);
+            if (itemId.isNotEmpty())
+            {
+                projectState.setLibraryItemPlaybackPath(itemId, cachePath);
+            }
+        }
+        return cachePath;
+    }
+
+    const auto stored = projectState.getLibraryItemPlaybackPathForSource(sourceFilePath);
+    if (stored.isNotEmpty() && stored.endsWithIgnoreCase(".wav") && juce::File(stored).existsAsFile())
+    {
+        return stored;
+    }
+    return sourceFilePath;
+}
+
+/**
+ * Make sure a decoded-WAV cache exists for `sourceFilePath`. If the
+ * cache file already exists on disk this is a no-op; otherwise a
+ * worker-pool job decodes the source in the background and updates
+ * the library item's `playbackFilePath` when done. Future CLIP_ADDs
+ * for the same source will then pick up the cache via
+ * `resolveEnginePlaybackPath`.
+ */
+void ensureDecodedCache(const juce::String& sourceFilePath, silverdaw::AudioEngine& engine,
+                        silverdaw::ProjectState& projectState, juce::ThreadPool& peakPool,
+                        const silverdaw::DecodedCache& decodedCache)
+{
+    if (sourceFilePath.isEmpty()) return;
+    const juce::File source(sourceFilePath);
+    if (!source.existsAsFile()) return;
+    if (decodedCache.getCacheFilePath(source).existsAsFile()) return;
+
+    peakPool.addJob(
+        [src = source, &engine, &projectState, &decodedCache]
+        {
+            const auto built = decodedCache.ensureDecoded(src, engine.getFormatManager());
+            if (!built.existsAsFile()) return;
+            const auto cachePath = built.getFullPathName();
+            const auto sourcePath = src.getFullPathName();
+            juce::MessageManager::callAsync(
+                [&projectState, sourcePath, cachePath]
+                {
+                    const auto itemId = findLibraryItemIdForPath(projectState, sourcePath);
+                    if (itemId.isNotEmpty())
+                    {
+                        projectState.setLibraryItemPlaybackPath(itemId, cachePath);
+                    }
+                });
+        });
+}
+
 void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                    silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
                    const silverdaw::DecodedCache& decodedCache)
 {
     const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
     const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
-    const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
-    if (trackId.isEmpty() || clipId.isEmpty() || filePath.isEmpty())
+    const juce::String libraryItemId = payload.getProperty("libraryItemId", juce::var()).toString();
+    if (trackId.isEmpty() || clipId.isEmpty() || libraryItemId.isEmpty())
     {
+        silverdaw::log::warn("bridge", "CLIP_ADD missing trackId / clipId / libraryItemId");
+        return;
+    }
+
+    // Resolve the source file through the linked library item. A clip
+    // is now a pure window into a library item; the library is the
+    // single source of truth for the underlying file path.
+    const juce::String filePath = projectState.getLibraryItemFilePath(libraryItemId);
+    if (filePath.isEmpty())
+    {
+        silverdaw::log::warn("bridge", "CLIP_ADD libraryItemId=" + libraryItemId + " has no filePath in library");
+        auto* err = new juce::DynamicObject();
+        err->setProperty("trackId", trackId);
+        err->setProperty("clipId", clipId);
+        err->setProperty("libraryItemId", libraryItemId);
+        err->setProperty("ok", false);
+        err->setProperty("error", juce::String("Unknown library item"));
+        bridge.broadcast("CLIP_ADD_FAILED", juce::var(err));
         return;
     }
 
@@ -640,17 +752,20 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     // (e.g. older clients that never send TRACK_ADD). Idempotent.
     projectState.addTrack(trackId);
 
-    // Prefer the decoded-WAV cache when one exists for this file —
-    // the audio engine then reads cheap 16-bit PCM instead of
-    // decoding the original on every block. The cache is built
-    // lazily by `runBpmDetection`, so the *first* clip of a new
-    // file still loads the original (until detection completes);
-    // subsequent clips of the same file pick up the cache.
-    juce::String engineFilePath = filePath;
-    const juce::String cachedPath = projectState.getLibraryItemPlaybackPathForSource(filePath);
-    if (cachedPath.isNotEmpty() && juce::File(cachedPath).existsAsFile())
+    // Always read from the decoded-WAV cache: compressed sources
+    // (MP3, M4A, …) are too slow to seek for the read-ahead buffer to
+    // hide latency at clip boundaries. `resolveEnginePlaybackPath`
+    // prefers the cache file when it exists and keeps the persisted
+    // `playbackFilePath` in sync so subsequent loads pick it up.
+    const juce::String engineFilePath =
+        resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+    // Kick off a background decode if the cache is missing. The first
+    // play of a freshly-imported file still uses the original (the only
+    // option until decoding completes), but every subsequent CLIP_ADD
+    // of the same source picks up the cache.
+    if (engineFilePath == filePath)
     {
-        engineFilePath = cachedPath;
+        ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
     }
 
     juce::String errorMsg;
@@ -664,7 +779,7 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         // For trimmed clips (durationMs > 0) trust the renderer.
         const double effectiveDurationMs =
             payloadDurationMs > 0.0 ? payloadDurationMs : engine.getClipDurationMs(clipId);
-        if (!projectState.addClip(trackId, clipId, filePath, initialOffsetMs, effectiveDurationMs, inMs,
+        if (!projectState.addClip(trackId, clipId, libraryItemId, initialOffsetMs, effectiveDurationMs, inMs,
                                    payloadColorIndex))
         {
             engine.removeClip(clipId);
@@ -680,7 +795,7 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
     p->setProperty("clipId", clipId);
-    p->setProperty("filePath", filePath);
+    p->setProperty("libraryItemId", libraryItemId);
     p->setProperty("ok", ok);
     if (!ok)
     {
@@ -709,11 +824,7 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         // the user imported the file to the library earlier and is
         // only now placing it on a track), re-evaluate the seed
         // gates now that the project has a clip.
-        const juce::String matchedItemId = findLibraryItemIdForPath(projectState, filePath);
-        if (matchedItemId.isNotEmpty())
-        {
-            maybeSeedProjectBpmFor(matchedItemId, projectState, bridge);
-        }
+        maybeSeedProjectBpmFor(libraryItemId, projectState, bridge);
     }
 }
 
@@ -968,65 +1079,76 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     return juce::var(obj);
 }
 
-void handleClipRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
-                      silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                      const ProjectSession& session)
+/**
+ * Library-item relink. Updates the source file path on a library item
+ * and rebuilds every clip that references it. Every dependent clip
+ * picks up the new file automatically because clips reference the
+ * library item by id, not by path.
+ */
+void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
+                             silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                             const ProjectSession& session, juce::ThreadPool& peakPool,
+                             const silverdaw::DecodedCache& decodedCache)
 {
-    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
     const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
-    if (clipId.isEmpty() || filePath.isEmpty())
+    if (itemId.isEmpty() || filePath.isEmpty())
     {
         return;
     }
-
-    if (!projectState.setClipFilePath(clipId, filePath))
+    if (!projectState.setLibraryItemFilePath(itemId, filePath))
     {
-        silverdaw::log::warn("project", "CLIP_RELINK unknown clipId=" + clipId);
+        silverdaw::log::warn("project", "LIBRARY_ITEM_RELINK unknown itemId=" + itemId);
         return;
     }
 
-    // Drop any stale audio source (it'll have failed to load on the
-    // original `rebuildEngineFromProject` pass) and re-create it
-    // against the new file. Walk the tree to find the clip's offset.
-    engine.removeClip(clipId);
-    double clipOffsetMs = 0.0;
-    double clipInMs = 0.0;
-    double clipDurationMs = 0.0;
-    float clipGain = 1.0F;
-    bool foundClip = false;
+    // Re-create every clip that points at this library item so the
+    // engine swaps in the new source file. Each clip is its own
+    // playable source in the engine, so we rebuild them individually.
     const auto& root = projectState.getTree();
-    for (int t = 0; t < root.getNumChildren() && !foundClip; ++t)
+    int rebuilt = 0;
+    int failed = 0;
+    for (int t = 0; t < root.getNumChildren(); ++t)
     {
         const auto track = root.getChild(t);
+        if (!track.hasType(juce::Identifier{"TRACK"})) continue;
         for (int c = 0; c < track.getNumChildren(); ++c)
         {
             const auto clip = track.getChild(c);
-            if (clip.getProperty("id").toString() == clipId)
+            if (!clip.hasType(juce::Identifier{"CLIP"})) continue;
+            if (clip.getProperty("libraryItemId", {}).toString() != itemId) continue;
+
+            const juce::String clipId = clip.getProperty("id").toString();
+            const double offsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
+            const double inMs = static_cast<double>(clip.getProperty("inMs", 0.0));
+            const double durationMs = static_cast<double>(clip.getProperty("durationMs", 0.0));
+            const auto trackGain = static_cast<float>(static_cast<double>(track.getProperty("gain", 1.0)));
+
+            engine.removeClip(clipId);
+            const juce::String engineFilePath =
+                resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+            if (engineFilePath == filePath)
             {
-                clipOffsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
-                clipInMs = static_cast<double>(clip.getProperty("inMs", 0.0));
-                clipDurationMs = static_cast<double>(clip.getProperty("durationMs", 0.0));
-                clipGain = static_cast<float>(static_cast<double>(track.getProperty("gain", 1.0)));
-                foundClip = true;
-                break;
+                ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
+            }
+            juce::String err;
+            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, trackGain, &err))
+            {
+                engine.setClipGain(clipId, trackGain);
+                ++rebuilt;
+            }
+            else
+            {
+                ++failed;
+                silverdaw::log::warn("project", "relink-rebuild failed clipId=" + clipId + " err=" + err);
             }
         }
     }
-
-    juce::String err;
-    const bool added =
-        engine.addClip(clipId, juce::File(filePath), clipOffsetMs, clipInMs, clipDurationMs, clipGain, &err);
-    if (added)
-    {
-        engine.setClipGain(clipId, clipGain);
-    }
-    silverdaw::log::info("project", "CLIP_RELINK clipId=" + clipId + " ok=" + juce::String(added ? 1 : 0) +
-                                        (added ? "" : " err=" + err));
+    silverdaw::log::info("project", "LIBRARY_ITEM_RELINK itemId=" + itemId + " rebuilt=" + juce::String(rebuilt) +
+                                        " failed=" + juce::String(failed));
 
     // Re-broadcast PROJECT_STATE so the renderer learns the new
-    // filePath + clears the unresolved flag for this clip. Cheap: the
-    // tree is small and the renderer's `applyProjectStateSnapshot` is
-    // additive when `reset` is omitted.
+    // filePath + clears the unresolved flag on every dependent clip.
     bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, false));
 }
 
@@ -1036,7 +1158,8 @@ void handleClipRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
  * the engine currently holds — `handleProjectLoad` / `handleProjectNew`
  * do that immediately before invoking this.
  */
-void rebuildEngineFromProject(silverdaw::AudioEngine& engine, const silverdaw::ProjectState& projectState)
+void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                              juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
 {
     const auto& root = projectState.getTree();
     int rebuilt = 0;
@@ -1056,23 +1179,25 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, const silverdaw::P
                 continue;
             }
             const juce::String clipId = clip.getProperty("id").toString();
-            const juce::String filePath = clip.getProperty("filePath").toString();
+            const juce::String libraryItemId = clip.getProperty("libraryItemId", {}).toString();
+            const juce::String filePath = projectState.getLibraryItemFilePath(libraryItemId);
             const double offsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
             const double inMs = static_cast<double>(clip.getProperty("inMs", 0.0));
             const double durationMs = static_cast<double>(clip.getProperty("durationMs", 0.0));
-            if (clipId.isEmpty() || filePath.isEmpty())
+            if (clipId.isEmpty() || libraryItemId.isEmpty() || filePath.isEmpty())
             {
+                ++failed;
+                silverdaw::log::warn("project", "skip clipId=" + clipId + " libraryItemId=" + libraryItemId +
+                                                    " (no resolvable source)");
                 continue;
             }
-            // Prefer the cached-decoded WAV when one exists for this
-            // file — same logic as `handleClipAdd`. Falls back to the
-            // original source if the cache hasn't been written yet
-            // (the renderer will re-cache lazily on the next BPM run).
-            juce::String engineFilePath = filePath;
-            const juce::String cachedPath = projectState.getLibraryItemPlaybackPathForSource(filePath);
-            if (cachedPath.isNotEmpty() && juce::File(cachedPath).existsAsFile())
+            // Same WAV-first resolution as `handleClipAdd` so a loaded
+            // project never plays compressed sources at the engine.
+            const juce::String engineFilePath =
+                resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+            if (engineFilePath == filePath)
             {
-                engineFilePath = cachedPath;
+                ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
             }
             juce::String err;
             const auto trackGain = static_cast<float>(static_cast<double>(track.getProperty("gain", 1.0)));
@@ -1127,7 +1252,8 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
 
 void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
                        silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                       ProjectSession& session)
+                       ProjectSession& session, juce::ThreadPool& peakPool,
+                       const silverdaw::DecodedCache& decodedCache)
 {
     const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
     if (filePath.isEmpty())
@@ -1161,7 +1287,7 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
     {
         engine.removeClip(id);
     }
-    rebuildEngineFromProject(engine, projectState);
+    rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
     // Restore the persisted playhead position so the user reopens the
     // project at the same point they left it. `engine.stop()` reset to
     // 0 above; this puts us back where the project file says.
@@ -1337,11 +1463,18 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::info("bridge", "recv CLIP_REMOVE clipId=" + payload.getProperty("clipId", "").toString());
         handleClipRemove(payload, engine, projectState, bridge);
     }
-    else if (type == "CLIP_RELINK")
+    else if (type == "LIBRARY_ITEM_RELINK")
     {
-        silverdaw::log::info("bridge", "recv CLIP_RELINK clipId=" + payload.getProperty("clipId", "").toString() +
+        silverdaw::log::info("bridge", "recv LIBRARY_ITEM_RELINK itemId=" + payload.getProperty("itemId", "").toString() +
                                             " path=" + payload.getProperty("filePath", "").toString());
-        handleClipRelink(payload, engine, projectState, bridge, session);
+        handleLibraryItemRelink(payload, engine, projectState, bridge, session, peakPool, decodedCache);
+    }
+    else if (type == "CLIP_RENAME")
+    {
+        const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+        const juce::String name = payload.getProperty("name", juce::var()).toString();
+        silverdaw::log::info("bridge", "recv CLIP_RENAME clipId=" + clipId + " name=" + name);
+        projectState.setClipName(clipId, name);
     }
     else if (type == "LIBRARY_ADD")
     {
@@ -1353,9 +1486,27 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const int channelCount = static_cast<int>(payload.getProperty("channelCount", 0));
         const juce::String playbackPath = payload.getProperty("playbackFilePath", juce::var()).toString();
         const juce::String key = payload.getProperty("key", juce::var()).toString();
+        const juce::String kind = payload.getProperty("kind", juce::var()).toString();
+        const juce::String displayName = payload.getProperty("name", juce::var()).toString();
+        const juce::String sourceItemId = payload.getProperty("sourceItemId", juce::var()).toString();
+        const juce::String sourceClipId = payload.getProperty("sourceClipId", juce::var()).toString();
+        const double sourceInMs = payload.hasProperty("sourceInMs")
+                                      ? static_cast<double>(payload.getProperty("sourceInMs", 0.0))
+                                      : -1.0;
+        const double sourceDurationMs = payload.hasProperty("sourceDurationMs")
+                                            ? static_cast<double>(payload.getProperty("sourceDurationMs", 0.0))
+                                            : -1.0;
+        const int collapsedFlag = payload.hasProperty("collapsed")
+                                      ? (bool(payload.getProperty("collapsed", false)) ? 1 : 0)
+                                      : -1;
         silverdaw::log::info("bridge", "recv LIBRARY_ADD itemId=" + itemId);
-        projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath, key);
-        ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
+        projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath, key,
+                                    kind, displayName, sourceItemId, sourceClipId, sourceInMs, sourceDurationMs,
+                                    collapsedFlag);
+        if (kind != "saved-clip")
+        {
+            ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
+        }
     }
     else if (type == "LIBRARY_REMOVE")
     {
@@ -1456,7 +1607,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "PROJECT_LOAD")
     {
         silverdaw::log::info("bridge", "recv PROJECT_LOAD path=" + payload.getProperty("filePath", "").toString());
-        handleProjectLoad(payload, engine, projectState, bridge, session);
+        handleProjectLoad(payload, engine, projectState, bridge, session, peakPool, decodedCache);
     }
     else if (type == "PROJECT_RENAME")
     {

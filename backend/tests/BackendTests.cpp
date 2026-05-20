@@ -84,7 +84,7 @@ juce::ValueTree makeProjectTree()
 
     juce::ValueTree clip(juce::Identifier{"CLIP"});
     clip.setProperty("id", "c1", nullptr);
-    clip.setProperty("filePath", "C:\\audio\\loop.wav", nullptr);
+    clip.setProperty("libraryItemId", "lib1", nullptr);
     clip.setProperty("offsetMs", 1000.0, nullptr);
     clip.setProperty("inMs", 250.0, nullptr);
     clip.setProperty("durationMs", 4000.0, nullptr);
@@ -92,6 +92,16 @@ juce::ValueTree makeProjectTree()
     track.appendChild(clip, nullptr);
 
     project.appendChild(track, nullptr);
+    // Library holds the single source-of-truth filePath. Clips
+    // reference it by id.
+    juce::ValueTree library(juce::Identifier{"LIBRARY"});
+    juce::ValueTree libItem(juce::Identifier{"ITEM"});
+    libItem.setProperty("id", "lib1", nullptr);
+    libItem.setProperty("filePath", "C:\\audio\\loop.wav", nullptr);
+    libItem.setProperty("kind", "audio-file", nullptr);
+    library.appendChild(libItem, nullptr);
+    project.appendChild(library, nullptr);
+    project.appendChild(juce::ValueTree(juce::Identifier{"MARKERS"}), nullptr);
     return project;
 }
 
@@ -128,14 +138,23 @@ void testProjectStateTracksClipsAndDirty()
     require(state.setTrackGain("t1", 0.5F), "setTrackGain should update an existing track");
     requireNear(state.getTrackGain("t1"), 0.5, 0.0001, "track gain should round-trip");
 
-    require(state.addClip("t1", "c1", "C:\\audio\\a.wav", 100.0, 1000.0, 25.0, 2),
+    // Seed a library item; clips reference it by id and resolve the
+    // source path via the library — the new schema where filePath
+    // lives only on library items, never on individual clips.
+    require(state.addLibraryItem("lib1", "C:\\audio\\a.wav", "a.wav"), "library item should add");
+
+    require(state.addClip("t1", "c1", "lib1", 100.0, 1000.0, 25.0, 2),
             "addClip should add under an existing track");
-    require(!state.addClip("missing", "c2", "C:\\audio\\b.wav", 0.0, 1000.0),
+    require(!state.addClip("missing", "c2", "lib1", 0.0, 1000.0),
             "addClip should reject unknown tracks");
-    require(!state.addClip("t1", "c1", "C:\\audio\\b.wav", 0.0, 1000.0),
+    require(!state.addClip("t1", "c1", "lib1", 0.0, 1000.0),
             "addClip should reject duplicate clip ids");
+    require(!state.addClip("t1", "c2", "", 0.0, 1000.0),
+            "addClip should reject blank libraryItemId");
     requireEqual(state.getClipTrackId("c1"), "t1", "clip should report its owning track");
-    requireEqual(state.getClipFilePath("c1"), "C:\\audio\\a.wav", "clip path should round-trip");
+    requireEqual(state.getClipLibraryItemId("c1"), "lib1", "clip libraryItemId should round-trip");
+    requireEqual(state.getClipFilePath("c1"), "C:\\audio\\a.wav",
+                 "clip filePath should resolve through its library item");
     requireNear(state.getClipInMs("c1"), 25.0, 0.0001, "clip inMs should round-trip");
 
     require(state.addTrack("t2"), "second track should add");
@@ -145,7 +164,17 @@ void testProjectStateTracksClipsAndDirty()
     requireNear(state.getClipInMs("c1"), 100.0, 0.0001, "trimmed inMs should update");
     requireNear(state.getClipDurationMs("c1"), 900.0, 0.0001, "trimmed duration should update");
     require(state.setClipColorIndex("c1", -1), "negative color should clear override");
-    require(state.setClipFilePath("c1", "C:\\audio\\relinked.wav"), "clip relink should update path");
+    require(state.setClipName("c1", "  My Chop  "), "setClipName should trim+accept names");
+    requireEqual(state.getClipName("c1"), "My Chop", "clip name should round-trip after trim");
+    require(state.setClipName("c1", ""), "setClipName with blank should clear");
+    requireEqual(state.getClipName("c1"), "", "blank clip name should clear the property");
+    require(state.setClipName("c1", "Final"), "setClipName should re-accept a new name");
+    // Library-level relink — every clip pointing at this library
+    // item picks up the new source path automatically.
+    require(state.setLibraryItemFilePath("lib1", "C:\\audio\\relinked.wav"),
+            "library relink should update item filePath");
+    requireEqual(state.getClipFilePath("c1"), "C:\\audio\\relinked.wav",
+                 "clip filePath should follow library item relink");
 
     const auto removedIds = state.removeTrack("t2");
     require(removedIds.size() == 1 && removedIds[0] == "c1", "removeTrack should return removed clip ids");
@@ -177,8 +206,11 @@ void testProjectStateViewLibraryMarkersAndReplace()
     requireNear(state.getProjectLengthMs(), 180000.0, 0.0001, "project length should store");
 
     require(state.addLibraryItem("l1", "C:\\audio\\source.wav", "source.wav", 2000.0, 48000, 2,
-                                 "C:\\cache\\source.wav", "Bb minor"),
+                                  "C:\\cache\\source.wav", "Bb minor"),
             "library item should add");
+    require(state.addLibraryItem("l2", "C:\\audio\\source.wav", "source.wav", 750.0, 48000, 2,
+                                 {}, {}, "saved-clip", "Source chop", "l1", "c1", 500.0, 750.0),
+            "saved clip library item should add");
     require(state.hasLibraryItemForPath("C:\\audio\\source.wav"), "library item should be found by path");
     requireEqual(state.getLibraryItemPlaybackPathForSource("C:\\audio\\source.wav"), "C:\\cache\\source.wav",
                  "library playback path should round-trip");
@@ -190,10 +222,16 @@ void testProjectStateViewLibraryMarkersAndReplace()
                 "library bpm should be found by source path");
 
     const auto library = state.libraryAsJson();
-    require(library.isArray() && library.getArray()->size() == 1, "libraryAsJson should return one item");
+    require(library.isArray() && library.getArray()->size() == 2, "libraryAsJson should return two items");
     const auto& firstItem = library.getArray()->getReference(0);
     require(firstItem.getProperty("beats", {}).isArray(), "libraryAsJson should include beats array");
     require(bool(firstItem.getProperty("variableTempo", false)), "libraryAsJson should include variableTempo");
+    const auto& savedItem = library.getArray()->getReference(1);
+    requireEqual(savedItem.getProperty("kind", {}).toString(), "saved-clip", "saved clip kind should round-trip");
+    requireEqual(savedItem.getProperty("name", {}).toString(), "Source chop", "saved clip name should round-trip");
+    requireEqual(savedItem.getProperty("sourceItemId", {}).toString(), "l1", "saved clip source should round-trip");
+    requireNear(static_cast<double>(savedItem.getProperty("sourceInMs", 0.0)), 500.0, 0.0001,
+                "saved clip in point should round-trip");
 
     require(state.addMarker("m2", 2000.0), "marker should add");
     require(state.addMarker("m1", 1000.0), "second marker should add");
@@ -247,6 +285,10 @@ void testProjectFileSaveLoadAndViewState()
     state.replaceTree(makeProjectTree());
     state.setViewScrollX(12.0);
     state.setPlayheadMs(34.0);
+    // Rename a clip and confirm the user-facing name survives the
+    // ValueTree JSON round-trip — this is the persistence the timeline
+    // inline-rename relies on.
+    require(state.setClipName("c1", "Verse chop"), "setClipName before save should succeed");
     state.markClean();
 
     const auto saveResult = silverdaw::ProjectFile::save(file, state);
@@ -267,6 +309,7 @@ void testProjectFileSaveLoadAndViewState()
             "load should report schema");
     expectTreeEquivalent(loaded.getTree(), state.getTree());
     require(!loaded.isDirty(), "loaded project should be clean");
+    requireEqual(loaded.getClipName("c1"), "Verse chop", "clip name should persist through save/load");
 
     const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, -10.0, 99.0);
     require(viewStateResult.wasOk(), "saveViewState should update existing project file");
@@ -343,6 +386,39 @@ void testBridgeAuthTokenValidation()
 
 } // namespace
 
+void testProjectStateNetZeroDirty()
+{
+    silverdaw::ProjectState state;
+    state.addTrack("t1");
+    state.markClean();
+    require(!state.isDirty(), "fresh markClean baseline should be clean");
+
+    int transitions = 0;
+    bool lastDirty = false;
+    state.setDirtyChangedCallback(
+        [&](bool d)
+        {
+            ++transitions;
+            lastDirty = d;
+        });
+
+    require(state.addLibraryItem("l1", "C:\\audio\\loop.wav", "loop.wav", 1000.0, 48000, 2),
+            "library add should succeed");
+    require(state.isDirty(), "adding a library item should mark dirty");
+    require(transitions == 1 && lastDirty, "dirty callback should fire on add");
+
+    require(state.removeLibraryItem("l1"), "library remove should succeed");
+    require(!state.isDirty(), "removing the just-added library item should return to clean");
+    require(transitions == 2 && !lastDirty, "dirty callback should fire on net-zero remove");
+
+    require(state.addLibraryItem("l2", "C:\\audio\\saved.wav", "saved.wav", 500.0, 48000, 2,
+                                 {}, {}, "saved-clip", "Chop", "src", "clip", 100.0, 500.0),
+            "saved clip add should succeed");
+    require(state.isDirty(), "saved-clip add should mark dirty");
+    require(state.removeLibraryItem("l2"), "saved-clip remove should succeed");
+    require(!state.isDirty(), "saved-clip add+remove should return to clean");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -354,6 +430,7 @@ int main()
         {"ProjectFile save/load and view-state update", testProjectFileSaveLoadAndViewState},
         {"PeaksCache round-trip and validation", testPeaksCacheRoundTripAndValidation},
         {"Bridge auth token validation", testBridgeAuthTokenValidation},
+        {"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty},
     };
 
     int failed = 0;

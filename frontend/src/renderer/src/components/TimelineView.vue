@@ -16,8 +16,9 @@
 // template wiring. Drawing logic lives in `useTimelineDrawing`; scrollbar
 // pointer handling lives in `useScrollbarDrag`.
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
+import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
@@ -27,6 +28,8 @@ import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
   SCROLLBAR_WIDTH,
+  TRACK_GAP,
+  TRACK_HEIGHT,
   ZOOM_STEP_PX_PER_SECOND
 } from '@/lib/timeline/constants'
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
@@ -39,6 +42,7 @@ import { useScrollbarDrag } from '@/lib/timeline/useScrollbarDrag'
 import { send as sendBridge } from '@/lib/bridgeService'
 
 const project = useProjectStore()
+const library = useLibraryStore()
 const transport = useTransportStore()
 const ui = useUiStore()
 const host = ref<HTMLDivElement | null>(null)
@@ -141,6 +145,8 @@ onBeforeUnmount(() => {
   host.value?.removeEventListener('wheel', onWheel)
   host.value?.removeEventListener('contextmenu', onContextMenu)
   host.value?.removeEventListener('dblclick', onDoubleClick)
+  document.removeEventListener('keydown', onRenameDocumentKeyDown, { capture: true })
+  document.removeEventListener('pointerdown', onRenameDocumentPointerDown, { capture: true })
   stopPlayheadRaf()
 })
 
@@ -186,7 +192,8 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
   // underlying features land.
   items.push({ command: 'clip.warp', label: 'Warp settings…', disabled: true, separatorAbove: true })
   items.push({ command: 'clip.transpose', label: 'Transpose…', disabled: true })
-  items.push({ command: 'clip.saveSample', label: 'Save as Sample…', disabled: true })
+  items.push({ command: 'clip.saveToLibrary', label: 'Save clip to library', separatorAbove: true })
+  items.push({ command: 'clip.saveSample', label: 'Bounce to Sample…', disabled: true })
   return items
 })
 
@@ -222,6 +229,8 @@ function onContextMenuCommand(command: string): void {
     project.duplicateClip(clipId)
   } else if (command === 'clip.split') {
     project.splitClipAt(clipId, transport.positionMs)
+  } else if (command === 'clip.saveToLibrary') {
+    project.saveClipToLibrary(clipId)
   } else if (command.startsWith('clip.color:')) {
     const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
     if (Number.isFinite(idx)) project.setClipColor(clipId, idx)
@@ -233,7 +242,7 @@ function onContextMenuCommand(command: string): void {
       void window.silverdaw
         .chooseAudioFile({ title: `Locate ${clip.fileName}`, defaultPath })
         .then((picked) => {
-          if (picked) project.relinkClip(clipId, picked)
+          if (picked) project.relinkLibraryItem(clip.libraryItemId, picked)
         })
     }
   }
@@ -281,6 +290,31 @@ function pointerToSnappedRulerMs(e: MouseEvent): number | null {
 
 function onDoubleClick(e: MouseEvent): void {
   if (e.button !== 0) return
+
+  // First: did the user double-click a clip's title (top 14 px header)?
+  // If so, open the inline rename overlay. This takes priority over the
+  // marker / ruler handling below so the rename gesture is reachable
+  // anywhere the title strip is visible.
+  if (host.value) {
+    const rect = host.value.getBoundingClientRect()
+    const worldX = (e.clientX - rect.left) + scrollX.value
+    const worldY = (e.clientY - rect.top) + scrollY.value
+    for (let i = clipHitRegions.length - 1; i >= 0; i--) {
+      const r = clipHitRegions[i]
+      if (!r) continue
+      if (
+        worldX >= r.x &&
+        worldX <= r.x + r.w &&
+        worldY >= r.y &&
+        worldY <= r.y + CLIP_HEADER_H
+      ) {
+        e.preventDefault()
+        startClipRename(r.clipId)
+        return
+      }
+    }
+  }
+
   const markerId = markerAtPointer(e)
   if (markerId) {
     e.preventDefault()
@@ -293,6 +327,108 @@ function onDoubleClick(e: MouseEvent): void {
   e.preventDefault()
   project.toggleMarkerAt(snappedMs)
 }
+
+// ─── Inline clip-name rename ──────────────────────────────────────────────
+// Double-click on a clip's title strip opens an HTML <input> floating
+// over the strip. Enter (or click-outside) commits via `project.renameClip`;
+// Escape cancels. The input position is computed reactively from the
+// clip's startMs/durationMs and the current scroll/zoom so it follows
+// the clip if the user scrolls during the edit.
+
+/** Must mirror the HEADER_H used inside `useTimelineDrawing.drawClipHeader`. */
+const CLIP_HEADER_H = 14
+
+const renamingClipId = ref<string | null>(null)
+const renameValue = ref('')
+const renameInputRef = ref<HTMLInputElement | null>(null)
+
+const renameOverlayStyle = computed<Record<string, string> | null>(() => {
+  const id = renamingClipId.value
+  if (!id) return null
+  const clip = project.clips[id]
+  if (!clip) return null
+  const trackIndex = project.tracks.findIndex((t) => t.id === clip.trackId)
+  if (trackIndex < 0) return null
+
+  // World coords mirror `useTimelineDrawing` so the input lands exactly
+  // on top of the drawn header strip.
+  const absX = headerWidth() + (clip.startMs / 1000) * pxPerSecond.value
+  const rowWorldY = RULER_HEIGHT + trackIndex * (TRACK_HEIGHT + TRACK_GAP)
+  const padding = 4
+  const innerY = rowWorldY + padding
+  const widthPx = Math.max(80, (clip.durationMs / 1000) * pxPerSecond.value)
+
+  // Convert to viewport pixels (relative to host).
+  const left = absX - scrollX.value
+  const top = innerY - scrollY.value
+
+  return {
+    position: 'absolute',
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${widthPx}px`,
+    height: `${CLIP_HEADER_H}px`
+  }
+})
+
+function startClipRename(clipId: string): void {
+  const clip = project.clips[clipId]
+  if (!clip) return
+  const libItem = library.items.find((i) => i.filePath === clip.filePath)
+  const initial = clip.name?.trim()
+    ? clip.name
+    : libItem
+      ? libraryItemDisplayName(libItem)
+      : clip.fileName
+  renamingClipId.value = clipId
+  renameValue.value = initial
+  void nextTick(() => {
+    renameInputRef.value?.focus()
+    renameInputRef.value?.select()
+  })
+}
+
+function commitClipRename(): void {
+  const id = renamingClipId.value
+  if (!id) return
+  project.renameClip(id, renameValue.value)
+  renamingClipId.value = null
+}
+
+function cancelClipRename(): void {
+  renamingClipId.value = null
+}
+
+function onRenameDocumentKeyDown(e: KeyboardEvent): void {
+  if (!renamingClipId.value) return
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    e.stopPropagation()
+    commitClipRename()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    cancelClipRename()
+  }
+}
+
+function onRenameDocumentPointerDown(e: PointerEvent): void {
+  if (!renamingClipId.value) return
+  const inputEl = renameInputRef.value
+  if (!inputEl) return
+  if (e.target instanceof Node && inputEl.contains(e.target)) return
+  commitClipRename()
+}
+
+watch(renamingClipId, (id) => {
+  if (id) {
+    document.addEventListener('keydown', onRenameDocumentKeyDown, { capture: true })
+    document.addEventListener('pointerdown', onRenameDocumentPointerDown, { capture: true })
+  } else {
+    document.removeEventListener('keydown', onRenameDocumentKeyDown, { capture: true })
+    document.removeEventListener('pointerdown', onRenameDocumentPointerDown, { capture: true })
+  }
+})
 
 /**
  * Apply a global keyboard zoom request from App.vue.
@@ -648,6 +784,23 @@ function onHeaderResizePointerUp(e: PointerEvent): void {
 
     <!-- HTML overlay for track headers (name + M/S/X buttons). -->
     <TrackHeaderPanel :scroll-y="scrollY" />
+
+    <!-- Inline rename input for a clip's title strip. Floats over the
+             drawn header pixels and updates its position reactively as the
+             user scrolls or zooms during the edit. -->
+    <input
+      v-if="renameOverlayStyle"
+      ref="renameInputRef"
+      v-model="renameValue"
+      type="text"
+      spellcheck="false"
+      data-borderless-button="true"
+      class="z-30 rounded-sm border border-cyan-500 bg-zinc-950 px-1 text-[10px] font-medium text-zinc-100 outline-none"
+      :style="renameOverlayStyle"
+      @pointerdown.stop
+      @dblclick.stop
+      @click.stop
+    >
 
     <!-- Vertical divider drag handle. Sits on top of the column boundary
              between the track-header panel and the timeline canvas. The

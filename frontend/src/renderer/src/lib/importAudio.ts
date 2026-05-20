@@ -172,6 +172,7 @@ export async function importAudioIntoTrack(
     const clipId = project.addClipToTrack(
       trackId,
       {
+        libraryItemId: audio.id,
         filePath: audio.filePath,
         fileName: libraryItemDisplayName(audio),
         durationMs: audio.durationMs,
@@ -186,12 +187,13 @@ export async function importAudioIntoTrack(
     )
     if (!clipId) return null
 
-    // Tell the backend so it can load the same file for playback. Use the
-    // (possibly transcoded) playback path, not the original source path.
+    // Tell the backend so it can load the same file for playback —
+    // CLIP_ADD references the library item; the backend resolves the
+    // actual source path (and decoded-WAV cache) on its side.
     sendBridge('CLIP_ADD', {
       trackId,
       clipId,
-      filePath: audio.playbackFilePath,
+      libraryItemId: audio.id,
       positionMs: resolvedStartMs
     })
     const track = project.tracks.find((candidate) => candidate.id === trackId)

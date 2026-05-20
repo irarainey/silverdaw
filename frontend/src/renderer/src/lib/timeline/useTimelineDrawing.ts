@@ -679,13 +679,16 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     if (clipW < 20) return
 
-    // Prefer the ID3 / Vorbis tag title from the matching library item;
-    // fall back to the clip's filename only when no title was found
+    // Prefer the clip's own custom name (set via inline rename on the
+    // timeline) first. Otherwise fall back to the ID3 / Vorbis tag
+    // title from the matching library item, then to the clip's filename
     // (or hasn't loaded yet — metadata fetches are async on snapshot
     // reload). Library lookup is by filePath because the library may
     // have generated a different `id` than the clip.
     const libItem = library.items.find((i) => i.filePath === clip.filePath)
-    const displayName = libItem ? libraryItemDisplayName(libItem) : clip.fileName
+    const displayName = clip.name?.trim()
+      ? clip.name
+      : libItem ? libraryItemDisplayName(libItem) : clip.fileName
 
     const maxChars = Math.max(1, Math.floor((clipW - PAD_X * 2) / APPROX_CHAR_W))
     const text =

@@ -69,6 +69,7 @@ describe('projectStore', () => {
     const clipId = project.addClipToTrack(
       trackId,
       {
+        libraryItemId: 'lib-drums',
         filePath: 'C:\\audio\\drums.wav',
         fileName: 'drums.wav',
         durationMs: 2_000,
@@ -95,6 +96,7 @@ describe('projectStore', () => {
     const firstClipId = project.addClipToTrack(
       trackId,
       {
+        libraryItemId: 'lib-a',
         filePath: 'C:\\audio\\a.wav',
         fileName: 'a.wav',
         durationMs: 1_000,
@@ -107,6 +109,7 @@ describe('projectStore', () => {
     const secondClipId = project.addClipToTrack(
       trackId,
       {
+        libraryItemId: 'lib-b',
         filePath: 'C:\\audio\\b.wav',
         fileName: 'b.wav',
         durationMs: 500,
@@ -136,6 +139,7 @@ describe('projectStore', () => {
     project.addClipToTrack(
       staleTrackId,
       {
+        libraryItemId: 'lib-stale',
         filePath: 'C:\\audio\\stale.wav',
         fileName: 'stale.wav',
         durationMs: 1_000,
@@ -174,6 +178,7 @@ describe('projectStore', () => {
         {
           id: 'l7',
           filePath: 'C:\\audio\\loop.wav',
+          kind: 'audio-file',
           fileName: 'loop.wav',
           durationMs: 4_000,
           sampleRate: 48_000,
@@ -184,6 +189,18 @@ describe('projectStore', () => {
           beatAnchorSec: 0.25,
           playbackFilePath: 'C:\\cache\\loop.wav',
           variableTempo: true
+        },
+        {
+          id: 'l8',
+          filePath: 'C:\\audio\\loop.wav',
+          kind: 'saved-clip',
+          name: 'Loop chop',
+          fileName: 'loop.wav',
+          durationMs: 1_000,
+          sourceItemId: 'l7',
+          sourceClipId: 'c1',
+          sourceInMs: 500,
+          sourceDurationMs: 1_000
         }
       ],
       tracks: [
@@ -194,7 +211,7 @@ describe('projectStore', () => {
           clips: [
             {
               id: 'c1',
-              filePath: 'C:\\audio\\loop.wav',
+              libraryItemId: 'l7',
               offsetMs: 1_000,
               inMs: 250,
               durationMs: 2_000,
@@ -224,6 +241,7 @@ describe('projectStore', () => {
     expect(project.clips.c1).toMatchObject({
       id: 'c1',
       trackId: 't1',
+      libraryItemId: 'l7',
       filePath: 'C:\\audio\\loop.wav',
       startMs: 1_000,
       inMs: 250,
@@ -231,9 +249,10 @@ describe('projectStore', () => {
       unresolved: false,
       colorIndex: 3
     })
-    expect(library.items).toHaveLength(1)
+    expect(library.items).toHaveLength(2)
     expect(library.items[0]).toMatchObject({
       id: 'l7',
+      kind: 'audio-file',
       filePath: 'C:\\audio\\loop.wav',
       bpm: 124.5,
       beatAnchorSec: 0.25,
@@ -241,7 +260,63 @@ describe('projectStore', () => {
       variableTempo: true,
       decodedCacheFilePath: 'C:\\cache\\loop.wav'
     })
+    expect(library.items[1]).toMatchObject({
+      id: 'l8',
+      kind: 'saved-clip',
+      name: 'Loop chop',
+      derivedFrom: {
+        sourceItemId: 'l7',
+        sourceClipId: 'c1',
+        inMs: 500,
+        durationMs: 1_000
+      }
+    })
     expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_ADD', expect.anything())
     expect(sendMock).toHaveBeenCalledWith('WAVEFORM_REQUEST', { clipId: 'c1' })
+  })
+
+  it('places saved library clips using their source trim window', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    sendMock.mockClear()
+
+    const clipId = project.addClipFromLibrary(
+      trackId,
+      {
+        id: 'l2',
+        kind: 'saved-clip',
+        name: 'Vocal chop',
+        filePath: 'C:\\audio\\vocal.wav',
+        fileName: 'vocal.wav',
+        durationMs: 1_500,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1]),
+        playbackFilePath: 'C:\\audio\\vocal.wav',
+        derivedFrom: {
+          sourceItemId: 'l1',
+          sourceClipId: 'c1',
+          inMs: 2_000,
+          durationMs: 1_500
+        }
+      },
+      3_000
+    )
+
+    expect(clipId).toBe('uuid-2')
+    expect(project.clips[clipId ?? '']).toMatchObject({
+      libraryItemId: 'l2',
+      fileName: 'Vocal chop',
+      inMs: 2_000,
+      durationMs: 1_500
+    })
+    expect(sendMock).toHaveBeenCalledWith('CLIP_ADD', {
+      trackId,
+      clipId,
+      libraryItemId: 'l2',
+      positionMs: 3_000,
+      inMs: 2_000,
+      durationMs: 1_500
+    })
   })
 })

@@ -86,26 +86,26 @@ describe('isPlayheadUpdatePayload', () => {
 
 describe('isClipAckPayload', () => {
   it('accepts a success ack (no error field)', () => {
-    expect(isClipAckPayload({ trackId: 't1', clipId: 'c1', filePath: '/p', ok: true })).toBe(true)
+    expect(isClipAckPayload({ trackId: 't1', clipId: 'c1', libraryItemId: 'l1', ok: true })).toBe(true)
   })
 
   it('accepts a failure ack with an error string', () => {
     expect(
-      isClipAckPayload({ trackId: 't1', clipId: 'c1', filePath: '/p', ok: false, error: 'boom' })
+      isClipAckPayload({ trackId: 't1', clipId: 'c1', libraryItemId: 'l1', ok: false, error: 'boom' })
     ).toBe(true)
   })
 
   it('rejects an ack with a non-string error', () => {
     expect(
-      isClipAckPayload({ trackId: 't1', clipId: 'c1', filePath: '/p', ok: false, error: 42 })
+      isClipAckPayload({ trackId: 't1', clipId: 'c1', libraryItemId: 'l1', ok: false, error: 42 })
     ).toBe(false)
   })
 
   it('rejects missing required fields', () => {
-    expect(isClipAckPayload({ clipId: 'c1', filePath: '/p', ok: true })).toBe(false)
-    expect(isClipAckPayload({ trackId: 't1', filePath: '/p', ok: true })).toBe(false)
+    expect(isClipAckPayload({ clipId: 'c1', libraryItemId: 'l1', ok: true })).toBe(false)
+    expect(isClipAckPayload({ trackId: 't1', libraryItemId: 'l1', ok: true })).toBe(false)
     expect(isClipAckPayload({ trackId: 't1', clipId: 'c1', ok: true })).toBe(false)
-    expect(isClipAckPayload({ trackId: 't1', clipId: 'c1', filePath: '/p' })).toBe(false)
+    expect(isClipAckPayload({ trackId: 't1', clipId: 'c1', libraryItemId: 'l1' })).toBe(false)
   })
 })
 
@@ -171,6 +171,7 @@ describe('isProjectStatePayload', () => {
           {
             id: 'l1',
             filePath: '/sample.wav',
+            kind: 'audio-file',
             fileName: 'sample.wav',
             durationMs: 1000,
             sampleRate: 44100,
@@ -182,6 +183,18 @@ describe('isProjectStatePayload', () => {
             playbackFilePath: '/cache/sample.wav',
             variableTempo: true,
             unresolved: false
+          },
+          {
+            id: 'l2',
+            filePath: '/sample.wav',
+            kind: 'saved-clip',
+            name: 'Sample chop',
+            fileName: 'sample.wav',
+            durationMs: 500,
+            sourceItemId: 'l1',
+            sourceClipId: 'c1',
+            sourceInMs: 250,
+            sourceDurationMs: 500
           }
         ],
         tracks: [
@@ -191,7 +204,7 @@ describe('isProjectStatePayload', () => {
             clips: [
               {
                 id: 'c1',
-                filePath: '/p',
+                libraryItemId: 'l1',
                 offsetMs: 0,
                 inMs: 25,
                 durationMs: 1000,
@@ -224,13 +237,13 @@ describe('isProjectStatePayload', () => {
     expect(
       isProjectStatePayload({
         ...base,
-        tracks: [{ id: 't1', gain: 1.0, clips: [{ id: 'c1', filePath: '/p', offsetMs: 0 }] }]
+        tracks: [{ id: 't1', gain: 1.0, clips: [{ id: 'c1', libraryItemId: 'lib1', offsetMs: 0 }] }]
       })
     ).toBe(false)
     expect(
       isProjectStatePayload({
         ...base,
-        tracks: [{ id: 't1', gain: 1.0, clips: [{ filePath: '/p', offsetMs: 0, durationMs: 1 }] }]
+        tracks: [{ id: 't1', gain: 1.0, clips: [{ libraryItemId: 'lib1', offsetMs: 0, durationMs: 1 }] }]
       })
     ).toBe(false)
     expect(
@@ -271,11 +284,18 @@ describe('isProjectStatePayload', () => {
     expect(
       isProjectStatePayload({
         ...base,
+        library: [{ id: 'l2', filePath: '/sample.wav', kind: 'saved-clip', sourceInMs: 0 }],
+        tracks: []
+      })
+    ).toBe(false)
+    expect(
+      isProjectStatePayload({
+        ...base,
         tracks: [
           {
             id: 't1',
             gain: 1.0,
-            clips: [{ id: 'c1', filePath: '/p', offsetMs: 0, durationMs: 1, unresolved: 'yes' }]
+            clips: [{ id: 'c1', libraryItemId: 'lib1', offsetMs: 0, durationMs: 1, unresolved: 'yes' }]
           }
         ]
       })

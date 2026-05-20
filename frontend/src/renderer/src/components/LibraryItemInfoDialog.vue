@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
-import type { LibraryItem } from '@/stores/libraryStore'
+import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 
 const props = defineProps<{
@@ -12,7 +12,13 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const project = useProjectStore()
+const library = useLibraryStore()
 const dialogEl = ref<HTMLDivElement | null>(null)
+const sourceItem = computed(() => {
+  const item = props.item
+  if (!item?.derivedFrom?.sourceItemId) return null
+  return library.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId) ?? null
+})
 
 const usages = computed(() => {
   const item = props.item
@@ -149,7 +155,7 @@ function channelLabel(count: number): string {
               id="clip-info-title"
               class="truncate text-base font-semibold text-zinc-100"
             >
-              {{ item.metadata?.title ?? item.fileName }}
+              {{ libraryItemDisplayName(item) }}
             </h2>
             <p
               v-if="item.metadata?.artist"
@@ -185,6 +191,28 @@ function channelLabel(count: number): string {
             </div>
 
             <dl class="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+              <dt class="text-zinc-500">
+                Type
+              </dt>
+              <dd>{{ item.kind === 'saved-clip' ? 'Saved clip' : 'Audio file' }}</dd>
+              <dt
+                v-if="sourceItem"
+                class="text-zinc-500"
+              >
+                Source
+              </dt>
+              <dd v-if="sourceItem">
+                {{ libraryItemDisplayName(sourceItem) }}
+              </dd>
+              <dt
+                v-if="item.derivedFrom"
+                class="text-zinc-500"
+              >
+                Source window
+              </dt>
+              <dd v-if="item.derivedFrom">
+                {{ formatTime(item.derivedFrom.inMs) }} - {{ formatTime(item.derivedFrom.inMs + item.derivedFrom.durationMs) }}
+              </dd>
               <dt class="text-zinc-500">
                 Duration
               </dt>

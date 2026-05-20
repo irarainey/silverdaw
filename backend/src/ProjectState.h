@@ -118,8 +118,8 @@ class ProjectState : public juce::ValueTree::Listener
      * Add a clip under an existing track. Returns false if `trackId` is
      * unknown or `clipId` already exists anywhere in the tree.
      */
-    bool addClip(const juce::String& trackId, const juce::String& clipId, const juce::String& filePath, double offsetMs,
-                 double durationMs, double inMs = 0.0, int colorIndex = -1);
+    bool addClip(const juce::String& trackId, const juce::String& clipId, const juce::String& libraryItemId,
+                 double offsetMs, double durationMs, double inMs = 0.0, int colorIndex = -1);
 
     /** Remove a clip. Returns true if it existed. */
     bool removeClip(const juce::String& clipId);
@@ -158,6 +158,22 @@ class ProjectState : public juce::ValueTree::Listener
      *  emits CLIP_RELINK so we can re-create the engine's audio source
      *  against the new path. */
     bool setClipFilePath(const juce::String& clipId, const juce::String& filePath);
+
+    /** Read the library item id the clip is sourced from. Empty if
+     *  the clip is not yet linked (legacy paths only). */
+    juce::String getClipLibraryItemId(const juce::String& clipId) const;
+
+    /** Update which library item a clip is sourced from. Used by the
+     *  CLIP_RELINK / library-relink flow. */
+    bool setClipLibraryItemId(const juce::String& clipId, const juce::String& libraryItemId);
+
+    /** Set a clip's user-facing display name override. Empty/blank
+     *  clears the override. Marks dirty. Returns true if the clip
+     *  existed. */
+    bool setClipName(const juce::String& clipId, const juce::String& name);
+
+    /** Read a clip's user-facing display name override, or empty if unset. */
+    juce::String getClipName(const juce::String& clipId) const;
 
     /** Returns the trackId owning `clipId`, or empty string if not found. */
     juce::String getClipTrackId(const juce::String& clipId) const;
@@ -221,7 +237,11 @@ class ProjectState : public juce::ValueTree::Listener
     /** Add (or update the file path of) a library item. Marks dirty. */
     bool addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName = {},
                         double durationMs = 0.0, int sampleRate = 0, int channelCount = 0,
-                        const juce::String& playbackPath = {}, const juce::String& key = {});
+                        const juce::String& playbackPath = {}, const juce::String& key = {},
+                        const juce::String& kind = {}, const juce::String& displayName = {},
+                        const juce::String& sourceItemId = {}, const juce::String& sourceClipId = {},
+                        double sourceInMs = -1.0, double sourceDurationMs = -1.0,
+                        int collapsedFlag = -1);
 
     /** Remove a library item by id. Returns true if it existed. Marks dirty. */
     bool removeLibraryItem(const juce::String& itemId);
@@ -246,6 +266,19 @@ class ProjectState : public juce::ValueTree::Listener
      *  Pass an empty string to clear. Marks dirty. Returns true if
      *  the item existed. */
     bool setLibraryItemPlaybackPath(const juce::String& itemId, const juce::String& playbackPath);
+
+    /** Update a library item's source file path. Used by the
+     *  relink-missing-files flow: the user picks a replacement file
+     *  and the new path is applied to the library item. All clips
+     *  referencing the item pick up the new file automatically. */
+    bool setLibraryItemFilePath(const juce::String& itemId, const juce::String& filePath);
+
+    /** Read a library item's source file path. */
+    juce::String getLibraryItemFilePath(const juce::String& itemId) const;
+
+    /** Read a library item's decoded-WAV playback path. Empty when
+     *  no cache has been written yet. */
+    juce::String getLibraryItemPlaybackPath(const juce::String& itemId) const;
 
     /** Replace or clear the detected musical key for a library item.
      *  Pass an empty string to clear. Marks dirty. Returns true if
@@ -350,8 +383,10 @@ class ProjectState : public juce::ValueTree::Listener
                                     int /*newIndex*/) override;
 
     void setDirty(bool d);
+    void recomputeDirty();
 
     juce::ValueTree root;
+    juce::ValueTree cleanSnapshot;
     juce::UndoManager undoManager;
     bool dirty{false};
     /**
@@ -393,6 +428,15 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kPlaybackFilePath;
     static const juce::Identifier kVariableTempo;
     static const juce::Identifier kKey;
+    static const juce::Identifier kKind;
+    static const juce::Identifier kSourceItemId;
+    static const juce::Identifier kSourceClipId;
+    static const juce::Identifier kSourceInMs;
+    static const juce::Identifier kSourceDurationMs;
+    static const juce::Identifier kDisplayName;
+    static const juce::Identifier kClipName;
+    static const juce::Identifier kCollapsed;
+    static const juce::Identifier kLibraryItemId;
 };
 
 } // namespace silverdaw

@@ -150,11 +150,12 @@ onBeforeUnmount(() => {
                 v-for="(s, idx) in item.swatches"
                 :key="idx"
                 type="button"
-                class="h-4 w-4 rounded-sm border transition-transform hover:scale-110"
+                data-borderless-button="true"
+                class="h-4 w-4 rounded-sm transition-transform hover:scale-110"
                 :class="
                   item.selectedSwatch === idx
-                    ? 'border-zinc-100 ring-1 ring-zinc-100'
-                    : 'border-zinc-700 hover:border-zinc-400'
+                    ? 'ring-1 ring-zinc-100'
+                    : ''
                 "
                 :style="{ backgroundColor: s.cssHex }"
                 :title="s.label"
@@ -166,6 +167,7 @@ onBeforeUnmount(() => {
             v-else
             type="button"
             role="menuitem"
+            data-borderless-button="true"
             class="flex w-full items-center px-3 py-1.5 text-left transition-colors"
             :class="
               item.disabled

@@ -256,6 +256,7 @@ function onGlobalShortcutKey(e: KeyboardEvent): void {
     e.stopPropagation()
     lastArrowSeekMs = target
     transport.setPosition(target)
+    ui.requestTimelineScrollToPosition(target)
     sendBridge('TRANSPORT_SEEK', { positionMs: target })
     log.debug('transport', `alt-arrow-seek to ${target.toFixed(2)}ms (${msPerPx.toFixed(2)}ms/px step)`)
     return
@@ -287,6 +288,7 @@ function onGlobalShortcutKey(e: KeyboardEvent): void {
   e.stopPropagation()
   lastArrowSeekMs = target
   transport.setPosition(target)
+  ui.requestTimelineScrollToPosition(target)
   sendBridge('TRANSPORT_SEEK', { positionMs: target })
   log.debug('transport', `arrow-seek to ${target}ms (msPerSub=${msPerSub.toFixed(2)})`)
 }

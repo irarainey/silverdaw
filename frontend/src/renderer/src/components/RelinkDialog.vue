@@ -67,7 +67,7 @@ async function relinkOne(clip: Clip): Promise<void> {
     defaultPath
   })
   if (!picked) return
-  project.relinkClip(clip.id, picked)
+  project.relinkLibraryItem(clip.libraryItemId, picked)
 }
 </script>
 

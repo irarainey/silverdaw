@@ -11,9 +11,21 @@ import { defineStore } from 'pinia'
 import { useProjectStore } from '@/stores/projectStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import type { Clip } from '@/stores/projectStore'
+import type { LibraryItemKind } from '@shared/bridge-protocol'
+
+export interface SavedClipSource {
+  sourceItemId?: string
+  sourceClipId?: string
+  inMs: number
+  durationMs: number
+}
 
 export interface LibraryItem {
   readonly id: string
+  readonly kind: LibraryItemKind
+  /** User-facing reusable name. Saved clips use this; audio files fall back to tags/fileName. */
+  name?: string
   readonly filePath: string
   readonly fileName: string
   durationMs: number
@@ -93,6 +105,13 @@ export interface LibraryItem {
    * as an `<img :src>` — no base64, no copying.
    */
   coverArtUrl?: string
+  /** Present when this row is a reusable clip derived from another library source. */
+  derivedFrom?: SavedClipSource
+  /** Source-group disclosure state. True when the user has collapsed
+   *  this source's saved-clip list in the library panel. Only
+   *  meaningful for `audio-file` items with at least one saved-clip
+   *  child. Persisted with the project. */
+  collapsed?: boolean
 }
 
 /**
@@ -216,10 +235,13 @@ export const useLibraryStore = defineStore('library', {
 
     /**
      * Add a decoded audio file to the library. If a file with the same
-     * `filePath` is already present, returns the existing item's id rather
-     * than creating a duplicate.
-     */
+      * `filePath` is already present, returns the existing audio-file item's
+      * id rather than creating a duplicate. Saved clips are allowed to share a
+      * filePath with their source because their trim window makes them distinct.
+      */
     addItem(audio: {
+      kind?: LibraryItemKind
+      name?: string
       filePath: string
       fileName: string
       durationMs: number
@@ -238,8 +260,25 @@ export const useLibraryStore = defineStore('library', {
       /** Specific id to use (snapshot path). Auto-minted when omitted
        *  on a user-driven import. */
       id?: string
+      derivedFrom?: SavedClipSource
+      collapsed?: boolean
     }): string {
-      const existing = this.items.find((i) => i.filePath === audio.filePath)
+      const kind = audio.kind ?? 'audio-file'
+      if (kind === 'saved-clip' && !audio.derivedFrom) {
+        log.warn('library', `addItem refused saved clip without source window file=${audio.filePath}`)
+        return ''
+      }
+      const existing =
+        kind === 'audio-file'
+          ? this.items.find((i) => i.kind === 'audio-file' && i.filePath === audio.filePath)
+          : this.items.find(
+              (i) =>
+                i.kind === 'saved-clip' &&
+                i.filePath === audio.filePath &&
+                i.derivedFrom?.sourceItemId === audio.derivedFrom?.sourceItemId &&
+                i.derivedFrom?.inMs === audio.derivedFrom?.inMs &&
+                i.derivedFrom?.durationMs === audio.derivedFrom?.durationMs
+            )
       if (existing) {
         this.setItemAudioDetails(existing.id, audio.durationMs, audio.sampleRate, audio.channelCount)
         if (audio.key && !existing.key) existing.key = audio.key
@@ -266,6 +305,8 @@ export const useLibraryStore = defineStore('library', {
       }
       this.items.push({
         id,
+        kind,
+        name: audio.name,
         filePath: audio.filePath,
         fileName: audio.fileName,
         durationMs: audio.durationMs,
@@ -273,7 +314,9 @@ export const useLibraryStore = defineStore('library', {
         channelCount: audio.channelCount,
         peaks: audio.peaks,
         playbackFilePath: audio.playbackFilePath ?? audio.filePath,
-        key: audio.key
+        key: audio.key,
+        derivedFrom: audio.derivedFrom,
+        collapsed: audio.collapsed
       })
       log.info(
         'library',
@@ -287,15 +330,101 @@ export const useLibraryStore = defineStore('library', {
         sendBridge('LIBRARY_ADD', {
           itemId: id,
           filePath: audio.filePath,
+          kind,
+          name: audio.name,
           fileName: audio.fileName,
           durationMs: audio.durationMs,
           sampleRate: audio.sampleRate,
           channelCount: audio.channelCount,
           playbackFilePath: audio.playbackFilePath,
-          key: audio.key
+          key: audio.key,
+          sourceItemId: audio.derivedFrom?.sourceItemId,
+          sourceClipId: audio.derivedFrom?.sourceClipId,
+          sourceInMs: audio.derivedFrom?.inMs,
+          sourceDurationMs: audio.derivedFrom?.durationMs,
+          collapsed: audio.collapsed
         })
       }
       return id
+    },
+
+    /** Save a timeline clip as a reusable library item related to its source file. */
+    addSavedClipFromTimelineClip(clip: Clip): string | null {
+      // Resolve the source library item via the clip's libraryItemId
+      // (single source of truth). If the clip's library item is itself
+      // a saved-clip, walk up to its source audio-file.
+      const direct = this.items.find((item) => item.id === clip.libraryItemId)
+      const source =
+        direct?.kind === 'audio-file'
+          ? direct
+          : direct?.derivedFrom?.sourceItemId
+            ? this.items.find((i) => i.id === direct.derivedFrom?.sourceItemId)
+            : direct
+      const sourceItemId = source?.id
+      const inMs = Math.max(0, clip.inMs)
+      const durationMs = Math.max(0, clip.durationMs)
+      if (durationMs <= 0) {
+        log.warn('library', `addSavedClipFromTimelineClip refused zero-duration clip id=${clip.id}`)
+        return null
+      }
+      const existing = this.items.find(
+        (item) =>
+          item.kind === 'saved-clip' &&
+          item.derivedFrom?.sourceItemId === sourceItemId &&
+          item.derivedFrom?.inMs === inMs &&
+          item.derivedFrom?.durationMs === durationMs
+      )
+      if (existing) return existing.id
+
+      // Prefer the clip's own custom name (set via inline rename on the
+       // timeline) so the saved-clip library item inherits whatever the
+       // user already chose to call it. Falls back to an auto-generated
+       // "<source> @ <position>" label otherwise.
+      const customName = clip.name?.trim()
+      const name = customName && customName.length > 0
+        ? customName
+        : buildSavedClipName(source ?? clip, inMs, durationMs)
+      const itemId = this.addItem({
+        kind: 'saved-clip',
+        name,
+        filePath: clip.filePath,
+        fileName: source?.fileName ?? clip.fileName,
+        durationMs,
+        sampleRate: clip.sampleRate,
+        channelCount: clip.channelCount,
+        peaks: clip.peaks,
+        playbackFilePath: source?.playbackFilePath ?? clip.playbackFilePath ?? clip.filePath,
+        key: source?.key,
+        derivedFrom: {
+          sourceItemId,
+          sourceClipId: clip.id,
+          inMs,
+          durationMs
+        }
+      })
+      // Inherit the source's already-known analysis details so the info
+      // dialog opens with populated fields instead of "Not available
+      // yet". The saved clip points at the same underlying audio file,
+      // so its decoded WAV cache, BPM, beats and variable-tempo flag
+      // are guaranteed to match.
+      if (itemId && source) {
+        const item = this.items.find((i) => i.id === itemId)
+        if (item) {
+          if (source.decodedCacheFilePath) item.decodedCacheFilePath = source.decodedCacheFilePath
+          if (source.bpm !== undefined) item.bpm = source.bpm
+          if (source.beats !== undefined) item.beats = source.beats.slice()
+          if (source.beatAnchorSec !== undefined) item.beatAnchorSec = source.beatAnchorSec
+          if (source.variableTempo !== undefined) item.variableTempo = source.variableTempo
+        }
+      }
+      // Auto-expand the parent source group so the new saved clip is
+      // visible immediately. If the user had previously collapsed it
+      // this overrides that — adding a clip is an explicit gesture
+      // that should reveal its result.
+      if (itemId && source && source.collapsed) {
+        this.setItemCollapsed(source.id, false)
+      }
+      return itemId || null
     },
 
     /**
@@ -330,6 +459,80 @@ export const useLibraryStore = defineStore('library', {
           item.metadata = rest
         }
       }
+    },
+
+    /**
+     * Rename a library item. Blank names are coerced to undefined so the
+     * tile falls back to the source-file name. Persisted to the backend
+     * via a fresh `LIBRARY_ADD` envelope; the backend treats matching ids
+     * as an upsert and the new name round-trips through PROJECT_STATE.
+     */
+    renameItem(itemId: string, name: string): boolean {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return false
+      const trimmed = name.trim()
+      const nextName = trimmed.length > 0 ? trimmed : undefined
+      if (item.name === nextName) return false
+      item.name = nextName
+      // Omit `playbackFilePath` from rename/collapse upserts: the
+      // renderer's `item.playbackFilePath` is just the source filePath
+      // (the cached-WAV optimisation lives entirely backend-side), and
+      // sending it here would overwrite the backend's decoded-cache
+      // path with the original audio file — turning subsequent
+      // CLIP_ADDs into slow MP3 reads instead of cheap WAV reads.
+      sendBridge('LIBRARY_ADD', {
+        itemId: item.id,
+        filePath: item.filePath,
+        kind: item.kind,
+        name: nextName,
+        fileName: item.fileName,
+        durationMs: item.durationMs,
+        sampleRate: item.sampleRate,
+        channelCount: item.channelCount,
+        key: item.key,
+        sourceItemId: item.derivedFrom?.sourceItemId,
+        sourceClipId: item.derivedFrom?.sourceClipId,
+        sourceInMs: item.derivedFrom?.inMs,
+        sourceDurationMs: item.derivedFrom?.durationMs,
+        collapsed: item.collapsed
+      })
+      log.info('library', `renameItem id=${itemId} name=${nextName ?? '<cleared>'}`)
+      return true
+    },
+
+    /**
+     * Toggle the source-group disclosure for a library item. Only
+     * meaningful for `audio-file` items; saved-clip items don't have
+     * a child list. Persisted to the backend so the open/closed state
+     * survives save / load.
+     */
+    setItemCollapsed(itemId: string, collapsed: boolean): boolean {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return false
+      const next = collapsed ? true : undefined
+      if ((item.collapsed ?? false) === (next ?? false)) return false
+      item.collapsed = next
+      // Same `playbackFilePath` omission as `renameItem` — see comment
+      // there. Sending the renderer's value would clobber the
+      // backend-managed decoded-WAV cache path.
+      sendBridge('LIBRARY_ADD', {
+        itemId: item.id,
+        filePath: item.filePath,
+        kind: item.kind,
+        name: item.name,
+        fileName: item.fileName,
+        durationMs: item.durationMs,
+        sampleRate: item.sampleRate,
+        channelCount: item.channelCount,
+        key: item.key,
+        sourceItemId: item.derivedFrom?.sourceItemId,
+        sourceClipId: item.derivedFrom?.sourceClipId,
+        sourceInMs: item.derivedFrom?.inMs,
+        sourceDurationMs: item.derivedFrom?.durationMs,
+        collapsed
+      })
+      log.info('library', `setItemCollapsed id=${itemId} collapsed=${collapsed}`)
+      return true
     },
 
     /** Clear stale tempo/beat metadata while a forced reanalysis is running. */
@@ -368,15 +571,18 @@ export const useLibraryStore = defineStore('library', {
 
     /**
      * True if any clip on any track currently references this library
-     * item's file. Used to gate `removeItem` and to disable the remove
-     * button in the library UI.
-     */
+     * item's file, or if an audio-file item has saved clips derived from it.
+     * Saved-clip rows themselves are reusable shortcuts; removing one does not
+     * remove timeline clips already created from it.
+      */
     isItemInUse(itemId: string): boolean {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return false
+      if (this.items.some((child) => child.derivedFrom?.sourceItemId === itemId)) return true
+      if (item.kind === 'saved-clip') return false
       const project = useProjectStore()
       for (const id in project.clips) {
-        if (project.clips[id]?.filePath === item.filePath) return true
+        if (project.clips[id]?.libraryItemId === itemId) return true
       }
       return false
     },
@@ -603,11 +809,31 @@ export const useLibraryStore = defineStore('library', {
  * if there's no title or the title is just whitespace.
  */
 export function libraryItemDisplayName(item: {
+  name?: string
   fileName: string
   metadata?: AudioMetadata | null
 }): string {
+  const name = item.name?.trim()
+  if (name && name.length > 0) return name
   const title = item.metadata?.title?.trim()
   return title && title.length > 0 ? title : item.fileName
+}
+
+function buildSavedClipName(
+  source: { name?: string; fileName: string; metadata?: AudioMetadata | null },
+  inMs: number,
+  durationMs: number
+): string {
+  void durationMs
+  const sourceName = libraryItemDisplayName(source).replace(/\.[^.]+$/, '')
+  return `${sourceName} @ ${formatTimeForName(inMs)}`
+}
+
+function formatTimeForName(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
 /**

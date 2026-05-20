@@ -16,7 +16,9 @@
 export interface ClipAddPayload {
   trackId: string
   clipId: string
-  filePath: string
+  /** Source library item the clip plays from. Clips reference their
+   *  audio via the library — they never carry a filesystem path. */
+  libraryItemId: string
   positionMs: number
   /** Optional trim window: where in the source file to start reading.
    *  Used by split / duplicate to mint clips that share the underlying
@@ -68,14 +70,21 @@ export interface ClipRemovePayload {
   clipId: string
 }
 
-/** Re-point a clip at a new source file. Used by the relink flow after
- *  a project loads with missing files: the user picks a replacement in
- *  an OS dialog and the renderer emits one of these per relinked clip.
- *  The backend updates the clip's filePath in the project tree and
- *  re-creates the engine source. */
-export interface ClipRelinkPayload {
-  clipId: string
+/** Relink a library item to a new source file. All clips that
+ *  reference the item pick up the new file automatically; the user
+ *  doesn't need to relink each clip individually. */
+export interface LibraryItemRelinkPayload {
+  itemId: string
   filePath: string
+}
+
+/** User-facing display-name override for a single clip. Empty string
+ *  clears the override and the clip falls back to its library item /
+ *  filename for display. Used by the inline rename on the timeline,
+ *  and propagated to saved-clip library items if the clip is saved. */
+export interface ClipRenamePayload {
+  clipId: string
+  name: string
 }
 
 /** Register a library item with the backend so its durable fields are
@@ -84,12 +93,21 @@ export interface ClipRelinkPayload {
 export interface LibraryAddPayload {
   itemId: string
   filePath: string
+  kind?: LibraryItemKind
+  name?: string
   fileName?: string
   durationMs?: number
   sampleRate?: number
   channelCount?: number
   playbackFilePath?: string
   key?: string
+  sourceItemId?: string
+  sourceClipId?: string
+  sourceInMs?: number
+  sourceDurationMs?: number
+  /** Source-group disclosure state. True when the user has collapsed
+   *  the source's saved-clip list in the library panel. */
+  collapsed?: boolean
 }
 
 /** Drop a library item from the persisted catalogue. */
@@ -161,7 +179,8 @@ export interface BridgeOutboundMap {
   CLIP_TRIM: ClipTrimPayload
   CLIP_COLOR: ClipColorPayload
   CLIP_REMOVE: ClipRemovePayload
-  CLIP_RELINK: ClipRelinkPayload
+  LIBRARY_ITEM_RELINK: LibraryItemRelinkPayload
+  CLIP_RENAME: ClipRenamePayload
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
   LIBRARY_REANALYSE: LibraryReanalysePayload
@@ -280,7 +299,7 @@ export interface PlayheadUpdatePayload {
 export interface ClipAckPayload {
   trackId: string
   clipId: string
-  filePath: string
+  libraryItemId: string
   ok: boolean
   /**
    * Backend-supplied error message. Present iff `ok === false`.
@@ -353,19 +372,24 @@ export interface ProjectViewStateSavedPayload {
  */
 export interface ProjectStateClip {
   id: string
-  filePath: string
+  /** Library item this clip plays from. Source-of-truth for the
+   *  underlying audio file; the renderer resolves filePath / fileName /
+   *  peaks through the library. */
+  libraryItemId: string
   offsetMs: number
   durationMs: number
   /** Where in the source file this clip starts reading (trim offset).
-   *  Optional for back-compat: pre-trim projects don't carry the field;
-   *  the renderer falls back to 0. */
+   *  Optional: omitted on un-trimmed clips; the renderer falls back to 0. */
   inMs?: number
   /** Per-clip palette index override (0..15). Absent means the clip
    *  inherits the host track's colour. */
   colorIndex?: number
-  /** True when the backend's `existsAsFile` check failed for this
-   *  clip's `filePath` at load time. Renderer renders it greyed-out
-   *  and surfaces a "Locate files…" toast; engine playback skips it. */
+  /** User-facing display name override (set via inline rename on the
+   *  timeline). Absent means use the library item title / filename. */
+  name?: string
+  /** True when the library item's source file no longer exists on
+   *  disk. Renderer renders the clip greyed-out and surfaces a
+   *  "Locate files…" toast; engine playback skips it. */
   unresolved?: boolean
 }
 
@@ -426,6 +450,10 @@ export interface ProjectStateMarker {
 export interface ProjectStateLibraryItem {
   id: string
   filePath: string
+  /** Library item kind. Older projects omit this and are treated as whole audio files. */
+  kind?: LibraryItemKind
+  /** User-facing name. Saved clips use this for their reusable clip name. */
+  name?: string
   /** Display file name captured when the item entered the library. */
   fileName?: string
   /** Source duration in milliseconds. Optional for older saved projects. */
@@ -454,8 +482,21 @@ export interface ProjectStateLibraryItem {
    *  ~2 % over the analysis window — the project-BPM seeder skips
    *  these and the library tile shows a "variable" badge. */
   variableTempo?: boolean
+  /** Parent source library item for saved clips. */
+  sourceItemId?: string
+  /** Timeline clip that originally produced this saved clip, when known. */
+  sourceClipId?: string
+  /** Start of the saved clip window inside the source file. */
+  sourceInMs?: number
+  /** Duration of the saved clip window inside the source file. */
+  sourceDurationMs?: number
+  /** Source-group disclosure state. True when the user has collapsed
+   *  the source's saved-clip list in the library panel. */
+  collapsed?: boolean
   unresolved?: boolean
 }
+
+export type LibraryItemKind = 'audio-file' | 'saved-clip'
 
 export interface ProjectSavedPayload {
   filePath: string
@@ -620,7 +661,7 @@ export function isClipAckPayload(value: unknown): value is ClipAckPayload {
     isPlainObject(value) &&
     typeof value.trackId === 'string' &&
     typeof value.clipId === 'string' &&
-    typeof value.filePath === 'string' &&
+    typeof value.libraryItemId === 'string' &&
     typeof value.ok === 'boolean' &&
     (value.error === undefined || typeof value.error === 'string')
   )
@@ -654,6 +695,8 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
     for (const item of value.library) {
       if (!isPlainObject(item)) return false
       if (typeof item.id !== 'string' || typeof item.filePath !== 'string') return false
+      if (item.kind !== undefined && item.kind !== 'audio-file' && item.kind !== 'saved-clip') return false
+      if (item.name !== undefined && typeof item.name !== 'string') return false
       if (item.fileName !== undefined && typeof item.fileName !== 'string') return false
       if (item.durationMs !== undefined && typeof item.durationMs !== 'number') return false
       if (item.sampleRate !== undefined && typeof item.sampleRate !== 'number') return false
@@ -669,7 +712,15 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
       if (item.beatAnchorSec !== undefined && typeof item.beatAnchorSec !== 'number') return false
       if (item.playbackFilePath !== undefined && typeof item.playbackFilePath !== 'string') return false
       if (item.variableTempo !== undefined && typeof item.variableTempo !== 'boolean') return false
+      if (item.sourceItemId !== undefined && typeof item.sourceItemId !== 'string') return false
+      if (item.sourceClipId !== undefined && typeof item.sourceClipId !== 'string') return false
+      if (item.sourceInMs !== undefined && typeof item.sourceInMs !== 'number') return false
+      if (item.sourceDurationMs !== undefined && typeof item.sourceDurationMs !== 'number') return false
+      if (item.collapsed !== undefined && typeof item.collapsed !== 'boolean') return false
       if (item.unresolved !== undefined && typeof item.unresolved !== 'boolean') return false
+      if (item.kind === 'saved-clip') {
+        if (typeof item.sourceInMs !== 'number' || typeof item.sourceDurationMs !== 'number') return false
+      }
     }
   }
   if (!Array.isArray(value.tracks)) return false
@@ -682,7 +733,7 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
       if (!isPlainObject(c)) return false
       if (
         typeof c.id !== 'string' ||
-        typeof c.filePath !== 'string' ||
+        typeof c.libraryItemId !== 'string' ||
         typeof c.offsetMs !== 'number' ||
         typeof c.durationMs !== 'number'
       ) {
@@ -690,6 +741,7 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
       }
       if (c.inMs !== undefined && typeof c.inMs !== 'number') return false
       if (c.colorIndex !== undefined && typeof c.colorIndex !== 'number') return false
+      if (c.name !== undefined && typeof c.name !== 'string') return false
       if (c.unresolved !== undefined && typeof c.unresolved !== 'boolean') return false
     }
   }

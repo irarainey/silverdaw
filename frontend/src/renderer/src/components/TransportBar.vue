@@ -225,6 +225,7 @@ function onToggleFollow(): void {
     <div class="flex items-center gap-1">
       <button
         type="button"
+        data-borderless-button="true"
         class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
         title="Skip to start"
         @click="onSkipBack"
@@ -240,6 +241,7 @@ function onToggleFollow(): void {
       </button>
       <button
         type="button"
+        data-borderless-button="true"
         class="rounded p-2 hover:bg-blue-600 hover:text-white"
         :class="transport.isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
         :title="transport.isPlaying ? 'Pause' : 'Play'"
@@ -266,6 +268,7 @@ function onToggleFollow(): void {
       </button>
       <button
         type="button"
+        data-borderless-button="true"
         class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
         title="Skip to end"
         @click="onSkipForward"
@@ -282,6 +285,7 @@ function onToggleFollow(): void {
       <div class="mx-1 h-7 w-px bg-zinc-800" />
       <button
         type="button"
+        data-borderless-button="true"
         class="rounded p-2 hover:bg-zinc-800"
         :class="ui.followPlayback ? 'text-blue-400 hover:text-blue-300' : 'text-zinc-500 hover:text-zinc-300'"
         :title="ui.followPlayback ? 'Follow playback (on) — timeline scrolls with the playhead' : 'Follow playback (off) — timeline stays put during playback'"

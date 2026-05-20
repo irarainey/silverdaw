@@ -80,6 +80,7 @@ describe('libraryStore', () => {
     expect(library.items).toHaveLength(1)
     expect(library.items[0]).toMatchObject({
       id,
+      kind: 'audio-file',
       durationMs: 2_000,
       sampleRate: 48_000,
       channelCount: 1,
@@ -89,13 +90,89 @@ describe('libraryStore', () => {
     expect(sendMock).toHaveBeenCalledWith('LIBRARY_ADD', {
       itemId: 'l1',
       filePath: 'C:\\audio\\loop.wav',
+      kind: 'audio-file',
+      name: undefined,
       fileName: 'loop.wav',
       durationMs: 1_000,
       sampleRate: 44_100,
       channelCount: 2,
       playbackFilePath: undefined,
-      key: 'A minor'
+      key: 'A minor',
+      sourceItemId: undefined,
+      sourceClipId: undefined,
+      sourceInMs: undefined,
+      sourceDurationMs: undefined
     })
+  })
+
+  it('saves reusable clips as derived library children of their source', () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\song.wav',
+      fileName: 'song.wav',
+      durationMs: 10_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    sendMock.mockClear()
+
+    const savedId = library.addSavedClipFromTimelineClip({
+      id: 'c1',
+      trackId: 't1',
+      libraryItemId: sourceId,
+      filePath: 'C:\\audio\\song.wav',
+      playbackFilePath: 'C:\\audio\\song.wav',
+      fileName: 'song.wav',
+      startMs: 4_000,
+      inMs: 2_000,
+      durationMs: 1_500,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      unresolved: false
+    })
+    const duplicateId = library.addSavedClipFromTimelineClip({
+      id: 'c2',
+      trackId: 't1',
+      libraryItemId: sourceId,
+      filePath: 'C:\\audio\\song.wav',
+      fileName: 'song.wav',
+      startMs: 6_000,
+      inMs: 2_000,
+      durationMs: 1_500,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      unresolved: false
+    })
+
+    expect(savedId).toBe('l2')
+    expect(duplicateId).toBe(savedId)
+    expect(library.items).toHaveLength(2)
+    expect(library.items[1]).toMatchObject({
+      id: savedId,
+      kind: 'saved-clip',
+      filePath: 'C:\\audio\\song.wav',
+      durationMs: 1_500,
+      derivedFrom: {
+        sourceItemId: sourceId,
+        sourceClipId: 'c1',
+        inMs: 2_000,
+        durationMs: 1_500
+      }
+    })
+    expect(library.isItemInUse(sourceId)).toBe(true)
+    expect(library.isItemInUse(savedId ?? '')).toBe(false)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ADD', expect.objectContaining({
+      itemId: savedId,
+      kind: 'saved-clip',
+      sourceItemId: sourceId,
+      sourceClipId: 'c1',
+      sourceInMs: 2_000,
+      sourceDurationMs: 1_500
+    }))
   })
 
   it('hydrates snapshot items without echoing them to the backend', () => {
@@ -184,6 +261,7 @@ describe('libraryStore', () => {
     project.addClipToTrack(
       trackId,
       {
+        libraryItemId: usedItemId,
         filePath: 'C:\\audio\\used.wav',
         fileName: 'used.wav',
         durationMs: 1_000,

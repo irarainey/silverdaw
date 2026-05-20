@@ -41,6 +41,7 @@ const notifications = useNotificationsStore()
         <span class="flex-1 wrap-break-word text-sm leading-snug">{{ n.message }}</span>
         <button
           type="button"
+          data-borderless-button="true"
           class="-mt-0.5 -mr-1 ml-1 shrink-0 rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
           title="Dismiss"
           @click="notifications.dismiss(n.id)"

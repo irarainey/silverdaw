@@ -34,15 +34,31 @@ const juce::Identifier ProjectState::kBeatAnchorSec{"beatAnchorSec"};
 const juce::Identifier ProjectState::kPlaybackFilePath{"playbackFilePath"};
 const juce::Identifier ProjectState::kVariableTempo{"variableTempo"};
 const juce::Identifier ProjectState::kKey{"key"};
+const juce::Identifier ProjectState::kKind{"kind"};
+const juce::Identifier ProjectState::kSourceItemId{"sourceItemId"};
+const juce::Identifier ProjectState::kSourceClipId{"sourceClipId"};
+const juce::Identifier ProjectState::kSourceInMs{"sourceInMs"};
+const juce::Identifier ProjectState::kSourceDurationMs{"sourceDurationMs"};
+const juce::Identifier ProjectState::kDisplayName{"displayName"};
+const juce::Identifier ProjectState::kClipName{"clipName"};
+const juce::Identifier ProjectState::kCollapsed{"collapsed"};
+const juce::Identifier ProjectState::kLibraryItemId{"libraryItemId"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
 
 ProjectState::ProjectState() : root(kProject)
 {
-    // The initial `name=Untitled` write happens BEFORE we attach the
-    // listener so it doesn't count as a user-initiated edit (it's part
-    // of constructing a clean, empty project).
+    // The initial `name=Untitled` write and the empty container children
+    // happen BEFORE we attach the listener so they don't count as
+    // user-initiated edits. Adding the LIBRARY / MARKERS containers up
+    // front means add-then-remove cycles return to byte-identical state
+    // (the containers don't appear and disappear with their contents),
+    // so the clean-snapshot comparison correctly reports "clean" after
+    // a net-zero edit sequence.
     root.setProperty(kName, kDefaultName, nullptr);
+    root.appendChild(juce::ValueTree(kLibrary), nullptr);
+    root.appendChild(juce::ValueTree(kMarkers), nullptr);
+    cleanSnapshot = root.createCopy();
     root.addListener(this);
 }
 
@@ -53,8 +69,12 @@ ProjectState::~ProjectState()
 
 void ProjectState::markClean()
 {
-    if (!dirty) return;
-    setDirty(false);
+    // Capture the current tree as the new clean baseline so subsequent
+    // mutations are compared against the just-saved state. Any net-zero
+    // edit sequence (e.g. add + remove a library item) will then
+    // correctly return the project to its clean status.
+    cleanSnapshot = root.createCopy();
+    if (dirty) setDirty(false);
 }
 
 void ProjectState::setDirtyChangedCallback(DirtyChangedCallback callback)
@@ -72,31 +92,46 @@ void ProjectState::setDirty(bool d)
     }
 }
 
+void ProjectState::recomputeDirty()
+{
+    // Compare the live tree against the last clean snapshot. If they
+    // match, the project has effectively returned to its saved state
+    // and should be considered clean again — even if individual
+    // listener callbacks tried to flip dirty=true along the way.
+    if (!cleanSnapshot.isValid())
+    {
+        setDirty(true);
+        return;
+    }
+    const bool actuallyDirty = !root.isEquivalentTo(cleanSnapshot);
+    setDirty(actuallyDirty);
+}
+
 void ProjectState::valueTreePropertyChanged(juce::ValueTree& /*tree*/,
                                             const juce::Identifier& /*property*/)
 {
     if (suppressDirtyTransitions) return;
-    setDirty(true);
+    recomputeDirty();
 }
 
 void ProjectState::valueTreeChildAdded(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/)
 {
     if (suppressDirtyTransitions) return;
-    setDirty(true);
+    recomputeDirty();
 }
 
 void ProjectState::valueTreeChildRemoved(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/,
                                          int /*index*/)
 {
     if (suppressDirtyTransitions) return;
-    setDirty(true);
+    recomputeDirty();
 }
 
 void ProjectState::valueTreeChildOrderChanged(juce::ValueTree& /*parent*/, int /*oldIndex*/,
                                               int /*newIndex*/)
 {
     if (suppressDirtyTransitions) return;
-    setDirty(true);
+    recomputeDirty();
 }
 
 juce::String ProjectState::getName() const
@@ -240,13 +275,13 @@ juce::StringArray ProjectState::getTrackClipIds(const juce::String& trackId) con
 }
 
 // `addClip` carries multiple adjacent `juce::String` parameters because the
-// bridge envelope itself uses three distinct string fields. The parameter
+// bridge envelope itself uses two distinct string fields. The parameter
 // order is a load-bearing wire-protocol convention; swapping is silenced.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-bool ProjectState::addClip(const juce::String& trackId, const juce::String& clipId, const juce::String& filePath,
+bool ProjectState::addClip(const juce::String& trackId, const juce::String& clipId, const juce::String& libraryItemId,
                            double offsetMs, double durationMs, double inMs, int colorIndex)
 {
-    if (trackId.isEmpty() || clipId.isEmpty())
+    if (trackId.isEmpty() || clipId.isEmpty() || libraryItemId.isEmpty())
     {
         return false;
     }
@@ -261,7 +296,7 @@ bool ProjectState::addClip(const juce::String& trackId, const juce::String& clip
     }
     juce::ValueTree clip(kClip);
     clip.setProperty(kId, clipId, &undoManager);
-    clip.setProperty(kFilePath, filePath, &undoManager);
+    clip.setProperty(kLibraryItemId, libraryItemId, &undoManager);
     clip.setProperty(kOffsetMs, offsetMs, &undoManager);
     clip.setProperty(kInMs, inMs, &undoManager);
     clip.setProperty(kDurationMs, durationMs, &undoManager);
@@ -381,6 +416,44 @@ bool ProjectState::setClipFilePath(const juce::String& clipId, const juce::Strin
     return true;
 }
 
+juce::String ProjectState::getClipLibraryItemId(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return {};
+    return clip.getProperty(kLibraryItemId, {}).toString();
+}
+
+bool ProjectState::setClipLibraryItemId(const juce::String& clipId, const juce::String& libraryItemId)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+    clip.setProperty(kLibraryItemId, libraryItemId, &undoManager);
+    return true;
+}
+
+bool ProjectState::setClipName(const juce::String& clipId, const juce::String& name)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+    const auto trimmed = name.trim();
+    if (trimmed.isEmpty())
+    {
+        clip.removeProperty(kClipName, &undoManager);
+    }
+    else
+    {
+        clip.setProperty(kClipName, trimmed, &undoManager);
+    }
+    return true;
+}
+
+juce::String ProjectState::getClipName(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return {};
+    return clip.getProperty(kClipName, {}).toString();
+}
+
 juce::String ProjectState::getClipTrackId(const juce::String& clipId) const
 {
     const auto clip = findClip(clipId);
@@ -398,7 +471,16 @@ juce::String ProjectState::getClipFilePath(const juce::String& clipId) const
     {
         return {};
     }
-    return clip.getProperty(kFilePath).toString();
+    // Source-of-truth is the linked library item; fall back to a
+    // legacy `filePath` property if present (older projects that
+    // pre-date the library-item-id refactor).
+    const juce::String libraryItemId = clip.getProperty(kLibraryItemId, {}).toString();
+    if (libraryItemId.isNotEmpty())
+    {
+        const auto path = getLibraryItemFilePath(libraryItemId);
+        if (path.isNotEmpty()) return path;
+    }
+    return clip.getProperty(kFilePath, {}).toString();
 }
 
 double ProjectState::getViewPxPerSecond() const
@@ -470,10 +552,15 @@ void ProjectState::setProjectLengthMs(double lengthMs)
 }
 
 bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName,
-                                  double durationMs, int sampleRate, int channelCount,
-                                  const juce::String& playbackPath, const juce::String& key)
+                                   double durationMs, int sampleRate, int channelCount,
+                                   const juce::String& playbackPath, const juce::String& key,
+                                   const juce::String& kind, const juce::String& displayName,
+                                   const juce::String& sourceItemId, const juce::String& sourceClipId,
+                                   double sourceInMs, double sourceDurationMs,
+                                   int collapsedFlag)
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return false;
+    const auto normalisedKind = kind == "saved-clip" ? juce::String("saved-clip") : juce::String("audio-file");
     auto library = root.getChildWithName(kLibrary);
     if (!library.isValid())
     {
@@ -489,6 +576,11 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
         if (item.getProperty(kId).toString() == itemId)
         {
             item.setProperty(kFilePath, filePath, nullptr);
+            item.setProperty(kKind, normalisedKind, nullptr);
+            if (displayName.isNotEmpty())
+            {
+                item.setProperty(kDisplayName, displayName, nullptr);
+            }
             if (fileName.isNotEmpty())
             {
                 item.setProperty(kName, fileName, nullptr);
@@ -513,12 +605,41 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
             {
                 item.setProperty(kKey, key, nullptr);
             }
+            if (sourceItemId.isNotEmpty())
+            {
+                item.setProperty(kSourceItemId, sourceItemId, nullptr);
+            }
+            if (sourceClipId.isNotEmpty())
+            {
+                item.setProperty(kSourceClipId, sourceClipId, nullptr);
+            }
+            if (sourceInMs >= 0.0)
+            {
+                item.setProperty(kSourceInMs, sourceInMs, nullptr);
+            }
+            if (sourceDurationMs >= 0.0)
+            {
+                item.setProperty(kSourceDurationMs, sourceDurationMs, nullptr);
+            }
+            if (collapsedFlag == 1)
+            {
+                item.setProperty(kCollapsed, true, nullptr);
+            }
+            else if (collapsedFlag == 0)
+            {
+                item.removeProperty(kCollapsed, nullptr);
+            }
             return true;
         }
     }
     juce::ValueTree item(kLibraryItem);
     item.setProperty(kId, itemId, nullptr);
     item.setProperty(kFilePath, filePath, nullptr);
+    item.setProperty(kKind, normalisedKind, nullptr);
+    if (displayName.isNotEmpty())
+    {
+        item.setProperty(kDisplayName, displayName, nullptr);
+    }
     if (fileName.isNotEmpty())
     {
         item.setProperty(kName, fileName, nullptr);
@@ -542,6 +663,26 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
     if (key.isNotEmpty())
     {
         item.setProperty(kKey, key, nullptr);
+    }
+    if (sourceItemId.isNotEmpty())
+    {
+        item.setProperty(kSourceItemId, sourceItemId, nullptr);
+    }
+    if (sourceClipId.isNotEmpty())
+    {
+        item.setProperty(kSourceClipId, sourceClipId, nullptr);
+    }
+    if (sourceInMs >= 0.0)
+    {
+        item.setProperty(kSourceInMs, sourceInMs, nullptr);
+    }
+    if (sourceDurationMs >= 0.0)
+    {
+        item.setProperty(kSourceDurationMs, sourceDurationMs, nullptr);
+    }
+    if (collapsedFlag == 1)
+    {
+        item.setProperty(kCollapsed, true, nullptr);
     }
     library.appendChild(item, nullptr);
     return true;
@@ -651,6 +792,56 @@ bool ProjectState::setLibraryItemPlaybackPath(const juce::String& itemId, const 
     return false;
 }
 
+bool ProjectState::setLibraryItemFilePath(const juce::String& itemId, const juce::String& filePath)
+{
+    if (filePath.isEmpty()) return false;
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            item.setProperty(kFilePath, filePath, &undoManager);
+            // Clear the cached playback path — the new source needs to
+            // be decoded again before playback can use a WAV cache.
+            item.removeProperty(kPlaybackFilePath, &undoManager);
+            return true;
+        }
+    }
+    return false;
+}
+
+juce::String ProjectState::getLibraryItemFilePath(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return {};
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            return item.getProperty(kFilePath, {}).toString();
+        }
+    }
+    return {};
+}
+
+juce::String ProjectState::getLibraryItemPlaybackPath(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return {};
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            return item.getProperty(kPlaybackFilePath, {}).toString();
+        }
+    }
+    return {};
+}
+
 bool ProjectState::setLibraryItemKey(const juce::String& itemId, const juce::String& key)
 {
     auto library = root.getChildWithName(kLibrary);
@@ -700,7 +891,8 @@ juce::String ProjectState::getLibraryItemPlaybackPathForSource(const juce::Strin
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(kFilePath).toString() == sourceFilePath)
+        if (item.getProperty(kKind, "audio-file").toString() == "audio-file"
+            && item.getProperty(kFilePath).toString() == sourceFilePath)
         {
             return item.getProperty(kPlaybackFilePath, {}).toString();
         }
@@ -738,7 +930,8 @@ bool ProjectState::hasLibraryItemForPath(const juce::String& filePath) const
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(kFilePath).toString() == filePath) return true;
+        if (item.getProperty(kKind, "audio-file").toString() == "audio-file"
+            && item.getProperty(kFilePath).toString() == filePath) return true;
     }
     return false;
 }
@@ -750,7 +943,8 @@ double ProjectState::getLibraryItemBpmForPath(const juce::String& filePath) cons
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(kFilePath).toString() == filePath)
+        if (item.getProperty(kKind, "audio-file").toString() == "audio-file"
+            && item.getProperty(kFilePath).toString() == filePath)
         {
             return static_cast<double>(item.getProperty(kBpm, 0.0));
         }
@@ -771,6 +965,12 @@ juce::var ProjectState::libraryAsJson() const
         obj->setProperty("id", item.getProperty(kId).toString());
         const juce::String filePath = item.getProperty(kFilePath).toString();
         obj->setProperty("filePath", filePath);
+        const auto kind = item.getProperty(kKind, "audio-file").toString();
+        obj->setProperty("kind", kind);
+        if (item.hasProperty(kDisplayName))
+        {
+            obj->setProperty("name", item.getProperty(kDisplayName).toString());
+        }
         if (item.hasProperty(kName))
         {
             obj->setProperty("fileName", item.getProperty(kName).toString());
@@ -805,6 +1005,26 @@ juce::var ProjectState::libraryAsJson() const
         if (item.hasProperty(kVariableTempo) && bool(item.getProperty(kVariableTempo)))
         {
             obj->setProperty("variableTempo", true);
+        }
+        if (item.hasProperty(kSourceItemId))
+        {
+            obj->setProperty("sourceItemId", item.getProperty(kSourceItemId).toString());
+        }
+        if (item.hasProperty(kSourceClipId))
+        {
+            obj->setProperty("sourceClipId", item.getProperty(kSourceClipId).toString());
+        }
+        if (item.hasProperty(kSourceInMs))
+        {
+            obj->setProperty("sourceInMs", static_cast<double>(item.getProperty(kSourceInMs, 0.0)));
+        }
+        if (item.hasProperty(kSourceDurationMs))
+        {
+            obj->setProperty("sourceDurationMs", static_cast<double>(item.getProperty(kSourceDurationMs, 0.0)));
+        }
+        if (item.hasProperty(kCollapsed) && bool(item.getProperty(kCollapsed)))
+        {
+            obj->setProperty("collapsed", true);
         }
         // Same unresolved-flag pattern as clips so the renderer can
         // grey-out library cards whose source file has gone missing
@@ -980,8 +1200,8 @@ juce::var ProjectState::tracksAsJson() const
             }
             auto* clipObj = new juce::DynamicObject();
             clipObj->setProperty("id", clip.getProperty(kId).toString());
-            const juce::String filePath = clip.getProperty(kFilePath).toString();
-            clipObj->setProperty("filePath", filePath);
+            const juce::String libraryItemId = clip.getProperty(kLibraryItemId, {}).toString();
+            clipObj->setProperty("libraryItemId", libraryItemId);
             clipObj->setProperty("offsetMs", static_cast<double>(clip.getProperty(kOffsetMs, 0.0)));
             clipObj->setProperty("inMs", static_cast<double>(clip.getProperty(kInMs, 0.0)));
             clipObj->setProperty("durationMs", static_cast<double>(clip.getProperty(kDurationMs, 0.0)));
@@ -992,12 +1212,18 @@ juce::var ProjectState::tracksAsJson() const
             {
                 clipObj->setProperty("colorIndex", static_cast<int>(clip.getProperty(kColorIndex, -1)));
             }
-            // Flag clips whose source file is missing from disk so the
-            // renderer can render them greyed-out and prompt the user
-            // to relink. We test by path: an empty path is also treated
-            // as unresolved (defensive — shouldn't happen, but covers
-            // the edge case).
-            const bool unresolved = filePath.isEmpty() || !juce::File(filePath).existsAsFile();
+            if (clip.hasProperty(kClipName))
+            {
+                clipObj->setProperty("name", clip.getProperty(kClipName).toString());
+            }
+            // Resolve the source file through the linked library item so
+            // the renderer can flag clips whose underlying file went
+            // missing since the project was last saved. An empty library
+            // item id (defensive — shouldn't happen) is also treated as
+            // unresolved.
+            const juce::String resolvedFilePath = getLibraryItemFilePath(libraryItemId);
+            const bool unresolved =
+                libraryItemId.isEmpty() || resolvedFilePath.isEmpty() || !juce::File(resolvedFilePath).existsAsFile();
             if (unresolved)
             {
                 clipObj->setProperty("unresolved", true);
@@ -1026,6 +1252,17 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
     root.removeAllChildren(nullptr);
     root.removeAllProperties(nullptr);
     root.copyPropertiesAndChildrenFrom(newTree, nullptr);
+    // Ensure the standard container children exist even if the loaded
+    // project file pre-dates them, so subsequent add+remove cycles
+    // round-trip cleanly against the clean-snapshot baseline.
+    if (!root.getChildWithName(kLibrary).isValid())
+    {
+        root.appendChild(juce::ValueTree(kLibrary), nullptr);
+    }
+    if (!root.getChildWithName(kMarkers).isValid())
+    {
+        root.appendChild(juce::ValueTree(kMarkers), nullptr);
+    }
     undoManager.clearUndoHistory();
     suppressDirtyTransitions = false;
     // A load is by definition clean (in-memory state matches disk).
