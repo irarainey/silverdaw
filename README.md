@@ -77,17 +77,29 @@ Silverdaw currently supports the core arrangement workflow:
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
 - Move clips across tracks with grid snapping, source-beat snapping and `Alt` bypass.
 - Analyse imported audio for key, BPM, beat positions and variable-tempo status.
-- Save and reopen `.silverdaw` projects with tracks, clips, library items, markers,
-  view state and dirty-state prompts.
-- Relink missing source files after loading a project.
+- Save reusable saved clips to the library from any timeline clip; saved clips are
+  grouped under their source file and can be dragged back to the timeline as a clip
+  with the same source window.
+- Inline rename for library items (single-click into the name) and timeline clips
+  (double-click the clip title). Renames persist with the project; if the renamed
+  clip is saved to the library, the library entry inherits the same name.
+- Save and reopen `.silverdaw` projects with tracks, clips (referencing library
+  items by id), library catalogue, markers, view state and dirty-state prompts.
+- Relink a missing source file at the **library item** level — every clip
+  referencing that item picks up the new file automatically.
 - Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
   file association.
 
-The main remaining roadmap areas are warp / pitch shifting, region selection, sample
-creation from clip ranges, library search / tags / list view, ffmpeg-backed decoding for
-unsupported formats, mixer / effects / automation, mixdown export, stem separation, loop
-slicing, a fine-clip editor, autosave / recovery, recent projects and CI / backend test
-coverage.
+Playback is always served from the decoded WAV cache; original compressed sources
+(MP3, M4A, …) are only used to generate that cache. This keeps the read-ahead
+buffer's latency-hiding contract intact at clip boundaries so back-to-back loops
+play seamlessly.
+
+The main remaining roadmap areas are warp / pitch shifting, region selection, bouncing a
+clip range into a new sample (the saved-clip mechanism above is non-destructive only),
+library search / tags / list view, ffmpeg-backed decoding for unsupported formats, mixer
+/ effects / automation, mixdown export, stem separation, loop slicing, a fine-clip editor,
+autosave / recovery, recent projects and CI / backend test coverage.
 
 ## Bridge protocol
 
@@ -95,9 +107,13 @@ The bridge is **text only**. Every envelope is a JSON `{ type, payload }` frame:
 
 ```json
 { "type": "TRANSPORT_PLAY" }
-{ "type": "CLIP_ADD", "payload": { "trackId": "...", "clipId": "...", "filePath": "...", "positionMs": 0 } }
+{ "type": "CLIP_ADD", "payload": { "trackId": "...", "clipId": "...", "libraryItemId": "...", "positionMs": 0 } }
 { "type": "WAVEFORM_REQUEST", "payload": { "clipId": "..." } }
 ```
+
+Clips reference their audio via `libraryItemId` — the source file path lives only on the
+library item itself. The backend resolves the actual on-disk file (always preferring the
+decoded-WAV cache) at the time it loads the clip's audio source.
 
 - `type` is an UPPER_SNAKE_CASE discriminator.
 - `payload` is a JSON object or omitted.
@@ -133,42 +149,54 @@ the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
   TRACK[id, name, gain]
-    CLIP[id, filePath, offsetMs, inMs, durationMs, colorIndex?]
+    CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?]
   LIBRARY
-    ITEM[id, filePath, fileName?, durationMs, sampleRate, channelCount,
-         key?, bpm?, beats?, beatAnchorSec?, playbackFilePath?, variableTempo?]
+    ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
+         sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?,
+         playbackFilePath?, variableTempo?, collapsed?,
+         sourceItemId?, sourceClipId?, sourceInMs?, sourceDurationMs?]
   MARKERS
     MARKER[id, positionMs]
 ```
 
-`CLIP` carries a non-destructive trim window: `offsetMs` is the timeline start,
-`inMs` is where in the source file playback begins (≥ 0), and `durationMs` is
-how long the clip plays for from that point. Split, duplicate and edge-drag
-trim all manipulate this window without ever re-decoding the source — peaks
-are computed once per file and the renderer windows into them at draw time.
-`colorIndex` is an optional 0..15 per-clip palette override; when absent the
-clip inherits its host track's colour. `ITEM.key` holds the renderer's detected
-musical key. `ITEM.bpm` + `ITEM.beats` (an array of beat positions in seconds
-from the start of the source) + `ITEM.variableTempo` hold the BTrack analysis
-output (see [Audio analysis](#audio-analysis) below). The durable library fields
-are stored once and round-tripped through save/load so a reopened project doesn't
-have to re-analyse every imported file. Timeline markers are stored as `MARKER`
-children with absolute project positions in milliseconds, round-trip through
-`PROJECT_STATE`, and mark the project dirty when added, moved or removed.
+`CLIP` references the audio it plays via `libraryItemId`; the underlying source file path
+lives only on the library item. `offsetMs` is the timeline start, `inMs` is where in the
+source file playback begins (≥ 0), and `durationMs` is how long the clip plays for from
+that point. Split, duplicate and edge-drag trim all manipulate this window without ever
+re-decoding the source — peaks are computed once per file and the renderer windows into
+them at draw time. `colorIndex` is an optional 0..15 per-clip palette override; when
+absent the clip inherits its host track's colour. `clipName` is an optional user-set
+display name for the clip (double-click the clip's title strip to rename).
+
+`ITEM.kind` is either `audio-file` (a normal imported source) or `saved-clip` (a
+reusable region derived from a timeline clip). Saved-clip items share `filePath` with
+their parent audio-file item and carry `sourceItemId` / `sourceClipId` / `sourceInMs` /
+`sourceDurationMs` describing the trim window into the source. `displayName` is the
+user-facing name shown on library tiles. `collapsed` is a per-source UI flag that hides
+the saved-clip sub-list under a parent source. `ITEM.key`, `ITEM.bpm`, `ITEM.beats`,
+`ITEM.beatAnchorSec` and `ITEM.variableTempo` hold the BTrack analysis output (see
+[Audio analysis](#audio-analysis) below). `ITEM.playbackFilePath` is the on-disk path
+of the decoded-WAV cache the audio engine reads from. The durable library fields are
+stored once and round-tripped through save/load so a reopened project doesn't have to
+re-analyse every imported file. Timeline markers are stored as `MARKER` children with
+absolute project positions in milliseconds, round-trip through `PROJECT_STATE`, and
+mark the project dirty when added, moved or removed.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
 The view-state properties (`viewPxPerSecond`, `viewScrollX`, `playheadMs`) bypass the
 dirty-flag listener via a `suppressDirtyTransitions` guard inside their setters — zooming,
 scrolling, or moving the playhead doesn't prompt an unsaved-changes dialog. Meaningful
-project edits (BPM, project length, marker add/move/remove, clip add/move/remove,
-gain changes, library import/remove, etc.) still mark the project dirty as normal
-property edits.
+project edits (BPM, project length, marker add/move/remove, clip add/move/remove/rename,
+gain changes, library import/remove/rename/relink, etc.) still mark the project dirty as
+normal property edits.
 
-The `LIBRARY` sub-tree carries the user's imported-but-not-yet-placed samples so the catalogue
-survives save / load. Durable library fields are persisted: id, source path, display file name,
-duration, sample rate, channel count, detected key, cached playback path, BPM, beat positions,
-beat anchor and variable-tempo flag. Cover art, ID3 tags, waveform peaks and playable bytes are
-not written into the project file; they are re-fetched or served from cache on load.
+The `LIBRARY` sub-tree carries the user's imported-but-not-yet-placed samples *and* every
+saved clip so the catalogue survives save / load. Durable library fields are persisted: id,
+kind, source path, display file name, display name override, duration, sample rate, channel
+count, detected key, cached playback path, BPM, beat positions, beat anchor, variable-tempo
+flag, collapse state and (for saved clips) the source-window pointers. Cover art, ID3 tags,
+waveform peaks and playable bytes are not written into the project file; they are re-fetched
+or served from cache on load.
 
 **Save / load** is via `.silverdaw` files — a versioned JSON serialisation. A small outer
 object carries `schemaVersion`, `appVersion`, and an ISO `savedAt` timestamp; the `project`
@@ -182,26 +210,31 @@ existing `.silverdaw` file, so view state survives reopen without saving unrelat
 project edits or changing the dirty flag. Logic lives in
 [`backend/src/ProjectFile.cpp`](backend/src/ProjectFile.cpp).
 
-**Missing files** — on every `tracksAsJson` / `libraryAsJson` call, the backend stat()s each
-referenced source path. Anything that's gone gets an `unresolved: true` flag in the
-`PROJECT_STATE` snapshot. The renderer:
+**Missing files** — on every `tracksAsJson` / `libraryAsJson` call, the backend resolves
+each clip's library item and stat()s the underlying source path. Anything that's gone
+gets an `unresolved: true` flag in the `PROJECT_STATE` snapshot. The renderer:
 
 - Draws affected clips in a muted grey fill + red border so they're visibly broken.
-- Auto-pops the **RelinkDialog** listing each missing clip with a *Locate file…* button. Each
-  successful pick emits `CLIP_RELINK { clipId, filePath }`; the backend updates the project
-  tree and re-creates the engine source, then rebroadcasts `PROJECT_STATE` which clears the
-  `unresolved` flag on the relinked clip.
+- Auto-pops the **RelinkDialog** listing each missing clip with a *Locate file…* button.
+  Each successful pick emits `LIBRARY_ITEM_RELINK { itemId, filePath }`; the backend
+  updates the library item's filePath, clears its cached WAV path (so the new source
+  gets re-decoded) and rebuilds every clip referencing that item against the new file,
+  then rebroadcasts `PROJECT_STATE` which clears the `unresolved` flag on each clip.
 - Surfaces a single info toast summarising the count.
-- Lets the user re-enter the relink flow later via the **Relink…** entry on the clip's
-  right-click menu (only visible when the clip is unresolved).
+- Lets the user re-enter the relink flow later via the **Relink…** entry on any
+  unresolved clip's right-click menu.
 
-**Dirty tracking** is driven by a `juce::ValueTree::Listener` on `ProjectState` that flips an
-internal flag on every mutation. The flag is cleared by `markClean()` (called after load + a
-successful save) and changes are broadcast as `PROJECT_DIRTY { dirty }` envelopes. The renderer
-mirrors it as `projectStore.isDirty`, shows a leading `•` next to the project name in the title
-bar when dirty, and intercepts **File → New / Open / Exit** and the window close button to
-prompt with **Save / Don't save / Cancel** before discarding work. When the project is clean,
-those same leave-project paths silently flush view state only.
+**Dirty tracking** is content-based. `ProjectState` snapshots its `ValueTree` on
+construction, after `markClean()` and after `replaceTree()` (load). A
+`juce::ValueTree::Listener` fires on every mutation and compares the live tree against
+the clean snapshot via `isEquivalentTo`. If they match — for example after a sequence
+that nets to zero (add a library item, then remove it) — the project returns to clean.
+Otherwise it's dirty. Changes are broadcast as `PROJECT_DIRTY { dirty }` envelopes. The
+renderer mirrors it as `projectStore.isDirty`, shows a leading `•` next to the project
+name in the title bar when dirty, and intercepts **File → New / Open / Exit** and the
+window close button to prompt with **Save / Don't save / Cancel** before discarding
+work. When the project is clean, those same leave-project paths silently flush view
+state only.
 
 On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
 
@@ -349,17 +382,31 @@ The OS busy cursor stays in its `progress` state through all three stages.
 
 ## Library panel
 
-The bottom library panel stores imported audio files as draggable tiles. Tiles wrap to
-the available width and the panel scrolls vertically when there are more tiles than fit;
-it does not expose a horizontal scrollbar. Each tile shows duration, detected key and
-detected BPM when those fields are available.
+The bottom library panel stores imported audio files and saved clips as draggable tiles.
+Tiles wrap to the available width and the panel scrolls vertically when there are more
+tiles than fit; it does not expose a horizontal scrollbar. Each source tile shows
+duration, detected key and detected BPM when those fields are available.
+
+**Saved clips** — right-click a timeline clip and choose **Save clip to library** to
+turn its trim window into a reusable library entry. Saved clips are non-destructive
+references back into their source file (same audio, same WAV cache, same BPM / key)
+and are grouped underneath the source they came from. Each source group has a
+disclosure chevron that hides / shows its saved-clip list; the open/closed state
+persists with the project. Adding a new saved clip auto-expands the group so the new
+clip is immediately visible. Dragging a saved-clip tile onto a track creates a
+timeline clip with the same source window the saved clip describes.
+
+**Renaming** — single-click the name on any library tile (or pick **Rename…** from
+the right-click menu) to edit it inline. Saved clips inherit a sensible default name
+based on their source and offset; renaming is the same flow.
 
 Double-click a tile to open a read-only information dialog. The same dialog is available
 from the tile's right-click context menu via **Show information**. The dialog shows file
 details, technical audio details, detected BPM/beat/key metadata, tag metadata, cover art
 and which tracks currently use the library item. The right-click context menu also includes
-**Reanalyse clip**, which refreshes the decoded cache, BPM/beat analysis and musical key,
-and **Delete**, which is disabled while the library item is used by any clip.
+**Reanalyse file** (audio-file items only), which refreshes the decoded cache, BPM/beat
+analysis and musical key, and **Delete**, which is disabled while the library item (or any
+of its derived saved clips) is in use by a timeline clip.
 
 ## Preferences
 
@@ -425,9 +472,11 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Delete` | Delete the selected clip. |
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip — on the source track it lands immediately after the source clip; on a different (selected) track it lands at the playhead. A toast appears if the slot is already occupied. |
-| **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Save as Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
-| Double-click a **library tile** | Open the read-only library item information dialog. |
-| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Reanalyse clip**, and **Delete**. Delete is disabled while the item is in use. |
+| **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Bounce to Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
+| Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
+| Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
+| Double-click a **library tile** (off the name) | Open the read-only library item information dialog. |
+| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename…**, **Reanalyse file** (audio-file items only), and **Delete**. Delete is disabled while the item is in use. |
 
 Clicking **Skip to start** in the transport bar rewinds the playhead and returns the
 timeline's horizontal scroll position to the start. **Skip to end** and the matching
