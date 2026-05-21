@@ -4,7 +4,8 @@
 export interface MenuItemDef {
   /** Visible label, or `null` for a separator. */
   label: string | null
-  /** Action ID handled in the main process; omitted for separators. */
+  /** Action ID handled in the main process; omitted for separators
+   *  and for parent items that own a `submenu`. */
   action?: string
   /** Display-only keyboard shortcut hint, e.g. "Ctrl+S". */
   accelerator?: string
@@ -14,6 +15,10 @@ export interface MenuItemDef {
    *  (e.g. the file path for a recent-projects entry). Independent of
    *  `accelerator`. */
   hint?: string
+  /** Nested submenu items. When present, the entry renders as a
+   *  flyout parent (with a `▸` chevron); clicking / hovering opens
+   *  the submenu to the right rather than firing an action. */
+  submenu?: MenuItemDef[]
 }
 
 export interface MenuDef {
@@ -32,21 +37,36 @@ export interface BuildMenusOptions {
    */
   debugMode: boolean
   /**
-   * Recent Projects MRU, head = most recent. Up to 5 entries are
-   * rendered as flat items inside the File menu (the menu engine
-   * doesn't currently model nested submenus); the remainder are
-   * accessible from the Start Screen.
+   * Recent Projects MRU, head = most recent. Surfaced under
+   * File > Recent Projects ▸ as a flyout submenu. The Start Screen
+   * lists the same MRU in full as a parallel entry point.
    */
   recentProjects?: string[]
 }
 
 /** Max number of recent-project entries surfaced in the File menu. The
  *  Start Screen lists the full MRU; the menu is just a quick path. */
-const MAX_RECENT_IN_MENU = 5
+const MAX_RECENT_IN_MENU = 10
 
 function basename(path: string): string {
   const lastSep = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
   return lastSep >= 0 ? path.slice(lastSep + 1) : path
+}
+
+function buildRecentProjectsSubmenu(paths: string[]): MenuItemDef[] {
+  if (paths.length === 0) {
+    return [{ label: 'No recent projects', disabled: true }]
+  }
+  const items: MenuItemDef[] = paths.map((path, index) => ({
+    label: basename(path),
+    // Encode the index, not the path — Windows paths contain `\` and
+    // `:`, which would collide with any path-parsing scheme.
+    action: `file.openRecentByIndex:${index}`,
+    hint: path
+  }))
+  items.push(SEP)
+  items.push({ label: 'Clear Recent Projects', action: 'file.clearRecentProjects' })
+  return items
 }
 
 /**
@@ -56,19 +76,9 @@ function basename(path: string): string {
  */
 export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
   const recents = (opts.recentProjects ?? []).slice(0, MAX_RECENT_IN_MENU)
-  const recentItems: MenuItemDef[] = []
-  if (recents.length > 0) {
-    recentItems.push(SEP)
-    recents.forEach((path, index) => {
-      recentItems.push({
-        label: basename(path),
-        // Encode the index, not the path — Windows paths contain `\` and
-        // `:`, which would collide with any path-parsing scheme.
-        action: `file.openRecentByIndex:${index}`,
-        hint: path
-      })
-    })
-    recentItems.push({ label: 'Clear Recent', action: 'file.clearRecentProjects' })
+  const recentMenuItem: MenuItemDef = {
+    label: 'Recent Projects',
+    submenu: buildRecentProjectsSubmenu(recents)
   }
 
   const menus: MenuDef[] = [
@@ -77,7 +87,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
       items: [
         { label: 'New Project', action: 'file.newProject', accelerator: 'Ctrl+N' },
         { label: 'Open Project...', action: 'file.openProject', accelerator: 'Ctrl+O' },
-        ...recentItems,
+        recentMenuItem,
         SEP,
         { label: 'Save', action: 'file.save', accelerator: 'Ctrl+S' },
         { label: 'Save As...', action: 'file.saveAs', accelerator: 'Ctrl+Shift+S' },

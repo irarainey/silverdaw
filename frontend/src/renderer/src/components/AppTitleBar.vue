@@ -19,6 +19,11 @@ const visibleMenus = computed(() =>
 )
 
 const openIndex = ref<number | null>(null)
+/** Key of the currently-open submenu, formatted as
+ *  `<topMenuIndex>:<itemIndex>`. Null when no submenu is open. Only
+ *  one submenu can be open at a time; opening a new one closes the
+ *  previous. */
+const openSubmenuKey = ref<string | null>(null)
 const root = ref<HTMLElement | null>(null)
 
 const renaming = ref(false)
@@ -36,16 +41,39 @@ const renameTooltip = computed(() => {
 
 function toggle(i: number): void {
   openIndex.value = openIndex.value === i ? null : i
+  // Closing or switching the top-level menu must collapse any open
+  // submenu — its parent has gone away.
+  openSubmenuKey.value = null
 }
 
 function onHover(i: number): void {
   // Only switch menus on hover if a menu is already open (Windows behaviour).
-  if (openIndex.value !== null) openIndex.value = i
+  if (openIndex.value !== null) {
+    openIndex.value = i
+    openSubmenuKey.value = null
+  }
+}
+
+function onItemHover(menuIdx: number, itemIdx: number, item: MenuItemDef): void {
+  // Hovering a non-submenu item should retract any flyout that was
+  // open from an earlier sibling. Hovering a submenu parent opens its
+  // flyout — Windows-style "flyouts follow the pointer once a menu
+  // is open".
+  if (item.submenu && item.submenu.length > 0) {
+    openSubmenuKey.value = `${menuIdx}:${itemIdx}`
+  } else {
+    openSubmenuKey.value = null
+  }
 }
 
 function invoke(item: MenuItemDef): void {
+  // Submenu parents don't have actions — clicking the row just keeps
+  // (or opens) the flyout. Hover already handles open; nothing to do
+  // here.
+  if (item.submenu && item.submenu.length > 0) return
   if (item.disabled || !item.action) return
   openIndex.value = null
+  openSubmenuKey.value = null
   // Intercept the project-rename menu item directly — the rename input
   // lives in this component so it's simpler to switch into edit mode
   // here than to round-trip through main + the renderer-side
@@ -59,14 +87,6 @@ function invoke(item: MenuItemDef): void {
   // open-project flow (App.vue handleMenuAction). Forward them as
   // synthetic actions on the same `menu:action` channel so App.vue
   // sees a single dispatch point.
-  if (item.action.startsWith('file.openRecentByIndex:')) {
-    window.silverdaw.menuAction(item.action)
-    return
-  }
-  if (item.action === 'file.clearRecentProjects') {
-    window.silverdaw.menuAction(item.action)
-    return
-  }
   window.silverdaw.menuAction(item.action)
 }
 
@@ -93,11 +113,17 @@ function cancelRename(): void {
 
 function onDocumentClick(e: MouseEvent): void {
   if (!root.value) return
-  if (!root.value.contains(e.target as Node)) openIndex.value = null
+  if (!root.value.contains(e.target as Node)) {
+    openIndex.value = null
+    openSubmenuKey.value = null
+  }
 }
 
 function onKey(e: KeyboardEvent): void {
-  if (e.key === 'Escape') openIndex.value = null
+  if (e.key === 'Escape') {
+    openIndex.value = null
+    openSubmenuKey.value = null
+  }
 }
 
 onMounted(() => {
@@ -172,20 +198,63 @@ defineExpose({ startRename })
               v-if="item.label === null"
               class="my-1 border-t border-zinc-700"
             />
-            <button
+            <div
               v-else
-              type="button"
-              class="flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-600 disabled:hover:bg-transparent"
-              :disabled="item.disabled"
-              :title="item.hint"
-              @click="invoke(item)"
+              class="relative"
+              @mouseenter="onItemHover(i, j, item)"
             >
-              <span class="truncate">{{ item.label }}</span>
-              <span
-                v-if="item.accelerator"
-                class="ml-6 text-zinc-500"
-              >{{ item.accelerator }}</span>
-            </button>
+              <button
+                type="button"
+                class="flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-600 disabled:hover:bg-transparent"
+                :class="{ 'bg-zinc-800': openSubmenuKey === `${i}:${j}` }"
+                :disabled="item.disabled"
+                :title="item.hint"
+                @click="invoke(item)"
+              >
+                <span class="truncate">{{ item.label }}</span>
+                <span
+                  v-if="item.submenu && item.submenu.length > 0"
+                  class="ml-6 text-zinc-500"
+                  aria-hidden="true"
+                >▸</span>
+                <span
+                  v-else-if="item.accelerator"
+                  class="ml-6 text-zinc-500"
+                >{{ item.accelerator }}</span>
+              </button>
+
+              <!-- Flyout submenu. Anchored to the right edge of the
+                   parent row; `top-0` keeps the first sub-item aligned
+                   with the parent row, matching Windows menu behaviour. -->
+              <div
+                v-if="item.submenu && openSubmenuKey === `${i}:${j}`"
+                class="absolute left-full top-0 z-50 min-w-64 border border-zinc-700 bg-zinc-900 py-1 shadow-2xl"
+              >
+                <template
+                  v-for="(sub, k) in item.submenu"
+                  :key="k"
+                >
+                  <div
+                    v-if="sub.label === null"
+                    class="my-1 border-t border-zinc-700"
+                  />
+                  <button
+                    v-else
+                    type="button"
+                    class="flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left hover:bg-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-500 disabled:hover:bg-transparent"
+                    :disabled="sub.disabled"
+                    :title="sub.hint"
+                    @click="invoke(sub)"
+                  >
+                    <span class="truncate">{{ sub.label }}</span>
+                    <span
+                      v-if="sub.accelerator"
+                      class="text-zinc-500"
+                    >{{ sub.accelerator }}</span>
+                  </button>
+                </template>
+              </div>
+            </div>
           </template>
         </div>
       </div>
