@@ -95,11 +95,13 @@ Playback is always served from the decoded WAV cache; original compressed source
 buffer's latency-hiding contract intact at clip boundaries so back-to-back loops
 play seamlessly.
 
-The main remaining roadmap areas are warp / pitch shifting, region selection, bouncing a
-clip range into a new sample (the saved-clip mechanism above is non-destructive only),
+The main remaining roadmap areas are warp / pitch shifting, region selection on timeline clips, bouncing a
+clip range into a new baked WAV sample (the saved-clip mechanism above is non-destructive only),
 library search / tags / list view, ffmpeg-backed decoding for unsupported formats, mixer
-/ effects / automation, mixdown export, stem separation, loop slicing, a fine-clip editor,
-autosave / recovery, recent projects and CI / backend test coverage.
+/ effects / automation, mixdown export, stem separation, loop slicing, a timeline-clip entry point
+into the Clip Editor (today the editor opens from library items only), autosave / recovery,
+recent projects, and a CI matrix that enforces a coverage floor over the existing backend and
+frontend test suites.
 
 ## Bridge protocol
 
@@ -407,6 +409,18 @@ and which tracks currently use the library item. The right-click context menu al
 **Reanalyse file** (audio-file items only), which refreshes the decoded cache, BPM/beat
 analysis and musical key, and **Delete**, which is disabled while the library item (or any
 of its derived saved clips) is in use by a timeline clip.
+
+**Clip Editor** — choose **Edit clip** from a library tile's right-click menu (or double-click
+the tile when configured for it) to open the **Clip Editor** dialog. The dialog renders the
+source waveform at a per-item zoom up to one peak per pixel, supports drag-select / numeric
+trim of a sub-region, and auditions the selection through an independent **backend preview
+voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_SEEK` / `PREVIEW_UNLOAD` → `PREVIEW_STATE`
+/ `PREVIEW_POSITION` / `PREVIEW_ENDED`) so the main transport is unaffected. **Save as new
+clip** writes a new saved-clip entry to the library; the trim of the source library item
+itself can be edited in place when no timeline clip currently references it (otherwise the
+dialog blocks the in-place edit and steers the user to *Save as new* instead). A monotonic
+`generation` counter on the preview voice means stale events for a preview the user has
+already closed are silently dropped.
 
 ## Preferences
 
