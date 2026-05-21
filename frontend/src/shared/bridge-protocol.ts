@@ -740,6 +740,12 @@ export interface AudioDevicesListPayload {
    *  renderer to pop a one-shot "your saved device wasn't connected;
    *  using default" toast. Cleared by the backend on the next switch. */
   fellBackToDefault?: boolean
+  /** True when this snapshot is the partial pre-scan list broadcast
+   *  during boot, while the full device scan is still pending. The
+   *  renderer surfaces a small "Scanning audio devices…" hint on the
+   *  startup overlay until the follow-up snapshot arrives with the
+   *  flag absent / false. */
+  scanInProgress?: boolean
 }
 
 /** Ack for an `AUDIO_DEVICE_SELECT`. On `ok: true` it's followed by a
@@ -1085,6 +1091,7 @@ export function isAudioDevicesListPayload(value: unknown): value is AudioDevices
   if (value.outputLatencyMs !== undefined && typeof value.outputLatencyMs !== 'number') return false
   if (value.heuristicExtraLatencyMs !== undefined && typeof value.heuristicExtraLatencyMs !== 'number') return false
   if (value.fellBackToDefault !== undefined && typeof value.fellBackToDefault !== 'boolean') return false
+  if (value.scanInProgress !== undefined && typeof value.scanInProgress !== 'boolean') return false
   return true
 }
 

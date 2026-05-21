@@ -76,6 +76,10 @@ interface AudioDeviceState {
    *  doesn't briefly render an empty "no devices" list during the
    *  request round-trip. */
   hydrated: boolean
+  /** True while the backend's deferred startup scan is still pending.
+   *  The startup overlays surface a small "Scanning audio devices…"
+   *  status hint until the post-scan snapshot arrives. */
+  scanInProgress: boolean
 }
 
 export const useAudioDeviceStore = defineStore('audioDevice', {
@@ -90,7 +94,8 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
     pendingSelection: null,
     lastError: null,
     startupFellBack: false,
-    hydrated: false
+    hydrated: false,
+    scanInProgress: false
   }),
 
   getters: {
@@ -128,6 +133,7 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       this.outputLatencyMs = payload.outputLatencyMs ?? null
       this.isBluetoothHeuristic = (payload.heuristicExtraLatencyMs ?? 0) > 0
       this.hydrated = true
+      this.scanInProgress = payload.scanInProgress === true
       // Clear any pending selection — the list reflects the actual
       // live device, so whatever the user clicked has either landed
       // (we don't care which) or been superseded.

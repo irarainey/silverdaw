@@ -1486,7 +1486,8 @@ void handleProjectRename(const juce::var& payload, silverdaw::ProjectState& proj
 // `audioDeviceListChanged` fires (USB plug / unplug, Windows audio
 // reconfig) so the renderer never has to poll.
 
-juce::var buildAudioDevicesListEnvelope(const silverdaw::AudioEngine::AudioDevicesSnapshot& snap)
+juce::var buildAudioDevicesListEnvelope(const silverdaw::AudioEngine::AudioDevicesSnapshot& snap,
+                                        bool scanInProgress = false)
 {
     auto* obj = new juce::DynamicObject();
     juce::Array<juce::var> types;
@@ -1526,6 +1527,10 @@ juce::var buildAudioDevicesListEnvelope(const silverdaw::AudioEngine::AudioDevic
     {
         obj->setProperty("fellBackToDefault", true);
     }
+    if (scanInProgress)
+    {
+        obj->setProperty("scanInProgress", true);
+    }
     return juce::var(obj);
 }
 
@@ -1533,15 +1538,43 @@ void handleAudioDevicesRequest(const juce::var& payload, silverdaw::AudioEngine&
                                silverdaw::BridgeServer& bridge)
 {
     const bool refresh = static_cast<bool>(payload.getProperty("refresh", false));
-    // Lazy-scan on the first request after boot: backend init
-    // deliberately skips the slow `scanForDevices()` loop so the
-    // bridge becomes ready faster, then this handler picks up the
-    // scan on the renderer's first ask (which happens right after
-    // bridge-ready). Subsequent requests respect the `refresh` flag
-    // — the UI's "Rescan devices" buttons pass `refresh: true`, but
-    // cheap state-reload requests can keep the cached snapshot.
-    if (refresh || !engine.hasScannedAllDevices()) engine.refreshAudioDevices();
-    bridge.broadcast("AUDIO_DEVICES_LIST", buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()));
+    // The first scan after boot is the slow step (100–400 ms, dominated
+    // by ASIO/Bluetooth driver probing). Audio devices rarely change
+    // between launches, so we don't want to block the message thread
+    // for it during the renderer's startup window.
+    //
+    //   - Explicit "Rescan devices" (`refresh: true`): synchronous —
+    //     the user is waiting and expects the freshest list.
+    //   - Already scanned: just broadcast the cached snapshot.
+    //   - First request after boot, no explicit refresh: broadcast
+    //     whatever the engine already has (current device + its type,
+    //     populated by `initialise()`), then defer the full scan via
+    //     `MessageManager::callAsync`. The bridge ships the initial
+    //     response before the slow scan runs, and the UI updates a
+    //     beat later when the deferred scan broadcasts the full list.
+    if (refresh)
+    {
+        engine.refreshAudioDevices();
+        bridge.broadcast("AUDIO_DEVICES_LIST", buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()));
+        return;
+    }
+
+    const bool needsFirstScan = !engine.hasScannedAllDevices();
+    bridge.broadcast("AUDIO_DEVICES_LIST",
+                     buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot(),
+                                                   /*scanInProgress*/ needsFirstScan));
+
+    if (needsFirstScan)
+    {
+        juce::MessageManager::callAsync(
+            [enginePtr = &engine, bridgePtr = &bridge]()
+            {
+                enginePtr->refreshAudioDevices();
+                bridgePtr->broadcast(
+                    "AUDIO_DEVICES_LIST",
+                    buildAudioDevicesListEnvelope(enginePtr->getAudioDevicesSnapshot()));
+            });
+    }
 }
 
 void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& engine,

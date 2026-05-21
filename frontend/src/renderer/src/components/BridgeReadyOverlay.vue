@@ -31,11 +31,13 @@
 
 import { computed, onMounted, ref } from 'vue'
 import { useTransportStore } from '@/stores/transportStore'
+import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 // 256-px source is large enough to render crisply at 128 px on 2x DPI
 // while staying small enough to inline as a hashed-URL static asset.
 import logoUrl from '@resources/icons/256x256.png'
 
 const transport = useTransportStore()
+const audioDevices = useAudioDeviceStore()
 
 /** Minimum time (ms) the overlay stays on screen from first mount.
  *  Tuned to "you can read the status line at least once" — short
@@ -134,7 +136,13 @@ function quit(): void {
             Connecting to audio engine…
           </p>
           <p class="mt-1 text-xs text-zinc-400">
-            {{ transport.connected ? 'Loading project…' : 'Waiting for the backend to start.' }}
+            {{
+              !transport.connected
+                ? 'Waiting for the backend to start.'
+                : audioDevices.scanInProgress
+                  ? 'Scanning audio devices…'
+                  : 'Loading project…'
+            }}
           </p>
         </div>
       </div>
