@@ -273,8 +273,17 @@ wipes its mirror before applying.
 
 Until the first `PROJECT_STATE` arrives, an inline splash inside `index.html` (then the Vue
 `StartupScreen` once it mounts) blocks all input so the user can't act on state that
-hasn't been reconciled yet. A 30-second timeout shows an "Unable to start Silverdaw" error if
-the bridge handshake never completes.
+hasn't been reconciled yet. `StartupScreen` is the single boot-and-landing surface — it
+mounts at app boot (before the bridge is up) and stays visible until the project becomes
+non-empty (file path, tracks, or library items) or the user explicitly dismisses it via
+**New Project**. An inline status row walks the boot phases ("Waiting for the backend
+to start…", "Connecting to audio engine…", "Scanning audio devices…", "Checking for
+recovered projects…") and hides once everything is ready. New / Open / Recent buttons
+disable while loading, then enable. On a terminal bridge failure the whole screen
+swaps to a focused error view with a single Quit action; project actions are hidden
+because they cannot recover the app. A 30-second timeout fires the failure path if the
+bridge handshake never completes. The `RecoveryDialog` stacks above the StartupScreen
+via z-index when crash-recovery autosaves are available.
 
 ## Audio formats
 
@@ -429,16 +438,43 @@ of its derived saved clips) is in use by a timeline clip.
 
 **Clip Editor** — double-click a library tile (or pick **Open in editor…** from its
 right-click menu) to open the **Clip Editor** dialog. The dialog renders the source
-waveform at a per-item zoom up to one peak per pixel, supports drag-select of a sub-region
-with `Shift+←/→` keyboard nudges, and auditions the selection through an independent
-**backend preview voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` /
-`PREVIEW_STOP` / `PREVIEW_SEEK` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` / `PREVIEW_POSITION`
-/ `PREVIEW_ENDED`) so the main transport is unaffected. **Save as new clip** writes a new
-saved-clip entry to the library. Audio-file source items are always immutable; a
-saved-clip's trim can be edited in place when no timeline clip currently references that
-saved clip (otherwise the in-place edit is blocked and the user is steered to *Save as
-new* instead). A monotonic `generation` counter on the preview voice means stale events
-for a preview the user has already closed are silently dropped.
+waveform with an adaptive time ruler, faint beat lines extrapolated from the
+detected BPM, and zoom + horizontal scroll (`+` / `-` / `0`, mouse-wheel anchored at
+the pointer, `Shift+wheel` to pan; capped at 8× / 800%). Audio-file items open at
+the same px-per-second scale as the main timeline; saved clips open zoomed to fit
+the cropped range. Auditioning runs through an independent **backend preview
+voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
+`PREVIEW_SEEK` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` / `PREVIEW_POSITION` /
+`PREVIEW_ENDED`) so the main transport is unaffected. A monotonic `generation`
+counter on the preview voice means stale events for a preview the user has already
+closed are silently dropped. While playing the canvas follows the playhead with
+the same smooth ease-in catch-up the main timeline uses.
+
+Within the dialog:
+
+- **Transport**: Skip-to-start, Play / Pause, Skip-to-end — the same three icons
+  as the main TransportBar. `Space` toggles play / pause and is scoped to the
+  dialog while it's open (`uiStore.clipEditorOpen` defers the global handler).
+- **Click** anywhere on the waveform to seek the playhead.
+- **`←` / `→`**: snap the playhead to the previous / next beat on the
+  source-BPM grid. **`Alt+←` / `Alt+→`**: 1 ms nudge.
+- **`Shift+←` / `Shift+→`** (with or without `Alt`): extend a keyboard
+  selection using a text-editor-style anchor — the first press anchors at
+  the playhead (or the opposite edge of an existing narrowing selection), each
+  subsequent press moves the playhead while the selection grows or shrinks to
+  match. Any non-shift seek clears the anchor.
+- **Loop (`L`)**: when on, playback loops the current selection — or the whole
+  saved clip if no selection is set. Source files only loop when an explicit
+  selection is set (the source file itself is immutable).
+- **Selection-bounded playback**: with a selection set, Play starts from the
+  selection start and stops (or loops) at the selection end. The skip-to-start
+  / skip-to-end buttons honour the selection bounds.
+- **Save as new clip**: writes a new saved-clip entry to the library from the
+  current selection.
+- **Apply trim** (saved clips only): updates the saved-clip's `derivedFrom`
+  window in place. Disabled while any timeline clip currently references this
+  saved clip — the user is steered to *Save as new* instead so an in-use clip
+  doesn't shift under existing arrangements.
 
 ## Preferences
 
@@ -510,9 +546,16 @@ Robustness:
 - **Live unplug** — JUCE's `audioDeviceListChanged` callback fires; the backend reopens
   the system default automatically so audio keeps flowing. A fresh `AUDIO_DEVICES_LIST`
   goes out to the renderer in the same round-trip.
-- **Slow ASIO probes** — the initial device-type scan is deferred until just after the
-  bridge is ready, so backend startup is ~100–400 ms faster on machines with ASIO
-  drivers installed.
+- **Fast startup** — the first full device-type scan (the slow step on
+  machines with ASIO drivers — typically 100–400 ms) is deferred via
+  `juce::MessageManager::callAsync` and runs *after* the bridge has shipped
+  its initial response. The renderer's first `AUDIO_DEVICES_LIST` arrives
+  immediately with the current device + its type; the post-scan envelope
+  follows when the scan completes. The pre-scan envelope carries a
+  `scanInProgress: true` flag that the startup screen surfaces as
+  "Scanning audio devices…" so the user knows what's happening. The
+  user-initiated **Rescan devices** button stays synchronous (the user is
+  explicitly waiting on it).
 
 Latency compensation:
 
@@ -569,6 +612,26 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
 | Double-click a **library tile** (off the name) | Open the read-only library item information dialog. |
 | Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename…**, **Reanalyse file** (audio-file items only), and **Delete**. Delete is disabled while the item is in use. |
+
+### Clip Editor
+
+When the Clip Editor dialog is open, the timeline shortcuts above are suspended
+and the following set takes over instead:
+
+| Input | Effect |
+|---|---|
+| `Space` | Play / pause the preview voice. |
+| Click on waveform | Seek the preview playhead. |
+| `←` / `→` | Snap the playhead to the previous / next beat on the source-BPM grid. |
+| `Alt` + `←` / `→` | Nudge the playhead by 1 ms (unsnapped). |
+| `Shift` + `←` / `→` | Extend a keyboard selection: first press anchors at the playhead (or the opposite edge of an existing narrowing selection); subsequent presses move the playhead and grow / shrink the selection. Combine with `Alt` for 1 ms steps. |
+| `L` | Toggle loop mode. With loop on, playback loops the selection — or the whole saved clip if no selection is set. Source files only loop when a selection is set. |
+| Drag on waveform | Mark a sub-selection. The selection drives Save-as-new and Apply-trim. |
+| Drag on a selection handle | Fine-tune the selection edge. |
+| Mouse wheel | Zoom (anchored on the pointer), capped at 8× / 800%. |
+| `Shift` + wheel | Pan left / right. |
+| `+` / `-` / `0` | Zoom in / out / reset. |
+| `Esc` | Close the dialog. |
 
 Clicking **Skip to start** in the transport bar rewinds the playhead and returns the
 timeline's horizontal scroll position to the start. **Skip to end** and the matching
