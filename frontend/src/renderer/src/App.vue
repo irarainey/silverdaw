@@ -98,9 +98,19 @@ const stopUnresolvedWatch = watch(
     const isNew = ids.some((id) => !prevIds.includes(id))
     if (!isNew) return
     relinkDialogOpen.value = true
+    // Count UNIQUE missing file paths (not clip references) so the
+    // toast matches the row count the RelinkDialog actually shows —
+    // a project with five clips referencing one missing file should
+    // say "1 audio file is missing", not "5 audio files".
+    const uniqueMissingPaths = new Set<string>()
+    for (const id of ids) {
+      const clip = project.clips[id]
+      if (clip) uniqueMissingPaths.add(clip.filePath)
+    }
+    const fileCount = uniqueMissingPaths.size
     notifications.push(
       'error',
-      `${ids.length} ${ids.length === 1 ? 'audio file is' : 'audio files are'} missing — locate or relink them to play.`
+      `${fileCount} ${fileCount === 1 ? 'audio file is' : 'audio files are'} missing — locate or relink to play.`
     )
   }
 )
