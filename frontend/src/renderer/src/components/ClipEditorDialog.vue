@@ -177,41 +177,29 @@ function autoFollowPlayhead(): void {
 // When a selection is active, playback is bounded by it. As soon as
 // the playhead reaches the selection end, pause and rewind to the
 // selection start so the next Play press replays the section.
-// Tracks whether playback was running on the previous watcher tick so
-// the loop-restart logic only fires when playback ended naturally
-// (isPlaying transitioned from true to false) — not when the user
-// seeks (e.g. via Shift+arrow) and happens to land near the end.
-let prevIsPlaying = false
-
+// Natural end-of-window (the entire preview window finished playing)
+// is handled separately via the `endedCount` watcher further below
+// — applyEnded resets positionMs to 0, so a position-based check
+// here can't detect that transition.
 function enforceSelectionPlaybackBounds(): void {
-  const wasPlaying = prevIsPlaying
-  prevIsPlaying = preview.isPlaying
+  if (!preview.isPlaying) return
 
   const item = props.item
   if (!item) return
   const isSavedClip = item.kind === 'saved-clip'
   const hasSel = hasPlaybackSelection.value
+  // Loop applies whenever there's a selection, OR for a saved clip with
+  // no selection (loops the whole clip). Source files only loop when
+  // there is an explicit selection.
   const looping = loopEnabled.value && (hasSel || isSavedClip)
 
+  // While playing, enforce the selection bounds before reaching the
+  // natural end of the preview window.
+  if (!hasSel && !looping) return
   const pos = preview.positionMs
   const endRel = playbackEndMs.value - viewInMs.value
-  const startRel = Math.max(0, playbackStartMs.value - viewInMs.value)
-
-  // Native end fired: isPlaying just transitioned true → false at the
-  // very end of the loaded window. If we should be looping, restart
-  // from the start. Skip when the user simply seeked while paused.
-  if (!preview.isPlaying) {
-    if (wasPlaying && looping && pos >= endRel - 5) {
-      preview.seek(startRel)
-      preview.play()
-    }
-    return
-  }
-
-  // Still playing: enforce the selection / loop bounds before the
-  // native end fires.
-  if (!hasSel && !looping) return
   if (pos < endRel - 0.5) return
+  const startRel = Math.max(0, playbackStartMs.value - viewInMs.value)
   if (looping) {
     preview.seek(startRel)
   } else {
@@ -280,7 +268,6 @@ watch(
       resetZoom()
       initSelectionForItem()
       loopEnabled.value = false
-      prevIsPlaying = false
       await nextTick()
       if (waveformEl.value) {
         canvasCssWidth.value = waveformEl.value.getBoundingClientRect().width
@@ -318,6 +305,25 @@ watch(
   [selectionInMs, selectionDurationMs, zoom, scrollMs, canvasCssWidth, () => ui.zoomPxPerSecond],
   () => {
     drawWaveform()
+  }
+)
+
+// Loop restart on natural end-of-window. The preview store resets
+// positionMs to 0 in applyEnded, so the position-watcher's
+// "playhead near end" check can't fire after a natural end. Watching
+// the endedCount counter gives us a reliable signal to restart.
+watch(
+  () => preview.endedCount,
+  (n, prev) => {
+    if (n === prev) return
+    const item = props.item
+    if (!item) return
+    const isSavedClip = item.kind === 'saved-clip'
+    const looping = loopEnabled.value && (hasPlaybackSelection.value || isSavedClip)
+    if (!looping) return
+    const startRel = Math.max(0, playbackStartMs.value - viewInMs.value)
+    preview.seek(startRel)
+    preview.play()
   }
 )
 

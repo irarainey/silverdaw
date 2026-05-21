@@ -29,7 +29,11 @@ export const usePreviewStore = defineStore('preview', {
     isLoaded: false,
     /** Mirror of the backend's preview generation. Inbound envelopes with a
      *  lower generation are discarded. */
-    generation: 0
+    generation: 0,
+    /** Monotonic counter that bumps on every inbound `PREVIEW_ENDED`. The
+     *  Clip Editor watches this so loop playback can restart cleanly
+     *  even though `applyEnded` resets `positionMs` to 0. */
+    endedCount: 0
   }),
   actions: {
     /** Begin a new preview session for `itemId`, windowed to [inMs, inMs+durationMs].
@@ -107,6 +111,7 @@ export const usePreviewStore = defineStore('preview', {
       if (payload.generation < this.generation) return
       this.isPlaying = false
       this.positionMs = 0
+      this.endedCount++
     }
   }
 })
