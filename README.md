@@ -410,17 +410,18 @@ and which tracks currently use the library item. The right-click context menu al
 analysis and musical key, and **Delete**, which is disabled while the library item (or any
 of its derived saved clips) is in use by a timeline clip.
 
-**Clip Editor** — choose **Edit clip** from a library tile's right-click menu (or double-click
-the tile when configured for it) to open the **Clip Editor** dialog. The dialog renders the
-source waveform at a per-item zoom up to one peak per pixel, supports drag-select / numeric
-trim of a sub-region, and auditions the selection through an independent **backend preview
-voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_SEEK` / `PREVIEW_UNLOAD` → `PREVIEW_STATE`
-/ `PREVIEW_POSITION` / `PREVIEW_ENDED`) so the main transport is unaffected. **Save as new
-clip** writes a new saved-clip entry to the library; the trim of the source library item
-itself can be edited in place when no timeline clip currently references it (otherwise the
-dialog blocks the in-place edit and steers the user to *Save as new* instead). A monotonic
-`generation` counter on the preview voice means stale events for a preview the user has
-already closed are silently dropped.
+**Clip Editor** — double-click a library tile (or pick **Open in editor…** from its
+right-click menu) to open the **Clip Editor** dialog. The dialog renders the source
+waveform at a per-item zoom up to one peak per pixel, supports drag-select of a sub-region
+with `Shift+←/→` keyboard nudges, and auditions the selection through an independent
+**backend preview voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` /
+`PREVIEW_STOP` / `PREVIEW_SEEK` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` / `PREVIEW_POSITION`
+/ `PREVIEW_ENDED`) so the main transport is unaffected. **Save as new clip** writes a new
+saved-clip entry to the library. Audio-file source items are always immutable; a
+saved-clip's trim can be edited in place when no timeline clip currently references that
+saved clip (otherwise the in-place edit is blocked and the user is steered to *Save as
+new* instead). A monotonic `generation` counter on the preview voice means stale events
+for a preview the user has already closed are silently dropped.
 
 ## Preferences
 
