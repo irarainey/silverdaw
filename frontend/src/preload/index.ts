@@ -160,10 +160,12 @@ const api = {
     ipcRenderer.send('app:openExternal', url)
   },
   // ─── Project file lifecycle ──────────────────────────────────────────────
-  /** Absolute path of the most recently saved/loaded project, or null. */
-  getLastProjectPath: (): Promise<string | null> => ipcRenderer.invoke('project:getLastPath'),
-  /** Persist the most recently saved/loaded project path (or null to clear). */
-  setLastProjectPath: (value: string | null): void => {
+  /**
+   * Record that `value` was just saved or loaded. Main writes it to the
+   * head of the Recent Projects MRU (deduped, capped) so the File menu
+   * and Start Screen surface it on subsequent launches.
+   */
+  setLastProjectPath: (value: string): void => {
     ipcRenderer.send('project:setLastPath', value)
   },
   /** Resolve to true iff `path` exists and is readable. */
@@ -255,7 +257,65 @@ const api = {
   chooseDirectory: (args: {
     title?: string
     defaultPath?: string
-  }): Promise<string | null> => ipcRenderer.invoke('prefs:chooseDirectory', args)
+  }): Promise<string | null> => ipcRenderer.invoke('prefs:chooseDirectory', args),
+  // ─── Recent projects ────────────────────────────────────────────────────
+  /** Resolve the current Recent Projects MRU list (head = most recent). */
+  getRecentProjects: (): Promise<string[]> => ipcRenderer.invoke('prefs:getRecentProjects'),
+  /** Remove a single path from the MRU. No-op if not present. */
+  removeRecentProject: (filePath: string): void => {
+    ipcRenderer.send('prefs:removeRecentProject', filePath)
+  },
+  /** Empty the MRU. Used by File > Clear Recent. */
+  clearRecentProjects: (): void => {
+    ipcRenderer.send('prefs:clearRecentProjects')
+  },
+  // ─── Autosave configuration ─────────────────────────────────────────────
+  /** Read the persisted autosave interval + enable flag. */
+  getAutosaveConfig: (): Promise<{ enabled: boolean; intervalSeconds: number }> =>
+    ipcRenderer.invoke('prefs:getAutosaveConfig'),
+  /** Persist autosave settings. Clamped server-side to 5..600 seconds. */
+  setAutosaveConfig: (partial: { enabled?: boolean; intervalSeconds?: number }): void => {
+    ipcRenderer.send('prefs:setAutosaveConfig', partial)
+  },
+  // ─── Autosave folder + manifest IPCs ────────────────────────────────────
+  /**
+   * Ensure the autosave bucket exists for `projectId` and resolve to the
+   * absolute path of `autosave.silverdaw` + its parent dir. Returns
+   * `null` if `projectId` fails main's allow-list (which restricts it to
+   * a strict character set so a hostile renderer can't break out of the
+   * autosave root).
+   */
+  resolveAutosaveDir: (
+    projectId: string
+  ): Promise<{ dir: string; filePath: string } | null> =>
+    ipcRenderer.invoke('autosave:resolveDir', projectId),
+  /** Write (or refresh) the autosave manifest. Returns true on success. */
+  writeAutosaveManifest: (manifest: {
+    projectId: string
+    originalPath: string | null
+    projectName: string
+    savedAtIso: string
+    pending: boolean
+  }): Promise<boolean> => ipcRenderer.invoke('autosave:writeManifest', manifest),
+  /**
+   * Scan `%APPDATA%/Silverdaw/autosave/` and return all entries whose
+   * autosave file is newer than its backing file (or whose backing file
+   * is missing / null). Used by the renderer to drive the recovery
+   * dialog on startup.
+   */
+  listRecoverableAutosaves: (): Promise<
+    Array<{
+      projectId: string
+      originalPath: string | null
+      projectName: string
+      autosavePath: string
+      savedAtIso: string
+      originalExists: boolean
+    }>
+  > => ipcRenderer.invoke('autosave:listRecoverable'),
+  /** Delete the autosave bucket for `projectId`. Refused on invalid ids. */
+  clearAutosave: (projectId: string): Promise<boolean> =>
+    ipcRenderer.invoke('autosave:clear', projectId)
 }as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)

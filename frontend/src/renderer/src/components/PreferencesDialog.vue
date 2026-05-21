@@ -27,6 +27,8 @@ const followPlayback = ref(true)
 const showLibraryTileImages = ref(true)
 const defaultProjectDir = ref('')
 const defaultClipDir = ref('')
+const autosaveEnabled = ref(true)
+const autosaveIntervalSeconds = ref(30)
 
 // Snapshot of the values when the dialog opened, used to:
 //   1. Detect whether anything actually changed (Save no-ops if not).
@@ -37,6 +39,8 @@ const initialFollow = ref(true)
 const initialShowLibraryTileImages = ref(true)
 const initialProjectDir = ref('')
 const initialClipDir = ref('')
+const initialAutosaveEnabled = ref(true)
+const initialAutosaveSeconds = ref(30)
 
 const hasChanges = computed(
   () =>
@@ -45,24 +49,31 @@ const hasChanges = computed(
     followPlayback.value !== initialFollow.value ||
     showLibraryTileImages.value !== initialShowLibraryTileImages.value ||
     defaultProjectDir.value !== initialProjectDir.value ||
-    defaultClipDir.value !== initialClipDir.value
+    defaultClipDir.value !== initialClipDir.value ||
+    autosaveEnabled.value !== initialAutosaveEnabled.value ||
+    autosaveIntervalSeconds.value !== initialAutosaveSeconds.value
 )
 
 async function loadCurrent(): Promise<void> {
   try {
-    const [debugVal, qol] = await Promise.all([
+    const [debugVal, qol, autosave] = await Promise.all([
       window.silverdaw.getDebugEnabled(),
-      window.silverdaw.getQolPrefs()
+      window.silverdaw.getQolPrefs(),
+      window.silverdaw.getAutosaveConfig()
     ])
     debugEnabled.value = debugVal
     toastsEnabled.value = qol.toasts.enabled
     defaultProjectDir.value = qol.paths.defaultProjectDir
     defaultClipDir.value = qol.paths.defaultClipDir
+    autosaveEnabled.value = autosave.enabled
+    autosaveIntervalSeconds.value = autosave.intervalSeconds
   } catch {
     debugEnabled.value = false
     toastsEnabled.value = true
     defaultProjectDir.value = ''
     defaultClipDir.value = ''
+    autosaveEnabled.value = true
+    autosaveIntervalSeconds.value = 30
   }
   // `followPlayback` lives in the UI prefs sub-tree (alongside panel
   // sizes) and is mirrored into the uiStore on startup — read it from
@@ -75,6 +86,8 @@ async function loadCurrent(): Promise<void> {
   initialShowLibraryTileImages.value = showLibraryTileImages.value
   initialProjectDir.value = defaultProjectDir.value
   initialClipDir.value = defaultClipDir.value
+  initialAutosaveEnabled.value = autosaveEnabled.value
+  initialAutosaveSeconds.value = autosaveIntervalSeconds.value
 }
 
 function onKeyDown(e: KeyboardEvent): void {
@@ -159,6 +172,20 @@ function onSave(): void {
   }
   if (showLibraryTileImages.value !== initialShowLibraryTileImages.value) {
     ui.setShowLibraryTileImages(showLibraryTileImages.value)
+  }
+  // Autosave config is also mirrored in appStore so the autosave
+  // manager's reactive watcher picks up the change without waiting
+  // for a re-hydrate.
+  if (
+    autosaveEnabled.value !== initialAutosaveEnabled.value ||
+    autosaveIntervalSeconds.value !== initialAutosaveSeconds.value
+  ) {
+    const next = {
+      enabled: autosaveEnabled.value,
+      intervalSeconds: Math.max(5, Math.min(600, Math.round(autosaveIntervalSeconds.value)))
+    }
+    window.silverdaw.setAutosaveConfig(next)
+    appStore.setAutosaveConfig(next)
   }
   emit('close')
 }
@@ -299,6 +326,47 @@ function onSave(): void {
                   </button>
                 </div>
               </div>
+            </div>
+          </section>
+
+          <!-- Autosave -->
+          <section>
+            <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+              Autosave
+            </h2>
+            <label class="flex cursor-pointer items-start gap-3">
+              <input
+                v-model="autosaveEnabled"
+                type="checkbox"
+                class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+              >
+              <span class="flex-1">
+                <span class="block font-medium text-zinc-200">Auto-save dirty projects in the background</span>
+                <span class="mt-0.5 block text-zinc-500">
+                  Periodically writes a recovery copy of any project with
+                  unsaved changes into
+                  <code class="text-zinc-400">%APPDATA%/Silverdaw/autosave/</code>.
+                  The next launch offers to restore anything left behind
+                  by a crash or unclean shutdown.
+                </span>
+              </span>
+            </label>
+            <div class="mt-3 flex items-center gap-2 pl-7">
+              <label
+                for="autosave-interval"
+                class="text-zinc-400"
+              >Tick interval</label>
+              <input
+                id="autosave-interval"
+                v-model.number="autosaveIntervalSeconds"
+                type="number"
+                min="5"
+                max="600"
+                step="5"
+                :disabled="!autosaveEnabled"
+                class="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-zinc-200 focus:border-sky-500 focus:outline-none disabled:opacity-40"
+              >
+              <span class="text-zinc-500">seconds (5..600)</span>
             </div>
           </section>
 

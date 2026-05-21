@@ -12,6 +12,13 @@
 //     (and any later disconnect / reconnect cycle)
 //   - true once the bridge is up AND the snapshot has been applied
 //
+// We also enforce a **minimum dwell time** so the overlay always
+// renders for at least `MIN_DWELL_MS` after mount, even when the
+// backend is warm and PROJECT_STATE arrives in <100 ms. Without the
+// dwell the cross-fade into the Start Screen happens so fast that the
+// user perceives the boot as instantaneous and never sees the spinner
+// confirming the audio engine is actually connecting.
+//
 // If `bridgeFailureMessage` is also set (initial-connection timeout
 // fired in `App.vue`), the overlay flips from its spinner state into
 // an error state with a "Quit" button — the only useful action when
@@ -22,12 +29,32 @@
 // any future modals. The transition fade-out is short to avoid feeling
 // laggy on a healthy local connection.
 
+import { computed, onMounted, ref } from 'vue'
 import { useTransportStore } from '@/stores/transportStore'
 // 256-px source is large enough to render crisply at 128 px on 2x DPI
 // while staying small enough to inline as a hashed-URL static asset.
 import logoUrl from '@resources/icons/256x256.png'
 
 const transport = useTransportStore()
+
+/** Minimum time (ms) the overlay stays on screen from first mount.
+ *  Tuned to "you can read the status line at least once" — short
+ *  enough not to feel sluggish on a fast warm backend, long enough
+ *  to make the cross-fade legible. */
+const MIN_DWELL_MS = 600
+
+const dwellElapsed = ref(false)
+
+onMounted(() => {
+  setTimeout(() => {
+    dwellElapsed.value = true
+  }, MIN_DWELL_MS)
+})
+
+/** Effective "ready" signal that gates the overlay. Stays false until
+ *  BOTH the bridge has delivered its first PROJECT_STATE AND the
+ *  minimum dwell window has elapsed. */
+const displayReady = computed(() => transport.bridgeReady && dwellElapsed.value)
 
 function quit(): void {
   // Reuses the same File > Exit handler in main: destroys every window
@@ -40,6 +67,7 @@ function quit(): void {
 
 <template>
   <Transition
+    appear
     enter-active-class="transition-opacity duration-100"
     enter-from-class="opacity-0"
     enter-to-class="opacity-100"
@@ -48,7 +76,7 @@ function quit(): void {
     leave-to-class="opacity-0"
   >
     <div
-      v-if="!transport.bridgeReady"
+      v-if="!displayReady"
       class="fixed inset-0 z-1000 flex items-center justify-center bg-zinc-900"
       role="status"
       aria-live="polite"

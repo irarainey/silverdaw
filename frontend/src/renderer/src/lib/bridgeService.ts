@@ -23,6 +23,7 @@
 
 import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { useAppStore } from '@/stores/appStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { usePreviewStore } from '@/stores/previewStore'
@@ -37,6 +38,7 @@ import {
   isPreviewPositionPayload,
   isPreviewStatePayload,
   isProjectBpmAppliedPayload,
+  isProjectAutosavedPayload,
   isProjectDirtyPayload,
   isProjectLoadFailedPayload,
   isProjectRenamedPayload,
@@ -285,6 +287,17 @@ function dispatch(msg: BridgeInboundMessage): void {
       // Unblock the UI now that we have an authoritative snapshot and
       // the renderer's optimistic state is reconciled.
       useTransportStore().setBridgeReady(true)
+      // Push to the Recent Projects MRU whenever a `reset=true` snapshot
+      // arrives with a concrete file path — i.e. a successful Load or
+      // Save As (the explicit-save path already runs through the
+      // PROJECT_SAVED handler below, but Load does not, so without this
+      // recently-opened-but-never-saved files never enter the MRU).
+      // The initial AUTH-connect snapshot (no reset flag) is excluded so
+      // we don't double-bump on every reconnect.
+      if (msg.payload.reset === true && msg.payload.filePath) {
+        window.silverdaw.setLastProjectPath(msg.payload.filePath)
+        void useAppStore().refreshRecentProjects()
+      }
       break
     }
 
@@ -384,7 +397,18 @@ function dispatch(msg: BridgeInboundMessage): void {
         log.info('bridge', `PROJECT_SAVED path=${msg.payload.filePath}`)
         // Persist the path as "last project" so the next launch reopens
         // it. Main owns the preferences file and ignores empty values.
+        // `project:setLastPath` also bumps the Recent Projects MRU.
         window.silverdaw.setLastProjectPath(msg.payload.filePath)
+        // The explicit save made the autosave bucket redundant — drop it
+        // so the next launch's recovery scan stays clean. Use the
+        // current project id (post-save the id may have rotated if this
+        // was a Save As; both old and new ids get cleared because the
+        // store's previousProjectId watcher in `autosave.ts` deletes the
+        // old bucket on the reset=true PROJECT_STATE that follows).
+        if (project.projectId) void window.silverdaw.clearAutosave(project.projectId)
+        // Refresh the in-store MRU mirror so the File menu picks up the
+        // new top entry without waiting for a re-launch.
+        void useAppStore().refreshRecentProjects()
         notifications.pushInfo('Project saved')
       } else {
         log.warn('bridge', `PROJECT_SAVED failed: ${msg.payload.error ?? 'unknown'}`)
@@ -401,15 +425,29 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'PROJECT_AUTOSAVED': {
+      // Autosave is intentionally invisible at the user level — no
+      // toast, no PROJECT_STATE follow-up. The renderer's autosave
+      // manager listens for this ack to advance the manifest from
+      // "pending" to confirmed so crash recovery picks the entry up.
+      useProjectStore().notifyAutosaveAck(msg.payload.filePath, msg.payload.ok, msg.payload.error)
+      if (!msg.payload.ok) {
+        log.warn('bridge', `PROJECT_AUTOSAVED failed: ${msg.payload.error ?? 'unknown'}`)
+      } else {
+        log.debug('bridge', `PROJECT_AUTOSAVED path=${msg.payload.filePath}`)
+      }
+      break
+    }
+
     case 'PROJECT_LOAD_FAILED': {
       log.warn('bridge', `PROJECT_LOAD_FAILED ${msg.payload.filePath}: ${msg.payload.error}`)
       useNotificationsStore().pushError(
         `Could not open project: ${msg.payload.error || msg.payload.filePath}`
       )
-      // Clear the persisted last-path so a failed file doesn't keep
-      // re-failing at every launch. The user can pick it again
-      // explicitly with File > Open.
-      window.silverdaw.setLastProjectPath(null)
+      // The MRU's `openRecentPath` helper already prunes missing /
+      // unreadable entries on click, so there's nothing else to do
+      // here — the user picked a file, the backend rejected it, the
+      // toast surfaces why.
       break
     }
 
@@ -584,6 +622,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_VIEW_STATE_SAVED':
       return isProjectViewStateSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_AUTOSAVED':
+      return isProjectAutosavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_LOAD_FAILED':
       return isProjectLoadFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_RENAMED':

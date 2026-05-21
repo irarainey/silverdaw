@@ -85,6 +85,15 @@ Silverdaw currently supports the core arrangement workflow:
   clip is saved to the library, the library entry inherits the same name.
 - Save and reopen `.silverdaw` projects with tracks, clips (referencing library
   items by id), library catalogue, markers, view state and dirty-state prompts.
+- Background autosave + crash recovery: a dirty project is silently snapshotted
+  every 30 s (user-configurable in Preferences → Autosave) into
+  `%APPDATA%/Silverdaw/autosave/<projectId>/`; on the next launch the Recovery
+  dialog offers to restore any project whose autosave is newer than its backing
+  file (or whose backing file is missing / was untitled). Restored projects
+  always reopen marked dirty so the user is steered to File > Save.
+- Recent Projects MRU (up to 10) persisted in `preferences.json`, surfaced as
+  inline File-menu entries and as the Start Screen list shown on first launch
+  or after File > New on a fresh install.
 - Relink a missing source file at the **library item** level — every clip
   referencing that item picks up the new file automatically.
 - Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
@@ -99,9 +108,8 @@ The main remaining roadmap areas are warp / pitch shifting, region selection on 
 clip range into a new baked WAV sample (the saved-clip mechanism above is non-destructive only),
 library search / tags / list view, ffmpeg-backed decoding for unsupported formats, mixer
 / effects / automation, mixdown export, stem separation, loop slicing, a timeline-clip entry point
-into the Clip Editor (today the editor opens from library items only), autosave / recovery,
-recent projects, and a CI matrix that enforces a coverage floor over the existing backend and
-frontend test suites.
+into the Clip Editor (today the editor opens from library items only), and a CI matrix that
+enforces a coverage floor over the existing backend and frontend test suites.
 
 ## Bridge protocol
 

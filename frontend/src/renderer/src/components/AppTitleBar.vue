@@ -14,7 +14,9 @@ const appStore = useAppStore()
 // Menu list is rebuilt whenever `debugMode` flips. In practice the flag
 // is a startup snapshot so this is computed once, but `computed` keeps
 // the dependency wiring honest without any extra cost.
-const visibleMenus = computed(() => buildMenus({ debugMode: appStore.debugMode }))
+const visibleMenus = computed(() =>
+  buildMenus({ debugMode: appStore.debugMode, recentProjects: appStore.recentProjects })
+)
 
 const openIndex = ref<number | null>(null)
 const root = ref<HTMLElement | null>(null)
@@ -50,6 +52,19 @@ function invoke(item: MenuItemDef): void {
   // `menu:action` IPC.
   if (item.action === 'file.renameProject') {
     void startRename()
+    return
+  }
+  // Recent Projects entries don't need to involve main — the renderer
+  // already owns the MRU mirror (appStore.recentProjects) and the
+  // open-project flow (App.vue handleMenuAction). Forward them as
+  // synthetic actions on the same `menu:action` channel so App.vue
+  // sees a single dispatch point.
+  if (item.action.startsWith('file.openRecentByIndex:')) {
+    window.silverdaw.menuAction(item.action)
+    return
+  }
+  if (item.action === 'file.clearRecentProjects') {
+    window.silverdaw.menuAction(item.action)
     return
   }
   window.silverdaw.menuAction(item.action)
@@ -162,9 +177,10 @@ defineExpose({ startRename })
               type="button"
               class="flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-600 disabled:hover:bg-transparent"
               :disabled="item.disabled"
+              :title="item.hint"
               @click="invoke(item)"
             >
-              <span>{{ item.label }}</span>
+              <span class="truncate">{{ item.label }}</span>
               <span
                 v-if="item.accelerator"
                 class="ml-6 text-zinc-500"

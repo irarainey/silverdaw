@@ -12,11 +12,15 @@ import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
 import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import RelinkDialog from '@/components/RelinkDialog.vue'
+import RecoveryDialog, { type RecoverableEntry } from '@/components/RecoveryDialog.vue'
+import StartScreenOverlay from '@/components/StartScreenOverlay.vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { startAutosaveManager, stopAutosaveManager } from '@/lib/autosave'
+import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
@@ -32,6 +36,16 @@ const appStore = useAppStore()
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
 const relinkDialogOpen = ref(false)
+// Crash-recovery state. Populated on bridge-ready by
+// `autosave:listRecoverable`; if non-empty, the RecoveryDialog mounts
+// and blocks the rest of the startup flow (auto-open + start screen)
+// until the user resolves each entry. Mutually exclusive with
+// `pendingOpenAfterRecovery`.
+const recoveryEntries = ref<RecoverableEntry[]>([])
+const recoveryDialogOpen = ref(false)
+// Set when a cold-launch `.silverdaw` file is parked while the
+// recovery dialog is open. Consumed once recovery resolves.
+let pendingOpenAfterRecovery: string | null = null
 // Unsaved-changes prompt state. `pendingAfterSave` is the action to
 // run once the user has either saved or chosen to discard their
 // changes. Set when the prompt opens; cleared when it closes.
@@ -109,6 +123,11 @@ onMounted(() => {
   // already in the store, so a slow hydrate just looks like a tiny size
   // tween rather than a jarring jump.)
   void ui.hydrate()
+  // Start the background autosave manager. The manager subscribes to
+  // `projectStore.isDirty` + the autosave config — it stays idle until
+  // there's actually something to save, then ticks every N seconds.
+  const pinia = getActivePinia()
+  if (pinia) startAutosaveManager(pinia)
 })
 
 // ─── Global keyboard shortcuts ────────────────────────────────────────────
@@ -338,19 +357,57 @@ const stopBridgeTimerWatcher = watch(
       clearTimeout(bridgeTimer)
       bridgeTimer = null
     }
-    // Cold-launch hand-off from `Silverdaw.exe <file.silverdaw>`. We
-    // can only safely send PROJECT_LOAD after the bridge has delivered
-    // its first PROJECT_STATE; the renderer's menu-action gate enforces
-    // the same rule for File > Open, so we defer the consume call until
-    // here. Fire-and-forget — a `null` return just means the app was
-    // launched normally.
-    if (ready) {
-      void window.silverdaw.consumePendingOpenPath().then((filePath) => {
-        if (filePath) void openProjectByPath(filePath)
-      })
-    }
+    if (!ready) return
+    // ── Startup coordinator ────────────────────────────────────────────
+    // 1. Park any cold-launch hand-off path so it doesn't race the
+    //    recovery scan (consumePendingOpenPath clears the slot in main;
+    //    we hold the value locally until the recovery flow has
+    //    finished).
+    void window.silverdaw.consumePendingOpenPath().then((filePath) => {
+      if (filePath) pendingOpenAfterRecovery = filePath
+      runStartupRecoveryFlow()
+    })
   }
 )
+
+/** Drive the recovery-then-launch flow once the bridge is ready. */
+function runStartupRecoveryFlow(): void {
+  void window.silverdaw.listRecoverableAutosaves().then((entries) => {
+    if (entries.length > 0) {
+      recoveryEntries.value = entries
+      recoveryDialogOpen.value = true
+      return
+    }
+    finishStartupFlow()
+  })
+}
+
+/** Called once the recovery dialog has resolved (Restore + close, or
+ *  Skip, or no entries to begin with). Runs the cold-launch
+ *  hand-off if one was parked, then marks the startup flow complete
+ *  so the start screen can decide whether to mount. */
+function finishStartupFlow(): void {
+  const parked = pendingOpenAfterRecovery
+  pendingOpenAfterRecovery = null
+  if (parked) {
+    void openProjectByPath(parked)
+    appStore.dismissStartScreen()
+  }
+  appStore.markStartupFlowComplete()
+}
+
+function onRecoveryRestored(): void {
+  // Restore implies a project will replace the empty boot snapshot;
+  // discard any parked cold-launch path so we don't immediately
+  // navigate away from the recovered project.
+  pendingOpenAfterRecovery = null
+}
+
+function onRecoveryClose(): void {
+  recoveryDialogOpen.value = false
+  recoveryEntries.value = []
+  finishStartupFlow()
+}
 
 /**
  * Shared entry point for both the cold-launch and warm-launch hand-offs
@@ -367,8 +424,66 @@ async function openProjectByPath(filePath: string): Promise<void> {
   guardAgainstUnsavedChanges(async () => {
     await window.silverdaw.prepareProjectOpen(filePath)
     project.requestLoad(filePath)
+    appStore.dismissStartScreen()
   })
 }
+
+/**
+ * Open a Recent Projects entry. Guarded by the unsaved-changes prompt
+ * + main's path allow-list seeding. If the file no longer exists, the
+ * MRU entry is removed and a toast surfaces the failure — the user
+ * was probably looking at a stale list.
+ */
+async function openRecentPath(filePath: string): Promise<void> {
+  if (!filePath) return
+  if (!transport.bridgeReady) {
+    log.warn('app', `dropped open-recent ${filePath} (bridge not ready)`)
+    return
+  }
+  const exists = await window.silverdaw.projectFileExists(filePath)
+  if (!exists) {
+    log.warn('app', `recent project missing: ${filePath}`)
+    window.silverdaw.removeRecentProject(filePath)
+    await appStore.refreshRecentProjects()
+    notifications.pushError(`Recent project file no longer exists: ${filePath}`)
+    return
+  }
+  void openProjectByPath(filePath)
+}
+
+function onStartScreenNew(): void {
+  appStore.dismissStartScreen()
+  handleMenuAction('file.newProject')
+}
+
+function onStartScreenOpen(): void {
+  appStore.dismissStartScreen()
+  handleMenuAction('file.openProject')
+}
+
+function onStartScreenRecent(filePath: string): void {
+  appStore.dismissStartScreen()
+  void openRecentPath(filePath)
+}
+
+/**
+ * Visibility of the start screen. Mounted once the startup coordinator
+ * has finished and the project is genuinely empty (no path, no tracks,
+ * no library). The session-scoped `startScreenDismissed` flag prevents
+ * it from re-appearing if the user does File > New and then has an
+ * empty workspace again — that's intentional behaviour, not the boot
+ * landing page.
+ */
+const startScreenVisible = computed(
+  () =>
+    transport.bridgeReady &&
+    appStore.startupFlowComplete &&
+    !appStore.startScreenDismissed &&
+    !recoveryDialogOpen.value &&
+    project.currentFilePath === null &&
+    project.tracks.length === 0 &&
+    library.items.length === 0
+)
 
 onBeforeUnmount(() => {
   log.info('app', 'beforeUnmount')
@@ -380,6 +495,7 @@ onBeforeUnmount(() => {
   unregisterShortcuts = null
   window.removeEventListener('keydown', onGlobalShortcutKey, { capture: true })
   disconnectBridge()
+  stopAutosaveManager()
   stopImportingWatcher()
   stopBridgeTimerWatcher()
   stopUnresolvedWatch()
@@ -434,7 +550,10 @@ function handleMenuAction(action: string): void {
     return
   }
   if (action === 'file.newProject') {
-    guardAgainstUnsavedChanges(() => project.requestNewProject())
+    guardAgainstUnsavedChanges(() => {
+      project.requestNewProject()
+      appStore.dismissStartScreen()
+    })
     return
   }
   if (action === 'file.openProject') {
@@ -447,8 +566,27 @@ function handleMenuAction(action: string): void {
         // whitelist by that point.
         await window.silverdaw.prepareProjectOpen(filePath)
         project.requestLoad(filePath)
+        appStore.dismissStartScreen()
       })
     })
+    return
+  }
+  // Recent Projects MRU click. The action ID encodes the visible-menu
+  // index; we look the path up out of the appStore mirror because the
+  // file menu only surfaces the top 5 (the full MRU lives in the
+  // start screen).
+  if (action.startsWith('file.openRecentByIndex:')) {
+    const indexStr = action.slice('file.openRecentByIndex:'.length)
+    const index = Number.parseInt(indexStr, 10)
+    if (!Number.isFinite(index) || index < 0) return
+    const filePath = appStore.recentProjects[index]
+    if (!filePath) return
+    openRecentPath(filePath)
+    return
+  }
+  if (action === 'file.clearRecentProjects') {
+    window.silverdaw.clearRecentProjects()
+    void appStore.refreshRecentProjects()
     return
   }
   if (action === 'file.save') {
@@ -655,6 +793,21 @@ function onUnsavedPromptCancel(): void {
     <RelinkDialog
       :open="relinkDialogOpen"
       @close="relinkDialogOpen = false"
+    />
+
+    <RecoveryDialog
+      :open="recoveryDialogOpen"
+      :entries="recoveryEntries"
+      @restored="onRecoveryRestored"
+      @close="onRecoveryClose"
+    />
+
+    <StartScreenOverlay
+      :open="startScreenVisible"
+      :bridge-ready="transport.bridgeReady"
+      @new-project="onStartScreenNew"
+      @open-project="onStartScreenOpen"
+      @open-recent="onStartScreenRecent"
     />
   </div>
 </template>

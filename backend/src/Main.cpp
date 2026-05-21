@@ -1458,6 +1458,120 @@ void handleProjectRename(const juce::var& payload, silverdaw::ProjectState& proj
     bridge.broadcast("PROJECT_RENAMED", juce::var(p));
 }
 
+// Background autosave: serialise the current ValueTree to `filePath`
+// without touching `session.currentPath` or the dirty flag. Used by the
+// renderer's autosave manager — autosave is deliberately invisible to
+// the user-facing project lifecycle so an in-progress edit session is
+// never silently "saved" against the wrong file or quietly marked
+// clean. Playhead and scroll setters are dirty-suppressed (see
+// `ProjectState::setPlayheadMs` / `setViewScrollX`) so capturing them
+// here doesn't pollute the dirty bit.
+void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& engine,
+                           silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
+{
+    const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    auto* p = new juce::DynamicObject();
+    p->setProperty("filePath", filePath);
+    if (filePath.isEmpty())
+    {
+        p->setProperty("ok", false);
+        p->setProperty("error", juce::String("Missing filePath"));
+        bridge.broadcast("PROJECT_AUTOSAVED", juce::var(p));
+        return;
+    }
+
+    // Capture playhead + scroll so a recovered autosave restores the
+    // user where they actually were. Both setters are explicitly
+    // dirty-suppressed so this does not turn into a feedback loop with
+    // the autosave manager (which only runs while the project is
+    // already dirty).
+    const auto scrollX = tryGetNumber(payload, "viewScrollX");
+    if (scrollX.has_value())
+    {
+        projectState.setViewScrollX(juce::jmax(0.0, *scrollX));
+    }
+    projectState.setPlayheadMs(juce::jmax(0.0, engine.getPositionMs()));
+
+    const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
+    p->setProperty("ok", result.wasOk());
+    if (!result.wasOk())
+    {
+        p->setProperty("error", result.getErrorMessage());
+    }
+    bridge.broadcast("PROJECT_AUTOSAVED", juce::var(p));
+    silverdaw::log::debug("project",
+                         juce::String("PROJECT_AUTOSAVE ") +
+                             (result.wasOk() ? "ok" : "fail: " + result.getErrorMessage()) + " path=" + filePath);
+}
+
+// Crash-recovery load. Same restore pipeline as PROJECT_LOAD but
+// `session.currentPath` is set to the *original* backing path (or left
+// empty when the autosave was for an untitled project) so File > Save
+// either overwrites the original or falls through to Save As. The
+// project is marked dirty after the load so the user is clearly
+// steered to a deliberate save (the autosave file should be a transient
+// safety net, not a stand-in for the real project).
+void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine& engine,
+                               silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                               ProjectSession& session, juce::ThreadPool& peakPool,
+                               const silverdaw::DecodedCache& decodedCache)
+{
+    const juce::String autosavePath = payload.getProperty("autosavePath", juce::var()).toString();
+    const juce::var originalVar = payload.getProperty("originalPath", juce::var());
+    const juce::String originalPath = originalVar.isString() ? originalVar.toString() : juce::String();
+
+    if (autosavePath.isEmpty())
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("filePath", autosavePath);
+        p->setProperty("error", juce::String("Missing autosavePath"));
+        bridge.broadcast("PROJECT_LOAD_FAILED", juce::var(p));
+        return;
+    }
+
+    const auto previousClipIds = collectClipIds(projectState);
+
+    const auto result = silverdaw::ProjectFile::load(juce::File(autosavePath), projectState);
+    if (!result.ok)
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("filePath", autosavePath);
+        p->setProperty("error", result.error);
+        bridge.broadcast("PROJECT_LOAD_FAILED", juce::var(p));
+        silverdaw::log::warn("project", "PROJECT_LOAD_RECOVERY failed: " + result.error);
+        return;
+    }
+
+    engine.stop();
+    for (const auto& id : previousClipIds)
+    {
+        engine.removeClip(id);
+    }
+    rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
+
+    const double persistedPlayhead = projectState.getPlayheadMs();
+    if (persistedPlayhead > 0.0)
+    {
+        engine.setPositionMs(persistedPlayhead);
+    }
+
+    // Aim the user's "current project" pointer at the original backing
+    // path (or clear it for an untitled recovery). The autosave path
+    // itself is never exposed as the user's working file.
+    session.currentPath = originalPath;
+
+    bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, true));
+
+    // Force dirty so the user is steered to save. `ProjectFile::load`
+    // calls `markClean()` at the end of replaceTree, so we have to
+    // re-dirty the project here rather than rely on the listener.
+    projectState.markDirty();
+
+    silverdaw::log::info("project",
+                         juce::String("PROJECT_LOAD_RECOVERY ok autosavePath=") + autosavePath +
+                             " originalPath=" + originalPath);
+}
+
 // Same wire-protocol convention as BridgeServer::broadcast: (type, payload) order is
 // fixed by design, so the easily-swappable-parameters check is intentionally silenced.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -1730,6 +1844,18 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::info("bridge", "recv PROJECT_LOAD path=" + payload.getProperty("filePath", "").toString());
         handleProjectLoad(payload, engine, projectState, bridge, session, peakPool, decodedCache);
+    }
+    else if (type == "PROJECT_LOAD_RECOVERY")
+    {
+        silverdaw::log::info("bridge", "recv PROJECT_LOAD_RECOVERY autosavePath=" +
+                                           payload.getProperty("autosavePath", "").toString());
+        handleProjectLoadRecovery(payload, engine, projectState, bridge, session, peakPool, decodedCache);
+    }
+    else if (type == "PROJECT_AUTOSAVE")
+    {
+        silverdaw::log::debug("bridge", "recv PROJECT_AUTOSAVE path=" +
+                                            payload.getProperty("filePath", "").toString());
+        handleProjectAutosave(payload, engine, projectState, bridge);
     }
     else if (type == "PROJECT_RENAME")
     {

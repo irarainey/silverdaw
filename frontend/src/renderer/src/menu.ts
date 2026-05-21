@@ -10,6 +10,10 @@ export interface MenuItemDef {
   accelerator?: string
   /** Disable the item (greyed out). */
   disabled?: boolean
+  /** Optional secondary text shown right-aligned next to the label
+   *  (e.g. the file path for a recent-projects entry). Independent of
+   *  `accelerator`. */
+  hint?: string
 }
 
 export interface MenuDef {
@@ -27,6 +31,22 @@ export interface BuildMenusOptions {
    * the startup-snapshot debug flag in `appStore`.
    */
   debugMode: boolean
+  /**
+   * Recent Projects MRU, head = most recent. Up to 5 entries are
+   * rendered as flat items inside the File menu (the menu engine
+   * doesn't currently model nested submenus); the remainder are
+   * accessible from the Start Screen.
+   */
+  recentProjects?: string[]
+}
+
+/** Max number of recent-project entries surfaced in the File menu. The
+ *  Start Screen lists the full MRU; the menu is just a quick path. */
+const MAX_RECENT_IN_MENU = 5
+
+function basename(path: string): string {
+  const lastSep = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
+  return lastSep >= 0 ? path.slice(lastSep + 1) : path
 }
 
 /**
@@ -35,12 +55,29 @@ export interface BuildMenusOptions {
  * snapshot so both consumers see a consistent set of menus + accelerators.
  */
 export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
+  const recents = (opts.recentProjects ?? []).slice(0, MAX_RECENT_IN_MENU)
+  const recentItems: MenuItemDef[] = []
+  if (recents.length > 0) {
+    recentItems.push(SEP)
+    recents.forEach((path, index) => {
+      recentItems.push({
+        label: basename(path),
+        // Encode the index, not the path — Windows paths contain `\` and
+        // `:`, which would collide with any path-parsing scheme.
+        action: `file.openRecentByIndex:${index}`,
+        hint: path
+      })
+    })
+    recentItems.push({ label: 'Clear Recent', action: 'file.clearRecentProjects' })
+  }
+
   const menus: MenuDef[] = [
     {
       label: 'File',
       items: [
         { label: 'New Project', action: 'file.newProject', accelerator: 'Ctrl+N' },
         { label: 'Open Project...', action: 'file.openProject', accelerator: 'Ctrl+O' },
+        ...recentItems,
         SEP,
         { label: 'Save', action: 'file.save', accelerator: 'Ctrl+S' },
         { label: 'Save As...', action: 'file.saveAs', accelerator: 'Ctrl+Shift+S' },

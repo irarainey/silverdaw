@@ -50,8 +50,7 @@ declare global {
         node: string
       }>
       openExternal(url: string): void
-      getLastProjectPath(): Promise<string | null>
-      setLastProjectPath(value: string | null): void
+      setLastProjectPath(value: string): void
       projectFileExists(path: string): Promise<boolean>
       chooseProjectOpen(): Promise<string | null>
       chooseProjectSaveAs(defaultName: string): Promise<string | null>
@@ -71,6 +70,33 @@ declare global {
         paths?: { defaultProjectDir?: string; defaultClipDir?: string }
       }): void
       chooseDirectory(args: { title?: string; defaultPath?: string }): Promise<string | null>
+      // ── Recent projects ───────────────────────────────────────────────
+      getRecentProjects(): Promise<string[]>
+      removeRecentProject(filePath: string): void
+      clearRecentProjects(): void
+      // ── Autosave configuration ────────────────────────────────────────
+      getAutosaveConfig(): Promise<{ enabled: boolean; intervalSeconds: number }>
+      setAutosaveConfig(partial: { enabled?: boolean; intervalSeconds?: number }): void
+      // ── Autosave folder + manifest IPCs ───────────────────────────────
+      resolveAutosaveDir(projectId: string): Promise<{ dir: string; filePath: string } | null>
+      writeAutosaveManifest(manifest: {
+        projectId: string
+        originalPath: string | null
+        projectName: string
+        savedAtIso: string
+        pending: boolean
+      }): Promise<boolean>
+      listRecoverableAutosaves(): Promise<
+        Array<{
+          projectId: string
+          originalPath: string | null
+          projectName: string
+          autosavePath: string
+          savedAtIso: string
+          originalExists: boolean
+        }>
+      >
+      clearAutosave(projectId: string): Promise<boolean>
     }
   }
 }

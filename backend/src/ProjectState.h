@@ -74,6 +74,14 @@ class ProjectState : public juce::ValueTree::Listener
      */
     void markClean();
 
+    /**
+     * Force the dirty flag to true. Used by crash-recovery loads where
+     * we deliberately want File > Save to be the next step the user
+     * takes (the autosave is a transient safety net, not a real save).
+     * No-op if already dirty.
+     */
+    void markDirty();
+
     /** Register a callback fired on every dirty-flag transition. */
     void setDirtyChangedCallback(DirtyChangedCallback callback);
 

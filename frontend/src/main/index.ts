@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen }
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, readdir, stat, rm } from 'node:fs/promises'
 import { createServer as createNetServer } from 'node:net'
 import { basename, dirname, extname, isAbsolute, join, resolve as pathResolve } from 'node:path'
 import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogLevel } from './log'
@@ -312,19 +312,45 @@ interface PathPrefs {
   defaultClipDir: string
 }
 
+/**
+ * Background autosave configuration. While the project is dirty AND
+ * `enabled` is true, the renderer runs a periodic timer that pushes a
+ * `PROJECT_AUTOSAVE` to a project-scoped folder under
+ * `%APPDATA%/Silverdaw/autosave/<projectId>/`. A clean shutdown — File >
+ * Save, accepting "Discard" in the unsaved-changes dialog, or any other
+ * path that resolves dirty — clears the bucket. The periodic save is
+ * deliberately the only crash-recovery mechanism (a synchronous flush
+ * during `before-quit` could race the IXWebSocket I/O loop and would
+ * not be reliable enough to be worth implementing).
+ */
+interface AutosavePrefs {
+  enabled: boolean
+  /** Tick interval in seconds. Clamped 5..600 on read so a corrupted
+   *  preferences file can never DoS the bridge with sub-second saves. */
+  intervalSeconds: number
+}
+
 interface Preferences {
   window: WindowPrefs
   ui: UiPrefs
   debug: DebugPrefs
   toasts: ToastPrefs
   paths: PathPrefs
+  autosave: AutosavePrefs
   /**
-   * Absolute path of the most-recently saved or loaded `.silverdaw`
-   * project. Read on startup to decide whether to auto-open the last
-   * project. `null` until the user saves / loads anything.
+   * Most-recently used `.silverdaw` paths, head = most recent. Capped
+   * at `MAX_RECENT_PROJECTS`; deduplicated case-insensitively on
+   * Windows. Populated by `project:setLastPath` on every successful
+   * save/load. The head of this list also acts as the "last
+   * project" the app would auto-reopen if that flow ever lands.
    */
-  lastProjectPath: string | null
+  recentProjects: string[]
 }
+
+const MAX_RECENT_PROJECTS = 10
+const AUTOSAVE_MIN_SECONDS = 5
+const AUTOSAVE_MAX_SECONDS = 600
+const AUTOSAVE_DEFAULT_SECONDS = 30
 
 /**
  * Build the default preferences object. The path defaults need
@@ -358,7 +384,8 @@ function buildDefaultPrefs(): Preferences {
     debug: { enabled: false },
     toasts: { enabled: true },
     paths: { defaultProjectDir, defaultClipDir },
-    lastProjectPath: null
+    autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
+    recentProjects: []
   }
 }
 
@@ -373,7 +400,8 @@ let prefs: Preferences = {
   debug: { enabled: false },
   toasts: { enabled: true },
   paths: { defaultProjectDir: '', defaultClipDir: '' },
-  lastProjectPath: null
+  autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
+  recentProjects: []
 }
 let prefsPath = ''
 let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null
@@ -443,10 +471,16 @@ async function loadPreferences(): Promise<void> {
             ? savedPaths.defaultClipDir
             : defaults.paths.defaultClipDir
       },
-      lastProjectPath:
-        typeof parsed.lastProjectPath === 'string' && parsed.lastProjectPath.length > 0
-          ? parsed.lastProjectPath
-          : null
+      autosave: {
+        enabled:
+          typeof (parsed.autosave as Partial<AutosavePrefs> | undefined)?.enabled === 'boolean'
+            ? ((parsed.autosave as AutosavePrefs).enabled)
+            : defaults.autosave.enabled,
+        intervalSeconds: clampAutosaveSeconds(
+          (parsed.autosave as Partial<AutosavePrefs> | undefined)?.intervalSeconds
+        )
+      },
+      recentProjects: sanitiseRecentList(parsed.recentProjects)
     }
   } catch (err) {
     // ENOENT on first run is expected; anything else is logged but we still
@@ -514,6 +548,105 @@ function flushPrefsSaveSync(): void {
     console.warn('[prefs] save failed:', err)
   }
 }
+
+function clampAutosaveSeconds(input: unknown): number {
+  const value = typeof input === 'number' && Number.isFinite(input) ? input : AUTOSAVE_DEFAULT_SECONDS
+  if (value < AUTOSAVE_MIN_SECONDS) return AUTOSAVE_MIN_SECONDS
+  if (value > AUTOSAVE_MAX_SECONDS) return AUTOSAVE_MAX_SECONDS
+  return Math.round(value)
+}
+
+/** Sanitise an arbitrary value parsed out of `preferences.json` into a
+ *  recent-project string list: trim, dedupe (Windows case-insensitive),
+ *  drop empties, cap at MAX_RECENT_PROJECTS. */
+function sanitiseRecentList(input: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const value of input) {
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (trimmed.length === 0) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(trimmed)
+    if (out.length >= MAX_RECENT_PROJECTS) break
+  }
+  return out
+}
+
+/** Insert `filePath` at the head of `prefs.recentProjects`, deduped
+ *  case-insensitively, capped at MAX_RECENT_PROJECTS. Returns true when
+ *  the list mutated so the caller can decide whether to write to disk. */
+function bumpRecentProject(filePath: string): boolean {
+  if (typeof filePath !== 'string' || filePath.length === 0) return false
+  const key = filePath.toLowerCase()
+  const existingIndex = prefs.recentProjects.findIndex((p) => p.toLowerCase() === key)
+  if (existingIndex === 0) return false
+  if (existingIndex > 0) prefs.recentProjects.splice(existingIndex, 1)
+  prefs.recentProjects.unshift(filePath)
+  if (prefs.recentProjects.length > MAX_RECENT_PROJECTS) {
+    prefs.recentProjects.length = MAX_RECENT_PROJECTS
+  }
+  return true
+}
+
+// ─── Autosave folder layout ────────────────────────────────────────────
+//
+// All autosave artefacts live under `%APPDATA%/Silverdaw/autosave/`.
+// Each project (saved or untitled) gets its own subfolder keyed by a
+// renderer-supplied `projectId` containing `autosave.silverdaw` (the
+// serialised ValueTree) + `manifest.json`. Recovery on launch is just
+// a walk of these subfolders.
+//
+// The `projectId` is whitelisted to a strict character set before it
+// touches the filesystem so a malicious renderer can't break out of
+// the autosave folder via `../` segments or absolute paths. The same
+// rule applies to deletes / listings.
+const AUTOSAVE_FILENAME = 'autosave.silverdaw'
+const AUTOSAVE_MANIFEST_FILENAME = 'manifest.json'
+const AUTOSAVE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/
+
+function getAutosaveRoot(): string {
+  return join(app.getPath('userData'), 'autosave')
+}
+
+function resolveAutosaveDir(projectId: string): string {
+  if (!AUTOSAVE_ID_REGEX.test(projectId)) {
+    throw new Error(`[autosave] rejected projectId ${JSON.stringify(projectId)}`)
+  }
+  return join(getAutosaveRoot(), projectId)
+}
+
+interface AutosaveManifest {
+  projectId: string
+  originalPath: string | null
+  projectName: string
+  /** ISO-8601 UTC timestamp of the most recent confirmed autosave write. */
+  savedAtIso: string
+  /** True between the moment the renderer kicks off a tick and the
+   *  PROJECT_AUTOSAVED ack. Recovery skips pending entries because
+   *  the file may be partially written. */
+  pending: boolean
+  /** App version that wrote the autosave — surfaced in the recovery
+   *  dialog for diagnostics. */
+  appVersion: string
+}
+
+function isAutosaveManifest(value: unknown): value is AutosaveManifest {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.projectId === 'string' &&
+    AUTOSAVE_ID_REGEX.test(v.projectId) &&
+    (v.originalPath === null || typeof v.originalPath === 'string') &&
+    typeof v.projectName === 'string' &&
+    typeof v.savedAtIso === 'string' &&
+    typeof v.pending === 'boolean'
+  )
+}
+
 
 /**
  * Return a window bounds object clamped to fall inside one of the currently
@@ -906,6 +1039,17 @@ function handleMenuAction(action: string): void {
       break
 
     default:
+      // Recent Projects entries arrive as `file.openRecentByIndex:<i>`.
+      // They're purely renderer-side (the renderer owns the MRU mirror
+      // and the open-project flow) so we forward without parsing.
+      if (action.startsWith('file.openRecentByIndex:')) {
+        wc.send('menu:action', action)
+        break
+      }
+      if (action === 'file.clearRecentProjects') {
+        wc.send('menu:action', action)
+        break
+      }
       console.warn('[menu] unknown action:', action)
   }
 }
@@ -1402,20 +1546,17 @@ app.whenReady().then(async () => {
 
   // ─── Project file lifecycle ─────────────────────────────────────────────
   // Helpers used by the renderer to drive Save / Save As / Open menus. Main
-  // owns the native OS dialog plus the `lastProjectPath` preference so the
-  // app can auto-reopen the last project on launch.
-
-  ipcMain.handle('project:getLastPath', () => prefs.lastProjectPath)
+  // owns the native OS dialog plus the Recent Projects MRU so the app can
+  // surface it in the File menu and on the Start Screen. The MRU head
+  // doubles as the "last opened project" — there's no separate slot.
 
   ipcMain.on('project:setLastPath', (_evt, value: unknown) => {
-    if (value === null) {
-      prefs.lastProjectPath = null
-    } else if (typeof value === 'string' && value.length > 0) {
-      prefs.lastProjectPath = value
-    } else {
-      return
-    }
-    flushPrefsSaveSync()
+    if (typeof value !== 'string' || value.length === 0) return
+    // A successful save / load bumps the Recent Projects MRU. Bridge
+    // service calls this IPC from both the PROJECT_SAVED arm and the
+    // `reset=true && filePath` PROJECT_STATE arm, so every
+    // user-visible "I just opened this file" event is captured.
+    if (bumpRecentProject(value)) flushPrefsSaveSync()
   })
 
   ipcMain.handle('project:fileExists', async (_evt, value: unknown): Promise<boolean> => {
@@ -1533,6 +1674,191 @@ app.whenReady().then(async () => {
     const p = pendingOpenPath
     pendingOpenPath = null
     return p
+  })
+
+  // ─── Recent projects (MRU) ─────────────────────────────────────────────
+  ipcMain.handle('prefs:getRecentProjects', (): string[] => [...prefs.recentProjects])
+
+  ipcMain.on('prefs:removeRecentProject', (_evt, value: unknown) => {
+    if (typeof value !== 'string' || value.length === 0) return
+    const key = value.toLowerCase()
+    const before = prefs.recentProjects.length
+    prefs.recentProjects = prefs.recentProjects.filter((p) => p.toLowerCase() !== key)
+    if (prefs.recentProjects.length !== before) flushPrefsSaveSync()
+  })
+
+  ipcMain.on('prefs:clearRecentProjects', () => {
+    if (prefs.recentProjects.length === 0) return
+    prefs.recentProjects = []
+    flushPrefsSaveSync()
+  })
+
+  // ─── Autosave preferences ───────────────────────────────────────────────
+  ipcMain.handle(
+    'prefs:getAutosaveConfig',
+    (): { enabled: boolean; intervalSeconds: number } => ({ ...prefs.autosave })
+  )
+
+  ipcMain.on('prefs:setAutosaveConfig', (_evt, partial: unknown) => {
+    if (!partial || typeof partial !== 'object') return
+    const p = partial as Partial<AutosavePrefs>
+    let changed = false
+    if (typeof p.enabled === 'boolean' && p.enabled !== prefs.autosave.enabled) {
+      prefs.autosave = { ...prefs.autosave, enabled: p.enabled }
+      changed = true
+    }
+    if (typeof p.intervalSeconds === 'number' && Number.isFinite(p.intervalSeconds)) {
+      const clamped = clampAutosaveSeconds(p.intervalSeconds)
+      if (clamped !== prefs.autosave.intervalSeconds) {
+        prefs.autosave = { ...prefs.autosave, intervalSeconds: clamped }
+        changed = true
+      }
+    }
+    if (changed) schedulePrefsSave()
+  })
+
+  // ─── Autosave folder + manifest IPCs ────────────────────────────────────
+  //
+  // The renderer's autosave manager drives writes. Main owns the
+  // filesystem side — folder creation, manifest write, recovery scan,
+  // and bucket cleanup — so the renderer never touches paths outside
+  // `%APPDATA%/Silverdaw/autosave/<projectId>/`. Every accepted
+  // `projectId` is validated against `AUTOSAVE_ID_REGEX` first.
+
+  ipcMain.handle(
+    'autosave:resolveDir',
+    async (_evt, projectId: unknown): Promise<{ dir: string; filePath: string } | null> => {
+      if (typeof projectId !== 'string') return null
+      try {
+        const dir = resolveAutosaveDir(projectId)
+        await mkdir(dir, { recursive: true })
+        return { dir, filePath: join(dir, AUTOSAVE_FILENAME) }
+      } catch (err) {
+        console.warn('[autosave:resolveDir]', err)
+        return null
+      }
+    }
+  )
+
+  ipcMain.handle('autosave:writeManifest', async (_evt, payload: unknown): Promise<boolean> => {
+    if (!payload || typeof payload !== 'object') return false
+    const p = payload as Partial<AutosaveManifest>
+    if (typeof p.projectId !== 'string' || !AUTOSAVE_ID_REGEX.test(p.projectId)) return false
+    const manifest: AutosaveManifest = {
+      projectId: p.projectId,
+      originalPath: typeof p.originalPath === 'string' && p.originalPath.length > 0 ? p.originalPath : null,
+      projectName: typeof p.projectName === 'string' ? p.projectName : 'Untitled',
+      savedAtIso: typeof p.savedAtIso === 'string' ? p.savedAtIso : new Date().toISOString(),
+      pending: typeof p.pending === 'boolean' ? p.pending : false,
+      appVersion: app.getVersion()
+    }
+    try {
+      const dir = resolveAutosaveDir(manifest.projectId)
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, AUTOSAVE_MANIFEST_FILENAME), JSON.stringify(manifest, null, 2), 'utf8')
+      return true
+    } catch (err) {
+      console.warn('[autosave:writeManifest]', err)
+      return false
+    }
+  })
+
+  ipcMain.handle('autosave:listRecoverable', async (): Promise<
+    Array<{
+      projectId: string
+      originalPath: string | null
+      projectName: string
+      autosavePath: string
+      savedAtIso: string
+      originalExists: boolean
+    }>
+  > => {
+    const root = getAutosaveRoot()
+    let entries: string[] = []
+    try {
+      entries = await readdir(root)
+    } catch {
+      return []
+    }
+    const out: Array<{
+      projectId: string
+      originalPath: string | null
+      projectName: string
+      autosavePath: string
+      savedAtIso: string
+      originalExists: boolean
+    }> = []
+    for (const projectId of entries) {
+      if (!AUTOSAVE_ID_REGEX.test(projectId)) continue
+      const dir = join(root, projectId)
+      const manifestPath = join(dir, AUTOSAVE_MANIFEST_FILENAME)
+      const autosavePath = join(dir, AUTOSAVE_FILENAME)
+      let manifest: AutosaveManifest | null = null
+      try {
+        const raw = await readFile(manifestPath, 'utf8')
+        const parsed = JSON.parse(raw) as unknown
+        if (isAutosaveManifest(parsed)) manifest = parsed
+      } catch {
+        manifest = null
+      }
+      if (!manifest) continue
+      if (manifest.pending) continue
+      let autosaveStat: Awaited<ReturnType<typeof stat>> | null = null
+      try {
+        autosaveStat = await stat(autosavePath)
+      } catch {
+        // No autosave file on disk — manifest is orphaned. Skip.
+        continue
+      }
+      // Recoverable iff the autosave is newer than its backing file
+      // (or the backing file is missing / nonexistent / null).
+      let originalExists = false
+      let recoverable = manifest.originalPath === null
+      if (manifest.originalPath) {
+        try {
+          const origStat = await stat(manifest.originalPath)
+          originalExists = true
+          if (autosaveStat.mtimeMs > origStat.mtimeMs + 500) recoverable = true
+        } catch {
+          // Original gone — definitely recoverable.
+          recoverable = true
+        }
+      }
+      if (!recoverable) continue
+      out.push({
+        projectId: manifest.projectId,
+        originalPath: manifest.originalPath,
+        projectName: manifest.projectName,
+        autosavePath,
+        savedAtIso: manifest.savedAtIso,
+        originalExists
+      })
+    }
+    // Most recent first.
+    out.sort((a, b) => (a.savedAtIso < b.savedAtIso ? 1 : -1))
+    return out
+  })
+
+  ipcMain.handle('autosave:clear', async (_evt, projectId: unknown): Promise<boolean> => {
+    if (typeof projectId !== 'string' || !AUTOSAVE_ID_REGEX.test(projectId)) return false
+    try {
+      const dir = resolveAutosaveDir(projectId)
+      // Verify the dir is under the autosave root (paranoid double-check
+      // — `AUTOSAVE_ID_REGEX` already prevents traversal, but the cost
+      // is one extra `startsWith` so do it anyway).
+      const root = getAutosaveRoot()
+      const canonical = pathResolve(dir)
+      const canonicalRoot = pathResolve(root)
+      if (!canonical.toLowerCase().startsWith(canonicalRoot.toLowerCase())) {
+        console.warn('[autosave:clear] refused traversal:', canonical)
+        return false
+      }
+      await rm(canonical, { recursive: true, force: true })
+      return true
+    } catch (err) {
+      console.warn('[autosave:clear]', err)
+      return false
+    }
   })
 
   /**

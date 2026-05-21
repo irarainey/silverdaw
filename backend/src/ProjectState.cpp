@@ -77,6 +77,11 @@ void ProjectState::markClean()
     if (dirty) setDirty(false);
 }
 
+void ProjectState::markDirty()
+{
+    if (!dirty) setDirty(true);
+}
+
 void ProjectState::setDirtyChangedCallback(DirtyChangedCallback callback)
 {
     onDirtyChanged = std::move(callback);

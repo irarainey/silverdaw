@@ -102,6 +102,57 @@ export interface Track {
 /** Default visible length of a new empty track — 10 minutes. */
 export const DEFAULT_TRACK_LENGTH_MS = 10 * 60 * 1000
 
+/**
+ * Derive a stable `projectId` from an absolute project file path. Used
+ * to bucket autosave artefacts so the same file always lands in the
+ * same `%APPDATA%/Silverdaw/autosave/<projectId>/` folder across
+ * launches.
+ *
+ * Prefers `crypto.subtle.digest` (SHA-1, 8-byte prefix) and falls back
+ * to a cheap deterministic string hash on environments that don't
+ * expose Web Crypto (e.g. Vitest's happy-dom shim used by the store
+ * specs).
+ */
+async function deriveProjectIdFromPath(absolutePath: string): Promise<string> {
+  const lower = absolutePath.trim().toLowerCase()
+  try {
+    const subtle = (globalThis.crypto as Crypto | undefined)?.subtle
+    if (subtle) {
+      const data = new TextEncoder().encode(lower)
+      const digest = await subtle.digest('SHA-1', data)
+      return Array.from(new Uint8Array(digest))
+        .slice(0, 8)
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+    }
+  } catch {
+    // Fall through to the synchronous fallback.
+  }
+  // Deterministic 32-bit FNV-1a → 8 hex digits. Good enough for
+  // tests; the SHA-1 path covers real users.
+  let h = 0x811c9dc5
+  for (let i = 0; i < lower.length; i++) {
+    h ^= lower.charCodeAt(i)
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
+}
+
+/** Generate a fresh autosave id for an untitled project. Same character
+ *  set as `deriveProjectIdFromPath` so main's allow-list (a strict
+ *  `[A-Za-z0-9_-]{1,64}` regex) accepts both. */
+function freshUntitledProjectId(): string {
+  const c = globalThis.crypto as Crypto | undefined
+  if (c?.randomUUID) return c.randomUUID().replace(/-/g, '').slice(0, 24)
+  // Test-environment fallback. Math.random() entropy is fine here —
+  // collisions inside one Vitest run don't matter.
+  let out = ''
+  for (let i = 0; i < 24; i++) {
+    out += Math.floor(Math.random() * 16).toString(16)
+  }
+  return out
+}
+
 async function refreshLibraryItemMedia(itemId: string, filePath: string): Promise<void> {
   const library = useLibraryStore()
   try {
@@ -195,6 +246,23 @@ interface ProjectState {
    */
   isDirty: boolean
   /**
+   * Stable identifier used to bucket autosave artefacts under
+   * `%APPDATA%/Silverdaw/autosave/<projectId>/`. Derived from the
+   * absolute file path for saved projects (so the same file always
+   * lands in the same folder across launches) and a random UUID for
+   * untitled / freshly-created projects. Refreshed on every
+   * PROJECT_STATE with reset=true so File > Save As switches buckets
+   * cleanly. `null` until the first snapshot has been applied.
+   */
+  projectId: string | null
+  /**
+   * Snapshot of `projectId` before the most recent transition (Load,
+   * New, Save As). The autosave manager uses this to delete the old
+   * bucket after a successful explicit save / new without losing the
+   * file that's still under the new id.
+   */
+  previousProjectId: string | null
+  /**
    * Horizontal zoom (pixels per second) persisted with the project.
    * Mirrors `viewPxPerSecond` from PROJECT_STATE; the timeline writes
    * back here when the user wheel-zooms (debounced) so the value
@@ -258,6 +326,18 @@ let pendingSaveResolver: ((result: { ok: boolean; error?: string }) => void) | n
 let pendingViewStateSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
 let pendingSaveTimeout: ReturnType<typeof setTimeout> | null = null
 const PENDING_SAVE_TIMEOUT_MS = 10000
+
+/**
+ * Outstanding autosave resolver keyed by autosave filePath. The
+ * renderer's autosave manager can have at most one tick in flight at a
+ * time, but keying on path keeps the resolver robust to a tick races
+ * being raced by a project replacement (the new bucket's ack should
+ * not resolve the previous bucket's promise).
+ */
+const pendingAutosaveResolvers = new Map<
+  string,
+  (result: { ok: boolean; error?: string }) => void
+>()
 
 /**
  * Return the position closest to `desiredStartMs` on `trackId` where a
@@ -328,6 +408,8 @@ export const useProjectStore = defineStore('project', {
     currentFilePath: null,
     projectName: DEFAULT_PROJECT_NAME,
     isDirty: false,
+    projectId: null,
+    previousProjectId: null,
     viewPxPerSecond: null,
     viewScrollX: null,
     selectedClipId: null,
@@ -1306,9 +1388,37 @@ export const useProjectStore = defineStore('project', {
       // post-load values. A fresh snapshot is by definition clean — any
       // mutation made AFTER it lands will flip dirty back to true via
       // a follow-up PROJECT_DIRTY envelope.
+      const previousFilePath = this.currentFilePath
       this.currentFilePath = snapshot.filePath
       this.projectName = snapshot.name?.trim() ? snapshot.name : DEFAULT_PROJECT_NAME
       this.isDirty = false
+      // Bucket transition for autosave. We rotate the project id on
+      // any snapshot that *replaces* the project — Load / New (which
+      // carry `reset=true`) AND Save As (which broadcasts a follow-up
+      // `reset=false` PROJECT_STATE with a new `filePath`, because
+      // the in-memory ValueTree itself didn't change — only the
+      // backing file did). Bucket cleanup for the prior id is run
+      // by the `previousProjectId` watcher in `lib/autosave.ts`.
+      const pathChanged = snapshot.filePath !== previousFilePath
+      const shouldRotateId = snapshot.reset === true || pathChanged
+      if (shouldRotateId) {
+        this.previousProjectId = this.projectId
+        if (snapshot.filePath) {
+          // Derive a stable id from the absolute path. The derivation
+          // is async (subtle.digest); assign provisionally to null so
+          // the autosave manager's start-condition treats the project
+          // as "not yet ready" until the id resolves.
+          const targetPath = snapshot.filePath
+          this.projectId = null
+          void deriveProjectIdFromPath(targetPath).then((id) => {
+            // Only adopt the id if the snapshot is still the current
+            // project — a follow-up Load could have raced this.
+            if (this.currentFilePath === targetPath) this.projectId = id
+          })
+        } else {
+          this.projectId = freshUntitledProjectId()
+        }
+      }
       // Adopt the persisted zoom level (if the backend supplied one) so
       // the TimelineView watcher in the component can apply it via the
       // grid-geometry composable.
@@ -1726,10 +1836,80 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
+    /**
+     * Fire-and-forget autosave tick. Returns a promise the autosave
+     * manager awaits to know whether to update the manifest from
+     * `pending=true` to `pending=false`. Resolves with `{ ok: false }`
+     * after a short timeout if the backend never acks (so the manager
+     * doesn't leak resolvers forever).
+     */
+    autosaveAndWait(filePath: string): Promise<{ ok: boolean; error?: string }> {
+      // If a prior tick for the same filePath is still pending, reject
+      // it so its resolver doesn't fire on the new tick's ack.
+      const existing = pendingAutosaveResolvers.get(filePath)
+      if (existing) {
+        existing({ ok: false, error: 'Superseded by a newer autosave' })
+        pendingAutosaveResolvers.delete(filePath)
+      }
+      const promise = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        pendingAutosaveResolvers.set(filePath, resolve)
+      })
+      const sent = sendBridge('PROJECT_AUTOSAVE', {
+        filePath,
+        viewScrollX: this.viewScrollX ?? undefined
+      })
+      if (!sent) {
+        pendingAutosaveResolvers.delete(filePath)
+        return Promise.resolve({ ok: false, error: 'Backend is not connected' })
+      }
+      // Safety timeout: a backend that drops the ack must not leak a
+      // resolver. Mirrors the explicit-save timeout.
+      const timeoutId = setTimeout(() => {
+        const r = pendingAutosaveResolvers.get(filePath)
+        if (r) {
+          r({ ok: false, error: 'Autosave timed out' })
+          pendingAutosaveResolvers.delete(filePath)
+        }
+      }, PENDING_SAVE_TIMEOUT_MS)
+      // Wrap the resolve so it always clears the timeout. Replace the
+      // map entry with the wrapped version so the bridge-side dispatch
+      // calls the wrapped one.
+      const original = pendingAutosaveResolvers.get(filePath)!
+      const wrapped = (result: { ok: boolean; error?: string }): void => {
+        clearTimeout(timeoutId)
+        original(result)
+      }
+      pendingAutosaveResolvers.set(filePath, wrapped)
+      return promise
+    },
+
+    /** Called by `bridgeService` on every PROJECT_AUTOSAVED. */
+    notifyAutosaveAck(filePath: string, ok: boolean, error?: string): void {
+      const resolver = pendingAutosaveResolvers.get(filePath)
+      if (resolver) {
+        pendingAutosaveResolvers.delete(filePath)
+        resolver({ ok, error })
+      }
+    },
+
     /** Send PROJECT_LOAD with the path the user picked in the OS dialog. */
     requestLoad(filePath: string): void {
       log.info('project', `requestLoad path=${filePath}`)
       sendBridge('PROJECT_LOAD', { filePath })
+    },
+
+    /**
+     * Crash-recovery load. The backend rebuilds the engine from
+     * `autosavePath` but seeds `session.currentPath` to `originalPath`
+     * (or empty when null) and flips the dirty flag to true so the
+     * user is steered to a deliberate File > Save.
+     */
+    requestLoadRecovery(autosavePath: string, originalPath: string | null): void {
+      log.info(
+        'project',
+        `requestLoadRecovery autosavePath=${autosavePath} originalPath=${originalPath ?? 'null'}`
+      )
+      sendBridge('PROJECT_LOAD_RECOVERY', { autosavePath, originalPath })
     },
 
     /**

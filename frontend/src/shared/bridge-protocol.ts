@@ -198,6 +198,8 @@ export interface BridgeOutboundMap {
   PROJECT_SAVE_AS: ProjectSaveAsPayload
   PROJECT_SAVE_VIEW_STATE: ProjectSaveViewStatePayload
   PROJECT_LOAD: ProjectLoadPayload
+  PROJECT_LOAD_RECOVERY: ProjectLoadRecoveryPayload
+  PROJECT_AUTOSAVE: ProjectAutosavePayload
   PROJECT_RENAME: ProjectRenamePayload
   PROJECT_SET_VIEW: ProjectSetViewPayload
   PROJECT_SET_BPM: ProjectSetBpmPayload
@@ -241,6 +243,46 @@ export interface ProjectSaveViewStatePayload {
 
 export interface ProjectLoadPayload {
   filePath: string
+}
+
+/**
+ * Recover a project from an autosave file. Differs from PROJECT_LOAD in
+ * that the backend deliberately seeds the project's "current file path"
+ * to `originalPath` (or empty when null) instead of `autosavePath`, and
+ * leaves `isDirty` set to `true` so Ctrl+S behaves the way the user
+ * expects after a recovery:
+ *
+ *   - With `originalPath`: the autosave is overlaid on top of the
+ *     original; File > Save overwrites the original.
+ *   - Without `originalPath` (the project was untitled when it crashed):
+ *     File > Save falls through to Save As so the user is forced to
+ *     pick a permanent home for their recovered work.
+ *
+ * The backend rebuilds the engine from the autosave just like
+ * PROJECT_LOAD, broadcasts a `reset=true` PROJECT_STATE with the
+ * adjusted `filePath`, then broadcasts `PROJECT_DIRTY { dirty: true }`.
+ */
+export interface ProjectLoadRecoveryPayload {
+  /** Path to the autosave `.silverdaw` file inside `%APPDATA%/Silverdaw/autosave/<projectId>/`. */
+  autosavePath: string
+  /** Original backing project path the autosave came from, or `null`
+   *  if the project was untitled. */
+  originalPath: string | null
+}
+
+/** Background autosave write request from the renderer. The backend
+ *  serializes the current ValueTree to `filePath` without touching
+ *  `session.currentPath` or the dirty flag — autosave is invisible to
+ *  the user-facing project lifecycle. Playhead position IS captured
+ *  (the setter is dirty-suppressed), so a recovered autosave reopens at
+ *  the right point in time. View-state scroll is also captured when the
+ *  renderer supplies it. */
+export interface ProjectAutosavePayload {
+  filePath: string
+  /** Latest horizontal scroll position from the renderer, captured into
+   *  the autosave snapshot. Optional — omit for "don't touch the saved
+   *  scroll value". */
+  viewScrollX?: number
 }
 
 /** Push the renderer's current horizontal zoom (in pixels-per-second)
@@ -375,6 +417,15 @@ export interface TrackGainAppliedPayload {
 }
 
 export interface ProjectViewStateSavedPayload {
+  filePath: string
+  ok: boolean
+  error?: string
+}
+
+/** Ack for `PROJECT_AUTOSAVE`. Carries no `PROJECT_STATE` or
+ *  `PROJECT_DIRTY` follow-up: autosave is deliberately invisible to the
+ *  user-facing project lifecycle. */
+export interface ProjectAutosavedPayload {
   filePath: string
   ok: boolean
   error?: string
@@ -630,6 +681,7 @@ export interface BridgeInboundMap {
   TRACK_GAIN_APPLIED: TrackGainAppliedPayload
   PROJECT_SAVED: ProjectSavedPayload
   PROJECT_VIEW_STATE_SAVED: ProjectViewStateSavedPayload
+  PROJECT_AUTOSAVED: ProjectAutosavedPayload
   PROJECT_LOAD_FAILED: ProjectLoadFailedPayload
   PROJECT_RENAMED: ProjectRenamedPayload
   PROJECT_DIRTY: ProjectDirtyPayload
@@ -674,6 +726,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_GAIN_APPLIED',
   'PROJECT_SAVED',
   'PROJECT_VIEW_STATE_SAVED',
+  'PROJECT_AUTOSAVED',
   'PROJECT_LOAD_FAILED',
   'PROJECT_RENAMED',
   'PROJECT_DIRTY',
@@ -812,6 +865,18 @@ export function isProjectSavedPayload(value: unknown): value is ProjectSavedPayl
 }
 
 export function isProjectViewStateSavedPayload(value: unknown): value is ProjectViewStateSavedPayload {
+  return (
+    isPlainObject(value) &&
+    typeof value.filePath === 'string' &&
+    typeof value.ok === 'boolean' &&
+    (value.error === undefined || typeof value.error === 'string')
+  )
+}
+
+/** Guard for `ProjectAutosavedPayload`. Shares its shape with the
+ *  explicit-save ack; kept as a separate function so callers can
+ *  document intent at the call site. */
+export function isProjectAutosavedPayload(value: unknown): value is ProjectAutosavedPayload {
   return (
     isPlainObject(value) &&
     typeof value.filePath === 'string' &&
