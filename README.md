@@ -530,18 +530,10 @@ Silverdaw is Windows-only. Developed in Visual Studio Code.
 
 - **MSVC** — the standalone **Build Tools for Visual Studio** SKU with the *C++ build tools*
   workload is sufficient (it ships `cl.exe`, `link.exe`, the Windows SDK, `vswhere.exe` and the
-  Developer Shell module that `scripts/Invoke-DevShell.ps1` relies on). Quick install:
-
-  ```powershell
-  winget install --id Microsoft.VisualStudio.2022.BuildTools `
-    --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-  ```
-
-  If you already have Visual Studio or Build Tools installed without the C++ workload, run the
-  Visual Studio Installer and **Modify** the install to add *C++ build tools* (Build Tools SKU)
-  or *Desktop development with C++* (full VS).
+  Developer Shell module that `scripts/Invoke-DevShell.ps1` relies on).
 - **CMake** ≥ 3.22 and **Ninja**.
-- **Node.js** ≥ 20 and **pnpm** ≥ 9 (the frontend is pure ESM and pnpm-only).
+- **Node.js** ≥ 20. **pnpm** is activated via `corepack` (which ships with Node) — the version
+  is pinned by `frontend/package.json`'s `packageManager` field; do not `npm i -g pnpm`.
 
 JUCE 8.0.12 and IXWebSocket are fetched automatically by CMake `FetchContent`; nothing to
 install by hand.
@@ -550,18 +542,62 @@ The PowerShell helpers under `scripts/` (`Invoke-DevShell.ps1`, `Invoke-ClangTid
 matching Visual Studio Code tasks import the Visual Studio Developer Shell so `cl.exe` /
 `link.exe` are on `PATH`.
 
-## Setup and run
+### One-shot setup (recommended)
 
-Clone the repository and from the workspace root:
+`scripts/Setup-Dev.ps1` brings a fresh Windows machine to a buildable checkout in a single
+command. It verifies each prerequisite, offers to install anything missing via `winget`,
+activates `pnpm` via `corepack`, runs `pnpm install` in `frontend/`, and configures the
+backend Debug CMake cache in `backend/build/` (CMake creates that directory itself — no
+manual `mkdir` is required).
 
 ```powershell
-# 1. Configure + build the backend (Debug)
+# Interactive: prompts before each winget install
+pwsh -NoProfile -File scripts/Setup-Dev.ps1
+
+# Non-interactive: silently install missing prereqs and also build the Debug backend
+pwsh -NoProfile -File scripts/Setup-Dev.ps1 -Yes -BuildBackend
+```
+
+The same flow is available as the VS Code `setup: dev` task. The script is idempotent —
+re-running it on an already-configured machine is a no-op for anything already installed
+and refreshes the frontend lockfile install + CMake cache.
+
+### Manual prerequisite install
+
+If you'd rather install the tools yourself, the canonical `winget` IDs are:
+
+```powershell
+# MSVC C++ Build Tools (provides cl.exe, link.exe, Windows SDK, vswhere)
+winget install --id Microsoft.VisualStudio.2022.BuildTools `
+  --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+
+# CMake, Ninja, Node.js (LTS)
+winget install --id Kitware.CMake
+winget install --id Ninja-build.Ninja
+winget install --id OpenJS.NodeJS.LTS
+
+# Activate pnpm (corepack ships with Node >= 16.13)
+corepack enable
+corepack prepare pnpm@latest --activate
+```
+
+If you already have Visual Studio or Build Tools installed without the C++ workload, run the
+Visual Studio Installer and **Modify** the install to add *C++ build tools* (Build Tools SKU)
+or *Desktop development with C++* (full VS).
+
+## Setup and run
+
+After running `scripts/Setup-Dev.ps1` (or installing the prerequisites manually), from the
+workspace root:
+
+```powershell
+# 1. Configure + build the backend (Debug) — Setup-Dev already ran the configure step
 pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
   "cmake -S backend -B backend/build -G Ninja -DCMAKE_BUILD_TYPE=Debug"
 pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
   "cmake --build backend/build --config Debug --parallel"
 
-# 2. Install frontend dependencies
+# 2. Install frontend dependencies — Setup-Dev already did this too
 cd frontend
 pnpm install
 
@@ -569,8 +605,9 @@ pnpm install
 pnpm dev
 ```
 
-The same commands are also available as Visual Studio Code tasks (`backend: configure`,
-`backend: build`, `frontend: install`, `frontend: dev`, plus the composite `dev: all`).
+The same commands are also available as Visual Studio Code tasks (`setup: dev`,
+`backend: configure`, `backend: build`, `frontend: install`, `frontend: dev`, plus the
+composite `dev: all`).
 
 The recommended dev path is **F5** in VS Code with the `Silverdaw (Dev)` launch configuration
 selected — it has a `preLaunchTask: "backend: build"` so the Debug backend is always rebuilt

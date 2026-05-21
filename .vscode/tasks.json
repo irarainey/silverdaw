@@ -186,6 +186,27 @@
       "detail": "Run vue-tsc / tsc --noEmit."
     },
 
+    // ─── Setup ───────────────────────────────────────────────────────────
+    {
+      "label": "setup: dev",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/Setup-Dev.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "always",
+        "clear": true
+      },
+      "detail": "One-shot: verify/install prereqs (MSVC, CMake, Ninja, Node), activate pnpm, pnpm install, configure backend."
+    },
+
     // ─── Combined ────────────────────────────────────────────────────────
     {
       "label": "dev: all",
