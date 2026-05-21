@@ -15,7 +15,7 @@
 // straddles the seam between this column and the canvas).
 
 import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
-import { useProjectStore } from '@/stores/projectStore'
+import { useProjectStore, MAX_TRACK_VOLUME } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoTrack } from '@/lib/importAudio'
 import { RULER_HEIGHT, TRACK_GAP, TRACK_HEIGHT } from '@/lib/timeline/constants'
@@ -26,6 +26,29 @@ const project = useProjectStore()
 const ui = useUiStore()
 
 const headerWidth = computed(() => ui.trackHeaderWidth)
+
+/**
+ * Map a linear gain `volume` (0 .. MAX_TRACK_VOLUME) onto the slider's
+ * 0..1 visual domain. Two-segment linear so unity (1.0) lands at
+ * exactly 0.5 — half travel for cuts (0..1.0 ↦ 0..0.5), half travel
+ * for boosts (1.0..MAX ↦ 0.5..1.0). This is the same shape as a
+ * conventional DAW fader where 0 dB sits at the middle and the lower
+ * half of the bar covers fade-to-silence.
+ */
+function volumeToSliderPosition(volume: number): number {
+  if (volume <= 1) return Math.max(0, volume) * 0.5
+  const boostRange = MAX_TRACK_VOLUME - 1
+  if (boostRange <= 0) return 0.5
+  return 0.5 + Math.min(1, (volume - 1) / boostRange) * 0.5
+}
+
+/** Inverse of `volumeToSliderPosition`. */
+function sliderPositionToVolume(position: number): number {
+  const clamped = Math.min(1, Math.max(0, position))
+  if (clamped <= 0.5) return clamped * 2
+  const boostRange = MAX_TRACK_VOLUME - 1
+  return 1 + (clamped - 0.5) * 2 * boostRange
+}
 
 function onImportClick(trackId: string): void {
   // Fire-and-forget; failures are logged inside the helper.
@@ -200,11 +223,11 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
               min="0"
               max="1"
               step="0.01"
-              :value="track.volume"
+              :value="volumeToSliderPosition(track.volume)"
               :title="'Volume ' + Math.round(track.volume * 100) + '%'"
               class="track-volume h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
-              @input="(e) => project.setTrackVolumeLocal(track.id, Number((e.target as HTMLInputElement).value))"
-              @change="(e) => project.setTrackVolume(track.id, Number((e.target as HTMLInputElement).value))"
+              @input="(e) => project.setTrackVolumeLocal(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
+              @change="(e) => project.setTrackVolume(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
             >
             <span class="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-500">
               {{ Math.round(track.volume * 100) }}

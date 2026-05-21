@@ -86,7 +86,12 @@ export interface Track {
   clipIds: string[]
   muted: boolean
   soloed: boolean
-  /** Per-track volume as a linear gain (0.0 = silent, 1.0 = unity). */
+  /** Per-track volume as a linear gain. 0.0 = silent, 1.0 = unity
+   *  (the slider's mid-point), 1.5 = +50% boost (the slider's
+   *  right-hand maximum). The TrackHeaderPanel fader maps its 0..1
+   *  visual position onto this domain piecewise so unity sits at the
+   *  middle of the bar, giving the user equal travel for cuts and
+   *  boosts. */
   volume: number
   /** Index into `TRACK_PALETTE`. Selects the waveform / clip-block colours. */
   colorIndex: number
@@ -101,6 +106,16 @@ export interface Track {
 
 /** Default visible length of a new empty track — 10 minutes. */
 export const DEFAULT_TRACK_LENGTH_MS = 10 * 60 * 1000
+
+/**
+ * Upper bound on a track's linear volume. Unity (1.0) sits at the
+ * mid-point of the fader so the user gets equal travel for cuts and
+ * boosts; the maximum is +50% (which the backend's clamp at 4.0× lets
+ * through unchanged). Saved projects clamp incoming `gain` values to
+ * this domain on snapshot apply, so an older `.silverdaw` with gain
+ * 1.0 still resolves to "unity at the mid-point" — no migration needed.
+ */
+export const MAX_TRACK_VOLUME = 1.5
 
 /**
  * Derive a stable `projectId` from an absolute project file path. Used
@@ -1239,8 +1254,9 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Set a track's volume (linear gain, 0.0–1.0) and push the new effective
-     * gain to the backend. Mute / solo still override volume to silence.
+     * Set a track's volume (linear gain, 0.0–1.5; 1.0 is unity, the
+     * slider's mid-point) and push the new effective gain to the
+     * backend. Mute / solo still override volume to silence.
      *
      * Use this for *commits* (e.g. the slider's `@change` event). For the
      * live drag (every `@input`) use `setTrackVolumeLocal` so we don't
@@ -1249,7 +1265,7 @@ export const useProjectStore = defineStore('project', {
     setTrackVolume(trackId: string, volume: number): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
-      t.volume = Math.min(1, Math.max(0, volume))
+      t.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, volume))
       log.debug('project', `setTrackVolume id=${trackId} volume=${t.volume}`)
       this.pushTrackGain(t)
     },
@@ -1263,7 +1279,7 @@ export const useProjectStore = defineStore('project', {
     setTrackVolumeLocal(trackId: string, volume: number): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
-      t.volume = Math.min(1, Math.max(0, volume))
+      t.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, volume))
     },
 
     /**
@@ -1558,7 +1574,7 @@ export const useProjectStore = defineStore('project', {
             clipIds: [],
             muted: false,
             soloed: false,
-            volume: Math.min(1, Math.max(0, t.gain)),
+            volume: Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain)),
             colorIndex: index % TRACK_PALETTE.length,
             lengthMs: DEFAULT_TRACK_LENGTH_MS
           }
