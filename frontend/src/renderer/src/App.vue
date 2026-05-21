@@ -866,4 +866,43 @@ button[data-borderless-button="true"]:focus-visible {
   box-shadow: none !important;
   outline: none !important;
 }
+
+/*
+ * Shared dark scrollbar treatment. Apply `class="silverdaw-scroll"` to
+ * any element whose `overflow-y: auto` chrome would otherwise inherit
+ * the browser default (which on Windows is a bright grey track that
+ * looks misplaced inside the dark zinc panels). The colours are the
+ * same ones the library panel + library-item-info dialog use, lifted
+ * here so dialogs, dropdowns and tabbed bodies share one rule instead
+ * of each component re-declaring its own.
+ *
+ *   - Firefox: scrollbar-color / scrollbar-width (thin thumb).
+ *   - Chromium / Electron: the ::-webkit-scrollbar pseudo-elements
+ *     give us a 12-px chrome with a rounded pill thumb surrounded by
+ *     a 3-px transparent ring so the thumb visually shrinks away from
+ *     the track edge.
+ */
+.silverdaw-scroll {
+  scrollbar-color: rgb(113 113 122) rgb(24 24 27 / 0.8);
+  scrollbar-width: thin;
+}
+
+.silverdaw-scroll::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.silverdaw-scroll::-webkit-scrollbar-track {
+  background: rgb(24 24 27 / 0.8);
+}
+
+.silverdaw-scroll::-webkit-scrollbar-thumb {
+  background-color: rgb(113 113 122);
+  border: 3px solid rgb(24 24 27 / 0.8);
+  border-radius: 9999px;
+}
+
+.silverdaw-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(161 161 170);
+}
 </style>

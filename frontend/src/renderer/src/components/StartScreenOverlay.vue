@@ -129,7 +129,7 @@ function openRecent(filePath: string): void {
           <div class="px-1 text-xs font-medium uppercase tracking-wider text-zinc-500">
             Recent Projects
           </div>
-          <ul class="max-h-72 overflow-y-auto rounded border border-zinc-800 bg-zinc-900/50">
+          <ul class="silverdaw-scroll max-h-72 overflow-y-auto rounded border border-zinc-800 bg-zinc-900/50">
             <li
               v-for="(path, idx) in recents"
               :key="path"

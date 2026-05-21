@@ -213,6 +213,8 @@ export interface BridgeOutboundMap {
   PREVIEW_PAUSE: undefined
   PREVIEW_STOP: undefined
   PREVIEW_SEEK: PreviewSeekPayload
+  AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
+  AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
 }
 
 export interface WaveformRequestPayload {
@@ -337,6 +339,34 @@ export interface PreviewLoadPayload {
  *  relative to the window start (0..durationMs). */
 export interface PreviewSeekPayload {
   positionMs: number
+}
+
+/**
+ * Switch the audio output device. Both fields null = "revert to system
+ * default" (the backend re-runs JUCE's default-device init). Otherwise
+ * both `typeName` (e.g. "Windows Audio") and `deviceName` (e.g.
+ * "Speakers (Realtek HD Audio)") must be supplied — JUCE's
+ * `AudioDeviceManager::setAudioDeviceSetup` resolves device names
+ * within their type, so picking a device from one type without
+ * switching to that type first won't take effect.
+ *
+ * The backend acks with `AUDIO_DEVICE_CHANGED { ok, error? }` and, on
+ * success, broadcasts a fresh `AUDIO_DEVICES_LIST` so every connected
+ * client sees the new current selection.
+ */
+export interface AudioDeviceSelectPayload {
+  typeName: string | null
+  deviceName: string | null
+}
+
+/** Force the backend to rescan every device type's available devices.
+ *  Renderer fires this when the user explicitly clicks a "refresh"
+ *  button or right after a plug / unplug it noticed elsewhere. */
+export interface AudioDevicesRequestPayload {
+  /** When true, the backend calls `scanForDevices()` on every type
+   *  before responding. Cheap-but-not-free on Windows (ASIO scans
+   *  can take ~10ms); omit for a "just resend the cached snapshot". */
+  refresh?: boolean
 }
 
 export type BridgeOutboundType = keyof BridgeOutboundMap
@@ -669,6 +699,59 @@ export interface PreviewEndedPayload {
   generation: number
 }
 
+/** One device-type group inside `AudioDevicesListPayload`. */
+export interface AudioDeviceTypeListing {
+  /** Backend-side type name as JUCE reports it ("Windows Audio",
+   *  "DirectSound", "ASIO", …). Used as the discriminator when
+   *  picking a device with `AUDIO_DEVICE_SELECT`. */
+  name: string
+  /** Output device names available under this type. May be empty
+   *  (e.g. ASIO type is present but no ASIO drivers installed). */
+  devices: string[]
+}
+
+/**
+ * Snapshot of available audio output devices plus the currently
+ * active selection. Broadcast immediately after AUTH, after every
+ * successful device switch, and after JUCE's `audioDeviceListChanged`
+ * fires (USB plug / unplug, Windows audio-config reload).
+ */
+export interface AudioDevicesListPayload {
+  types: AudioDeviceTypeListing[]
+  /** Active device type, or null when the backend has no device open. */
+  currentTypeName: string | null
+  /** Active output device name, or null when the backend has no device
+   *  open. Empty string is treated the same as null. */
+  currentDeviceName: string | null
+  currentSampleRate?: number
+  currentBufferSize?: number
+  /** Total effective output latency in ms — what the backend will
+   *  subtract from the broadcast playhead while playing. Sum of the
+   *  driver's own report + the Bluetooth heuristic baseline. Absent
+   *  / 0 means "negligible, no compensation applied". */
+  outputLatencyMs?: number
+  /** Just the Bluetooth-heuristic component, in ms. Non-zero means
+   *  "the driver under-reports and we've added a baseline guess for
+   *  the radio/headset pipeline". Surfaces a small "BT" hint next to
+   *  the latency readout. */
+  heuristicExtraLatencyMs?: number
+  /** True iff the backend tried to honour a persisted device preference
+   *  on startup but the saved device wasn't available — useful for the
+   *  renderer to pop a one-shot "your saved device wasn't connected;
+   *  using default" toast. Cleared by the backend on the next switch. */
+  fellBackToDefault?: boolean
+}
+
+/** Ack for an `AUDIO_DEVICE_SELECT`. On `ok: true` it's followed by a
+ *  refreshed `AUDIO_DEVICES_LIST`; on `ok: false` the backend rolled
+ *  the device setup back to whatever was active before the request. */
+export interface AudioDeviceChangedPayload {
+  typeName: string | null
+  deviceName: string | null
+  ok: boolean
+  error?: string
+}
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PROJECT_STATE: ProjectStatePayload
@@ -691,6 +774,8 @@ export interface BridgeInboundMap {
   PREVIEW_STATE: PreviewStatePayload
   PREVIEW_POSITION: PreviewPositionPayload
   PREVIEW_ENDED: PreviewEndedPayload
+  AUDIO_DEVICES_LIST: AudioDevicesListPayload
+  AUDIO_DEVICE_CHANGED: AudioDeviceChangedPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -735,7 +820,9 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PROJECT_BPM_APPLIED',
   'PREVIEW_STATE',
   'PREVIEW_POSITION',
-  'PREVIEW_ENDED'
+  'PREVIEW_ENDED',
+  'AUDIO_DEVICES_LIST',
+  'AUDIO_DEVICE_CHANGED'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -977,4 +1064,36 @@ export function isPreviewPositionPayload(value: unknown): value is PreviewPositi
 /** Guard for `PreviewEndedPayload`. */
 export function isPreviewEndedPayload(value: unknown): value is PreviewEndedPayload {
   return isPlainObject(value) && typeof value.generation === 'number'
+}
+
+/** Guard for `AudioDevicesListPayload`. */
+export function isAudioDevicesListPayload(value: unknown): value is AudioDevicesListPayload {
+  if (!isPlainObject(value)) return false
+  if (!Array.isArray(value.types)) return false
+  for (const t of value.types) {
+    if (!isPlainObject(t)) return false
+    if (typeof t.name !== 'string') return false
+    if (!Array.isArray(t.devices)) return false
+    for (const d of t.devices) {
+      if (typeof d !== 'string') return false
+    }
+  }
+  if (value.currentTypeName !== null && typeof value.currentTypeName !== 'string') return false
+  if (value.currentDeviceName !== null && typeof value.currentDeviceName !== 'string') return false
+  if (value.currentSampleRate !== undefined && typeof value.currentSampleRate !== 'number') return false
+  if (value.currentBufferSize !== undefined && typeof value.currentBufferSize !== 'number') return false
+  if (value.outputLatencyMs !== undefined && typeof value.outputLatencyMs !== 'number') return false
+  if (value.heuristicExtraLatencyMs !== undefined && typeof value.heuristicExtraLatencyMs !== 'number') return false
+  if (value.fellBackToDefault !== undefined && typeof value.fellBackToDefault !== 'boolean') return false
+  return true
+}
+
+/** Guard for `AudioDeviceChangedPayload`. */
+export function isAudioDeviceChangedPayload(value: unknown): value is AudioDeviceChangedPayload {
+  if (!isPlainObject(value)) return false
+  if (value.typeName !== null && typeof value.typeName !== 'string') return false
+  if (value.deviceName !== null && typeof value.deviceName !== 'string') return false
+  if (typeof value.ok !== 'boolean') return false
+  if (value.error !== undefined && typeof value.error !== 'string') return false
+  return true
 }

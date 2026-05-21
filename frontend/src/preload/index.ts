@@ -277,6 +277,19 @@ const api = {
   setAutosaveConfig: (partial: { enabled?: boolean; intervalSeconds?: number }): void => {
     ipcRenderer.send('prefs:setAutosaveConfig', partial)
   },
+  // ─── Audio output device preference ─────────────────────────────────────
+  /** Read the persisted audio output device (or `{ null, null }` for
+   *  "system default"). The runtime current selection lives in the
+   *  renderer's `audioDeviceStore`; this IPC is just persistence. */
+  getAudioOutput: (): Promise<{ typeName: string | null; deviceName: string | null }> =>
+    ipcRenderer.invoke('prefs:getAudioOutput'),
+  /** Persist the audio output device selection. Renderer calls this
+   *  only after the backend acks the corresponding `AUDIO_DEVICE_SELECT`
+   *  with `ok: true`, so a saved device that failed to open never
+   *  ends up in the prefs file. */
+  setAudioOutput: (partial: { typeName: string | null; deviceName: string | null }): void => {
+    ipcRenderer.send('prefs:setAudioOutput', partial)
+  },
   // ─── Autosave folder + manifest IPCs ────────────────────────────────────
   /**
    * Ensure the autosave bucket exists for `projectId` and resolve to the

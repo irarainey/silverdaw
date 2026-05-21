@@ -153,7 +153,7 @@ async function relinkOne(row: MissingFileRow): Promise<void> {
         </div>
 
         <!-- Body -->
-        <div class="max-h-[60vh] overflow-y-auto px-6 py-4">
+        <div class="silverdaw-scroll max-h-[60vh] overflow-y-auto px-6 py-4">
           <ul
             v-if="missingFiles.length > 0"
             class="space-y-3"

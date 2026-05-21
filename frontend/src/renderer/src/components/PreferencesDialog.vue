@@ -11,12 +11,143 @@
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const appStore = useAppStore()
 const ui = useUiStore()
+const audioDevices = useAudioDeviceStore()
+
+/**
+ * Plain-English description for every audio backend JUCE may report
+ * on Windows. Used by the advanced-backend picker; the primary
+ * "pick a device" surface keeps the backend invisible.
+ */
+const AUDIO_BACKEND_DESCRIPTIONS: Record<string, string> = {
+  'Windows Audio':
+    'Recommended. Modern Windows audio path; reliable latency and shares the device with other apps.',
+  'Windows Audio (Exclusive Mode)':
+    'Lower latency, but takes the device exclusively — other apps fall silent while Silverdaw runs.',
+  DirectSound:
+    'Legacy backend. Use only if a device misbehaves with Windows Audio.',
+  ASIO:
+    'Lowest latency, but requires a vendor-supplied ASIO driver. Pick this for pro-audio interfaces.',
+  CoreAudio: 'macOS standard audio backend.',
+  ALSA: 'Linux standard audio backend.',
+  JACK: 'Pro-audio routing on Linux / macOS.'
+}
+
+/** Preference order when auto-picking a backend for a freshly-clicked
+ *  device. We default to the most-reliable user-friendly backend
+ *  rather than the lowest-latency one — advanced users who want ASIO
+ *  expand the "Audio driver" disclosure below the device list. */
+const BACKEND_PREFERENCE: string[] = [
+  'Windows Audio',
+  'CoreAudio',
+  'ALSA',
+  'DirectSound',
+  'Windows Audio (Exclusive Mode)',
+  'JACK',
+  'ASIO'
+]
+
+function describeBackend(typeName: string): string {
+  return AUDIO_BACKEND_DESCRIPTIONS[typeName] ?? 'Audio backend.'
+}
+
+/** A single physical device aggregated across every backend that
+ *  exposes it. Two backends are considered the "same device" when
+ *  their device names match case-insensitively — which holds for
+ *  Windows Audio vs DirectSound (both describe the underlying
+ *  MMDevice) and gives ASIO devices their own row since vendor
+ *  ASIO drivers usually report distinct names. */
+interface UniqueDevice {
+  /** Canonical (display) name — the first capitalisation we saw. */
+  name: string
+  /** Backend type names that offer this device. */
+  backends: string[]
+}
+
+const uniqueDevices = computed<UniqueDevice[]>(() => {
+  const map = new Map<string, UniqueDevice>()
+  for (const type of audioDevices.types) {
+    for (const dev of type.devices) {
+      const key = dev.toLowerCase()
+      const existing = map.get(key)
+      if (existing) {
+        if (!existing.backends.includes(type.name)) existing.backends.push(type.name)
+      } else {
+        map.set(key, { name: dev, backends: [type.name] })
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
+})
+
+/** Pending audio-output selection — edited freely by the radio
+ *  buttons; persisted (and applied to the engine) only when the
+ *  user clicks Save. `null/null` means "use system default". */
+const audioOutputTypeName = ref<string | null>(null)
+const audioOutputDeviceName = ref<string | null>(null)
+const initialAudioOutputTypeName = ref<string | null>(null)
+const initialAudioOutputDeviceName = ref<string | null>(null)
+
+const audioHasSelection = computed(
+  () => !!audioOutputTypeName.value && !!audioOutputDeviceName.value
+)
+
+function isAudioOutputSelectedDevice(deviceName: string): boolean {
+  return audioOutputDeviceName.value?.toLowerCase() === deviceName.toLowerCase()
+}
+
+/** Pick the most-preferred backend that offers `device`. Used when
+ *  the user clicks a device row — they don't have to think about
+ *  drivers at all. */
+function preferredBackendFor(device: UniqueDevice): string {
+  for (const b of BACKEND_PREFERENCE) {
+    if (device.backends.includes(b)) return b
+  }
+  return device.backends[0] ?? ''
+}
+
+/** Selecting a device row picks its preferred backend automatically.
+ *  If the user already picked this device but with a different
+ *  backend (via the advanced disclosure), keep their backend choice
+ *  — we only auto-pick when switching to a different device. */
+function pickDevice(device: UniqueDevice): void {
+  if (audioOutputDeviceName.value?.toLowerCase() === device.name.toLowerCase()) return
+  audioOutputDeviceName.value = device.name
+  audioOutputTypeName.value = preferredBackendFor(device)
+}
+
+function pickSystemDefault(): void {
+  audioOutputDeviceName.value = null
+  audioOutputTypeName.value = null
+}
+
+/** Backends available for the currently-selected device — drives the
+ *  advanced disclosure. Empty when the user is on System default. */
+const backendsForSelectedDevice = computed<string[]>(() => {
+  const name = audioOutputDeviceName.value
+  if (!name) return []
+  const dev = uniqueDevices.value.find((d) => d.name.toLowerCase() === name.toLowerCase())
+  return dev ? dev.backends.slice().sort((a, b) => {
+    const ai = BACKEND_PREFERENCE.indexOf(a)
+    const bi = BACKEND_PREFERENCE.indexOf(b)
+    return (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) - (bi < 0 ? Number.MAX_SAFE_INTEGER : bi)
+  }) : []
+})
+
+/** Toggle controlling visibility of the audio-driver picker. Hidden
+ *  by default so the typical user sees a simple list of devices and
+ *  isn't bothered by Windows Audio / DirectSound / ASIO duplicates. */
+const showAdvancedBackend = ref(false)
+
+function pickBackend(typeName: string): void {
+  audioOutputTypeName.value = typeName
+}
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 
@@ -24,12 +155,13 @@ const dialogEl = ref<HTMLDivElement | null>(null)
  *  on each change; nothing about the working refs / Save logic cares
  *  which tab is active so unsaved edits on one tab survive a tab
  *  switch. Reset to `'general'` whenever the dialog re-opens. */
-type PreferencesTab = 'general' | 'project' | 'developer'
+type PreferencesTab = 'general' | 'project' | 'audio' | 'developer'
 const activeTab = ref<PreferencesTab>('general')
 
 const tabs: Array<{ id: PreferencesTab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'project', label: 'Project' },
+  { id: 'audio', label: 'Audio' },
   { id: 'developer', label: 'Developer' }
 ]
 
@@ -64,15 +196,18 @@ const hasChanges = computed(
     defaultProjectDir.value !== initialProjectDir.value ||
     defaultClipDir.value !== initialClipDir.value ||
     autosaveEnabled.value !== initialAutosaveEnabled.value ||
-    autosaveIntervalSeconds.value !== initialAutosaveSeconds.value
+    autosaveIntervalSeconds.value !== initialAutosaveSeconds.value ||
+    audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
+    audioOutputDeviceName.value !== initialAudioOutputDeviceName.value
 )
 
 async function loadCurrent(): Promise<void> {
   try {
-    const [debugVal, qol, autosave] = await Promise.all([
+    const [debugVal, qol, autosave, audioPref] = await Promise.all([
       window.silverdaw.getDebugEnabled(),
       window.silverdaw.getQolPrefs(),
-      window.silverdaw.getAutosaveConfig()
+      window.silverdaw.getAutosaveConfig(),
+      window.silverdaw.getAudioOutput()
     ])
     debugEnabled.value = debugVal
     toastsEnabled.value = qol.toasts.enabled
@@ -80,6 +215,14 @@ async function loadCurrent(): Promise<void> {
     defaultClipDir.value = qol.paths.defaultClipDir
     autosaveEnabled.value = autosave.enabled
     autosaveIntervalSeconds.value = autosave.intervalSeconds
+    // Audio: seed from the *saved preference*, not the live device.
+    // A fresh install with no explicit pick has both fields null,
+    // which the radio group renders as "System default" — even
+    // though the engine is technically driving a concrete device
+    // it chose itself. The user's actual choice is what's persisted,
+    // not what JUCE happened to open.
+    audioOutputTypeName.value = audioPref.typeName
+    audioOutputDeviceName.value = audioPref.deviceName
   } catch {
     debugEnabled.value = false
     toastsEnabled.value = true
@@ -87,6 +230,8 @@ async function loadCurrent(): Promise<void> {
     defaultClipDir.value = ''
     autosaveEnabled.value = true
     autosaveIntervalSeconds.value = 30
+    audioOutputTypeName.value = null
+    audioOutputDeviceName.value = null
   }
   // `followPlayback` lives in the UI prefs sub-tree (alongside panel
   // sizes) and is mirrored into the uiStore on startup — read it from
@@ -101,6 +246,8 @@ async function loadCurrent(): Promise<void> {
   initialClipDir.value = defaultClipDir.value
   initialAutosaveEnabled.value = autosaveEnabled.value
   initialAutosaveSeconds.value = autosaveIntervalSeconds.value
+  initialAudioOutputTypeName.value = audioOutputTypeName.value
+  initialAudioOutputDeviceName.value = audioOutputDeviceName.value
 }
 
 function onKeyDown(e: KeyboardEvent): void {
@@ -127,6 +274,10 @@ watch(
     // sees the same layout every time. Edits made on a previous tab
     // are preserved in the working refs until Save / Cancel.
     activeTab.value = 'general'
+    // Collapse the audio-driver disclosure on each open so a previous
+    // session's expanded state doesn't carry across — keeps the
+    // Audio tab visually clean for users who don't normally need it.
+    showAdvancedBackend.value = false
     await loadCurrent()
     requestAnimationFrame(() => dialogEl.value?.focus())
   }
@@ -204,6 +355,18 @@ function onSave(): void {
     window.silverdaw.setAutosaveConfig(next)
     appStore.setAutosaveConfig(next)
   }
+  // Audio output device: routes through the same
+  // `audioDeviceStore.selectDevice` path the transport-bar
+  // quick-switch uses. The store optimistic-updates locally, sends
+  // `AUDIO_DEVICE_SELECT` over the bridge, and persists via main IPC
+  // only after the backend acks `ok: true` — so an unreachable
+  // device picked here is never written to disk.
+  if (
+    audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
+    audioOutputDeviceName.value !== initialAudioOutputDeviceName.value
+  ) {
+    audioDevices.selectDevice(audioOutputTypeName.value, audioOutputDeviceName.value)
+  }
   emit('close')
 }
 </script>
@@ -268,7 +431,7 @@ function onSave(): void {
 
           <!-- Active tab content -->
           <div
-            class="flex-1 overflow-y-auto px-6 py-5 text-xs leading-relaxed"
+            class="silverdaw-scroll flex-1 overflow-y-auto px-6 py-5 text-xs leading-relaxed"
             role="tabpanel"
           >
             <!-- General -->
@@ -416,6 +579,152 @@ function onSave(): void {
                   <span class="text-zinc-500">seconds (5..600)</span>
                 </div>
               </div>
+            </section>
+
+            <!-- Audio -->
+            <section
+              v-else-if="activeTab === 'audio'"
+              class="space-y-4"
+            >
+              <div>
+                <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+                  Output device
+                </h2>
+                <p class="mb-3 text-zinc-500">
+                  Pick where Silverdaw sends audio. Most users should leave this on
+                  <strong class="text-zinc-300">System default</strong> so it follows your
+                  Windows audio choice. Removable devices fall back to the default when
+                  unplugged and reconnect automatically next launch.
+                </p>
+
+                <div
+                  v-if="!audioDevices.hydrated"
+                  class="text-zinc-500"
+                >
+                  Loading device list…
+                </div>
+                <div
+                  v-else
+                  class="space-y-2"
+                >
+                  <label class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2">
+                    <input
+                      type="radio"
+                      name="audio-output"
+                      :checked="!audioHasSelection"
+                      class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                      @change="pickSystemDefault"
+                    >
+                    <span class="flex-1">
+                      <span class="block font-medium text-zinc-200">System default</span>
+                      <span class="mt-0.5 block text-zinc-500">
+                        Follow whichever device Windows is currently routing audio to.
+                      </span>
+                    </span>
+                  </label>
+
+                  <div
+                    v-if="uniqueDevices.length === 0"
+                    class="rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2 text-zinc-600"
+                  >
+                    No output devices detected.
+                  </div>
+                  <label
+                    v-for="device in uniqueDevices"
+                    :key="device.name"
+                    class="flex cursor-pointer items-center gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+                  >
+                    <input
+                      type="radio"
+                      name="audio-output"
+                      :checked="isAudioOutputSelectedDevice(device.name)"
+                      class="h-4 w-4 cursor-pointer accent-sky-500"
+                      @change="pickDevice(device)"
+                    >
+                    <span class="truncate text-zinc-200">{{ device.name }}</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Progressive disclosure: audio driver / backend picker.
+                   Hidden by default so the typical user never sees the
+                   Windows Audio / DirectSound / ASIO distinction unless
+                   they're chasing latency or working around a buggy
+                   device. Per the design plan §2's "Progressive
+                   disclosure" principle. -->
+              <div
+                v-if="audioDevices.hydrated && audioHasSelection && backendsForSelectedDevice.length > 1"
+              >
+                <button
+                  type="button"
+                  class="flex items-center gap-1 text-[11px] font-medium text-zinc-400 hover:text-zinc-200"
+                  data-borderless-button="true"
+                  @click="showAdvancedBackend = !showAdvancedBackend"
+                >
+                  <span
+                    aria-hidden="true"
+                    class="inline-block w-3 text-center"
+                  >{{ showAdvancedBackend ? '▾' : '▸' }}</span>
+                  Audio driver ({{ audioOutputTypeName }})
+                </button>
+                <div
+                  v-if="showAdvancedBackend"
+                  class="mt-2 space-y-2 rounded border border-zinc-800 bg-zinc-950/40 p-2"
+                >
+                  <p class="text-zinc-500">
+                    Windows offers several backends for the same physical device. Stick with
+                    the recommended one unless you have a reason to change.
+                  </p>
+                  <label
+                    v-for="backend in backendsForSelectedDevice"
+                    :key="backend"
+                    class="flex cursor-pointer items-start gap-3 rounded px-2 py-1.5 hover:bg-zinc-900/60"
+                  >
+                    <input
+                      type="radio"
+                      name="audio-backend"
+                      :checked="audioOutputTypeName === backend"
+                      class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                      @change="pickBackend(backend)"
+                    >
+                    <span class="flex-1">
+                      <span class="block font-medium text-zinc-200">{{ backend }}</span>
+                      <span class="mt-0.5 block text-zinc-500">
+                        {{ describeBackend(backend) }}
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div
+                v-if="audioDevices.hydrated"
+                class="flex items-center justify-between text-zinc-500"
+              >
+                <span v-if="audioDevices.currentSampleRate">
+                  Current: {{ Math.round(audioDevices.currentSampleRate) }} Hz<template
+                    v-if="audioDevices.currentBufferSize"
+                  > / {{ audioDevices.currentBufferSize }}-sample buffer</template><template
+                    v-if="audioDevices.outputLatencyMs !== null && audioDevices.outputLatencyMs >= 30"
+                  > · ~{{ Math.round(audioDevices.outputLatencyMs) }} ms latency<template
+                    v-if="audioDevices.isBluetoothHeuristic"
+                  > (Bluetooth — playhead auto-compensates)</template></template>
+                </span>
+                <button
+                  type="button"
+                  class="rounded bg-zinc-800 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  @click="audioDevices.requestRescan"
+                >
+                  Rescan devices
+                </button>
+              </div>
+
+              <p
+                v-if="audioDevices.lastError"
+                class="rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-amber-200"
+              >
+                {{ audioDevices.lastError }}
+              </p>
             </section>
 
             <!-- Developer -->

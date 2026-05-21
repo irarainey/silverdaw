@@ -3,11 +3,12 @@
 // WebSocket bridge. Playhead position is mirrored from the backend's
 // `PLAYHEAD_UPDATE` messages into `transportStore`.
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
@@ -16,6 +17,135 @@ const project = useProjectStore()
 const library = useLibraryStore()
 const transport = useTransportStore()
 const ui = useUiStore()
+const audioDevices = useAudioDeviceStore()
+
+// ─── Audio output device quick-switch ────────────────────────────────────
+//
+// Compact chip on the left of the transport bar showing the current
+// output device. Clicking opens a popover with every device grouped
+// by type (mirrors the Preferences > Audio tab) plus a "System
+// default" entry on top. Picking a device routes through the same
+// `audioDeviceStore.selectDevice` action as the Preferences tab —
+// the renderer optimistic-updates the label, the backend acks via
+// `AUDIO_DEVICE_CHANGED`, and main persists the choice only on
+// `ok: true`.
+const audioMenuOpen = ref(false)
+const audioMenuRoot = ref<HTMLElement | null>(null)
+
+const audioMenuLabel = computed(() => {
+  // Show the *target* device name immediately on click rather than a
+  // verbose "Switching to X…" string. Optimistic update — when the
+  // backend acks (the round-trip is ~50–300 ms on Windows depending
+  // on driver), the `pendingSelection` clears and we fall through to
+  // the live `currentDeviceName` which is the same string. If the
+  // switch fails, `audioDevices.lastError` flips and the chip border
+  // goes amber, but the label still reads the device the user picked
+  // so the failure is obvious in context rather than via a label flip.
+  const pending = audioDevices.pendingSelection
+  if (pending) {
+    if (!pending.typeName && !pending.deviceName) return 'System default'
+    return pending.deviceName || 'System default'
+  }
+  if (audioDevices.onSystemDefault) return 'System default'
+  return audioDevices.currentDeviceName || 'System default'
+})
+
+/** Latency caption shown under the device name in the chip when the
+ *  active device has a meaningful end-to-end delay (>30 ms). Stays
+ *  hidden for low-latency wired / ASIO devices so the chip doesn't
+ *  feel busy in the common case. */
+const audioLatencyCaption = computed<string | null>(() => {
+  const ms = audioDevices.outputLatencyMs
+  if (ms === null || ms < 30) return null
+  const rounded = Math.round(ms)
+  return audioDevices.isBluetoothHeuristic ? `~${rounded} ms · BT` : `${rounded} ms`
+})
+
+/** Unique-device list for the quick-switch popover. Identical
+ *  dedupe rule to the one in `PreferencesDialog.vue` — same physical
+ *  device exposed by multiple Windows backends collapses into one
+ *  row, so the user picks "Speakers" once, not three times. */
+interface QuickSwitchDevice {
+  name: string
+  backends: string[]
+}
+const quickSwitchDevices = computed<QuickSwitchDevice[]>(() => {
+  const map = new Map<string, QuickSwitchDevice>()
+  for (const type of audioDevices.types) {
+    for (const dev of type.devices) {
+      const key = dev.toLowerCase()
+      const existing = map.get(key)
+      if (existing) {
+        if (!existing.backends.includes(type.name)) existing.backends.push(type.name)
+      } else {
+        map.set(key, { name: dev, backends: [type.name] })
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
+})
+
+/** Same backend-preference ordering as the Preferences dialog. */
+const QUICK_SWITCH_BACKEND_PRIORITY = [
+  'Windows Audio',
+  'CoreAudio',
+  'ALSA',
+  'DirectSound',
+  'Windows Audio (Exclusive Mode)',
+  'JACK',
+  'ASIO'
+]
+
+function preferredBackendForQuickSwitch(device: QuickSwitchDevice): string {
+  for (const b of QUICK_SWITCH_BACKEND_PRIORITY) {
+    if (device.backends.includes(b)) return b
+  }
+  return device.backends[0] ?? ''
+}
+
+function toggleAudioMenu(): void {
+  audioMenuOpen.value = !audioMenuOpen.value
+}
+
+function pickDevice(typeName: string | null, deviceName: string | null): void {
+  audioDevices.selectDevice(typeName, deviceName)
+  audioMenuOpen.value = false
+}
+
+function pickUniqueDevice(device: QuickSwitchDevice): void {
+  // Auto-pick the most-friendly backend for the chosen device. The
+  // transport-bar popover deliberately doesn't expose the backend
+  // distinction — advanced users who want ASIO use Preferences →
+  // Audio → Audio driver instead.
+  pickDevice(preferredBackendForQuickSwitch(device), device.name)
+}
+
+function isCurrentDevice(typeName: string | null, deviceName: string | null): boolean {
+  const activeType = audioDevices.pendingSelection?.typeName ?? audioDevices.currentTypeName
+  const activeDevice = audioDevices.pendingSelection?.deviceName ?? audioDevices.currentDeviceName
+  return activeType === typeName && activeDevice === deviceName
+}
+
+function isCurrentUniqueDevice(device: QuickSwitchDevice): boolean {
+  const activeDevice = audioDevices.pendingSelection?.deviceName ?? audioDevices.currentDeviceName
+  return !!activeDevice && activeDevice.toLowerCase() === device.name.toLowerCase()
+}
+
+function onAudioMenuDocClick(e: MouseEvent): void {
+  if (!audioMenuRoot.value) return
+  if (!audioMenuRoot.value.contains(e.target as Node)) audioMenuOpen.value = false
+}
+function onAudioMenuKey(e: KeyboardEvent): void {
+  if (e.key === 'Escape') audioMenuOpen.value = false
+}
+onMounted(() => {
+  document.addEventListener('mousedown', onAudioMenuDocClick)
+  document.addEventListener('keydown', onAudioMenuKey)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onAudioMenuDocClick)
+  document.removeEventListener('keydown', onAudioMenuKey)
+})
 
 // Wrappers that mutate local state AND push the change to the backend
 // so it persists with the project. The wrapped underlying setters are
@@ -218,8 +348,108 @@ function onToggleFollow(): void {
   <header
     class="flex h-16 w-full select-none items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 text-zinc-300"
   >
-    <!-- Left: spacer (matches the right Timing box width so the centre buttons stay truly centred). -->
-    <div class="flex-1" />
+    <!-- Left: audio output device quick-switch. Replaces the
+         flex-spacer; the chip's natural width still keeps the
+         centre transport buttons centred relative to the right
+         timing-box width. -->
+    <div
+      ref="audioMenuRoot"
+      class="relative flex-1"
+    >
+      <button
+        type="button"
+        data-borderless-button="true"
+        class="flex max-w-xs items-center gap-1.5 rounded border border-zinc-700 bg-zinc-950/40 px-2 py-1 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900"
+        :class="{
+          'border-amber-700 text-amber-200': audioDevices.lastError,
+          'animate-pulse': audioDevices.pendingSelection !== null
+        }"
+        :title="
+          audioDevices.lastError
+            ? audioDevices.lastError
+            : audioLatencyCaption
+              ? `Audio output: ${audioDevices.currentDeviceName || 'System default'} (${audioLatencyCaption} of output latency — playhead is auto-compensated during playback)`
+              : 'Audio output device'
+        "
+        @click="toggleAudioMenu"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="h-3.5 w-3.5 shrink-0"
+          aria-hidden="true"
+        >
+          <path d="M11 5L6 9H2v6h4l5 4V5z" />
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+        </svg>
+        <span class="flex min-w-0 flex-col items-start leading-none">
+          <span class="truncate text-xs">{{ audioMenuLabel }}</span>
+          <span
+            v-if="audioLatencyCaption"
+            class="mt-0.5 text-[9px] tracking-wide text-zinc-500"
+          >{{ audioLatencyCaption }}</span>
+        </span>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+          class="h-3 w-3 shrink-0 text-zinc-500"
+          aria-hidden="true"
+        >
+          <path d="M4.427 6.427a.6.6 0 0 1 .849 0L8 9.151l2.724-2.724a.6.6 0 0 1 .849.849l-3.149 3.148a.6.6 0 0 1-.848 0L4.427 7.276a.6.6 0 0 1 0-.849Z" />
+        </svg>
+      </button>
+
+      <div
+        v-if="audioMenuOpen"
+        class="silverdaw-scroll absolute left-0 top-full z-40 mt-1 max-h-80 w-80 overflow-y-auto rounded border border-zinc-700 bg-zinc-900 py-1 shadow-2xl"
+      >
+        <button
+          type="button"
+          data-borderless-button="true"
+          class="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-zinc-800"
+          @click="pickDevice(null, null)"
+        >
+          <span class="text-zinc-200">System default</span>
+          <span
+            v-if="isCurrentDevice(null, null)"
+            class="text-sky-400"
+            aria-hidden="true"
+          >✓</span>
+        </button>
+        <div class="my-1 border-t border-zinc-800" />
+        <button
+          v-for="device in quickSwitchDevices"
+          :key="device.name"
+          type="button"
+          data-borderless-button="true"
+          class="flex w-full items-center justify-between gap-3 px-3 py-1 text-left text-xs hover:bg-zinc-800"
+          @click="pickUniqueDevice(device)"
+        >
+          <span class="truncate text-zinc-200">{{ device.name }}</span>
+          <span
+            v-if="isCurrentUniqueDevice(device)"
+            class="text-sky-400"
+            aria-hidden="true"
+          >✓</span>
+        </button>
+        <div class="my-1 border-t border-zinc-800" />
+        <button
+          type="button"
+          data-borderless-button="true"
+          class="w-full px-3 py-1 text-left text-[11px] text-zinc-400 hover:bg-zinc-800"
+          @click="audioDevices.requestRescan(); audioMenuOpen = false"
+        >
+          Rescan devices
+        </button>
+      </div>
+    </div>
 
     <!-- Centre: transport buttons -->
     <div class="flex items-center gap-1">

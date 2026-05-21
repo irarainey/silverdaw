@@ -27,8 +27,11 @@ import { useAppStore } from '@/stores/appStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { usePreviewStore } from '@/stores/previewStore'
+import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { log } from '@/lib/log'
 import {
+  isAudioDeviceChangedPayload,
+  isAudioDevicesListPayload,
   isBridgeInboundType,
   isClipAckPayload,
   isClipRemovedPayload,
@@ -298,6 +301,11 @@ function dispatch(msg: BridgeInboundMessage): void {
         window.silverdaw.setLastProjectPath(msg.payload.filePath)
         void useAppStore().refreshRecentProjects()
       }
+      // First PROJECT_STATE = bridge is up. Seed the audio-device
+      // mirror so the Preferences > Audio tab + the transport-bar
+      // quick-switch render immediately rather than after the user
+      // opens them.
+      useAudioDeviceStore().requestInitialList()
       break
     }
 
@@ -517,6 +525,16 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'AUDIO_DEVICES_LIST': {
+      useAudioDeviceStore().applyList(msg.payload)
+      break
+    }
+
+    case 'AUDIO_DEVICE_CHANGED': {
+      useAudioDeviceStore().applyChanged(msg.payload)
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -642,6 +660,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isPreviewPositionPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PREVIEW_ENDED':
       return isPreviewEndedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'AUDIO_DEVICES_LIST':
+      return isAudioDevicesListPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'AUDIO_DEVICE_CHANGED':
+      return isAudioDeviceChangedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

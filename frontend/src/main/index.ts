@@ -330,6 +330,22 @@ interface AutosavePrefs {
   intervalSeconds: number
 }
 
+/**
+ * Persisted audio output device selection. Both fields null = "use
+ * system default". When non-null, main passes them to the backend via
+ * `SILVERDAW_OUTPUT_DEVICE_TYPE` / `SILVERDAW_OUTPUT_DEVICE_NAME` env
+ * vars at spawn time; if the device isn't available on this machine
+ * (e.g. USB headphones unplugged before launch) the backend silently
+ * falls back to default and tells the renderer via the
+ * `fellBackToDefault` flag on `AUDIO_DEVICES_LIST` — the persisted
+ * preference is kept intact, so re-plugging the device next launch
+ * just works.
+ */
+interface AudioOutputPrefs {
+  typeName: string | null
+  deviceName: string | null
+}
+
 interface Preferences {
   window: WindowPrefs
   ui: UiPrefs
@@ -337,6 +353,7 @@ interface Preferences {
   toasts: ToastPrefs
   paths: PathPrefs
   autosave: AutosavePrefs
+  audioOutput: AudioOutputPrefs
   /**
    * Most-recently used `.silverdaw` paths, head = most recent. Capped
    * at `MAX_RECENT_PROJECTS`; deduplicated case-insensitively on
@@ -385,6 +402,7 @@ function buildDefaultPrefs(): Preferences {
     toasts: { enabled: true },
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
+    audioOutput: { typeName: null, deviceName: null },
     recentProjects: []
   }
 }
@@ -401,6 +419,7 @@ let prefs: Preferences = {
   toasts: { enabled: true },
   paths: { defaultProjectDir: '', defaultClipDir: '' },
   autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
+  audioOutput: { typeName: null, deviceName: null },
   recentProjects: []
 }
 let prefsPath = ''
@@ -479,6 +498,18 @@ async function loadPreferences(): Promise<void> {
         intervalSeconds: clampAutosaveSeconds(
           (parsed.autosave as Partial<AutosavePrefs> | undefined)?.intervalSeconds
         )
+      },
+      audioOutput: {
+        typeName:
+          typeof (parsed.audioOutput as Partial<AudioOutputPrefs> | undefined)?.typeName === 'string' &&
+          (parsed.audioOutput as AudioOutputPrefs).typeName!.length > 0
+            ? (parsed.audioOutput as AudioOutputPrefs).typeName
+            : null,
+        deviceName:
+          typeof (parsed.audioOutput as Partial<AudioOutputPrefs> | undefined)?.deviceName === 'string' &&
+          (parsed.audioOutput as AudioOutputPrefs).deviceName!.length > 0
+            ? (parsed.audioOutput as AudioOutputPrefs).deviceName
+            : null
       },
       recentProjects: sanitiseRecentList(parsed.recentProjects)
     }
@@ -742,6 +773,20 @@ function startBackend(): void {
     env: {
       ...process.env,
       SILVERDAW_BRIDGE_TOKEN: bridgeToken,
+      // Pass the persisted audio-output device preference so the
+      // backend can try to honour it during `AudioDeviceManager`
+      // init. If the saved device is no longer present (USB
+      // unplugged, etc.) the backend silently falls back to default
+      // and tells the renderer via the `fellBackToDefault` flag on
+      // `AUDIO_DEVICES_LIST`. The preference itself stays in
+      // `preferences.json` so re-plugging the device next launch
+      // just works.
+      ...(prefs.audioOutput.typeName && prefs.audioOutput.deviceName
+        ? {
+            SILVERDAW_OUTPUT_DEVICE_TYPE: prefs.audioOutput.typeName,
+            SILVERDAW_OUTPUT_DEVICE_NAME: prefs.audioOutput.deviceName
+          }
+        : {}),
       ...(startupDebugEnabled ? { SILVERDAW_LOG_DIR: getSessionDir() } : {})
     }
   })
@@ -1715,6 +1760,35 @@ app.whenReady().then(async () => {
       }
     }
     if (changed) schedulePrefsSave()
+  })
+
+  // ─── Audio output device preferences ────────────────────────────────────
+  //
+  // The renderer's `audioDeviceStore` is the source of truth at
+  // runtime; this IPC is just the persistence path. Renderer calls
+  // `setAudioOutput` only after the backend acks an
+  // `AUDIO_DEVICE_SELECT` with `ok: true`, so a saved device that
+  // failed to open never gets persisted (and won't repeatedly fail
+  // on subsequent launches).
+  ipcMain.handle(
+    'prefs:getAudioOutput',
+    (): { typeName: string | null; deviceName: string | null } => ({ ...prefs.audioOutput })
+  )
+
+  ipcMain.on('prefs:setAudioOutput', (_evt, partial: unknown) => {
+    if (!partial || typeof partial !== 'object') return
+    const p = partial as Partial<AudioOutputPrefs>
+    const nextTypeName = typeof p.typeName === 'string' && p.typeName.length > 0 ? p.typeName : null
+    const nextDeviceName =
+      typeof p.deviceName === 'string' && p.deviceName.length > 0 ? p.deviceName : null
+    if (
+      prefs.audioOutput.typeName === nextTypeName &&
+      prefs.audioOutput.deviceName === nextDeviceName
+    ) {
+      return
+    }
+    prefs.audioOutput = { typeName: nextTypeName, deviceName: nextDeviceName }
+    schedulePrefsSave()
   })
 
   // ─── Autosave folder + manifest IPCs ────────────────────────────────────

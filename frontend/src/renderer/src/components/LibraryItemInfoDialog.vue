@@ -166,7 +166,7 @@ function channelLabel(count: number): string {
           </div>
         </header>
 
-        <div class="library-info-body min-h-0 overflow-y-auto px-5 py-4 text-xs">
+        <div class="silverdaw-scroll min-h-0 overflow-y-auto px-5 py-4 text-xs">
           <section class="grid gap-3 md:grid-cols-[160px_1fr]">
             <div
               class="flex h-36 items-center justify-center overflow-hidden rounded border border-zinc-800 bg-zinc-950"
@@ -388,26 +388,9 @@ function channelLabel(count: number): string {
 </template>
 
 <style scoped>
-.library-info-body {
-  scrollbar-color: rgb(113 113 122) rgb(24 24 27 / 0.8);
-  scrollbar-width: thin;
-}
-
-.library-info-body::-webkit-scrollbar {
-  width: 12px;
-}
-
-.library-info-body::-webkit-scrollbar-track {
-  background: rgb(24 24 27 / 0.8);
-}
-
-.library-info-body::-webkit-scrollbar-thumb {
-  background-color: rgb(113 113 122);
-  border: 3px solid rgb(24 24 27 / 0.8);
-  border-radius: 9999px;
-}
-
-.library-info-body::-webkit-scrollbar-thumb:hover {
-  background-color: rgb(161 161 170);
-}
+/*
+ * Scrollbar styling now comes from the global `silverdaw-scroll`
+ * utility in App.vue — the class is applied directly on the dialog
+ * body. No component-scoped overrides needed here.
+ */
 </style>

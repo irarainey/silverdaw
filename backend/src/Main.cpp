@@ -182,7 +182,23 @@ class PlayheadEmitter : public juce::Timer
     void timerCallback() override
     {
         const bool playing = engine.isPlaying();
-        const double posMs = engine.getPositionMs();
+        const double rawPosMs = engine.getPositionMs();
+
+        // While the transport is playing, subtract the device's
+        // effective output latency from the broadcast position so the
+        // visual playhead matches what the user is hearing — critical
+        // for high-latency outputs like Bluetooth headphones, where
+        // the uncompensated value drifts ~200 ms ahead of the audio.
+        //
+        // Paused / seek-anchor reads stay raw (see
+        // `AudioEngine::getPositionMs` for the rationale): click-to-
+        // seek lands exactly where the user clicked, and Save's
+        // persisted playhead matches the engine's write position.
+        // The play/pause transition does cause a one-off visual snap
+        // (~latency ms), absorbed by the renderer's existing position
+        // smoothing.
+        const double latencyMs = playing ? engine.getOutputLatencyMs() : 0.0;
+        const double posMs = playing ? juce::jmax(0.0, rawPosMs - latencyMs) : rawPosMs;
 
         // Always broadcast on transitions; while playing, broadcast every tick so the
         // renderer can drive a smooth playhead. Reuse a single DynamicObject so we
@@ -1458,6 +1474,105 @@ void handleProjectRename(const juce::var& payload, silverdaw::ProjectState& proj
     bridge.broadcast("PROJECT_RENAMED", juce::var(p));
 }
 
+// ─── Audio output device control ──────────────────────────────────────
+//
+// Renderer-facing envelopes:
+//   AUDIO_DEVICES_REQUEST { refresh? }     → AUDIO_DEVICES_LIST
+//   AUDIO_DEVICE_SELECT   { typeName, deviceName }
+//                                          → AUDIO_DEVICE_CHANGED
+//                                          + AUDIO_DEVICES_LIST (on ok)
+//
+// The list payload is also broadcast spontaneously when JUCE's
+// `audioDeviceListChanged` fires (USB plug / unplug, Windows audio
+// reconfig) so the renderer never has to poll.
+
+juce::var buildAudioDevicesListEnvelope(const silverdaw::AudioEngine::AudioDevicesSnapshot& snap)
+{
+    auto* obj = new juce::DynamicObject();
+    juce::Array<juce::var> types;
+    for (const auto& t : snap.types)
+    {
+        auto* typeObj = new juce::DynamicObject();
+        typeObj->setProperty("name", t.typeName);
+        juce::Array<juce::var> devices;
+        for (const auto& d : t.deviceNames)
+        {
+            devices.add(d);
+        }
+        typeObj->setProperty("devices", juce::var(devices));
+        types.add(juce::var(typeObj));
+    }
+    obj->setProperty("types", juce::var(types));
+    obj->setProperty("currentTypeName", snap.currentTypeName.isEmpty() ? juce::var() : juce::var(snap.currentTypeName));
+    obj->setProperty("currentDeviceName",
+                     snap.currentDeviceName.isEmpty() ? juce::var() : juce::var(snap.currentDeviceName));
+    if (snap.currentSampleRate > 0.0)
+    {
+        obj->setProperty("currentSampleRate", snap.currentSampleRate);
+    }
+    if (snap.currentBufferSize > 0)
+    {
+        obj->setProperty("currentBufferSize", snap.currentBufferSize);
+    }
+    if (snap.outputLatencyMs > 0.0)
+    {
+        obj->setProperty("outputLatencyMs", snap.outputLatencyMs);
+    }
+    if (snap.heuristicExtraLatencyMs > 0.0)
+    {
+        obj->setProperty("heuristicExtraLatencyMs", snap.heuristicExtraLatencyMs);
+    }
+    if (snap.fellBackToDefault)
+    {
+        obj->setProperty("fellBackToDefault", true);
+    }
+    return juce::var(obj);
+}
+
+void handleAudioDevicesRequest(const juce::var& payload, silverdaw::AudioEngine& engine,
+                               silverdaw::BridgeServer& bridge)
+{
+    const bool refresh = static_cast<bool>(payload.getProperty("refresh", false));
+    // Lazy-scan on the first request after boot: backend init
+    // deliberately skips the slow `scanForDevices()` loop so the
+    // bridge becomes ready faster, then this handler picks up the
+    // scan on the renderer's first ask (which happens right after
+    // bridge-ready). Subsequent requests respect the `refresh` flag
+    // — the UI's "Rescan devices" buttons pass `refresh: true`, but
+    // cheap state-reload requests can keep the cached snapshot.
+    if (refresh || !engine.hasScannedAllDevices()) engine.refreshAudioDevices();
+    bridge.broadcast("AUDIO_DEVICES_LIST", buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()));
+}
+
+void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& engine,
+                             silverdaw::BridgeServer& bridge)
+{
+    // Nullable fields: both null = revert to system default.
+    const auto typeVar = payload.getProperty("typeName", juce::var());
+    const auto deviceVar = payload.getProperty("deviceName", juce::var());
+    const juce::String typeName = typeVar.isString() ? typeVar.toString() : juce::String();
+    const juce::String deviceName = deviceVar.isString() ? deviceVar.toString() : juce::String();
+
+    const auto err = engine.selectOutputDevice(typeName, deviceName);
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("typeName", typeName.isEmpty() ? juce::var() : juce::var(typeName));
+    p->setProperty("deviceName", deviceName.isEmpty() ? juce::var() : juce::var(deviceName));
+    p->setProperty("ok", err.isEmpty());
+    if (err.isNotEmpty()) p->setProperty("error", err);
+    bridge.broadcast("AUDIO_DEVICE_CHANGED", juce::var(p));
+
+    // No explicit `AUDIO_DEVICES_LIST` broadcast here: a successful
+    // `setAudioDeviceSetup` fires JUCE's `audioDeviceListChanged`
+    // callback, which the engine forwards to the renderer via
+    // `setDeviceListChangedCallback` (wired up in `runBackend`).
+    // Avoiding the duplicate keeps the round-trip lean on a switch.
+
+    silverdaw::log::info("audio",
+                         juce::String("device select type=") + typeName + " name=" + deviceName +
+                             (err.isEmpty() ? " ok" : " fail: " + err));
+}
+
 // Background autosave: serialise the current ValueTree to `filePath`
 // without touching `session.currentPath` or the dirty flag. Used by the
 // renderer's autosave manager — autosave is deliberately invisible to
@@ -1945,6 +2060,19 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             projectState.removeMarker(markerId);
         }
     }
+    else if (type == "AUDIO_DEVICES_REQUEST")
+    {
+        silverdaw::log::debug("bridge", "recv AUDIO_DEVICES_REQUEST refresh=" +
+                                            payload.getProperty("refresh", "false").toString());
+        handleAudioDevicesRequest(payload, engine, bridge);
+    }
+    else if (type == "AUDIO_DEVICE_SELECT")
+    {
+        silverdaw::log::info("bridge", "recv AUDIO_DEVICE_SELECT type=" +
+                                           payload.getProperty("typeName", "").toString() + " name=" +
+                                           payload.getProperty("deviceName", "").toString());
+        handleAudioDeviceSelect(payload, engine, bridge);
+    }
     else
     {
         silverdaw::log::warn("bridge", "unhandled message type: " + type);
@@ -1979,7 +2107,12 @@ int runBackend(int argc, char* argv[])
     const juce::ScopedJuceInitialiser_GUI juceInit;
 
     silverdaw::AudioEngine engine;
-    if (const auto err = engine.initialise(); err.isNotEmpty())
+    const auto preferredAudioTypeName =
+        juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_DEVICE_TYPE", {});
+    const auto preferredAudioDeviceName =
+        juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_DEVICE_NAME", {});
+    if (const auto err = engine.initialise(preferredAudioTypeName, preferredAudioDeviceName);
+        err.isNotEmpty())
     {
         silverdaw::log::error("engine", "audio device init failed: " + err);
         std::cerr << "[engine] audio device init failed: " << err.toStdString() << '\n';
@@ -2056,6 +2189,20 @@ int runBackend(int argc, char* argv[])
             auto* p = new juce::DynamicObject();
             p->setProperty("dirty", dirty);
             bridge.broadcast("PROJECT_DIRTY", juce::var(p));
+        });
+
+    // Rebroadcast AUDIO_DEVICES_LIST whenever JUCE's
+    // `audioDeviceListChanged` fires (USB plug / unplug, Windows audio
+    // reconfig, current-device removal). The engine has already
+    // refreshed its cached snapshot + handled any forced fallback by
+    // the time this callback runs, so the renderer's mirror updates
+    // in one round-trip and the transport-bar selector reflects the
+    // change without polling.
+    engine.setDeviceListChangedCallback(
+        [&bridge, &engine]()
+        {
+            bridge.broadcast("AUDIO_DEVICES_LIST",
+                             buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()));
         });
 
     PlayheadEmitter emitter(engine, bridge);

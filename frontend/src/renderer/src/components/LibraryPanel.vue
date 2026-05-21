@@ -424,7 +424,7 @@ function onResizePointerUp(): void {
     </header>
 
     <!-- Body. Tiles wrap to the available width; only vertical overflow scrolls. -->
-    <div class="library-panel-body relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2">
+    <div class="library-panel-body silverdaw-scroll relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2">
       <div
         v-if="library.items.length === 0"
         class="flex h-full w-full items-center justify-center text-xs text-zinc-500"
@@ -757,26 +757,10 @@ function onResizePointerUp(): void {
 }
 
 .library-panel-body {
-    scrollbar-color: rgb(113 113 122) rgb(24 24 27 / 0.8);
-    scrollbar-width: thin;
-}
-
-.library-panel-body::-webkit-scrollbar {
-    width: 12px;
-}
-
-.library-panel-body::-webkit-scrollbar-track {
-    background: rgb(24 24 27 / 0.8);
-}
-
-.library-panel-body::-webkit-scrollbar-thumb {
-    background-color: rgb(113 113 122);
-    border: 3px solid rgb(24 24 27 / 0.8);
-    border-radius: 9999px;
-}
-
-.library-panel-body::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(161 161 170);
+    /* Scrollbar styling shared with the rest of the app via the
+     * `silverdaw-scroll` utility in App.vue. Keeping the class on the
+     * element preserves any layout assumptions earlier code made about
+     * it without re-declaring the colour rules here. */
 }
 </style>
 

@@ -147,7 +147,7 @@ onBeforeUnmount(() => {
           </p>
         </header>
 
-        <ul class="flex-1 overflow-y-auto divide-y divide-zinc-800">
+        <ul class="silverdaw-scroll flex-1 overflow-y-auto divide-y divide-zinc-800">
           <li
             v-for="entry in entries"
             :key="entry.projectId"

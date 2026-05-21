@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -340,8 +341,22 @@ class AudioEngine
     AudioEngine(const AudioEngine&) = delete;
     AudioEngine& operator=(const AudioEngine&) = delete;
 
-    /** Open the default audio device. Returns the device error string, or empty on success. */
-    juce::String initialise();
+    /**
+     * Open the audio device. Returns the device error string, or empty
+     * on success.
+     *
+     * `preferredTypeName` / `preferredDeviceName` come from the
+     * `SILVERDAW_OUTPUT_DEVICE_TYPE` / `SILVERDAW_OUTPUT_DEVICE_NAME`
+     * env vars passed by the main process at spawn time. When both are
+     * non-empty we try to honour them; on any failure (saved device
+     * unplugged, type missing on this platform, etc.) we silently fall
+     * back to the system default and set `outFellBackToDefault = true`
+     * so the bridge can surface a "your saved device wasn't available"
+     * notice to the renderer.
+     */
+    juce::String initialise(const juce::String& preferredTypeName = {},
+                            const juce::String& preferredDeviceName = {},
+                            bool* outFellBackToDefault = nullptr);
 
     /** Close everything. Safe to call multiple times. */
     void shutdown();
@@ -476,9 +491,42 @@ class AudioEngine
 
     /** Monotonic counter incremented on every load/unload. Used by the
      *  bridge layer to discard stale state broadcasts after the user
-     *  has closed and re-opened the editor.
-     */
+     *  has closed and re-opened the editor. */
     juce::int64 getPreviewGeneration() const;
+
+    /**
+     * Effective output latency in milliseconds — the gap between the
+     * sample the audio thread is currently writing and the sample the
+     * user actually hears.
+     *
+     * Two layers:
+     *
+     *   1. `juce::AudioIODevice::getOutputLatencyInSamples()` — the
+     *      driver's own report. Accurate for ASIO (≈0) and WASAPI
+     *      shared (10–30 ms); the driver knows its own buffer chain.
+     *
+     *   2. Bluetooth-headset heuristic. Windows only sees the buffer
+     *      it controls — the BT radio + headset DSP + headset DAC
+     *      pipeline (another 100–250 ms) is invisible to the OS, so
+     *      a stock A2DP/SBC headset reads back ~10 ms of latency but
+     *      actually lags by ~200 ms. When the active device name
+     *      matches a conservative Bluetooth pattern (`bluetooth`,
+     *      `airpods`, `hands-free`, `wireless headphones`, …) we
+     *      add a baseline `kBluetoothLatencyMs` of additional
+     *      compensation on top of the driver's value.
+     *
+     * Used by the `PlayheadEmitter` to compensate the broadcast
+     * playhead position during playback so the visual cursor matches
+     * what the user is hearing. Paused / seek reads stay raw — see
+     * `getPositionMs()` for the rationale.
+     */
+    double getOutputLatencyMs() const;
+
+    /** Convenience: just the Bluetooth heuristic part of the latency
+     *  calculation, in milliseconds. Returns 0 when the active device
+     *  is not a recognised Bluetooth device. Useful for the renderer
+     *  to label the transport-bar chip with "BT" when non-zero. */
+    double getHeuristicExtraLatencyMs() const;
 
     /**
      * Access to the engine's `AudioFormatManager`. Used by the waveform
@@ -489,6 +537,93 @@ class AudioEngine
     juce::AudioFormatManager& getFormatManager() noexcept
     {
         return formatManager;
+    }
+
+    // ─── Audio output device control ────────────────────────────────────
+    //
+    // Cached snapshot of the available device types + names plus the
+    // current selection. Rebuilt lazily on construction, after a switch,
+    // and on explicit `refreshAudioDevices()` requests — `scanForDevices()`
+    // on some Windows backends (notably ASIO) can take tens of ms, so we
+    // don't pay it on every UI dropdown open.
+    struct DeviceTypeListing
+    {
+        juce::String typeName;
+        juce::StringArray deviceNames;
+    };
+
+    struct AudioDevicesSnapshot
+    {
+        juce::Array<DeviceTypeListing> types;
+        /** Active device type ("Windows Audio", "DirectSound", "ASIO" …) or empty when no device is open. */
+        juce::String currentTypeName;
+        /** Active output device name, or empty when no device is open. */
+        juce::String currentDeviceName;
+        double currentSampleRate = 0.0;
+        int currentBufferSize = 0;
+        /** Total effective output latency in ms — driver-reported +
+         *  Bluetooth heuristic. See `AudioEngine::getOutputLatencyMs()`. */
+        double outputLatencyMs = 0.0;
+        /** Just the Bluetooth heuristic part. Non-zero signals "the
+         *  driver under-reports — we've added a baseline guess for
+         *  the radio/headset pipeline." Surfaces a "BT" hint in the
+         *  renderer. */
+        double heuristicExtraLatencyMs = 0.0;
+        /** Set when `initialise()` tried to honour persisted prefs but
+         *  the saved device couldn't be found — surfaces a one-shot
+         *  "saved device unavailable" notice to the renderer. */
+        bool fellBackToDefault = false;
+    };
+
+    /** Return the cached snapshot. Cheap; safe to call from message-thread
+     *  bridge handlers without rescanning. */
+    AudioDevicesSnapshot getAudioDevicesSnapshot() const
+    {
+        return devicesSnapshot;
+    }
+
+    /** Force a rescan of every device type and refresh the cached
+     *  snapshot. Use sparingly — `scanForDevices()` is the slow step. */
+    void refreshAudioDevices();
+
+    /** True once the engine has performed at least one full
+     *  `refreshAudioDevices()`. Used by the bridge dispatcher to do
+     *  one mandatory scan on the renderer's first
+     *  `AUDIO_DEVICES_REQUEST` (which seeds the dropdowns) while
+     *  letting subsequent requests respect their `refresh` flag. */
+    bool hasScannedAllDevices() const noexcept
+    {
+        return hasFullyScanned;
+    }
+
+    /**
+     * Switch the active output device.
+     *
+     *  - Both empty ⇒ revert to the system default (`initialiseWithDefaultDevices`).
+     *  - Otherwise: switch the device type if needed, then apply the
+     *    chosen output device name. On any failure the previous setup
+     *    is restored and an error string returned; the cached snapshot
+     *    is left pointing at whichever device is actually live after
+     *    the dust settles.
+     *
+     * Returns an empty string on success, or a short diagnostic on
+     * failure.
+     */
+    juce::String selectOutputDevice(const juce::String& typeName, const juce::String& deviceName);
+
+    /**
+     * Register a callback fired when the audio device list changes
+     * (USB plug / unplug, Windows audio reconfig). The callback runs on
+     * the JUCE message thread and is invoked AFTER the engine has
+     * already refreshed `devicesSnapshot` and applied any forced
+     * fallback (a removed current device drops back to default
+     * silently). Used by `Main.cpp` to rebroadcast `AUDIO_DEVICES_LIST`
+     * to the renderer.
+     */
+    using DeviceListChangedCallback = std::function<void()>;
+    void setDeviceListChangedCallback(DeviceListChangedCallback cb)
+    {
+        deviceListChangedCallback = std::move(cb);
     }
 
   private:
@@ -572,6 +707,46 @@ class AudioEngine
     juce::AudioDeviceManager deviceManager;
     juce::AudioSourcePlayer sourcePlayer;
     juce::MixerAudioSource mixer;
+
+    /** Refresh `devicesSnapshot` from the current `deviceManager`
+     *  state. Optionally calls `scanForDevices()` first when `rescan`
+     *  is true (slow on some backends; pass false to just refresh the
+     *  current-device fields after a switch). */
+    void rebuildDevicesSnapshot(bool rescan);
+
+    /** Internal: react to `audioDeviceListChanged` from JUCE. If the
+     *  currently-active device is no longer present (USB pulled, etc.)
+     *  drop back to the system default; otherwise just refresh the
+     *  cached snapshot. Either way, fires `deviceListChangedCallback`
+     *  so the bridge rebroadcasts. */
+    void onDeviceListChanged();
+
+    AudioDevicesSnapshot devicesSnapshot;
+    DeviceListChangedCallback deviceListChangedCallback;
+    /** Latches true on the first `rebuildDevicesSnapshot(true)` call.
+     *  Lets the bridge dispatcher distinguish "renderer's first
+     *  request, please populate the list" from "renderer's
+     *  cheap-refresh request, give them whatever's cached". */
+    bool hasFullyScanned = false;
+
+    /** Bridge between JUCE's `ChangeListener` API and our private
+     *  `onDeviceListChanged()` method. Construct-time bound to the
+     *  enclosing engine; registered with `deviceManager` in
+     *  `initialise()`. */
+    class DeviceChangeListener : public juce::ChangeListener
+    {
+      public:
+        explicit DeviceChangeListener(AudioEngine& e) : engine(e) {}
+        void changeListenerCallback(juce::ChangeBroadcaster*) override
+        {
+            engine.onDeviceListChanged();
+        }
+
+      private:
+        AudioEngine& engine;
+    };
+    DeviceChangeListener deviceChangeListener{*this};
+
     // MasterClockSource wraps the mixer; the top mixer in turn mixes the
     // master (project tracks) with the preview voice so the Clip Editor
     // can play in parallel with — or in place of — the project transport.
