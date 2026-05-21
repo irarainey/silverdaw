@@ -20,6 +20,19 @@ const ui = useUiStore()
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 
+/** Active settings tab. Section content swaps in the right-hand pane
+ *  on each change; nothing about the working refs / Save logic cares
+ *  which tab is active so unsaved edits on one tab survive a tab
+ *  switch. Reset to `'general'` whenever the dialog re-opens. */
+type PreferencesTab = 'general' | 'project' | 'developer'
+const activeTab = ref<PreferencesTab>('general')
+
+const tabs: Array<{ id: PreferencesTab; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'project', label: 'Project' },
+  { id: 'developer', label: 'Developer' }
+]
+
 // Working copies — edited freely; not persisted until Save.
 const debugEnabled = ref(false)
 const toastsEnabled = ref(true)
@@ -110,6 +123,10 @@ watch(
   () => props.open,
   async (isOpen) => {
     if (!isOpen) return
+    // Always land on the first tab when the dialog opens so the user
+    // sees the same layout every time. Edits made on a previous tab
+    // are preserved in the working refs until Save / Cancel.
+    activeTab.value = 'general'
     await loadCurrent()
     requestAnimationFrame(() => dialogEl.value?.focus())
   }
@@ -210,7 +227,7 @@ function onSave(): void {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex w-[min(520px,92vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="flex w-[min(720px,94vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
       >
         <!-- Header -->
         <div class="border-b border-zinc-800 px-6 py-4">
@@ -222,183 +239,212 @@ function onSave(): void {
           </h1>
         </div>
 
-        <!-- Body -->
-        <div class="space-y-6 px-6 py-5 text-xs leading-relaxed">
-          <!-- Interface -->
-          <section>
-            <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-              Interface
-            </h2>
-            <label class="flex cursor-pointer items-start gap-3">
-              <input
-                v-model="toastsEnabled"
-                type="checkbox"
-                class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
-              >
-              <span class="flex-1">
-                <span class="block font-medium text-zinc-200">Show toast notifications</span>
-                <span class="mt-0.5 block text-zinc-500">
-                  Pop transient feedback (errors, save confirmations) in the
-                  bottom-right corner. Turn off for a quieter UI; events are
-                  still written to the log when debugging is enabled.
-                </span>
-              </span>
-            </label>
-            <label class="mt-3 flex cursor-pointer items-start gap-3">
-              <input
-                v-model="followPlayback"
-                type="checkbox"
-                class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
-              >
-              <span class="flex-1">
-                <span class="block font-medium text-zinc-200">Follow playback</span>
-                <span class="mt-0.5 block text-zinc-500">
-                  Scroll the timeline during playback so the playhead stays
-                  centred in the viewport. Turn off if you want the view to
-                  stay still while playing. Can also be toggled from the
-                  transport bar.
-                </span>
-              </span>
-            </label>
-            <label class="mt-3 flex cursor-pointer items-start gap-3">
-              <input
-                v-model="showLibraryTileImages"
-                type="checkbox"
-                class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
-              >
-              <span class="flex-1">
-                <span class="block font-medium text-zinc-200">Show images on library tiles</span>
-                <span class="mt-0.5 block text-zinc-500">
-                  Display embedded cover art, or the fallback audio icon, on
-                  each library tile. Turn off for a denser text-only library.
-                </span>
-              </span>
-            </label>
-          </section>
-
-          <!-- Paths -->
-          <section>
-            <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-              Default paths
-            </h2>
-            <div class="space-y-3">
-              <div>
-                <div class="mb-1 font-medium text-zinc-200">
-                  Project folder
-                </div>
-                <p class="mb-1.5 text-zinc-500">
-                  Used by Save, Save As, and Open for every project file.
-                </p>
-                <div class="flex items-center gap-2">
-                  <code
-                    class="flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
-                    :title="defaultProjectDir"
-                  >{{ defaultProjectDir || '(home)' }}</code>
-                  <button
-                    type="button"
-                    class="shrink-0 rounded bg-zinc-700 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none"
-                    @click="chooseProjectDir"
-                  >
-                    Change…
-                  </button>
-                </div>
-              </div>
-              <div>
-                <div class="mb-1 font-medium text-zinc-200">
-                  Clip folder
-                </div>
-                <p class="mb-1.5 text-zinc-500">
-                  Starting folder for "Add Track from File" and library
-                  import. The most recent folder you browsed to is reused
-                  for the rest of the session.
-                </p>
-                <div class="flex items-center gap-2">
-                  <code
-                    class="flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
-                    :title="defaultClipDir"
-                  >{{ defaultClipDir || '(home)' }}</code>
-                  <button
-                    type="button"
-                    class="shrink-0 rounded bg-zinc-700 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none"
-                    @click="chooseClipDir"
-                  >
-                    Change…
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <!-- Autosave -->
-          <section>
-            <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-              Autosave
-            </h2>
-            <label class="flex cursor-pointer items-start gap-3">
-              <input
-                v-model="autosaveEnabled"
-                type="checkbox"
-                class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
-              >
-              <span class="flex-1">
-                <span class="block font-medium text-zinc-200">Auto-save dirty projects in the background</span>
-                <span class="mt-0.5 block text-zinc-500">
-                  Periodically writes a recovery copy of any project with
-                  unsaved changes into
-                  <code class="text-zinc-400">%APPDATA%/Silverdaw/autosave/</code>.
-                  The next launch offers to restore anything left behind
-                  by a crash or unclean shutdown.
-                </span>
-              </span>
-            </label>
-            <div class="mt-3 flex items-center gap-2 pl-7">
-              <label
-                for="autosave-interval"
-                class="text-zinc-400"
-              >Tick interval</label>
-              <input
-                id="autosave-interval"
-                v-model.number="autosaveIntervalSeconds"
-                type="number"
-                min="5"
-                max="600"
-                step="5"
-                :disabled="!autosaveEnabled"
-                class="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-zinc-200 focus:border-sky-500 focus:outline-none disabled:opacity-40"
-              >
-              <span class="text-zinc-500">seconds (5..600)</span>
-            </div>
-          </section>
-
-          <!-- Developer -->
-          <section>
-            <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-              Developer
-            </h2>
-            <label class="flex cursor-pointer items-start gap-3">
-              <input
-                v-model="debugEnabled"
-                type="checkbox"
-                class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
-              >
-              <span class="flex-1">
-                <span class="block font-medium text-zinc-200">Enable Debugging</span>
-                <span class="mt-0.5 block text-zinc-500">
-                  Shows the Debug menu (Toggle Developer Tools, …) and writes
-                  per-session diagnostic logs under
-                  <code class="text-zinc-400">.logs/&lt;timestamp&gt;/</code>.
-                  Takes effect the next time Silverdaw is launched.
-                </span>
-              </span>
-            </label>
-
-            <p
-              v-if="debugEnabled !== initialDebug"
-              class="mt-3 rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-amber-200"
+        <!-- Body: sidebar tab list + content pane -->
+        <div class="flex max-h-[70vh] min-h-[360px] overflow-hidden">
+          <!-- Sidebar tab list -->
+          <nav
+            class="flex w-40 shrink-0 flex-col gap-0.5 border-r border-zinc-800 bg-zinc-950/40 py-3 text-xs"
+            role="tablist"
+            aria-orientation="vertical"
+          >
+            <button
+              v-for="tab in tabs"
+              :key="tab.id"
+              type="button"
+              role="tab"
+              :aria-selected="activeTab === tab.id"
+              data-borderless-button="true"
+              :class="[
+                'mx-2 rounded px-3 py-1.5 text-left',
+                activeTab === tab.id
+                  ? 'bg-sky-600/20 text-sky-200'
+                  : 'text-zinc-300 hover:bg-zinc-800'
+              ]"
+              @click="activeTab = tab.id"
             >
-              Restart Silverdaw to apply changes.
-            </p>
-          </section>
+              {{ tab.label }}
+            </button>
+          </nav>
+
+          <!-- Active tab content -->
+          <div
+            class="flex-1 overflow-y-auto px-6 py-5 text-xs leading-relaxed"
+            role="tabpanel"
+          >
+            <!-- General -->
+            <section v-if="activeTab === 'general'">
+              <label class="flex cursor-pointer items-start gap-3">
+                <input
+                  v-model="toastsEnabled"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                >
+                <span class="flex-1">
+                  <span class="block font-medium text-zinc-200">Show toast notifications</span>
+                  <span class="mt-0.5 block text-zinc-500">
+                    Pop transient feedback (errors, save confirmations) in the
+                    bottom-right corner. Turn off for a quieter UI; events are
+                    still written to the log when debugging is enabled.
+                  </span>
+                </span>
+              </label>
+              <label class="mt-3 flex cursor-pointer items-start gap-3">
+                <input
+                  v-model="followPlayback"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                >
+                <span class="flex-1">
+                  <span class="block font-medium text-zinc-200">Follow playback</span>
+                  <span class="mt-0.5 block text-zinc-500">
+                    Scroll the timeline during playback so the playhead stays
+                    centred in the viewport. Turn off if you want the view to
+                    stay still while playing. Can also be toggled from the
+                    transport bar.
+                  </span>
+                </span>
+              </label>
+              <label class="mt-3 flex cursor-pointer items-start gap-3">
+                <input
+                  v-model="showLibraryTileImages"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                >
+                <span class="flex-1">
+                  <span class="block font-medium text-zinc-200">Show images on library tiles</span>
+                  <span class="mt-0.5 block text-zinc-500">
+                    Display embedded cover art, or the fallback audio icon, on
+                    each library tile. Turn off for a denser text-only library.
+                  </span>
+                </span>
+              </label>
+            </section>
+
+            <!-- Project -->
+            <section
+              v-else-if="activeTab === 'project'"
+              class="space-y-6"
+            >
+              <div>
+                <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+                  Default paths
+                </h2>
+                <div class="space-y-3">
+                  <div>
+                    <div class="mb-1 font-medium text-zinc-200">
+                      Project folder
+                    </div>
+                    <p class="mb-1.5 text-zinc-500">
+                      Used by Save, Save As, and Open for every project file.
+                    </p>
+                    <div class="flex items-center gap-2">
+                      <code
+                        class="flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
+                        :title="defaultProjectDir"
+                      >{{ defaultProjectDir || '(home)' }}</code>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded bg-zinc-700 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                        @click="chooseProjectDir"
+                      >
+                        Change…
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="mb-1 font-medium text-zinc-200">
+                      Clip folder
+                    </div>
+                    <p class="mb-1.5 text-zinc-500">
+                      Starting folder for "Add Track from File" and library
+                      import. The most recent folder you browsed to is reused
+                      for the rest of the session.
+                    </p>
+                    <div class="flex items-center gap-2">
+                      <code
+                        class="flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
+                        :title="defaultClipDir"
+                      >{{ defaultClipDir || '(home)' }}</code>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded bg-zinc-700 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                        @click="chooseClipDir"
+                      >
+                        Change…
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+                  Autosave
+                </h2>
+                <label class="flex cursor-pointer items-start gap-3">
+                  <input
+                    v-model="autosaveEnabled"
+                    type="checkbox"
+                    class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                  >
+                  <span class="flex-1">
+                    <span class="block font-medium text-zinc-200">Auto-save dirty projects in the background</span>
+                    <span class="mt-0.5 block text-zinc-500">
+                      Periodically writes a recovery copy of any project with
+                      unsaved changes into
+                      <code class="text-zinc-400">%APPDATA%/Silverdaw/autosave/</code>.
+                      The next launch offers to restore anything left behind
+                      by a crash or unclean shutdown.
+                    </span>
+                  </span>
+                </label>
+                <div class="mt-3 flex items-center gap-2 pl-7">
+                  <label
+                    for="autosave-interval"
+                    class="text-zinc-400"
+                  >Tick interval</label>
+                  <input
+                    id="autosave-interval"
+                    v-model.number="autosaveIntervalSeconds"
+                    type="number"
+                    min="5"
+                    max="600"
+                    step="5"
+                    :disabled="!autosaveEnabled"
+                    class="w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-zinc-200 focus:border-sky-500 focus:outline-none disabled:opacity-40"
+                  >
+                  <span class="text-zinc-500">seconds (5..600)</span>
+                </div>
+              </div>
+            </section>
+
+            <!-- Developer -->
+            <section v-else-if="activeTab === 'developer'">
+              <label class="flex cursor-pointer items-start gap-3">
+                <input
+                  v-model="debugEnabled"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                >
+                <span class="flex-1">
+                  <span class="block font-medium text-zinc-200">Enable Debugging</span>
+                  <span class="mt-0.5 block text-zinc-500">
+                    Shows the Debug menu (Toggle Developer Tools, …) and writes
+                    per-session diagnostic logs under
+                    <code class="text-zinc-400">.logs/&lt;timestamp&gt;/</code>.
+                    Takes effect the next time Silverdaw is launched.
+                  </span>
+                </span>
+              </label>
+
+              <p
+                v-if="debugEnabled !== initialDebug"
+                class="mt-3 rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-amber-200"
+              >
+                Restart Silverdaw to apply changes.
+              </p>
+            </section>
+          </div>
         </div>
 
         <!-- Footer -->
