@@ -28,7 +28,7 @@
         Static splash: visible from the first paint of `index.html` and
         kept on screen until `createApp(App).mount('#app')` replaces the
         container's children with the Vue tree. The Vue-side
-        `BridgeReadyOverlay` is styled to match exactly, so the handoff
+        `StartupScreen` is styled to match exactly, so the handoff
         is invisible to the user — they see one consistent loading
         screen from `BrowserWindow` open through the bridge handshake.
       */
@@ -36,7 +36,7 @@
         margin: 0;
         padding: 0;
         height: 100%;
-        background: #18181b; /* zinc-900 — matches BridgeReadyOverlay + title-bar overlay */
+        background: #18181b; /* zinc-900 — matches StartupScreen + title-bar overlay */
         color: #e4e4e7;      /* zinc-200 */
         font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         -webkit-font-smoothing: antialiased;

@@ -25,7 +25,7 @@ interface TransportState {
   bridgeReady: boolean
   /**
    * Set when the initial bridge connection has timed out (or otherwise
-   * failed terminally). When non-null the BridgeReadyOverlay swaps from
+   * failed terminally). When non-null the StartupScreen swaps from
    * its spinner state to an error message with a "Quit" button. Once
    * set this stays set — there's no useful recovery path mid-session
    * because the backend either never started or is responding with an

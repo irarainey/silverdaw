@@ -6,14 +6,13 @@ import TransportBar from '@/components/TransportBar.vue'
 import LibraryPanel from '@/components/LibraryPanel.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import NotificationToasts from '@/components/NotificationToasts.vue'
-import BridgeReadyOverlay from '@/components/BridgeReadyOverlay.vue'
 import ImportProgressDialog from '@/components/ImportProgressDialog.vue'
 import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
 import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import RelinkDialog from '@/components/RelinkDialog.vue'
 import RecoveryDialog, { type RecoverableEntry } from '@/components/RecoveryDialog.vue'
-import StartScreenOverlay from '@/components/StartScreenOverlay.vue'
+import StartupScreen from '@/components/StartupScreen.vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -175,6 +174,8 @@ function isShortcutModalOpen(): boolean {
     preferencesOpen.value ||
     relinkDialogOpen.value ||
     unsavedPromptOpen.value ||
+    recoveryDialogOpen.value ||
+    startupScreenVisible.value ||
     ui.clipEditorOpen
   )
 }
@@ -329,7 +330,7 @@ function onGlobalShortcutKey(e: KeyboardEvent): void {
 }
 
 // ─── Initial bridge-connection timeout ────────────────────────────────
-// Without this the BridgeReadyOverlay can sit on screen forever if the
+// Without this the StartupScreen can sit on screen forever if the
 // backend never starts (missing exe, wrong path, crashed at launch) or
 // if the bridge handshake fails (socket open but no PROJECT_STATE). 30
 // seconds comfortably covers a cold backend launch + initial
@@ -400,8 +401,11 @@ function finishStartupFlow(): void {
   const parked = pendingOpenAfterRecovery
   pendingOpenAfterRecovery = null
   if (parked) {
+    // Cold-launch hand-off. The StartupScreen stays mounted while
+    // the project loads — its disappearance is driven by the
+    // `currentFilePath !== null` arm of `startupScreenVisible`,
+    // so there's no need (or desire) to dismiss it preemptively.
     void openProjectByPath(parked)
-    appStore.dismissStartScreen()
   }
   appStore.markStartupFlowComplete()
 }
@@ -434,7 +438,9 @@ async function openProjectByPath(filePath: string): Promise<void> {
   guardAgainstUnsavedChanges(async () => {
     await window.silverdaw.prepareProjectOpen(filePath)
     project.requestLoad(filePath)
-    appStore.dismissStartScreen()
+    // The StartupScreen hides naturally when PROJECT_STATE arrives and
+    // `currentFilePath` becomes non-null. Dismissing here would briefly
+    // expose the empty timeline during the load round-trip.
   })
 }
 
@@ -462,34 +468,44 @@ async function openRecentPath(filePath: string): Promise<void> {
 }
 
 function onStartScreenNew(): void {
+  // "New Project" creates an empty workspace with no file path and
+  // no tracks, so the natural file-loaded gate can't hide the
+  // screen — we have to dismiss explicitly.
   appStore.dismissStartScreen()
   handleMenuAction('file.newProject')
 }
 
 function onStartScreenOpen(): void {
-  appStore.dismissStartScreen()
+  // Defer dismissal to the project-loaded gate via `openProjectByPath`.
+  // If the user cancels the file dialog, the screen stays.
   handleMenuAction('file.openProject')
 }
 
 function onStartScreenRecent(filePath: string): void {
-  appStore.dismissStartScreen()
+  // Same as Open: dismissal is driven by the project-loaded gate.
   void openRecentPath(filePath)
 }
 
 /**
- * Visibility of the start screen. Mounted once the startup coordinator
- * has finished and the project is genuinely empty (no path, no tracks,
- * no library). The session-scoped `startScreenDismissed` flag prevents
- * it from re-appearing if the user does File > New and then has an
- * empty workspace again — that's intentional behaviour, not the boot
- * landing page.
+ * Visibility of the startup landing screen. Mounts on app boot
+ * (does NOT wait for bridge-ready) and stays visible until the
+ * project becomes non-empty or the user explicitly dismisses it.
+ * The screen has its own internal "loading / failure / ready"
+ * states; gating those there rather than here keeps the boot to
+ * a single visual surface — there's no cross-fade between two
+ * splashes.
+ *
+ * RecoveryDialog stacks above this overlay via z-index, so we
+ * intentionally do NOT include `recoveryDialogOpen` in the gate.
+ *
+ * The session-scoped `startScreenDismissed` flag prevents the
+ * screen from re-appearing once the user has clicked through to
+ * a project — including the empty "New Project" case where
+ * currentFilePath is still null.
  */
-const startScreenVisible = computed(
+const startupScreenVisible = computed(
   () =>
-    transport.bridgeReady &&
-    appStore.startupFlowComplete &&
     !appStore.startScreenDismissed &&
-    !recoveryDialogOpen.value &&
     project.currentFilePath === null &&
     project.tracks.length === 0 &&
     library.items.length === 0
@@ -545,7 +561,7 @@ function handleMenuAction(action: string): void {
   }
   // Drop any menu action (incl. keyboard shortcut) that arrives before
   // the bridge has delivered its initial PROJECT_STATE — the visible
-  // <BridgeReadyOverlay> swallows mouse clicks but accelerators bypass
+  // <StartupScreen> swallows mouse clicks but accelerators bypass
   // it, and acting on stale local state before reconcile would lose
   // the action (it'd race the snapshot apply pass).
   if (!transport.bridgeReady) {
@@ -576,7 +592,8 @@ function handleMenuAction(action: string): void {
         // whitelist by that point.
         await window.silverdaw.prepareProjectOpen(filePath)
         project.requestLoad(filePath)
-        appStore.dismissStartScreen()
+        // StartupScreen disappears once PROJECT_STATE arrives. Avoid
+        // a preemptive dismiss so the empty timeline never flashes.
       })
     })
     return
@@ -780,8 +797,6 @@ function onUnsavedPromptCancel(): void {
 
     <ImportProgressDialog />
 
-    <BridgeReadyOverlay />
-
     <AboutDialog
       :open="aboutOpen"
       @close="aboutOpen = false"
@@ -812,9 +827,10 @@ function onUnsavedPromptCancel(): void {
       @close="onRecoveryClose"
     />
 
-    <StartScreenOverlay
-      :open="startScreenVisible"
-      :bridge-ready="transport.bridgeReady"
+    <StartupScreen
+      :open="startupScreenVisible"
+      :startup-flow-complete="appStore.startupFlowComplete"
+      :recovery-open="recoveryDialogOpen"
       @new-project="onStartScreenNew"
       @open-project="onStartScreenOpen"
       @open-recent="onStartScreenRecent"

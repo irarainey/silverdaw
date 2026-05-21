@@ -272,7 +272,7 @@ lose work. On a load / new-project the same envelope carries `reset: true` and t
 wipes its mirror before applying.
 
 Until the first `PROJECT_STATE` arrives, an inline splash inside `index.html` (then the Vue
-`BridgeReadyOverlay` once it mounts) blocks all input so the user can't act on state that
+`StartupScreen` once it mounts) blocks all input so the user can't act on state that
 hasn't been reconciled yet. A 30-second timeout shows an "Unable to start Silverdaw" error if
 the bridge handshake never completes.
 
