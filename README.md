@@ -91,11 +91,20 @@ Silverdaw currently supports the core arrangement workflow:
   dialog offers to restore any project whose autosave is newer than its backing
   file (or whose backing file is missing / was untitled). Restored projects
   always reopen marked dirty so the user is steered to File > Save.
-- Recent Projects MRU (up to 10) persisted in `preferences.json`, surfaced as
-  inline File-menu entries and as the Start Screen list shown on first launch
-  or after File > New on a fresh install.
+- Recent Projects MRU (up to 10) persisted in `preferences.json`, surfaced as a
+  `File > Recent Projects ▸` submenu and as the Start Screen list shown on first
+  launch or after File > New on a fresh install.
 - Relink a missing source file at the **library item** level — every clip
-  referencing that item picks up the new file automatically.
+  referencing that item picks up the new file automatically. The Relink dialog
+  groups missing references by file path so the same broken path used by ten
+  clips is fixed with a single Locate File click.
+- Choose any installed audio output device or stay on the system default;
+  hot-swap from the transport bar without leaving the timeline. The selection
+  is persisted, removable devices (USB, Bluetooth) fall back to default when
+  unplugged, and the saved choice is honoured again as soon as the device
+  reappears. Bluetooth output is auto-detected and the visible playhead
+  compensates for radio-and-headset latency so it stays in sync with what you
+  hear (~250 ms for A2DP, ~400 ms for HFP).
 - Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
   file association.
 
@@ -433,7 +442,21 @@ for a preview the user has already closed are silently dropped.
 
 ## Preferences
 
-User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`:
+User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`
+and edited via the in-app **Edit → Preferences…** dialog. The dialog is
+**transactional**: every field is held in a local working copy until you click
+**Save**; **Cancel** (and `Esc`) discard pending edits without touching the
+engine or the file. The settings are organised into four tabs on a left-hand
+sidebar:
+
+- **General** — toast notifications, follow-playback auto-scroll, library tile
+  imagery.
+- **Project** — default Save / Open / Import directories and background autosave
+  configuration.
+- **Audio** — output device selection (see below).
+- **Developer** — the Enable-Debugging toggle.
+
+Persisted fields:
 
 - Window bounds + maximised state.
 - Panel sizes (track-header column width, library panel height).
@@ -451,14 +474,60 @@ User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`
 - **Default clip folder** — starting directory for Add Track from File / library Import.
   Defaults to `<home>/Music/`. After every successful open it remembers the folder you
   browsed to **for the rest of the session**; on next launch it resets to this default.
-- Last opened project path (for future Recent Projects MRU).
+- **Autosave** — enable / disable plus tick interval (clamped 5..600 s, default 30 s).
+- **Audio output device** — persisted `{ typeName, deviceName }` pair, both `null` for
+  "System default". The backend receives the pair as `SILVERDAW_OUTPUT_DEVICE_TYPE` /
+  `SILVERDAW_OUTPUT_DEVICE_NAME` env vars at spawn time.
+- **Recent Projects** MRU (max 10, head = most recent, case-insensitive dedupe on Windows).
 - **Enable Debugging** — gates the visibility of the **Debug** menu (Toggle Developer Tools)
   and the entire cross-layer file logger. Off by default. When on, the next launch writes a
   per-session `<repo>/.logs/<ISO-timestamp>/{main,backend,renderer}.log` triple with aligned
   millisecond timestamps so post-mortem analysis is one `cat *.log | sort` away.
 
-Toggled via the in-app **Edit → Preferences…** dialog. QoL settings take effect on **Save**;
-the **Enable Debugging** toggle requires a restart and the dialog surfaces that explicitly.
+QoL settings take effect on **Save**; the **Enable Debugging** toggle requires a restart
+and the dialog surfaces that explicitly.
+
+### Audio output device
+
+Pick where Silverdaw sends audio in **Preferences → Audio**, or switch live from the
+chip on the left of the transport bar without leaving the timeline. Devices are
+**deduplicated across backends** — the same physical Speakers exposed by both Windows
+Audio and DirectSound shows up as a single row in both surfaces, with the most-friendly
+backend auto-picked (Windows Audio first, falling back to DirectSound, then the rest).
+
+Advanced users can override the backend via the collapsed **Audio driver ▸** disclosure
+in Preferences (hidden until you've picked a non-default device). Each backend carries a
+plain-English description — e.g. *"Recommended. Modern Windows audio path; reliable
+latency and shares the device with other apps."* / *"ASIO — Lowest latency, but requires
+a vendor-supplied ASIO driver."* — so no outside docs are needed.
+
+Robustness:
+
+- **Removable devices** (USB / Bluetooth headphones) — when the saved device isn't
+  present at launch the backend silently falls back to system default and the renderer
+  pops a one-shot toast. The persisted preference is kept so re-plugging works next
+  launch.
+- **Live unplug** — JUCE's `audioDeviceListChanged` callback fires; the backend reopens
+  the system default automatically so audio keeps flowing. A fresh `AUDIO_DEVICES_LIST`
+  goes out to the renderer in the same round-trip.
+- **Slow ASIO probes** — the initial device-type scan is deferred until just after the
+  bridge is ready, so backend startup is ~100–400 ms faster on machines with ASIO
+  drivers installed.
+
+Latency compensation:
+
+- The backend tracks effective output latency = `juce::AudioIODevice::getOutputLatencyInSamples()`
+  + a **Bluetooth heuristic baseline**. Conservative name-match on the active device
+  (`bluetooth`, `airpods`, `hands-free`, `wireless headphones`, `earbuds`, `a2dp`, `hfp`,
+  …); when matched, adds **250 ms** for A2DP (music profile) or **400 ms** for
+  HFP / Hands-Free (call profile — the low-bitrate codec Windows often switches BT
+  headsets into).
+- The `PlayheadEmitter` subtracts this from the broadcast playhead position **while the
+  transport is playing**. Paused / seek anchors stay raw so click-to-seek lands exactly
+  where you click. There's a one-off ~latency-ms snap when you press Play / Pause,
+  absorbed by the renderer's existing position smoothing.
+- The transport-bar audio chip surfaces the effective latency (`~250 ms · BT`) when it's
+  non-trivial. The Preferences Audio tab shows the same line with a Bluetooth caveat.
 
 ## Keyboard & mouse reference
 
