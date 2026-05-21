@@ -163,7 +163,7 @@ describe('libraryStore', () => {
         durationMs: 1_500
       }
     })
-    expect(library.isItemInUse(sourceId)).toBe(true)
+    expect(library.isItemInUse(sourceId)).toBe(false)
     expect(library.isItemInUse(savedId ?? '')).toBe(false)
     expect(sendMock).toHaveBeenCalledWith('LIBRARY_ADD', expect.objectContaining({
       itemId: savedId,
@@ -282,6 +282,105 @@ describe('libraryStore', () => {
     expect(library.items.map((item) => item.id)).not.toContain(unusedItemId)
     expect(revokeObjectURLMock).toHaveBeenCalledWith('blob:cover')
     expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: unusedItemId })
+  })
+
+  it('cascade-removes unused saved-clip children when their audio-file source is deleted', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\loop.wav',
+      fileName: 'loop.wav',
+      durationMs: 8_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    // Create a saved clip from a (transient) timeline clip, then
+    // immediately drop the timeline clip so the source has only an
+    // unused library child — the exact scenario the bug report
+    // describes.
+    const savedId = library.addSavedClipFromTimelineClip({
+      id: 'c1',
+      trackId: 't1',
+      libraryItemId: sourceId,
+      filePath: 'C:\\audio\\loop.wav',
+      playbackFilePath: 'C:\\audio\\loop.wav',
+      fileName: 'loop.wav',
+      startMs: 0,
+      inMs: 1_000,
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      unresolved: false
+    })
+
+    // No timeline clip references either row — both should be
+    // freely removable, and removing the source should take the
+    // child with it.
+    expect(library.isItemInUse(sourceId)).toBe(false)
+    expect(library.isItemInUse(savedId ?? '')).toBe(false)
+    expect(project.tracks).toHaveLength(0)
+
+    sendMock.mockClear()
+    expect(library.removeItem(sourceId)).toBe(true)
+    expect(library.items).toHaveLength(0)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: savedId })
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: sourceId })
+  })
+
+  it('refuses to remove a source when one of its saved-clip children is still on the timeline', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\hook.wav',
+      fileName: 'hook.wav',
+      durationMs: 10_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      fromSnapshot: true
+    })
+    const savedId = library.addSavedClipFromTimelineClip({
+      id: 'c-transient',
+      trackId: 't0',
+      libraryItemId: sourceId,
+      filePath: 'C:\\audio\\hook.wav',
+      playbackFilePath: 'C:\\audio\\hook.wav',
+      fileName: 'hook.wav',
+      startMs: 0,
+      inMs: 500,
+      durationMs: 1_500,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      unresolved: false
+    })
+    // Now put the saved-clip on the timeline — the source becomes
+    // in-use via its child, even though no clip references the
+    // source directly.
+    const trackId = project.addTrack()
+    project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: savedId ?? '',
+        filePath: 'C:\\audio\\hook.wav',
+        fileName: 'hook.wav',
+        durationMs: 1_500,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+
+    expect(library.isItemInUse(sourceId)).toBe(true)
+    expect(library.isItemInUse(savedId ?? '')).toBe(true)
+    sendMock.mockClear()
+    expect(library.removeItem(sourceId)).toBe(false)
+    expect(library.items.map((item) => item.id)).toEqual([sourceId, savedId])
+    expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_REMOVE', expect.anything())
   })
 
   it('normalises metadata and display names', () => {

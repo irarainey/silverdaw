@@ -661,13 +661,21 @@ export const useLibraryStore = defineStore('library', {
     },
 
     /**
-     * Remove an item from the library. No-op if the item's file is still
-     * referenced by any clip on any track — the user must delete those
-     * clips first. Returns true if the item was actually removed.
+     * Remove an item from the library. Returns true when the item was
+     * actually removed.
      *
-     * Also revokes the cover-art object URL so the underlying Blob is
-     * eligible for GC; without this the renderer would leak ~MB per
-     * imported file across the session.
+     * - Saved-clip items: removable iff no timeline clip references
+     *   them. (A saved-clip has no children of its own.)
+     * - Audio-file source items: removable iff neither the source nor
+     *   any of its derived saved-clip children are referenced by a
+     *   timeline clip. The cascade is the important detail — a source
+     *   row is *not* held hostage by a saved-clip child that's itself
+     *   sitting unused in the library. Removing such a source deletes
+     *   every unused saved-clip descendant as well so the library
+     *   doesn't leak orphaned rows pointing at a now-gone parent.
+     *
+     * Cover-art object URLs are revoked on each removed row so the
+     * underlying Blob is eligible for GC.
      */
     removeItem(itemId: string): boolean {
       const idx = this.items.findIndex((i) => i.id === itemId)
@@ -676,27 +684,73 @@ export const useLibraryStore = defineStore('library', {
         log.warn('library', `removeItem refused (in use) id=${itemId}`)
         return false
       }
-      revokeItemCoverArt(this.items[idx])
-      this.items.splice(idx, 1)
+      const item = this.items[idx]
+      if (!item) return false
+      // Cascade: removing an audio-file source also removes every
+      // saved-clip derived from it. Each child is guaranteed to be
+      // unused at this point (the in-use check above would have
+      // refused otherwise), so the cascade is safe. Walk the array
+      // back-to-front so child splices don't invalidate later indexes.
+      if (item.kind === 'audio-file') {
+        for (let i = this.items.length - 1; i >= 0; i--) {
+          const child = this.items[i]
+          if (!child || child.derivedFrom?.sourceItemId !== itemId) continue
+          revokeItemCoverArt(child)
+          this.items.splice(i, 1)
+          sendBridge('LIBRARY_REMOVE', { itemId: child.id })
+          log.info('library', `removeItem id=${child.id} (cascade)`)
+        }
+      }
+      // Re-locate the source row in case the cascade above shifted
+      // its index. Safe-guard against the possibility that the row
+      // itself got spliced (shouldn't happen — a source doesn't
+      // derive from itself — but cheaper to check than to debug).
+      const finalIdx = this.items.findIndex((i) => i.id === itemId)
+      if (finalIdx < 0) return true
+      revokeItemCoverArt(this.items[finalIdx])
+      this.items.splice(finalIdx, 1)
       sendBridge('LIBRARY_REMOVE', { itemId })
       log.info('library', `removeItem id=${itemId}`)
       return true
     },
 
     /**
-     * True if any clip on any track currently references this library
-     * item's file, or if an audio-file item has saved clips derived from it.
-     * Saved-clip rows themselves are reusable shortcuts; removing one does not
-     * remove timeline clips already created from it.
+     * True iff this library item is still referenced somewhere the
+     * UI cares about — i.e. removing it would leave a dangling
+     * reference on the timeline.
+     *
+     * For audio-file source items the answer is "any timeline clip
+     * points at me, OR any timeline clip points at one of my
+     * derived saved-clips". The second clause stops `removeItem`
+     * from orphaning an in-use saved-clip when its parent is being
+     * deleted; saved-clips that exist in the library but aren't on
+     * any track are NOT counted, so a source with only-unused
+     * children is freely removable (and the children get cascade-
+     * deleted alongside it).
+     *
+     * For saved-clip items the answer is simply "any timeline clip
+     * references me". They have no children to consider.
       */
     isItemInUse(itemId: string): boolean {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return false
-      if (this.items.some((child) => child.derivedFrom?.sourceItemId === itemId)) return true
-      if (item.kind === 'saved-clip') return false
       const project = useProjectStore()
+      // Direct timeline reference?
       for (const id in project.clips) {
         if (project.clips[id]?.libraryItemId === itemId) return true
+      }
+      // Audio-file source: also block removal if any *active*
+      // saved-clip descendant exists. An "active" descendant is one
+      // currently referenced by a timeline clip — a saved-clip just
+      // sitting in the library is fine, because the cascade in
+      // `removeItem` will tidy it up.
+      if (item.kind === 'audio-file') {
+        for (const child of this.items) {
+          if (child.derivedFrom?.sourceItemId !== itemId) continue
+          for (const id in project.clips) {
+            if (project.clips[id]?.libraryItemId === child.id) return true
+          }
+        }
       }
       return false
     },
