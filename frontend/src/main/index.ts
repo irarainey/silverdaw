@@ -1065,6 +1065,12 @@ function handleMenuAction(action: string): void {
       // clip from its track.
       wc.send('menu:action', action)
       break
+    case 'edit.cropProjectToLastClip':
+      // Forwarded to the renderer, which collapses the project length
+      // to the end of the latest clip on any track and emits a single
+      // PROJECT_SET_LENGTH envelope so the backend ruler matches.
+      wc.send('menu:action', action)
+      break
 
     // View
     case 'view.toggleDevTools':

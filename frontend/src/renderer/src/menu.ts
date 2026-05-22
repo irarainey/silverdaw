@@ -113,6 +113,8 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Duplicate Clip', action: 'edit.duplicateClip', accelerator: 'D' },
         { label: 'Delete Clip', action: 'edit.deleteClip', accelerator: 'Delete' },
         SEP,
+        { label: 'Crop Project to Last Clip', action: 'edit.cropProjectToLastClip' },
+        SEP,
         { label: 'Preferences...', action: 'edit.preferences' }
       ]
     },

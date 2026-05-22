@@ -197,6 +197,14 @@ function onGlobalShortcutKey(e: KeyboardEvent): void {
       transport.setPlaybackState(false)
       log.info('transport', 'shortcut pause')
     } else {
+      // Playhead parked at the end → Spacebar Play is a no-op.
+      // Mirrors `TransportBar.onPlay`'s guard so the keyboard
+      // shortcut can't bypass the disabled Play button.
+      const end = project.durationMs
+      if (end > 0 && transport.positionMs >= end) {
+        log.info('transport', 'shortcut play ignored (at end of project)')
+        return
+      }
       sendBridge('TRANSPORT_PLAY')
       transport.setPlaybackState(true)
       log.info('transport', 'shortcut play')
@@ -702,6 +710,30 @@ function handleMenuAction(action: string): void {
   if (action === 'edit.deleteClip') {
     if (project.selectedClipId) {
       project.removeClip(project.selectedClipId)
+    }
+    return
+  }
+  if (action === 'edit.cropProjectToLastClip') {
+    // Crop the project length to the end of the latest clip on any
+    // track. No-op if there are no clips at all — collapsing an empty
+    // project to 0 ms would leave a 0-width ruler with no way back
+    // except a tempo / length edit. The setter clamps upward per-track
+    // to fit clips on that track, so passing the global max keeps the
+    // shorter tracks honest as well.
+    let maxEndMs = 0
+    for (const clip of Object.values(project.clips)) {
+      const end = clip.startMs + clip.durationMs
+      if (end > maxEndMs) maxEndMs = end
+    }
+    if (maxEndMs <= 0) {
+      notifications.pushInfo('No clips on the timeline — nothing to crop.')
+      return
+    }
+    const before = project.durationMs
+    project.setProjectLengthMs(maxEndMs)
+    const after = project.durationMs
+    if (after !== before) {
+      sendBridge('PROJECT_SET_LENGTH', { lengthMs: after })
     }
     return
   }

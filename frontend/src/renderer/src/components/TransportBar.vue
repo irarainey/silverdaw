@@ -189,6 +189,29 @@ watch(
   }
 )
 
+// Auto-stop at the end of the project. The audio engine streams
+// forever (it has no notion of `projectLengthMs`), so when the
+// playhead crosses the project ruler's end we send a TRANSPORT_PAUSE
+// from the renderer. We pause (not stop) so the playhead stays parked
+// at the end — matches the user's mental model of "playback finished
+// here", and a fresh Play picks up from start via the existing
+// auto-rewind in `onPlay`. Guard against a 0-length project so a
+// fresh / cropped-empty timeline doesn't get into a pause loop.
+watch(
+  () => transport.positionMs,
+  (ms) => {
+    if (!transport.isPlaying) return
+    const end = project.durationMs
+    if (end <= 0) return
+    if (ms < end) return
+    sendBridge('TRANSPORT_PAUSE')
+    // Optimistic local stop so the play / pause button flips
+    // immediately rather than waiting for the backend ack.
+    transport.setPlaybackState(false)
+    transport.setPosition(end)
+  }
+)
+
 // Editable BPM. Same pattern as length — mirror the store while not focused.
 const bpmInput = ref(transport.bpm.toFixed(2))
 const isEditingBpm = ref(false)
@@ -213,6 +236,23 @@ const timingEditable = lengthEditable
 const projectClipCount = computed(() =>
   project.tracks.reduce((count, track) => count + track.clipIds.length, 0)
 )
+
+// Play is disabled when the playhead is parked at (or past) the end of
+// the project ruler. Pause is always reachable, so we only gate the
+// "start playing" path. Empty projects (durationMs===0) keep Play
+// enabled — the disabled-while-empty case is already covered by
+// `timingEditable` further down.
+const playDisabled = computed(() => {
+  if (transport.isPlaying) return false
+  const end = project.durationMs
+  return end > 0 && transport.positionMs >= end
+})
+
+const playButtonTitle = computed(() => {
+  if (transport.isPlaying) return 'Pause'
+  if (playDisabled.value) return 'Playhead at end of project — skip back to play'
+  return 'Play'
+})
 
 const projectBpmPending = computed(() => {
   if (!timingEditable.value || projectClipCount.value === 0) return false
@@ -325,6 +365,15 @@ function onPlay(): void {
     sendBridge('TRANSPORT_PAUSE')
     transport.setPlaybackState(false)
   } else {
+    // Playhead parked at (or past) the end of the project — Play is a
+    // no-op. The button itself is disabled in this case (see
+    // `playDisabled`); this guard also catches the keyboard-shortcut
+    // path so Spacebar can't sneak past the UI.
+    const end = project.durationMs
+    if (end > 0 && transport.positionMs >= end) {
+      log.info('transport', 'click play ignored (at end of project)')
+      return
+    }
     log.info('transport', 'click play')
     sendBridge('TRANSPORT_PLAY')
     transport.setPlaybackState(true)
@@ -475,9 +524,10 @@ function onToggleFollow(): void {
       <button
         type="button"
         data-borderless-button="true"
-        class="rounded p-2 hover:bg-blue-600 hover:text-white"
+        class="rounded p-2 hover:bg-blue-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-100"
         :class="transport.isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
-        :title="transport.isPlaying ? 'Pause' : 'Play'"
+        :title="playButtonTitle"
+        :disabled="playDisabled"
         @click="onPlay"
       >
         <svg
