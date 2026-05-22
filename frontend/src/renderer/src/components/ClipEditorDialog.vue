@@ -618,9 +618,16 @@ function onCanvasMouseDown(e: MouseEvent): void {
     window.removeEventListener('mousemove', onMove)
     window.removeEventListener('mouseup', onUp)
     if (mode === 'click') {
-      // No drag occurred → seek the playhead to the clicked position
-      // (anywhere inside the clip view).
       const ms = xToMs(ev.clientX)
+      // Click outside the current narrowing selection clears it AND
+      // moves the playhead. Click inside the selection just moves the
+      // playhead (so the user can scrub within their selection).
+      if (
+        hasPlaybackSelection.value &&
+        (ms < selectionInMs.value || ms > selectionEndMs.value)
+      ) {
+        clearSelection()
+      }
       seekPlayheadToSourceMs(ms)
     }
     // Selection changes don't reload the preview — preview window is the
@@ -797,9 +804,29 @@ function onToggleLoop(): void {
   loopEnabled.value = !loopEnabled.value
 }
 
+// Clear the user-narrowing selection so playback (and Save-as-new /
+// Apply-trim gating) revert to whole-view semantics.
+function clearSelection(): void {
+  selectionInMs.value = viewInMs.value
+  selectionDurationMs.value = viewDurationMs.value
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
+    // Esc with an active selection clears the selection first; a
+    // second Esc closes the dialog. Matches how text-editor and DAW
+    // selections behave.
+    if (hasPlaybackSelection.value) {
+      e.preventDefault()
+      clearSelection()
+      return
+    }
     emit('close')
+    return
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D') && !e.shiftKey && !e.altKey) {
+    e.preventDefault()
+    clearSelection()
     return
   }
   if (e.key === ' ' || e.code === 'Space') {
@@ -1042,8 +1069,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             <span class="ml-3 text-xs text-zinc-500">
               {{
                 item.kind === 'audio-file'
-                  ? 'The source file is immutable. Drag (or Shift+←/→) to mark a section, then Save as new clip. L toggles loop.'
-                  : 'Click moves the playhead. ←/→ snap to beats; Alt+←/→ fine nudge; Shift+←/→ grows the selection; L toggles loop.'
+                  ? 'Drag (or Shift+←/→) to mark a section, then Save as new clip. Ctrl+D / Esc clears. L toggles loop.'
+                  : 'Click moves the playhead. ←/→ snap to beats; Alt+←/→ fine nudge; Shift+←/→ grows selection; Ctrl+D / Esc clears; L toggles loop.'
               }}
             </span>
             <div class="ml-auto flex items-center gap-1">
