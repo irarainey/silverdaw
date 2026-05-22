@@ -34,6 +34,7 @@ import {
   isAudioDevicesListPayload,
   isBridgeInboundType,
   isClipAckPayload,
+  isClipEditorPeaksReadyPayload,
   isClipRemovedPayload,
   isEditUndoStatePayload,
   isLibraryItemAnalysisPayload,
@@ -486,6 +487,14 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'CLIP_EDITOR_PEAKS_READY': {
+      // High-resolution peaks for the Clip Editor — same wire model
+      // as WAVEFORM_READY but keyed on the library item id so all
+      // saved-clips that share the source can reuse one cache entry.
+      void loadEditorPeaksFromCache(msg.payload)
+      break
+    }
+
     case 'LIBRARY_ITEM_ANALYSIS': {
       useLibraryStore().setItemAnalysis(
         msg.payload.itemId,
@@ -600,6 +609,56 @@ async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise<void> 
   log.info('bridge', `WAVEFORM_READY clipId=${clipId} peaks=${peakCount}`)
 }
 
+async function loadEditorPeaksFromCache(payload: {
+  libraryItemId: string
+  cachePath: string
+  peakCount: number
+  peaksPerSecond: number
+  sampleRate: number
+}): Promise<void> {
+  const { libraryItemId, cachePath, peakCount, peaksPerSecond, sampleRate } = payload
+  let buffer: ArrayBuffer | null
+  try {
+    buffer = await window.silverdaw.readPeaksCacheFile(cachePath)
+  } catch (err) {
+    log.warn('bridge', `CLIP_EDITOR_PEAKS_READY read failed libId=${libraryItemId}: ${String(err)}`)
+    return
+  }
+  if (!buffer) {
+    log.warn('bridge', `CLIP_EDITOR_PEAKS_READY no data libId=${libraryItemId} cachePath=${cachePath}`)
+    return
+  }
+  if (buffer.byteLength < PEAKS_FILE_HEADER_SIZE) {
+    log.warn('bridge', `CLIP_EDITOR_PEAKS_READY short file libId=${libraryItemId} bytes=${buffer.byteLength}`)
+    return
+  }
+  const view = new DataView(buffer)
+  const magic = view.getUint32(0, /* littleEndian */ true)
+  if (magic !== PEAKS_FILE_MAGIC) {
+    log.warn(
+      'bridge',
+      `CLIP_EDITOR_PEAKS_READY bad magic libId=${libraryItemId} magic=0x${magic.toString(16)}`
+    )
+    return
+  }
+  const floatCount = peakCount * 2
+  const expectedBytes = PEAKS_FILE_HEADER_SIZE + floatCount * Float32Array.BYTES_PER_ELEMENT
+  if (buffer.byteLength < expectedBytes) {
+    log.warn(
+      'bridge',
+      `CLIP_EDITOR_PEAKS_READY size mismatch libId=${libraryItemId} got=${buffer.byteLength} expected>=${expectedBytes}`
+    )
+    return
+  }
+  const view32 = new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, floatCount)
+  const peaks = new Float32Array(view32)
+  useLibraryStore().setEditorHiResPeaks({ libraryItemId, peaksPerSecond, sampleRate, peaks })
+  log.info(
+    'bridge',
+    `CLIP_EDITOR_PEAKS_READY libId=${libraryItemId} peaks=${peakCount} ppS=${peaksPerSecond}`
+  )
+}
+
 function assertNever(value: never): never {
   throw new Error(`[bridge] unhandled inbound message: ${JSON.stringify(value)}`)
 }
@@ -656,6 +715,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectDirtyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'WAVEFORM_READY':
       return isWaveformReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'CLIP_EDITOR_PEAKS_READY':
+      return isClipEditorPeaksReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'LIBRARY_ITEM_ANALYSIS':
       return isLibraryItemAnalysisPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_BPM_APPLIED':

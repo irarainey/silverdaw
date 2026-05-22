@@ -160,6 +160,17 @@ interface LibraryState {
    * drag-over handler reads the dragged item from here instead.
    */
   currentDragItemId: string | null
+  /** Session-scoped high-resolution peaks for the Clip Editor.
+   *  Computed on demand when the user zooms in past the detail the
+   *  default-resolution peaks can resolve. We hold a single entry
+   *  here (one per dialog open / item switch) because each array can
+   *  be multi-MB and there's only one Clip Editor on screen at a time. */
+  editorHiResPeaks: {
+    libraryItemId: string
+    peaksPerSecond: number
+    sampleRate: number
+    peaks: Float32Array
+  } | null
 }
 
 export const useLibraryStore = defineStore('library', {
@@ -169,7 +180,8 @@ export const useLibraryStore = defineStore('library', {
     importTotal: 0,
     importDone: 0,
     imports: [],
-    currentDragItemId: null
+    currentDragItemId: null,
+    editorHiResPeaks: null
   }),
 
   getters: {
@@ -967,6 +979,20 @@ export const useLibraryStore = defineStore('library', {
       item.peaks = peaks
       if (sampleRate > 0) item.sampleRate = sampleRate
       log.debug('library', `setItemPeaks id=${itemId} peaks=${peaks.length / 2} sr=${sampleRate}`)
+    },
+
+    /** Set the session-scoped high-resolution peaks payload used by
+     *  the Clip Editor. Pass null to clear (called on dialog close /
+     *  item switch so the multi-MB Float32Array is GC-eligible). */
+    setEditorHiResPeaks(
+      payload: {
+        libraryItemId: string
+        peaksPerSecond: number
+        sampleRate: number
+        peaks: Float32Array
+      } | null
+    ): void {
+      this.editorHiResPeaks = payload
     },
 
     /**

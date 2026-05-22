@@ -20,12 +20,12 @@ export const SCROLLBAR_WIDTH = 12
 // ─── Horizontal zoom (px per second) ────────────────────────────────────────
 // The min/max caps prevent zooming to either a sliver or extreme
 // densities where the per-clip / per-grid-line draw work starts to
-// stall the UI thread. The previous cap of 480 px/s was visibly
-// laggy on longer projects; 300 px/s (3× default) gives plenty of
-// headroom for fine clip edits without that hit.
+// stall the UI thread. The 600 px/s ceiling (6× default) gives the
+// user enough resolution to align clips on a sub-beat without making
+// the redraw cost noticeable on larger projects.
 export const DEFAULT_PX_PER_SECOND = 100
 export const MIN_PX_PER_SECOND = 10
-export const MAX_PX_PER_SECOND = 300
+export const MAX_PX_PER_SECOND = 600
 export const ZOOM_STEP_PX_PER_SECOND = 10
 
 // ─── Musical grid ───────────────────────────────────────────────────────────

@@ -97,6 +97,17 @@ export interface ClipRebindPayload {
   libraryItemId: string
 }
 
+/** Ask the backend to compute high-resolution peaks for the given
+ *  library item's source file at `peaksPerSecond` (typically much
+ *  higher than the default 500). Used by the Clip Editor when the
+ *  user zooms in past the point where the default peaks resolution
+ *  blocks out into chunky rectangles. Backend caches the result on
+ *  disk so subsequent dialog opens for the same source are instant. */
+export interface ClipEditorPeaksRequestPayload {
+  libraryItemId: string
+  peaksPerSecond: number
+}
+
 /** Register a library item with the backend so its durable fields are
  *  persisted with the project. Volatile renderer-only data such as
  *  waveform peaks and object URLs is rebuilt on demand. */
@@ -192,6 +203,7 @@ export interface BridgeOutboundMap {
   LIBRARY_ITEM_RELINK: LibraryItemRelinkPayload
   CLIP_RENAME: ClipRenamePayload
   CLIP_REBIND: ClipRebindPayload
+  CLIP_EDITOR_PEAKS_REQUEST: ClipEditorPeaksRequestPayload
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
   LIBRARY_REANALYSE: LibraryReanalysePayload
@@ -667,6 +679,19 @@ export interface WaveformReadyPayload {
   sampleRate: number
 }
 
+/** Backend notification that a Clip Editor high-resolution peaks job
+ *  has completed. Same disk-cache layout as `WAVEFORM_READY`, just
+ *  keyed against the library item rather than a specific timeline
+ *  clip (because every saved-clip sharing this source can reuse the
+ *  same peaks file). */
+export interface ClipEditorPeaksReadyPayload {
+  libraryItemId: string
+  cachePath: string
+  peakCount: number
+  peaksPerSecond: number
+  sampleRate: number
+}
+
 /** Backend notification that BPM + beat-position detection has completed
  *  for a library item. `beats` is an array of times (in seconds from
  *  the start of the source file) at which BTrack detected a beat;
@@ -797,6 +822,7 @@ export interface BridgeInboundMap {
   PROJECT_RENAMED: ProjectRenamedPayload
   PROJECT_DIRTY: ProjectDirtyPayload
   WAVEFORM_READY: WaveformReadyPayload
+  CLIP_EDITOR_PEAKS_READY: ClipEditorPeaksReadyPayload
   LIBRARY_ITEM_ANALYSIS: LibraryItemAnalysisPayload
   PROJECT_BPM_APPLIED: ProjectBpmAppliedPayload
   PREVIEW_STATE: PreviewStatePayload
@@ -864,6 +890,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PROJECT_RENAMED',
   'PROJECT_DIRTY',
   'WAVEFORM_READY',
+  'CLIP_EDITOR_PEAKS_READY',
   'LIBRARY_ITEM_ANALYSIS',
   'PROJECT_BPM_APPLIED',
   'PREVIEW_STATE',
@@ -1043,6 +1070,18 @@ export function isWaveformReadyPayload(value: unknown): value is WaveformReadyPa
   return (
     isPlainObject(value) &&
     typeof value.clipId === 'string' &&
+    typeof value.cachePath === 'string' &&
+    typeof value.peakCount === 'number' &&
+    typeof value.peaksPerSecond === 'number' &&
+    typeof value.sampleRate === 'number'
+  )
+}
+
+/** Guard for `ClipEditorPeaksReadyPayload`. */
+export function isClipEditorPeaksReadyPayload(value: unknown): value is ClipEditorPeaksReadyPayload {
+  return (
+    isPlainObject(value) &&
+    typeof value.libraryItemId === 'string' &&
     typeof value.cachePath === 'string' &&
     typeof value.peakCount === 'number' &&
     typeof value.peaksPerSecond === 'number' &&

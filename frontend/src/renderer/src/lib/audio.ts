@@ -5,7 +5,7 @@
 // resolution (`PEAKS_PER_SECOND`) so the timeline can downsample further
 // at draw time without re-decoding the file.
 
-export const PEAKS_PER_SECOND = 200
+export const PEAKS_PER_SECOND = 500
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'] as const
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88] as const

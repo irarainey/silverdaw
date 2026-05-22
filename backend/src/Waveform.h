@@ -14,7 +14,7 @@ namespace silverdaw::waveform
  * renderer can splice peaks from any source (backend or renderer-side
  * decode) at the same density.
  */
-constexpr int kDefaultPeaksPerSecond = 200;
+constexpr int kDefaultPeaksPerSecond = 500;
 
 /**
  * Result of a peaks computation. `peaks` is a flat array of alternating

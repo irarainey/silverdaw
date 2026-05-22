@@ -5,6 +5,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { formatTime } from '@/lib/musicTime'
+import { send as sendBridge } from '@/lib/bridgeService'
 
 const props = defineProps<{
   open: boolean
@@ -34,19 +35,28 @@ const sourceItem = computed<LibraryItem | null>(() => {
 
 const sourceDurationMs = computed(() => sourceItem.value?.durationMs ?? 0)
 
+// The Clip Editor opens with the visible *view bounds* limited to the
+// clip's window so the user isn't presented with the full source for a
+// small clip. `viewExpanded` lifts that limit to expose the full source
+// — needed when the user wants to EXTEND (not just crop) a saved
+// clip's window. The selection stays where it was, so the existing
+// edge handles can simply be dragged outward to grow the saved clip.
+const viewExpanded = ref(false)
+
 // Visible window on the canvas, in ms relative to the source.
-// - audio-file: the full source.
-// - saved-clip: only the cropped portion that defines the clip.
+// - audio-file: always the full source.
+// - saved-clip: the cropped clip window by default; full source when
+//   `viewExpanded` is true.
 const viewInMs = computed(() => {
   const item = props.item
   if (!item) return 0
-  if (item.kind === 'saved-clip') return item.derivedFrom?.inMs ?? 0
+  if (item.kind === 'saved-clip' && !viewExpanded.value) return item.derivedFrom?.inMs ?? 0
   return 0
 })
 const viewDurationMs = computed(() => {
   const item = props.item
   if (!item) return 0
-  if (item.kind === 'saved-clip') {
+  if (item.kind === 'saved-clip' && !viewExpanded.value) {
     return item.derivedFrom?.durationMs ?? item.durationMs
   }
   return sourceDurationMs.value
@@ -62,10 +72,10 @@ const viewEndMs = computed(() => viewInMs.value + viewDurationMs.value)
 // - saved-clip: the base scale is whatever fits the cropped clip range
 //   exactly into the canvas. zoom=1 → entire clip visible.
 //
-// Both cases cap at 8× (800%) and never zoom out below 1× (the base scale
+// Both cases cap at 64× (6400%) and never zoom out below 1× (the base scale
 // for that item).
 const MIN_ZOOM = 1
-const MAX_ZOOM = 8
+const MAX_ZOOM = 64
 const zoom = ref(1)
 const scrollMs = ref(0)
 const canvasCssWidth = ref(0)
@@ -254,9 +264,12 @@ watch(
   async (open) => {
     ui.clipEditorOpen = open
     if (open) {
+      viewExpanded.value = false
       resetZoom()
       initSelectionForItem()
       loopEnabled.value = false
+      lastHiResRequestKey = ''
+      library.setEditorHiResPeaks(null)
       await nextTick()
       if (waveformEl.value) {
         canvasCssWidth.value = waveformEl.value.getBoundingClientRect().width
@@ -266,6 +279,8 @@ watch(
       loadPreviewForView()
     } else {
       preview.unload()
+      library.setEditorHiResPeaks(null)
+      lastHiResRequestKey = ''
     }
   }
 )
@@ -274,12 +289,53 @@ watch(
   () => props.item?.id,
   () => {
     if (!props.open) return
+    viewExpanded.value = false
     resetZoom()
     initSelectionForItem()
+    lastHiResRequestKey = ''
+    library.setEditorHiResPeaks(null)
     drawWaveform()
     loadPreviewForView()
   }
 )
+
+// Toggling view-expanded changes viewInMs/viewDurationMs which
+// affect every downstream computation. Reset zoom (so the new view
+// fits the canvas at 1x), redraw, and reload the preview voice
+// against the new bounds. When collapsing back to the cropped view,
+// clamp the selection so it stays inside the visible bounds — the
+// user might have grown it past the original window while expanded.
+// When expanding to the source view, scroll so the selection (i.e.
+// the existing clip window) sits inside the visible window — saves
+// the user from hunting for it on long sources.
+watch(viewExpanded, async (expanded) => {
+  if (!expanded) {
+    const lo = viewInMs.value
+    const hi = viewEndMs.value
+    const newStart = Math.max(lo, Math.min(hi, selectionInMs.value))
+    const newEnd = Math.max(newStart, Math.min(hi, selectionEndMs.value))
+    selectionInMs.value = newStart
+    selectionDurationMs.value = newEnd - newStart
+  }
+  resetZoom()
+  scrollMs.value = 0
+  await nextTick()
+  if (expanded) {
+    // Centre the visible window on the selection midpoint when it's
+    // not already inside the visible window. resetZoom + scrollMs=0
+    // above already shows from the start; on long sources that may
+    // not include the selection.
+    const selMid = (selectionInMs.value + selectionEndMs.value) / 2 - viewInMs.value
+    const visLeft = scrollMs.value
+    const visRight = visLeft + visibleDurationMs.value
+    if (selMid < visLeft || selMid > visRight) {
+      const target = selMid - visibleDurationMs.value / 2
+      scrollMs.value = Math.max(0, Math.min(maxScrollMs.value, target))
+    }
+  }
+  drawWaveform()
+  loadPreviewForView()
+})
 
 watch(
   [() => preview.positionMs, () => preview.isPlaying],
@@ -291,7 +347,15 @@ watch(
 )
 
 watch(
-  [selectionInMs, selectionDurationMs, zoom, scrollMs, canvasCssWidth, () => ui.zoomPxPerSecond],
+  [
+    selectionInMs,
+    selectionDurationMs,
+    zoom,
+    scrollMs,
+    canvasCssWidth,
+    () => ui.zoomPxPerSecond,
+    () => library.editorHiResPeaks
+  ],
   () => {
     drawWaveform()
   }
@@ -383,6 +447,37 @@ function loadPreviewForView(): void {
   preview.load(src.id, viewInMs.value, viewDurationMs.value)
 }
 
+// On-demand high-resolution peaks for the Clip Editor. The default
+// peaks resolution (500 peaks/sec, shared with the timeline) starts
+// to look chunky past about 8× zoom; this requests a one-off
+// higher-resolution rebuild for the source file that only the editor
+// uses, cached on disk by `PeaksCache` so subsequent dialog opens
+// for the same source are instant.
+const EDITOR_HI_RES_PEAKS_PER_SECOND = 2000
+const EDITOR_HI_RES_ZOOM_THRESHOLD = 4
+let lastHiResRequestKey = ''
+
+function ensureEditorHiResPeaks(): void {
+  const src = sourceItem.value
+  if (!src) return
+  if (zoom.value < EDITOR_HI_RES_ZOOM_THRESHOLD) return
+  const existing = library.editorHiResPeaks
+  if (existing && existing.libraryItemId === src.id &&
+      existing.peaksPerSecond >= EDITOR_HI_RES_PEAKS_PER_SECOND) {
+    return
+  }
+  const key = `${src.id}:${EDITOR_HI_RES_PEAKS_PER_SECOND}`
+  if (key === lastHiResRequestKey) return
+  lastHiResRequestKey = key
+  sendBridge('CLIP_EDITOR_PEAKS_REQUEST', {
+    libraryItemId: src.id,
+    peaksPerSecond: EDITOR_HI_RES_PEAKS_PER_SECOND
+  })
+}
+
+// Trigger a request whenever the user zooms in past the threshold.
+watch(zoom, () => ensureEditorHiResPeaks())
+
 function drawWaveform(): void {
   const canvas = waveformEl.value
   if (!canvas) return
@@ -471,7 +566,15 @@ function drawWaveform(): void {
   ctx.stroke()
 
   // --- Waveform peaks --------------------------------------------------
-  const peaks = src.peaks
+  // Prefer the editor's high-resolution peaks (computed on demand when
+  // the user zooms in past EDITOR_HI_RES_ZOOM_THRESHOLD) over the
+  // shared default-resolution peaks on the library item. Both are
+  // alternating min/max float pairs covering the whole source.
+  const hiRes = library.editorHiResPeaks
+  const peaks =
+    hiRes && hiRes.libraryItemId === src.id && hiRes.peaks.length >= 2
+      ? hiRes.peaks
+      : src.peaks
   if (peaks && peaks.length >= 2 && sourceTotal > 0) {
     const pairs = Math.floor(peaks.length / 2)
     const peakStart = (vIn / sourceTotal) * pairs
@@ -1075,8 +1178,26 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             </span>
             <div class="ml-auto flex items-center gap-1">
               <button
+                v-if="item.kind === 'saved-clip'"
                 type="button"
-                class="flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                class="rounded px-2 py-1 text-[11px] font-medium"
+                :class="
+                  viewExpanded
+                    ? 'bg-blue-600 text-white hover:bg-blue-500'
+                    : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+                "
+                :title="
+                  viewExpanded
+                    ? 'Showing full source — click to crop back to the clip'
+                    : 'Show full source so you can extend the clip past its current bounds'
+                "
+                @click="viewExpanded = !viewExpanded"
+              >
+                {{ viewExpanded ? 'Clip' : 'Source' }}
+              </button>
+              <button
+                type="button"
+                class="ml-1 flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
                 title="Zoom out (-)"
                 :disabled="zoom <= 1.0001"
                 @click="zoomOut"
@@ -1095,7 +1216,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                 type="button"
                 class="flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
                 title="Zoom in (+)"
-                :disabled="zoom >= 7.99"
+                :disabled="zoom >= MAX_ZOOM - 0.01"
                 @click="zoomIn"
               >
                 <span class="text-base leading-none">+</span>

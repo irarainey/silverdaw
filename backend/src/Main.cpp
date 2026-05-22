@@ -907,6 +907,65 @@ void handleWaveformRequest(const juce::var& payload, silverdaw::AudioEngine& eng
         { produceAndBroadcastPeaks(clipId, file, engine, cache, bridge); });
 }
 
+// Variant of `produceAndBroadcastPeaks` that targets a library item id
+// at a caller-specified resolution. Used by the Clip Editor's
+// `CLIP_EDITOR_PEAKS_REQUEST` flow: when the user zooms past the
+// detail level that the default-resolution peaks can resolve, the
+// renderer asks for a high-res rebuild (typically 2000+ peaks/sec) of
+// the source file. PeaksCache keys on `(filePath, peaksPerSecond)`,
+// so the high-res result lives alongside the default-res one and
+// every saved-clip sharing the source reuses it.
+void produceAndBroadcastEditorPeaks(const juce::String& libraryItemId, const juce::File& filePath,
+                                    int peaksPerSecond, silverdaw::AudioEngine& engine,
+                                    const silverdaw::PeaksCache& cache, silverdaw::BridgeServer& bridge)
+{
+    silverdaw::log::info("peaksjob", "editor start libId=" + libraryItemId +
+                                          " file=" + filePath.getFileName() +
+                                          " ppS=" + juce::String(peaksPerSecond));
+    auto result = cache.tryLoad(filePath, peaksPerSecond);
+    const bool fromCache = !result.peaks.empty();
+    if (!fromCache)
+    {
+        result = silverdaw::waveform::computePeaks(filePath, engine.getFormatManager(), peaksPerSecond);
+        if (!result.peaks.empty())
+        {
+            cache.store(filePath, result);
+        }
+    }
+    if (result.peaks.empty())
+    {
+        silverdaw::log::warn("peaksjob", "editor no peaks libId=" + libraryItemId);
+        return;
+    }
+    const auto cacheFile = cache.getCacheFilePath(filePath, peaksPerSecond);
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("libraryItemId", libraryItemId);
+    obj->setProperty("cachePath", cacheFile.getFullPathName());
+    obj->setProperty("peakCount", static_cast<int>(result.peaks.size() / 2U));
+    obj->setProperty("peaksPerSecond", peaksPerSecond);
+    obj->setProperty("sampleRate", result.sampleRate);
+    bridge.broadcast("CLIP_EDITOR_PEAKS_READY", juce::var(obj));
+    silverdaw::log::info("peaksjob", "editor done libId=" + libraryItemId + " peaks=" +
+                                          juce::String(static_cast<int>(result.peaks.size() / 2U)) +
+                                          (fromCache ? " (cache hit)" : " (computed)"));
+}
+
+void handleClipEditorPeaksRequest(const juce::var& payload, silverdaw::AudioEngine& engine,
+                                   silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                                   juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
+{
+    const juce::String libraryItemId = payload.getProperty("libraryItemId", juce::var()).toString();
+    const int peaksPerSecond =
+        juce::jmax(silverdaw::waveform::kDefaultPeaksPerSecond,
+                   juce::jmin(20000, static_cast<int>(payload.getProperty("peaksPerSecond", 0))));
+    if (libraryItemId.isEmpty()) return;
+    const auto filePath = projectState.getLibraryItemFilePath(libraryItemId);
+    if (filePath.isEmpty()) return;
+    peakPool.addJob(
+        [libraryItemId, file = juce::File(filePath), peaksPerSecond, &engine, &cache, &bridge]
+        { produceAndBroadcastEditorPeaks(libraryItemId, file, peaksPerSecond, engine, cache, bridge); });
+}
+
 void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState)
 {
     const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
@@ -2220,6 +2279,14 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::debug("bridge", "recv WAVEFORM_REQUEST clipId=" + payload.getProperty("clipId", "").toString());
         handleWaveformRequest(payload, engine, projectState, bridge, peakPool, cache);
+    }
+    else if (type == "CLIP_EDITOR_PEAKS_REQUEST")
+    {
+        silverdaw::log::debug("bridge",
+                              "recv CLIP_EDITOR_PEAKS_REQUEST libId=" +
+                                  payload.getProperty("libraryItemId", "").toString() +
+                                  " ppS=" + payload.getProperty("peaksPerSecond", "").toString());
+        handleClipEditorPeaksRequest(payload, engine, projectState, bridge, peakPool, cache);
     }
     else if (type == "PROJECT_NEW")
     {
