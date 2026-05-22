@@ -43,21 +43,31 @@ const sourceDurationMs = computed(() => sourceItem.value?.durationMs ?? 0)
 // edge handles can simply be dragged outward to grow the saved clip.
 const viewExpanded = ref(false)
 
+// The cropped-view bounds for saved-clips. Starts at the persisted
+// `derivedFrom` window but can be updated mid-edit — specifically
+// when the user expands to Source view, grows the selection to a
+// bigger range, and toggles back: the cropped view snaps to the new
+// selection so the canvas shows that range zoomed in for fine
+// tuning. Persistence still lives on the library item; the user
+// commits via "Apply trim".
+const cropViewInMs = ref(0)
+const cropViewDurationMs = ref(0)
+
 // Visible window on the canvas, in ms relative to the source.
 // - audio-file: always the full source.
-// - saved-clip: the cropped clip window by default; full source when
+// - saved-clip: the cropped-view bounds by default; full source when
 //   `viewExpanded` is true.
 const viewInMs = computed(() => {
   const item = props.item
   if (!item) return 0
-  if (item.kind === 'saved-clip' && !viewExpanded.value) return item.derivedFrom?.inMs ?? 0
+  if (item.kind === 'saved-clip' && !viewExpanded.value) return cropViewInMs.value
   return 0
 })
 const viewDurationMs = computed(() => {
   const item = props.item
   if (!item) return 0
   if (item.kind === 'saved-clip' && !viewExpanded.value) {
-    return item.derivedFrom?.durationMs ?? item.durationMs
+    return cropViewDurationMs.value
   }
   return sourceDurationMs.value
 })
@@ -221,17 +231,37 @@ const selectionInMs = ref(0)
 const selectionDurationMs = ref(0)
 const selectionEndMs = computed(() => selectionInMs.value + selectionDurationMs.value)
 
+// Has the user changed anything from the persisted saved-clip window?
+// True when EITHER the selection is narrower than the cropped view,
+// OR the cropped view itself differs from `derivedFrom` (because the
+// user clicked Crop one or more times). Apply trim is enabled in
+// either case — the act of Apply uses the current selection.
 const hasSelectionChanged = computed(() => {
   const item = props.item
   if (!item || item.kind !== 'saved-clip') return false
   const origIn = item.derivedFrom?.inMs ?? 0
   const origDur = item.derivedFrom?.durationMs ?? item.durationMs
-  return selectionInMs.value !== origIn || selectionDurationMs.value !== origDur
+  if (selectionInMs.value !== origIn || selectionDurationMs.value !== origDur) return true
+  if (cropViewInMs.value !== origIn || cropViewDurationMs.value !== origDur) return true
+  return false
 })
 
 const canApplyTrim = computed(() => {
   const item = props.item
   return !!item && item.kind === 'saved-clip' && hasSelectionChanged.value
+})
+
+// Non-destructive crop: snap the cropped working view to the current
+// selection so the user can audition / fine-tune the new range
+// before committing it to the library. Enabled whenever there's a
+// narrowing selection (selection strictly inside the cropped view).
+const canApplyCrop = computed(() => {
+  if (!props.item) return false
+  if (selectionDurationMs.value <= 0) return false
+  return (
+    selectionInMs.value > cropViewInMs.value + 0.5 ||
+    selectionEndMs.value < cropViewInMs.value + cropViewDurationMs.value - 0.5
+  )
 })
 
 const canSaveAsNew = computed(() => {
@@ -269,6 +299,8 @@ watch(
       initSelectionForItem()
       loopEnabled.value = false
       lastHiResRequestKey = ''
+      cropUndoStack.value = []
+      cropRedoStack.value = []
       library.setEditorHiResPeaks(null)
       await nextTick()
       if (waveformEl.value) {
@@ -281,6 +313,8 @@ watch(
       preview.unload()
       library.setEditorHiResPeaks(null)
       lastHiResRequestKey = ''
+      cropUndoStack.value = []
+      cropRedoStack.value = []
     }
   }
 )
@@ -293,6 +327,8 @@ watch(
     resetZoom()
     initSelectionForItem()
     lastHiResRequestKey = ''
+    cropUndoStack.value = []
+    cropRedoStack.value = []
     library.setEditorHiResPeaks(null)
     drawWaveform()
     loadPreviewForView()
@@ -302,20 +338,27 @@ watch(
 // Toggling view-expanded changes viewInMs/viewDurationMs which
 // affect every downstream computation. Reset zoom (so the new view
 // fits the canvas at 1x), redraw, and reload the preview voice
-// against the new bounds. When collapsing back to the cropped view,
-// clamp the selection so it stays inside the visible bounds — the
-// user might have grown it past the original window while expanded.
-// When expanding to the source view, scroll so the selection (i.e.
-// the existing clip window) sits inside the visible window — saves
-// the user from hunting for it on long sources.
+// against the new bounds.
+//
+// On collapse (Source → Clip): the cropped-view bounds snap to the
+// current selection. The user often goes to Source view specifically
+// to mark a bigger range; switching back, we want the new range to
+// become the focused clip view so they can fine-tune inside it. The
+// selection then covers the full view (no narrowing), which gives
+// the user a clean canvas to drag the handles inward from.
+//
+// On expansion (Clip → Source): scroll so the selection (the current
+// clip window) sits inside the visible window — saves the user from
+// hunting for it on long sources.
 watch(viewExpanded, async (expanded) => {
   if (!expanded) {
-    const lo = viewInMs.value
-    const hi = viewEndMs.value
-    const newStart = Math.max(lo, Math.min(hi, selectionInMs.value))
-    const newEnd = Math.max(newStart, Math.min(hi, selectionEndMs.value))
-    selectionInMs.value = newStart
-    selectionDurationMs.value = newEnd - newStart
+    // Snap the cropped view to the user's current selection so it
+    // becomes the new focused range. Fall back to keeping the
+    // existing crop when the selection has been cleared.
+    if (selectionDurationMs.value > 0) {
+      cropViewInMs.value = Math.max(0, selectionInMs.value)
+      cropViewDurationMs.value = Math.max(0, selectionDurationMs.value)
+    }
   }
   resetZoom()
   scrollMs.value = 0
@@ -350,6 +393,8 @@ watch(
   [
     selectionInMs,
     selectionDurationMs,
+    cropViewInMs,
+    cropViewDurationMs,
     zoom,
     scrollMs,
     canvasCssWidth,
@@ -394,7 +439,31 @@ onMounted(() => {
       }
     })
   }
+  // Window-level capture-phase listener for the dialog's local
+  // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z. Beats the menu-accelerator
+  // binding in `menuShortcuts.ts` to the punch and is independent
+  // of where focus lives inside the dialog (which can drift to any
+  // canvas / button / scrollbar element). The handler is a no-op
+  // when the dialog isn't open.
+  window.addEventListener('keydown', onWindowKeydownCapture, { capture: true })
 })
+
+function onWindowKeydownCapture(e: KeyboardEvent): void {
+  if (!props.open) return
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+  const key = e.key.toLowerCase()
+  if (key === 'z' && !e.shiftKey) {
+    e.preventDefault()
+    e.stopPropagation()
+    undoCropLocal()
+    return
+  }
+  if ((key === 'y' && !e.shiftKey) || (key === 'z' && e.shiftKey)) {
+    e.preventDefault()
+    e.stopPropagation()
+    redoCropLocal()
+  }
+}
 
 watch(
   () => waveformEl.value,
@@ -411,6 +480,7 @@ watch(
 onBeforeUnmount(() => {
   ui.clipEditorOpen = false
   preview.unload()
+  window.removeEventListener('keydown', onWindowKeydownCapture, { capture: true })
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
@@ -422,14 +492,22 @@ function initSelectionForItem(): void {
   if (!item) {
     selectionInMs.value = 0
     selectionDurationMs.value = 0
+    cropViewInMs.value = 0
+    cropViewDurationMs.value = 0
     return
   }
   if (item.kind === 'saved-clip') {
-    selectionInMs.value = item.derivedFrom?.inMs ?? 0
-    selectionDurationMs.value = item.derivedFrom?.durationMs ?? item.durationMs
+    const persistedIn = item.derivedFrom?.inMs ?? 0
+    const persistedDur = item.derivedFrom?.durationMs ?? item.durationMs
+    cropViewInMs.value = persistedIn
+    cropViewDurationMs.value = persistedDur
+    selectionInMs.value = persistedIn
+    selectionDurationMs.value = persistedDur
   } else {
     // The main source is immutable — open with no selection. The user
     // drags on the waveform to mark a range, then "Save as new clip".
+    cropViewInMs.value = 0
+    cropViewDurationMs.value = sourceDurationMs.value
     selectionInMs.value = 0
     selectionDurationMs.value = 0
   }
@@ -968,6 +1046,23 @@ function onKeydown(e: KeyboardEvent): void {
     clearSelection()
     return
   }
+  // Dialog-local Undo / Redo: only covers the Crop button's
+  // working-view changes. The global undo handler defers to the
+  // dialog while `ui.clipEditorOpen` is true, so these shortcuts
+  // never leak through to the project-wide undo stack.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const key = e.key.toLowerCase()
+    if (key === 'z' && !e.shiftKey) {
+      e.preventDefault()
+      undoCropLocal()
+      return
+    }
+    if ((key === 'y' && !e.shiftKey) || (key === 'z' && e.shiftKey)) {
+      e.preventDefault()
+      redoCropLocal()
+      return
+    }
+  }
   if (e.key === ' ' || e.code === 'Space') {
     e.preventDefault()
     e.stopPropagation()
@@ -1025,14 +1120,85 @@ function onBackdropClick(e: MouseEvent): void {
 
 const backdropMouseDownTarget = ref(false)
 
+// Dialog-local undo stack for Crop operations. Crop is purely
+// non-destructive (it just narrows the working view); committing the
+// final result via Apply trim goes through the project-wide
+// UndoManager and gets its own undo step there. We keep this stack
+// scoped to the dialog so closing it discards any uncommitted crops
+// — the library entry hasn't been touched.
+interface CropSnapshot {
+  cropViewInMs: number
+  cropViewDurationMs: number
+  selectionInMs: number
+  selectionDurationMs: number
+}
+const cropUndoStack = ref<CropSnapshot[]>([])
+const cropRedoStack = ref<CropSnapshot[]>([])
+
+function captureCropSnapshot(): CropSnapshot {
+  return {
+    cropViewInMs: cropViewInMs.value,
+    cropViewDurationMs: cropViewDurationMs.value,
+    selectionInMs: selectionInMs.value,
+    selectionDurationMs: selectionDurationMs.value
+  }
+}
+
+function restoreCropSnapshot(snap: CropSnapshot): void {
+  cropViewInMs.value = snap.cropViewInMs
+  cropViewDurationMs.value = snap.cropViewDurationMs
+  selectionInMs.value = snap.selectionInMs
+  selectionDurationMs.value = snap.selectionDurationMs
+  resetZoom()
+  scrollMs.value = 0
+  drawWaveform()
+  loadPreviewForView()
+}
+
+function onApplyCrop(): void {
+  if (!canApplyCrop.value) return
+  cropUndoStack.value.push(captureCropSnapshot())
+  cropRedoStack.value = []
+  cropViewInMs.value = Math.max(0, selectionInMs.value)
+  cropViewDurationMs.value = Math.max(0, selectionDurationMs.value)
+  resetZoom()
+  scrollMs.value = 0
+  drawWaveform()
+  loadPreviewForView()
+}
+
+function undoCropLocal(): void {
+  const snap = cropUndoStack.value.pop()
+  if (!snap) return
+  cropRedoStack.value.push(captureCropSnapshot())
+  restoreCropSnapshot(snap)
+}
+
+function redoCropLocal(): void {
+  const snap = cropRedoStack.value.pop()
+  if (!snap) return
+  cropUndoStack.value.push(captureCropSnapshot())
+  restoreCropSnapshot(snap)
+}
+
 function onApplyTrim(): void {
   const item = props.item
   if (!item) return
-  const result = library.updateSavedClipTrim(
-    item.id,
-    selectionInMs.value,
-    selectionDurationMs.value
-  )
+  // Apply trim commits whatever the user is currently looking at.
+  // After Crop operations the cropped view IS the working state; if
+  // there's a still-narrower selection inside it, use that as the
+  // commit target instead (matches the user's mental "save the
+  // selection" model). Falls back to the cropped view bounds when
+  // there's no narrowing selection.
+  const targetIn =
+    canApplyCrop.value || selectionDurationMs.value > 0
+      ? selectionInMs.value
+      : cropViewInMs.value
+  const targetDur =
+    canApplyCrop.value || selectionDurationMs.value > 0
+      ? selectionDurationMs.value
+      : cropViewDurationMs.value
+  const result = library.updateSavedClipTrim(item.id, targetIn, targetDur)
   if (result.ok) {
     notifications.pushInfo(`Updated trim for "${libraryItemDisplayName(item)}".`)
     emit('close')
@@ -1205,13 +1371,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                 class="h-5 w-5"
               ><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>
             </button>
-            <span class="ml-3 text-xs text-zinc-500">
-              {{
-                item.kind === 'audio-file'
-                  ? 'Drag (or Shift+←/→) to mark a section, then Save as new clip. Ctrl+D / Esc clears. L toggles loop.'
-                  : 'Click moves the playhead. ←/→ snap to beats; Alt+←/→ fine nudge; Shift+←/→ grows selection; Ctrl+D / Esc clears; L toggles loop.'
-              }}
-            </span>
             <div class="ml-auto flex items-center gap-1">
               <button
                 v-if="item.kind === 'saved-clip'"
@@ -1269,12 +1428,26 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
           >
             Close
           </button>
+          <!-- Non-destructive crop: narrows the working view to the
+               current selection so the user can audition/tweak before
+               committing. Local Ctrl+Z / Ctrl+Y undo/redo while the
+               dialog is open. Closing without Apply trim discards
+               every crop — the library entry is untouched. -->
+          <button
+            type="button"
+            class="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="!canApplyCrop"
+            title="Crop the working view to the selection (Ctrl+Z to undo)"
+            @click="onApplyCrop"
+          >
+            Crop
+          </button>
           <button
             v-if="item.kind === 'saved-clip'"
             type="button"
             class="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
             :disabled="!canApplyTrim"
-            title="Update the saved clip's trim window in-place. Disabled when the clip is in use on a track."
+            title="Save changes to the library and apply to every linked timeline clip"
             @click="onApplyTrim"
           >
             Apply trim

@@ -16,6 +16,7 @@
 //      undo. A renderer listener can see the focus target; main cannot.
 
 import { buildMenus } from '@/menu'
+import { useUiStore } from '@/stores/uiStore'
 
 interface ParsedAccelerator {
   /** Lower-case `e.key` to match. Single-char keys are letters (e.g. `'s'`);
@@ -116,6 +117,12 @@ export function registerMenuShortcuts(opts: { debugMode: boolean }): () => void 
   }
 
   function onKeyDown(e: KeyboardEvent): void {
+    // Modal dialogs that own their own keyboard interactions (e.g.
+    // the Clip Editor's local undo / redo stack) need the accelerator
+    // to reach their bubble-phase handler. Bailing here lets the
+    // dialog's `@keydown` see the event without our `stopPropagation`
+    // pre-empting it.
+    if (useUiStore().clipEditorOpen) return
     for (const b of bindings) {
       if (!matches(e, b.accel)) continue
       if (isEditableTarget(e.target) && TEXT_EDIT_ACTIONS.has(b.action)) {
