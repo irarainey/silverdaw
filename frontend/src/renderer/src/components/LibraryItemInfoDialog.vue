@@ -48,7 +48,13 @@ const displayKey = computed(() => props.item?.key ?? props.item?.metadata?.key)
 const displayDecodedCachePath = computed(() => {
   const item = props.item
   if (!item) return 'Not available yet'
-  return item.decodedCacheFilePath ?? 'Not available yet'
+  // Saved-clip items don't carry their own decoded-WAV cache —
+  // they play through their source's cache. Inherit the source's
+  // value so the info dialog shows the same path that's actually
+  // serving audio for this clip.
+  return (
+    item.decodedCacheFilePath ?? sourceItem.value?.decodedCacheFilePath ?? 'Not available yet'
+  )
 })
 
 const metadataRows = computed(() => {
