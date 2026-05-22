@@ -235,8 +235,11 @@ function onGlobalShortcutKey(e: KeyboardEvent): void {
     e.stopPropagation()
     lastArrowSeekMs = null
     if (e.key === 'ArrowLeft') {
+      // Skip-to-start: scroll the view + rewind the playhead. Never
+      // touches the playback state — playing carries on from 0.
       ui.requestTimelineScroll('start')
-      sendBridge('TRANSPORT_STOP')
+      transport.setPosition(0)
+      sendBridge('TRANSPORT_SEEK', { positionMs: 0 })
       log.info('transport', 'shortcut skip-back')
       return
     }

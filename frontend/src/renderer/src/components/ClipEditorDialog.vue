@@ -1010,11 +1010,22 @@ function onTogglePlay(): void {
 function onSkipToStart(): void {
   const rel = Math.max(0, playbackStartMs.value - viewInMs.value)
   preview.seek(rel)
+  // Scroll the canvas so the playhead's new position is visible.
+  // Auto-follow only ever scrolls forward, so without this the
+  // playhead would land off-screen to the left when scrolled in.
+  if (rel < scrollMs.value) {
+    scrollMs.value = rel
+  }
 }
 
 function onSkipToEnd(): void {
   const end = Math.max(0, playbackEndMs.value - viewInMs.value - 1)
   preview.seek(end)
+  // Ensure the end position is on-screen.
+  const visDur = visibleDurationMs.value
+  if (end > scrollMs.value + visDur) {
+    scrollMs.value = Math.max(0, Math.min(maxScrollMs.value, end - visDur / 2))
+  }
 }
 
 function onToggleLoop(): void {

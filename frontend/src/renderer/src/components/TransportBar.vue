@@ -307,11 +307,14 @@ function bumpBpm(delta: number): void {
 }
 
 function onSkipBack(): void {
-  // Stop + rewind for now; Skip-back behaves like Stop until we have markers.
+  // Skip-back rewinds the playhead and scrolls the view to the start
+  // but never changes the playback state — if playback was running,
+  // it just carries on from position 0.
   log.info('transport', 'click skip-back')
   project.viewScrollX = 0
   sendBridge('PROJECT_SET_VIEW', { scrollX: 0 })
-  sendBridge('TRANSPORT_STOP')
+  transport.setPosition(0)
+  sendBridge('TRANSPORT_SEEK', { positionMs: 0 })
 }
 
 function onPlay(): void {
