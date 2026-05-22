@@ -1798,7 +1798,8 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "CLIP_REMOVE" || type == "CLIP_RENAME" || type == "CLIP_REBIND" ||
            type == "CLIP_RELINK" ||
            type == "TRACK_ADD" || type == "TRACK_REMOVE" || type == "TRACK_RENAME" ||
-           type == "TRACK_GAIN" || type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
+           type == "TRACK_GAIN" || type == "TRACK_SET_HEIGHT" ||
+           type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
            type == "PROJECT_RENAME" || type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" ||
            type == "PROJECT_MARKER_ADD" || type == "PROJECT_MARKER_MOVE" ||
@@ -1819,6 +1820,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_REMOVE") return "Remove track";
     if (type == "TRACK_RENAME") return "Rename track";
     if (type == "TRACK_GAIN") return "Change track gain";
+    if (type == "TRACK_SET_HEIGHT") return "Resize track";
     if (type == "LIBRARY_ADD") return "Update library item";
     if (type == "LIBRARY_REMOVE") return "Remove library item";
     if (type == "LIBRARY_REANALYSE") return "Reanalyse library item";
@@ -2274,6 +2276,17 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::debug("bridge", "recv TRACK_GAIN trackId=" + payload.getProperty("trackId", "").toString() +
                                             " gain=" + payload.getProperty("gain", "").toString());
         handleTrackGain(payload, engine, projectState, bridge);
+    }
+    else if (type == "TRACK_SET_HEIGHT")
+    {
+        const auto trackId = payload.getProperty("trackId", juce::var()).toString();
+        const auto heightVar = tryGetNumber(payload, "heightPx");
+        silverdaw::log::debug("bridge", "recv TRACK_SET_HEIGHT trackId=" + trackId +
+                                            " heightPx=" + payload.getProperty("heightPx", "").toString());
+        if (trackId.isNotEmpty() && heightVar.has_value())
+        {
+            projectState.setTrackHeightPx(trackId, *heightVar);
+        }
     }
     else if (type == "WAVEFORM_REQUEST")
     {

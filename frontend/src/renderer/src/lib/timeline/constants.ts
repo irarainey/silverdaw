@@ -7,7 +7,16 @@
 // drawing code uses identical values.
 
 // ─── Layout (pixels) ────────────────────────────────────────────────────────
+/** Default height of a freshly-created track row. Individual tracks
+ *  can override this via the user-resizable handle on each header. */
 export const TRACK_HEIGHT = 120
+/** Lower bound on per-track height. Picked so the M / S / Import / X
+ *  controls and the volume slider remain visible without overflowing
+ *  the header card. */
+export const MIN_TRACK_HEIGHT = 60
+/** Upper bound on per-track height. Picked so a single track can't
+ *  hog the entire viewport leaving siblings off-screen. */
+export const MAX_TRACK_HEIGHT = 400
 export const TRACK_GAP = 4
 export const RULER_HEIGHT = 28
 // Reserved width of the vertical scrollbar lane and height of the

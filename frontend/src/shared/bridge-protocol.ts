@@ -172,6 +172,23 @@ export interface TrackGainPayload {
   gain: number
 }
 
+/**
+ * Persist a per-track row height. Sent once on `pointerup` after a
+ * resize-handle drag in TrackHeaderPanel; the backend stores it on the
+ * Track ValueTree (so it round-trips through save/load and joins the
+ * undo history) and echoes the new value via a fresh `PROJECT_STATE`.
+ * Coalesced 60Hz drag motion is kept renderer-local via
+ * `projectStore.setTrackHeightLocal` so the bridge only sees the
+ * committed value.
+ */
+export interface TrackSetHeightPayload {
+  trackId: string
+  /** Row height in CSS pixels. The backend clamps to a project-wide
+   *  min/max so a hostile payload can't make rows invisible or
+   *  push every sibling off-screen. */
+  heightPx: number
+}
+
 export interface TransportSeekPayload {
   positionMs: number
 }
@@ -211,6 +228,7 @@ export interface BridgeOutboundMap {
   TRACK_REMOVE: TrackRemovePayload
   TRACK_RENAME: TrackRenamePayload
   TRACK_GAIN: TrackGainPayload
+  TRACK_SET_HEIGHT: TrackSetHeightPayload
   TRANSPORT_PLAY: undefined
   TRANSPORT_PAUSE: undefined
   TRANSPORT_STOP: undefined
@@ -526,6 +544,10 @@ export interface ProjectStateTrack {
   /** Persisted user-facing track name. Optional for projects saved before this field existed. */
   name?: string
   gain: number
+  /** Persisted row height in CSS pixels. Optional for projects saved
+   *  before per-track height existed (and for tracks that have never
+   *  been resized — the renderer falls back to its default). */
+  heightPx?: number
   clips: ProjectStateClip[]
 }
 

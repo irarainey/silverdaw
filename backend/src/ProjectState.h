@@ -117,6 +117,19 @@ class ProjectState : public juce::ValueTree::Listener
     /** Set per-track gain. Returns true if the track existed. */
     bool setTrackGain(const juce::String& trackId, float gain);
 
+    /** Per-track row height in CSS pixels (renderer-side display
+     *  metric). 0 if unknown — the renderer falls back to its default
+     *  in that case. Clamped to a sane min/max by the setter so a
+     *  hostile bridge payload can't make rows invisible. */
+    double getTrackHeightPx(const juce::String& trackId) const;
+
+    /** Persist a per-track row height. Returns false if the track is
+     *  unknown. The value is clamped to [`kMinTrackHeightPx`,
+     *  `kMaxTrackHeightPx`] mirroring the renderer's clamp so a value
+     *  written by an older / different client doesn't drift outside
+     *  the resize-handle's range. */
+    bool setTrackHeightPx(const juce::String& trackId, double heightPx);
+
     /** Ordered ids of all clips on `trackId` (empty if the track is missing). */
     juce::StringArray getTrackClipIds(const juce::String& trackId) const;
 
@@ -414,6 +427,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kId;
     static const juce::Identifier kName;
     static const juce::Identifier kGain;
+    static const juce::Identifier kHeightPx;
     static const juce::Identifier kFilePath;
     static const juce::Identifier kOffsetMs;
     static const juce::Identifier kInMs;

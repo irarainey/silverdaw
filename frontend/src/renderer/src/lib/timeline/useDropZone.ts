@@ -20,10 +20,9 @@ import { log } from '@/lib/log'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
-  SCROLLBAR_WIDTH,
-  TRACK_GAP,
-  TRACK_HEIGHT
+  SCROLLBAR_WIDTH
 } from './constants'
+import { trackIndexAtWorldY } from './trackLayout'
 import type { GridGeometry } from './useGridGeometry'
 
 export interface DropPreview {
@@ -112,14 +111,10 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     const bottomLimit = a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
     if (y > bottomLimit) return null
 
-    const contentY = y + scrollY.value - RULER_HEIGHT
-    const slot = TRACK_HEIGHT + TRACK_GAP
-    const trackIndex = Math.floor(contentY / slot)
-    if (trackIndex < 0 || trackIndex >= project.tracks.length) return null
-    // Reject the inter-track gap so dropping between rows doesn't pick
-    // one arbitrarily — the user has to land in the row proper.
-    const yWithinSlot = contentY - trackIndex * slot
-    if (yWithinSlot >= TRACK_HEIGHT) return null
+    const worldY = y + scrollY.value
+    const hit = trackIndexAtWorldY(project.tracks, worldY)
+    if (!hit) return null
+    const trackIndex = hit.index
 
     const trackLocalX = x - geometry.headerWidth()
     const rawMs = ((scrollX.value + trackLocalX) / geometry.pxPerSecond.value) * 1000

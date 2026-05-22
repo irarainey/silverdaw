@@ -102,6 +102,14 @@ export interface Track {
    * scroll extent.
    */
   lengthMs: number
+  /**
+   * Per-track row height in CSS pixels. User-resizable via the drag
+   * handle on the bottom edge of each track header. Optional: tracks
+   * loaded from a project saved before this field existed (or freshly
+   * created without an explicit override) fall back to the default
+   * row height from the timeline constants module.
+   */
+  heightPx?: number
 }
 
 /** Default visible length of a new empty track — 10 minutes. */
@@ -1343,6 +1351,34 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * Mutate a track's `heightPx` locally without pushing to the
+     * backend — used by the drag handle's `pointermove` so the row
+     * resizes smoothly under the cursor. The committed value is sent
+     * once on `pointerup` via `setTrackHeight` so the bridge isn't
+     * flooded with one envelope per frame and the undo manager
+     * captures a single coalesced edit per drag.
+     */
+    setTrackHeightLocal(trackId: string, heightPx: number): void {
+      const t = this.tracks.find((x) => x.id === trackId)
+      if (!t) return
+      t.heightPx = heightPx
+    },
+
+    /**
+     * Commit a track's `heightPx` to the backend so it's persisted with
+     * the project file and joins the undo history. Sent on
+     * `pointerup` at the end of a resize drag; the backend acks via a
+     * fresh `PROJECT_STATE` so any clamp the engine applies surfaces
+     * back to the renderer.
+     */
+    setTrackHeight(trackId: string, heightPx: number): void {
+      const t = this.tracks.find((x) => x.id === trackId)
+      if (!t) return
+      t.heightPx = heightPx
+      sendBridge('TRACK_SET_HEIGHT', { trackId, heightPx })
+    },
+
+    /**
      * Reconcile a `CLIP_ADDED` / `CLIP_ADD_FAILED` ack from the backend
      * against the optimistically-added clip in the renderer.
      *
@@ -1652,13 +1688,17 @@ export const useProjectStore = defineStore('project', {
             soloed: false,
             volume: Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain)),
             colorIndex: index % TRACK_PALETTE.length,
-            lengthMs: DEFAULT_TRACK_LENGTH_MS
+            lengthMs: DEFAULT_TRACK_LENGTH_MS,
+            heightPx: typeof t.heightPx === 'number' && t.heightPx > 0 ? t.heightPx : undefined
           }
           this.tracks.push(track)
         } else {
           const persistedName = t.name?.trim()
           if (persistedName && persistedName.length > 0) {
             track.name = persistedName
+          }
+          if (typeof t.heightPx === 'number' && t.heightPx > 0) {
+            track.heightPx = t.heightPx
           }
         }
         for (const c of t.clips) {

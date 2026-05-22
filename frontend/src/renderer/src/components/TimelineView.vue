@@ -28,12 +28,11 @@ import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
   SCROLLBAR_WIDTH,
-  TRACK_GAP,
-  TRACK_HEIGHT,
   ZOOM_STEP_PX_PER_SECOND
 } from '@/lib/timeline/constants'
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
 import { useTimelineScroll } from '@/lib/timeline/useTimelineScroll'
+import { tracksContentHeight as tracksContentHeight_, trackTopWorldYAt } from '@/lib/timeline/trackLayout'
 import { usePixiApp } from '@/lib/timeline/usePixiApp'
 import { useDragHandlers, type ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import { useDropZone } from '@/lib/timeline/useDropZone'
@@ -59,8 +58,8 @@ let updatePlayhead: () => void = () => { }
 const geometry = useGridGeometry()
 const { pxPerSecond, headerWidth, headerWidthRef, contentPx } = geometry
 
-const trackCount = computed(() => project.tracks.length)
-const scroll = useTimelineScroll({ contentPx, headerWidthRef, trackCount })
+const tracksContentHeightPx = computed(() => tracksContentHeight_(project.tracks))
+const scroll = useTimelineScroll({ contentPx, headerWidthRef, tracksContentHeightPx })
 const {
   scrollX, scrollY, viewportWidth, viewportHeight,
   trackAreaWidth, maxScrollX, showScrollbar, thumbWidthPx, thumbLeftPx,
@@ -366,7 +365,7 @@ const renameOverlayStyle = computed<Record<string, string> | null>(() => {
   // World coords mirror `useTimelineDrawing` so the input lands exactly
   // on top of the drawn header strip.
   const absX = headerWidth() + (clip.startMs / 1000) * pxPerSecond.value
-  const rowWorldY = RULER_HEIGHT + trackIndex * (TRACK_HEIGHT + TRACK_GAP)
+  const rowWorldY = trackTopWorldYAt(project.tracks, trackIndex)
   const padding = 4
   const innerY = rowWorldY + padding
   const widthPx = Math.max(80, (clip.durationMs / 1000) * pxPerSecond.value)
@@ -525,6 +524,20 @@ function stopPlayheadRaf(): void {
 watch(
   () => [project.tracks.length, Object.keys(project.clips).length] as const,
   () => {
+    redraw()
+    updatePlayhead()
+  }
+)
+
+// Per-track height changes (drag-resize handle in TrackHeaderPanel)
+// shift every row below the resized track and grow / shrink the
+// tracksContentHeight used by the vertical scrollbar. Both the canvas
+// and the scrollbar geometry need to repaint; tracksContentHeightPx is
+// already reactive so a `redraw` here is enough.
+watch(
+  () => project.tracks.map((t) => t.heightPx ?? 0).join(','),
+  () => {
+    clampScroll()
     redraw()
     updatePlayhead()
   }

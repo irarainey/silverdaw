@@ -35,9 +35,9 @@ import {
   TIME_SIG_NUM,
   TRACK_BG,
   TRACK_GAP,
-  TRACK_HEADER_BG,
-  TRACK_HEIGHT
+  TRACK_HEADER_BG
 } from './constants'
+import { trackHeightOf, buildTrackRowLayout } from './trackLayout'
 import type { ClipHitRegion } from './useDragHandlers'
 import type { DropPreview } from './useDropZone'
 import type { GridGeometry } from './useGridGeometry'
@@ -430,21 +430,29 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const worldRowRight = headerWidth() + projectPx + viewWidth
     const worldLeft = 0
     const worldRight = worldRowRight
-    const visibleRows: { track: (typeof tracks)[number]; worldY: number }[] = []
+    const rowLayout = buildTrackRowLayout(tracks)
+    const visibleRows: {
+      track: (typeof tracks)[number]
+      worldY: number
+      rowHeight: number
+    }[] = []
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i]
       if (!track) continue
-      const worldY = RULER_HEIGHT + i * (TRACK_HEIGHT + TRACK_GAP)
+      const slot = rowLayout[i]
+      if (!slot) continue
+      const worldY = slot.top
+      const rowHeight = slot.height
       const viewportY = worldY - scrollY.value
 
       // Cull rows that are entirely outside the visible track area.
-      if (viewportY + TRACK_HEIGHT <= RULER_HEIGHT) continue
+      if (viewportY + rowHeight <= RULER_HEIGHT) continue
       if (viewportY >= visibleBottom) break
 
       // Row background — drawn in world coords across the whole
       // project. The header column bg above masks its left edge.
       const rowBg = new G()
-      rowBg.rect(0, worldY, worldRowRight, TRACK_HEIGHT).fill(TRACK_BG)
+      rowBg.rect(0, worldY, worldRowRight, rowHeight).fill(TRACK_BG)
       tracksL.addChild(rowBg)
 
       // Selected-track highlight — a 2 px inset border in the
@@ -455,7 +463,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         const palette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
         const highlight = new G()
         highlight
-          .rect(1, worldY + 1, worldRowRight - 2, TRACK_HEIGHT - 2)
+          .rect(1, worldY + 1, worldRowRight - 2, rowHeight - 2)
           .stroke({ color: palette.border, width: 2, alpha: 0.9 })
         tracksL.addChild(highlight)
       }
@@ -463,21 +471,21 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       // Per-track header — drawn on the static headers layer in
       // viewport coords so it doesn't scroll horizontally.
       const header = new G()
-      header.rect(0, viewportY, headerWidth(), TRACK_HEIGHT).fill(TRACK_HEADER_BG)
+      header.rect(0, viewportY, headerWidth(), rowHeight).fill(TRACK_HEADER_BG)
       header
         .moveTo(headerWidth() - 0.5, viewportY)
-        .lineTo(headerWidth() - 0.5, viewportY + TRACK_HEIGHT)
+        .lineTo(headerWidth() - 0.5, viewportY + rowHeight)
         .stroke({ color: RULER_TICK, width: 1, alpha: 0.6 })
       headers.addChild(header)
 
-      visibleRows.push({ track, worldY })
+      visibleRows.push({ track, worldY, rowHeight })
     }
 
     // Grid lines after row bgs so clips overlay both.
     drawGrid(width)
 
     // Pass 2: clips.
-    for (const { track, worldY } of visibleRows) {
+    for (const { track, worldY, rowHeight } of visibleRows) {
       const trackPalette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
       for (const clipId of track.clipIds) {
         const clip = project.clips[clipId]
@@ -487,7 +495,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
           typeof clip.colorIndex === 'number'
             ? TRACK_PALETTE[clip.colorIndex % TRACK_PALETTE.length]!
             : trackPalette
-        drawClip(clip, worldY, palette, worldLeft, worldRight)
+        drawClip(clip, worldY, rowHeight, palette, worldLeft, worldRight)
       }
     }
   }
@@ -495,6 +503,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
   function drawClip(
     clip: Clip,
     rowWorldY: number,
+    rowHeight: number,
     palette: (typeof TRACK_PALETTE)[number],
     worldLeft: number,
     worldRight: number
@@ -515,7 +524,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     const padding = 4
     const innerY = rowWorldY + padding
-    const innerH = TRACK_HEIGHT - padding * 2
+    const innerH = rowHeight - padding * 2
     const midY = innerY + innerH / 2
 
     // Unresolved clips (source file missing on disk) render in muted
@@ -913,9 +922,16 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     if (dp.trackIndex < 0 || dp.trackIndex >= project.tracks.length) return
 
     const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
-    const yTop = RULER_HEIGHT + dp.trackIndex * (TRACK_HEIGHT + TRACK_GAP) - scrollY.value
+    const targetTrack = project.tracks[dp.trackIndex]
+    const rowH = trackHeightOf(targetTrack)
+    // World-space top of the target row, then convert to viewport.
+    let worldTop = RULER_HEIGHT
+    for (let i = 0; i < dp.trackIndex; i++) {
+      worldTop += trackHeightOf(project.tracks[i]) + TRACK_GAP
+    }
+    const yTop = worldTop - scrollY.value
     // Off-screen vertically — skip.
-    if (yTop + TRACK_HEIGHT <= RULER_HEIGHT) return
+    if (yTop + rowH <= RULER_HEIGHT) return
     if (yTop >= a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)) return
 
     const absLeft = headerWidth() + (dp.startMs / 1000) * pxPerSecond.value
@@ -937,7 +953,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       RULER_HEIGHT + trackAreaHeight.value
     )
     const clippedTop = Math.max(RULER_HEIGHT, yTop)
-    const clippedBottom = Math.min(bottomLimit, yTop + TRACK_HEIGHT)
+    const clippedBottom = Math.min(bottomLimit, yTop + rowH)
     const h = clippedBottom - clippedTop
     if (h <= 0) return
 

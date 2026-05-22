@@ -18,7 +18,12 @@ import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
 import { useProjectStore, MAX_TRACK_VOLUME } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoTrack } from '@/lib/importAudio'
-import { RULER_HEIGHT, TRACK_GAP, TRACK_HEIGHT } from '@/lib/timeline/constants'
+import {
+  MAX_TRACK_HEIGHT,
+  MIN_TRACK_HEIGHT,
+  RULER_HEIGHT
+} from '@/lib/timeline/constants'
+import { buildTrackRowLayout, trackHeightOf } from '@/lib/timeline/trackLayout'
 
 withDefaults(defineProps<{ scrollY?: number }>(), { scrollY: 0 })
 
@@ -104,9 +109,75 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
   }
 }
 
-// Layout constants (RULER_HEIGHT / TRACK_HEIGHT / TRACK_GAP) are imported
-// above from `@/lib/timeline/constants` so the column stays aligned with
-// the PixiJS-drawn rows regardless of any future height tweaks.
+// Layout constants (RULER_HEIGHT / MIN/MAX_TRACK_HEIGHT / TRACK_GAP) are
+// imported above from `@/lib/timeline/constants` so the column stays
+// aligned with the PixiJS-drawn rows regardless of any future tweaks.
+
+// Cached per-track {top, height} so the v-for can do a single lookup per
+// row rather than each row re-computing its prefix-sum. `buildTrackRowLayout`
+// is pure and cheap, so a `computed` is the natural fit.
+const rowLayout = computed(() => buildTrackRowLayout(project.tracks))
+
+// ─── Resize-handle drag ───────────────────────────────────────────────────
+// Each track header carries a 5 px tall handle on its bottom edge. While
+// the user drags it we mutate the local `heightPx` every pointermove
+// (cheap; just a Pinia write + Pixi redraw via the project.tracks watcher
+// in TimelineView). On pointerup we commit the final value via
+// `setTrackHeight` so the backend captures one undo step per drag rather
+// than dozens of intermediate values.
+const HANDLE_PX = 5
+
+interface ResizeDragState {
+  trackId: string
+  startY: number
+  startHeightPx: number
+  moved: boolean
+}
+let resizeDrag: ResizeDragState | null = null
+
+function onHandlePointerDown(track: { id: string }, ev: PointerEvent): void {
+  if (ev.button !== 0) return
+  const current = project.tracks.find((t) => t.id === track.id)
+  if (!current) return
+  ev.preventDefault()
+  ev.stopPropagation()
+  resizeDrag = {
+    trackId: track.id,
+    startY: ev.clientY,
+    startHeightPx: trackHeightOf(current),
+    moved: false
+  }
+  ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
+  window.addEventListener('pointermove', onHandlePointerMove)
+  window.addEventListener('pointerup', onHandlePointerUp)
+  window.addEventListener('pointercancel', onHandlePointerUp)
+}
+
+function onHandlePointerMove(ev: PointerEvent): void {
+  if (!resizeDrag) return
+  const dy = ev.clientY - resizeDrag.startY
+  if (!resizeDrag.moved && Math.abs(dy) < 1) return
+  resizeDrag.moved = true
+  const next = Math.max(
+    MIN_TRACK_HEIGHT,
+    Math.min(MAX_TRACK_HEIGHT, Math.round(resizeDrag.startHeightPx + dy))
+  )
+  project.setTrackHeightLocal(resizeDrag.trackId, next)
+}
+
+function onHandlePointerUp(): void {
+  window.removeEventListener('pointermove', onHandlePointerMove)
+  window.removeEventListener('pointerup', onHandlePointerUp)
+  window.removeEventListener('pointercancel', onHandlePointerUp)
+  const drag = resizeDrag
+  resizeDrag = null
+  if (!drag || !drag.moved) return
+  const t = project.tracks.find((x) => x.id === drag.trackId)
+  if (!t) return
+  // Commit once on release — captures a single undo step covering the
+  // whole drag, not one per pixel of motion.
+  project.setTrackHeight(drag.trackId, trackHeightOf(t))
+}
 </script>
 
 <template>
@@ -169,8 +240,8 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
             'ring-1 ring-inset ring-cyan-500/60': track.soloed
           }"
           :style="{
-            top: (i * (TRACK_HEIGHT + TRACK_GAP)) + 'px',
-            height: TRACK_HEIGHT + 'px',
+            top: ((rowLayout[i]?.top ?? 0) - RULER_HEIGHT) + 'px',
+            height: (rowLayout[i]?.height ?? 0) + 'px',
             width: headerWidth + 'px'
           }"
         >
@@ -317,6 +388,24 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
             </button>
           </div>
         </div>
+
+        <!-- Resize handles. Sit on each track's bottom edge, straddling
+             the inter-track gap so the user has a comfortable hit zone
+             without intruding on the track contents. Pointer-events
+             only fire on the handle itself; the cursor is `ns-resize`
+             so the affordance is unambiguous. -->
+        <div
+          v-for="(track, i) in project.tracks"
+          :key="'rh-' + track.id"
+          class="track-resize-handle pointer-events-auto absolute left-0"
+          :style="{
+            top: (((rowLayout[i]?.top ?? 0) + (rowLayout[i]?.height ?? 0)) - RULER_HEIGHT - Math.floor(HANDLE_PX / 2)) + 'px',
+            height: HANDLE_PX + 'px',
+            width: headerWidth + 'px'
+          }"
+          :title="'Drag to resize track \u2014 ' + Math.round(rowLayout[i]?.height ?? 0) + 'px'"
+          @pointerdown="onHandlePointerDown(track, $event)"
+        />
       </div>
     </div>
   </div>
@@ -364,5 +453,21 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
   height: 3px;
   border-radius: 9999px;
   background: #3f3f46;
+}
+
+/* Bottom-edge drag affordance for resizing a track row. Default state is
+   invisible (so it doesn't draw a line on every row); hovering or
+   dragging surfaces a subtle accent so the user sees what they're
+   about to grab without ever wondering if the whole row is a button. */
+.track-resize-handle {
+  cursor: ns-resize;
+  background: transparent;
+  z-index: 5;
+}
+.track-resize-handle:hover {
+  background: rgba(113, 113, 122, 0.45); /* zinc-500 @ 45% */
+}
+.track-resize-handle:active {
+  background: rgba(244, 244, 245, 0.6); /* zinc-100 while dragging */
 }
 </style>

@@ -21,7 +21,8 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH, TRACK_HEIGHT, TRACK_GAP } from './constants'
+import { RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from './constants'
+import { trackIndexAtWorldY } from './trackLayout'
 import type { GridGeometry } from './useGridGeometry'
 
 /** Edge-zone width in PIXELS for trim-vs-move hit detection. A click
@@ -357,15 +358,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const rect = host.value.getBoundingClientRect()
     const y = clientY - rect.top
     if (y < RULER_HEIGHT) return null
-    const contentY = y + scrollY.value - RULER_HEIGHT
-    const slot = TRACK_HEIGHT + TRACK_GAP
-    const trackIndex = Math.floor(contentY / slot)
-    if (trackIndex < 0 || trackIndex >= project.tracks.length) return null
-    const yWithinSlot = contentY - trackIndex * slot
-    // Pointer in the inter-track gap: no decisive answer — keep the
-    // current track (caller sees `null`).
-    if (yWithinSlot >= TRACK_HEIGHT) return null
-    return project.tracks[trackIndex]?.id ?? null
+    const worldY = y + scrollY.value
+    // `trackIndexAtWorldY` already returns null for the inter-row gap.
+    const hit = trackIndexAtWorldY(project.tracks, worldY)
+    if (!hit) return null
+    return project.tracks[hit.index]?.id ?? null
   }
 
   // ─── Pointer event handlers ──────────────────────────────────────────

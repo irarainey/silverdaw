@@ -12,6 +12,7 @@ const juce::Identifier ProjectState::kClip{"CLIP"};
 const juce::Identifier ProjectState::kId{"id"};
 const juce::Identifier ProjectState::kName{"name"};
 const juce::Identifier ProjectState::kGain{"gain"};
+const juce::Identifier ProjectState::kHeightPx{"heightPx"};
 const juce::Identifier ProjectState::kFilePath{"filePath"};
 const juce::Identifier ProjectState::kOffsetMs{"offsetMs"};
 const juce::Identifier ProjectState::kInMs{"inMs"};
@@ -257,6 +258,35 @@ bool ProjectState::setTrackGain(const juce::String& trackId, float gain)
         return false;
     }
     track.setProperty(kGain, gain, &undoManager);
+    return true;
+}
+
+// Per-track row height clamps. Must agree with the renderer's
+// MIN_TRACK_HEIGHT / MAX_TRACK_HEIGHT in
+// `frontend/src/renderer/src/lib/timeline/constants.ts` so the backend
+// rejects values outside the resize-handle's range.
+static constexpr double kMinTrackHeightPx = 60.0;
+static constexpr double kMaxTrackHeightPx = 400.0;
+
+double ProjectState::getTrackHeightPx(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid())
+    {
+        return 0.0;
+    }
+    return static_cast<double>(track.getProperty(kHeightPx, 0.0));
+}
+
+bool ProjectState::setTrackHeightPx(const juce::String& trackId, double heightPx)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid())
+    {
+        return false;
+    }
+    const auto clamped = juce::jlimit(kMinTrackHeightPx, kMaxTrackHeightPx, heightPx);
+    track.setProperty(kHeightPx, clamped, &undoManager);
     return true;
 }
 
@@ -1198,6 +1228,13 @@ juce::var ProjectState::tracksAsJson() const
         trackObj->setProperty("id", track.getProperty(kId).toString());
         trackObj->setProperty("name", track.getProperty(kName).toString());
         trackObj->setProperty("gain", static_cast<double>(track.getProperty(kGain, 1.0)));
+        // Only emit heightPx when explicitly set; the renderer falls
+        // back to its own default for tracks that have never been
+        // resized so older projects survive without backfilling.
+        if (track.hasProperty(kHeightPx))
+        {
+            trackObj->setProperty("heightPx", static_cast<double>(track.getProperty(kHeightPx, 0.0)));
+        }
 
         juce::Array<juce::var> clipsArray;
         for (int c = 0; c < track.getNumChildren(); ++c)

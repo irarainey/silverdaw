@@ -11,9 +11,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
-  SCROLLBAR_WIDTH,
-  TRACK_GAP,
-  TRACK_HEIGHT
+  SCROLLBAR_WIDTH
 } from './constants'
 
 export interface TimelineScroll {
@@ -45,12 +43,16 @@ export interface TimelineScrollOptions {
   contentPx: ComputedRef<number>
   /** Reactive width of the (user-resizable) track-header column. */
   headerWidthRef: ComputedRef<number>
-  /** Number of track rows currently in the project. */
-  trackCount: ComputedRef<number>
+  /** Total stacked height of all track rows (incl. inter-row gaps).
+   *  Per-track heights live in `project.tracks[*].heightPx`, so the
+   *  host passes a pre-computed reactive total rather than a row count
+   *  — otherwise this composable would have to know about the project
+   *  store. */
+  tracksContentHeightPx: ComputedRef<number>
 }
 
 export function useTimelineScroll(opts: TimelineScrollOptions): TimelineScroll {
-  const { contentPx, headerWidthRef, trackCount } = opts
+  const { contentPx, headerWidthRef, tracksContentHeightPx } = opts
 
   const scrollX = ref(0)
   const scrollY = ref(0)
@@ -77,11 +79,7 @@ export function useTimelineScroll(opts: TimelineScrollOptions): TimelineScroll {
   })
 
   // Pixel height of all track rows stacked vertically (excludes the ruler row).
-  const tracksContentHeight = computed(() => {
-    const n = trackCount.value
-    if (n === 0) return 0
-    return n * TRACK_HEIGHT + (n - 1) * TRACK_GAP
-  })
+  const tracksContentHeight = computed(() => tracksContentHeightPx.value)
   // Visible height available for track rows: full host minus ruler minus
   // horizontal scrollbar lane (only when shown).
   const trackAreaHeight = computed(() => {
