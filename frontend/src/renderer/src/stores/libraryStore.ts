@@ -536,20 +536,78 @@ export const useLibraryStore = defineStore('library', {
      * silently rewriting the source-of-truth would corrupt them. The
      * caller is expected to surface a "Save as new clip" hint instead.
      */
-    updateSavedClipTrim(itemId: string, inMs: number, durationMs: number): boolean {
+    updateSavedClipTrim(
+      itemId: string,
+      inMs: number,
+      durationMs: number
+    ): { ok: boolean; conflictingTrackNames?: string[] } {
       const item = this.items.find((i) => i.id === itemId)
-      if (!item) return false
-      if (item.kind !== 'saved-clip') return false
-      const project = useProjectStore()
-      for (const id in project.clips) {
-        if (project.clips[id]?.libraryItemId === itemId) {
-          log.warn('library', `updateSavedClipTrim refused (in use) id=${itemId}`)
-          return false
-        }
-      }
+      if (!item) return { ok: false }
+      if (item.kind !== 'saved-clip') return { ok: false }
       const trimIn = Math.max(0, Math.floor(inMs))
       const trimDur = Math.max(0, Math.floor(durationMs))
-      if (trimDur <= 0) return false
+      if (trimDur <= 0) return { ok: false }
+
+      // Saved-clip trim edits propagate to every linked timeline clip
+      // (clips whose `libraryItemId === item.id`). Before applying the
+      // edit, verify the new duration won't make any linked sibling
+      // overlap a neighbour on its track. Refuse the whole edit if
+      // any sibling would collide — predictable and non-destructive,
+      // and the user can move the conflicting neighbour aside before
+      // retrying.
+      const project = useProjectStore()
+      const directLinkedClips = Object.values(project.clips).filter(
+        (c) => c?.libraryItemId === itemId
+      )
+      // Legacy projects (created before the saveClipToLibrary rebind
+      // landed) hold timeline clips that still point at the underlying
+      // audio-file source but happen to share the exact window we're
+      // about to edit. Treat those as "implicitly linked" — adopt them
+      // as proper linked siblings by rebinding (so the project file
+      // becomes structurally correct) and propagate the trim. Match
+      // is by current `derivedFrom` window against the source-bound
+      // clip's `(inMs, durationMs)` so we don't accidentally absorb
+      // unrelated clips.
+      const sourceItemId = item.derivedFrom?.sourceItemId
+      const currentInMs = item.derivedFrom?.inMs ?? 0
+      const currentDurationMs = item.derivedFrom?.durationMs ?? item.durationMs
+      const implicitLinkedClips =
+        sourceItemId
+          ? Object.values(project.clips).filter(
+              (c) =>
+                c?.libraryItemId === sourceItemId &&
+                Math.abs(c.inMs - currentInMs) < 0.5 &&
+                Math.abs(c.durationMs - currentDurationMs) < 0.5
+            )
+          : []
+      const linkedClips = [...directLinkedClips, ...implicitLinkedClips]
+      const conflictingTrackNames = new Set<string>()
+      for (const c of linkedClips) {
+        if (!c) continue
+        const track = project.tracks.find((t) => t.id === c.trackId)
+        if (!track) continue
+        const newEnd = c.startMs + trimDur
+        let collides = false
+        for (const otherId of track.clipIds) {
+          if (otherId === c.id) continue
+          const other = project.clips[otherId]
+          if (!other) continue
+          const otherEnd = other.startMs + other.durationMs
+          if (c.startMs < otherEnd && newEnd > other.startMs) {
+            collides = true
+            break
+          }
+        }
+        if (collides) conflictingTrackNames.add(track.name)
+      }
+      if (conflictingTrackNames.size > 0) {
+        log.warn(
+          'library',
+          `updateSavedClipTrim refused (collisions on ${[...conflictingTrackNames].join(', ')}) id=${itemId}`
+        )
+        return { ok: false, conflictingTrackNames: [...conflictingTrackNames] }
+      }
+
       const next = item.derivedFrom
         ? { ...item.derivedFrom, inMs: trimIn, durationMs: trimDur }
         : { sourceItemId: '', sourceClipId: '', inMs: trimIn, durationMs: trimDur }
@@ -571,8 +629,43 @@ export const useLibraryStore = defineStore('library', {
         sourceDurationMs: next.durationMs,
         collapsed: item.collapsed
       })
-      log.info('library', `updateSavedClipTrim id=${itemId} in=${trimIn} dur=${trimDur}`)
-      return true
+      // Propagate the new trim to every linked timeline clip. The
+      // backend coalesces same-clip CLIP_TRIM envelopes within 500 ms
+      // into one undo step, but we also want the saved-clip's
+      // LIBRARY_ADD upsert and all of these CLIP_TRIMs to fold into
+      // the SAME undo step — that's the user's mental "apply trim"
+      // action. The dispatcher's coalescing keys CLIP_TRIM on clipId,
+      // so each sibling's edit starts its own transaction. For now
+      // they're separate undo steps; bundling them is a follow-up
+      // (the existing compound-op gap mentioned in the design plan).
+      for (const c of linkedClips) {
+        if (!c) continue
+        // Adopt implicitly-linked clips (legacy projects) by rebinding
+        // their libraryItemId to this saved-clip before pushing the
+        // new window. Subsequent edits then find them via the direct
+        // libraryItemId === item.id path.
+        if (c.libraryItemId !== itemId) {
+          c.libraryItemId = itemId
+          sendBridge('CLIP_REBIND', { clipId: c.id, libraryItemId: itemId })
+        }
+        c.inMs = trimIn
+        c.durationMs = trimDur
+        sendBridge('CLIP_TRIM', {
+          clipId: c.id,
+          startMs: c.startMs,
+          inMs: trimIn,
+          durationMs: trimDur
+        })
+      }
+      // Force the PixiJS timeline to repaint — the clip-block
+      // geometry depends on durationMs and the watch on
+      // `project.peaksRevision` is the cheapest redraw trigger.
+      if (linkedClips.length > 0) project.peaksRevision++
+      log.info(
+        'library',
+        `updateSavedClipTrim id=${itemId} in=${trimIn} dur=${trimDur} propagatedTo=${linkedClips.length}`
+      )
+      return { ok: true }
     },
 
     /**
@@ -587,7 +680,24 @@ export const useLibraryStore = defineStore('library', {
       const trimmed = name.trim()
       const nextName = trimmed.length > 0 ? trimmed : undefined
       if (item.name === nextName) return false
+      const previousName = item.name
       item.name = nextName
+      // Saved-clip renames propagate to every linked timeline clip
+      // that's still displaying the saved-clip's previous name
+      // (i.e. the user hasn't given that clip its own per-instance
+      // name override via the title-strip double-click). Clips whose
+      // `clip.name` differs from `previousName` are treated as
+      // user-customised and left untouched.
+      if (item.kind === 'saved-clip') {
+        const project = useProjectStore()
+        for (const clipId in project.clips) {
+          const clip = project.clips[clipId]
+          if (!clip || clip.libraryItemId !== itemId) continue
+          if (clip.name !== previousName) continue
+          clip.name = nextName
+          sendBridge('CLIP_RENAME', { clipId, name: nextName ?? '' })
+        }
+      }
       // Omit `playbackFilePath` from rename/collapse upserts: the
       // renderer's `item.playbackFilePath` is just the source filePath
       // (the cached-WAV optimisation lives entirely backend-side), and
@@ -680,12 +790,31 @@ export const useLibraryStore = defineStore('library', {
     removeItem(itemId: string): boolean {
       const idx = this.items.findIndex((i) => i.id === itemId)
       if (idx < 0) return false
-      if (this.isItemInUse(itemId)) {
-        log.warn('library', `removeItem refused (in use) id=${itemId}`)
-        return false
-      }
       const item = this.items[idx]
       if (!item) return false
+
+      // Audio-file sources remain blocked while anything depends on
+      // them — actual audio data lives behind the source path. Saved
+      // clips, on the other hand, are organisational references: we
+      // can always remove them by unlinking any linked timeline clips
+      // first (the clips keep their current window, just rebound to
+      // the saved-clip's underlying audio-file source).
+      if (item.kind === 'audio-file' && this.isItemInUse(itemId)) {
+        log.warn('library', `removeItem refused (audio-file in use) id=${itemId}`)
+        return false
+      }
+
+      if (item.kind === 'saved-clip') {
+        const project = useProjectStore()
+        const linkedClipIds: string[] = []
+        for (const clipId in project.clips) {
+          if (project.clips[clipId]?.libraryItemId === itemId) linkedClipIds.push(clipId)
+        }
+        for (const clipId of linkedClipIds) {
+          project.unlinkClipFromLibrary(clipId)
+        }
+      }
+
       // Cascade: removing an audio-file source also removes every
       // saved-clip derived from it. Each child is guaranteed to be
       // unused at this point (the in-use check above would have

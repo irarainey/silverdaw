@@ -1105,6 +1105,34 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * Break the bond between a timeline clip and its parent saved-clip,
+     * making the clip independent. The clip's current trim window is
+     * preserved exactly (we just rebind libraryItemId to the saved-clip's
+     * underlying audio-file source). No-op when the clip is already
+     * independent (libraryItemId points at an audio-file).
+     *
+     * Used by:
+     *   - Right-click → "Unlink from library" on a linked clip.
+     *   - The edge-drag trim path (auto-unlinks before the trim so
+     *     the edit doesn't propagate to linked siblings).
+     *   - Cascade from `libraryStore.removeItem` when a saved-clip is
+     *     deleted (each linked sibling is unlinked here first).
+     */
+    unlinkClipFromLibrary(clipId: string): boolean {
+      const clip = this.clips[clipId]
+      if (!clip) return false
+      const library = useLibraryStore()
+      const parent = library.items.find((i) => i.id === clip.libraryItemId)
+      if (!parent || parent.kind !== 'saved-clip') return false
+      const fallbackParentId = parent.derivedFrom?.sourceItemId
+      if (!fallbackParentId) return false
+      clip.libraryItemId = fallbackParentId
+      sendBridge('CLIP_REBIND', { clipId, libraryItemId: fallbackParentId })
+      log.info('project', `unlinkClipFromLibrary clip=${clipId} -> source=${fallbackParentId}`)
+      return true
+    },
+
+    /**
      * True if placing a clip of `durationMs` length on `trackId` starting at
      * `startMs` would overlap any existing clip on that track. Used by the
      * library drag-drop flow to reject drops onto occupied space.
@@ -1717,6 +1745,36 @@ export const useProjectStore = defineStore('project', {
       // disagrees with the on-disk tracks degrades gracefully.
       if (pendingProjectLengthMs !== null && this.tracks.length > 0) {
         this.setProjectLengthMs(pendingProjectLengthMs)
+      }
+
+      // Migration: rebind any timeline clip whose (libraryItemId,
+      // inMs, durationMs) is an exact audio-equivalent match to an
+      // existing saved-clip's (sourceItemId, inMs, durationMs). Fixes
+      // projects created before "Save clip to library" rebound the
+      // originating clip — without this, those clips stay linked to
+      // the source audio-file and the saved-clip's "Used on" view is
+      // empty. Saved-clip dedupe upstream guarantees at most one
+      // saved-clip per window so the match is unambiguous.
+      if (snapshot.reset === true || isSoftReplace) {
+        for (const clipId in this.clips) {
+          const clip = this.clips[clipId]
+          if (!clip) continue
+          const candidate = library.items.find(
+            (i) =>
+              i.kind === 'saved-clip' &&
+              i.derivedFrom?.sourceItemId === clip.libraryItemId &&
+              Math.abs((i.derivedFrom?.inMs ?? 0) - clip.inMs) < 0.5 &&
+              Math.abs((i.derivedFrom?.durationMs ?? 0) - clip.durationMs) < 0.5
+          )
+          if (candidate && candidate.id !== clip.libraryItemId) {
+            log.info(
+              'project',
+              `migrate clip ${clipId} libraryItemId=${clip.libraryItemId} -> ${candidate.id} (saved-clip window match)`
+            )
+            clip.libraryItemId = candidate.id
+            sendBridge('CLIP_REBIND', { clipId, libraryItemId: candidate.id })
+          }
+        }
       }
     },
 

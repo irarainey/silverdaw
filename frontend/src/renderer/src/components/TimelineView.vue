@@ -193,6 +193,17 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
   items.push({ command: 'clip.warp', label: 'Warp settings…', disabled: true, separatorAbove: true })
   items.push({ command: 'clip.transpose', label: 'Transpose…', disabled: true })
   items.push({ command: 'clip.saveToLibrary', label: 'Save clip to library', separatorAbove: true })
+  // "Unlink from library" only shown when the clip is linked to a
+  // saved-clip library entry. Unlinking preserves the current trim
+  // window and rebinds the clip to the saved-clip's underlying
+  // audio-file source — the audio plays identically; only the link
+  // is gone (so future edits to the saved-clip stop propagating).
+  if (clip) {
+    const parent = library.items.find((i) => i.id === clip.libraryItemId)
+    if (parent?.kind === 'saved-clip') {
+      items.push({ command: 'clip.unlink', label: 'Unlink from library' })
+    }
+  }
   items.push({ command: 'clip.saveSample', label: 'Bounce to Sample…', disabled: true })
   return items
 })
@@ -231,6 +242,8 @@ function onContextMenuCommand(command: string): void {
     project.splitClipAt(clipId, transport.positionMs)
   } else if (command === 'clip.saveToLibrary') {
     project.saveClipToLibrary(clipId)
+  } else if (command === 'clip.unlink') {
+    project.unlinkClipFromLibrary(clipId)
   } else if (command.startsWith('clip.color:')) {
     const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
     if (Number.isFinite(idx)) project.setClipColor(clipId, idx)

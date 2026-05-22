@@ -467,9 +467,9 @@ describe('libraryStore', () => {
     const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)
     sendMock.mockClear()
 
-    const ok = library.updateSavedClipTrim(savedId!, 1_500, 3_000)
+    const result = library.updateSavedClipTrim(savedId!, 1_500, 3_000)
 
-    expect(ok).toBe(true)
+    expect(result.ok).toBe(true)
     expect(library.items.find((i) => i.id === savedId)).toMatchObject({
       durationMs: 3_000,
       derivedFrom: { inMs: 1_500, durationMs: 3_000 }
@@ -485,7 +485,7 @@ describe('libraryStore', () => {
     )
   })
 
-  it('refuses to update saved-clip trim when a timeline clip references it', () => {
+  it('propagates saved-clip trim to every linked timeline clip', () => {
     const library = useLibraryStore()
     const project = useProjectStore()
     const sourceId = library.addItem({
@@ -499,6 +499,57 @@ describe('libraryStore', () => {
     })
     const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
     const trackId = project.addTrack()
+    const clipId = project.addClipFromLibrary(
+      trackId,
+      {
+        id: savedId,
+        kind: 'saved-clip',
+        filePath: 'C:\\audio\\source.wav',
+        fileName: 'source.wav',
+        durationMs: 2_000,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1]),
+        derivedFrom: { sourceItemId: sourceId!, sourceClipId: '', inMs: 1_000, durationMs: 2_000 }
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    const result = library.updateSavedClipTrim(savedId, 1_500, 3_000)
+
+    expect(result.ok).toBe(true)
+    // Saved-clip library entry updated.
+    expect(library.items.find((i) => i.id === savedId)).toMatchObject({
+      durationMs: 3_000,
+      derivedFrom: { inMs: 1_500, durationMs: 3_000 }
+    })
+    // Linked timeline clip's window mirrors the new trim.
+    expect(project.clips[clipId]).toMatchObject({ inMs: 1_500, durationMs: 3_000 })
+    // CLIP_TRIM envelope broadcast for the linked sibling.
+    expect(sendMock).toHaveBeenCalledWith('CLIP_TRIM', {
+      clipId,
+      startMs: 0,
+      inMs: 1_500,
+      durationMs: 3_000
+    })
+  })
+
+  it('refuses saved-clip trim when propagation would collide with a neighbour clip', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const trackId = project.addTrack()
+    // Linked saved-clip instance at position 0..2000 ms.
     project.addClipFromLibrary(
       trackId,
       {
@@ -514,11 +565,30 @@ describe('libraryStore', () => {
       },
       0
     )
+    // Independent neighbour clip at 2500..4500 ms — close enough that
+    // growing the saved-clip to 3000 ms would overlap into it.
+    project.addClipFromLibrary(
+      trackId,
+      {
+        id: sourceId!,
+        kind: 'audio-file',
+        filePath: 'C:\\audio\\source.wav',
+        fileName: 'source.wav',
+        durationMs: 2_000,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1])
+      },
+      2_500
+    )
     sendMock.mockClear()
 
-    const ok = library.updateSavedClipTrim(savedId, 1_500, 3_000)
+    const result = library.updateSavedClipTrim(savedId, 1_500, 3_000)
 
-    expect(ok).toBe(false)
+    expect(result.ok).toBe(false)
+    expect(result.conflictingTrackNames).toBeDefined()
+    expect(result.conflictingTrackNames!.length).toBeGreaterThan(0)
+    // Saved-clip library entry unchanged.
     expect(library.items.find((i) => i.id === savedId)).toMatchObject({
       durationMs: 2_000,
       derivedFrom: { inMs: 1_000, durationMs: 2_000 }

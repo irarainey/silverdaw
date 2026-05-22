@@ -679,24 +679,38 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     if (clipW < 20) return
 
+    // Resolve the parent library item by id (the authoritative link
+    // recorded in the project file). When the parent is a saved-clip
+    // the clip is "linked" — edits in the Clip Editor propagate to
+    // every sibling sharing the same `libraryItemId`. We surface this
+    // with a small chain-link badge at the right edge of the header
+    // so the user can tell linked from independent clips at a glance.
+    const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+    const isLinked = libItem?.kind === 'saved-clip'
+
     // Prefer the clip's own custom name (set via inline rename on the
-    // timeline) first. Otherwise fall back to the ID3 / Vorbis tag
-    // title from the matching library item, then to the clip's filename
-    // (or hasn't loaded yet — metadata fetches are async on snapshot
-    // reload). Library lookup is by filePath because the library may
-    // have generated a different `id` than the clip.
-    const libItem = library.items.find((i) => i.filePath === clip.filePath)
+    // timeline) first. Otherwise fall back to the parent library
+    // item's display name, then to the clip's filename.
     const displayName = clip.name?.trim()
       ? clip.name
       : libItem ? libraryItemDisplayName(libItem) : clip.fileName
 
-    const maxChars = Math.max(1, Math.floor((clipW - PAD_X * 2) / APPROX_CHAR_W))
+    // Reserve room on the right for the link badge when the clip is
+    // linked, so the text doesn't slide under it.
+    const LINK_BADGE_W = isLinked ? 12 : 0
+    const maxChars = Math.max(
+      1,
+      Math.floor((clipW - PAD_X * 2 - LINK_BADGE_W) / APPROX_CHAR_W)
+    )
     const text =
       displayName.length > maxChars
         ? displayName.slice(0, Math.max(1, maxChars - 1)) + '…'
         : displayName
 
-    const desiredW = Math.min(clipW, text.length * APPROX_CHAR_W + PAD_X * 2)
+    const desiredW = Math.min(
+      clipW,
+      text.length * APPROX_CHAR_W + PAD_X * 2 + LINK_BADGE_W
+    )
     const headerBg = new G()
     headerBg
       .rect(clipX, clipInnerY, desiredW, HEADER_H)
@@ -714,6 +728,20 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     label.x = Math.round(clipX + PAD_X)
     label.y = Math.round(clipInnerY + (HEADER_H - FONT_SIZE) / 2 - 1)
     tracksL.addChild(label)
+
+    if (isLinked) {
+      // Two interlocking small circles, drawn in the same near-black
+      // ink the label uses so the badge reads as an icon, not chrome.
+      const badge = new G()
+      const cx = clipX + desiredW - PAD_X - LINK_BADGE_W / 2
+      const cy = clipInnerY + HEADER_H / 2
+      badge
+        .circle(cx - 2.5, cy, 2.5)
+        .stroke({ color: 0x09090b, width: 1 })
+        .circle(cx + 2.5, cy, 2.5)
+        .stroke({ color: 0x09090b, width: 1 })
+      tracksL.addChild(badge)
+    }
   }
 
   // ─── Cached playhead Graphics ──────────────────────────────────────────

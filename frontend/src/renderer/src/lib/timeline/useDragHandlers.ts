@@ -583,7 +583,13 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (!clip) return
 
     if (edge) {
-      // Threshold crossed in trim mode.
+      // Threshold crossed in trim mode. If the clip is linked to a
+      // saved-clip library entry, auto-unlink first so this trim is
+      // a per-instance edit rather than propagating to every linked
+      // sibling. The clip's current trim window is preserved exactly
+      // by the rebind, so the visual state doesn't shift before the
+      // first drag-delta is applied.
+      project.unlinkClipFromLibrary(clip.id)
       trimClipId = clip.id
       trimEdge = edge
       trimOrigStartMs = clip.startMs

@@ -141,11 +141,21 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     if (item.kind === 'audio-file') {
         items.push({ command: 'library.reanalyse', label: 'Reanalyse file' })
     }
+    // Saved clips can always be deleted — removing one just unlinks
+    // any timeline clips that reference it (they keep their audio and
+    // become independent). Audio-file sources stay gated because
+    // removing them would orphan the actual sound data.
+    const isSavedClip = item.kind === 'saved-clip'
+    const blockDelete = inUse && !isSavedClip
     items.push(
         {
             command: 'library.delete',
-            label: inUse ? 'Delete (in use)' : 'Delete',
-            disabled: inUse,
+            label: blockDelete
+                ? 'Delete (in use)'
+                : isSavedClip && inUse
+                  ? 'Delete (unlinks timeline clips)'
+                  : 'Delete',
+            disabled: blockDelete,
             separatorAbove: true
         }
     )
@@ -641,9 +651,12 @@ function onResizePointerUp(): void {
                 <button
                   type="button"
                   tabindex="-1"
-                  :disabled="library.isItemInUse(item.id)"
-                  class="shrink-0 rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:text-zinc-700"
-                  :title="library.isItemInUse(item.id) ? 'In use - remove from the timeline first' : 'Remove saved clip from library'"
+                  class="shrink-0 rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100"
+                  :title="
+                    library.isItemInUse(item.id)
+                      ? 'Remove saved clip from library (timeline clips will become independent)'
+                      : 'Remove saved clip from library'
+                  "
                   @click="library.removeItem(item.id)"
                   @mousedown.stop
                   @contextmenu.stop.prevent

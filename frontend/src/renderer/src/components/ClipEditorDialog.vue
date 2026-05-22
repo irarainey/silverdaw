@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
-import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { formatTime } from '@/lib/musicTime'
@@ -15,7 +14,6 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 
 const preview = usePreviewStore()
 const library = useLibraryStore()
-const project = useProjectStore()
 const notifications = useNotificationsStore()
 const ui = useUiStore()
 
@@ -221,18 +219,9 @@ const hasSelectionChanged = computed(() => {
   return selectionInMs.value !== origIn || selectionDurationMs.value !== origDur
 })
 
-const inUse = computed(() => {
-  const item = props.item
-  if (!item || item.kind !== 'saved-clip') return false
-  for (const id in project.clips) {
-    if (project.clips[id]?.libraryItemId === item.id) return true
-  }
-  return false
-})
-
 const canApplyTrim = computed(() => {
   const item = props.item
-  return !!item && item.kind === 'saved-clip' && hasSelectionChanged.value && !inUse.value
+  return !!item && item.kind === 'saved-clip' && hasSelectionChanged.value
 })
 
 const canSaveAsNew = computed(() => {
@@ -855,14 +844,20 @@ function onKeydown(e: KeyboardEvent): void {
 function onApplyTrim(): void {
   const item = props.item
   if (!item) return
-  const ok = library.updateSavedClipTrim(item.id, selectionInMs.value, selectionDurationMs.value)
-  if (ok) {
+  const result = library.updateSavedClipTrim(
+    item.id,
+    selectionInMs.value,
+    selectionDurationMs.value
+  )
+  if (result.ok) {
     notifications.pushInfo(`Updated trim for "${libraryItemDisplayName(item)}".`)
     emit('close')
-  } else {
+  } else if (result.conflictingTrackNames && result.conflictingTrackNames.length > 0) {
     notifications.pushError(
-      'Cannot edit trim while clip is in use on a track. Use "Save as new" instead.'
+      `Cannot apply trim — it would overlap clips on ${result.conflictingTrackNames.join(', ')}.`
     )
+  } else {
+    notifications.pushError('Cannot apply trim — invalid selection.')
   }
 }
 
