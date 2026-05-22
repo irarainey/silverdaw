@@ -141,21 +141,17 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     if (item.kind === 'audio-file') {
         items.push({ command: 'library.reanalyse', label: 'Reanalyse file' })
     }
-    // Saved clips can always be deleted — removing one just unlinks
-    // any timeline clips that reference it (they keep their audio and
+    // Saved clips can always be removed — doing so just unlinks any
+    // timeline clips that reference them (they keep their audio and
     // become independent). Audio-file sources stay gated because
     // removing them would orphan the actual sound data.
     const isSavedClip = item.kind === 'saved-clip'
-    const blockDelete = inUse && !isSavedClip
+    const blockRemove = inUse && !isSavedClip
     items.push(
         {
             command: 'library.delete',
-            label: blockDelete
-                ? 'Delete (in use)'
-                : isSavedClip && inUse
-                  ? 'Delete (unlinks timeline clips)'
-                  : 'Delete',
-            disabled: blockDelete,
+            label: 'Remove',
+            disabled: blockRemove,
             separatorAbove: true
         }
     )

@@ -364,7 +364,10 @@ function channelLabel(count: number): string {
             </div>
           </section>
 
-          <section class="mt-5">
+          <section
+            v-if="item.kind === 'audio-file'"
+            class="mt-5"
+          >
             <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
               Library details
             </h3>
