@@ -638,6 +638,39 @@ function drawWaveform(): void {
     ctx.fillStyle = '#3b82f6'
     ctx.fillRect(sx - 1, 0, 2, h)
     ctx.fillRect(ex - 1, 0, 2, h)
+    // Triangle grab handles at the top and bottom of each edge line.
+    // Pointing inward toward the selection so the visual reads as
+    // "here's where the selection edge is — grab to fine-tune". Hit
+    // detection on these lives in `onCanvasMouseDown` (HANDLE_PX
+    // around the edge x) so the user can also click the line itself.
+    const handleW = 10 * dpr
+    const handleH = 8 * dpr
+    // Start edge — triangles point right (into the selection).
+    ctx.beginPath()
+    ctx.moveTo(sx, 0)
+    ctx.lineTo(sx + handleW, 0)
+    ctx.lineTo(sx, handleH)
+    ctx.closePath()
+    ctx.fill()
+    ctx.beginPath()
+    ctx.moveTo(sx, h)
+    ctx.lineTo(sx + handleW, h)
+    ctx.lineTo(sx, h - handleH)
+    ctx.closePath()
+    ctx.fill()
+    // End edge — triangles point left (into the selection).
+    ctx.beginPath()
+    ctx.moveTo(ex, 0)
+    ctx.lineTo(ex - handleW, 0)
+    ctx.lineTo(ex, handleH)
+    ctx.closePath()
+    ctx.fill()
+    ctx.beginPath()
+    ctx.moveTo(ex, h)
+    ctx.lineTo(ex - handleW, h)
+    ctx.lineTo(ex, h - handleH)
+    ctx.closePath()
+    ctx.fill()
   }
 
   // --- Playhead --------------------------------------------------------
@@ -685,9 +718,12 @@ function onCanvasMouseDown(e: MouseEvent): void {
   const endSx = ((selectionEndMs.value - vIn) / vDur) * rect.width
   const localX = e.clientX - rect.left
   const startX = e.clientX
-  const HANDLE_PX = 8
+  const HANDLE_PX = 12
 
   // Handle grabs only count when there's actually a visible sub-selection.
+  // The hit zone is intentionally wider than the 1-px edge line so the
+  // triangle grab markers drawn at the top/bottom of each edge fall
+  // inside the grabbable area.
   const hasSubSel = selectionInMs.value > fullIn + 0.5 || selectionEndMs.value < fullEnd - 0.5
   let mode: 'start' | 'end' | 'select' | 'click' = 'click'
   if (hasSubSel && Math.abs(localX - startSx) <= HANDLE_PX) mode = 'start'
