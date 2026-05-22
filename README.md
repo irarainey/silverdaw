@@ -77,9 +77,28 @@ Silverdaw currently supports the core arrangement workflow:
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
 - Move clips across tracks with grid snapping, source-beat snapping and `Alt` bypass.
 - Analyse imported audio for key, BPM, beat positions and variable-tempo status.
+- Resize any track row by dragging its bottom edge in the track-header column
+  (clamped 60..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
+  a track name and dragging up or down; an emerald drop indicator shows where
+  the track will land. Both are persisted with the project and undoable.
+- **End-of-project playback** stops automatically: when the playhead reaches the
+  project ruler's end, the renderer sends `TRANSPORT_PAUSE` and parks the playhead
+  there. The Play button (and the Spacebar shortcut) is disabled while the
+  playhead sits at the end — skip back to the start to re-arm playback.
+- **Edit ▸ Crop Project to Last Clip** collapses the project length to the end of
+  the latest clip on any track. No-op when there are no clips.
 - Save reusable saved clips to the library from any timeline clip; saved clips are
   grouped under their source file and can be dragged back to the timeline as a clip
-  with the same source window.
+  with the same source window. **Linked saved-clips**: clips dropped from a saved-clip
+  library tile remember that link; the Clip Editor's **Crop** previews a new window
+  inside the dialog only, while **Apply trim** propagates the new window to every
+  linked timeline instance in lockstep, unless a collision would result (in which
+  case the user is prompted and the edit is rejected). Linked clips show a small
+  chain badge in their title strip and are locked against edge-resize on the timeline
+  — to free a single instance for per-clip trim use right-click ▸ **Unlink from
+  library**. Removing a saved clip from the library is always allowed: every
+  dependent timeline clip is silently unlinked first so the audio plays on as an
+  independent clip referencing the underlying source file.
 - Inline rename for library items (single-click into the name) and timeline clips
   (double-click the clip title). Renames persist with the project; if the renamed
   clip is saved to the library, the library entry inherits the same name.
@@ -108,16 +127,21 @@ Silverdaw currently supports the core arrangement workflow:
 - Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
   file association.
 - Undo / redo (Ctrl+Z / Ctrl+Y) any project-mutating edit. Covers
-  clip add / move / trim / recolour / rename / delete / relink, track
-  add / remove / rename / gain, library add / remove / relink /
-  reanalyse, marker add / move / remove, BPM, project length, and
-  project rename. Drag streams (clip move / trim / track gain /
-  marker move) coalesce same-target events within 500 ms into a
-  single undo step; everything else gets its own step. View state
+  clip add / move / trim / recolour / rename / delete / relink / rebind, track
+  add / remove / rename / gain / **resize / reorder**, library
+  add / remove / relink / reanalyse, marker add / move / remove, BPM,
+  project length, and project rename. Drag streams (clip move / trim /
+  track gain / marker move) coalesce same-target events within 500 ms
+  into a single undo step; track resize and reorder commit a single
+  step on `pointerup`; everything else gets its own step. View state
   (zoom, scroll, playhead) is intentionally outside the undo stack
-  so navigating around doesn't pollute the history. Compound
-  operations like clip split / duplicate currently emit multiple
-  undo steps; bundling them is a follow-up.
+  so navigating around doesn't pollute the history. The **Clip Editor
+  Crop** workflow keeps a dialog-local undo stack so the user can
+  tweak a crop with Ctrl+Z/Y inside the dialog without touching the
+  project-level history; only when the user clicks **Apply trim** or
+  **Save as new** does the change land in the main undo stack.
+  Compound operations like clip split / duplicate currently emit
+  multiple undo steps; bundling them is a follow-up.
 
 Playback is always served from the decoded WAV cache; original compressed sources
 (MP3, M4A, …) are only used to generate that cache. This keeps the read-ahead
@@ -179,7 +203,7 @@ the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
 
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
-  TRACK[id, name, gain]
+  TRACK[id, name, gain, heightPx?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?]
   LIBRARY
     ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
@@ -214,6 +238,11 @@ absolute project positions in milliseconds, round-trip through `PROJECT_STATE`, 
 mark the project dirty when added, moved or removed.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
+Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 60..400) is
+likewise persisted on the `TRACK` node and is undoable in the same project undo
+history. Track order is the child order of `TRACK` nodes under `PROJECT` and is
+preserved by save/load and by drag-reorder (`juce::ValueTree::moveChild` with the
+project's `UndoManager`).
 The view-state properties (`viewPxPerSecond`, `viewScrollX`, `playheadMs`) bypass the
 dirty-flag listener via a `suppressDirtyTransitions` guard inside their setters — zooming,
 scrolling, or moving the playhead doesn't prompt an unsaved-changes dialog. Meaningful
@@ -317,13 +346,21 @@ handler in [`main/index.ts`](frontend/src/main/index.ts).
 
 ## Peaks cache
 
-Waveform peaks (mono-mixed `min, max` float32 pairs at 200 peaks/sec) are computed once per
-source file and persisted under `%APPDATA%/Silverdaw/peaks/<hash>.peaks`. The cache key is a
-64-bit hash of `(filePath | mtime | size | peaksPerSecond)` — any change to the file
-invalidates the entry automatically. The on-disk format is a 24-byte header (magic, version,
-peaksPerSecond, peakCount, sampleRate) followed by `peakCount × 2 × float32` little-endian
-peak values. Versioned so a future format change is detected as a miss rather than a corrupted
-read; the same layout is what the renderer reads via the `peaks:readCacheFile` IPC.
+Waveform peaks (mono-mixed `min, max` float32 pairs) are computed once per source
+file and persisted under `%APPDATA%/Silverdaw/peaks/<hash>.peaks`. The default
+resolution is **500 peaks/sec** — enough detail to keep the main timeline crisp
+at 600 % zoom without ballooning the cache. The Clip Editor opportunistically
+requests a higher-resolution **2000 peaks/sec** rendering for the item currently
+on screen via `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_EDITOR_PEAKS_READY`; that
+hi-res cache lives next to the default one on disk (the cache key includes
+`peaksPerSecond`) and is held in renderer memory only while the dialog is open.
+The cache key is a 64-bit hash of `(filePath | mtime | size | peaksPerSecond)` —
+any change to the file or to the requested resolution invalidates the entry
+automatically. The on-disk format is a 24-byte header (magic, version,
+peaksPerSecond, peakCount, sampleRate) followed by `peakCount × 2 × float32`
+little-endian peak values. Versioned so a future format change is detected as a
+miss rather than a corrupted read; the same layout is what the renderer reads
+via the `peaks:readCacheFile` IPC.
 
 The cache survives backend restarts.
 
@@ -440,22 +477,30 @@ timeline clip with the same source window the saved clip describes.
 the right-click menu) to edit it inline. Saved clips inherit a sensible default name
 based on their source and offset; renaming is the same flow.
 
-Double-click a tile to open a read-only information dialog. The same dialog is available
-from the tile's right-click context menu via **Show information**. The dialog shows file
-details, technical audio details, detected BPM/beat/key metadata, tag metadata, cover art
-and which tracks currently use the library item. The right-click context menu also includes
-**Reanalyse file** (audio-file items only), which refreshes the decoded cache, BPM/beat
-analysis and musical key, and **Delete**, which is disabled while the library item (or any
-of its derived saved clips) is in use by a timeline clip.
+Double-click a tile to open the **Clip Editor** (see below). To view the read-only
+information dialog instead — file details, technical audio details, detected
+BPM/beat/key metadata, tag metadata, cover art and which tracks currently use the
+library item — pick **Show information** from the tile's right-click context menu.
+The right-click context menu also includes **Reanalyse file** (audio-file items
+only), which refreshes the decoded cache, BPM/beat analysis and musical key, and
+**Remove**. Removal is gated for audio-file source items while they're in use by a
+timeline clip; saved-clip items can always be removed (every linked timeline clip
+is silently unlinked first and continues playing from the underlying source).
 
 **Clip Editor** — double-click a library tile (or pick **Open in editor…** from its
 right-click menu) to open the **Clip Editor** dialog. The dialog renders the source
 waveform with an adaptive time ruler, faint beat lines extrapolated from the
 detected BPM, and zoom + horizontal scroll (`+` / `-` / `0`, mouse-wheel anchored at
-the pointer, `Shift+wheel` to pan; capped at 8× / 800%). Audio-file items open at
-the same px-per-second scale as the main timeline; saved clips open zoomed to fit
-the cropped range. Auditioning runs through an independent **backend preview
-voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
+the pointer, `Shift+wheel` to pan; capped at **64× / 6400 %** so even narrow saved
+clips can be inspected sample-precise). Once zoom or selection narrows past a
+threshold the dialog opportunistically requests a **2000 peaks/sec** rendering for
+the item on screen so the waveform stays crisp at deep zoom; the request is
+keyed on the library item id and cached on disk alongside the default 500 peaks/sec
+cache. Audio-file items open at the same px-per-second scale as the main timeline;
+saved clips open zoomed to fit the cropped range and the bottom-left toggle flips
+between **Clip** view (cropped) and **Source** view (full source for extending the
+window). Auditioning runs through an independent **backend preview voice**
+(`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
 `PREVIEW_SEEK` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` / `PREVIEW_POSITION` /
 `PREVIEW_ENDED`) so the main transport is unaffected. A monotonic `generation`
 counter on the preview voice means stale events for a preview the user has already
@@ -481,12 +526,24 @@ Within the dialog:
 - **Selection-bounded playback**: with a selection set, Play starts from the
   selection start and stops (or loops) at the selection end. The skip-to-start
   / skip-to-end buttons honour the selection bounds.
+- **Selection edges** carry triangular handles at the top and bottom for
+  fine-tuning. Drag a handle to adjust just that edge of the selection without
+  redrawing the whole range.
+- **Crop** (`Crop` button) narrows the in-dialog view to the current selection
+  without writing anything to the project — purely a non-destructive preview
+  zoom. Ctrl+Z / Ctrl+Y inside the dialog walk a dialog-local Crop history so
+  the user can experiment freely. **Source** / **Clip** toggle flips between
+  full-source view (so the window can be extended beyond the saved clip's
+  current bounds) and the cropped view; switching back from Source carries the
+  most recently selected range with you so a wider selection on the source
+  can be tightened up at clip-level zoom.
 - **Save as new clip**: writes a new saved-clip entry to the library from the
   current selection.
 - **Apply trim** (saved clips only): updates the saved-clip's `derivedFrom`
-  window in place. Disabled while any timeline clip currently references this
-  saved clip — the user is steered to *Save as new* instead so an in-use clip
-  doesn't shift under existing arrangements.
+  window in place and pushes the new trim to every linked timeline clip
+  atomically. Refused with a toast if the new window would cause one of the
+  linked clips to collide with a neighbour on its track — the user resolves
+  the collision (or unlinks the offending clip) and retries.
 
 ## Preferences
 
@@ -598,7 +655,9 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
-| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge (ms-precise; non-destructive — only the window over the source file changes). |
+| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge (ms-precise; non-destructive — only the window over the source file changes). Disabled on clips linked to a saved-clip library item — right-click ▸ Unlink first, or use the Clip Editor to resize every linked sibling in lockstep. |
+| Drag the **bottom edge of a track header** (~5 px hit zone) | Resize that track row vertically (60–400 px). Each track's height is persisted with the project and undoable. |
+| Drag the **grip icon** (6-dot handle next to the track name) | Reorder the track. A green drop indicator shows the target slot. Drop on the indicator commits one undoable reorder step. |
 | Click on **empty area of a track row** | Select that track (highlighted row border), deselect any clip. |
 | Click on **inter-track gap** / below the last track | Deselect both clip and track. |
 | `←` / `→` | Step the playhead one grid line (sub-beat). |
@@ -612,7 +671,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl +` / `Ctrl =` | Zoom in 10% (anchored on the playhead). |
 | `Ctrl -` | Zoom out 10%. |
 | `Ctrl 0` | Reset zoom to 100% (100 px/s). |
-| `Space` | Play / pause globally unless a text field or modal dialog is active. |
+| `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
 | `F2` | Rename project (also activates the title-bar rename input). |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
 | `D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |
@@ -623,8 +682,8 @@ or releasing the modifier between frames switches mode without restarting the dr
 | **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Bounce to Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
-| Double-click a **library tile** (off the name) | Open the read-only library item information dialog. |
-| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename…**, **Reanalyse file** (audio-file items only), and **Delete**. Delete is disabled while the item is in use. |
+| Double-click a **library tile** (off the name) | Open the **Clip Editor** for that library item. Use **Show information** from the right-click menu for the read-only info dialog. |
+| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename…**, **Reanalyse file** (audio-file items only), and **Remove**. Removal is gated only for audio-file sources that are still in use by a timeline clip; saved-clip removal silently unlinks dependent clips. |
 
 ### Clip Editor
 
@@ -641,7 +700,7 @@ and the following set takes over instead:
 | `L` | Toggle loop mode. With loop on, playback loops the selection — or the whole saved clip if no selection is set. Source files only loop when a selection is set. |
 | Drag on waveform | Mark a sub-selection. The selection drives Save-as-new and Apply-trim. |
 | Drag on a selection handle | Fine-tune the selection edge. |
-| Mouse wheel | Zoom (anchored on the pointer), capped at 8× / 800%. |
+| Mouse wheel | Zoom (anchored on the pointer), capped at 64× / 6400%. |
 | `Shift` + wheel | Pan left / right. |
 | `+` / `-` / `0` | Zoom in / out / reset. |
 | `Esc` | Close the dialog. |
