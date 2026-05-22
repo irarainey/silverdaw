@@ -251,24 +251,29 @@ onBeforeUnmount(() => {
            resolved. Matches the inline splash in `index.html` so the
            hand-off between the static HTML splash and this Vue
            component is invisible. -->
+      <!-- Every child has a locked height and the column has a fixed
+           total height so flex centring is byte-identical regardless
+           of the text content. Without this lockdown, font-metrics
+           reflow + the spinner's compositor layer can wobble the
+           text vertically by 1-2 px between status changes. -->
       <div
         v-else-if="!ready"
-        class="flex flex-col items-center gap-6 text-zinc-200"
+        class="flex h-[228px] flex-col items-center justify-between text-zinc-200"
       >
         <img
           :src="logoUrl"
           alt=""
           aria-hidden="true"
-          class="h-32 w-32 select-none"
+          class="h-32 w-32 shrink-0 select-none"
           draggable="false"
         >
         <div
-          class="h-8 w-8 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-100"
+          class="h-8 w-8 shrink-0 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-100"
           aria-hidden="true"
         />
         <p
           id="startup-title"
-          class="whitespace-nowrap text-sm font-medium"
+          class="m-0 flex h-5 shrink-0 items-center whitespace-nowrap text-[13px] font-medium leading-[20px]"
           aria-live="polite"
         >
           {{ statusText || 'Loading Silverdaw…' }}
