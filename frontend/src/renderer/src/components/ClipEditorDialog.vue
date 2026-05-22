@@ -841,6 +841,24 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
+function onBackdropMouseDown(e: MouseEvent): void {
+  // Track whether the user pressed mouse-down on the backdrop itself.
+  // Without this, a drag that *started* on the waveform but ends with
+  // the cursor over the backdrop synthesises a `click` whose target
+  // is the backdrop — `@click.self` would then fire and close the
+  // dialog mid-edit. We only treat a click as a backdrop click when
+  // the originating mouse-down landed on the backdrop.
+  backdropMouseDownTarget.value = e.target === e.currentTarget
+}
+
+function onBackdropClick(e: MouseEvent): void {
+  if (!backdropMouseDownTarget.value) return
+  if (e.target !== e.currentTarget) return
+  emit('close')
+}
+
+const backdropMouseDownTarget = ref(false)
+
 function onApplyTrim(): void {
   const item = props.item
   if (!item) return
@@ -894,7 +912,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
       role="dialog"
       aria-modal="true"
       aria-labelledby="clip-editor-title"
-      @click.self="emit('close')"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick"
     >
       <div
         ref="dialogEl"
