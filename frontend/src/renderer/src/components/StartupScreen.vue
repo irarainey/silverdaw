@@ -1,30 +1,31 @@
 <script setup lang="ts">
 // Unified startup landing page.
 //
-// Replaces the older two-overlay pattern (BridgeReadyOverlay during
-// boot then StartScreenOverlay once the bridge was up). The boundary
-// between "connecting" and "pick a project" used to cross-fade between
-// two separate components with identical logos, which the user
-// experienced as multiple flashing screens. This component is the
-// single splash surface, with an internal status row that updates as
-// the boot progresses:
+// Two distinct visual states, never on screen at the same time:
 //
-//   1. Waiting for the backend to start.
-//   2. Connecting to audio engine…
-//   3. Scanning audio devices…
-//   4. Checking for recovered projects…
-//   5. (idle — buttons enabled)
+//   1. **Loading state** — centred logo + spinner + the current
+//      boot phase ("Waiting for the backend to start" → "Connecting
+//      to audio engine" → "Scanning audio devices" → "Checking for
+//      recovered projects"). No buttons. This continues the inline
+//      splash inside `index.html`; they share the same logo crop and
+//      backdrop so the hand-off is seamless.
+//
+//   2. **Ready state** — the project picker: logo + title + New
+//      Project / Open Project… / Recent Projects. Only mounts once
+//      the backend, the device scan, and the recovery flow have all
+//      resolved, so the buttons never render disabled. The user
+//      knows the app is ready the moment they see them.
 //
 // On terminal bridge failure the whole screen swaps to a focused
-// error view with a single Quit action; project actions are hidden
-// because they cannot recover the app.
+// error view with a single Quit action; the loading + ready surfaces
+// are both hidden because they cannot recover the app.
 //
 // Visibility (from App.vue) only requires that the project is empty
 // and the user hasn't dismissed the screen — it mounts BEFORE the
 // bridge is up so there's no cross-fade between two splashes.
 // RecoveryDialog stacks above this overlay via z-index.
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useTransportStore } from '@/stores/transportStore'
@@ -61,14 +62,19 @@ const recents = computed(() => app.recentProjects)
 // never showed up. The whole screen swaps to a focused error mode.
 const bridgeFailed = computed(() => transport.bridgeFailureMessage !== null)
 
-// "Ready" gating for the action buttons. `scanInProgress` is
-// intentionally NOT included — opening a project doesn't need the
-// full device list, and a slow / stuck scan shouldn't block the user.
-const ready = computed(
-  () => !bridgeFailed.value && transport.bridgeReady && props.startupFlowComplete
+// "All systems resolved" — every gate is green and the loading
+// screen could exit. We deliberately wait for the async device
+// scan AND a stable-display window (below) before treating this as
+// truly ready.
+const allResolved = computed(
+  () =>
+    !bridgeFailed.value &&
+    transport.bridgeReady &&
+    props.startupFlowComplete &&
+    !audioDevices.scanInProgress
 )
 
-const statusText = computed(() => {
+const liveStatusText = computed(() => {
   if (bridgeFailed.value) return ''
   if (!transport.connected) return 'Waiting for the backend to start…'
   if (!transport.bridgeReady) return 'Connecting to audio engine…'
@@ -79,23 +85,71 @@ const statusText = computed(() => {
   return ''
 })
 
+// Minimum time each phase must remain on screen before the next is
+// allowed to overwrite it. Without this, on a fast machine the boot
+// resolves in <100 ms and the user sees only "Waiting…" before the
+// picker appears — they never get to see what actually happened.
+const MIN_PHASE_MS = 500
+
+// Pump that displays each distinct phase for at least MIN_PHASE_MS,
+// queueing successive changes so a burst of phase transitions plays
+// out as a readable sequence rather than collapsing to the latest.
+const statusText = ref('')
+const phaseQueue: string[] = []
+const phaseQueueLength = ref(0)
+const phaseTimerActive = ref(false)
+let phaseTimer: ReturnType<typeof setTimeout> | null = null
+
+function showNextPhase(): void {
+  const next = phaseQueue.shift()
+  phaseQueueLength.value = phaseQueue.length
+  if (next === undefined) {
+    phaseTimer = null
+    phaseTimerActive.value = false
+    return
+  }
+  statusText.value = next
+  phaseTimerActive.value = true
+  phaseTimer = setTimeout(showNextPhase, MIN_PHASE_MS)
+}
+
+watch(
+  liveStatusText,
+  (text) => {
+    // Skip the terminal empty status — once everything has resolved
+    // we want to switch to the picker as soon as the last real phase
+    // has had its display dwell, not hold an extra MIN_PHASE_MS on
+    // a blank message.
+    if (text === '') return
+    const tail = phaseQueue.length > 0 ? phaseQueue[phaseQueue.length - 1] : statusText.value
+    if (text === tail) return
+    phaseQueue.push(text)
+    phaseQueueLength.value = phaseQueue.length
+    if (phaseTimer === null) showNextPhase()
+  },
+  { immediate: true }
+)
+
+// "Ready" = all gates resolved AND the phase pump has finished
+// showing every queued message for its minimum dwell.
+const ready = computed(
+  () => allResolved.value && phaseQueueLength.value === 0 && !phaseTimerActive.value
+)
+
 function basename(path: string): string {
   const lastSep = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
   return lastSep >= 0 ? path.slice(lastSep + 1) : path
 }
 
 function newProject(): void {
-  if (!ready.value) return
   emit('newProject')
 }
 
 function openProject(): void {
-  if (!ready.value) return
   emit('openProject')
 }
 
 function openRecent(filePath: string): void {
-  if (!ready.value) return
   emit('openRecent', filePath)
 }
 
@@ -127,6 +181,13 @@ watch(ready, async (now) => {
   const active = document.activeElement
   if (!active || active === document.body) {
     newButtonEl.value?.focus()
+  }
+})
+
+onBeforeUnmount(() => {
+  if (phaseTimer !== null) {
+    clearTimeout(phaseTimer)
+    phaseTimer = null
   }
 })
 </script>
@@ -183,7 +244,41 @@ watch(ready, async (now) => {
         </button>
       </div>
 
-      <!-- ─── Normal mode ──────────────────────────────────────── -->
+      <!-- ─── Loading mode ──────────────────────────────────────── -->
+      <!-- Single boot surface: logo + spinner + the current loading
+           phase. No buttons here — the project picker only appears
+           once the backend, device scan and recovery flow have all
+           resolved. Matches the inline splash in `index.html` so the
+           hand-off between the static HTML splash and this Vue
+           component is invisible. -->
+      <div
+        v-else-if="!ready"
+        class="flex flex-col items-center gap-6 text-zinc-200"
+      >
+        <img
+          :src="logoUrl"
+          alt=""
+          aria-hidden="true"
+          class="h-32 w-32 select-none"
+          draggable="false"
+        >
+        <div
+          class="h-8 w-8 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-100"
+          aria-hidden="true"
+        />
+        <p
+          id="startup-title"
+          class="whitespace-nowrap text-sm font-medium"
+          aria-live="polite"
+        >
+          {{ statusText || 'Loading Silverdaw…' }}
+        </p>
+      </div>
+
+      <!-- ─── Ready mode: project picker ────────────────────────── -->
+      <!-- Only mounted once everything is ready, so the buttons never
+           render in a disabled state. Closing happens by picking an
+           action (or the user opens a project from elsewhere). -->
       <div
         v-else
         class="flex w-[min(560px,92vw)] flex-col items-stretch gap-6 px-8 py-10"
@@ -205,38 +300,20 @@ watch(ready, async (now) => {
           <p class="mt-1 text-xs text-zinc-500">
             Start a new project or open an existing one.
           </p>
-
-          <!-- Inline status row: visible only while something is still
-               loading. The spinner + text are constrained to a fixed
-               height so the layout doesn't jump when the row hides. -->
-          <div
-            class="mt-3 flex h-5 items-center gap-2 text-xs text-zinc-400"
-            aria-live="polite"
-          >
-            <template v-if="statusText">
-              <span
-                class="h-3 w-3 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-200"
-                aria-hidden="true"
-              />
-              <span>{{ statusText }}</span>
-            </template>
-          </div>
         </header>
 
         <div class="flex flex-col gap-2">
           <button
             ref="newButtonEl"
             type="button"
-            class="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-zinc-50 hover:bg-sky-500 focus:ring-2 focus:ring-sky-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-sky-600"
-            :disabled="!ready"
+            class="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-zinc-50 hover:bg-sky-500 focus:ring-2 focus:ring-sky-400 focus:outline-none"
             @click="newProject"
           >
             New Project
           </button>
           <button
             type="button"
-            class="rounded bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:ring-2 focus:ring-zinc-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-zinc-800"
-            :disabled="!ready"
+            class="rounded bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:ring-2 focus:ring-zinc-500 focus:outline-none"
             @click="openProject"
           >
             Open Project…
@@ -262,8 +339,7 @@ watch(ready, async (now) => {
               <button
                 type="button"
                 data-borderless-button="true"
-                class="flex min-w-0 flex-1 flex-col bg-transparent p-0 text-left disabled:cursor-not-allowed disabled:opacity-50"
-                :disabled="!ready"
+                class="flex min-w-0 flex-1 flex-col bg-transparent p-0 text-left"
                 :title="path"
                 @click="openRecent(path)"
               >
