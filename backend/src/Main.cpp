@@ -1798,7 +1798,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "CLIP_REMOVE" || type == "CLIP_RENAME" || type == "CLIP_REBIND" ||
            type == "CLIP_RELINK" ||
            type == "TRACK_ADD" || type == "TRACK_REMOVE" || type == "TRACK_RENAME" ||
-           type == "TRACK_GAIN" || type == "TRACK_SET_HEIGHT" ||
+           type == "TRACK_GAIN" || type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
            type == "PROJECT_RENAME" || type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" ||
@@ -1821,6 +1821,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_RENAME") return "Rename track";
     if (type == "TRACK_GAIN") return "Change track gain";
     if (type == "TRACK_SET_HEIGHT") return "Resize track";
+    if (type == "TRACK_REORDER") return "Reorder track";
     if (type == "LIBRARY_ADD") return "Update library item";
     if (type == "LIBRARY_REMOVE") return "Remove library item";
     if (type == "LIBRARY_REANALYSE") return "Reanalyse library item";
@@ -2286,6 +2287,17 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         if (trackId.isNotEmpty() && heightVar.has_value())
         {
             projectState.setTrackHeightPx(trackId, *heightVar);
+        }
+    }
+    else if (type == "TRACK_REORDER")
+    {
+        const auto trackId = payload.getProperty("trackId", juce::var()).toString();
+        const auto idxVar = tryGetNumber(payload, "newIndex");
+        silverdaw::log::info("bridge", "recv TRACK_REORDER trackId=" + trackId +
+                                           " newIndex=" + payload.getProperty("newIndex", "").toString());
+        if (trackId.isNotEmpty() && idxVar.has_value())
+        {
+            projectState.moveTrack(trackId, static_cast<int>(*idxVar));
         }
     }
     else if (type == "WAVEFORM_REQUEST")

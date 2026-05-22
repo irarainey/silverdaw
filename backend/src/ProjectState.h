@@ -108,6 +108,13 @@ class ProjectState : public juce::ValueTree::Listener
     /** Returns true if `trackId` exists in the tree. */
     bool hasTrack(const juce::String& trackId) const;
 
+    /** Move `trackId` so it ends up at `newIndex` in the project's
+     *  track order. `newIndex` is clamped to [0, trackCount-1]. Returns
+     *  true if the track existed and the order actually changed. The
+     *  move goes through `juce::ValueTree::moveChild` so it sits in
+     *  the undo manager as a single coalesced step. */
+    bool moveTrack(const juce::String& trackId, int newIndex);
+
     /** Per-track linear gain (0 = silent, 1 = unity). 1.0 if unknown. */
     float getTrackGain(const juce::String& trackId) const;
 

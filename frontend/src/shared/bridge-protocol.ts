@@ -189,6 +189,18 @@ export interface TrackSetHeightPayload {
   heightPx: number
 }
 
+/**
+ * Reorder a track within the project. Sent once on drop after the user
+ * drags a track header to a new position. `newIndex` is the desired
+ * 0-based position in the track list; the backend clamps it to the
+ * current track count and emits a fresh PROJECT_STATE reflecting the
+ * new order. Joins the undo history as a single "Reorder track" step.
+ */
+export interface TrackReorderPayload {
+  trackId: string
+  newIndex: number
+}
+
 export interface TransportSeekPayload {
   positionMs: number
 }
@@ -229,6 +241,7 @@ export interface BridgeOutboundMap {
   TRACK_RENAME: TrackRenamePayload
   TRACK_GAIN: TrackGainPayload
   TRACK_SET_HEIGHT: TrackSetHeightPayload
+  TRACK_REORDER: TrackReorderPayload
   TRANSPORT_PLAY: undefined
   TRANSPORT_PAUSE: undefined
   TRANSPORT_STOP: undefined

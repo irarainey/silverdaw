@@ -178,6 +178,112 @@ function onHandlePointerUp(): void {
   // whole drag, not one per pixel of motion.
   project.setTrackHeight(drag.trackId, trackHeightOf(t))
 }
+
+// ─── Reorder drag ─────────────────────────────────────────────────────────
+// The grip icon at the top-left of each header carries a pointerdown
+// handler that promotes to a drag once the pointer has moved past a
+// small threshold. Below the threshold we treat the gesture as a stray
+// click and abort, so a misclick on the grip doesn't accidentally
+// trigger a reorder commit. During the drag we track the pointer's y
+// against the row layout to compute the target slot index; the
+// `dropIndicator` ref drives a thin green line rendered between rows so
+// the user sees exactly where the dropped track will land.
+const REORDER_THRESHOLD_PX = 4
+
+interface ReorderDragState {
+  trackId: string
+  startY: number
+  startIndex: number
+  moved: boolean
+}
+let reorderDrag: ReorderDragState | null = null
+const dropIndicatorIndex = ref<number | null>(null)
+const reorderingTrackId = ref<string | null>(null)
+
+function computeDropIndex(clientY: number, rowsHostRect: DOMRect): number {
+  // Convert the pointer into the rows-host content space (the same
+  // coordinate space the rowLayout entries use, modulo the
+  // RULER_HEIGHT subtraction the template applies for `top`).
+  const localY = clientY - rowsHostRect.top + RULER_HEIGHT
+  const layout = rowLayout.value
+  for (let i = 0; i < layout.length; i++) {
+    const row = layout[i]!
+    const mid = row.top + row.height / 2
+    if (localY < mid) return i
+  }
+  return layout.length
+}
+
+function onGripPointerDown(track: { id: string }, ev: PointerEvent): void {
+  if (ev.button !== 0) return
+  ev.preventDefault()
+  ev.stopPropagation()
+  const startIndex = project.tracks.findIndex((t) => t.id === track.id)
+  if (startIndex < 0) return
+  reorderDrag = {
+    trackId: track.id,
+    startY: ev.clientY,
+    startIndex,
+    moved: false
+  }
+  ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
+  window.addEventListener('pointermove', onGripPointerMove)
+  window.addEventListener('pointerup', onGripPointerUp)
+  window.addEventListener('pointercancel', onGripPointerUp)
+}
+
+function onGripPointerMove(ev: PointerEvent): void {
+  if (!reorderDrag) return
+  const dy = ev.clientY - reorderDrag.startY
+  if (!reorderDrag.moved && Math.abs(dy) < REORDER_THRESHOLD_PX) return
+  reorderDrag.moved = true
+  reorderingTrackId.value = reorderDrag.trackId
+  // Find the rows host so we can compute drop index relative to it.
+  const host = rowsHostEl.value
+  if (!host) return
+  const rect = host.getBoundingClientRect()
+  let target = computeDropIndex(ev.clientY, rect)
+  // Translate "slot index in current array" to "would-be index after
+  // removing the dragged track". If the user drags within the same
+  // visual region as the original slot we don't want to flicker the
+  // drop indicator between two equivalent positions.
+  if (target > reorderDrag.startIndex) target -= 1
+  dropIndicatorIndex.value = target === reorderDrag.startIndex ? null : target
+}
+
+function onGripPointerUp(): void {
+  window.removeEventListener('pointermove', onGripPointerMove)
+  window.removeEventListener('pointerup', onGripPointerUp)
+  window.removeEventListener('pointercancel', onGripPointerUp)
+  const drag = reorderDrag
+  reorderDrag = null
+  reorderingTrackId.value = null
+  const indicator = dropIndicatorIndex.value
+  dropIndicatorIndex.value = null
+  if (!drag || !drag.moved || indicator === null) return
+  project.reorderTrack(drag.trackId, indicator)
+}
+
+const rowsHostEl = ref<HTMLDivElement | null>(null)
+
+// Top position of the drop-indicator line, in the rows-host content
+// space (i.e. matching the per-track `top` style). When the drop slot
+// is at index `i`, the line sits at the top edge of row `i` minus half
+// the inter-row gap; at the end of the list it sits below the last
+// row.
+const dropIndicatorTopPx = computed<number>(() => {
+  const idx = dropIndicatorIndex.value
+  const layout = rowLayout.value
+  if (idx === null) return 0
+  if (idx >= layout.length) {
+    const last = layout[layout.length - 1]
+    if (!last) return 0
+    return last.top + last.height - RULER_HEIGHT
+  }
+  const row = layout[idx]
+  if (!row) return 0
+  return row.top - RULER_HEIGHT - 1
+})
 </script>
 
 <template>
@@ -227,6 +333,7 @@ function onHandlePointerUp(): void {
           tracks-layer scroll offset.
         -->
     <div
+      ref="rowsHostEl"
       class="absolute left-0 right-0 overflow-hidden"
       :style="{ top: RULER_HEIGHT + 'px', bottom: '0px' }"
     >
@@ -237,7 +344,8 @@ function onHandlePointerUp(): void {
           class="pointer-events-auto absolute flex flex-col justify-between rounded border border-zinc-700 px-2 py-1.5 text-xs"
           :class="{
             'opacity-50': track.muted || (project.anySoloed && !track.soloed),
-            'ring-1 ring-inset ring-cyan-500/60': track.soloed
+            'ring-1 ring-inset ring-cyan-500/60': track.soloed,
+            'opacity-30': reorderingTrackId === track.id
           }"
           :style="{
             top: ((rowLayout[i]?.top ?? 0) - RULER_HEIGHT) + 'px',
@@ -245,10 +353,55 @@ function onHandlePointerUp(): void {
             width: headerWidth + 'px'
           }"
         >
-          <!-- Top row: name. Click to rename inline; Enter / blur
-                         commits, Escape cancels. Only the track header is
-                         renamed — clip labels keep their own names. -->
+          <!-- Top row: grip + name. The grip is the dedicated drag
+                         handle for reordering tracks — dragging it
+                         vertically promotes to a reorder gesture with
+                         a drop indicator across the header column. -->
           <div class="flex items-start gap-1">
+            <div
+              class="track-grip flex h-4 w-3 shrink-0 cursor-grab items-center justify-center text-zinc-500 hover:text-zinc-200 active:cursor-grabbing"
+              title="Drag to reorder"
+              @pointerdown="onGripPointerDown(track, $event)"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 8 12"
+                fill="currentColor"
+                aria-hidden="true"
+                class="h-3 w-2"
+              >
+                <circle
+                  cx="2"
+                  cy="2"
+                  r="1"
+                />
+                <circle
+                  cx="6"
+                  cy="2"
+                  r="1"
+                />
+                <circle
+                  cx="2"
+                  cy="6"
+                  r="1"
+                />
+                <circle
+                  cx="6"
+                  cy="6"
+                  r="1"
+                />
+                <circle
+                  cx="2"
+                  cy="10"
+                  r="1"
+                />
+                <circle
+                  cx="6"
+                  cy="10"
+                  r="1"
+                />
+              </svg>
+            </div>
             <div class="min-w-0 flex-1">
               <input
                 v-if="editingTrackId === track.id"
@@ -406,6 +559,19 @@ function onHandlePointerUp(): void {
           :title="'Drag to resize track \u2014 ' + Math.round(rowLayout[i]?.height ?? 0) + 'px'"
           @pointerdown="onHandlePointerDown(track, $event)"
         />
+
+        <!-- Drop indicator. A thin emerald line across the column at
+             the inter-track seam corresponding to the current drop
+             slot. Mounted only while a reorder drag is active and a
+             non-noop target has been computed. -->
+        <div
+          v-if="dropIndicatorIndex !== null"
+          class="track-drop-indicator pointer-events-none absolute left-0"
+          :style="{
+            top: dropIndicatorTopPx + 'px',
+            width: headerWidth + 'px'
+          }"
+        />
       </div>
     </div>
   </div>
@@ -469,5 +635,16 @@ function onHandlePointerUp(): void {
 }
 .track-resize-handle:active {
   background: rgba(244, 244, 245, 0.6); /* zinc-100 while dragging */
+}
+
+/* Drop indicator line for the reorder drag. Sits over the inter-track
+   gap pointing to the slot the dropped track would land in. 2 px tall
+   so it reads as a positive affordance without obscuring the row
+   below. */
+.track-drop-indicator {
+  height: 2px;
+  background: #10b981; /* emerald-500 */
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.35);
+  z-index: 10;
 }
 </style>

@@ -224,6 +224,48 @@ bool ProjectState::hasTrack(const juce::String& trackId) const
     return findTrack(trackId).isValid();
 }
 
+bool ProjectState::moveTrack(const juce::String& trackId, int newIndex)
+{
+    // Only `TRACK`-typed children count toward the visible track order;
+    // PROJECT may also hold LIBRARY / MARKERS at the same depth.
+    int currentIndex = -1;
+    int trackChildCount = 0;
+    for (int i = 0; i < root.getNumChildren(); ++i)
+    {
+        const auto child = root.getChild(i);
+        if (!child.hasType(kTrack))
+            continue;
+        if (child.getProperty(kId).toString() == trackId)
+            currentIndex = i;
+        ++trackChildCount;
+    }
+    if (currentIndex < 0 || trackChildCount <= 1)
+        return false;
+    // `newIndex` arrives in TRACK-ordinal space (i.e. ignoring sibling
+    // LIBRARY / MARKERS nodes); translate it back into the absolute
+    // child index ValueTree expects. We do this by walking forwards
+    // skipping non-TRACK children until we've stepped over `newIndex`
+    // tracks.
+    const int clampedOrdinal = juce::jlimit(0, trackChildCount - 1, newIndex);
+    int absoluteTarget = -1;
+    int seen = 0;
+    for (int i = 0; i < root.getNumChildren(); ++i)
+    {
+        if (!root.getChild(i).hasType(kTrack))
+            continue;
+        if (seen == clampedOrdinal)
+        {
+            absoluteTarget = i;
+            break;
+        }
+        ++seen;
+    }
+    if (absoluteTarget < 0 || absoluteTarget == currentIndex)
+        return false;
+    root.moveChild(currentIndex, absoluteTarget, &undoManager);
+    return true;
+}
+
 float ProjectState::getTrackGain(const juce::String& trackId) const
 {
     const auto track = findTrack(trackId);

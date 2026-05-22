@@ -1379,6 +1379,26 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * Move `trackId` to a new 0-based position in the project's track
+     * order. Sent once on drop after the user drags a track header.
+     * The mutation is optimistic (the local array is reordered before
+     * the bridge ack) so the timeline repaints immediately; the
+     * backend stores the new order in its ValueTree with undo support
+     * and broadcasts a soft-replace PROJECT_STATE after EDIT_UNDO /
+     * EDIT_REDO so the renderer can re-sort to match.
+     */
+    reorderTrack(trackId: string, newIndex: number): void {
+      const currentIndex = this.tracks.findIndex((t) => t.id === trackId)
+      if (currentIndex < 0) return
+      const clamped = Math.max(0, Math.min(this.tracks.length - 1, Math.floor(newIndex)))
+      if (clamped === currentIndex) return
+      const [moved] = this.tracks.splice(currentIndex, 1)
+      if (!moved) return
+      this.tracks.splice(clamped, 0, moved)
+      sendBridge('TRACK_REORDER', { trackId, newIndex: clamped })
+    },
+
+    /**
      * Reconcile a `CLIP_ADDED` / `CLIP_ADD_FAILED` ack from the backend
      * against the optimistically-added clip in the renderer.
      *
@@ -1761,6 +1781,26 @@ export const useProjectStore = defineStore('project', {
             track.name = fileName
           }
         }
+      }
+      // Reorder `this.tracks` to match the snapshot's track order.
+      // The backend is authoritative on track ordering; without this
+      // step a TRACK_REORDER undo (which arrives as a softReplace
+      // PROJECT_STATE) wouldn't actually re-shuffle the renderer's
+      // array. Locally-known tracks the snapshot doesn't mention stay
+      // appended at the end so an optimistic TRACK_ADD that hasn't
+      // round-tripped yet doesn't get lost.
+      if (snapshot.tracks.length > 0) {
+        const indexOf = new Map<string, number>()
+        for (let i = 0; i < snapshot.tracks.length; i++) {
+          const id = snapshot.tracks[i]?.id
+          if (id) indexOf.set(id, i)
+        }
+        const SENTINEL = Number.MAX_SAFE_INTEGER
+        this.tracks.sort((a, b) => {
+          const ai = indexOf.has(a.id) ? indexOf.get(a.id)! : SENTINEL
+          const bi = indexOf.has(b.id) ? indexOf.get(b.id)! : SENTINEL
+          return ai - bi
+        })
       }
       // PROJECT_STATE is *additive only*. We do NOT drop optimistic
       // tracks/clips that aren't in the snapshot:
