@@ -1128,6 +1128,13 @@ export const useProjectStore = defineStore('project', {
       if (!fallbackParentId) return false
       clip.libraryItemId = fallbackParentId
       sendBridge('CLIP_REBIND', { clipId, libraryItemId: fallbackParentId })
+      // Bump the redraw revision so the timeline picks up the new
+      // library binding immediately — the chain-link badge depends on
+      // `clip.libraryItemId` resolved against the library, but the
+      // timeline's watchers key on track/clip counts and peaksRevision,
+      // not on per-clip libraryItemId. Without this nudge the unlinked
+      // clip still shows the linked-icon until the next unrelated redraw.
+      this.peaksRevision++
       log.info('project', `unlinkClipFromLibrary clip=${clipId} -> source=${fallbackParentId}`)
       return true
     },

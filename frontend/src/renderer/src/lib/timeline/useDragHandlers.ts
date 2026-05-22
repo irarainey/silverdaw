@@ -301,6 +301,15 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
    */
   function hitTestClipEdge(clientX: number, region: ClipHitRegion): 'left' | 'right' | null {
     if (!host.value) return null
+    // Clips linked to a saved-clip library entry are locked against
+    // edge-resize on the timeline: resizing one would have to resize
+    // every linked sibling, which is the clip-editor's job (or the
+    // user can right-click → "Unlink from library" to free this
+    // instance). Suppressing the edge hit-region here transparently
+    // makes both the hover cursor and the pointer-down handler treat
+    // the whole clip as a move target.
+    const clip = project.clips[region.clipId]
+    if (clip && isClipLinkedToSavedClip(clip)) return null
     const rect = host.value.getBoundingClientRect()
     const worldX = (clientX - rect.left) + scrollX.value
     const leftDist = worldX - region.x
@@ -312,6 +321,17 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (leftDist <= edge) return 'left'
     if (rightDist <= edge) return 'right'
     return null
+  }
+
+  /** True if the clip's libraryItemId points at a saved-clip library
+   *  item (i.e. this is a linked instance). Independent clips whose
+   *  libraryItemId points at an audio-file, or whose libraryItemId is
+   *  missing from the library, return false. */
+  function isClipLinkedToSavedClip(clip: { libraryItemId?: string }): boolean {
+    const libId = clip.libraryItemId
+    if (!libId) return false
+    const item = library.items.find((i) => i.id === libId)
+    return item?.kind === 'saved-clip'
   }
 
   /** Source-file duration for a clip's underlying audio in ms. Used to
@@ -583,13 +603,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (!clip) return
 
     if (edge) {
-      // Threshold crossed in trim mode. If the clip is linked to a
-      // saved-clip library entry, auto-unlink first so this trim is
-      // a per-instance edit rather than propagating to every linked
-      // sibling. The clip's current trim window is preserved exactly
-      // by the rebind, so the visual state doesn't shift before the
-      // first drag-delta is applied.
-      project.unlinkClipFromLibrary(clip.id)
+      // Threshold crossed in trim mode. (Linked saved-clip instances
+      // never reach here because hitTestClipEdge suppresses the edge
+      // hit-region for them — resizing a linked clip would have to
+      // resize every sibling, which is the clip-editor's job.)
       trimClipId = clip.id
       trimEdge = edge
       trimOrigStartMs = clip.startMs

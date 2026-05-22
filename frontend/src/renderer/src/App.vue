@@ -18,7 +18,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
-import { startAutosaveManager, stopAutosaveManager } from '@/lib/autosave'
+import { startAutosaveManager, stopAutosaveManager, clearAutosaveBucket } from '@/lib/autosave'
 import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
@@ -774,10 +774,23 @@ async function onUnsavedPromptSave(): Promise<void> {
   next()
 }
 
-function onUnsavedPromptDiscard(): void {
+async function onUnsavedPromptDiscard(): Promise<void> {
   unsavedPromptOpen.value = false
   const next = pendingAfterDiscard
   pendingAfterDiscard = null
+  // The user explicitly chose to throw away their unsaved changes.
+  // Delete this project's autosave bucket so the next launch's
+  // recovery scanner doesn't resurrect them as a "we crashed, want
+  // to restore?" prompt. We MUST await this before proceeding —
+  // `next` is typically `app.confirmClose` / `file.exitConfirmed`
+  // which synchronously calls `app.exit(0)` in main, terminating
+  // the process before any in-flight IPC can land. Without the
+  // await the autosave folder stays on disk and the next launch
+  // still offers recovery.
+  const projectId = project.projectId
+  if (projectId) {
+    await clearAutosaveBucket(projectId)
+  }
   next?.()
 }
 
