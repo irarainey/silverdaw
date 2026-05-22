@@ -539,9 +539,9 @@ double ProjectState::getBpm() const
 
 void ProjectState::setBpm(double bpm)
 {
-    // Tempo is a meaningful project edit; let the normal dirty-tracking
-    // listener observe the property change.
-    root.setProperty(kBpm, bpm, nullptr);
+    // Tempo is a meaningful project edit; record via the undo manager
+    // so Ctrl+Z reverts a tempo change.
+    root.setProperty(kBpm, bpm, &undoManager);
 }
 
 double ProjectState::getProjectLengthMs() const
@@ -552,8 +552,8 @@ double ProjectState::getProjectLengthMs() const
 void ProjectState::setProjectLengthMs(double lengthMs)
 {
     // Length is a meaningful edit (the user explicitly chose this
-    // length via the transport bar).
-    root.setProperty(kProjectLengthMs, lengthMs, nullptr);
+    // length via the transport bar) — recorded for undo.
+    root.setProperty(kProjectLengthMs, lengthMs, &undoManager);
 }
 
 bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName,
@@ -580,59 +580,59 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
         auto item = library.getChild(i);
         if (item.getProperty(kId).toString() == itemId)
         {
-            item.setProperty(kFilePath, filePath, nullptr);
-            item.setProperty(kKind, normalisedKind, nullptr);
+            item.setProperty(kFilePath, filePath, &undoManager);
+            item.setProperty(kKind, normalisedKind, &undoManager);
             if (displayName.isNotEmpty())
             {
-                item.setProperty(kDisplayName, displayName, nullptr);
+                item.setProperty(kDisplayName, displayName, &undoManager);
             }
             if (fileName.isNotEmpty())
             {
-                item.setProperty(kName, fileName, nullptr);
+                item.setProperty(kName, fileName, &undoManager);
             }
             if (durationMs > 0.0)
             {
-                item.setProperty(kDurationMs, durationMs, nullptr);
+                item.setProperty(kDurationMs, durationMs, &undoManager);
             }
             if (sampleRate > 0)
             {
-                item.setProperty(kSampleRate, sampleRate, nullptr);
+                item.setProperty(kSampleRate, sampleRate, &undoManager);
             }
             if (channelCount > 0)
             {
-                item.setProperty(kChannelCount, channelCount, nullptr);
+                item.setProperty(kChannelCount, channelCount, &undoManager);
             }
             if (playbackPath.isNotEmpty())
             {
-                item.setProperty(kPlaybackFilePath, playbackPath, nullptr);
+                item.setProperty(kPlaybackFilePath, playbackPath, &undoManager);
             }
             if (key.isNotEmpty())
             {
-                item.setProperty(kKey, key, nullptr);
+                item.setProperty(kKey, key, &undoManager);
             }
             if (sourceItemId.isNotEmpty())
             {
-                item.setProperty(kSourceItemId, sourceItemId, nullptr);
+                item.setProperty(kSourceItemId, sourceItemId, &undoManager);
             }
             if (sourceClipId.isNotEmpty())
             {
-                item.setProperty(kSourceClipId, sourceClipId, nullptr);
+                item.setProperty(kSourceClipId, sourceClipId, &undoManager);
             }
             if (sourceInMs >= 0.0)
             {
-                item.setProperty(kSourceInMs, sourceInMs, nullptr);
+                item.setProperty(kSourceInMs, sourceInMs, &undoManager);
             }
             if (sourceDurationMs >= 0.0)
             {
-                item.setProperty(kSourceDurationMs, sourceDurationMs, nullptr);
+                item.setProperty(kSourceDurationMs, sourceDurationMs, &undoManager);
             }
             if (collapsedFlag == 1)
             {
-                item.setProperty(kCollapsed, true, nullptr);
+                item.setProperty(kCollapsed, true, &undoManager);
             }
             else if (collapsedFlag == 0)
             {
-                item.removeProperty(kCollapsed, nullptr);
+                item.removeProperty(kCollapsed, &undoManager);
             }
             return true;
         }
@@ -689,7 +689,11 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
     {
         item.setProperty(kCollapsed, true, nullptr);
     }
-    library.appendChild(item, nullptr);
+    // The properties above are set on the orphan item BEFORE it joins
+    // the tree so they don't generate undo actions individually — the
+    // single `appendChild` below records one undoable action that
+    // covers the entire item insertion (undo removes the whole child).
+    library.appendChild(item, &undoManager);
     return true;
 }
 
@@ -702,7 +706,7 @@ bool ProjectState::removeLibraryItem(const juce::String& itemId)
         auto item = library.getChild(i);
         if (item.getProperty(kId).toString() == itemId)
         {
-            library.removeChild(item, nullptr);
+            library.removeChild(item, &undoManager);
             return true;
         }
     }
@@ -1077,7 +1081,7 @@ bool ProjectState::addMarker(const juce::String& markerId, double positionMs)
         }
         if (marker.hasType(kMarker) && marker.getProperty(kId).toString() == markerId)
         {
-            marker.setProperty(kPositionMs, positionMs, nullptr);
+            marker.setProperty(kPositionMs, positionMs, &undoManager);
             return true;
         }
     }
@@ -1085,7 +1089,7 @@ bool ProjectState::addMarker(const juce::String& markerId, double positionMs)
     juce::ValueTree marker(kMarker);
     marker.setProperty(kId, markerId, nullptr);
     marker.setProperty(kPositionMs, positionMs, nullptr);
-    markers.addChild(marker, -1, nullptr);
+    markers.addChild(marker, -1, &undoManager);
     return true;
 }
 
@@ -1118,7 +1122,7 @@ bool ProjectState::moveMarker(const juce::String& markerId, double positionMs)
             {
                 return true;
             }
-            marker.setProperty(kPositionMs, positionMs, nullptr);
+            marker.setProperty(kPositionMs, positionMs, &undoManager);
             return true;
         }
     }
@@ -1143,7 +1147,7 @@ bool ProjectState::removeMarker(const juce::String& markerId)
         auto marker = markers.getChild(i);
         if (marker.hasType(kMarker) && marker.getProperty(kId).toString() == markerId)
         {
-            markers.removeChild(marker, nullptr);
+            markers.removeChild(marker, &undoManager);
             return true;
         }
     }

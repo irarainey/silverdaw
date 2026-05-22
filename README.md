@@ -107,6 +107,17 @@ Silverdaw currently supports the core arrangement workflow:
   hear (~250 ms for A2DP, ~400 ms for HFP).
 - Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
   file association.
+- Undo / redo (Ctrl+Z / Ctrl+Y) any project-mutating edit. Covers
+  clip add / move / trim / recolour / rename / delete / relink, track
+  add / remove / rename / gain, library add / remove / relink /
+  reanalyse, marker add / move / remove, BPM, project length, and
+  project rename. Drag streams (clip move / trim / track gain /
+  marker move) coalesce same-target events within 500 ms into a
+  single undo step; everything else gets its own step. View state
+  (zoom, scroll, playhead) is intentionally outside the undo stack
+  so navigating around doesn't pollute the history. Compound
+  operations like clip split / duplicate currently emit multiple
+  undo steps; bundling them is a follow-up.
 
 Playback is always served from the decoded WAV cache; original compressed sources
 (MP3, M4A, …) are only used to generate that cache. This keeps the read-ahead
@@ -117,7 +128,8 @@ The main remaining roadmap areas are warp / pitch shifting, region selection on 
 clip range into a new baked WAV sample (the saved-clip mechanism above is non-destructive only),
 library search / tags / list view, ffmpeg-backed decoding for unsupported formats, mixer
 / effects / automation, mixdown export, stem separation, loop slicing, a timeline-clip entry point
-into the Clip Editor (today the editor opens from library items only), and a CI matrix that
+into the Clip Editor (today the editor opens from library items only), grouping compound
+operations (split / duplicate) into a single undo step, and a CI matrix that
 enforces a coverage floor over the existing backend and frontend test suites.
 
 ## Bridge protocol
@@ -607,6 +619,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Delete` | Delete the selected clip. |
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip — on the source track it lands immediately after the source clip; on a different (selected) track it lands at the playhead. A toast appears if the slot is already occupied. |
+| `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
 | **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Bounce to Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |

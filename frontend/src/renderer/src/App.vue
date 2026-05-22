@@ -656,6 +656,14 @@ function handleMenuAction(action: string): void {
     void titleBarRef.value?.startRename()
     return
   }
+  if (action === 'edit.undo') {
+    project.requestUndo()
+    return
+  }
+  if (action === 'edit.redo') {
+    project.requestRedo()
+    return
+  }
   if (action === 'edit.splitAtPlayhead') {
     // Split every clip whose timeline window straddles the current
     // playhead. Same logic as the 'S' accelerator inside the timeline

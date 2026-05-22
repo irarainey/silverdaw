@@ -215,6 +215,8 @@ export interface BridgeOutboundMap {
   PREVIEW_SEEK: PreviewSeekPayload
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
+  EDIT_UNDO: undefined
+  EDIT_REDO: undefined
 }
 
 export interface WaveformRequestPayload {
@@ -518,6 +520,15 @@ export interface ProjectStatePayload {
    */
   reset?: boolean
   /**
+   * Authoritative-reconcile hint used by Undo/Redo: replace tracks /
+   * clips / library / markers wholesale (so things that disappeared
+   * actually disappear) but do NOT mark the project clean, rotate the
+   * `projectId`, or clear clipboard / selection. The dirty state is
+   * communicated separately by the backend via `PROJECT_DIRTY` and the
+   * undo / redo handler explicitly resends it after the snapshot.
+   */
+  softReplace?: boolean
+  /**
    * Horizontal zoom level (px-per-second) persisted with the project.
    * Optional: omitted on a snapshot for a project that hasn't yet set a
    * zoom (the renderer keeps its current zoom in that case).
@@ -782,6 +793,26 @@ export interface BridgeInboundMap {
   PREVIEW_ENDED: PreviewEndedPayload
   AUDIO_DEVICES_LIST: AudioDevicesListPayload
   AUDIO_DEVICE_CHANGED: AudioDeviceChangedPayload
+  EDIT_UNDO_STATE: EditUndoStatePayload
+}
+
+/**
+ * Mirror of the backend's `juce::UndoManager` head state. Broadcast on
+ * AUTH-connect right after the first `PROJECT_STATE`, after every
+ * project-mutating envelope, and after `EDIT_UNDO` / `EDIT_REDO`. The
+ * renderer surfaces the boolean flags on the Edit menu (Undo / Redo
+ * grey out when their respective flag is false) and the label fields
+ * power optional menu hints like "Undo Move clip".
+ */
+export interface EditUndoStatePayload {
+  canUndo: boolean
+  canRedo: boolean
+  /** Description of the transaction that would be undone next, or
+   *  absent when `canUndo === false`. */
+  undoLabel?: string
+  /** Description of the transaction that would be redone next, or
+   *  absent when `canRedo === false`. */
+  redoLabel?: string
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -828,7 +859,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PREVIEW_POSITION',
   'PREVIEW_ENDED',
   'AUDIO_DEVICES_LIST',
-  'AUDIO_DEVICE_CHANGED'
+  'AUDIO_DEVICE_CHANGED',
+  'EDIT_UNDO_STATE'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1102,5 +1134,15 @@ export function isAudioDeviceChangedPayload(value: unknown): value is AudioDevic
   if (value.deviceName !== null && typeof value.deviceName !== 'string') return false
   if (typeof value.ok !== 'boolean') return false
   if (value.error !== undefined && typeof value.error !== 'string') return false
+  return true
+}
+
+/** Guard for `EditUndoStatePayload`. */
+export function isEditUndoStatePayload(value: unknown): value is EditUndoStatePayload {
+  if (!isPlainObject(value)) return false
+  if (typeof value.canUndo !== 'boolean') return false
+  if (typeof value.canRedo !== 'boolean') return false
+  if (value.undoLabel !== undefined && typeof value.undoLabel !== 'string') return false
+  if (value.redoLabel !== undefined && typeof value.redoLabel !== 'string') return false
   return true
 }

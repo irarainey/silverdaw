@@ -1024,10 +1024,14 @@ function handleMenuAction(action: string): void {
 
     // Edit
     case 'edit.undo':
-      wc.undo()
+      // Project undo (forwarded to the renderer → `EDIT_UNDO` bridge
+      // envelope). Text-input native undo is still reachable via the
+      // keyboard shortcut, which `menuShortcuts` keeps out of this
+      // path while focus is in an editable target.
+      wc.send('menu:action', action)
       break
     case 'edit.redo':
-      wc.redo()
+      wc.send('menu:action', action)
       break
     case 'edit.cut':
       // Forward to renderer so it can target the selected clip. The

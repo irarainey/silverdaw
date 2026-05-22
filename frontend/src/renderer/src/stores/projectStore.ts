@@ -309,6 +309,18 @@ interface ProjectState {
 
   /** Source clip id -> last duplicated clip id for repeated duplicate commands. */
   duplicateTailBySource: Record<string, string>
+
+  /** Mirror of the backend `juce::UndoManager` head: whether an undo /
+   *  redo step is currently available. Drives the Edit > Undo / Redo
+   *  menu's enabled state. Updated by `EDIT_UNDO_STATE` envelopes. */
+  canUndo: boolean
+  canRedo: boolean
+  /** Description of the next undo / redo transaction (e.g. "Move clip").
+   *  Reserved for future menu hints like "Undo Move clip"; the basic
+   *  Edit menu just uses the boolean fields. `null` when the
+   *  corresponding `can…` flag is false. */
+  undoLabel: string | null
+  redoLabel: string | null
 }
 
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
@@ -430,7 +442,11 @@ export const useProjectStore = defineStore('project', {
     selectedClipId: null,
     selectedTrackId: null,
     clipboardClip: null,
-    duplicateTailBySource: {}
+    duplicateTailBySource: {},
+    canUndo: false,
+    canRedo: false,
+    undoLabel: null,
+    redoLabel: null
   }),
 
   getters: {
@@ -1399,6 +1415,14 @@ export const useProjectStore = defineStore('project', {
       // Stashed length applied at the end, after tracks have been
       // reconciled (the setter writes to each track's lengthMs).
       let pendingProjectLengthMs: number | null = null
+      // Soft-replace is the authoritative-reconcile variant used by
+      // Undo / Redo: replace tracks/clips/library/markers wholesale
+      // (so things that disappeared actually disappear) WITHOUT
+      // marking clean, rotating projectId, or clearing the clipboard
+      // and selection. The backend explicitly resends PROJECT_DIRTY
+      // with the correct dirty state right after this envelope so the
+      // title-bar indicator stays accurate.
+      const isSoftReplace = snapshot.softReplace === true
       // Adopt the project identity fields up front so any code that reads
       // them during the snapshot apply (e.g. the title bar) sees the
       // post-load values. A fresh snapshot is by definition clean — any
@@ -1407,7 +1431,9 @@ export const useProjectStore = defineStore('project', {
       const previousFilePath = this.currentFilePath
       this.currentFilePath = snapshot.filePath
       this.projectName = snapshot.name?.trim() ? snapshot.name : DEFAULT_PROJECT_NAME
-      this.isDirty = false
+      if (!isSoftReplace) {
+        this.isDirty = false
+      }
       // Bucket transition for autosave. We rotate the project id on
       // any snapshot that *replaces* the project — Load / New (which
       // carry `reset=true`) AND Save As (which broadcasts a follow-up
@@ -1416,7 +1442,7 @@ export const useProjectStore = defineStore('project', {
       // backing file did). Bucket cleanup for the prior id is run
       // by the `previousProjectId` watcher in `lib/autosave.ts`.
       const pathChanged = snapshot.filePath !== previousFilePath
-      const shouldRotateId = snapshot.reset === true || pathChanged
+      const shouldRotateId = (snapshot.reset === true || pathChanged) && !isSoftReplace
       if (shouldRotateId) {
         this.previousProjectId = this.projectId
         if (snapshot.filePath) {
@@ -1468,13 +1494,19 @@ export const useProjectStore = defineStore('project', {
       // we don't carry stale tracks/clips/library items from the
       // previous project. The connect-time path leaves `reset` falsy
       // and the snapshot is treated as additive (see comment below).
-      if (snapshot.reset === true) {
+      //
+      // Undo / Redo sets `softReplace=true`: the same wholesale-replace
+      // semantics for tracks/clips/markers/library, but preserves the
+      // clipboard and selection (which aren't ValueTree state).
+      if (snapshot.reset === true || isSoftReplace) {
         this.tracks = []
         this.clips = {}
         this.markers = []
-        this.selectedClipId = null
-        this.selectedTrackId = null
-        this.clipboardClip = null
+        if (!isSoftReplace) {
+          this.selectedClipId = null
+          this.selectedTrackId = null
+          this.clipboardClip = null
+        }
         this.duplicateTailBySource = {}
         this.peaksRevision++
         library.clear()
@@ -1685,6 +1717,31 @@ export const useProjectStore = defineStore('project', {
     requestNewProject(): void {
       log.info('project', 'requestNewProject')
       sendBridge('PROJECT_NEW')
+    },
+
+    /** Apply an inbound `EDIT_UNDO_STATE` envelope. Mirrors the backend
+     *  `juce::UndoManager` head so the Edit menu's Undo / Redo items
+     *  reflect the current can-undo / can-redo state. */
+    applyEditUndoState(payload: { canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string }): void {
+      this.canUndo = payload.canUndo
+      this.canRedo = payload.canRedo
+      this.undoLabel = payload.canUndo && payload.undoLabel ? payload.undoLabel : null
+      this.redoLabel = payload.canRedo && payload.redoLabel ? payload.redoLabel : null
+    },
+
+    /** Send EDIT_UNDO; backend reverts the most recent undoable
+     *  transaction and rebroadcasts the project state. No-op locally if
+     *  `canUndo` is false — the backend will also no-op. */
+    requestUndo(): void {
+      log.info('project', 'requestUndo')
+      sendBridge('EDIT_UNDO')
+    },
+
+    /** Send EDIT_REDO; backend re-applies the most recently-undone
+     *  transaction and rebroadcasts the project state. */
+    requestRedo(): void {
+      log.info('project', 'requestRedo')
+      sendBridge('EDIT_REDO')
     },
 
     addMarkerAt(positionMs: number): boolean {

@@ -35,6 +35,7 @@ import {
   isBridgeInboundType,
   isClipAckPayload,
   isClipRemovedPayload,
+  isEditUndoStatePayload,
   isLibraryItemAnalysisPayload,
   isPlayheadUpdatePayload,
   isPreviewEndedPayload,
@@ -535,6 +536,11 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'EDIT_UNDO_STATE': {
+      useProjectStore().applyEditUndoState(msg.payload)
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -664,6 +670,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isAudioDevicesListPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'AUDIO_DEVICE_CHANGED':
       return isAudioDeviceChangedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'EDIT_UNDO_STATE':
+      return isEditUndoStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

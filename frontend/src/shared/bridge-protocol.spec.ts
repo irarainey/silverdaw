@@ -46,7 +46,8 @@ const INBOUND_TYPES = {
   PREVIEW_POSITION: true,
   PREVIEW_ENDED: true,
   AUDIO_DEVICES_LIST: true,
-  AUDIO_DEVICE_CHANGED: true
+  AUDIO_DEVICE_CHANGED: true,
+  EDIT_UNDO_STATE: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {

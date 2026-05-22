@@ -1720,6 +1720,240 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
                              " originalPath=" + originalPath);
 }
 
+// ─── Undo / Redo plumbing ─────────────────────────────────────────────
+//
+// The backend's `juce::UndoManager` already collects every ValueTree
+// mutation that goes through `&undoManager` (see ProjectState.cpp).
+// Without explicit transaction boundaries every individual
+// `setProperty` becomes its own undoable action — a 60Hz drag would
+// produce hundreds of useless one-pixel undo steps. We call
+// `beginNewTransaction(name)` at the start of every project-mutating
+// dispatch so each bridge envelope is exactly one undo step, with a
+// small coalescing window for streaming drags.
+
+// Bridge envelope types whose handlers actually mutate
+// `setProperty(..., &undoManager)`-tracked state.
+bool isUndoableEnvelopeType(const juce::String& type) noexcept
+{
+    return type == "CLIP_ADD" || type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_COLOR" ||
+           type == "CLIP_REMOVE" || type == "CLIP_RENAME" || type == "CLIP_RELINK" ||
+           type == "TRACK_ADD" || type == "TRACK_REMOVE" || type == "TRACK_RENAME" ||
+           type == "TRACK_GAIN" || type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
+           type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
+           type == "PROJECT_RENAME" || type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" ||
+           type == "PROJECT_MARKER_ADD" || type == "PROJECT_MARKER_MOVE" ||
+           type == "PROJECT_MARKER_REMOVE";
+}
+
+juce::String prettyTransactionName(const juce::String& type)
+{
+    if (type == "CLIP_ADD") return "Add clip";
+    if (type == "CLIP_MOVE") return "Move clip";
+    if (type == "CLIP_TRIM") return "Trim clip";
+    if (type == "CLIP_COLOR") return "Recolour clip";
+    if (type == "CLIP_REMOVE") return "Delete clip";
+    if (type == "CLIP_RENAME") return "Rename clip";
+    if (type == "CLIP_RELINK") return "Relink clip";
+    if (type == "TRACK_ADD") return "Add track";
+    if (type == "TRACK_REMOVE") return "Remove track";
+    if (type == "TRACK_RENAME") return "Rename track";
+    if (type == "TRACK_GAIN") return "Change track gain";
+    if (type == "LIBRARY_ADD") return "Update library item";
+    if (type == "LIBRARY_REMOVE") return "Remove library item";
+    if (type == "LIBRARY_REANALYSE") return "Reanalyse library item";
+    if (type == "LIBRARY_ITEM_RELINK") return "Relink library item";
+    if (type == "PROJECT_RENAME") return "Rename project";
+    if (type == "PROJECT_SET_BPM") return "Change tempo";
+    if (type == "PROJECT_SET_LENGTH") return "Change project length";
+    if (type == "PROJECT_MARKER_ADD") return "Add marker";
+    if (type == "PROJECT_MARKER_MOVE") return "Move marker";
+    if (type == "PROJECT_MARKER_REMOVE") return "Remove marker";
+    return type;
+}
+
+// File-scope coalescing state. Dispatch always runs on the JUCE message
+// thread so no synchronisation is needed.
+struct UndoCoalesceState
+{
+    juce::String lastKey;
+    juce::int64 lastTimeMs = 0;
+};
+
+static UndoCoalesceState& undoCoalesceState()
+{
+    static UndoCoalesceState state;
+    return state;
+}
+
+void resetUndoCoalesceState() noexcept
+{
+    auto& s = undoCoalesceState();
+    s.lastKey = {};
+    s.lastTimeMs = 0;
+}
+
+// 60Hz drag streams (CLIP_MOVE / CLIP_TRIM / TRACK_GAIN) coalesce
+// same-target events within this window into a single undo step. Other
+// mutating envelopes get a fresh transaction every time.
+constexpr juce::int64 kUndoCoalesceWindowMs = 500;
+
+void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& payload,
+                                  silverdaw::ProjectState& projectState)
+{
+    if (!isUndoableEnvelopeType(type)) return;
+
+    juce::String idPart;
+    if (type == "CLIP_MOVE" || type == "CLIP_TRIM")
+    {
+        idPart = payload.getProperty("clipId", "").toString();
+    }
+    else if (type == "TRACK_GAIN")
+    {
+        idPart = payload.getProperty("trackId", "").toString();
+    }
+    else if (type == "PROJECT_MARKER_MOVE")
+    {
+        idPart = payload.getProperty("markerId", "").toString();
+    }
+    else if (type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" || type == "PROJECT_RENAME")
+    {
+        // Singleton project-level edits coalesce against themselves
+        // — typing in the BPM / length / name field commits per
+        // keystroke, but we want one undo step per "edit session".
+        idPart = "_";
+    }
+
+    juce::String key = type;
+    if (idPart.isNotEmpty()) key << ":" << idPart;
+
+    const auto now = juce::Time::currentTimeMillis();
+    auto& s = undoCoalesceState();
+    const bool coalesce = idPart.isNotEmpty() && key == s.lastKey &&
+                          (now - s.lastTimeMs) < kUndoCoalesceWindowMs;
+    if (!coalesce)
+    {
+        projectState.getUndoManager().beginNewTransaction(prettyTransactionName(type));
+    }
+    s.lastKey = key;
+    s.lastTimeMs = now;
+}
+
+juce::var buildEditUndoStateEnvelope(silverdaw::ProjectState& projectState)
+{
+    auto& um = projectState.getUndoManager();
+    auto* obj = new juce::DynamicObject();
+    const bool canUndo = um.canUndo();
+    const bool canRedo = um.canRedo();
+    obj->setProperty("canUndo", canUndo);
+    obj->setProperty("canRedo", canRedo);
+    if (canUndo)
+    {
+        const auto label = um.getUndoDescription();
+        if (label.isNotEmpty()) obj->setProperty("undoLabel", label);
+    }
+    if (canRedo)
+    {
+        const auto label = um.getRedoDescription();
+        if (label.isNotEmpty()) obj->setProperty("redoLabel", label);
+    }
+    return juce::var(obj);
+}
+
+void broadcastEditUndoState(silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
+{
+    bridge.broadcast("EDIT_UNDO_STATE", buildEditUndoStateEnvelope(projectState));
+}
+
+// Build a PROJECT_STATE envelope with the `softReplace` flag set —
+// used by undo / redo to authoritatively reconcile the renderer's
+// mirror (so removed tracks/clips actually vanish) without rotating
+// projectId, marking clean, or clearing the renderer's clipboard /
+// selection. The dirty state is communicated separately via a
+// follow-up PROJECT_DIRTY broadcast.
+juce::var buildSoftReplaceProjectStateEnvelope(const ProjectSession& session,
+                                                silverdaw::ProjectState& projectState)
+{
+    auto envelope = buildProjectStateEnvelope(session, projectState, false);
+    if (auto* obj = envelope.getDynamicObject())
+    {
+        obj->setProperty("softReplace", true);
+    }
+    return envelope;
+}
+
+void handleEditUndo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                    silverdaw::BridgeServer& bridge, ProjectSession& session,
+                    juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
+{
+    auto& um = projectState.getUndoManager();
+    // Flush any in-flight coalesced transaction so this undo step is
+    // a clean unit.
+    um.beginNewTransaction();
+    resetUndoCoalesceState();
+    if (!um.canUndo())
+    {
+        silverdaw::log::debug("project", "EDIT_UNDO ignored (nothing to undo)");
+        return;
+    }
+
+    // Capture engine playhead so the user doesn't get teleported to 0
+    // by the rebuild's `engine.stop()`. View state (zoom, scroll) is
+    // outside the undo stack so it survives naturally.
+    const double playheadMs = engine.getPositionMs();
+    const auto preIds = collectClipIds(projectState);
+
+    engine.stop();
+    um.undo();
+    for (const auto& id : preIds) engine.removeClip(id);
+    rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
+    engine.setPositionMs(playheadMs);
+
+    bridge.broadcast("PROJECT_STATE", buildSoftReplaceProjectStateEnvelope(session, projectState));
+
+    // The dirty listener only fires on transitions. Force-broadcast the
+    // current dirty state so the renderer's title-bar indicator picks up
+    // the "still dirty after undo" case.
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("dirty", projectState.isDirty());
+        bridge.broadcast("PROJECT_DIRTY", juce::var(p));
+    }
+
+    silverdaw::log::info("project", "EDIT_UNDO ok");
+}
+
+void handleEditRedo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                    silverdaw::BridgeServer& bridge, ProjectSession& session,
+                    juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
+{
+    auto& um = projectState.getUndoManager();
+    um.beginNewTransaction();
+    resetUndoCoalesceState();
+    if (!um.canRedo())
+    {
+        silverdaw::log::debug("project", "EDIT_REDO ignored (nothing to redo)");
+        return;
+    }
+
+    const double playheadMs = engine.getPositionMs();
+    const auto preIds = collectClipIds(projectState);
+
+    engine.stop();
+    um.redo();
+    for (const auto& id : preIds) engine.removeClip(id);
+    rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
+    engine.setPositionMs(playheadMs);
+
+    bridge.broadcast("PROJECT_STATE", buildSoftReplaceProjectStateEnvelope(session, projectState));
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("dirty", projectState.isDirty());
+        bridge.broadcast("PROJECT_DIRTY", juce::var(p));
+    }
+
+    silverdaw::log::info("project", "EDIT_REDO ok");
+}
+
 // Same wire-protocol convention as BridgeServer::broadcast: (type, payload) order is
 // fixed by design, so the easily-swappable-parameters check is intentionally silenced.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -1728,6 +1962,12 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                            juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
                            const silverdaw::DecodedCache& decodedCache, ProjectSession& session)
 {
+    // Undo-transaction prologue. Each project-mutating envelope is wrapped
+    // in its own UndoManager transaction so Ctrl+Z reverts one logical
+    // edit. Drag streams (CLIP_MOVE / CLIP_TRIM / TRACK_GAIN) coalesce
+    // same-target events within a 500 ms window so a 60 Hz drag is one
+    // undo step.
+    beginUndoTransactionIfNeeded(type, payload, projectState);
     if (type == "CLIP_ADD")
     {
         silverdaw::log::info("bridge", "recv CLIP_ADD trackId=" + payload.getProperty("trackId", "").toString() +
@@ -2106,9 +2346,29 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                            payload.getProperty("deviceName", "").toString());
         handleAudioDeviceSelect(payload, engine, bridge);
     }
+    else if (type == "EDIT_UNDO")
+    {
+        silverdaw::log::info("bridge", "recv EDIT_UNDO");
+        handleEditUndo(engine, projectState, bridge, session, peakPool, decodedCache);
+    }
+    else if (type == "EDIT_REDO")
+    {
+        silverdaw::log::info("bridge", "recv EDIT_REDO");
+        handleEditRedo(engine, projectState, bridge, session, peakPool, decodedCache);
+    }
     else
     {
         silverdaw::log::warn("bridge", "unhandled message type: " + type);
+    }
+
+    // Undo-state epilogue. Any mutating envelope (or an undo/redo itself)
+    // can change `canUndo` / `canRedo`. PROJECT_LOAD / PROJECT_NEW and
+    // the recovery / autosave paths each clear the undo history via
+    // `replaceTree`, so they fall under the mutating branch too.
+    if (isUndoableEnvelopeType(type) || type == "EDIT_UNDO" || type == "EDIT_REDO" ||
+        type == "PROJECT_NEW" || type == "PROJECT_LOAD" || type == "PROJECT_LOAD_RECOVERY")
+    {
+        broadcastEditUndoState(projectState, bridge);
     }
 }
 
@@ -2200,6 +2460,9 @@ int runBackend(int argc, char* argv[])
             // snapshot from when they connected. `reset` is omitted on the
             // connect path so the renderer treats it as additive.
             sendToClient("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, false));
+            // Seed the renderer's Undo / Redo menu state so the Edit menu
+            // reflects the backend's UndoManager from the first paint.
+            sendToClient("EDIT_UNDO_STATE", buildEditUndoStateEnvelope(projectState));
         });
 
     if (!bridge.start(bridgePort))

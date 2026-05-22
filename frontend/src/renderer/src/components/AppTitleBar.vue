@@ -18,6 +18,25 @@ const visibleMenus = computed(() =>
   buildMenus({ debugMode: appStore.debugMode, recentProjects: appStore.recentProjects })
 )
 
+/** Per-action dynamic disabled overrides. Menu definitions are static
+ *  (so `menuShortcuts` can bind accelerators once at startup), but a
+ *  handful of items need to reflect live store state — Undo / Redo
+ *  grey out when the backend's UndoManager has nothing to undo / redo.
+ *  Returning a non-boolean from this map means "fall through to the
+ *  static `item.disabled`". */
+function isActionDynamicallyDisabled(action: string | undefined): boolean | null {
+  if (!action) return null
+  if (action === 'edit.undo') return !project.canUndo
+  if (action === 'edit.redo') return !project.canRedo
+  return null
+}
+
+function isItemDisabled(item: MenuItemDef): boolean {
+  const dyn = isActionDynamicallyDisabled(item.action)
+  if (dyn !== null) return dyn
+  return item.disabled === true
+}
+
 const openIndex = ref<number | null>(null)
 /** Key of the currently-open submenu, formatted as
  *  `<topMenuIndex>:<itemIndex>`. Null when no submenu is open. Only
@@ -71,7 +90,7 @@ function invoke(item: MenuItemDef): void {
   // (or opens) the flyout. Hover already handles open; nothing to do
   // here.
   if (item.submenu && item.submenu.length > 0) return
-  if (item.disabled || !item.action) return
+  if (isItemDisabled(item) || !item.action) return
   openIndex.value = null
   openSubmenuKey.value = null
   // Intercept the project-rename menu item directly — the rename input
@@ -207,7 +226,7 @@ defineExpose({ startRename })
                 type="button"
                 class="flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-600 disabled:hover:bg-transparent"
                 :class="{ 'bg-zinc-800': openSubmenuKey === `${i}:${j}` }"
-                :disabled="item.disabled"
+                :disabled="isItemDisabled(item)"
                 :title="item.hint"
                 @click="invoke(item)"
               >
@@ -242,7 +261,7 @@ defineExpose({ startRename })
                     v-else
                     type="button"
                     class="flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left hover:bg-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-500 disabled:hover:bg-transparent"
-                    :disabled="sub.disabled"
+                    :disabled="isItemDisabled(sub)"
                     :title="sub.hint"
                     @click="invoke(sub)"
                   >
