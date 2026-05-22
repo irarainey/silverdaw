@@ -23,16 +23,31 @@ const sourceItem = computed(() => {
 const usages = computed(() => {
   const item = props.item
   if (!item) return []
+  // Truth lives in the project file: each timeline clip records the
+  // `libraryItemId` of its parent library entry. Match on that.
+  //
+  // Audio-file sources additionally count timeline clips whose
+  // libraryItemId references any saved-clip derived FROM this
+  // source — that's a structural relationship recorded by
+  // `derivedFrom.sourceItemId` on the saved-clip, not a heuristic.
+  const derivedSavedClipIds =
+    item.kind === 'audio-file'
+      ? new Set(
+          library.items
+            .filter((i) => i.derivedFrom?.sourceItemId === item.id)
+            .map((i) => i.id)
+        )
+      : null
   const rows: { trackId: string; trackName: string; clipCount: number; starts: string[] }[] = []
   for (const track of project.tracks) {
     const matching = track.clipIds
       .map((clipId) => project.clips[clipId])
-      .filter(
-        (clip): clip is Clip =>
-          clip?.filePath === item.filePath ||
-          clip?.filePath === item.playbackFilePath ||
-          clip?.playbackFilePath === item.filePath
-      )
+      .filter((clip): clip is Clip => {
+        if (!clip) return false
+        if (clip.libraryItemId === item.id) return true
+        if (derivedSavedClipIds?.has(clip.libraryItemId)) return true
+        return false
+      })
     if (matching.length === 0) continue
     rows.push({
       trackId: track.id,

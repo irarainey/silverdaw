@@ -1736,7 +1736,8 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
 bool isUndoableEnvelopeType(const juce::String& type) noexcept
 {
     return type == "CLIP_ADD" || type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_COLOR" ||
-           type == "CLIP_REMOVE" || type == "CLIP_RENAME" || type == "CLIP_RELINK" ||
+           type == "CLIP_REMOVE" || type == "CLIP_RENAME" || type == "CLIP_REBIND" ||
+           type == "CLIP_RELINK" ||
            type == "TRACK_ADD" || type == "TRACK_REMOVE" || type == "TRACK_RENAME" ||
            type == "TRACK_GAIN" || type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
@@ -1753,6 +1754,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "CLIP_COLOR") return "Recolour clip";
     if (type == "CLIP_REMOVE") return "Delete clip";
     if (type == "CLIP_RENAME") return "Rename clip";
+    if (type == "CLIP_REBIND") return "Save clip to library";
     if (type == "CLIP_RELINK") return "Relink clip";
     if (type == "TRACK_ADD") return "Add track";
     if (type == "TRACK_REMOVE") return "Remove track";
@@ -2011,6 +2013,17 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const juce::String name = payload.getProperty("name", juce::var()).toString();
         silverdaw::log::info("bridge", "recv CLIP_RENAME clipId=" + clipId + " name=" + name);
         projectState.setClipName(clipId, name);
+    }
+    else if (type == "CLIP_REBIND")
+    {
+        const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+        const juce::String libraryItemId = payload.getProperty("libraryItemId", juce::var()).toString();
+        silverdaw::log::info("bridge", "recv CLIP_REBIND clipId=" + clipId + " libraryItemId=" +
+                                           libraryItemId);
+        if (clipId.isNotEmpty() && libraryItemId.isNotEmpty())
+        {
+            projectState.setClipLibraryItemId(clipId, libraryItemId);
+        }
     }
     else if (type == "LIBRARY_ADD")
     {

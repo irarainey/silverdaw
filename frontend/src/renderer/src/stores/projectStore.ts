@@ -1090,6 +1090,15 @@ export const useProjectStore = defineStore('project', {
       if (!clip) return null
       const itemId = useLibraryStore().addSavedClipFromTimelineClip(clip)
       if (itemId) {
+        // Rebind the originating timeline clip to the new saved-clip
+        // so the project file records the correct parent relationship.
+        // Without this the clip keeps pointing at the underlying
+        // audio-file source, and the saved-clip's "Used on" view
+        // would never see it.
+        if (clip.libraryItemId !== itemId) {
+          clip.libraryItemId = itemId
+          sendBridge('CLIP_REBIND', { clipId, libraryItemId: itemId })
+        }
         log.info('project', `saveClipToLibrary clip=${clipId} item=${itemId}`)
       }
       return itemId

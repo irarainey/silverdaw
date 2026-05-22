@@ -87,6 +87,16 @@ export interface ClipRenamePayload {
   name: string
 }
 
+/** Change a timeline clip's parent library item. Used by "Save clip
+ *  to library", which promotes a clip's trim window to a reusable
+ *  saved-clip entry — the originating timeline clip is then rebound
+ *  to point at the new saved-clip so the project file records the
+ *  correct parent relationship. */
+export interface ClipRebindPayload {
+  clipId: string
+  libraryItemId: string
+}
+
 /** Register a library item with the backend so its durable fields are
  *  persisted with the project. Volatile renderer-only data such as
  *  waveform peaks and object URLs is rebuilt on demand. */
@@ -181,6 +191,7 @@ export interface BridgeOutboundMap {
   CLIP_REMOVE: ClipRemovePayload
   LIBRARY_ITEM_RELINK: LibraryItemRelinkPayload
   CLIP_RENAME: ClipRenamePayload
+  CLIP_REBIND: ClipRebindPayload
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
   LIBRARY_REANALYSE: LibraryReanalysePayload
