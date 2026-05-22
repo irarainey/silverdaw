@@ -919,23 +919,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
               {{ sourceItem.fileName }}
             </p>
           </div>
-          <button
-            type="button"
-            class="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-            aria-label="Close"
-            @click="emit('close')"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              class="h-4 w-4"
-            >
-              <path
-                d="M6.225 4.811 4.811 6.225 10.586 12l-5.775 5.775 1.414 1.414L12 13.414l5.775 5.775 1.414-1.414L13.414 12l5.775-5.775-1.414-1.414L12 10.586z"
-              />
-            </svg>
-          </button>
         </header>
 
         <div class="flex flex-1 flex-col gap-3 px-5 py-4">

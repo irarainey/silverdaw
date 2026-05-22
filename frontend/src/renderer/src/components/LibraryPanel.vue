@@ -641,8 +641,9 @@ function onResizePointerUp(): void {
                 <button
                   type="button"
                   tabindex="-1"
-                  class="shrink-0 rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100"
-                  title="Remove saved clip from library"
+                  :disabled="library.isItemInUse(item.id)"
+                  class="shrink-0 rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:text-zinc-700"
+                  :title="library.isItemInUse(item.id) ? 'In use - remove from the timeline first' : 'Remove saved clip from library'"
                   @click="library.removeItem(item.id)"
                   @mousedown.stop
                   @contextmenu.stop.prevent
