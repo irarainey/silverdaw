@@ -3,6 +3,7 @@
 #include "ProjectFile.h"
 #include "ProjectState.h"
 #include "ValueTreeJson.h"
+#include "WarpProcessor.h"
 
 #include <cmath>
 #include <exception>
@@ -419,6 +420,65 @@ void testProjectStateNetZeroDirty()
     require(!state.isDirty(), "saved-clip add+remove should return to clean");
 }
 
+void testWarpProcessorBasicStretch()
+{
+    // Smoke test: build a WarpProcessor, feed it a unit-amplitude sine
+    // wave at native rate, and verify it produces samples that look
+    // like audio (non-zero, finite, within range). This is enough to
+    // confirm the Rubber Band integration actually links and runs;
+    // detailed correctness tests (steady-state ratio, seek handling,
+    // pitch independence) belong in the next pass.
+    constexpr double kSampleRate = 48000.0;
+    constexpr int kChannels = 2;
+    constexpr int kBlockSamples = 512;
+    silverdaw::WarpProcessor warp(kChannels, kSampleRate,
+                                   RubberBand::RubberBandStretcher::OptionEngineFaster);
+    warp.prepareToPlay(kBlockSamples);
+    warp.setTempoRatio(1.25); // play 25 % faster
+    warp.setPitchScale(1.0);
+
+    std::vector<std::vector<float>> outBuffers(kChannels, std::vector<float>(kBlockSamples, 0.0f));
+    std::vector<float*> outPtrs(kChannels);
+    for (int c = 0; c < kChannels; ++c) outPtrs[c] = outBuffers[c].data();
+
+    // Source-read callback feeds a 440 Hz sine wave at the requested
+    // source position. Phase computed from the absolute sample index so
+    // it stays continuous across blocks.
+    auto readSource = [&](float* const* dest, juce::int64 sourcePos, int n)
+    {
+        for (int c = 0; c < kChannels; ++c)
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                const double phase = 2.0 * juce::MathConstants<double>::pi * 440.0
+                                     * static_cast<double>(sourcePos + i) / kSampleRate;
+                dest[c][i] = static_cast<float>(std::sin(phase) * 0.5);
+            }
+        }
+    };
+
+    // Run a few blocks so the stretcher's start-pad + steady-state
+    // ramp has time to produce real output.
+    int totalProduced = 0;
+    bool sawNonZero = false;
+    for (int block = 0; block < 8; ++block)
+    {
+        const int produced = warp.process(outPtrs.data(), kBlockSamples, readSource);
+        totalProduced += produced;
+        for (int c = 0; c < kChannels; ++c)
+        {
+            for (int i = 0; i < produced; ++i)
+            {
+                const float v = outBuffers[c][i];
+                require(std::isfinite(v), "warp produced non-finite sample");
+                require(std::abs(v) <= 1.5f, "warp produced wildly out-of-range sample");
+                if (std::abs(v) > 1e-4f) sawNonZero = true;
+            }
+        }
+    }
+    require(sawNonZero, "warp produced no audible output across 8 blocks");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -431,6 +491,7 @@ int main()
         {"PeaksCache round-trip and validation", testPeaksCacheRoundTripAndValidation},
         {"Bridge auth token validation", testBridgeAuthTokenValidation},
         {"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty},
+        {"WarpProcessor basic real-time stretch", testWarpProcessorBasicStretch},
     };
 
     int failed = 0;

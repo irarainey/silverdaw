@@ -44,6 +44,12 @@ const juce::Identifier ProjectState::kDisplayName{"displayName"};
 const juce::Identifier ProjectState::kClipName{"clipName"};
 const juce::Identifier ProjectState::kCollapsed{"collapsed"};
 const juce::Identifier ProjectState::kLibraryItemId{"libraryItemId"};
+const juce::Identifier ProjectState::kWarpEnabled{"warpEnabled"};
+const juce::Identifier ProjectState::kWarpMode{"warpMode"};
+const juce::Identifier ProjectState::kTempoRatio{"tempoRatio"};
+const juce::Identifier ProjectState::kSemitones{"semitones"};
+const juce::Identifier ProjectState::kCents{"cents"};
+const juce::Identifier ProjectState::kPendingAutoWarp{"pendingAutoWarp"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
 
@@ -531,6 +537,105 @@ juce::String ProjectState::getClipName(const juce::String& clipId) const
     return clip.getProperty(kClipName, {}).toString();
 }
 
+void ProjectState::forEachWarpClip(const std::function<void(const WarpClipInfo&)>& visitor) const
+{
+    if (!visitor) return;
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        const auto track = root.getChild(t);
+        if (!track.hasType(kTrack)) continue;
+        for (int c = 0; c < track.getNumChildren(); ++c)
+        {
+            const auto clip = track.getChild(c);
+            if (!clip.hasType(kClip)) continue;
+            WarpClipInfo info;
+            info.clipId = clip.getProperty(kId).toString();
+            info.libraryItemId = clip.getProperty(kLibraryItemId, {}).toString();
+            info.warpEnabled = static_cast<bool>(clip.getProperty(kWarpEnabled, false));
+            info.tempoRatioPinned = clip.hasProperty(kTempoRatio);
+            info.tempoRatio = static_cast<double>(clip.getProperty(kTempoRatio, 1.0));
+            info.semitones = static_cast<double>(clip.getProperty(kSemitones, 0.0));
+            info.cents = static_cast<double>(clip.getProperty(kCents, 0.0));
+            info.warpMode = clip.getProperty(kWarpMode, "rhythmic").toString();
+            info.pendingAutoWarp = static_cast<bool>(clip.getProperty(kPendingAutoWarp, false));
+            visitor(info);
+        }
+    }
+}
+
+double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return 0.0;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            return static_cast<double>(item.getProperty(kBpm, 0.0));
+        }
+    }
+    return 0.0;
+}
+
+bool ProjectState::setClipWarp(const juce::String& clipId,
+                               std::optional<bool> warpEnabled,
+                               std::optional<juce::String> warpMode,
+                               std::optional<double> tempoRatio,
+                               bool tempoRatioClear,
+                               std::optional<double> semitones,
+                               std::optional<double> cents,
+                               std::optional<bool> pendingAutoWarp)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+    if (warpEnabled.has_value())
+    {
+        clip.setProperty(kWarpEnabled, *warpEnabled, &undoManager);
+    }
+    if (warpMode.has_value() && warpMode->isNotEmpty())
+    {
+        // The mode strings used on the wire are validated by the bridge
+        // dispatch site; we trust them once they reach here.
+        clip.setProperty(kWarpMode, *warpMode, &undoManager);
+    }
+    if (tempoRatioClear)
+    {
+        clip.removeProperty(kTempoRatio, &undoManager);
+    }
+    else if (tempoRatio.has_value())
+    {
+        // Clamp to a sane band so a hostile payload can't ask Rubber Band
+        // to stretch by 1000x. 0.25 = quarter speed, 4.0 = quadruple
+        // speed; outside this band the audible artefacts dominate the
+        // result anyway.
+        const auto clamped = juce::jlimit(0.25, 4.0, *tempoRatio);
+        clip.setProperty(kTempoRatio, clamped, &undoManager);
+    }
+    if (semitones.has_value())
+    {
+        const auto clamped = juce::jlimit(-24.0, 24.0, *semitones);
+        clip.setProperty(kSemitones, clamped, &undoManager);
+    }
+    if (cents.has_value())
+    {
+        const auto clamped = juce::jlimit(-100.0, 100.0, *cents);
+        clip.setProperty(kCents, clamped, &undoManager);
+    }
+    if (pendingAutoWarp.has_value())
+    {
+        if (*pendingAutoWarp)
+        {
+            clip.setProperty(kPendingAutoWarp, true, &undoManager);
+        }
+        else
+        {
+            clip.removeProperty(kPendingAutoWarp, &undoManager);
+        }
+    }
+    return true;
+}
+
 juce::String ProjectState::getClipTrackId(const juce::String& clipId) const
 {
     const auto clip = findClip(clipId);
@@ -946,6 +1051,39 @@ bool ProjectState::setLibraryItemKey(const juce::String& itemId, const juce::Str
     return false;
 }
 
+bool ProjectState::setLibraryItemWarp(const juce::String& itemId,
+                                      std::optional<bool> warpEnabled,
+                                      std::optional<juce::String> warpMode,
+                                      std::optional<double> tempoRatio,
+                                      bool tempoRatioClear,
+                                      std::optional<double> semitones,
+                                      std::optional<double> cents)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() != itemId) continue;
+        // Warp defaults are only meaningful on saved-clip items.
+        if (item.getProperty(kKind).toString() != "saved-clip") return false;
+        if (warpEnabled.has_value())
+            item.setProperty(kWarpEnabled, *warpEnabled, &undoManager);
+        if (warpMode.has_value() && warpMode->isNotEmpty())
+            item.setProperty(kWarpMode, *warpMode, &undoManager);
+        if (tempoRatioClear)
+            item.removeProperty(kTempoRatio, &undoManager);
+        else if (tempoRatio.has_value())
+            item.setProperty(kTempoRatio, juce::jlimit(0.25, 4.0, *tempoRatio), &undoManager);
+        if (semitones.has_value())
+            item.setProperty(kSemitones, juce::jlimit(-24.0, 24.0, *semitones), &undoManager);
+        if (cents.has_value())
+            item.setProperty(kCents, juce::jlimit(-100.0, 100.0, *cents), &undoManager);
+        return true;
+    }
+    return false;
+}
+
 bool ProjectState::clearLibraryItemAnalysis(const juce::String& itemId)
 {
     auto library = root.getChildWithName(kLibrary);
@@ -1106,6 +1244,31 @@ juce::var ProjectState::libraryAsJson() const
         if (item.hasProperty(kCollapsed) && bool(item.getProperty(kCollapsed)))
         {
             obj->setProperty("collapsed", true);
+        }
+        // Saved-clip default warp settings. These travel on the library
+        // item so dragging the tile back to the timeline restores the
+        // user's preferred warp state for new placements; they are
+        // copied-on-drop into the timeline clip and do NOT live-link
+        // back here (per the linked-clip / warp design split).
+        if (item.hasProperty(kWarpEnabled))
+        {
+            obj->setProperty("warpEnabled", static_cast<bool>(item.getProperty(kWarpEnabled, false)));
+        }
+        if (item.hasProperty(kWarpMode))
+        {
+            obj->setProperty("warpMode", item.getProperty(kWarpMode).toString());
+        }
+        if (item.hasProperty(kTempoRatio))
+        {
+            obj->setProperty("tempoRatio", static_cast<double>(item.getProperty(kTempoRatio, 1.0)));
+        }
+        if (item.hasProperty(kSemitones))
+        {
+            obj->setProperty("semitones", static_cast<double>(item.getProperty(kSemitones, 0.0)));
+        }
+        if (item.hasProperty(kCents))
+        {
+            obj->setProperty("cents", static_cast<double>(item.getProperty(kCents, 0.0)));
         }
         // Same unresolved-flag pattern as clips so the renderer can
         // grey-out library cards whose source file has gone missing
@@ -1303,6 +1466,33 @@ juce::var ProjectState::tracksAsJson() const
             if (clip.hasProperty(kClipName))
             {
                 clipObj->setProperty("name", clip.getProperty(kClipName).toString());
+            }
+            // Warp settings: every field is omitted when unset so older
+            // projects round-trip unchanged and the renderer can default
+            // each one independently.
+            if (clip.hasProperty(kWarpEnabled))
+            {
+                clipObj->setProperty("warpEnabled", static_cast<bool>(clip.getProperty(kWarpEnabled, false)));
+            }
+            if (clip.hasProperty(kWarpMode))
+            {
+                clipObj->setProperty("warpMode", clip.getProperty(kWarpMode).toString());
+            }
+            if (clip.hasProperty(kTempoRatio))
+            {
+                clipObj->setProperty("tempoRatio", static_cast<double>(clip.getProperty(kTempoRatio, 1.0)));
+            }
+            if (clip.hasProperty(kSemitones))
+            {
+                clipObj->setProperty("semitones", static_cast<double>(clip.getProperty(kSemitones, 0.0)));
+            }
+            if (clip.hasProperty(kCents))
+            {
+                clipObj->setProperty("cents", static_cast<double>(clip.getProperty(kCents, 0.0)));
+            }
+            if (clip.hasProperty(kPendingAutoWarp))
+            {
+                clipObj->setProperty("pendingAutoWarp", static_cast<bool>(clip.getProperty(kPendingAutoWarp, false)));
             }
             // Resolve the source file through the linked library item so
             // the renderer can flag clips whose underlying file went

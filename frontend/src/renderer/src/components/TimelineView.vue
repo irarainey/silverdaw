@@ -23,6 +23,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
+import ClipWarpDialog from '@/components/ClipWarpDialog.vue'
 import {
   DEFAULT_PX_PER_SECOND,
   RULER_HEIGHT,
@@ -157,6 +158,12 @@ const contextMenuOpen = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 const contextMenuClipId = ref<string | null>(null)
+// Warp settings dialog. Surfaced from the right-click context menu;
+// driven entirely by `project.setClipWarp` so closing without an
+// explicit "save" doesn't lose anything (every slider change has
+// already committed).
+const warpDialogOpen = ref(false)
+const warpDialogClipId = ref<string | null>(null)
 const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
   const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
   const items: ClipContextMenuItem[] = []
@@ -186,10 +193,11 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
       selectedSwatch: selected
     })
   }
-  // Phase 3+ placeholders — the menu surface is shaped now so the
-  // muscle memory exists; the actions will light up once the
-  // underlying features land.
-  items.push({ command: 'clip.warp', label: 'Warp settings…', disabled: true, separatorAbove: true })
+  // Warp settings — opens the per-clip warp dialog. Enabled now that
+  // the warp engine is wired through the audio path; Transpose stays
+  // disabled until pitch-only without time-stretch ships as a
+  // first-class control.
+  items.push({ command: 'clip.warp', label: 'Warp settings…', separatorAbove: true })
   items.push({ command: 'clip.transpose', label: 'Transpose…', disabled: true })
   items.push({ command: 'clip.saveToLibrary', label: 'Save clip to library', separatorAbove: true })
   // "Unlink from library" only shown when the clip is linked to a
@@ -243,6 +251,9 @@ function onContextMenuCommand(command: string): void {
     project.saveClipToLibrary(clipId)
   } else if (command === 'clip.unlink') {
     project.unlinkClipFromLibrary(clipId)
+  } else if (command === 'clip.warp') {
+    warpDialogClipId.value = clipId
+    warpDialogOpen.value = true
   } else if (command.startsWith('clip.color:')) {
     const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
     if (Number.isFinite(idx)) project.setClipColor(clipId, idx)
@@ -909,6 +920,15 @@ function onHeaderResizePointerUp(e: PointerEvent): void {
       :items="contextMenuItems"
       @close="onContextMenuClose"
       @command="onContextMenuCommand"
+    />
+
+    <!-- Per-clip warp settings. Surfaced from the right-click context
+         menu; every control commits live through projectStore so close
+         is just a dismiss, never a confirm/cancel. -->
+    <ClipWarpDialog
+      :open="warpDialogOpen"
+      :clip-id="warpDialogClipId"
+      @close="warpDialogOpen = false"
     />
   </div>
 </template>

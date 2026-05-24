@@ -405,7 +405,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
         return;
     }
     juce::MessageManager::callAsync(
-        [itemId, analysis, cachedPath, &projectState, &bridge]
+        [itemId, analysis, cachedPath, &projectState, &bridge, &engine]
         {
             // Item may have been removed while we were busy.
             if (!projectState.setLibraryItemBpm(itemId, analysis.bpm))
@@ -443,6 +443,60 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                 p->setProperty("playbackFilePath", cachedPath);
             }
             bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
+
+            // Late auto-warp: any clip that was dropped before this
+            // library item's BPM was known carries a `pendingAutoWarp`
+            // flag. Now that we have a stable source BPM (skip the
+            // variable-tempo case — median BPM aligns globally but
+            // drifts locally), flip warp on for those clips so the
+            // user gets the intent they signalled at drop time without
+            // any further action.
+            DBG("[warp/late-flip] LIBRARY_ITEM_ANALYSIS itemId=" + itemId
+                + " bpm=" + juce::String(analysis.bpm)
+                + " variableTempo=" + (analysis.variableTempo ? "true" : "false")
+                + " projectBpm=" + juce::String(projectState.getBpm()));
+            if (!analysis.variableTempo && analysis.bpm > 0.0)
+            {
+                const double projectBpm = projectState.getBpm();
+                int scanned = 0;
+                int flipped = 0;
+                projectState.forEachWarpClip(
+                    [&](const silverdaw::ProjectState::WarpClipInfo& info)
+                    {
+                        if (info.libraryItemId != itemId) return;
+                        ++scanned;
+                        DBG("[warp/late-flip]   candidate clip=" + info.clipId
+                            + " pendingAutoWarp=" + (info.pendingAutoWarp ? "true" : "false")
+                            + " warpEnabled=" + (info.warpEnabled ? "true" : "false"));
+                        if (info.pendingAutoWarp && projectBpm > 0.0)
+                        {
+                            // User opted into auto-warp at drop time
+                            // but BPM wasn't ready yet. Flip warp on
+                            // with the freshly-derived ratio.
+                            const double ratio = projectBpm / analysis.bpm;
+                            projectState.setClipWarp(info.clipId,
+                                /*enabled=*/true,
+                                juce::String("rhythmic"),
+                                /*tempoRatio=*/std::nullopt,
+                                /*tempoRatioClear=*/false,
+                                std::nullopt, std::nullopt,
+                                /*pendingAutoWarp=*/false);
+                            engine.setClipWarp(info.clipId, true,
+                                juce::String("rhythmic"), ratio, std::nullopt, std::nullopt);
+                            auto wp = std::make_unique<juce::DynamicObject>();
+                            wp->setProperty("clipId", info.clipId);
+                            wp->setProperty("warpEnabled", true);
+                            wp->setProperty("warpMode", juce::String("rhythmic"));
+                            wp->setProperty("pendingAutoWarp", false);
+                            bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
+                            ++flipped;
+                            DBG("[warp/late-flip]   → ENGAGED clip=" + info.clipId
+                                + " ratio=" + juce::String(ratio));
+                        }
+                    });
+                DBG("[warp/late-flip] itemId=" + itemId + " scanned=" + juce::String(scanned)
+                    + " flipped=" + juce::String(flipped));
+            }
 
             // Try to seed the project BPM. The helper checks the
             // gates (must have at least one clip on a track, etc.).
@@ -1313,6 +1367,37 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, trackGain, &err))
             {
                 ++rebuilt;
+                // If the saved project carried warp settings on this
+                // clip, replay them onto the freshly-built engine
+                // clip so a loaded project plays at the user's
+                // intended tempo / pitch. Identical to what a fresh
+                // CLIP_SET_WARP envelope would do.
+                const auto warpEnabled = static_cast<bool>(clip.getProperty("warpEnabled", false));
+                if (warpEnabled)
+                {
+                    const auto warpMode = clip.getProperty("warpMode", "rhythmic").toString();
+                    std::optional<double> tempoRatio;
+                    if (clip.hasProperty("tempoRatio"))
+                        tempoRatio = static_cast<double>(clip.getProperty("tempoRatio", 1.0));
+                    else
+                    {
+                        // No pin: derive live from project BPM vs source BPM.
+                        const auto warpLibraryItemId = clip.getProperty("libraryItemId", {}).toString();
+                        const double sourceBpm = projectState.getLibraryItemBpm(warpLibraryItemId);
+                        const double projectBpm = projectState.getBpm();
+                        if (sourceBpm > 0.0 && projectBpm > 0.0)
+                            tempoRatio = projectBpm / sourceBpm;
+                    }
+                    const std::optional<double> semitones =
+                        clip.hasProperty("semitones")
+                            ? std::optional<double>{static_cast<double>(clip.getProperty("semitones", 0.0))}
+                            : std::nullopt;
+                    const std::optional<double> cents =
+                        clip.hasProperty("cents")
+                            ? std::optional<double>{static_cast<double>(clip.getProperty("cents", 0.0))}
+                            : std::nullopt;
+                    engine.setClipWarp(clipId, true, warpMode, tempoRatio, semitones, cents);
+                }
             }
             else
             {
@@ -1796,6 +1881,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
 {
     return type == "CLIP_ADD" || type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_COLOR" ||
            type == "CLIP_REMOVE" || type == "CLIP_RENAME" || type == "CLIP_REBIND" ||
+           type == "CLIP_SET_WARP" ||
            type == "CLIP_RELINK" ||
            type == "TRACK_ADD" || type == "TRACK_REMOVE" || type == "TRACK_RENAME" ||
            type == "TRACK_GAIN" || type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
@@ -1815,6 +1901,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "CLIP_REMOVE") return "Delete clip";
     if (type == "CLIP_RENAME") return "Rename clip";
     if (type == "CLIP_REBIND") return "Save clip to library";
+    if (type == "CLIP_SET_WARP") return "Change warp";
     if (type == "CLIP_RELINK") return "Relink clip";
     if (type == "TRACK_ADD") return "Add track";
     if (type == "TRACK_REMOVE") return "Remove track";
@@ -1867,7 +1954,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     if (!isUndoableEnvelopeType(type)) return;
 
     juce::String idPart;
-    if (type == "CLIP_MOVE" || type == "CLIP_TRIM")
+    if (type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_SET_WARP")
     {
         idPart = payload.getProperty("clipId", "").toString();
     }
@@ -2087,6 +2174,96 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             projectState.setClipLibraryItemId(clipId, libraryItemId);
         }
     }
+    else if (type == "CLIP_SET_WARP")
+    {
+        const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+        silverdaw::log::info("bridge", "recv CLIP_SET_WARP clipId=" + clipId);
+        if (clipId.isNotEmpty())
+        {
+            std::optional<bool> warpEnabled;
+            if (payload.hasProperty("warpEnabled"))
+                warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
+            std::optional<juce::String> warpMode;
+            if (payload.hasProperty("warpMode"))
+                warpMode = payload.getProperty("warpMode", juce::var()).toString();
+            // `tempoRatio: null` clears the override (clip reverts to
+            // project-BPM tracking); a finite number pins the ratio.
+            std::optional<double> tempoRatio;
+            bool tempoRatioClear = false;
+            if (payload.hasProperty("tempoRatio"))
+            {
+                const auto& v = payload["tempoRatio"];
+                if (v.isVoid() || v.isUndefined())
+                    tempoRatioClear = true;
+                else
+                    tempoRatio = static_cast<double>(v);
+            }
+            std::optional<double> semitones;
+            if (payload.hasProperty("semitones"))
+                semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
+            std::optional<double> cents;
+            if (payload.hasProperty("cents"))
+                cents = static_cast<double>(payload.getProperty("cents", 0.0));
+            std::optional<bool> pendingAutoWarp;
+            if (payload.hasProperty("pendingAutoWarp"))
+                pendingAutoWarp = static_cast<bool>(payload.getProperty("pendingAutoWarp", false));
+            projectState.setClipWarp(clipId, warpEnabled, warpMode, tempoRatio, tempoRatioClear,
+                                     semitones, cents, pendingAutoWarp);
+            bool clipFound = false;
+            bool enabledNow = false;
+            bool tempoRatioPinnedNow = false;
+            double pinnedTempoRatioNow = 1.0;
+            juce::String libraryItemIdNow;
+            projectState.forEachWarpClip(
+                [&](const silverdaw::ProjectState::WarpClipInfo& info)
+                {
+                    if (info.clipId != clipId) return;
+                    clipFound = true;
+                    enabledNow = info.warpEnabled;
+                    tempoRatioPinnedNow = info.tempoRatioPinned;
+                    pinnedTempoRatioNow = info.tempoRatio;
+                    libraryItemIdNow = info.libraryItemId;
+                });
+            // If the renderer enabled warp WITHOUT pinning a ratio
+            // ("follow project BPM"), derive the effective ratio from
+            // project / source BPM right here so the engine's lazily-
+            // built WarpProcessor doesn't end up at its default 1.0
+            // and play unwarped. Mirrors the derivation in
+            // `rebuildEngineFromProject` so freshly-warped clips and
+            // freshly-loaded warped clips end up identical.
+            std::optional<double> effectiveRatio = tempoRatio;
+            if (!effectiveRatio.has_value() && !tempoRatioClear && tempoRatioPinnedNow)
+            {
+                effectiveRatio = pinnedTempoRatioNow;
+            }
+            if (enabledNow && !effectiveRatio.has_value() && !tempoRatioClear)
+            {
+                const auto libraryItemId =
+                    libraryItemIdNow.isNotEmpty() ? libraryItemIdNow : projectState.getClipLibraryItemId(clipId);
+                if (libraryItemId.isNotEmpty())
+                {
+                    const double sourceBpm = projectState.getLibraryItemBpm(libraryItemId);
+                    const double projectBpm = projectState.getBpm();
+                    if (sourceBpm > 0.0 && projectBpm > 0.0)
+                    {
+                        effectiveRatio = projectBpm / sourceBpm;
+                    }
+                }
+            }
+            silverdaw::log::info("warp",
+                "CLIP_SET_WARP clipId=" + clipId
+                + " enabled=" + (clipFound ? (enabledNow ? "true" : "false") : "unknown")
+                + " mode=" + (warpMode.has_value() ? *warpMode : juce::String("unset"))
+                + " tempoRatio=" + (tempoRatio.has_value() ? juce::String(*tempoRatio) : juce::String(tempoRatioClear ? "null" : "unset"))
+                + " pendingAutoWarp=" + (pendingAutoWarp.has_value() ? (*pendingAutoWarp ? "true" : "false") : "unset")
+                + " effectiveRatio=" + (effectiveRatio.has_value() ? juce::String(*effectiveRatio) : juce::String("unset")));
+            // Fan the same change out to the audio engine so the next
+            // audio block reflects it. The engine owns the per-clip
+            // WarpProcessor lifetime; it builds one lazily when
+            // warp is first enabled and tears it down when disabled.
+            engine.setClipWarp(clipId, warpEnabled, warpMode, effectiveRatio, semitones, cents);
+        }
+    }
     else if (type == "LIBRARY_ADD")
     {
         const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
@@ -2114,7 +2291,41 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath, key,
                                     kind, displayName, sourceItemId, sourceClipId, sourceInMs, sourceDurationMs,
                                     collapsedFlag);
-        if (kind != "saved-clip")
+        if (kind == "saved-clip")
+        {
+            // Warp defaults — only meaningful on saved clips. Each
+            // field is partial; missing fields stay at whatever
+            // `addLibraryItem` left them as (i.e. unset → identity).
+            std::optional<bool> warpEnabled;
+            if (payload.hasProperty("warpEnabled"))
+                warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
+            std::optional<juce::String> warpMode;
+            if (payload.hasProperty("warpMode"))
+                warpMode = payload.getProperty("warpMode", juce::var()).toString();
+            std::optional<double> tempoRatio;
+            bool tempoRatioClear = false;
+            if (payload.hasProperty("tempoRatio"))
+            {
+                const auto& v = payload["tempoRatio"];
+                if (v.isVoid() || v.isUndefined())
+                    tempoRatioClear = true;
+                else
+                    tempoRatio = static_cast<double>(v);
+            }
+            std::optional<double> semitones;
+            if (payload.hasProperty("semitones"))
+                semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
+            std::optional<double> cents;
+            if (payload.hasProperty("cents"))
+                cents = static_cast<double>(payload.getProperty("cents", 0.0));
+            if (warpEnabled.has_value() || warpMode.has_value() || tempoRatio.has_value() ||
+                tempoRatioClear || semitones.has_value() || cents.has_value())
+            {
+                projectState.setLibraryItemWarp(itemId, warpEnabled, warpMode, tempoRatio,
+                                                tempoRatioClear, semitones, cents);
+            }
+        }
+        else
         {
             ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
         }
@@ -2257,6 +2468,29 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             engine.setPreviewPositionMs(*positionMs);
         }
     }
+    else if (type == "PREVIEW_SET_WARP")
+    {
+        silverdaw::log::info("bridge", "recv PREVIEW_SET_WARP");
+        std::optional<bool> warpEnabled;
+        if (payload.hasProperty("warpEnabled"))
+            warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
+        std::optional<juce::String> warpMode;
+        if (payload.hasProperty("warpMode"))
+            warpMode = payload.getProperty("warpMode", juce::var()).toString();
+        std::optional<double> tempoRatio;
+        if (payload.hasProperty("tempoRatio"))
+        {
+            const auto& v = payload["tempoRatio"];
+            if (!v.isVoid() && !v.isUndefined()) tempoRatio = static_cast<double>(v);
+        }
+        std::optional<double> semitones;
+        if (payload.hasProperty("semitones"))
+            semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
+        std::optional<double> cents;
+        if (payload.hasProperty("cents"))
+            cents = static_cast<double>(payload.getProperty("cents", 0.0));
+        engine.setPreviewWarp(warpEnabled, warpMode, tempoRatio, semitones, cents);
+    }
     else if (type == "TRACK_ADD")
     {
         silverdaw::log::info("bridge", "recv TRACK_ADD trackId=" + payload.getProperty("trackId", "").toString());
@@ -2388,6 +2622,21 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             if (bpm > 0.0)
             {
                 projectState.setBpm(bpm);
+                // Live re-warp: every warped clip with a derived (not
+                // pinned) tempo ratio re-stretches to match the new
+                // project BPM. Clips with an explicit `tempoRatio`
+                // override keep their pinned value — the user opted
+                // out of project-BPM tracking on those.
+                projectState.forEachWarpClip(
+                    [&](const silverdaw::ProjectState::WarpClipInfo& info)
+                    {
+                        if (!info.warpEnabled || info.tempoRatioPinned) return;
+                        const double sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
+                        if (sourceBpm <= 0.0) return;
+                        const double ratio = bpm / sourceBpm;
+                        engine.setClipWarp(info.clipId, std::nullopt, std::nullopt,
+                                           ratio, std::nullopt, std::nullopt);
+                    });
             }
         }
     }

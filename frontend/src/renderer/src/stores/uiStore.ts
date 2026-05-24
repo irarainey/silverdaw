@@ -22,6 +22,8 @@ interface UiState {
   followPlayback: boolean
   /** Show cover art / fallback thumbnails on library tiles. */
   showLibraryTileImages: boolean
+  /** Auto-warp dropped clips to match project BPM. */
+  matchProjectTempoOnDrop: boolean
   /** Live horizontal-zoom value (px per second). NOT persisted to
    *  preferences.json — this just mirrors `geometry.pxPerSecond` from
    *  the timeline so other components (e.g. StatusBar) can show the
@@ -49,7 +51,8 @@ const DEFAULTS = {
   trackHeaderWidth: 175,
   libraryPanelHeight: 180,
   followPlayback: true,
-  showLibraryTileImages: true
+  showLibraryTileImages: true,
+  matchProjectTempoOnDrop: true
 } as const
 
 // Clamps mirror the resize-handle clamps in the components, but applied
@@ -76,6 +79,7 @@ let pendingPush: {
   libraryPanelHeight?: number
   followPlayback?: boolean
   showLibraryTileImages?: boolean
+  matchProjectTempoOnDrop?: boolean
 } = {}
 
 /**
@@ -88,6 +92,7 @@ function schedulePush(partial: {
   libraryPanelHeight?: number
   followPlayback?: boolean
   showLibraryTileImages?: boolean
+  matchProjectTempoOnDrop?: boolean
 }): void {
   pendingPush = { ...pendingPush, ...partial }
   if (pushTimer) return
@@ -105,6 +110,7 @@ export const useUiStore = defineStore('ui', {
     libraryPanelHeight: DEFAULTS.libraryPanelHeight,
     followPlayback: DEFAULTS.followPlayback,
     showLibraryTileImages: DEFAULTS.showLibraryTileImages,
+    matchProjectTempoOnDrop: DEFAULTS.matchProjectTempoOnDrop,
     zoomPxPerSecond: 100,
     timelineScrollRequest: null,
     timelineZoomRequest: null,
@@ -129,6 +135,10 @@ export const useUiStore = defineStore('ui', {
           typeof saved.showLibraryTileImages === 'boolean'
             ? saved.showLibraryTileImages
             : DEFAULTS.showLibraryTileImages
+        this.matchProjectTempoOnDrop =
+          typeof saved.matchProjectTempoOnDrop === 'boolean'
+            ? saved.matchProjectTempoOnDrop
+            : DEFAULTS.matchProjectTempoOnDrop
       } catch (err) {
         console.warn('[uiStore] hydrate failed, using defaults:', err)
       } finally {
@@ -165,6 +175,13 @@ export const useUiStore = defineStore('ui', {
       if (this.showLibraryTileImages === value) return
       this.showLibraryTileImages = value
       if (this.hydrated) schedulePush({ showLibraryTileImages: value })
+    },
+
+    /** Toggle auto-warp-on-drop. */
+    setMatchProjectTempoOnDrop(value: boolean): void {
+      if (this.matchProjectTempoOnDrop === value) return
+      this.matchProjectTempoOnDrop = value
+      if (this.hydrated) schedulePush({ matchProjectTempoOnDrop: value })
     },
 
     /** Update the live zoom mirror. Renderer-only — not persisted to

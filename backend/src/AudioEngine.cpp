@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "Log.h"
 
+#include <cmath>
 #include <iostream>
 
 namespace silverdaw
@@ -768,6 +769,114 @@ bool AudioEngine::setClipTrim(const juce::String& clipId, double startMs, double
     return true;
 }
 
+namespace
+{
+// Translate a renderer-side mode label into Rubber Band engine flags.
+// `'complex'` selects R3 / Finer (highest quality, highest CPU); the
+// other two share the R2 / Faster engine but differ in the auto-
+// curve / transient-handling preset Rubber Band picks internally.
+RubberBand::RubberBandStretcher::Options parseWarpMode(const juce::String& mode)
+{
+    using O = RubberBand::RubberBandStretcher;
+    if (mode == "complex") return O::OptionEngineFiner;
+    if (mode == "tonal")
+        return O::OptionEngineFaster | O::OptionTransientsSmooth | O::OptionWindowLong;
+    // Default — rhythmic. Suits drums and most general material.
+    return O::OptionEngineFaster | O::OptionTransientsCrisp;
+}
+} // namespace
+
+bool AudioEngine::setClipWarp(const juce::String& clipId,
+                              std::optional<bool> enabled,
+                              std::optional<juce::String> mode,
+                              std::optional<double> tempoRatio,
+                              std::optional<double> semitones,
+                              std::optional<double> cents)
+{
+    auto it = tracks.find(clipId);
+    if (it == tracks.end()) return false;
+    auto& track = it->second;
+    if (track->offsetSource == nullptr) return false;
+
+    const bool wantEnabled = enabled.value_or(track->warp != nullptr);
+
+    if (!wantEnabled)
+    {
+        // Disable / teardown. The audio thread sees nullptr via
+        // `setWarpProcessor(nullptr)` on the next read, after which
+        // it's safe to destroy the WarpProcessor itself. JUCE's
+        // graph plumbing never holds raw pointers to internal nodes
+        // across audio callbacks, so the publish-then-destroy
+        // sequence is sufficient — no need for an extra spin or fence.
+        track->offsetSource->setWarpProcessor(nullptr);
+        track->warp.reset();
+        silverdaw::log::info("engine", "clip warp disabled " + clipId);
+        return true;
+    }
+
+    // Enable / configure. If we already have a processor and the mode
+    // wasn't explicitly changed, just push the new parameters to it
+    // via its atomic publishers (no allocation, no audio glitch). If
+    // the mode IS changing — Rubber Band can't switch engines on a
+    // live instance — we tear down and rebuild.
+    const bool needRebuild = (track->warp == nullptr) || mode.has_value();
+    if (needRebuild)
+    {
+        const auto modeStr = mode.value_or(juce::String("rhythmic"));
+        const auto options = parseWarpMode(modeStr);
+        const int channels = juce::jmax(1, track->numChannels);
+        const double sr = track->sampleRate > 0 ? track->sampleRate : 44100.0;
+        auto wp = std::make_unique<WarpProcessor>(channels, sr, options);
+        // Pre-size the processor for the engine's current block size
+        // so the first audio block doesn't have to grow buffers.
+        const auto& dm = deviceManager.getAudioDeviceSetup();
+        const int blockSize = juce::jmax(64, static_cast<int>(dm.bufferSize));
+        wp->prepareToPlay(blockSize);
+        // Park the engine's audio thread at nullptr before swapping
+        // — same publish-then-replace discipline as the disable path.
+        track->offsetSource->setWarpProcessor(nullptr);
+        track->warp = std::move(wp);
+        track->offsetSource->setWarpProcessor(track->warp.get());
+        silverdaw::log::info("engine",
+            "clip warp built " + clipId + " mode=" + modeStr);
+    }
+
+    if (auto* w = track->warp.get())
+    {
+        if (tempoRatio.has_value() && *tempoRatio > 0.0)
+        {
+            w->setTempoRatio(*tempoRatio);
+        }
+        if (semitones.has_value() || cents.has_value())
+        {
+            const double s = semitones.value_or(0.0);
+            const double c = cents.value_or(0.0);
+            const double scale = std::pow(2.0, (s + c / 100.0) / 12.0);
+            w->setPitchScale(scale);
+        }
+    }
+
+    // Whether we built a fresh processor or just nudged its parameters,
+    // the BufferingAudioSource's read-ahead may now hold ~186 ms of
+    // audio prefetched through the OLD warp settings (or no warp at
+    // all). Drop it: a play-from-cold pull would otherwise serve a
+    // few hundred ms of stale audio before the fresh prefetch caught
+    // up — heard as a noticeable discontinuity at the very start of
+    // playback. Use the same rebuild discipline as `setClipOffsetMs`
+    // — sync rebuild while playing, debounced while paused.
+    if (master.isPlaying())
+    {
+        rebuildTrackPrefetch(*track);
+    }
+    else
+    {
+        track->prefetchDirty = true;
+        rebuildTimer.startTimer(kRebuildDebounceMs);
+    }
+    return true;
+}
+
+
 bool AudioEngine::isPlaying() const
 {
     return master.isPlaying();
@@ -872,12 +981,59 @@ void AudioEngine::unloadPreview()
     topMixer.removeInputSource(preview.transportSource.get());
     preview.transportSource->setSource(nullptr);
     preview.transportSource.reset();
+    if (preview.offsetSource != nullptr)
+    {
+        preview.offsetSource->setWarpProcessor(nullptr);
+    }
     preview.offsetSource.reset();
+    preview.warp.reset();
     preview.readerSource.reset();
     preview.inMs = 0.0;
     preview.durationMs = 0.0;
     preview.sourceDurationMs = 0.0;
     previewGeneration.fetch_add(1, std::memory_order_acq_rel);
+}
+
+bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
+                                 std::optional<juce::String> mode,
+                                 std::optional<double> tempoRatio,
+                                 std::optional<double> semitones,
+                                 std::optional<double> cents)
+{
+    if (preview.offsetSource == nullptr) return false;
+    const bool wantEnabled = enabled.value_or(preview.warp != nullptr);
+    if (!wantEnabled)
+    {
+        preview.offsetSource->setWarpProcessor(nullptr);
+        preview.warp.reset();
+        return true;
+    }
+    const bool needRebuild = (preview.warp == nullptr) || mode.has_value();
+    if (needRebuild)
+    {
+        const auto modeStr = mode.value_or(juce::String("rhythmic"));
+        const auto options = parseWarpMode(modeStr);
+        const int channels = preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
+        const double sr = preview.sampleRate > 0 ? preview.sampleRate : 44100.0;
+        auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels), sr, options);
+        const auto& dm = deviceManager.getAudioDeviceSetup();
+        const int blockSize = juce::jmax(64, static_cast<int>(dm.bufferSize));
+        wp->prepareToPlay(blockSize);
+        preview.offsetSource->setWarpProcessor(nullptr);
+        preview.warp = std::move(wp);
+        preview.offsetSource->setWarpProcessor(preview.warp.get());
+    }
+    if (auto* w = preview.warp.get())
+    {
+        if (tempoRatio.has_value() && *tempoRatio > 0.0) w->setTempoRatio(*tempoRatio);
+        if (semitones.has_value() || cents.has_value())
+        {
+            const double s = semitones.value_or(0.0);
+            const double c = cents.value_or(0.0);
+            w->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
+        }
+    }
+    return true;
 }
 
 void AudioEngine::playPreview()

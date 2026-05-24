@@ -23,6 +23,7 @@ import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
+import { clipEffectiveDurationMs } from '@/lib/warp'
 import { useAppStore } from '@/stores/appStore'
 
 const project = useProjectStore()
@@ -722,7 +723,9 @@ function handleMenuAction(action: string): void {
     // shorter tracks honest as well.
     let maxEndMs = 0
     for (const clip of Object.values(project.clips)) {
-      const end = clip.startMs + clip.durationMs
+      const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+      const effDur = clipEffectiveDurationMs(clip, libItem, transport.bpm)
+      const end = clip.startMs + effDur
       if (end > maxEndMs) maxEndMs = end
     }
     if (maxEndMs <= 0) {

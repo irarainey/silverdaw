@@ -625,7 +625,9 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // first *detected* beat ≥ inMs (the old behaviour) wobbled by a
     // few ms after a split because BTrack's per-beat timestamps
     // wander relative to the implied uniform tempo.
-    const libItem = library.items.find((i) => i.filePath === clip.filePath)
+    const libItem = clip.libraryItemId
+      ? library.items.find((i) => i.id === clip.libraryItemId)
+      : library.items.find((i) => i.filePath === clip.filePath)
     const beats = libItem?.beats
     const sourceBpm = libItem?.bpm
     // Prefer the regression-derived anchor over the first raw

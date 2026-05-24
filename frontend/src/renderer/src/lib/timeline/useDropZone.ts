@@ -16,7 +16,10 @@ import { onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Application } from 'pixi.js'
 import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { useTransportStore } from '@/stores/transportStore'
+import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
+import { effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
@@ -57,6 +60,7 @@ const MIME_LIBRARY_ITEM = 'application/x-silverdaw-library-item'
 export function useDropZone(opts: DropZoneOptions): DropZone {
   const library = useLibraryStore()
   const project = useProjectStore()
+  const transport = useTransportStore()
   const { host, app, scrollX, scrollY, showScrollbar, geometry, onPreviewChanged } = opts
 
   const dropPreview = ref<DropPreview | null>(null)
@@ -140,7 +144,39 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     let firstBeatMs = universalAnchorMs + Math.ceil(-universalAnchorMs / beatSpacingMs) * beatSpacingMs
     while (firstBeatMs < 0) firstBeatMs += beatSpacingMs
     if (firstBeatMs > item.durationMs) return null
-    return firstBeatMs
+    // Anticipate the warp ratio that will apply once the clip lands.
+    // Saved-clip tiles carry explicit warp defaults; audio-file tiles
+    // pick up auto-warp from project BPM / source BPM at drop time
+    // (assuming the source isn't variable-tempo). For both cases the
+    // beat-snap target needs to be in TIMELINE-time so the dropped
+    // clip's first beat lines up with a project sub-beat, not its
+    // source-time-shifted equivalent.
+    // pick up auto-warp from project BPM / source BPM at drop time
+    // (assuming the source isn't variable-tempo AND the user has the
+    // auto-warp pref enabled). For both cases the beat-snap target
+    // needs to be in TIMELINE-time so the dropped clip's first beat
+    // lines up with a project sub-beat, not its source-time-shifted
+    // equivalent.
+    const ui = useUiStore()
+    const projectHasOtherClips = Object.keys(project.clips).length > 0
+    const willWarpForSnap =
+      item.warpEnabled === true ||
+      (ui.matchProjectTempoOnDrop &&
+        projectHasOtherClips &&
+        item.kind !== 'saved-clip' && item.variableTempo !== true)
+    const ratio = isWarpActive({
+      warpEnabled: willWarpForSnap,
+      tempoRatio: item.tempoRatio,
+      sourceBpm,
+      projectBpm: transport.bpm
+    })
+      ? effectiveTempoRatio({
+          tempoRatio: item.tempoRatio,
+          sourceBpm,
+          projectBpm: transport.bpm
+        })
+      : 1
+    return firstBeatMs / ratio
   }
 
   function clearPreview(): void {
@@ -168,10 +204,39 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       return
     }
 
+    // Pre-compute the effective duration the dropped clip will land
+    // with. Auto-warp applies on drop for non-variable-tempo sources
+    // (see `applyDropTimeWarp` in projectStore), so the ghost should
+    // show the warped width — otherwise the user sees a wide preview
+    // that snaps to a different width once the drop lands. Saved
+    // clips with explicit warp defaults likewise scale. Mirrors the
+    // pref + first-clip check in `applyDropTimeWarp`: when auto-warp
+    // is off, or this would be the first clip on the project (BPM
+    // seeder), the ghost shows the native footprint.
+    const ui = useUiStore()
+    const projectHasOtherClips = Object.keys(project.clips).length > 0
+    const willWarp =
+      (item.warpEnabled === true) ||
+      (ui.matchProjectTempoOnDrop &&
+        projectHasOtherClips &&
+        item.kind !== 'saved-clip' && item.variableTempo !== true &&
+        typeof item.bpm === 'number' && item.bpm > 0 && transport.bpm > 0)
+    const previewRatio = willWarp
+      ? effectiveTempoRatio({
+          tempoRatio: item.tempoRatio,
+          sourceBpm: item.bpm,
+          projectBpm: transport.bpm
+        })
+      : 1
+    const effectiveDurMs =
+      previewRatio > 0 && Math.abs(previewRatio - 1) > 1e-4
+        ? item.durationMs / previewRatio
+        : item.durationMs
+
     const overlaps = project.wouldClipOverlap(
       project.tracks[target.trackIndex]!.id,
       target.startMs,
-      item.durationMs
+      effectiveDurMs
     )
     e.dataTransfer.dropEffect = overlaps ? 'none' : 'copy'
 
@@ -180,7 +245,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     const next: DropPreview = {
       trackIndex: target.trackIndex,
       startMs: target.startMs,
-      durationMs: item.durationMs,
+      durationMs: effectiveDurMs,
       valid: !overlaps
     }
     const cur = dropPreview.value

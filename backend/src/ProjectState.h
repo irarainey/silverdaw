@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <functional>
+#include <optional>
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
 
@@ -203,6 +204,59 @@ class ProjectState : public juce::ValueTree::Listener
     /** Read a clip's user-facing display name override, or empty if unset. */
     juce::String getClipName(const juce::String& clipId) const;
 
+    /** Per-warp-clip snapshot returned by `forEachWarpClip`. */
+    struct WarpClipInfo
+    {
+        juce::String clipId;
+        juce::String libraryItemId;
+        bool warpEnabled;
+        bool tempoRatioPinned;
+        double tempoRatio;
+        double semitones;
+        double cents;
+        juce::String warpMode;
+        /** True when the clip was dropped before its source BPM was
+         *  known. The `LIBRARY_ITEM_ANALYSIS` late-flip path uses
+         *  this to distinguish "user opted into auto-warp but BPM
+         *  wasn't ready yet" from "user explicitly disabled warp". */
+        bool pendingAutoWarp;
+    };
+
+    /** Visit every clip in the project. Used by `Main.cpp`'s
+     *  `PROJECT_SET_BPM` handler to update the warp ratio of every
+     *  clip whose `tempoRatio` is not explicitly pinned, so a tempo
+     *  change live-re-stretches the whole timeline in lockstep. */
+    void forEachWarpClip(const std::function<void(const WarpClipInfo&)>& visitor) const;
+
+    /** Source BPM (from the library item) in beats-per-minute. 0 if
+     *  the item is unknown or its BPM hasn't been detected yet. */
+    double getLibraryItemBpm(const juce::String& itemId) const;
+
+    /**
+     * Partial update of a clip's warp + pitch settings. Every parameter
+     * is wrapped in `std::optional` so the caller can drive a single
+     * field (e.g. just `semitones`) without touching the rest. Returns
+     * true if the clip existed. Mutations go through the `UndoManager`
+     * so a single `CLIP_SET_WARP` envelope coalesces with any other
+     * fields landed in the same drag window.
+     *
+     * The `tempoRatio` argument follows tri-state semantics:
+     *   - `std::nullopt` — caller is not touching `tempoRatio`.
+     *   - non-null double — pin `tempoRatio` to this explicit value;
+     *     project BPM changes no longer move the clip.
+     *   - sentinel: pass `std::optional<double>{}` plus
+     *     `tempoRatioClear=true` to remove the property so it reverts
+     *     to project-BPM tracking.
+     */
+    bool setClipWarp(const juce::String& clipId,
+                     std::optional<bool> warpEnabled,
+                     std::optional<juce::String> warpMode,
+                     std::optional<double> tempoRatio,
+                     bool tempoRatioClear,
+                     std::optional<double> semitones,
+                     std::optional<double> cents,
+                     std::optional<bool> pendingAutoWarp);
+
     /** Returns the trackId owning `clipId`, or empty string if not found. */
     juce::String getClipTrackId(const juce::String& clipId) const;
 
@@ -312,6 +366,20 @@ class ProjectState : public juce::ValueTree::Listener
      *  Pass an empty string to clear. Marks dirty. Returns true if
      *  the item existed. */
     bool setLibraryItemKey(const juce::String& itemId, const juce::String& key);
+
+    /** Partial update of a saved-clip library item's warp + pitch
+     *  defaults — the same five fields a `CLIP_SET_WARP` carries.
+     *  Mirrors `setClipWarp` exactly so save/load round-trip is
+     *  uniform between clips and saved clips. No-op (returns false)
+     *  on `audio-file` items; warp is meaningful only on saved
+     *  clips. */
+    bool setLibraryItemWarp(const juce::String& itemId,
+                            std::optional<bool> warpEnabled,
+                            std::optional<juce::String> warpMode,
+                            std::optional<double> tempoRatio,
+                            bool tempoRatioClear,
+                            std::optional<double> semitones,
+                            std::optional<double> cents);
 
     /** Clear persisted BPM/beat/variable-tempo fields before a forced
      *  reanalysis. Marks dirty. Returns true if the item existed. */
@@ -466,6 +534,16 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kClipName;
     static const juce::Identifier kCollapsed;
     static const juce::Identifier kLibraryItemId;
+
+    // Per-clip warp + pitch shift. Identifiers are reused for the same
+    // properties on saved-clip library items (where they act as the
+    // copy-on-drop defaults for a future timeline placement).
+    static const juce::Identifier kWarpEnabled;
+    static const juce::Identifier kWarpMode;
+    static const juce::Identifier kTempoRatio;
+    static const juce::Identifier kSemitones;
+    static const juce::Identifier kCents;
+    static const juce::Identifier kPendingAutoWarp;
 };
 
 } // namespace silverdaw

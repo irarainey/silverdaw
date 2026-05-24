@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isClipRemovedPayload,
+  isClipWarpAppliedPayload,
   isBridgeInboundType,
   isClipAckPayload,
   isLibraryItemAnalysisPayload,
@@ -42,6 +43,7 @@ const INBOUND_TYPES = {
   WAVEFORM_READY: true,
   CLIP_EDITOR_PEAKS_READY: true,
   LIBRARY_ITEM_ANALYSIS: true,
+  CLIP_WARP_APPLIED: true,
   PROJECT_BPM_APPLIED: true,
   PREVIEW_STATE: true,
   PREVIEW_POSITION: true,
@@ -463,6 +465,31 @@ describe('isProjectBpmAppliedPayload', () => {
   it('rejects missing or wrong-typed BPM', () => {
     expect(isProjectBpmAppliedPayload({})).toBe(false)
     expect(isProjectBpmAppliedPayload({ bpm: '124.5' })).toBe(false)
+  })
+})
+
+describe('isClipWarpAppliedPayload', () => {
+  it('accepts a well-shaped warp update payload', () => {
+    expect(
+      isClipWarpAppliedPayload({
+        clipId: 'c1',
+        warpEnabled: true,
+        warpMode: 'rhythmic',
+        pendingAutoWarp: false
+      })
+    ).toBe(true)
+    expect(
+      isClipWarpAppliedPayload({
+        clipId: 'c1',
+        tempoRatio: null
+      })
+    ).toBe(true)
+  })
+
+  it('rejects malformed fields', () => {
+    expect(isClipWarpAppliedPayload({ clipId: 1 })).toBe(false)
+    expect(isClipWarpAppliedPayload({ clipId: 'c1', warpMode: 'bad' })).toBe(false)
+    expect(isClipWarpAppliedPayload({ clipId: 'c1', pendingAutoWarp: 'yes' })).toBe(false)
   })
 })
 

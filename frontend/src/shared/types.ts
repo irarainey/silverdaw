@@ -75,4 +75,12 @@ export interface UiPreferences {
 
   /** Show cover art / fallback thumbnails on library tiles (default true). */
   showLibraryTileImages: boolean
+
+  /** When true, dragging a library clip onto a track auto-enables
+   *  warp so the clip's source BPM matches the project BPM. Off
+   *  leaves clips at native rate; the user can opt in per-clip via
+   *  the right-click Warp settings dialog. Defaults to true so the
+   *  conventional GarageBand-style "drop-and-play in time" behaviour
+   *  works out of the box. */
+  matchProjectTempoOnDrop: boolean
 }

@@ -170,6 +170,7 @@ const debugEnabled = ref(false)
 const toastsEnabled = ref(true)
 const followPlayback = ref(true)
 const showLibraryTileImages = ref(true)
+const matchProjectTempoOnDrop = ref(true)
 const defaultProjectDir = ref('')
 const defaultClipDir = ref('')
 const autosaveEnabled = ref(true)
@@ -182,6 +183,7 @@ const initialDebug = ref(false)
 const initialToasts = ref(true)
 const initialFollow = ref(true)
 const initialShowLibraryTileImages = ref(true)
+const initialMatchProjectTempoOnDrop = ref(true)
 const initialProjectDir = ref('')
 const initialClipDir = ref('')
 const initialAutosaveEnabled = ref(true)
@@ -193,6 +195,7 @@ const hasChanges = computed(
     toastsEnabled.value !== initialToasts.value ||
     followPlayback.value !== initialFollow.value ||
     showLibraryTileImages.value !== initialShowLibraryTileImages.value ||
+    matchProjectTempoOnDrop.value !== initialMatchProjectTempoOnDrop.value ||
     defaultProjectDir.value !== initialProjectDir.value ||
     defaultClipDir.value !== initialClipDir.value ||
     autosaveEnabled.value !== initialAutosaveEnabled.value ||
@@ -238,10 +241,12 @@ async function loadCurrent(): Promise<void> {
   // there directly so we don't need a second IPC round-trip.
   followPlayback.value = ui.followPlayback
   showLibraryTileImages.value = ui.showLibraryTileImages
+  matchProjectTempoOnDrop.value = ui.matchProjectTempoOnDrop
   initialDebug.value = debugEnabled.value
   initialToasts.value = toastsEnabled.value
   initialFollow.value = followPlayback.value
   initialShowLibraryTileImages.value = showLibraryTileImages.value
+  initialMatchProjectTempoOnDrop.value = matchProjectTempoOnDrop.value
   initialProjectDir.value = defaultProjectDir.value
   initialClipDir.value = defaultClipDir.value
   initialAutosaveEnabled.value = autosaveEnabled.value
@@ -340,6 +345,9 @@ function onSave(): void {
   }
   if (showLibraryTileImages.value !== initialShowLibraryTileImages.value) {
     ui.setShowLibraryTileImages(showLibraryTileImages.value)
+  }
+  if (matchProjectTempoOnDrop.value !== initialMatchProjectTempoOnDrop.value) {
+    ui.setMatchProjectTempoOnDrop(matchProjectTempoOnDrop.value)
   }
   // Autosave config is also mirrored in appStore so the autosave
   // manager's reactive watcher picks up the change without waiting
@@ -478,6 +486,22 @@ function onSave(): void {
                   <span class="mt-0.5 block text-zinc-500">
                     Display embedded cover art, or the fallback audio icon, on
                     each library tile. Turn off for a denser text-only library.
+                  </span>
+                </span>
+              </label>
+              <label class="mt-3 flex cursor-pointer items-start gap-3">
+                <input
+                  v-model="matchProjectTempoOnDrop"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                >
+                <span class="flex-1">
+                  <span class="block font-medium text-zinc-200">Match project tempo on drop</span>
+                  <span class="mt-0.5 block text-zinc-500">
+                    When dragging a clip onto a track, automatically enable
+                    warp so its source BPM matches the project BPM. Turn off
+                    to drop clips at their native tempo; you can still enable
+                    warp per-clip via right-click ▸ Warp settings.
                   </span>
                 </span>
               </label>

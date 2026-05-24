@@ -125,88 +125,51 @@ export async function importAudioIntoTrack(
   // Self-batch this single-file import so the status-bar progress bar
   // still shows for per-track imports (not just library batches).
   library.beginImportBatch(1)
-  const importEntryId = library.beginImport(opened.fileName)
 
-  try {
-    // Reuse the library's already-decoded data if this file is already
-    // there; otherwise decode once and register the new library item.
-    let audio = library.items.find((i) => i.filePath === opened.filePath) ?? null
-    if (!audio) {
-      // Parse peaks (slow) and tags (fast) in parallel so the card appears
-      // with full info in one shot rather than text-then-pop-in-cover-art.
-      const [decoded, metadata] = await Promise.all([
-        decodeAudioToPeaks(opened.data),
-        window.silverdaw.readAudioMetadata(opened.filePath).catch(() => null)
-      ])
-      const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
-      const enrichedMetadata = withDetectedKey(metadata, detectedKey)
-      // If the backend can't decode this format natively, write the
-      // already-decoded PCM out as a temp WAV and point playback at that.
-      const playbackFilePath = await resolvePlaybackPath(opened.filePath, decoded)
-      const itemId = library.addItem({
-        filePath: opened.filePath,
-        fileName: opened.fileName,
-        durationMs: decoded.durationMs,
-        sampleRate: decoded.sampleRate,
-        channelCount: decoded.channelCount,
-        peaks: decoded.peaks,
-        playbackFilePath,
-        key: enrichedMetadata?.key
-      })
-      library.setItemMetadata(itemId, enrichedMetadata)
-      audio = library.getItem(itemId)
-    }
-    if (!audio) {
-      library.finishImport(importEntryId, 'failed')
-      return null
-    }
-    // Decoding stage done — transition the progress entry into the
-    // "waiting for BPM" stage. If the item already has a BPM (i.e.
-    // it was deduplicated), close the entry immediately.
-    if (audio.bpm) {
-      library.finishImport(importEntryId, 'done')
-    } else {
-      library.markImportAnalyzing(importEntryId, audio.id)
-    }
+  // Delegate library registration to the exact same helper the
+  // library-panel Import button uses, so the two entry points share
+  // their decode + peaks + metadata + temp-WAV pipeline. Without
+  // this, a bug fix in one path would silently miss the other (and
+  // historically the per-track path forgot to call
+  // `applyDropTimeWarp` — see the auto-warp-on-import bug).
+  const itemId = await importAudioIntoLibrary(opened)
+  if (!itemId) return null
+  const audio = library.getItem(itemId)
+  if (!audio) return null
 
-    const clipId = project.addClipToTrack(
-      trackId,
-      {
-        libraryItemId: audio.id,
-        filePath: audio.filePath,
-        fileName: libraryItemDisplayName(audio),
-        durationMs: audio.durationMs,
-        sampleRate: audio.sampleRate,
-        channelCount: audio.channelCount,
-        peaks: audio.peaks,
-        // Store the backend's path on the clip so a later CLIP_ADD_FAILED
-        // ack can match the optimistically-added clip and remove it.
-        playbackFilePath: audio.playbackFilePath
-      },
-      resolvedStartMs
-    )
-    if (!clipId) return null
-
-    // Tell the backend so it can load the same file for playback —
-    // CLIP_ADD references the library item; the backend resolves the
-    // actual source path (and decoded-WAV cache) on its side.
-    sendBridge('CLIP_ADD', {
-      trackId,
-      clipId,
-      libraryItemId: audio.id,
-      positionMs: resolvedStartMs
-    })
-    const track = project.tracks.find((candidate) => candidate.id === trackId)
-    if (track) project.pushTrackGain(track)
-
-    return clipId
-  } catch (err) {
-    console.error('[importAudio] decode failed:', err)
-    library.finishImport(importEntryId, 'failed')
-    return null
-  } finally {
-    library.noteImportFinished()
-  }
+  // Place the new library item on the requested track. Reuses the
+  // drag-and-drop entry point so the warp / collision / saved-clip
+  // logic is identical. `addClipFromLibrary` already sends `CLIP_ADD`
+  // and runs `applyDropTimeWarp` for us.
+  log.info(
+    'import',
+    `importAudioIntoTrack → addClipFromLibrary itemId=${audio.id} bpm=${audio.bpm ?? 'undef'} ` +
+      `variableTempo=${audio.variableTempo ?? false} kind=${audio.kind ?? 'audio'}`
+  )
+  return project.addClipFromLibrary(
+    trackId,
+    {
+      id: audio.id,
+      filePath: audio.filePath,
+      fileName: libraryItemDisplayName(audio),
+      durationMs: audio.durationMs,
+      sampleRate: audio.sampleRate,
+      channelCount: audio.channelCount,
+      peaks: audio.peaks,
+      playbackFilePath: audio.playbackFilePath,
+      kind: audio.kind,
+      name: audio.name,
+      derivedFrom: audio.derivedFrom,
+      bpm: audio.bpm,
+      variableTempo: audio.variableTempo,
+      warpEnabled: audio.warpEnabled,
+      warpMode: audio.warpMode,
+      tempoRatio: audio.tempoRatio,
+      semitones: audio.semitones,
+      cents: audio.cents
+    },
+    resolvedStartMs
+  )
 }
 
 /**

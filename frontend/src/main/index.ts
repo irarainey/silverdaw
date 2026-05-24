@@ -266,6 +266,11 @@ interface UiPrefs {
   followPlayback: boolean
   /** When true, library tiles include cover art or a fallback icon. */
   showLibraryTileImages: boolean
+  /** When true, dragging a clip from the library onto a track
+   *  automatically enables warp targeting the project BPM (provided
+   *  the source's BPM is known and the source isn't variable-tempo).
+   *  Off lets the user opt in per-clip via the Warp settings dialog. */
+  matchProjectTempoOnDrop: boolean
 }
 
 /**
@@ -396,7 +401,8 @@ function buildDefaultPrefs(): Preferences {
       trackHeaderWidth: 175,
       libraryPanelHeight: 180,
       followPlayback: true,
-      showLibraryTileImages: true
+      showLibraryTileImages: true,
+      matchProjectTempoOnDrop: true
     },
     debug: { enabled: false },
     toasts: { enabled: true },
@@ -413,7 +419,8 @@ let prefs: Preferences = {
     trackHeaderWidth: 175,
     libraryPanelHeight: 180,
     followPlayback: true,
-    showLibraryTileImages: true
+    showLibraryTileImages: true,
+    matchProjectTempoOnDrop: true
   },
   debug: { enabled: false },
   toasts: { enabled: true },
@@ -548,22 +555,8 @@ function schedulePrefsSave(): void {
   if (prefsSaveTimer) clearTimeout(prefsSaveTimer)
   prefsSaveTimer = setTimeout(() => {
     prefsSaveTimer = null
-    void flushPrefsSave()
+    flushPrefsSaveSync()
   }, 400)
-}
-
-async function flushPrefsSave(): Promise<void> {
-  if (prefsSaveTimer) {
-    clearTimeout(prefsSaveTimer)
-    prefsSaveTimer = null
-  }
-  try {
-    const path = getPrefsPath()
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, JSON.stringify(prefs, null, 2), 'utf8')
-  } catch (err) {
-    console.warn('[prefs] save failed:', err)
-  }
 }
 
 function flushPrefsSaveSync(): void {
@@ -942,7 +935,7 @@ function createWindow(): void {
   mainWindow.on('unmaximize', captureWindowState)
   mainWindow.on('close', (event) => {
     captureWindowState()
-    void flushPrefsSave()
+    flushPrefsSaveSync()
     // First close attempt: hand control to the renderer so it can
     // prompt for unsaved changes. The renderer either calls
     // `app.confirmClose` (we flip `userConfirmedClose` and re-trigger
@@ -1536,7 +1529,7 @@ app.whenReady().then(async () => {
     prefs.debug = { ...prefs.debug, enabled: next }
     // Debug logging only takes effect after a restart, so this must
     // hit disk before the user immediately quits/relaunches. The
-    // debounced async preference writer can be skipped by process exit.
+    // debounced preference writer can be skipped by process exit.
     flushPrefsSaveSync()
   })
 

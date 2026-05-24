@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 /**
  * State of the Clip Editor's preview voice — an independent backend
@@ -39,7 +40,18 @@ export const usePreviewStore = defineStore('preview', {
     /** Begin a new preview session for `itemId`, windowed to [inMs, inMs+durationMs].
      *  Resets local state immediately so the dialog UI is responsive even
      *  before the backend has finished loading the source. */
-    load(itemId: string, inMs: number, durationMs: number): void {
+    load(
+      itemId: string,
+      inMs: number,
+      durationMs: number,
+      warp?: {
+        warpEnabled?: boolean
+        warpMode?: ClipWarpMode
+        tempoRatio?: number
+        semitones?: number
+        cents?: number
+      }
+    ): void {
       this.itemId = itemId
       this.inMs = inMs
       this.durationMs = durationMs
@@ -47,6 +59,38 @@ export const usePreviewStore = defineStore('preview', {
       this.isPlaying = false
       this.isLoaded = false
       sendBridge('PREVIEW_LOAD', { libraryItemId: itemId, inMs, durationMs })
+      // Apply warp defaults eagerly so the user hears the warped audio
+      // from the first Play press. Bypass when warp is off / unset —
+      // the backend's preview voice defaults to no-warp already.
+      if (warp && warp.warpEnabled === true) {
+        sendBridge('PREVIEW_SET_WARP', {
+          warpEnabled: true,
+          warpMode: warp.warpMode,
+          tempoRatio: warp.tempoRatio,
+          semitones: warp.semitones,
+          cents: warp.cents
+        })
+      }
+    },
+    /** Update the preview voice's warp engine while loaded. Mirrors
+     *  `setClipWarp` semantics — partial update, `tempoRatio: null`
+     *  clears the pin. Called by the Clip Editor when warp parameters
+     *  change on the saved-clip library item the editor is viewing. */
+    setWarp(patch: {
+      warpEnabled?: boolean
+      warpMode?: ClipWarpMode
+      tempoRatio?: number | null
+      semitones?: number
+      cents?: number
+    }): void {
+      if (!this.isLoaded && !this.itemId) return
+      sendBridge('PREVIEW_SET_WARP', {
+        warpEnabled: patch.warpEnabled,
+        warpMode: patch.warpMode,
+        tempoRatio: patch.tempoRatio === undefined ? undefined : patch.tempoRatio,
+        semitones: patch.semitones,
+        cents: patch.cents
+      })
     },
     /** Tear down the current preview session and tell the backend to release
      *  its reader. Safe to call when already unloaded. */

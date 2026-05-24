@@ -23,6 +23,7 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from './constants'
 import { trackIndexAtWorldY } from './trackLayout'
+import { effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import type { GridGeometry } from './useGridGeometry'
 
 /** Edge-zone width in PIXELS for trim-vs-move hit detection. A click
@@ -536,18 +537,32 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     else stopClipAutoScroll()
   }
 
-  /** Returns the offset (ms) from the clip's left edge to the first
-   *  source-grid beat inside the clip's window, or null if the clip's
-   *  source file has no detected beats / BPM yet. Uses the *same
-   *  source-global beat grid* as `useTimelineDrawing.drawClip` — both
-   *  views anchor on `beats[0]` and step by `60/sourceBpm`, so the
-   *  snap target is exactly the first drawn marker. */
+  /** Returns the **timeline-time** offset (ms) from the clip's left
+   *  edge to the first source-grid beat inside the clip's window, or
+   *  null if the clip's source file has no detected beats / BPM yet.
+   *  Uses the same source-global beat grid as
+   *  `useTimelineDrawing.drawClip` — both views anchor on
+   *  `beats[0]` and step by `60/sourceBpm` — but converts the
+   *  source-time result to timeline-time via the clip's effective
+   *  tempo ratio so a warped clip's snap target lands on its
+   *  visually-correct beat, not a source-time position that the
+   *  warp engine compresses elsewhere. */
   function firstBeatOffsetMs(clip: {
+    libraryItemId?: string
     filePath: string
     inMs: number
     durationMs: number
+    warpEnabled?: boolean
+    tempoRatio?: number
   }): number | null {
-    const item = library.items.find((i) => i.filePath === clip.filePath)
+    // Resolve via the authoritative `libraryItemId` first (saved-clip
+    // siblings can share a filePath; only the parent carries the BPM
+    // analysis). Fall back to filePath lookup for legacy / unsaved
+    // states where libraryItemId hasn't been resolved yet.
+    const itemById = clip.libraryItemId
+      ? library.items.find((i) => i.id === clip.libraryItemId)
+      : undefined
+    const item = itemById ?? library.items.find((i) => i.filePath === clip.filePath)
     const beats = item?.beats
     const sourceBpm = item?.bpm
     const anchorSec = item?.beatAnchorSec ?? beats?.[0]
@@ -563,7 +578,22 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       Math.ceil((inMs - universalAnchorMs) / beatSpacingMs) * beatSpacingMs
     while (firstBeatMs < inMs) firstBeatMs += beatSpacingMs
     if (firstBeatMs > outMs) return null
-    return firstBeatMs - inMs
+    const sourceOffsetMs = firstBeatMs - inMs
+    // Convert source-time offset to timeline-time. Un-warped clips
+    // get `ratio === 1` and the value is unchanged.
+    const ratio = isWarpActive({
+      warpEnabled: clip.warpEnabled,
+      tempoRatio: clip.tempoRatio,
+      sourceBpm,
+      projectBpm: transport.bpm
+    })
+      ? effectiveTempoRatio({
+          tempoRatio: clip.tempoRatio,
+          sourceBpm,
+          projectBpm: transport.bpm
+        })
+      : 1
+    return sourceOffsetMs / ratio
   }
 
   function onClipPointerUp(_e: PointerEvent): void {
@@ -650,23 +680,44 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (!clip) return
     const pointerMs = pointerToRawMs(e.clientX)
     if (pointerMs === null) return
-    // Round pointer delta to whole milliseconds — the user asked for
-    // ms-precision trim, not grid snap.
-    const deltaMs = Math.round(pointerMs - trimPointerStartMs)
+    // `deltaTimelineMs` is the user's drag in TIMELINE-time. The clip's
+    // `inMs` / `durationMs` are in SOURCE-time — for an un-warped clip
+    // the two coincide, but a warped clip's source-time fields scale
+    // by the tempo ratio. Compute both so the trim semantics are
+    // identical to what the user sees (the clip's right edge tracks
+    // the cursor) while still writing source-time values into the
+    // store.
+    const deltaTimelineMs = Math.round(pointerMs - trimPointerStartMs)
+    const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+    const ratio =
+      isWarpActive({
+        warpEnabled: clip.warpEnabled,
+        tempoRatio: clip.tempoRatio,
+        sourceBpm: libItem?.bpm,
+        projectBpm: transport.bpm
+      })
+        ? effectiveTempoRatio({
+            tempoRatio: clip.tempoRatio,
+            sourceBpm: libItem?.bpm,
+            projectBpm: transport.bpm
+          })
+        : 1
+    const deltaSourceMs = Math.round(deltaTimelineMs * ratio)
 
     if (trimEdge === 'left') {
       // Left-edge trim: dragging right (positive delta) shrinks from
-      // the left — `startMs` moves right by delta, `inMs` increases by
-      // delta, `durationMs` decreases by delta. Constraints:
-      //   - inMs >= 0   (can't read before the start of the source)
-      //   - durationMs >= MIN_CLIP_MS
-      // Both reduce to clamping `delta` into a permitted range.
-      const minDelta = -trimOrigInMs
-      const maxDelta = trimOrigDurationMs - MIN_CLIP_MS
-      const clamped = Math.max(minDelta, Math.min(maxDelta, deltaMs))
-      const newStartMs = trimOrigStartMs + clamped
-      const newInMs = trimOrigInMs + clamped
-      const newDurationMs = trimOrigDurationMs - clamped
+      // the left — `startMs` moves right by the TIMELINE delta (so the
+      // visible left edge follows the cursor), while `inMs` increases
+      // and `durationMs` decreases by the SOURCE delta. Constraints
+      // operate in source-time because that's what `inMs` and
+      // `durationMs` are measured in.
+      const minDeltaSrc = -trimOrigInMs
+      const maxDeltaSrc = trimOrigDurationMs - MIN_CLIP_MS
+      const clampedSrc = Math.max(minDeltaSrc, Math.min(maxDeltaSrc, deltaSourceMs))
+      const clampedTimeline = ratio > 0 ? Math.round(clampedSrc / ratio) : clampedSrc
+      const newStartMs = trimOrigStartMs + clampedTimeline
+      const newInMs = trimOrigInMs + clampedSrc
+      const newDurationMs = trimOrigDurationMs - clampedSrc
       if (
         newStartMs === clip.startMs &&
         newInMs === clip.inMs &&
@@ -676,15 +727,14 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       }
       project.trimClip(clip.id, newStartMs, newInMs, newDurationMs)
     } else {
-      // Right-edge trim: positive delta grows the clip from the right,
-      // negative shrinks it. `startMs` and `inMs` stay put.
-      // Constraints:
-      //   - durationMs >= MIN_CLIP_MS
-      //   - inMs + durationMs <= sourceDurationMs
-      const minDelta = MIN_CLIP_MS - trimOrigDurationMs
-      const maxDelta = trimSourceDurationMs - (trimOrigInMs + trimOrigDurationMs)
-      const clamped = Math.max(minDelta, Math.min(maxDelta, deltaMs))
-      const newDurationMs = trimOrigDurationMs + clamped
+      // Right-edge trim: positive timeline delta grows the clip from
+      // the right, negative shrinks it. `startMs` and `inMs` stay
+      // put; only `durationMs` changes — in source-time, so multiply
+      // the timeline-time pointer delta by the tempo ratio.
+      const minDeltaSrc = MIN_CLIP_MS - trimOrigDurationMs
+      const maxDeltaSrc = trimSourceDurationMs - (trimOrigInMs + trimOrigDurationMs)
+      const clampedSrc = Math.max(minDeltaSrc, Math.min(maxDeltaSrc, deltaSourceMs))
+      const newDurationMs = trimOrigDurationMs + clampedSrc
       if (newDurationMs === clip.durationMs) return
       project.trimClip(clip.id, trimOrigStartMs, trimOrigInMs, newDurationMs)
     }

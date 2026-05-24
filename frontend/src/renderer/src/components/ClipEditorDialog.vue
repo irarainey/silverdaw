@@ -522,7 +522,18 @@ function loadPreviewForView(): void {
   if (!item) return
   const src = sourceItem.value
   if (!src) return
-  preview.load(src.id, viewInMs.value, viewDurationMs.value)
+  // Pass any warp defaults stored on the library item (saved-clips
+  // carry the user's preferred warp at the time the clip was saved)
+  // so the preview voice plays the clip the way the timeline will.
+  // Audio-file items don't carry warp metadata, so the spread is a
+  // no-op for them.
+  preview.load(src.id, viewInMs.value, viewDurationMs.value, {
+    warpEnabled: item.warpEnabled,
+    warpMode: item.warpMode,
+    tempoRatio: item.tempoRatio,
+    semitones: item.semitones,
+    cents: item.cents
+  })
 }
 
 // On-demand high-resolution peaks for the Clip Editor. The default

@@ -35,6 +35,7 @@ import {
   isBridgeInboundType,
   isClipAckPayload,
   isClipEditorPeaksReadyPayload,
+  isClipWarpAppliedPayload,
   isClipRemovedPayload,
   isEditUndoStatePayload,
   isLibraryItemAnalysisPayload,
@@ -520,6 +521,26 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'CLIP_WARP_APPLIED': {
+      // Backend flipped or adjusted warp server-side (e.g. late
+      // auto-warp after LIBRARY_ITEM_ANALYSIS). Mirror locally without
+      // echoing CLIP_SET_WARP back to the backend.
+      useProjectStore().setClipWarp(
+        msg.payload.clipId,
+        {
+          warpEnabled: msg.payload.warpEnabled,
+          warpMode: msg.payload.warpMode,
+          tempoRatio: msg.payload.tempoRatio,
+          semitones: msg.payload.semitones,
+          cents: msg.payload.cents,
+          pendingAutoWarp: msg.payload.pendingAutoWarp
+        },
+        { localOnly: true }
+      )
+      log.info('bridge', `CLIP_WARP_APPLIED clipId=${msg.payload.clipId}`)
+      break
+    }
+
     case 'PREVIEW_STATE': {
       usePreviewStore().applyState(msg.payload)
       break
@@ -721,6 +742,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isLibraryItemAnalysisPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_BPM_APPLIED':
       return isProjectBpmAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'CLIP_WARP_APPLIED':
+      return isClipWarpAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PREVIEW_STATE':
       return isPreviewStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PREVIEW_POSITION':

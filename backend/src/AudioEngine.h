@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Log.h"
+#include "WarpProcessor.h"
 
 #include <atomic>
 #include <cstdint>
@@ -13,6 +14,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 namespace silverdaw
@@ -70,11 +72,27 @@ class OffsetSource : public juce::PositionableAudioSource
         return clipDurationSamples.load();
     }
 
+    /** Install (or remove with nullptr) the warp processor for this
+     *  clip. Pointer is non-owning — the AudioEngine's per-clip
+     *  `Track::warp` unique_ptr owns the lifetime. Safe to set / clear
+     *  from the message thread; the audio thread reads via the same
+     *  pointer on every block. */
+    void setWarpProcessor(WarpProcessor* w) noexcept
+    {
+        warp.store(w, std::memory_order_release);
+    }
+
     void prepareToPlay(int blockSize, double sampleRate) override
     {
+        cachedBlockSize.store(blockSize, std::memory_order_relaxed);
+        cachedSampleRate.store(sampleRate, std::memory_order_relaxed);
         if (child != nullptr)
         {
             child->prepareToPlay(blockSize, sampleRate);
+        }
+        if (auto* w = warp.load(std::memory_order_acquire))
+        {
+            w->prepareToPlay(blockSize);
         }
     }
 
@@ -133,8 +151,45 @@ class OffsetSource : public juce::PositionableAudioSource
             audible.numSamples = audibleSamples;
             // Read from the source at: how-far-into-the-clip + in-source-offset.
             const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
-            child->setNextReadPosition(sourcePos);
-            child->getNextAudioBlock(audible);
+            auto* w = warp.load(std::memory_order_acquire);
+            if (w != nullptr && w->isActive())
+            {
+                // Warp path. The processor owns the source cursor and
+                // advances it internally as it consumes input. We only
+                // need to re-seek when playback is discontinuous —
+                // i.e. on the very first block of a fresh play-from
+                // (lastBlockEnded), or when the master clock has
+                // jumped (audibleStart != lastAudibleEnd). During
+                // steady-state playback we leave the cursor alone so
+                // the stretcher reaches its steady-state quality —
+                // resetting every block was the source of the jittery
+                // audio reported on project reload.
+                if (lastBlockEnded || audibleStart != lastAudibleEnd)
+                {
+                    const double ratio = w->getTempoRatio();
+                    const juce::int64 warpedSourcePos =
+                        inSrc + static_cast<juce::int64>(static_cast<double>(audibleStart - clipStart) * ratio);
+                    w->seekSource(warpedSourcePos);
+                }
+                pullThroughWarp(*w, *audible.buffer, audible.startSample, audibleSamples);
+                lastBlockEnded = false;
+                lastAudibleEnd = audibleEnd;
+            }
+            else
+            {
+                child->setNextReadPosition(sourcePos);
+                child->getNextAudioBlock(audible);
+                lastBlockEnded = false;
+                lastAudibleEnd = audibleEnd;
+            }
+        }
+        else
+        {
+            // We didn't pull this block — the next time we do, the
+            // warp processor's source cursor is going to be stale (it
+            // has been sitting waiting for us). Force a re-seek on the
+            // next active block by remembering that we just ended.
+            lastBlockEnded = true;
         }
 
         if (silentTrailing > 0)
@@ -146,10 +201,29 @@ class OffsetSource : public juce::PositionableAudioSource
         }
 
         position.store(endPos, std::memory_order_relaxed);
+        // Record what `setNextReadPosition` should see next if playback
+        // is contiguous — used by the discontinuity check there to
+        // distinguish routine per-block advancement from a real seek.
+        lastBlockEndPosition.store(endPos, std::memory_order_relaxed);
     }
 
     void setNextReadPosition(juce::int64 newPosition) override
     {
+        // Detect discontinuity (master seek) vs routine "next block"
+        // call. JUCE's plumbing (BufferingAudioSource etc.) calls
+        // `setNextReadPosition` on its source EVERY block as part of
+        // normal advancement — a one-block-worth jump from
+        // `lastBlockEndPosition` is not a seek. Treat anything farther
+        // than 2× the largest sane block size as a real seek so the
+        // warp processor flushes its history; otherwise leave its
+        // cursor alone and let `getNextAudioBlock` advance it
+        // naturally.
+        const juce::int64 prevExpected = lastBlockEndPosition.load(std::memory_order_relaxed);
+        constexpr juce::int64 kContinuityToleranceSamples = 16384;
+        const bool isDiscontinuous =
+            prevExpected < 0 ||
+            std::abs(newPosition - prevExpected) > kContinuityToleranceSamples;
+
         position.store(newPosition, std::memory_order_relaxed);
         const juce::int64 off = offsetSamples.load();
         const juce::int64 inSrc = inSourceSamples.load();
@@ -159,6 +233,17 @@ class OffsetSource : public juce::PositionableAudioSource
             // call will use, so a seek immediately followed by a pull
             // produces aligned audio (no half-block of stale samples).
             child->setNextReadPosition(newPosition >= off ? (newPosition - off) + inSrc : inSrc);
+        }
+        if (isDiscontinuous)
+        {
+            // Genuine seek — flush the warp processor's internal
+            // history so the next pull starts fresh from the new
+            // source position. Routine per-block advances skip this.
+            lastBlockEnded = true;
+            if (auto* w = warp.load(std::memory_order_acquire))
+            {
+                w->requestReset();
+            }
         }
     }
 
@@ -200,6 +285,63 @@ class OffsetSource : public juce::PositionableAudioSource
     std::atomic<juce::int64> offsetSamples{0};
     std::atomic<juce::int64> inSourceSamples{0};
     std::atomic<juce::int64> clipDurationSamples{0};
+    /** Non-owning warp pointer. nullptr means "no warp" — the normal
+     *  fast path. Lifetime is managed by the owning `Track::warp`
+     *  unique_ptr in AudioEngine. */
+    std::atomic<WarpProcessor*> warp{nullptr};
+    /** Bookkeeping so we don't reset the warp processor on every
+     *  block during steady-state playback. `lastAudibleEnd` is the
+     *  master-clock position one-past-end of the previous block's
+     *  audible region; when the next block's `audibleStart` matches,
+     *  playback is contiguous and we let the WarpProcessor advance
+     *  its source cursor internally without a re-seek. */
+    juce::int64 lastAudibleEnd{std::numeric_limits<juce::int64>::min()};
+    /** Master-clock position one-past-end of the last block we
+     *  produced. Used by `setNextReadPosition` to distinguish a
+     *  routine per-block advance (a JUCE BufferingAudioSource sets
+     *  the read position before each pull) from a genuine seek that
+     *  warrants flushing the warp processor's internal history.
+     *  -1 sentinel means "no block produced yet". */
+    std::atomic<juce::int64> lastBlockEndPosition{-1};
+    bool lastBlockEnded{true};
+    std::atomic<int> cachedBlockSize{0};
+    std::atomic<double> cachedSampleRate{0.0};
+
+    /** Pull `numSamples` of warped audio into `dest[startSample..]`,
+     *  sourcing from `child` via the WarpProcessor's callback. Called
+     *  from `getNextAudioBlock` only when the audible region falls
+     *  inside the clip's timeline window AND the warp processor is
+     *  active. */
+    void pullThroughWarp(WarpProcessor& w, juce::AudioBuffer<float>& dest, int startSample, int numSamples)
+    {
+        if (child == nullptr || numSamples <= 0) return;
+        const int chans = juce::jmin(dest.getNumChannels(), 2);
+        // Build per-channel write pointers into the audible region.
+        // The output buffer is `dest`'s active region — channels live
+        // in separate float planes per JUCE convention.
+        float* outPtrs[8] = {nullptr};
+        const int outChannels = juce::jmin(chans, 8);
+        for (int c = 0; c < outChannels; ++c)
+        {
+            outPtrs[c] = dest.getWritePointer(c, startSample);
+        }
+        // Source-read callback. The WarpProcessor demands chunks of
+        // input at absolute source-sample positions; we seek the
+        // reader and pull into a scratch JUCE buffer aliased over the
+        // caller-supplied raw pointers. The reader's own
+        // `getNextAudioBlock` does the heavy lifting (file decode +
+        // resample to engine sample rate); we just sit between it and
+        // the stretcher.
+        auto readSource =
+            [this, outChannels](float* const* dst, juce::int64 srcPos, int n)
+        {
+            child->setNextReadPosition(srcPos);
+            juce::AudioBuffer<float> bufView(const_cast<float**>(dst), outChannels, n);
+            juce::AudioSourceChannelInfo info(&bufView, 0, n);
+            child->getNextAudioBlock(info);
+        };
+        w.process(outPtrs, numSamples, readSource);
+    }
 };
 
 /**
@@ -428,6 +570,38 @@ class AudioEngine
      */
     bool setClipTrim(const juce::String& clipId, double startMs, double inMs, double clipDurationMs);
 
+    /**
+     * Per-clip warp + pitch shift control. Each parameter is wrapped
+     * in `std::optional` so the renderer can drive a single field
+     * (e.g. just `semitones`) without echoing the rest. `enabled`
+     * gates the whole engine — when `false` the per-clip
+     * `WarpProcessor` is destroyed and the audio path falls back to
+     * the unwarped reader-source pull. `tempoRatio` follows the
+     * Silverdaw convention `projectBpm / sourceBpm` (i.e. "how many
+     * times faster the clip plays at native pitch"); the processor
+     * inverts it internally before feeding Rubber Band.
+     *
+     * Pitch is `semitones + cents/100` combined into a scale via
+     * `2^(s/12)`. Both fields are independent of `tempoRatio` —
+     * Rubber Band changes pitch without affecting tempo and vice
+     * versa.
+     *
+     * Mode (`'rhythmic'` / `'tonal'` / `'complex'`) is captured at
+     * construction time only; changing modes destroys and recreates
+     * the processor. Default is `'rhythmic'` (R2 / Faster) so the
+     * audio thread stays inside its CPU budget even with many active
+     * warped clips; the user can escalate per-clip from the Warp
+     * settings dialog when quality matters.
+     *
+     * Returns true if the clip existed.
+     */
+    bool setClipWarp(const juce::String& clipId,
+                     std::optional<bool> enabled,
+                     std::optional<juce::String> mode,
+                     std::optional<double> tempoRatio,
+                     std::optional<double> semitones,
+                     std::optional<double> cents);
+
     /** True if any track is currently playing. */
     bool isPlaying() const;
 
@@ -488,6 +662,19 @@ class AudioEngine
 
     /** True if a preview source is currently loaded. */
     bool isPreviewLoaded() const;
+
+    /**
+     * Per-preview warp configuration. Mirrors the per-clip
+     * `setClipWarp` API exactly so the Clip Editor's preview voice
+     * sounds the way the timeline clip will play. No-op when no
+     * preview is loaded; the next `loadPreview()` resets the warp
+     * state to bypass.
+     */
+    bool setPreviewWarp(std::optional<bool> enabled,
+                        std::optional<juce::String> mode,
+                        std::optional<double> tempoRatio,
+                        std::optional<double> semitones,
+                        std::optional<double> cents);
 
     /** Monotonic counter incremented on every load/unload. Used by the
      *  bridge layer to discard stale state broadcasts after the user
@@ -632,6 +819,11 @@ class AudioEngine
         std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
         std::unique_ptr<OffsetSource> offsetSource;
         std::unique_ptr<juce::AudioTransportSource> transportSource;
+        /** Owns the lifetime of the per-clip warp engine when warp is
+         *  enabled. nullptr means "no warp / bypass" — the fast path.
+         *  `OffsetSource` holds a non-owning atomic pointer to the
+         *  same instance for the audio thread to find on every block. */
+        std::unique_ptr<WarpProcessor> warp;
         double sampleRate = 44100.0;
         int numChannels = 2;
         /**
@@ -770,6 +962,11 @@ class AudioEngine
         std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
         std::unique_ptr<OffsetSource> offsetSource;
         std::unique_ptr<juce::AudioTransportSource> transportSource;
+        /** Owns the preview-voice warp engine when warp is enabled.
+         *  Lifetime mirrors `Track::warp`; the OffsetSource holds a
+         *  non-owning atomic pointer to the same instance so the
+         *  audio thread can fast-path it on every block. */
+        std::unique_ptr<WarpProcessor> warp;
         double sampleRate = 44100.0;
         double inMs = 0.0;
         double durationMs = 0.0;

@@ -12,7 +12,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import type { Clip } from '@/stores/projectStore'
-import type { LibraryItemKind } from '@shared/bridge-protocol'
+import type { ClipWarpMode, LibraryItemKind } from '@shared/bridge-protocol'
 
 export interface SavedClipSource {
   sourceItemId?: string
@@ -112,6 +112,14 @@ export interface LibraryItem {
    *  meaningful for `audio-file` items with at least one saved-clip
    *  child. Persisted with the project. */
   collapsed?: boolean
+  /** Saved-clip default warp settings. Copied onto a fresh timeline
+   *  clip when the saved-clip tile is dragged in (copy-on-drop, not
+   *  live link). Only meaningful when `kind === 'saved-clip'`. */
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number
+  semitones?: number
+  cents?: number
 }
 
 /**
@@ -274,6 +282,14 @@ export const useLibraryStore = defineStore('library', {
       id?: string
       derivedFrom?: SavedClipSource
       collapsed?: boolean
+      /** Saved-clip default warp settings (only meaningful when
+       *  `kind === 'saved-clip'`). Copied onto a fresh timeline clip
+       *  when the tile is dragged in (copy-on-drop, not live link). */
+      warpEnabled?: boolean
+      warpMode?: ClipWarpMode
+      tempoRatio?: number
+      semitones?: number
+      cents?: number
     }): string {
       const kind = audio.kind ?? 'audio-file'
       if (kind === 'saved-clip' && !audio.derivedFrom) {
@@ -328,7 +344,12 @@ export const useLibraryStore = defineStore('library', {
         playbackFilePath: audio.playbackFilePath ?? audio.filePath,
         key: audio.key,
         derivedFrom: audio.derivedFrom,
-        collapsed: audio.collapsed
+        collapsed: audio.collapsed,
+        warpEnabled: kind === 'saved-clip' ? audio.warpEnabled : undefined,
+        warpMode: kind === 'saved-clip' ? audio.warpMode : undefined,
+        tempoRatio: kind === 'saved-clip' ? audio.tempoRatio : undefined,
+        semitones: kind === 'saved-clip' ? audio.semitones : undefined,
+        cents: kind === 'saved-clip' ? audio.cents : undefined
       })
       log.info(
         'library',
@@ -354,7 +375,12 @@ export const useLibraryStore = defineStore('library', {
           sourceClipId: audio.derivedFrom?.sourceClipId,
           sourceInMs: audio.derivedFrom?.inMs,
           sourceDurationMs: audio.derivedFrom?.durationMs,
-          collapsed: audio.collapsed
+          collapsed: audio.collapsed,
+          warpEnabled: kind === 'saved-clip' ? audio.warpEnabled : undefined,
+          warpMode: kind === 'saved-clip' ? audio.warpMode : undefined,
+          tempoRatio: kind === 'saved-clip' ? audio.tempoRatio : undefined,
+          semitones: kind === 'saved-clip' ? audio.semitones : undefined,
+          cents: kind === 'saved-clip' ? audio.cents : undefined
         })
       }
       return id
@@ -412,7 +438,16 @@ export const useLibraryStore = defineStore('library', {
           sourceClipId: clip.id,
           inMs,
           durationMs
-        }
+        },
+        // Copy the originating clip's warp settings as the saved-clip
+        // defaults (copy-on-drop semantics: future placements of this
+        // saved clip start with these values, but later edits on
+        // either side do NOT propagate across — warp is per-instance).
+        warpEnabled: clip.warpEnabled,
+        warpMode: clip.warpMode,
+        tempoRatio: clip.tempoRatio,
+        semitones: clip.semitones,
+        cents: clip.cents
       })
       // Inherit the source's already-known analysis details so the info
       // dialog opens with populated fields instead of "Not available

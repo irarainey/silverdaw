@@ -11,8 +11,10 @@ import { log } from '@/lib/log'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
-import type { ProjectStatePayload } from '@shared/bridge-protocol'
+import { useUiStore } from '@/stores/uiStore'
+import type { ClipWarpMode, ProjectStatePayload } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
+import { clipEffectiveDurationMs, effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 
 export interface Clip {
   readonly id: string
@@ -73,6 +75,21 @@ export interface Clip {
    *  library. Undefined means fall back to the library item title /
    *  filename. */
   name?: string
+  /** Per-clip warp + pitch-shift settings. All fields optional; an
+   *  un-warped clip carries none of them. See `ClipSetWarpPayload` in
+   *  the shared bridge protocol for the field semantics. `tempoRatio`
+   *  undefined means "derive from project.bpm / sourceBpm live"; a
+   *  finite value pins the ratio so subsequent project-BPM edits
+   *  don't move this clip. */
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number
+  semitones?: number
+  cents?: number
+  /** Bookkeeping flag: clip was dropped before its library item's BPM
+   *  was detected. Cleared automatically by `LIBRARY_ITEM_ANALYSIS`
+   *  (auto-flip warp on) or by any manual warp edit (user opt-out). */
+  pendingAutoWarp?: boolean
 }
 
 export interface Marker {
@@ -346,6 +363,14 @@ export interface ClipboardEntry {
   durationMs: number
   colorIndex?: number
   name?: string
+  /** Warp settings carried across copy/paste so a paste preserves
+   *  the source clip's tempo / pitch state. All optional — un-warped
+   *  clips leave these undefined. */
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number
+  semitones?: number
+  cents?: number
 }
 
 /** Default name shown in the title bar before a project is named or loaded. */
@@ -464,6 +489,14 @@ export const useProjectStore = defineStore('project', {
      * extend past that.
      */
     durationMs(state): number {
+      // Walk every clip and compute its effective timeline end. Warped
+      // clips show on the timeline at `native / tempoRatio` so their
+      // contribution to the project duration is the warped length —
+      // anything else would let a clip overhang the project ruler.
+      // Native (un-warped) clips fall through `clipEffectiveDurationMs`
+      // unchanged because `isWarpActive` returns false for them.
+      const library = useLibraryStore()
+      const projectBpm = useTransportStore().bpm
       let max = 0
       for (const t of state.tracks) {
         if (t.lengthMs > max) max = t.lengthMs
@@ -471,7 +504,9 @@ export const useProjectStore = defineStore('project', {
       for (const id in state.clips) {
         const c = state.clips[id]
         if (!c) continue
-        const end = c.startMs + c.durationMs
+        const libItem = library.items.find((i) => i.id === c.libraryItemId)
+        const effDur = clipEffectiveDurationMs(c, libItem, projectBpm)
+        const end = c.startMs + effDur
         if (end > max) max = end
       }
       return max
@@ -695,23 +730,49 @@ export const useProjectStore = defineStore('project', {
     splitClipAt(clipId: string, atMs: number): string | null {
       const clip = this.clips[clipId]
       if (!clip) return null
+      // For warped clips the visible footprint is `nativeDur / ratio`,
+      // so the user-visible split position (timeline-time) maps to a
+      // source-time offset of `(atMs - clip.startMs) * ratio`. Compute
+      // both — `startMs` for the new right-half stays in timeline-time
+      // (the visible left edge of the new clip), while `inMs` /
+      // `durationMs` must be in source-time for the audio engine.
+      const library = useLibraryStore()
+      const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+      const projectBpm = useTransportStore().bpm
+      const ratio = isWarpActive({
+        warpEnabled: clip.warpEnabled,
+        tempoRatio: clip.tempoRatio,
+        sourceBpm: libItem?.bpm,
+        projectBpm
+      })
+        ? effectiveTempoRatio({
+            tempoRatio: clip.tempoRatio,
+            sourceBpm: libItem?.bpm,
+            projectBpm
+          })
+        : 1
+      const effectiveDurMs = clip.durationMs / ratio
+      const clipEnd = clip.startMs + effectiveDurMs
       // Need a strict-interior split: a split exactly at either edge
       // would mint a zero-length sibling. 1 ms of slack matches the
       // ms-precision we promised the user.
-      const clipEnd = clip.startMs + clip.durationMs
       if (atMs <= clip.startMs + 1 || atMs >= clipEnd - 1) return null
 
-      const splitOffsetInClip = atMs - clip.startMs
-      const newClipDurationMs = clip.durationMs - splitOffsetInClip
-      const newClipInMs = clip.inMs + splitOffsetInClip
+      const splitOffsetTimelineMs = atMs - clip.startMs
+      const splitOffsetSourceMs = splitOffsetTimelineMs * ratio
+      const newClipDurationMs = clip.durationMs - splitOffsetSourceMs
+      const newClipInMs = clip.inMs + splitOffsetSourceMs
       const newClipStartMs = atMs
 
-      // Shrink original first (atomic three-field write).
-      this.trimClip(clipId, clip.startMs, clip.inMs, splitOffsetInClip)
+      // Shrink original first (atomic three-field write). Left-half
+      // source-time duration = `splitOffsetSourceMs`.
+      this.trimClip(clipId, clip.startMs, clip.inMs, splitOffsetSourceMs)
 
       // Mint the right-hand half as a new clip on the same track,
       // sharing peaks + sampleRate + channelCount with the original
-      // (cheap — peaks is a shared Float32Array reference).
+      // (cheap — peaks is a shared Float32Array reference). Warp
+      // settings carry over so a split warped clip doesn't lose its
+      // tempo / pitch state — both halves continue to play in time.
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (!track) return null
       const newId = crypto.randomUUID()
@@ -730,7 +791,13 @@ export const useProjectStore = defineStore('project', {
         peaks: clip.peaks,
         unresolved: clip.unresolved,
         colorIndex: clip.colorIndex,
-        name: clip.name
+        name: clip.name,
+        warpEnabled: clip.warpEnabled,
+        warpMode: clip.warpMode,
+        tempoRatio: clip.tempoRatio,
+        semitones: clip.semitones,
+        cents: clip.cents,
+        pendingAutoWarp: clip.pendingAutoWarp
       }
       this.clips[newId] = right
       const insertAt = track.clipIds.indexOf(clipId)
@@ -752,6 +819,20 @@ export const useProjectStore = defineStore('project', {
       this.pushTrackGain(track)
       if (clip.name) {
         sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
+      }
+      // Replay warp onto the new clip via the bridge so the backend
+      // builds a fresh WarpProcessor on the engine's right-half track.
+      // Skip the envelope when warp is off — there's nothing to
+      // configure and we'd burn an undo step for no audible effect.
+      if (clip.warpEnabled === true) {
+        sendBridge('CLIP_SET_WARP', {
+          clipId: newId,
+          warpEnabled: true,
+          warpMode: clip.warpMode,
+          tempoRatio: clip.tempoRatio,
+          semitones: clip.semitones,
+          cents: clip.cents
+        })
       }
       log.info(
         'project',
@@ -777,7 +858,16 @@ export const useProjectStore = defineStore('project', {
         trackedTail && trackedTail.trackId === clip.trackId && track.clipIds.includes(trackedTail.id)
           ? trackedTail
           : clip
-      const newStartMs = tail.startMs + tail.durationMs
+      // Use effective (post-warp) durations everywhere we reason about
+      // timeline placement and overlap. `tail.durationMs` is the
+      // source-time length; we want the visible footprint.
+      const library = useLibraryStore()
+      const projectBpm = useTransportStore().bpm
+      const tailLib = library.items.find((i) => i.id === tail.libraryItemId)
+      const tailEffDur = clipEffectiveDurationMs(tail, tailLib, projectBpm)
+      const newStartMs = tail.startMs + tailEffDur
+      const clipLib = library.items.find((i) => i.id === clip.libraryItemId)
+      const clipEffDur = clipEffectiveDurationMs(clip, clipLib, projectBpm)
       // The duplicate must fit immediately after the current tail. We do
       // not search other gaps because repeated Duplicate is an append
       // gesture; if something blocks the chain, tell the user.
@@ -785,8 +875,10 @@ export const useProjectStore = defineStore('project', {
         if (id === clipId || id === tail.id) continue
         const c = this.clips[id]
         if (!c) continue
-        const cEnd = c.startMs + c.durationMs
-        if (newStartMs < cEnd && newStartMs + clip.durationMs > c.startMs) {
+        const cLib = library.items.find((i) => i.id === c.libraryItemId)
+        const cEffDur = clipEffectiveDurationMs(c, cLib, projectBpm)
+        const cEnd = c.startMs + cEffDur
+        if (newStartMs < cEnd && newStartMs + clipEffDur > c.startMs) {
           useNotificationsStore().pushError('Not enough space to duplicate clip after the last duplicate.')
           log.info('project', `duplicateClip rejected: source=${clipId} tail=${tail.id} overlaps clip ${id}`)
           return null
@@ -808,7 +900,13 @@ export const useProjectStore = defineStore('project', {
         peaks: clip.peaks,
         unresolved: clip.unresolved,
         colorIndex: clip.colorIndex,
-        name: clip.name
+        name: clip.name,
+        warpEnabled: clip.warpEnabled,
+        warpMode: clip.warpMode,
+        tempoRatio: clip.tempoRatio,
+        semitones: clip.semitones,
+        cents: clip.cents,
+        pendingAutoWarp: clip.pendingAutoWarp
       }
       this.clips[newId] = copy
       const insertAt = track.clipIds.indexOf(tail.id)
@@ -818,7 +916,7 @@ export const useProjectStore = defineStore('project', {
         track.clipIds.push(newId)
       }
       this.duplicateTailBySource[clipId] = newId
-      const clipEnd = copy.startMs + copy.durationMs
+      const clipEnd = copy.startMs + clipEffDur
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
 
       sendBridge('CLIP_ADD', {
@@ -833,6 +931,20 @@ export const useProjectStore = defineStore('project', {
       this.pushTrackGain(track)
       if (clip.name) {
         sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
+      }
+      // Carry warp settings onto the duplicate via the bridge so the
+      // backend builds a fresh WarpProcessor on the new engine clip.
+      // Skip when warp is off to avoid burning an undo step on an
+      // inaudible no-op.
+      if (clip.warpEnabled === true) {
+        sendBridge('CLIP_SET_WARP', {
+          clipId: newId,
+          warpEnabled: true,
+          warpMode: clip.warpMode,
+          tempoRatio: clip.tempoRatio,
+          semitones: clip.semitones,
+          cents: clip.cents
+        })
       }
       log.info('project', `duplicateClip id=${clipId} -> newId=${newId} @${newStartMs}ms`)
       return newId
@@ -915,7 +1027,12 @@ export const useProjectStore = defineStore('project', {
         inMs: clip.inMs,
         durationMs: clip.durationMs,
         colorIndex: clip.colorIndex,
-        name: clip.name
+        name: clip.name,
+        warpEnabled: clip.warpEnabled,
+        warpMode: clip.warpMode,
+        tempoRatio: clip.tempoRatio,
+        semitones: clip.semitones,
+        cents: clip.cents
       }
       log.info('project', `copySelectedClip id=${id}`)
       return true
@@ -962,21 +1079,44 @@ export const useProjectStore = defineStore('project', {
         useNotificationsStore().pushError("Can't paste — target track has been removed.")
         return null
       }
+      // Effective duration of the clipboard clip — the visible
+      // footprint, which is what targetStartMs + overlap checks
+      // operate in. Source-time `durationMs` would over/under-count
+      // a warped clip's timeline length.
+      const cbLib = useLibraryStore().items.find((i) => i.id === cb.libraryItemId)
+      const cbRatio = isWarpActive({
+        warpEnabled: cb.warpEnabled,
+        tempoRatio: cb.tempoRatio,
+        sourceBpm: cbLib?.bpm,
+        projectBpm: useTransportStore().bpm
+      })
+        ? effectiveTempoRatio({
+            tempoRatio: cb.tempoRatio,
+            sourceBpm: cbLib?.bpm,
+            projectBpm: useTransportStore().bpm
+          })
+        : 1
+      const cbEffDur = cbRatio > 0 ? cb.durationMs / cbRatio : cb.durationMs
+
       // Position depends on whether we're pasting onto the source
       // track or a different one.
       const targetStartMs =
         targetTrackId === cb.sourceTrackId
-          ? cb.sourceStartMs + cb.sourceDurationMs
+          ? cb.sourceStartMs + cbEffDur
           : Math.max(0, positionMs ?? 0)
+      const library = useLibraryStore()
+      const projectBpm = useTransportStore().bpm
       for (const id of track.clipIds) {
         const c = this.clips[id]
         if (!c) continue
-        const cEnd = c.startMs + c.durationMs
-        if (targetStartMs < cEnd && targetStartMs + cb.durationMs > c.startMs) {
+        const cLib = library.items.find((i) => i.id === c.libraryItemId)
+        const cEffDur = clipEffectiveDurationMs(c, cLib, projectBpm)
+        const cEnd = c.startMs + cEffDur
+        if (targetStartMs < cEnd && targetStartMs + cbEffDur > c.startMs) {
           useNotificationsStore().pushError('Not enough space to paste clip on this track.')
           log.info(
             'project',
-            `pasteClip rejected: target=${targetStartMs} dur=${cb.durationMs} overlaps clip ${id} on ${targetTrackId}`
+            `pasteClip rejected: target=${targetStartMs} dur=${cbEffDur} overlaps clip ${id} on ${targetTrackId}`
           )
           return null
         }
@@ -999,7 +1139,12 @@ export const useProjectStore = defineStore('project', {
         peaks: new Float32Array(0),
         unresolved: false,
         colorIndex: cb.colorIndex,
-        name: cb.name
+        name: cb.name,
+        warpEnabled: cb.warpEnabled,
+        warpMode: cb.warpMode,
+        tempoRatio: cb.tempoRatio,
+        semitones: cb.semitones,
+        cents: cb.cents
       }
       const peakSource = Object.values(this.clips).find(
         (c) => c.libraryItemId === cb.libraryItemId && c.peaks.length > 0
@@ -1010,7 +1155,7 @@ export const useProjectStore = defineStore('project', {
       }
       this.clips[newId] = placeholder
       track.clipIds.push(newId)
-      const clipEnd = startMs + cb.durationMs
+      const clipEnd = startMs + cbEffDur
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
       this.selectedClipId = newId
       this.peaksRevision++
@@ -1027,6 +1172,18 @@ export const useProjectStore = defineStore('project', {
       this.pushTrackGain(track)
       if (cb.name) {
         sendBridge('CLIP_RENAME', { clipId: newId, name: cb.name })
+      }
+      // Replay warp onto the pasted clip's engine voice — same as
+      // duplicate / split. Backend builds a fresh WarpProcessor.
+      if (cb.warpEnabled === true) {
+        sendBridge('CLIP_SET_WARP', {
+          clipId: newId,
+          warpEnabled: true,
+          warpMode: cb.warpMode,
+          tempoRatio: cb.tempoRatio,
+          semitones: cb.semitones,
+          cents: cb.cents
+        })
       }
       log.info('project', `pasteClip newId=${newId} @${startMs}ms`)
       return newId
@@ -1148,19 +1305,96 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * Mutate a clip's warp + pitch settings locally and push them to
+     * the backend. Every field is optional; only the fields supplied
+     * are applied. Pass `tempoRatio: null` (not `undefined`) to clear
+     * the pinned ratio so the clip reverts to following the project
+     * BPM live. The bridge envelope coalesces within 500 ms by
+     * (clipId, type) so dragging a slider commits a single undo step.
+     */
+    setClipWarp(
+      clipId: string,
+      patch: {
+        warpEnabled?: boolean
+        warpMode?: ClipWarpMode
+        /** `null` clears the pinned override; `number` pins it. */
+        tempoRatio?: number | null
+        semitones?: number
+        cents?: number
+        pendingAutoWarp?: boolean
+      },
+      opts?: { localOnly?: boolean }
+    ): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      if (patch.warpEnabled !== undefined) clip.warpEnabled = patch.warpEnabled
+      if (patch.warpMode !== undefined) clip.warpMode = patch.warpMode
+      if (patch.tempoRatio !== undefined) {
+        clip.tempoRatio = patch.tempoRatio === null ? undefined : patch.tempoRatio
+      }
+      if (patch.semitones !== undefined) clip.semitones = patch.semitones
+      if (patch.cents !== undefined) clip.cents = patch.cents
+      if (patch.pendingAutoWarp !== undefined) {
+        clip.pendingAutoWarp = patch.pendingAutoWarp ? true : undefined
+      }
+      // Any explicit warp-field edit clears the "waiting for analysis"
+      // flag so a late-arriving LIBRARY_ITEM_ANALYSIS can't override
+      // the latest state.
+      if (
+        patch.warpEnabled !== undefined ||
+        patch.warpMode !== undefined ||
+        patch.tempoRatio !== undefined ||
+        patch.semitones !== undefined ||
+        patch.cents !== undefined
+      ) {
+        clip.pendingAutoWarp = undefined
+      }
+      // Force a timeline redraw so any clip-header badge or
+      // effective-duration UI catches up.
+      this.peaksRevision++
+      if (!opts?.localOnly) {
+        sendBridge('CLIP_SET_WARP', {
+          clipId,
+          warpEnabled: patch.warpEnabled,
+          warpMode: patch.warpMode,
+          // The wire protocol uses absence to mean "don't change" and an
+          // explicit `null` to mean "clear the override". The default
+          // payload guard inserts JSON `null` for `null` so the backend
+          // sees the clear signal.
+          tempoRatio: patch.tempoRatio === undefined ? undefined : patch.tempoRatio,
+          semitones: patch.semitones,
+          cents: patch.cents,
+          pendingAutoWarp: patch.pendingAutoWarp
+        })
+      }
+    },
+
+    /**
      * True if placing a clip of `durationMs` length on `trackId` starting at
      * `startMs` would overlap any existing clip on that track. Used by the
      * library drag-drop flow to reject drops onto occupied space.
+     *
+     * `durationMs` is the **timeline footprint** of the prospective new
+     * clip — i.e. the effective (post-warp) length the caller expects
+     * to see on the ruler. Existing clips on the track are compared
+     * against their own effective durations so a warped clip's audible
+     * footprint is what collision-checks against. Un-warped clips
+     * fall through unchanged because `clipEffectiveDurationMs` is the
+     * native value in that case.
      */
     wouldClipOverlap(trackId: string, startMs: number, durationMs: number): boolean {
       const track = this.tracks.find((t) => t.id === trackId)
       if (!track) return false
+      const library = useLibraryStore()
+      const projectBpm = useTransportStore().bpm
       const newStart = Math.max(0, startMs)
       const newEnd = newStart + durationMs
       for (const otherId of track.clipIds) {
         const other = this.clips[otherId]
         if (!other) continue
-        const otherEnd = other.startMs + other.durationMs
+        const otherLibItem = library.items.find((i) => i.id === other.libraryItemId)
+        const otherEffDur = clipEffectiveDurationMs(other, otherLibItem, projectBpm)
+        const otherEnd = other.startMs + otherEffDur
         // Overlap if ranges intersect; touching edges (newEnd === other.startMs
         // or newStart === otherEnd) are allowed.
         if (newStart < otherEnd && newEnd > other.startMs) return true
@@ -1191,6 +1425,18 @@ export const useProjectStore = defineStore('project', {
         kind?: LibraryItem['kind']
         name?: string
         derivedFrom?: LibraryItem['derivedFrom']
+        /** Source BPM for auto-warp (audio-file items + variable-tempo
+         *  files surface their median here). */
+        bpm?: number
+        /** True when the source's tempo wasn't stable enough for a
+         *  global ratio to be safe. Auto-warp skips these. */
+        variableTempo?: boolean
+        /** Saved-clip default warp settings (copy-on-drop). */
+        warpEnabled?: boolean
+        warpMode?: ClipWarpMode
+        tempoRatio?: number
+        semitones?: number
+        cents?: number
       },
       startMs: number
     ): string | null {
@@ -1203,7 +1449,39 @@ export const useProjectStore = defineStore('project', {
         libraryItem.kind === 'saved-clip'
           ? Math.max(0, libraryItem.derivedFrom?.durationMs ?? libraryItem.durationMs)
           : libraryItem.durationMs
-      if (this.wouldClipOverlap(trackId, snapped, clipDurationMs)) return null
+      // Effective timeline footprint of the prospective new clip. Auto-
+      // warp will engage post-drop for non-variable-tempo sources with
+      // known BPMs IF the user's auto-warp preference is on AND the
+      // project already has another clip — the first clip on a fresh
+      // project seeds the project BPM instead of warping (see
+      // `applyDropTimeWarp`). Saved clips carry explicit warp
+      // defaults regardless. Reflect that in the collision check so
+      // an auto-warped clip doesn't get rejected for an overlap that
+      // won't exist once warp lands.
+      const projectBpm = useTransportStore().bpm
+      const autoWarpPref = useUiStore().matchProjectTempoOnDrop
+      const projectHasOtherClips = Object.keys(this.clips).length > 0
+      const willAutoWarp =
+        libraryItem.warpEnabled === true ||
+        (autoWarpPref &&
+          projectHasOtherClips &&
+          libraryItem.kind !== 'saved-clip' &&
+          libraryItem.variableTempo !== true &&
+          typeof libraryItem.bpm === 'number' && libraryItem.bpm > 0 &&
+          typeof projectBpm === 'number' && projectBpm > 0)
+      let effectiveClipDurationMs = clipDurationMs
+      if (willAutoWarp) {
+        const pinned = libraryItem.tempoRatio
+        const ratio = typeof pinned === 'number' && pinned > 0
+          ? pinned
+          : (typeof libraryItem.bpm === 'number' && libraryItem.bpm > 0 && projectBpm > 0
+              ? projectBpm / libraryItem.bpm
+              : 1)
+        if (ratio > 0 && Math.abs(ratio - 1) > 1e-4) {
+          effectiveClipDurationMs = clipDurationMs / ratio
+        }
+      }
+      if (this.wouldClipOverlap(trackId, snapped, effectiveClipDurationMs)) return null
 
       const inheritedName = libraryItem.name?.trim() || ''
       const clipId = this.addClipToTrack(
@@ -1236,9 +1514,142 @@ export const useProjectStore = defineStore('project', {
         if (newClip) newClip.name = inheritedName
         sendBridge('CLIP_RENAME', { clipId, name: inheritedName })
       }
+
+      // Warp on drop. Two-stage policy:
+      //   1. Saved-clip tile → copy the saved clip's warp settings as
+      //      the new clip's defaults (copy-on-drop, not live link).
+      //   2. Audio-file tile (or saved clip with no inherited warp) →
+      //      auto-warp to project BPM iff both BPMs are known and the
+      //      source isn't variable-tempo. If the source BPM hasn't been
+      //      analysed yet, leave warp off but mark `pendingAutoWarp`
+      //      so the backend's LIBRARY_ITEM_ANALYSIS handler can flip
+      //      it on once detection lands.
+      this.applyDropTimeWarp(clipId, libraryItem)
+
       this.pushTrackGain(track)
       log.info('project', `addClipFromLibrary track=${trackId} clip=${clipId} pos=${snapped}ms`)
       return clipId
+    },
+
+    /**
+     * Decide a new clip's warp settings at drop time and push them to
+     * the backend if any field is non-default. Split out of
+     * `addClipFromLibrary` so the policy lives in one place (and so a
+     * future paste / duplicate code path can reuse it).
+     */
+    applyDropTimeWarp(
+      clipId: string,
+      src: {
+        kind?: LibraryItem['kind']
+        bpm?: number
+        variableTempo?: boolean
+        warpEnabled?: boolean
+        warpMode?: ClipWarpMode
+        tempoRatio?: number
+        semitones?: number
+        cents?: number
+      }
+    ): void {
+      log.info(
+        'warp',
+        `applyDropTimeWarp clip=${clipId} kind=${src.kind ?? 'audio'} ` +
+          `srcBpm=${src.bpm ?? 'undef'} variableTempo=${src.variableTempo ?? false} ` +
+          `inheritedWarpEnabled=${src.warpEnabled ?? 'undef'} ` +
+          `inheritedTempoRatio=${src.tempoRatio ?? 'undef'}`
+      )
+      // Saved-clip inheritance wins — these are the user's deliberate
+      // defaults captured at save-to-library time. Always applied even
+      // when the auto-warp pref is off, because they're explicit
+      // choices the user made when saving the clip, not project-tempo
+      // auto-match.
+      if (src.kind === 'saved-clip' && (
+        src.warpEnabled !== undefined ||
+        src.warpMode !== undefined ||
+        src.tempoRatio !== undefined ||
+        src.semitones !== undefined ||
+        src.cents !== undefined
+      )) {
+        log.info('warp', `applyDropTimeWarp clip=${clipId} → saved-clip inheritance branch`)
+        this.setClipWarp(clipId, {
+          warpEnabled: src.warpEnabled,
+          warpMode: src.warpMode,
+          tempoRatio: src.tempoRatio,
+          semitones: src.semitones,
+          cents: src.cents
+        })
+        return
+      }
+      // Project-tempo auto-match is gated by the user preference. When
+      // off, the clip drops at native rate and the user can still
+      // engage warp manually via right-click ▸ Warp settings.
+      const ui = useUiStore()
+      if (!ui.matchProjectTempoOnDrop) {
+        log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (matchProjectTempoOnDrop pref OFF)`)
+        return
+      }
+      // First clip on a fresh project: skip auto-warp entirely. The
+      // backend's `maybeSeedProjectBpmFor` will seed the project BPM
+      // to this clip's source BPM once analysis completes, so warping
+      // it to "match project BPM" would end up at ratio 1 anyway —
+      // and worse, in the analysis-known-at-drop-time case we'd warp
+      // to the default-100 BPM that's about to be overwritten by the
+      // seed. Saved clips with explicit warp defaults already
+      // returned above so they still drop with their saved warp.
+      const otherClipExists = Object.values(this.clips).some((c) => c.id !== clipId)
+      if (!otherClipExists) {
+        log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (first clip on project)`)
+        return
+      }
+      // Need a stable source BPM (variable-tempo skipped — its median
+      // is misleading at most positions in the clip) and a project
+      // BPM to target.
+      const projectBpm = useTransportStore().bpm
+      if (src.variableTempo === true || typeof src.bpm !== 'number' || src.bpm <= 0) {
+        // Source BPM unknown today — mark the clip as waiting on
+        // analysis. The backend's analysis-done handler can flip warp
+        // on later if the user hasn't already opted out.
+        if (src.kind !== 'saved-clip' && src.variableTempo !== true) {
+          log.info(
+            'warp',
+            `applyDropTimeWarp clip=${clipId} → pendingAutoWarp (source BPM not yet known)`
+          )
+          this.setClipWarp(clipId, { pendingAutoWarp: true })
+        } else {
+          log.info(
+            'warp',
+            `applyDropTimeWarp clip=${clipId} → skip (variableTempo or no BPM, not pending)`
+          )
+        }
+        return
+      }
+      if (typeof projectBpm !== 'number' || projectBpm <= 0) {
+        log.info(
+          'warp',
+          `applyDropTimeWarp clip=${clipId} → skip (project BPM unknown: ${projectBpm})`
+        )
+        return
+      }
+      const ratio = projectBpm / src.bpm
+      // Skip when the ratio is effectively 1 — no audible difference
+      // and no point burning an undo step.
+      if (Math.abs(ratio - 1) < 1e-3) {
+        log.info(
+          'warp',
+          `applyDropTimeWarp clip=${clipId} → skip (ratio ≈ 1: project=${projectBpm} src=${src.bpm})`
+        )
+        return
+      }
+      log.info(
+        'warp',
+        `applyDropTimeWarp clip=${clipId} → ENGAGE warp (project=${projectBpm} src=${src.bpm} ratio=${ratio.toFixed(4)})`
+      )
+      this.setClipWarp(clipId, {
+        warpEnabled: true,
+        warpMode: 'rhythmic',
+        // Leave `tempoRatio` undefined so the clip continues to follow
+        // project BPM changes — pinning is a user-driven choice via
+        // the Warp settings dialog.
+      })
     },
 
     /**
@@ -1250,12 +1661,20 @@ export const useProjectStore = defineStore('project', {
     setProjectLengthMs(lengthMs: number): void {
       if (this.tracks.length === 0) return
       const target = Math.max(0, Math.floor(lengthMs))
+      const library = useLibraryStore()
+      const projectBpm = useTransportStore().bpm
       for (const track of this.tracks) {
         let minLength = 0
         for (const clipId of track.clipIds) {
           const clip = this.clips[clipId]
           if (!clip) continue
-          const end = clip.startMs + clip.durationMs
+          // Use the clip's effective (post-warp) timeline footprint so
+          // a shorter warped clip doesn't artificially keep the track
+          // longer than necessary, and a stretched warped clip can't
+          // be cropped under its audible end.
+          const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+          const effDur = clipEffectiveDurationMs(clip, libItem, projectBpm)
+          const end = clip.startMs + effDur
           if (end > minLength) minLength = end
         }
         track.lengthMs = Math.max(target, minLength)
@@ -1657,6 +2076,19 @@ export const useProjectStore = defineStore('project', {
                   }
                 : undefined,
             collapsed: item.collapsed === true ? true : undefined,
+            warpEnabled: item.kind === 'saved-clip' && typeof item.warpEnabled === 'boolean'
+              ? item.warpEnabled
+              : undefined,
+            warpMode: item.kind === 'saved-clip' ? item.warpMode : undefined,
+            tempoRatio: item.kind === 'saved-clip' && typeof item.tempoRatio === 'number'
+              ? item.tempoRatio
+              : undefined,
+            semitones: item.kind === 'saved-clip' && typeof item.semitones === 'number'
+              ? item.semitones
+              : undefined,
+            cents: item.kind === 'saved-clip' && typeof item.cents === 'number'
+              ? item.cents
+              : undefined,
             fromSnapshot: true
           })
           // Hydrate persisted analysis results (if the backend has
@@ -1745,6 +2177,12 @@ export const useProjectStore = defineStore('project', {
             existing.unresolved = c.unresolved === true
             existing.colorIndex = typeof c.colorIndex === 'number' ? c.colorIndex : undefined
             existing.name = typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined
+            existing.warpEnabled = typeof c.warpEnabled === 'boolean' ? c.warpEnabled : undefined
+            existing.warpMode = c.warpMode
+            existing.tempoRatio = typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined
+            existing.semitones = typeof c.semitones === 'number' ? c.semitones : undefined
+            existing.cents = typeof c.cents === 'number' ? c.cents : undefined
+            existing.pendingAutoWarp = c.pendingAutoWarp === true ? true : undefined
             if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
             continue
           }
@@ -1767,7 +2205,13 @@ export const useProjectStore = defineStore('project', {
             peaks: libItem.peaks.length > 0 ? libItem.peaks : new Float32Array(0),
             unresolved: c.unresolved === true,
             colorIndex: typeof c.colorIndex === 'number' ? c.colorIndex : undefined,
-            name: typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined
+            name: typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined,
+            warpEnabled: typeof c.warpEnabled === 'boolean' ? c.warpEnabled : undefined,
+            warpMode: c.warpMode,
+            tempoRatio: typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined,
+            semitones: typeof c.semitones === 'number' ? c.semitones : undefined,
+            cents: typeof c.cents === 'number' ? c.cents : undefined,
+            pendingAutoWarp: c.pendingAutoWarp === true ? true : undefined
           }
           this.clips[c.id] = placeholder
           track.clipIds.push(c.id)

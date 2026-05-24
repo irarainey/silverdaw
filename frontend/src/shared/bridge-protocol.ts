@@ -129,6 +129,14 @@ export interface LibraryAddPayload {
   /** Source-group disclosure state. True when the user has collapsed
    *  the source's saved-clip list in the library panel. */
   collapsed?: boolean
+  /** Saved-clip default warp settings — only meaningful when
+   *  `kind === 'saved-clip'`. Copied onto a fresh timeline clip when
+   *  the saved-clip tile is dragged in (copy-on-drop, not live link). */
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number
+  semitones?: number
+  cents?: number
 }
 
 /** Drop a library item from the persisted catalogue. */
@@ -201,6 +209,61 @@ export interface TrackReorderPayload {
   newIndex: number
 }
 
+/**
+ * Rubber Band time-stretch + pitch-shift mode for a clip.
+ *
+ *   - `'rhythmic'` — R2 / Faster, optimised for drums and percussive
+ *     material. Default for auto-warp because it's the lightest mode
+ *     and most general-purpose; user can escalate per-clip.
+ *   - `'tonal'`    — R2 with formant-preservation friendly options;
+ *     better for melodic / vocal material.
+ *   - `'complex'`  — R3 / Finer, highest quality, highest CPU cost.
+ *     Reserved for export and for clips the user has explicitly
+ *     escalated via the Warp settings dialog.
+ */
+export type ClipWarpMode = 'rhythmic' | 'tonal' | 'complex'
+
+/**
+ * Per-clip warp + pitch-shift settings. Sent as a partial-update from
+ * the renderer — every field is optional and only the fields present in
+ * a single envelope are mutated on the backend. The handler skips
+ * properties that aren't included so the renderer can drive a single
+ * field (e.g. just `semitones`) without having to echo the rest.
+ *
+ * Semantics of the numeric fields:
+ *   - `tempoRatio` is `projectBpm / sourceBpm` — i.e. "how many times
+ *     faster than its native rate this clip should play". `2.0` plays
+ *     at double speed; `0.5` plays at half speed; `1.0` is no
+ *     stretching. When `tempoRatio` is **absent** the backend derives
+ *     it live from the active project BPM and the library item's
+ *     detected BPM (so the clip follows project BPM changes); when
+ *     **present** it's a pinned override that survives BPM changes.
+ *   - `semitones` ranges ±12; `cents` ±100. Combined pitch scale is
+ *     `2^((semitones + cents/100) / 12)`. Pitch is independent of
+ *     tempo — changing one does not affect the other.
+ *
+ * The backend treats this envelope as undoable and collision-checks
+ * any change that would alter the effective timeline duration of the
+ * clip against neighbouring clips on the same track.
+ */
+export interface ClipSetWarpPayload {
+  clipId: string
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number | null
+  semitones?: number
+  cents?: number
+  /**
+   * Renderer-bookkeeping flag — when `true` the backend records that
+   * this clip is waiting on `LIBRARY_ITEM_ANALYSIS` to deliver a
+   * source BPM before warp can actually engage. Cleared automatically
+   * by any subsequent `CLIP_SET_WARP` (including the analysis-time
+   * auto-flip) and by an undoable manual edit, so a user who opts out
+   * of warp before analysis arrives isn't second-guessed afterwards.
+   */
+  pendingAutoWarp?: boolean
+}
+
 export interface TransportSeekPayload {
   positionMs: number
 }
@@ -232,6 +295,7 @@ export interface BridgeOutboundMap {
   LIBRARY_ITEM_RELINK: LibraryItemRelinkPayload
   CLIP_RENAME: ClipRenamePayload
   CLIP_REBIND: ClipRebindPayload
+  CLIP_SET_WARP: ClipSetWarpPayload
   CLIP_EDITOR_PEAKS_REQUEST: ClipEditorPeaksRequestPayload
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
@@ -267,6 +331,7 @@ export interface BridgeOutboundMap {
   PREVIEW_PAUSE: undefined
   PREVIEW_STOP: undefined
   PREVIEW_SEEK: PreviewSeekPayload
+  PREVIEW_SET_WARP: PreviewSetWarpPayload
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   EDIT_UNDO: undefined
@@ -395,6 +460,22 @@ export interface PreviewLoadPayload {
  *  relative to the window start (0..durationMs). */
 export interface PreviewSeekPayload {
   positionMs: number
+}
+
+/**
+ * Configure the warp engine on the currently-loaded preview voice.
+ * Mirrors `ClipSetWarpPayload` exactly — partial-update, every field
+ * optional, `tempoRatio: null` clears the pin. Used by the Clip
+ * Editor to keep the preview audio in sync with the saved-clip's
+ * warp defaults (so what the user previews matches what the
+ * timeline will play once the clip is dragged in).
+ */
+export interface PreviewSetWarpPayload {
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number | null
+  semitones?: number
+  cents?: number
 }
 
 /**
@@ -550,6 +631,22 @@ export interface ProjectStateClip {
    *  disk. Renderer renders the clip greyed-out and surfaces a
    *  "Locate files…" toast; engine playback skips it. */
   unresolved?: boolean
+  /** Per-clip warp + pitch settings. All five fields are optional and
+   *  default to the no-warp identity (`warpEnabled=false`,
+   *  `tempoRatio=1`, `semitones=0`, `cents=0`). Omitted on clips that
+   *  have never had warp touched so older project files round-trip
+   *  unchanged. See `ClipSetWarpPayload` for the semantics of each
+   *  field. */
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number
+  semitones?: number
+  cents?: number
+  /** Renderer-bookkeeping flag: clip was dropped before its source
+   *  BPM was detected. Cleared by the backend's `LIBRARY_ITEM_ANALYSIS`
+   *  handler when it auto-flips warp on, or by any explicit
+   *  `CLIP_SET_WARP` from the user. */
+  pendingAutoWarp?: boolean
 }
 
 export interface ProjectStateTrack {
@@ -666,6 +763,17 @@ export interface ProjectStateLibraryItem {
    *  the source's saved-clip list in the library panel. */
   collapsed?: boolean
   unresolved?: boolean
+  /** **Saved-clip default warp settings.** Copied onto a fresh timeline
+   *  clip when the saved-clip tile is dragged in (copy-on-drop, not
+   *  live link — changing these later does NOT propagate to existing
+   *  timeline instances). Only meaningful when `kind === 'saved-clip'`;
+   *  ignored on audio-file items. See `ClipSetWarpPayload` for field
+   *  semantics. */
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number
+  semitones?: number
+  cents?: number
 }
 
 export type LibraryItemKind = 'audio-file' | 'saved-clip'
@@ -754,6 +862,19 @@ export interface LibraryItemAnalysisPayload {
  *  `projectStore.bpm` mirror without re-broadcasting `PROJECT_SET_BPM`. */
 export interface ProjectBpmAppliedPayload {
   bpm: number
+}
+
+/** Backend notification that a clip's warp settings changed
+ *  server-side (e.g. late auto-warp once source BPM analysis lands). */
+export interface ClipWarpAppliedPayload {
+  clipId: string
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  /** `null` clears the pinned override; absent means "no change". */
+  tempoRatio?: number | null
+  semitones?: number
+  cents?: number
+  pendingAutoWarp?: boolean
 }
 
 /** Broadcast on every preview load/play/pause/stop/unload transition. */
@@ -859,6 +980,7 @@ export interface BridgeInboundMap {
   WAVEFORM_READY: WaveformReadyPayload
   CLIP_EDITOR_PEAKS_READY: ClipEditorPeaksReadyPayload
   LIBRARY_ITEM_ANALYSIS: LibraryItemAnalysisPayload
+  CLIP_WARP_APPLIED: ClipWarpAppliedPayload
   PROJECT_BPM_APPLIED: ProjectBpmAppliedPayload
   PREVIEW_STATE: PreviewStatePayload
   PREVIEW_POSITION: PreviewPositionPayload
@@ -927,6 +1049,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'WAVEFORM_READY',
   'CLIP_EDITOR_PEAKS_READY',
   'LIBRARY_ITEM_ANALYSIS',
+  'CLIP_WARP_APPLIED',
   'PROJECT_BPM_APPLIED',
   'PREVIEW_STATE',
   'PREVIEW_POSITION',
@@ -1161,6 +1284,32 @@ export function isLibraryItemAnalysisPayload(value: unknown): value is LibraryIt
 /** Guard for `ProjectBpmAppliedPayload`. */
 export function isProjectBpmAppliedPayload(value: unknown): value is ProjectBpmAppliedPayload {
   return isPlainObject(value) && typeof value.bpm === 'number'
+}
+
+/** Guard for `ClipWarpAppliedPayload`. */
+export function isClipWarpAppliedPayload(value: unknown): value is ClipWarpAppliedPayload {
+  if (!isPlainObject(value)) return false
+  if (typeof value.clipId !== 'string') return false
+  if (value.warpEnabled !== undefined && typeof value.warpEnabled !== 'boolean') return false
+  if (
+    value.warpMode !== undefined &&
+    value.warpMode !== 'rhythmic' &&
+    value.warpMode !== 'tonal' &&
+    value.warpMode !== 'complex'
+  ) {
+    return false
+  }
+  if (
+    value.tempoRatio !== undefined &&
+    value.tempoRatio !== null &&
+    typeof value.tempoRatio !== 'number'
+  ) {
+    return false
+  }
+  if (value.semitones !== undefined && typeof value.semitones !== 'number') return false
+  if (value.cents !== undefined && typeof value.cents !== 'number') return false
+  if (value.pendingAutoWarp !== undefined && typeof value.pendingAutoWarp !== 'boolean') return false
+  return true
 }
 
 /** Guard for `PreviewStatePayload`. */
