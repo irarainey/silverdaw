@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
+  clipEffectiveDurationMs,
   effectiveDurationMs,
   effectivePitchScale,
   effectiveTempoRatio,
-  isWarpActive
+  isWarpActive,
+  isWarpPending
 } from '@/lib/warp'
 
 describe('warp helpers', () => {
@@ -51,6 +53,24 @@ describe('warp helpers', () => {
     })
   })
 
+  describe('isWarpPending', () => {
+    it('is true while auto-warp is waiting for analysis', () => {
+      expect(isWarpPending({ pendingAutoWarp: true })).toBe(true)
+    })
+
+    it('is true for follow-project warp before source BPM is known', () => {
+      expect(isWarpPending({ warpEnabled: true, projectBpm: 120 })).toBe(true)
+    })
+
+    it('is false once a follow-project warp has the needed BPMs', () => {
+      expect(isWarpPending({ warpEnabled: true, sourceBpm: 100, projectBpm: 120 })).toBe(false)
+    })
+
+    it('is false for pinned ratios because no source BPM is needed', () => {
+      expect(isWarpPending({ warpEnabled: true, tempoRatio: 1.2 })).toBe(false)
+    })
+  })
+
   describe('effectiveDurationMs', () => {
     it('returns the native duration when warp is inactive', () => {
       expect(effectiveDurationMs(4000, { sourceBpm: 120, projectBpm: 90 })).toBe(4000)
@@ -74,6 +94,16 @@ describe('warp helpers', () => {
       expect(
         effectiveDurationMs(2000, { warpEnabled: true, tempoRatio: 2.0, sourceBpm: 120, projectBpm: 60 })
       ).toBe(1000)
+    })
+
+    it('uses the same effective duration helper shape as clips and library items', () => {
+      expect(
+        clipEffectiveDurationMs(
+          { durationMs: 4000, warpEnabled: true },
+          { bpm: 120 },
+          180
+        )
+      ).toBeCloseTo(4000 / 1.5, 3)
     })
   })
 

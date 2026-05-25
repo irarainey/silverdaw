@@ -72,6 +72,14 @@ class OffsetSource : public juce::PositionableAudioSource
         return clipDurationSamples.load();
     }
 
+    static juce::int64 timelineSamplesForSourceSamples(juce::int64 sourceSamples, WarpProcessor* w) noexcept
+    {
+        if (sourceSamples <= 0) return sourceSamples;
+        if (w == nullptr || !w->isActive()) return sourceSamples;
+        const double ratio = w->getTempoRatio();
+        return WarpProcessor::timelineSamplesForSourceSamples(sourceSamples, ratio);
+    }
+
     /** Install (or remove with nullptr) the warp processor for this
      *  clip. Pointer is non-owning — the AudioEngine's per-clip
      *  `Track::warp` unique_ptr owns the lifetime. Safe to set / clear
@@ -115,7 +123,9 @@ class OffsetSource : public juce::PositionableAudioSource
         const juce::int64 startPos = position.load(std::memory_order_relaxed);
         const juce::int64 endPos = startPos + info.numSamples;
         const juce::int64 clipStart = offsetSamples.load();
-        const juce::int64 dur = clipDurationSamples.load();
+        auto* currentWarp = warp.load(std::memory_order_acquire);
+        const juce::int64 sourceDur = clipDurationSamples.load();
+        const juce::int64 dur = timelineSamplesForSourceSamples(sourceDur, currentWarp);
         // `clipEnd = INT64_MAX` when `dur == 0`, so an un-trimmed clip
         // plays to the end of the source (existing behaviour).
         const juce::int64 clipEnd =
@@ -151,7 +161,7 @@ class OffsetSource : public juce::PositionableAudioSource
             audible.numSamples = audibleSamples;
             // Read from the source at: how-far-into-the-clip + in-source-offset.
             const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
-            auto* w = warp.load(std::memory_order_acquire);
+            auto* w = currentWarp;
             if (w != nullptr && w->isActive())
             {
                 // Warp path. The processor owns the source cursor and
@@ -230,9 +240,22 @@ class OffsetSource : public juce::PositionableAudioSource
         if (child != nullptr)
         {
             // Match the read-position offset the next getNextAudioBlock
-            // call will use, so a seek immediately followed by a pull
-            // produces aligned audio (no half-block of stale samples).
-            child->setNextReadPosition(newPosition >= off ? (newPosition - off) + inSrc : inSrc);
+            // call will use. Warped playback maps timeline offset through
+            // the effective tempo ratio; unwarped playback remains 1:1.
+            juce::int64 childPos = inSrc;
+            if (newPosition >= off)
+            {
+                if (auto* w = warp.load(std::memory_order_acquire); w != nullptr && w->isActive())
+                {
+                    childPos = inSrc + static_cast<juce::int64>(
+                        static_cast<double>(newPosition - off) * w->getTempoRatio());
+                }
+                else
+                {
+                    childPos = (newPosition - off) + inSrc;
+                }
+            }
+            child->setNextReadPosition(childPos);
         }
         if (isDiscontinuous)
         {

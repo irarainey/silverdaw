@@ -22,6 +22,7 @@
 export interface ClipWarpInputs {
   warpEnabled?: boolean
   tempoRatio?: number
+  pendingAutoWarp?: boolean
   /** Source BPM from the library item (when known). */
   sourceBpm?: number
   /** Active project BPM. */
@@ -41,6 +42,19 @@ export function isWarpActive(inputs: ClipWarpInputs): boolean {
   if (inputs.warpEnabled !== true) return false
   const ratio = effectiveTempoRatio(inputs)
   return Math.abs(ratio - 1) > WARP_BYPASS_EPSILON
+}
+
+/** True while the clip is waiting for the information needed to build
+ *  its effective warp. This covers the auto-warp import path where BPM
+ *  analysis is still running, plus manual "follow project BPM" warp
+ *  settings before the source BPM is known. */
+export function isWarpPending(inputs: ClipWarpInputs): boolean {
+  if (inputs.pendingAutoWarp === true) return true
+  if (inputs.warpEnabled !== true) return false
+  if (typeof inputs.tempoRatio === 'number' && inputs.tempoRatio > 0) return false
+  const src = inputs.sourceBpm
+  const proj = inputs.projectBpm
+  return typeof src !== 'number' || src <= 0 || typeof proj !== 'number' || proj <= 0
 }
 
 /**

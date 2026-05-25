@@ -525,7 +525,8 @@ function dispatch(msg: BridgeInboundMessage): void {
       // Backend flipped or adjusted warp server-side (e.g. late
       // auto-warp after LIBRARY_ITEM_ANALYSIS). Mirror locally without
       // echoing CLIP_SET_WARP back to the backend.
-      useProjectStore().setClipWarp(
+      const project = useProjectStore()
+      project.setClipWarp(
         msg.payload.clipId,
         {
           warpEnabled: msg.payload.warpEnabled,
@@ -537,6 +538,8 @@ function dispatch(msg: BridgeInboundMessage): void {
         },
         { localOnly: true }
       )
+      const clip = project.clips[msg.payload.clipId]
+      if (clip) useLibraryStore().finishItemWarping(clip.libraryItemId)
       log.info('bridge', `CLIP_WARP_APPLIED clipId=${msg.payload.clipId}`)
       break
     }

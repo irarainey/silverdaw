@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -107,6 +108,12 @@ class WarpProcessor
     /** Cheap "is the engine currently doing meaningful work" test for
      *  the engine's bypass path. */
     bool isActive() const noexcept;
+
+    static juce::int64 timelineSamplesForSourceSamples(juce::int64 sourceSamples, double tempoRatio) noexcept
+    {
+        if (sourceSamples <= 0 || tempoRatio <= 0.0) return sourceSamples;
+        return static_cast<juce::int64>(std::ceil(static_cast<double>(sourceSamples) / tempoRatio));
+    }
 
     /** Audio-thread-safe getter for the currently-published tempo
      *  ratio. Used by `OffsetSource` to convert a timeline-position

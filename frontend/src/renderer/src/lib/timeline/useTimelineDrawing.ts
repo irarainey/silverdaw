@@ -38,6 +38,7 @@ import {
   TRACK_HEADER_BG
 } from './constants'
 import { trackHeightOf, buildTrackRowLayout } from './trackLayout'
+import { clipEffectiveDurationMs, effectiveTempoRatio, isWarpActive, isWarpPending } from '@/lib/warp'
 import type { ClipHitRegion } from './useDragHandlers'
 import type { DropPreview } from './useDropZone'
 import type { GridGeometry } from './useGridGeometry'
@@ -513,7 +514,23 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     if (!tracksL || !G) return
 
     const absX = headerWidth() + (clip.startMs / 1000) * pxPerSecond.value
-    const w = (clip.durationMs / 1000) * pxPerSecond.value
+    const libItem = clip.libraryItemId
+      ? library.items.find((i) => i.id === clip.libraryItemId)
+      : library.items.find((i) => i.filePath === clip.filePath)
+    const effectiveDurMs = clipEffectiveDurationMs(clip, libItem, transport.bpm)
+    const w = (effectiveDurMs / 1000) * pxPerSecond.value
+    const warpRatio = isWarpActive({
+      warpEnabled: clip.warpEnabled,
+      tempoRatio: clip.tempoRatio,
+      sourceBpm: libItem?.bpm,
+      projectBpm: transport.bpm
+    })
+      ? effectiveTempoRatio({
+          tempoRatio: clip.tempoRatio,
+          sourceBpm: libItem?.bpm,
+          projectBpm: transport.bpm
+        })
+      : 1
 
     // Generous world-space cull: anything entirely outside the current
     // viewport plus one viewport's worth of margin on each side is
@@ -625,9 +642,6 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // first *detected* beat ≥ inMs (the old behaviour) wobbled by a
     // few ms after a split because BTrack's per-beat timestamps
     // wander relative to the implied uniform tempo.
-    const libItem = clip.libraryItemId
-      ? library.items.find((i) => i.id === clip.libraryItemId)
-      : library.items.find((i) => i.filePath === clip.filePath)
     const beats = libItem?.beats
     const sourceBpm = libItem?.bpm
     // Prefer the regression-derived anchor over the first raw
@@ -655,7 +669,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       for (let beatMs = firstBeatMs; beatMs <= outMs; beatMs += beatSpacingMs) {
         const offsetInClipMs = beatMs - inMs
         if (offsetInClipMs < 0) continue
-        const x = absX + offsetInClipMs * pxPerMs
+        const x = absX + (offsetInClipMs / warpRatio) * pxPerMs
         if (x - lastMarkerPx < minMarkerSpacingPx) continue
         markers.moveTo(x + 0.5, innerY + 1).lineTo(x + 0.5, innerY + innerH - 1)
         lastMarkerPx = x
@@ -683,10 +697,10 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const T = TextCtor.value
     if (!tracksL || !G || !T) return
 
-    const HEADER_H = 14
+    const HEADER_H = 18
     const PAD_X = 4
-    const FONT_SIZE = 10
-    const APPROX_CHAR_W = 5.5
+    const FONT_SIZE = 11
+    const APPROX_CHAR_W = 6
 
     if (clipW < 20) return
 
@@ -698,6 +712,19 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // so the user can tell linked from independent clips at a glance.
     const libItem = library.items.find((i) => i.id === clip.libraryItemId)
     const isLinked = libItem?.kind === 'saved-clip'
+    const warpIsPending = isWarpPending({
+      warpEnabled: clip.warpEnabled,
+      tempoRatio: clip.tempoRatio,
+      pendingAutoWarp: clip.pendingAutoWarp,
+      sourceBpm: libItem?.bpm,
+      projectBpm: transport.bpm
+    })
+    const warpIsActive = !warpIsPending && isWarpActive({
+      warpEnabled: clip.warpEnabled,
+      tempoRatio: clip.tempoRatio,
+      sourceBpm: libItem?.bpm,
+      projectBpm: transport.bpm
+    })
 
     // Prefer the clip's own custom name (set via inline rename on the
     // timeline) first. Otherwise fall back to the parent library
@@ -706,12 +733,14 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       ? clip.name
       : libItem ? libraryItemDisplayName(libItem) : clip.fileName
 
-    // Reserve room on the right for the link badge when the clip is
-    // linked, so the text doesn't slide under it.
-    const LINK_BADGE_W = isLinked ? 12 : 0
+    // Reserve room on the right for timeline status badges so the text
+    // doesn't slide under them.
+    const LINK_BADGE_W = isLinked ? 18 : 0
+    const WARP_BADGE_W = warpIsPending ? 18 : warpIsActive ? 42 : 0
+    const BADGES_W = LINK_BADGE_W + WARP_BADGE_W
     const maxChars = Math.max(
       1,
-      Math.floor((clipW - PAD_X * 2 - LINK_BADGE_W) / APPROX_CHAR_W)
+      Math.floor((clipW - PAD_X * 2 - BADGES_W) / APPROX_CHAR_W)
     )
     const text =
       displayName.length > maxChars
@@ -720,7 +749,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     const desiredW = Math.min(
       clipW,
-      text.length * APPROX_CHAR_W + PAD_X * 2 + LINK_BADGE_W
+      text.length * APPROX_CHAR_W + PAD_X * 2 + BADGES_W
     )
     const headerBg = new G()
     headerBg
@@ -733,7 +762,9 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       style: {
         fontFamily: 'system-ui, -apple-system, sans-serif',
         fontSize: FONT_SIZE,
-        fill: 0x09090b
+        fontWeight: '700',
+        fill: 0xffffff,
+        stroke: { color: 0x09090b, width: 2 }
       }
     })
     label.x = Math.round(clipX + PAD_X)
@@ -741,16 +772,54 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     tracksL.addChild(label)
 
     if (isLinked) {
-      // Two interlocking small circles, drawn in the same near-black
-      // ink the label uses so the badge reads as an icon, not chrome.
       const badge = new G()
       const cx = clipX + desiredW - PAD_X - LINK_BADGE_W / 2
       const cy = clipInnerY + HEADER_H / 2
       badge
-        .circle(cx - 2.5, cy, 2.5)
-        .stroke({ color: 0x09090b, width: 1 })
-        .circle(cx + 2.5, cy, 2.5)
-        .stroke({ color: 0x09090b, width: 1 })
+        .roundRect(cx - 7.5, cy - 6, 15, 12, 5)
+        .fill({ color: 0x09090b, alpha: 0.85 })
+        .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
+      badge
+        .circle(cx - 2.5, cy, 2.3)
+        .stroke({ color: 0xffffff, width: 1.5 })
+        .circle(cx + 2.5, cy, 2.3)
+        .stroke({ color: 0xffffff, width: 1.5 })
+      tracksL.addChild(badge)
+    }
+    if (warpIsPending) {
+      const badge = new G()
+      const cx = clipX + desiredW - PAD_X - LINK_BADGE_W - WARP_BADGE_W / 2
+      const cy = clipInnerY + HEADER_H / 2
+      const phase = Math.floor(Date.now() / 125) % 8
+      const radius = 4.2
+      for (let i = 0; i < 8; i++) {
+        const angle = ((i - phase) / 8) * Math.PI * 2
+        const alpha = 0.25 + ((i + 1) / 8) * 0.65
+        badge
+          .circle(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius, 1.1)
+          .fill({ color: 0xffffff, alpha })
+      }
+      tracksL.addChild(badge)
+    } else if (warpIsActive) {
+      const bg = new G()
+      const cx = clipX + desiredW - PAD_X - LINK_BADGE_W - WARP_BADGE_W / 2
+      const cy = clipInnerY + HEADER_H / 2
+      bg
+        .roundRect(cx - 20, cy - 7, 40, 14, 5)
+        .fill({ color: 0x0f172a, alpha: 0.95 })
+        .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
+      tracksL.addChild(bg)
+      const badge = new T({
+        text: 'WARP',
+        style: {
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          fontSize: 9,
+          fontWeight: '700',
+          fill: 0xfacc15
+        }
+      })
+      badge.x = Math.round(cx - 14)
+      badge.y = Math.round(cy - 7)
       tracksL.addChild(badge)
     }
   }

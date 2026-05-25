@@ -9,8 +9,10 @@
 
 import { defineStore } from 'pinia'
 import { useProjectStore } from '@/stores/projectStore'
+import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { clipEffectiveDurationMs } from '@/lib/warp'
 import type { Clip } from '@/stores/projectStore'
 import type { ClipWarpMode, LibraryItemKind } from '@shared/bridge-protocol'
 
@@ -134,6 +136,7 @@ export type ImportStage =
   | 'decoding'
   | 'detectingTempo'
   | 'detectingBeats'
+  | 'warping'
   | 'done'
   | 'failed'
 export interface ImportEntry {
@@ -629,17 +632,23 @@ export const useLibraryStore = defineStore('library', {
           : []
       const linkedClips = [...directLinkedClips, ...implicitLinkedClips]
       const conflictingTrackNames = new Set<string>()
+      const projectBpm = useTransportStore().bpm
       for (const c of linkedClips) {
         if (!c) continue
         const track = project.tracks.find((t) => t.id === c.trackId)
         if (!track) continue
-        const newEnd = c.startMs + trimDur
+        const newEnd = c.startMs + clipEffectiveDurationMs(
+          { ...c, durationMs: trimDur },
+          item,
+          projectBpm
+        )
         let collides = false
         for (const otherId of track.clipIds) {
           if (otherId === c.id) continue
           const other = project.clips[otherId]
           if (!other) continue
-          const otherEnd = other.startMs + other.durationMs
+          const otherLibItem = this.items.find((i) => i.id === other.libraryItemId)
+          const otherEnd = other.startMs + clipEffectiveDurationMs(other, otherLibItem, projectBpm)
           if (c.startMs < otherEnd && newEnd > other.startMs) {
             collides = true
             break
@@ -1071,14 +1080,23 @@ export const useLibraryStore = defineStore('library', {
       // progress panel before finishing the entry. The backend produces
       // BPM and beats in a single pass, but the UX reads more clearly
       // when the user sees two sequential stages ("Analysing tempo…"
-      // → "Analysing beats…" → done). 600 ms is long enough to be
-      // noticeable and short enough not to feel artificial.
+      // → "Analysing beats…" → optional "Applying warp…" → done).
       const entry = this.imports.find((e) => e.libraryItemId === itemId)
       if (entry && entry.stage !== 'done' && entry.stage !== 'failed') {
+        const project = useProjectStore()
+        const hasPendingAutoWarpClip = Object.values(project.clips).some(
+          (clip) => clip.libraryItemId === itemId && clip.pendingAutoWarp === true
+        )
         entry.stage = 'detectingBeats'
-        setTimeout(() => {
-          this.finishImport(entry.id, 'done')
-        }, 600)
+        if (hasPendingAutoWarpClip) {
+          setTimeout(() => {
+            if (entry.stage === 'detectingBeats') this.markItemWarping(itemId)
+          }, 300)
+        } else {
+          setTimeout(() => {
+            this.finishImport(entry.id, 'done')
+          }, 600)
+        }
       }
     },
 
@@ -1104,6 +1122,26 @@ export const useLibraryStore = defineStore('library', {
       if (!entry) return
       entry.libraryItemId = libraryItemId
       entry.stage = 'detectingTempo'
+    },
+
+    markItemWarping(libraryItemId: string): void {
+      const entry = this.imports.find((e) => e.libraryItemId === libraryItemId)
+      if (!entry || entry.stage === 'done' || entry.stage === 'failed') return
+      entry.stage = 'warping'
+      setTimeout(() => {
+        if (entry.stage === 'warping') this.finishImport(entry.id, 'done')
+      }, 2000)
+    },
+
+    finishItemWarping(libraryItemId: string): void {
+      const entry = this.imports.find((e) => e.libraryItemId === libraryItemId)
+      if (!entry || entry.stage === 'done' || entry.stage === 'failed') return
+      if (entry.stage === 'detectingBeats' || entry.stage === 'warping') {
+        entry.stage = 'warping'
+        setTimeout(() => {
+          this.finishImport(entry.id, 'done')
+        }, 300)
+      }
     },
 
     /**

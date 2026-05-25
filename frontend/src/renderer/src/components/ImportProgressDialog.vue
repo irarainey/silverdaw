@@ -31,6 +31,8 @@ function stageLabel(stage: ImportStage): string {
       return 'Analysing tempo…'
     case 'detectingBeats':
       return 'Analysing beats…'
+    case 'warping':
+      return 'Applying warp…'
     case 'done':
       return 'Done'
     case 'failed':
@@ -71,7 +73,7 @@ function stageColor(stage: ImportStage): string {
         <!-- Spinner / state icon -->
         <span class="flex h-3 w-3 shrink-0 items-center justify-center">
           <svg
-            v-if="entry.stage === 'decoding' || entry.stage === 'detectingTempo' || entry.stage === 'detectingBeats'"
+            v-if="entry.stage === 'decoding' || entry.stage === 'detectingTempo' || entry.stage === 'detectingBeats' || entry.stage === 'warping'"
             class="h-3 w-3 animate-spin text-zinc-300"
             viewBox="0 0 24 24"
             fill="none"

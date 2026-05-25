@@ -419,7 +419,8 @@ function findClipSlot(
   trackId: string,
   excludeClipId: string,
   desiredStartMs: number,
-  durationMs: number
+  durationMs: number,
+  resolveDurationMs?: (clip: Clip) => number
 ): number | null {
   const track = state.tracks.find((t) => t.id === trackId)
   if (!track) return null
@@ -429,7 +430,8 @@ function findClipSlot(
     if (id === excludeClipId) continue
     const c = state.clips[id]
     if (!c) continue
-    intervals.push({ start: c.startMs, end: c.startMs + c.durationMs })
+    const effectiveDurationMs = resolveDurationMs ? resolveDurationMs(c) : c.durationMs
+    intervals.push({ start: c.startMs, end: c.startMs + effectiveDurationMs })
   }
   intervals.sort((a, b) => a.start - b.start)
   // Build complementary "free gaps".
@@ -596,7 +598,8 @@ export const useProjectStore = defineStore('project', {
       track.clipIds.push(clipId)
 
       // Grow the visible track length if this clip extends past the end.
-      const clipEnd = clip.startMs + clip.durationMs
+      const libItem = useLibraryStore().items.find((i) => i.id === clip.libraryItemId)
+      const clipEnd = clip.startMs + clipEffectiveDurationMs(clip, libItem, useTransportStore().bpm)
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
 
       // If the track was previously unnamed (default "Track N") and this is
@@ -640,7 +643,18 @@ export const useProjectStore = defineStore('project', {
       if (!destTrack) return
 
       // Bump-clamp into the gap nearest the desired position.
-      const target = findClipSlot(this, destTrack.id, clipId, startMs, clip.durationMs)
+      const library = useLibraryStore()
+      const projectBpm = useTransportStore().bpm
+      const effectiveClipDurationMs = (c: Clip): number =>
+        clipEffectiveDurationMs(c, library.items.find((i) => i.id === c.libraryItemId), projectBpm)
+      const target = findClipSlot(
+        this,
+        destTrack.id,
+        clipId,
+        startMs,
+        effectiveClipDurationMs(clip),
+        effectiveClipDurationMs
+      )
       if (target === null) return // no gap big enough — keep current position
 
       const trackChanged = destTrackId !== clip.trackId
@@ -660,7 +674,7 @@ export const useProjectStore = defineStore('project', {
       clip.startMs = target
 
       // Grow the destination track to fit the new clip end.
-      const clipEnd = target + clip.durationMs
+      const clipEnd = target + effectiveClipDurationMs(clip)
       if (clipEnd > destTrack.lengthMs) destTrack.lengthMs = clipEnd
 
       // Single CLIP_MOVE envelope carries both the position and
@@ -703,7 +717,8 @@ export const useProjectStore = defineStore('project', {
 
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (track) {
-        const clipEnd = clip.startMs + clip.durationMs
+        const libItem = useLibraryStore().items.find((i) => i.id === clip.libraryItemId)
+        const clipEnd = clip.startMs + clipEffectiveDurationMs(clip, libItem, useTransportStore().bpm)
         if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
       }
 
@@ -1352,6 +1367,9 @@ export const useProjectStore = defineStore('project', {
       // Force a timeline redraw so any clip-header badge or
       // effective-duration UI catches up.
       this.peaksRevision++
+      if (!opts?.localOnly && patch.warpEnabled === true) {
+        useLibraryStore().markItemWarping(clip.libraryItemId)
+      }
       if (!opts?.localOnly) {
         sendBridge('CLIP_SET_WARP', {
           clipId,

@@ -479,6 +479,24 @@ void testWarpProcessorBasicStretch()
     require(sawNonZero, "warp produced no audible output across 8 blocks");
 }
 
+void testWarpTimelineDurationMapping()
+{
+    require(silverdaw::WarpProcessor::timelineSamplesForSourceSamples(4000, 1.0) == 4000,
+            "unwarped duration should remain in source samples");
+
+    silverdaw::WarpProcessor faster(2, 48000.0, RubberBand::RubberBandStretcher::OptionEngineFaster);
+    faster.prepareToPlay(512);
+    faster.setTempoRatio(2.0);
+    require(silverdaw::WarpProcessor::timelineSamplesForSourceSamples(4000, faster.getTempoRatio()) == 2000,
+            "2x tempo ratio should halve visible timeline duration");
+
+    silverdaw::WarpProcessor slower(2, 48000.0, RubberBand::RubberBandStretcher::OptionEngineFaster);
+    slower.prepareToPlay(512);
+    slower.setTempoRatio(0.5);
+    require(silverdaw::WarpProcessor::timelineSamplesForSourceSamples(4000, slower.getTempoRatio()) == 8000,
+            "0.5x tempo ratio should double visible timeline duration");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -492,6 +510,7 @@ int main()
         {"Bridge auth token validation", testBridgeAuthTokenValidation},
         {"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty},
         {"WarpProcessor basic real-time stretch", testWarpProcessorBasicStretch},
+        {"Warp timeline duration mapping", testWarpTimelineDurationMapping},
     };
 
     int failed = 0;

@@ -21,6 +21,7 @@ import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { clipEffectiveDurationMs, isWarpActive, isWarpPending } from '@/lib/warp'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 import ClipWarpDialog from '@/components/ClipWarpDialog.vue'
@@ -112,6 +113,19 @@ redraw = drawing.redraw
 updatePlayhead = drawing.updatePlayhead
 const applyScroll = drawing.applyScroll
 const setDisplayPositionMs = drawing.setDisplayPositionMs
+
+const hasPendingWarpClip = computed(() =>
+  Object.values(project.clips).some((clip) => {
+    const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+    return isWarpPending({
+      warpEnabled: clip.warpEnabled,
+      tempoRatio: clip.tempoRatio,
+      pendingAutoWarp: clip.pendingAutoWarp,
+      sourceBpm: libItem?.bpm,
+      projectBpm: transport.bpm
+    })
+  })
+)
 
 // Template refs for the two scrollbar lanes. Declared here (rather than
 // inside `useScrollbarDrag`) so the `ref="scrollbarTrack"` /
@@ -314,7 +328,7 @@ function pointerToSnappedRulerMs(e: MouseEvent): number | null {
 function onDoubleClick(e: MouseEvent): void {
   if (e.button !== 0) return
 
-  // First: did the user double-click a clip's title (top 14 px header)?
+  // First: did the user double-click a clip's title header?
   // If so, open the inline rename overlay. This takes priority over the
   // marker / ruler handling below so the rename gesture is reachable
   // anywhere the title strip is visible.
@@ -359,7 +373,12 @@ function onDoubleClick(e: MouseEvent): void {
 // the clip if the user scrolls during the edit.
 
 /** Must mirror the HEADER_H used inside `useTimelineDrawing.drawClipHeader`. */
-const CLIP_HEADER_H = 14
+const CLIP_HEADER_H = 18
+const CLIP_HEADER_PAD_X = 4
+const CLIP_HEADER_APPROX_CHAR_W = 6
+const CLIP_HEADER_LINK_BADGE_W = 18
+const CLIP_HEADER_WARP_PENDING_BADGE_W = 18
+const CLIP_HEADER_WARP_ACTIVE_BADGE_W = 42
 
 const renamingClipId = ref<string | null>(null)
 const renameValue = ref('')
@@ -379,7 +398,32 @@ const renameOverlayStyle = computed<Record<string, string> | null>(() => {
   const rowWorldY = trackTopWorldYAt(project.tracks, trackIndex)
   const padding = 4
   const innerY = rowWorldY + padding
-  const widthPx = Math.max(80, (clip.durationMs / 1000) * pxPerSecond.value)
+  const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+  const effectiveDurMs = clipEffectiveDurationMs(clip, libItem, transport.bpm)
+  const clipWidthPx = (effectiveDurMs / 1000) * pxPerSecond.value
+  const displayName = clip.name?.trim()
+    ? clip.name
+    : libItem ? libraryItemDisplayName(libItem) : clip.fileName
+  const isLinked = libItem?.kind === 'saved-clip'
+  const warpPending = isWarpPending({
+    warpEnabled: clip.warpEnabled,
+    tempoRatio: clip.tempoRatio,
+    pendingAutoWarp: clip.pendingAutoWarp,
+    sourceBpm: libItem?.bpm,
+    projectBpm: transport.bpm
+  })
+  const warpActive = !warpPending && isWarpActive({
+    warpEnabled: clip.warpEnabled,
+    tempoRatio: clip.tempoRatio,
+    sourceBpm: libItem?.bpm,
+    projectBpm: transport.bpm
+  })
+  const badgeWidth =
+    (isLinked ? CLIP_HEADER_LINK_BADGE_W : 0) +
+    (warpPending ? CLIP_HEADER_WARP_PENDING_BADGE_W : warpActive ? CLIP_HEADER_WARP_ACTIVE_BADGE_W : 0)
+  const naturalHeaderWidth =
+    displayName.length * CLIP_HEADER_APPROX_CHAR_W + CLIP_HEADER_PAD_X * 2 + badgeWidth
+  const widthPx = Math.max(120, Math.min(clipWidthPx, naturalHeaderWidth))
 
   // Convert to viewport pixels (relative to host).
   const left = absX - scrollX.value
@@ -514,11 +558,19 @@ watch(
 // cadence is well above the visual smoothness threshold for a DAW
 // timeline, so the trade-off is favourable.
 let rafId: number | null = null
+let lastWarpSpinnerRedrawMs = 0
 
 function startPlayheadRaf(): void {
   const tick = (): void => {
     rafId = requestAnimationFrame(tick)
     setDisplayPositionMs(transport.positionMs)
+    if (hasPendingWarpClip.value) {
+      const now = performance.now()
+      if (now - lastWarpSpinnerRedrawMs >= 125) {
+        lastWarpSpinnerRedrawMs = now
+        redraw()
+      }
+    }
     updatePlayhead()
   }
   rafId = requestAnimationFrame(tick)
@@ -534,6 +586,24 @@ function stopPlayheadRaf(): void {
 // Track / clip count changed → full repaint (new row stack or waveform).
 watch(
   () => [project.tracks.length, Object.keys(project.clips).length] as const,
+  () => {
+    redraw()
+    updatePlayhead()
+  }
+)
+
+watch(
+  () => Object.values(project.clips)
+    .map((clip) => [
+      clip.id,
+      clip.warpEnabled === true ? 1 : 0,
+      clip.pendingAutoWarp === true ? 1 : 0,
+      clip.warpMode ?? '',
+      clip.tempoRatio ?? '',
+      clip.semitones ?? '',
+      clip.cents ?? ''
+    ].join(':'))
+    .join('|'),
   () => {
     redraw()
     updatePlayhead()

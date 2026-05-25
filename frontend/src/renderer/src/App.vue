@@ -683,7 +683,11 @@ function handleMenuAction(action: string): void {
     // canvas doesn't have keyboard focus.
     const atMs = transport.positionMs
     const candidateIds = Object.values(project.clips)
-      .filter((c) => atMs > c.startMs && atMs < c.startMs + c.durationMs)
+      .filter((c) => {
+        const libItem = library.items.find((i) => i.id === c.libraryItemId)
+        const effDur = clipEffectiveDurationMs(c, libItem, transport.bpm)
+        return atMs > c.startMs && atMs < c.startMs + effDur
+      })
       .map((c) => c.id)
     for (const id of candidateIds) {
       project.splitClipAt(id, atMs)
