@@ -50,6 +50,13 @@ constexpr int kPeakWorkerCount = 4;
 
 std::atomic<bool> g_shouldQuit{false};
 
+double effectivePeaksPerSecond(const silverdaw::waveform::PeaksResult& result)
+{
+    if (result.sampleRate <= 0.0 || result.peaksPerSecond <= 0) return static_cast<double>(result.peaksPerSecond);
+    const int samplesPerPeak = juce::jmax(1, static_cast<int>(result.sampleRate / result.peaksPerSecond));
+    return result.sampleRate / static_cast<double>(samplesPerPeak);
+}
+
 void onSignal(int /*sig*/)
 {
     g_shouldQuit.store(true);
@@ -323,7 +330,7 @@ void produceAndBroadcastPeaks(const juce::String& clipId, const juce::File& file
     obj->setProperty("clipId", clipId);
     obj->setProperty("cachePath", cacheFile.getFullPathName());
     obj->setProperty("peakCount", static_cast<int>(result.peaks.size() / 2U));
-    obj->setProperty("peaksPerSecond", kPeaksPerSecond);
+    obj->setProperty("peaksPerSecond", effectivePeaksPerSecond(result));
     obj->setProperty("sampleRate", result.sampleRate);
     bridge.broadcast("WAVEFORM_READY", juce::var(obj));
 
@@ -996,7 +1003,7 @@ void produceAndBroadcastEditorPeaks(const juce::String& libraryItemId, const juc
     obj->setProperty("libraryItemId", libraryItemId);
     obj->setProperty("cachePath", cacheFile.getFullPathName());
     obj->setProperty("peakCount", static_cast<int>(result.peaks.size() / 2U));
-    obj->setProperty("peaksPerSecond", peaksPerSecond);
+    obj->setProperty("peaksPerSecond", effectivePeaksPerSecond(result));
     obj->setProperty("sampleRate", result.sampleRate);
     bridge.broadcast("CLIP_EDITOR_PEAKS_READY", juce::var(obj));
     silverdaw::log::info("peaksjob", "editor done libId=" + libraryItemId + " peaks=" +

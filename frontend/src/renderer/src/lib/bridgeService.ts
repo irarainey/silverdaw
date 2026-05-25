@@ -593,7 +593,7 @@ const PEAKS_FILE_MAGIC = 0x53445057
 const PEAKS_FILE_HEADER_SIZE = 24
 
 async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise<void> {
-  const { clipId, cachePath, peakCount, sampleRate } = payload
+  const { clipId, cachePath, peakCount, sampleRate, peaksPerSecond } = payload
   let buffer: ArrayBuffer | null
   try {
     buffer = await window.silverdaw.readPeaksCacheFile(cachePath)
@@ -629,8 +629,8 @@ async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise<void> 
   // lifetime of the clip — multi-MB live retention for every project).
   const view32 = new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, floatCount)
   const peaks = new Float32Array(view32)
-  useProjectStore().setClipPeaks(clipId, peaks, sampleRate)
-  log.info('bridge', `WAVEFORM_READY clipId=${clipId} peaks=${peakCount}`)
+  useProjectStore().setClipPeaks(clipId, peaks, sampleRate, peaksPerSecond)
+  log.info('bridge', `WAVEFORM_READY clipId=${clipId} peaks=${peakCount} ppS=${peaksPerSecond}`)
 }
 
 async function loadEditorPeaksFromCache(payload: {

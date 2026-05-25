@@ -593,14 +593,19 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const half = innerH / 2 - 2
 
     if (peakCount > 0 && w > 0) {
-      // Peaks are at a constant PEAKS_PER_SECOND rate over the SOURCE
-      // file; the clip may be a trimmed window. Convert the clip's
+      // Peaks are at a constant rate over the SOURCE file; the actual
+      // rate can differ slightly from the requested nominal rate because
+      // peak buckets contain an integer number of samples. Use the
+      // payload-provided rate so transients do not drift against beat
+      // markers over long clips. The clip may be a trimmed window.
+      // Convert the clip's
       // `[inMs, inMs + durationMs]` ms-window into peak indices and
       // distribute those across the clip's pixel width.
-      const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * PEAKS_PER_SECOND))
+      const peaksPerSecond = clip.peaksPerSecond ?? libItem?.peaksPerSecond ?? PEAKS_PER_SECOND
+      const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * peaksPerSecond))
       const endPeak = Math.min(
         peakCount,
-        Math.max(startPeak + 1, Math.ceil(((clip.inMs + clip.durationMs) / 1000) * PEAKS_PER_SECOND))
+        Math.max(startPeak + 1, Math.ceil(((clip.inMs + clip.durationMs) / 1000) * peaksPerSecond))
       )
       const windowSize = endPeak - startPeak
       const peaksPerPixel = windowSize / w

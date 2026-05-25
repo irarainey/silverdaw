@@ -55,11 +55,12 @@ export interface Clip {
   sampleRate: number
   readonly channelCount: number
   /**
-   * Alternating min, max float pairs at PEAKS_PER_SECOND resolution.
-   * Empty for placeholder clips reconstructed from PROJECT_STATE
-   * until a `WAVEFORM_DATA` binary frame fills them in.
+   * Alternating min, max float pairs. `peaksPerSecond` records the actual
+   * bucket rate used to create them; it can differ slightly from the
+   * requested nominal rate when sample buckets must be integer-sized.
    */
   peaks: Float32Array
+  peaksPerSecond?: number
   /** True when the library item's source file no longer exists on
    *  disk. The drawing code renders the clip greyed-out and the
    *  relink toast lists it. Mutable so a successful relink can
@@ -211,7 +212,7 @@ async function refreshLibraryItemMedia(itemId: string, filePath: string): Promis
     const decoded = await decodeAudioToPeaks(opened.data)
     library.setItemAudioDetails(itemId, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
     if (item.peaks.length === 0) {
-      library.setItemPeaks(itemId, decoded.peaks, decoded.sampleRate)
+      library.setItemPeaks(itemId, decoded.peaks, decoded.sampleRate, decoded.peaksPerSecond)
     }
   } catch (err) {
     log.warn('library', `readAudioFile/decode failed for ${filePath}: ${String(err)}`)
@@ -588,6 +589,7 @@ export const useProjectStore = defineStore('project', {
         sampleRate: number
         channelCount: number
         peaks: Float32Array
+        peaksPerSecond?: number
         /** Optional backend-loadable path; falls back to `filePath`. */
         playbackFilePath?: string
         /** Optional source-file trim window for reusable saved clips. */
@@ -612,6 +614,7 @@ export const useProjectStore = defineStore('project', {
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
         peaks: audio.peaks,
+        peaksPerSecond: audio.peaksPerSecond,
         unresolved: false
       }
       this.clips[clipId] = clip
@@ -1458,6 +1461,7 @@ export const useProjectStore = defineStore('project', {
         sampleRate: number
         channelCount: number
         peaks: Float32Array
+        peaksPerSecond?: number
         /** Optional backend-loadable path; falls back to `filePath`. */
         playbackFilePath?: string
         kind?: LibraryItem['kind']
@@ -1532,6 +1536,7 @@ export const useProjectStore = defineStore('project', {
           sampleRate: libraryItem.sampleRate,
           channelCount: libraryItem.channelCount,
           peaks: libraryItem.peaks,
+          peaksPerSecond: libraryItem.peaksPerSecond,
           playbackFilePath: libraryItem.playbackFilePath,
           inMs: clipInMs
         },
@@ -1940,10 +1945,11 @@ export const useProjectStore = defineStore('project', {
      * rehydrate. Silent no-op for unknown clipIds (the clip may have
      * been removed between request and response).
      */
-    setClipPeaks(clipId: string, peaks: Float32Array, sampleRate: number): void {
+    setClipPeaks(clipId: string, peaks: Float32Array, sampleRate: number, peaksPerSecond?: number): void {
       const clip = this.clips[clipId]
       if (!clip) return
       clip.peaks = peaks
+      if (typeof peaksPerSecond === 'number' && peaksPerSecond > 0) clip.peaksPerSecond = peaksPerSecond
       if (sampleRate > 0) clip.sampleRate = sampleRate
       // Tick the global peaks revision so consumers redraw. A single
       // counter is much cheaper than a `deep: true` watch on `clips`,
@@ -1959,9 +1965,9 @@ export const useProjectStore = defineStore('project', {
         lib.items.find((i) => i.kind === 'audio-file' && i.filePath === clip.filePath) ??
         lib.items.find((i) => i.filePath === clip.filePath)
       if (item && item.peaks.length === 0) {
-        lib.setItemPeaks(item.id, peaks, sampleRate)
+        lib.setItemPeaks(item.id, peaks, sampleRate, peaksPerSecond)
       }
-      log.debug('project', `setClipPeaks id=${clipId} peaks=${peaks.length / 2} sr=${sampleRate}`)
+      log.debug('project', `setClipPeaks id=${clipId} peaks=${peaks.length / 2} sr=${sampleRate} pps=${clip.peaksPerSecond ?? 'undef'}`)
     },
 
     applyProjectStateSnapshot(snapshot: ProjectStatePayload): void {

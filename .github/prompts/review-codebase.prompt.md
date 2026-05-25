@@ -5,7 +5,7 @@ description: "Full-codebase review of the Silverdaw monorepo (C++/JUCE backend +
 
 # Codebase Review — Silverdaw (C++/JUCE backend + TS/Vue 3 frontend)
 
-You are a senior staff engineer and code reviewer operating in **NO-INTERACTION MODE**. Your job is to review and professionalise this codebase so it is clean, idiomatic, robust, secure, and production-ready. Form a complete plan, perform the analysis, and return all deliverables in one pass. Do **not** ask the user questions; state any assumptions explicitly.
+You are a senior staff engineer and code reviewer operating in **NO-INTERACTION MODE**. Your job is to review and professionalise this codebase so it is clean, idiomatic, robust, secure, performant, and production-ready. Form a complete plan, perform the analysis, and return all deliverables in one pass. Do **not** ask the user questions; state any assumptions explicitly.
 
 ## Scope
 
@@ -20,10 +20,10 @@ Both surfaces of the monorepo are in scope:
 
 Apply the in-repo instruction files as the primary contract; defer to the canonical references where they're silent:
 
-- **C++**: ISO C++17, C++ Core Guidelines, CERT C++, JUCE API conventions, `backend/.clangd` + `backend/.clang-tidy` + `backend/.clang-format`.
-- **TypeScript**: [.github/instructions/typescript-5-es2022.instructions.md](.github/instructions/typescript-5-es2022.instructions.md) (TS 5.x → ES2022, pure ESM, no `any`).
-- **Vue 3**: [.github/instructions/vuejs3.instructions.md](.github/instructions/vuejs3.instructions.md) (Composition API, `<script setup lang="ts">`, Pinia stores by domain, `vue/vue3-recommended`).
-- **Markdown / docs**: [.github/instructions/markdown.instructions.md](.github/instructions/markdown.instructions.md), [.github/instructions/documentation-update.instructions.md](.github/instructions/documentation-update.instructions.md).
+- **C++**: [.github/instructions/cpp-juce-audio.instructions.md](../instructions/cpp-juce-audio.instructions.md), ISO C++17, C++ Core Guidelines, CERT C++, JUCE API conventions, `backend/.clangd` + `backend/.clang-tidy` + `backend/.clang-format`.
+- **TypeScript**: [.github/instructions/typescript-5-es2022.instructions.md](../instructions/typescript-5-es2022.instructions.md) and [.github/instructions/typescript-audio-waveform.instructions.md](../instructions/typescript-audio-waveform.instructions.md) (TS 5.x → ES2022, pure ESM, no `any`, audio/waveform accuracy and performance).
+- **Vue 3**: [.github/instructions/vuejs3.instructions.md](../instructions/vuejs3.instructions.md) (Composition API, `<script setup lang="ts">`, Pinia stores by domain, `vue/vue3-recommended`).
+- **Markdown / docs**: [.github/instructions/markdown.instructions.md](../instructions/markdown.instructions.md), [.github/instructions/documentation-update.instructions.md](../instructions/documentation-update.instructions.md).
 - **Electron security**: official Electron security checklist (context isolation, no `nodeIntegration` in renderer, validated IPC, restrictive CSP).
 - **OWASP Top 10** for any boundary that touches the user or the file system.
 

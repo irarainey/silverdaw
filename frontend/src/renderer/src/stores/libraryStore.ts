@@ -39,11 +39,12 @@ export interface LibraryItem {
   sampleRate: number
   channelCount: number
   /**
-   * Alternating min/max float pairs at PEAKS_PER_SECOND resolution. May
-   * be an empty array for placeholder items reconstructed from
-   * PROJECT_STATE; filled in by `setItemPeaks` when WAVEFORM_DATA arrives.
+   * Alternating min/max float pairs. `peaksPerSecond` records the actual
+   * bucket rate used to create them; it can differ slightly from the
+   * requested nominal rate when sample buckets must be integer-sized.
    */
   peaks: Float32Array
+  peaksPerSecond?: number
   /**
    * Detected BPM (rounded to 2 d.p.) from the backend's BTrack-based
    * estimator. `undefined` until the worker job finishes. The library
@@ -271,6 +272,7 @@ export const useLibraryStore = defineStore('library', {
       sampleRate: number
       channelCount: number
       peaks: Float32Array
+      peaksPerSecond?: number
       /** Optional override; defaults to `filePath`. */
       playbackFilePath?: string
       /** Detected or tagged musical key. */
@@ -344,6 +346,7 @@ export const useLibraryStore = defineStore('library', {
         sampleRate: audio.sampleRate,
         channelCount: audio.channelCount,
         peaks: audio.peaks,
+        peaksPerSecond: audio.peaksPerSecond,
         playbackFilePath: audio.playbackFilePath ?? audio.filePath,
         key: audio.key,
         derivedFrom: audio.derivedFrom,
@@ -434,6 +437,7 @@ export const useLibraryStore = defineStore('library', {
         sampleRate: clip.sampleRate,
         channelCount: clip.channelCount,
         peaks: clip.peaks,
+        peaksPerSecond: clip.peaksPerSecond,
         playbackFilePath: source?.playbackFilePath ?? clip.playbackFilePath ?? clip.filePath,
         key: source?.key,
         derivedFrom: {
@@ -556,6 +560,7 @@ export const useLibraryStore = defineStore('library', {
         sampleRate: source.sampleRate,
         channelCount: source.channelCount,
         peaks: source.peaks,
+        peaksPerSecond: source.peaksPerSecond,
         playbackFilePath: source.playbackFilePath,
         key: source.key,
         derivedFrom: {
@@ -1017,12 +1022,13 @@ export const useLibraryStore = defineStore('library', {
      * library cards rebuilt from PROJECT_STATE pick up their waveform
      * once the backend serves the cached peaks. No-op for unknown ids.
      */
-    setItemPeaks(itemId: string, peaks: Float32Array, sampleRate: number): void {
+    setItemPeaks(itemId: string, peaks: Float32Array, sampleRate: number, peaksPerSecond?: number): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
       item.peaks = peaks
+      if (typeof peaksPerSecond === 'number' && peaksPerSecond > 0) item.peaksPerSecond = peaksPerSecond
       if (sampleRate > 0) item.sampleRate = sampleRate
-      log.debug('library', `setItemPeaks id=${itemId} peaks=${peaks.length / 2} sr=${sampleRate}`)
+      log.debug('library', `setItemPeaks id=${itemId} peaks=${peaks.length / 2} sr=${sampleRate} pps=${item.peaksPerSecond ?? 'undef'}`)
     },
 
     /** Set the session-scoped high-resolution peaks payload used by

@@ -156,6 +156,7 @@ export async function importAudioIntoTrack(
       sampleRate: audio.sampleRate,
       channelCount: audio.channelCount,
       peaks: audio.peaks,
+      peaksPerSecond: audio.peaksPerSecond,
       playbackFilePath: audio.playbackFilePath,
       kind: audio.kind,
       name: audio.name,
@@ -212,6 +213,7 @@ export async function importAudioIntoLibrary(opened: {
       sampleRate: decoded.sampleRate,
       channelCount: decoded.channelCount,
       peaks: decoded.peaks,
+      peaksPerSecond: decoded.peaksPerSecond,
       playbackFilePath,
       key: enrichedMetadata?.key
     })
@@ -267,7 +269,7 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
     const playbackFilePath = await resolvePlaybackPath(item.filePath, decoded)
 
     library.setItemAudioDetails(item.id, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
-    library.setItemPeaks(item.id, decoded.peaks, decoded.sampleRate)
+    library.setItemPeaks(item.id, decoded.peaks, decoded.sampleRate, decoded.peaksPerSecond)
     library.setItemKey(item.id, detectedKey)
     library.setItemMetadata(item.id, enrichedMetadata)
     library.clearItemAnalysis(item.id)

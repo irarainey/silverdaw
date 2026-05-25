@@ -7,6 +7,12 @@
 
 export const PEAKS_PER_SECOND = 500
 
+export function effectivePeaksPerSecond(sampleRate: number, requestedPeaksPerSecond: number): number {
+  if (sampleRate <= 0 || requestedPeaksPerSecond <= 0) return requestedPeaksPerSecond
+  const samplesPerPeak = Math.max(1, Math.floor(sampleRate / requestedPeaksPerSecond))
+  return sampleRate / samplesPerPeak
+}
+
 const NOTE_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'] as const
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88] as const
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17] as const
@@ -33,6 +39,8 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
   channelCount: number
   /** Alternating min, max pairs at `PEAKS_PER_SECOND` resolution. */
   peaks: Float32Array
+  /** Actual peak-pair rate after integer sample buckets are applied. */
+  peaksPerSecond: number
   /** Planar PCM, one Float32Array per channel. */
   channels: Float32Array[]
 }> {
@@ -53,12 +61,14 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
   }
 
   const peaks = computePeaks(audioBuffer, PEAKS_PER_SECOND)
+  const peaksPerSecond = effectivePeaksPerSecond(audioBuffer.sampleRate, PEAKS_PER_SECOND)
 
   return {
     durationMs: audioBuffer.duration * 1000,
     sampleRate: audioBuffer.sampleRate,
     channelCount: audioBuffer.numberOfChannels,
     peaks,
+    peaksPerSecond,
     channels
   }
 }
