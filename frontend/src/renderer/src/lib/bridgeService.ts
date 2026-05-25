@@ -463,6 +463,7 @@ function dispatch(msg: BridgeInboundMessage): void {
 
     case 'PROJECT_LOAD_FAILED': {
       log.warn('bridge', `PROJECT_LOAD_FAILED ${msg.payload.filePath}: ${msg.payload.error}`)
+      useProjectStore().notifyProjectLoadFailed(msg.payload.error)
       useNotificationsStore().pushError(
         `Could not open project: ${msg.payload.error || msg.payload.filePath}`
       )

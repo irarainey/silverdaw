@@ -409,6 +409,34 @@ describe('projectStore', () => {
     expect(sendMock).toHaveBeenCalledWith('WAVEFORM_REQUEST', { clipId: 'c1' })
   })
 
+  it('adopts the autosave manifest id while restoring an untitled project', async () => {
+    const project = useProjectStore()
+    sendMock.mockReturnValueOnce(true)
+
+    const result = project.requestLoadRecovery(
+      'C:\\Users\\ira\\AppData\\Roaming\\Silverdaw\\autosave\\recovered-id\\autosave.silverdaw',
+      null,
+      'recovered-id'
+    )
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_LOAD_RECOVERY', {
+      autosavePath:
+        'C:\\Users\\ira\\AppData\\Roaming\\Silverdaw\\autosave\\recovered-id\\autosave.silverdaw',
+      originalPath: null
+    })
+
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Recovered Untitled',
+      reset: true,
+      library: [],
+      tracks: []
+    })
+
+    await expect(result).resolves.toEqual({ ok: true })
+    expect(project.projectId).toBe('recovered-id')
+    expect(project.pendingRecoveredProjectId).toBeNull()
+  })
+
   it('places saved library clips using their source trim window', () => {
     const project = useProjectStore()
     const trackId = project.addTrack()

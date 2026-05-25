@@ -314,6 +314,8 @@ interface ProjectState {
    * cleanly. `null` until the first snapshot has been applied.
    */
   projectId: string | null
+  /** Project id from the recovery manifest while an untitled recovery load is in flight. */
+  pendingRecoveredProjectId: string | null
   /**
    * Snapshot of `projectId` before the most recent transition (Load,
    * New, Save As). The autosave manager uses this to delete the old
@@ -404,6 +406,10 @@ let pendingSaveResolver: ((result: { ok: boolean; error?: string }) => void) | n
 let pendingViewStateSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
 let pendingSaveTimeout: ReturnType<typeof setTimeout> | null = null
 const PENDING_SAVE_TIMEOUT_MS = 10000
+let pendingRecoveryLoadResolver: ((result: { ok: boolean; error?: string }) => void) | null =
+  null
+let pendingRecoveryLoadTimeout: ReturnType<typeof setTimeout> | null = null
+const PENDING_LOAD_TIMEOUT_MS = 10000
 
 /**
  * Outstanding autosave resolver keyed by autosave filePath. The
@@ -489,6 +495,7 @@ export const useProjectStore = defineStore('project', {
     projectName: DEFAULT_PROJECT_NAME,
     isDirty: false,
     projectId: null,
+    pendingRecoveredProjectId: null,
     previousProjectId: null,
     viewPxPerSecond: null,
     viewScrollX: null,
@@ -2045,9 +2052,10 @@ export const useProjectStore = defineStore('project', {
             if (this.currentFilePath === targetPath) this.projectId = id
           })
         } else {
-          this.projectId = freshUntitledProjectId()
+          this.projectId = this.pendingRecoveredProjectId ?? freshUntitledProjectId()
         }
       }
+      this.pendingRecoveredProjectId = null
       // Adopt the persisted zoom level (if the backend supplied one) so
       // the TimelineView watcher in the component can apply it via the
       // grid-geometry composable.
@@ -2390,6 +2398,14 @@ export const useProjectStore = defineStore('project', {
           }
         }
       }
+      if (pendingRecoveryLoadTimeout) {
+        clearTimeout(pendingRecoveryLoadTimeout)
+        pendingRecoveryLoadTimeout = null
+      }
+      if (pendingRecoveryLoadResolver) {
+        pendingRecoveryLoadResolver({ ok: true })
+        pendingRecoveryLoadResolver = null
+      }
     },
 
     // ─── Project file lifecycle (Phase 3) ──────────────────────────────────
@@ -2658,12 +2674,59 @@ export const useProjectStore = defineStore('project', {
      * (or empty when null) and flips the dirty flag to true so the
      * user is steered to a deliberate File > Save.
      */
-    requestLoadRecovery(autosavePath: string, originalPath: string | null): void {
+    requestLoadRecovery(
+      autosavePath: string,
+      originalPath: string | null,
+      projectId?: string
+    ): Promise<{ ok: boolean; error?: string }> {
       log.info(
         'project',
-        `requestLoadRecovery autosavePath=${autosavePath} originalPath=${originalPath ?? 'null'}`
+        `requestLoadRecovery autosavePath=${autosavePath} originalPath=${originalPath ?? 'null'} projectId=${projectId ?? 'null'}`
       )
-      sendBridge('PROJECT_LOAD_RECOVERY', { autosavePath, originalPath })
+      this.pendingRecoveredProjectId = projectId ?? null
+      if (pendingRecoveryLoadResolver) {
+        pendingRecoveryLoadResolver({ ok: false, error: 'Superseded by a newer recovery load' })
+      }
+      if (pendingRecoveryLoadTimeout) {
+        clearTimeout(pendingRecoveryLoadTimeout)
+        pendingRecoveryLoadTimeout = null
+      }
+      const promise = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        pendingRecoveryLoadResolver = resolve
+        pendingRecoveryLoadTimeout = setTimeout(() => {
+          pendingRecoveryLoadTimeout = null
+          this.pendingRecoveredProjectId = null
+          if (!pendingRecoveryLoadResolver) return
+          pendingRecoveryLoadResolver({
+            ok: false,
+            error: 'Timed out waiting for backend recovery load acknowledgement'
+          })
+          pendingRecoveryLoadResolver = null
+        }, PENDING_LOAD_TIMEOUT_MS)
+      })
+      const sent = sendBridge('PROJECT_LOAD_RECOVERY', { autosavePath, originalPath })
+      if (!sent) {
+        if (pendingRecoveryLoadTimeout) {
+          clearTimeout(pendingRecoveryLoadTimeout)
+          pendingRecoveryLoadTimeout = null
+        }
+        this.pendingRecoveredProjectId = null
+        pendingRecoveryLoadResolver?.({ ok: false, error: 'Backend is not connected' })
+        pendingRecoveryLoadResolver = null
+      }
+      return promise
+    },
+
+    notifyProjectLoadFailed(error?: string): void {
+      if (pendingRecoveryLoadTimeout) {
+        clearTimeout(pendingRecoveryLoadTimeout)
+        pendingRecoveryLoadTimeout = null
+      }
+      this.pendingRecoveredProjectId = null
+      if (pendingRecoveryLoadResolver) {
+        pendingRecoveryLoadResolver({ ok: false, error })
+        pendingRecoveryLoadResolver = null
+      }
     },
 
     /**

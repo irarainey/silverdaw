@@ -19,6 +19,7 @@
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useAppStore } from '@/stores/appStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 
 export interface RecoverableEntry {
@@ -41,6 +42,7 @@ const emit = defineEmits<{
 
 const project = useProjectStore()
 const app = useAppStore()
+const notifications = useNotificationsStore()
 const busyId = ref<string | null>(null)
 
 function formatTimestamp(iso: string): string {
@@ -66,8 +68,22 @@ async function restore(entry: RecoverableEntry): Promise<void> {
     // Preload the audio paths inside the autosave so the renderer's
     // post-load metadata refresh works (same allow-list seeding that
     // a normal File > Open uses).
-    await window.silverdaw.prepareProjectOpen(entry.autosavePath)
-    project.requestLoadRecovery(entry.autosavePath, entry.originalPath)
+    const prepared = await window.silverdaw.prepareProjectOpen(entry.autosavePath)
+    if (!prepared) {
+      log.warn('recovery', `prepareProjectOpen failed for ${entry.autosavePath}`)
+    }
+    const result = await project.requestLoadRecovery(
+      entry.autosavePath,
+      entry.originalPath,
+      entry.projectId
+    )
+    if (!result.ok) {
+      log.warn('recovery', `restore failed: ${result.error ?? 'unknown error'}`)
+      if (result.error?.startsWith('Timed out') || result.error === 'Backend is not connected') {
+        notifications.pushError(`Could not restore project: ${result.error}`)
+      }
+      return
+    }
     log.info('recovery', `restored projectId=${entry.projectId} from ${entry.autosavePath}`)
     app.dismissStartScreen()
     emit('restored', entry)
