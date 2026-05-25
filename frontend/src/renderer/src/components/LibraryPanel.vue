@@ -140,6 +140,11 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     ]
     if (item.kind === 'audio-file') {
         items.push({ command: 'library.reanalyse', label: 'Reanalyse file' })
+    } else if (item.kind === 'saved-clip') {
+        items.push({
+            command: 'library.saveSample',
+            label: 'Save as sample…'
+        })
     }
     // Saved clips can always be removed — doing so just unlinks any
     // timeline clips that reference them (they keep their audio and
@@ -308,6 +313,11 @@ function onContextMenuCommand(command: string): void {
     if (command === 'library.reanalyse') {
         closeItemContextMenu()
         void reanalyseLibraryItem(item.id)
+        return
+    }
+    if (command === 'library.saveSample') {
+        closeItemContextMenu()
+        void library.saveLibraryItemAsSample(item.id)
         return
     }
     if (command === 'library.delete') {

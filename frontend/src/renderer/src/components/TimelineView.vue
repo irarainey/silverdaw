@@ -225,7 +225,10 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
       items.push({ command: 'clip.unlink', label: 'Unlink from library' })
     }
   }
-  items.push({ command: 'clip.saveSample', label: 'Bounce to Sample…', disabled: true })
+  items.push({
+    command: 'clip.saveSample',
+    label: 'Save as sample…'
+  })
   return items
 })
 
@@ -263,6 +266,8 @@ function onContextMenuCommand(command: string): void {
     project.splitClipAt(clipId, transport.positionMs)
   } else if (command === 'clip.saveToLibrary') {
     project.saveClipToLibrary(clipId)
+  } else if (command === 'clip.saveSample') {
+    void project.saveClipAsSample(clipId)
   } else if (command === 'clip.unlink') {
     project.unlinkClipFromLibrary(clipId)
   } else if (command === 'clip.warp') {

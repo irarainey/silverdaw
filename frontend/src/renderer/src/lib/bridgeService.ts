@@ -44,6 +44,7 @@ import {
   isPreviewPositionPayload,
   isPreviewStatePayload,
   isProjectBpmAppliedPayload,
+  isSampleSavedPayload,
   isProjectAutosavedPayload,
   isProjectDirtyPayload,
   isProjectLoadFailedPayload,
@@ -60,6 +61,7 @@ import {
   type BridgeInboundType,
   type BridgeOutboundArgs,
   type BridgeOutboundType,
+  type SampleSavedPayload,
   type WaveformReadyPayload
 } from '@shared/bridge-protocol'
 
@@ -544,6 +546,11 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'SAMPLE_SAVED': {
+      void applySampleSaved(msg.payload)
+      break
+    }
+
     case 'PREVIEW_STATE': {
       usePreviewStore().applyState(msg.payload)
       break
@@ -631,6 +638,38 @@ async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise<void> 
   const peaks = new Float32Array(view32)
   useProjectStore().setClipPeaks(clipId, peaks, sampleRate, peaksPerSecond)
   log.info('bridge', `WAVEFORM_READY clipId=${clipId} peaks=${peakCount} ppS=${peaksPerSecond}`)
+}
+
+async function applySampleSaved(payload: SampleSavedPayload): Promise<void> {
+  const notifications = useNotificationsStore()
+  if (!payload.ok) {
+    notifications.pushError(`Sample export failed: ${payload.error ?? 'unknown error'}`)
+    log.warn('bridge', `SAMPLE_SAVED failed source=${payload.clipId ?? payload.libraryItemId ?? '?'} error=${payload.error ?? 'unknown'}`)
+    return
+  }
+
+  const buffer = await window.silverdaw.readPeaksCacheFile(payload.cachePath).catch(() => null)
+  let peaks = new Float32Array()
+  if (buffer && buffer.byteLength >= PEAKS_FILE_HEADER_SIZE + payload.peakCount * 2 * Float32Array.BYTES_PER_ELEMENT) {
+    peaks = new Float32Array(new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, payload.peakCount * 2))
+  }
+
+  useLibraryStore().addItem({
+    id: payload.itemId,
+    kind: 'audio-file',
+    name: payload.name,
+    filePath: payload.filePath,
+    fileName: payload.fileName,
+    durationMs: payload.durationMs,
+    sampleRate: payload.sampleRate,
+    channelCount: payload.channelCount,
+    peaks,
+    peaksPerSecond: payload.peaksPerSecond,
+    playbackFilePath: payload.filePath,
+    fromSnapshot: true
+  })
+  notifications.pushInfo(`Saved sample "${payload.name}".`)
+  log.info('bridge', `SAMPLE_SAVED itemId=${payload.itemId} file=${payload.fileName}`)
 }
 
 async function loadEditorPeaksFromCache(payload: {
@@ -741,6 +780,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isWaveformReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'CLIP_EDITOR_PEAKS_READY':
       return isClipEditorPeaksReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'SAMPLE_SAVED':
+      return isSampleSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'LIBRARY_ITEM_ANALYSIS':
       return isLibraryItemAnalysisPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_BPM_APPLIED':

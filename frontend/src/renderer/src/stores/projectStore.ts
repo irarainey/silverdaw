@@ -194,6 +194,24 @@ function freshUntitledProjectId(): string {
   return out
 }
 
+function fileStem(name: string): string {
+  return name.replace(/\.[^.\\/:*?"<>|]+$/, '').trim() || 'Sample'
+}
+
+function parentDir(path: string | null | undefined): string {
+  if (!path) return ''
+  const slash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
+  return slash > 0 ? path.slice(0, slash) : ''
+}
+
+async function defaultSamplesDir(currentFilePath: string | null): Promise<string> {
+  const projectDir = parentDir(currentFilePath)
+  if (projectDir) return `${projectDir}\\Samples`
+  const qol = await window.silverdaw.getQolPrefs().catch(() => null)
+  const base = qol?.paths.defaultProjectDir || ''
+  return base ? `${base}\\Samples` : 'Samples'
+}
+
 async function refreshLibraryItemMedia(itemId: string, filePath: string): Promise<void> {
   const library = useLibraryStore()
   try {
@@ -1305,6 +1323,19 @@ export const useProjectStore = defineStore('project', {
         log.info('project', `saveClipToLibrary clip=${clipId} item=${itemId}`)
       }
       return itemId
+    },
+
+    async saveClipAsSample(clipId: string): Promise<void> {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const itemId = `sample-${crypto.randomUUID()}`
+      sendBridge('CLIP_SAVE_AS_SAMPLE', {
+        clipId,
+        itemId,
+        sampleName: clip.name?.trim() || fileStem(clip.fileName),
+        outputDir: await defaultSamplesDir(this.currentFilePath)
+      })
+      useNotificationsStore().pushInfo('Saving sample…')
     },
 
     /**

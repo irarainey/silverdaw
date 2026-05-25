@@ -264,6 +264,20 @@ export interface ClipSetWarpPayload {
   pendingAutoWarp?: boolean
 }
 
+export interface ClipSaveAsSamplePayload {
+  clipId: string
+  itemId: string
+  sampleName: string
+  outputDir: string
+}
+
+export interface LibraryItemSaveAsSamplePayload {
+  libraryItemId: string
+  itemId: string
+  sampleName: string
+  outputDir: string
+}
+
 export interface TransportSeekPayload {
   positionMs: number
 }
@@ -296,6 +310,8 @@ export interface BridgeOutboundMap {
   CLIP_RENAME: ClipRenamePayload
   CLIP_REBIND: ClipRebindPayload
   CLIP_SET_WARP: ClipSetWarpPayload
+  CLIP_SAVE_AS_SAMPLE: ClipSaveAsSamplePayload
+  LIBRARY_ITEM_SAVE_AS_SAMPLE: LibraryItemSaveAsSamplePayload
   CLIP_EDITOR_PEAKS_REQUEST: ClipEditorPeaksRequestPayload
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
@@ -835,6 +851,23 @@ export interface ClipEditorPeaksReadyPayload {
   sampleRate: number
 }
 
+export interface SampleSavedPayload {
+  clipId?: string
+  libraryItemId?: string
+  itemId: string
+  filePath: string
+  fileName: string
+  name: string
+  durationMs: number
+  sampleRate: number
+  channelCount: number
+  cachePath: string
+  peakCount: number
+  peaksPerSecond: number
+  ok: boolean
+  error?: string
+}
+
 /** Backend notification that BPM + beat-position detection has completed
  *  for a library item. `beats` is an array of times (in seconds from
  *  the start of the source file) at which BTrack detected a beat;
@@ -979,6 +1012,7 @@ export interface BridgeInboundMap {
   PROJECT_DIRTY: ProjectDirtyPayload
   WAVEFORM_READY: WaveformReadyPayload
   CLIP_EDITOR_PEAKS_READY: ClipEditorPeaksReadyPayload
+  SAMPLE_SAVED: SampleSavedPayload
   LIBRARY_ITEM_ANALYSIS: LibraryItemAnalysisPayload
   CLIP_WARP_APPLIED: ClipWarpAppliedPayload
   PROJECT_BPM_APPLIED: ProjectBpmAppliedPayload
@@ -1048,6 +1082,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PROJECT_DIRTY',
   'WAVEFORM_READY',
   'CLIP_EDITOR_PEAKS_READY',
+  'SAMPLE_SAVED',
   'LIBRARY_ITEM_ANALYSIS',
   'CLIP_WARP_APPLIED',
   'PROJECT_BPM_APPLIED',
@@ -1244,6 +1279,26 @@ export function isClipEditorPeaksReadyPayload(value: unknown): value is ClipEdit
     typeof value.peakCount === 'number' &&
     typeof value.peaksPerSecond === 'number' &&
     typeof value.sampleRate === 'number'
+  )
+}
+
+export function isSampleSavedPayload(value: unknown): value is SampleSavedPayload {
+  if (!isPlainObject(value)) return false
+  if (typeof value.itemId !== 'string' || typeof value.ok !== 'boolean') return false
+  if (value.clipId !== undefined && typeof value.clipId !== 'string') return false
+  if (value.libraryItemId !== undefined && typeof value.libraryItemId !== 'string') return false
+  if (value.ok === false) return value.error === undefined || typeof value.error === 'string'
+  return (
+    typeof value.filePath === 'string' &&
+    typeof value.fileName === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.durationMs === 'number' &&
+    typeof value.sampleRate === 'number' &&
+    typeof value.channelCount === 'number' &&
+    typeof value.cachePath === 'string' &&
+    typeof value.peakCount === 'number' &&
+    typeof value.peaksPerSecond === 'number' &&
+    (value.error === undefined || typeof value.error === 'string')
   )
 }
 

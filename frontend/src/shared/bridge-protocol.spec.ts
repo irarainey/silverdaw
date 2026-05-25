@@ -17,6 +17,7 @@ import {
   isProjectViewStateSavedPayload,
   isProjectStatePayload,
   isReadyPayload,
+  isSampleSavedPayload,
   isTrackAddedPayload,
   isTrackGainAppliedPayload,
   isTrackRemovedPayload,
@@ -42,6 +43,7 @@ const INBOUND_TYPES = {
   PROJECT_DIRTY: true,
   WAVEFORM_READY: true,
   CLIP_EDITOR_PEAKS_READY: true,
+  SAMPLE_SAVED: true,
   LIBRARY_ITEM_ANALYSIS: true,
   CLIP_WARP_APPLIED: true,
   PROJECT_BPM_APPLIED: true,
@@ -392,6 +394,35 @@ describe('isWaveformReadyPayload', () => {
         sampleRate: 44100
       })
     ).toBe(false)
+  })
+})
+
+describe('isSampleSavedPayload', () => {
+  it('accepts a successful sample payload', () => {
+    expect(
+      isSampleSavedPayload({
+        clipId: 'c1',
+        itemId: 'sample-1',
+        filePath: 'C:\\Samples\\Kick.wav',
+        fileName: 'Kick.wav',
+        name: 'Kick',
+        durationMs: 1000,
+        sampleRate: 44100,
+        channelCount: 2,
+        cachePath: 'C:\\peaks\\x.peaks',
+        peakCount: 500,
+        peaksPerSecond: 500,
+        ok: true
+      })
+    ).toBe(true)
+  })
+
+  it('rejects missing success fields', () => {
+    expect(isSampleSavedPayload({ itemId: 'x', ok: true })).toBe(false)
+  })
+
+  it('accepts a failed sample payload without file metadata', () => {
+    expect(isSampleSavedPayload({ itemId: 'sample-1', clipId: 'c1', ok: false, error: 'nope' })).toBe(true)
   })
 })
 
