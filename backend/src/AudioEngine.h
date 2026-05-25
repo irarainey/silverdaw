@@ -427,24 +427,18 @@ class MasterClockSource : public juce::AudioSource
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
     {
+        const auto startTicks = juce::Time::getHighResolutionTicks();
         const auto count = callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
-        // Diagnostic heartbeat: ~1 s at 48 kHz / 512 buffer. Logged so we
-        // can tell whether the audio device thread is alive even when no
-        // audible output is being produced.
-        if ((count % 100) == 0)
-        {
-            silverdaw::log::debug("master", "cb#" + juce::String(static_cast<juce::int64>(count)) + " playing=" +
-                                                juce::String(playing.load(std::memory_order_acquire) ? 1 : 0) +
-                                                " pos=" + juce::String(positionSamples.load(std::memory_order_relaxed)));
-        }
         if (!playing.load(std::memory_order_acquire))
         {
             info.clearActiveBufferRegion();
+            maybeLogAudioPerf(count, startTicks, info.numSamples);
             return;
         }
 
         child.getNextAudioBlock(info);
         positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
+        maybeLogAudioPerf(count, startTicks, info.numSamples);
     }
 
     void setPlaying(bool p) noexcept
@@ -471,6 +465,26 @@ class MasterClockSource : public juce::AudioSource
     }
 
   private:
+    void maybeLogAudioPerf(std::uint64_t count, juce::int64 startTicks, int numSamples) const
+    {
+        // Diagnostic heartbeat: ~1 s at 48 kHz / 512 buffer. Logged only
+        // when diagnostic logging is enabled; keep the audio-thread work
+        // bounded to a couple of tick reads and simple arithmetic.
+        if ((count % 100) != 0) return;
+        const auto elapsedTicks = juce::Time::getHighResolutionTicks() - startTicks;
+        const double elapsedMs = juce::Time::highResolutionTicksToSeconds(elapsedTicks) * 1000.0;
+        const double sr = sampleRate.load(std::memory_order_acquire);
+        const double budgetMs = sr > 0.0 && numSamples > 0 ? (static_cast<double>(numSamples) * 1000.0) / sr : 0.0;
+        const double pct = budgetMs > 0.0 ? (elapsedMs / budgetMs) * 100.0 : 0.0;
+        silverdaw::log::debug("perf.audio",
+                              "cb#" + juce::String(static_cast<juce::int64>(count)) +
+                                  " playing=" + juce::String(playing.load(std::memory_order_acquire) ? 1 : 0) +
+                                  " pos=" + juce::String(positionSamples.load(std::memory_order_relaxed)) +
+                                  " elapsedMs=" + juce::String(elapsedMs, 3) +
+                                  " budgetMs=" + juce::String(budgetMs, 3) +
+                                  " budgetPct=" + juce::String(pct, 1));
+    }
+
     juce::AudioSource& child;
     std::atomic<juce::int64> positionSamples{0};
     std::atomic<bool> playing{false};

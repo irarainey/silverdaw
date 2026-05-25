@@ -81,6 +81,9 @@ let reconnectDelay = RECONNECT_DELAY_MS
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let stopped = false
 let socketHeartbeat: ReturnType<typeof setInterval> | null = null
+let outboundCount = 0
+let inboundCount = 0
+let lastInboundAt = 0
 
 function readyStateName(s: number): string {
   switch (s) {
@@ -101,9 +104,12 @@ function startSocketHeartbeat(): void {
   if (socketHeartbeat) return
   socketHeartbeat = setInterval(() => {
     if (!socket) return
+    const now = performance.now()
+    const lastInboundAgeMs = lastInboundAt > 0 ? now - lastInboundAt : -1
     log.debug(
-      'bridge',
-      `heartbeat readyState=${readyStateName(socket.readyState)} bufferedAmount=${socket.bufferedAmount}`
+      'perf.bridge',
+      `heartbeat readyState=${readyStateName(socket.readyState)} bufferedAmount=${socket.bufferedAmount} ` +
+        `out=${outboundCount} in=${inboundCount} lastInboundAgeMs=${lastInboundAgeMs.toFixed(0)}`
     )
   }, 2000)
 }
@@ -252,6 +258,7 @@ export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K
     return false
   }
   const env = payload === undefined ? { type } : { type, payload }
+  outboundCount++
   // PLAYHEAD_UPDATE-style chatter doesn't exist outbound, but TRACK_GAIN
   // can fire per slider-pixel during a drag. Log everything except those
   // would-be high-frequency edges; for now, log every outbound envelope.
@@ -274,6 +281,8 @@ function scheduleReconnect(): void {
 }
 
 function dispatch(msg: BridgeInboundMessage): void {
+  inboundCount++
+  lastInboundAt = performance.now()
   // Exhaustive on `BridgeInboundType`: adding a new arm to `BridgeInboundMap`
   // without a matching case here is a TypeScript error via `assertNever`.
   // Skip PLAYHEAD_UPDATE — it fires 60 Hz and would drown the log. Same

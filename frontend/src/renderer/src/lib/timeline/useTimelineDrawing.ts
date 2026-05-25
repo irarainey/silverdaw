@@ -19,6 +19,7 @@ import { useProjectStore, type Clip, TRACK_PALETTE, PEAKS_PER_SECOND } from '@/s
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { log } from '@/lib/log'
 import {
   GRID_BAR,
   GRID_BEAT,
@@ -137,6 +138,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
   // PLAYHEAD_UPDATE ticks are jittery. Falls back to `transport.positionMs`
   // when nobody else has written.
   let displayPositionMs = 0
+  let redrawCount = 0
+  let lastRedrawStats = { rows: 0, clips: 0, durationMs: 0 }
   // Wall-clock timestamp of the previous `updatePlayhead` call. Used by
   // the auto-follow catch-up logic to step the scroll by a time-based
   // amount (so the feel is identical at 60 Hz / 120 Hz / variable
@@ -172,6 +175,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
   }
 
   function redraw(): void {
+    const redrawStart = performance.now()
     const a = app.value
     const ruler = rulerLayer.value
     const rulerTicks = rulerTicksLayer.value
@@ -203,6 +207,16 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     tracks.x = -Math.round(scrollX.value)
     tracks.y = -Math.round(scrollY.value)
     rulerTicks.x = -Math.round(scrollX.value)
+    lastRedrawStats.durationMs = performance.now() - redrawStart
+    ++redrawCount
+    if (redrawCount % 20 === 0 || lastRedrawStats.durationMs > 16) {
+      log.debug(
+        'perf.timeline',
+        `redraw#${redrawCount} ms=${lastRedrawStats.durationMs.toFixed(2)} rows=${lastRedrawStats.rows} ` +
+          `clips=${lastRedrawStats.clips} totalClips=${Object.keys(project.clips).length} ` +
+          `pxPerSecond=${pxPerSecond.value.toFixed(2)}`
+      )
+    }
   }
 
   function drawMarkers(): void {
@@ -486,6 +500,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     drawGrid(width)
 
     // Pass 2: clips.
+    let visibleClipCount = 0
     for (const { track, worldY, rowHeight } of visibleRows) {
       const trackPalette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
       for (const clipId of track.clipIds) {
@@ -497,8 +512,10 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
             ? TRACK_PALETTE[clip.colorIndex % TRACK_PALETTE.length]!
             : trackPalette
         drawClip(clip, worldY, rowHeight, palette, worldLeft, worldRight)
+        ++visibleClipCount
       }
     }
+    lastRedrawStats = { ...lastRedrawStats, rows: visibleRows.length, clips: visibleClipCount }
   }
 
   function drawClip(
