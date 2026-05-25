@@ -186,6 +186,16 @@ interface LibraryState {
   } | null
 }
 
+function touchTimelineClipsForLibraryItem(itemId: string): number {
+  const project = useProjectStore()
+  let count = 0
+  for (const clip of Object.values(project.clips)) {
+    if (clip?.libraryItemId === itemId) count++
+  }
+  if (count > 0) project.peaksRevision++
+  return count
+}
+
 export const useLibraryStore = defineStore('library', {
   state: (): LibraryState => ({
     items: [],
@@ -790,13 +800,18 @@ export const useLibraryStore = defineStore('library', {
       // user-customised and left untouched.
       if (item.kind === 'saved-clip') {
         const project = useProjectStore()
+        let propagated = 0
         for (const clipId in project.clips) {
           const clip = project.clips[clipId]
           if (!clip || clip.libraryItemId !== itemId) continue
-          if (clip.name !== previousName) continue
-          clip.name = nextName
-          sendBridge('CLIP_RENAME', { clipId, name: nextName ?? '' })
+          if (clip.name === previousName) {
+            clip.name = nextName
+            sendBridge('CLIP_RENAME', { clipId, name: nextName ?? '' })
+            propagated++
+          }
         }
+        const touched = touchTimelineClipsForLibraryItem(itemId)
+        log.debug('library', `renameItem linked redraw id=${itemId} touched=${touched} propagated=${propagated}`)
       }
       // Omit `playbackFilePath` from rename/collapse upserts: the
       // renderer's `item.playbackFilePath` is just the source filePath

@@ -204,6 +204,12 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     return ((scrollX.value + clampedX - geometry.headerWidth()) / geometry.pxPerSecond.value) * 1000
   }
 
+  function snapTimelineMs(ms: number, fineMode: boolean): number {
+    if (fineMode) return Math.max(0, Math.round(ms))
+    const snap = geometry.msPerSubBeat()
+    return Math.max(0, Math.round(ms / snap) * snap)
+  }
+
   function clipAutoScrollDelta(clientX: number): number {
     const a = app.value
     if (!host.value || !a || maxScrollX.value <= 0) return 0
@@ -680,14 +686,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (!clip) return
     const pointerMs = pointerToRawMs(e.clientX)
     if (pointerMs === null) return
-    // `deltaTimelineMs` is the user's drag in TIMELINE-time. The clip's
-    // `inMs` / `durationMs` are in SOURCE-time — for an un-warped clip
-    // the two coincide, but a warped clip's source-time fields scale
-    // by the tempo ratio. Compute both so the trim semantics are
-    // identical to what the user sees (the clip's right edge tracks
-    // the cursor) while still writing source-time values into the
-    // store.
-    const deltaTimelineMs = Math.round(pointerMs - trimPointerStartMs)
+    // Edge trims operate in TIMELINE-time so the visible edge snaps to
+    // the project grid by default (or follows the pointer at 1 ms
+    // resolution when Alt is held). The clip's `inMs` / `durationMs`
+    // are SOURCE-time fields, so warped clips convert the snapped
+    // timeline delta through the current tempo ratio before writing.
     const libItem = library.items.find((i) => i.id === clip.libraryItemId)
     const ratio =
       isWarpActive({
@@ -702,9 +705,12 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
             projectBpm: transport.bpm
           })
         : 1
-    const deltaSourceMs = Math.round(deltaTimelineMs * ratio)
 
     if (trimEdge === 'left') {
+      const rawLeftMs = trimOrigStartMs + (pointerMs - trimPointerStartMs)
+      const targetLeftMs = snapTimelineMs(rawLeftMs, e.altKey)
+      const deltaTimelineMs = targetLeftMs - trimOrigStartMs
+      const deltaSourceMs = Math.round(deltaTimelineMs * ratio)
       // Left-edge trim: dragging right (positive delta) shrinks from
       // the left — `startMs` moves right by the TIMELINE delta (so the
       // visible left edge follows the cursor), while `inMs` increases
@@ -727,6 +733,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       }
       project.trimClip(clip.id, newStartMs, newInMs, newDurationMs)
     } else {
+      const origRightMs = trimOrigStartMs + (trimOrigDurationMs / Math.max(1e-9, ratio))
+      const rawRightMs = origRightMs + (pointerMs - trimPointerStartMs)
+      const targetRightMs = snapTimelineMs(rawRightMs, e.altKey)
+      const deltaTimelineMs = targetRightMs - origRightMs
+      const deltaSourceMs = Math.round(deltaTimelineMs * ratio)
       // Right-edge trim: positive timeline delta grows the clip from
       // the right, negative shrinks it. `startMs` and `inMs` stay
       // put; only `durationMs` changes — in source-time, so multiply

@@ -622,6 +622,29 @@ watch(
   }
 )
 
+watch(
+  () => Object.values(project.clips)
+    .map((clip) => {
+      const item = library.items.find((candidate) => candidate.id === clip.libraryItemId)
+      const sourceBpm = item ? libraryItemSourceBpm(item, library.items) : undefined
+      return [
+        clip.id,
+        clip.libraryItemId,
+        item?.kind ?? '',
+        item ? libraryItemDisplayName(item) : '',
+        item?.durationMs ?? '',
+        item?.derivedFrom?.inMs ?? '',
+        item?.derivedFrom?.durationMs ?? '',
+        sourceBpm ?? ''
+      ].join(':')
+    })
+    .join('|'),
+  () => {
+    redraw()
+    updatePlayhead()
+  }
+)
+
 // Per-track height changes (drag-resize handle in TrackHeaderPanel)
 // shift every row below the resized track and grow / shrink the
 // tracksContentHeight used by the vertical scrollbar. Both the canvas

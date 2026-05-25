@@ -535,6 +535,48 @@ describe('libraryStore', () => {
     })
   })
 
+  it('redraws linked timeline clips when a saved clip is renamed', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000, 'Old loop')!
+    const saved = library.items.find((item) => item.id === savedId)!
+    const trackId = project.addTrack()
+    const clipId = project.addClipFromLibrary(
+      trackId,
+      {
+        id: savedId,
+        kind: 'saved-clip',
+        name: saved.name,
+        filePath: saved.filePath,
+        fileName: saved.fileName,
+        durationMs: saved.durationMs,
+        sampleRate: saved.sampleRate,
+        channelCount: saved.channelCount,
+        peaks: saved.peaks,
+        derivedFrom: saved.derivedFrom
+      },
+      0
+    )!
+    const revisionBefore = project.peaksRevision
+    sendMock.mockClear()
+
+    const renamed = library.renameItem(savedId, 'New loop')
+
+    expect(renamed).toBe(true)
+    expect(project.clips[clipId]?.name).toBe('New loop')
+    expect(project.peaksRevision).toBe(revisionBefore + 1)
+    expect(sendMock).toHaveBeenCalledWith('CLIP_RENAME', { clipId, name: 'New loop' })
+  })
+
   it('refuses saved-clip trim when propagation would collide with a neighbour clip', () => {
     const library = useLibraryStore()
     const project = useProjectStore()
