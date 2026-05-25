@@ -52,8 +52,6 @@ function withRedetectedKey(metadata: AudioMetadata | null, detectedKey: string |
   const next = { ...metadata }
   if (detectedKey) {
     next.key = detectedKey
-  } else {
-    delete next.key
   }
   return next
 }
@@ -270,7 +268,7 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
 
     library.setItemAudioDetails(item.id, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
     library.setItemPeaks(item.id, decoded.peaks, decoded.sampleRate, decoded.peaksPerSecond)
-    library.setItemKey(item.id, detectedKey)
+    library.setItemKey(item.id, enrichedMetadata?.key)
     library.setItemMetadata(item.id, enrichedMetadata)
     library.clearItemAnalysis(item.id)
     library.markImportAnalyzing(importEntryId, item.id)
@@ -283,7 +281,7 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
       sampleRate: decoded.sampleRate,
       channelCount: decoded.channelCount,
       playbackFilePath,
-      key: detectedKey ?? ''
+      key: enrichedMetadata?.key ?? ''
     })
   } catch (err) {
     console.error('[importAudio] reanalyse failed:', err)

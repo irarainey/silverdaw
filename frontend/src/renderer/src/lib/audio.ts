@@ -16,7 +16,7 @@ export function effectivePeaksPerSecond(sampleRate: number, requestedPeaksPerSec
 const NOTE_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'] as const
 const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88] as const
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17] as const
-const KEY_MIN_CONFIDENCE_GAP = 0.012
+const KEY_MIN_CONFIDENCE_GAP = 0.002
 
 /** Lazily-instantiated `AudioContext` reused across decodes. */
 let audioContext: AudioContext | null = null

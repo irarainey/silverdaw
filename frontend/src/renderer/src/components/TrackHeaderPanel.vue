@@ -69,6 +69,9 @@ function onImportClick(trackId: string): void {
 const editingTrackId = ref<string | null>(null)
 const editingValue = ref('')
 let nameInputEl: HTMLInputElement | null = null
+const editingGainTrackId = ref<string | null>(null)
+const editingGainValue = ref('')
+let gainInputEl: HTMLInputElement | null = null
 
 function setNameInputEl(el: Element | ComponentPublicInstance | null): void {
   // Function-style template ref — avoids the Vue-3-inside-v-for array
@@ -77,6 +80,10 @@ function setNameInputEl(el: Element | ComponentPublicInstance | null): void {
   // ComponentPublicInstance (the latter for components, not raw DOM
   // nodes); for a plain <input> we only ever get an HTMLInputElement.
   nameInputEl = el as HTMLInputElement | null
+}
+
+function setGainInputEl(el: Element | ComponentPublicInstance | null): void {
+  gainInputEl = el as HTMLInputElement | null
 }
 
 async function startRename(trackId: string, currentName: string): Promise<void> {
@@ -106,6 +113,66 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
   } else if (e.key === 'Escape') {
     e.preventDefault()
     cancelRename()
+  }
+}
+
+function volumePercent(volume: number): number {
+  return Math.round(Math.min(MAX_TRACK_VOLUME, Math.max(0, volume)) * 100)
+}
+
+async function startGainEdit(trackId: string, volume: number): Promise<void> {
+  editingGainTrackId.value = trackId
+  editingGainValue.value = String(volumePercent(volume))
+  await nextTick()
+  if (gainInputEl) {
+    gainInputEl.focus()
+    gainInputEl.select()
+  }
+}
+
+function commitGainEdit(trackId: string): void {
+  if (editingGainTrackId.value !== trackId) return
+  const parsed = Number(editingGainValue.value)
+  if (Number.isFinite(parsed)) {
+    const maxPercent = MAX_TRACK_VOLUME * 100
+    const clamped = Math.min(maxPercent, Math.max(0, parsed))
+    project.setTrackVolume(trackId, clamped / 100)
+  }
+  editingGainTrackId.value = null
+}
+
+function onGainInput(e: Event): void {
+  const input = e.target as HTMLInputElement
+  if (input.value.trim() === '') {
+    editingGainValue.value = ''
+    return
+  }
+  const parsed = Number(input.value)
+  if (!Number.isFinite(parsed)) return
+  const maxPercent = MAX_TRACK_VOLUME * 100
+  const clamped = Math.min(maxPercent, Math.max(0, parsed))
+  if (clamped !== parsed) {
+    const next = String(clamped)
+    input.value = next
+    editingGainValue.value = next
+  }
+}
+
+function cancelGainEdit(): void {
+  editingGainTrackId.value = null
+}
+
+function onGainKeydown(e: KeyboardEvent, trackId: string): void {
+  if (e.key === 'e' || e.key === 'E' || e.key === '+' || e.key === '-') {
+    e.preventDefault()
+    return
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    commitGainEdit(trackId)
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelGainEdit()
   }
 }
 
@@ -453,9 +520,29 @@ const dropIndicatorTopPx = computed<number>(() => {
               @input="(e) => project.setTrackVolumeLocal(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
               @change="(e) => project.setTrackVolume(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
             >
-            <span class="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-500">
-              {{ Math.round(track.volume * 100) }}
-            </span>
+            <input
+              v-if="editingGainTrackId === track.id"
+              :ref="setGainInputEl"
+              v-model="editingGainValue"
+              type="number"
+              min="0"
+              :max="MAX_TRACK_VOLUME * 100"
+              step="1"
+              class="w-9 shrink-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              @input="onGainInput"
+              @blur="commitGainEdit(track.id)"
+              @keydown="(e) => onGainKeydown(e, track.id)"
+            >
+            <button
+              v-else
+              type="button"
+              data-borderless-button="true"
+              class="w-7 shrink-0 cursor-text appearance-none border-0 bg-transparent p-0 text-right font-mono text-[10px] tabular-nums text-zinc-500 outline-none hover:text-zinc-200 focus-visible:text-cyan-300"
+              :title="`Double-click to type volume (0-${MAX_TRACK_VOLUME * 100})`"
+              @dblclick.stop="startGainEdit(track.id, track.volume)"
+            >
+              {{ volumePercent(track.volume) }}
+            </button>
           </div>
 
           <!-- Bottom row: close / import / mute / solo. -->
