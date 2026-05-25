@@ -129,7 +129,7 @@ const api = {
   }): Promise<string | null> => ipcRenderer.invoke('audio:writeTempWav', args),
   /**
    * Flush a batch of renderer-side log entries to the main-process
-   * session log (`.logs/<stamp>/renderer.log`). Renderer-side logging
+   * session log (`debug/<stamp>/renderer.log`). Renderer-side logging
    * (`lib/log.ts`) buffers entries on a ~50 ms timer and calls this
    * once per flush so we avoid per-message IPC overhead.
    *

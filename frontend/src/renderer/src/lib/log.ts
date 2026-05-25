@@ -1,7 +1,7 @@
 // Renderer-side logger.
 //
 // Buffers structured log entries and flushes them over IPC to the main
-// process, which persists them to `.logs/<session>/renderer.log` in the
+// process, which persists them to `debug/<session>/renderer.log` in the
 // same per-session directory as `main.log` and `backend.log`. All three
 // files share a single line format:
 //

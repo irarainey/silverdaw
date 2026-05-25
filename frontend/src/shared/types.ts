@@ -93,6 +93,6 @@ export interface DebugPreferences {
   loggingEnabled: boolean
   /** Allow and expose Chromium DevTools controls. */
   devToolsEnabled: boolean
-  /** Parent folder for per-session log folders. Empty means app default. */
+  /** Parent folder for per-session log folders. Defaults to the app directory's debug folder. */
   logDirectory: string
 }

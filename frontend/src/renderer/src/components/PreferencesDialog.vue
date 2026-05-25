@@ -807,7 +807,7 @@ function onSave(): void {
                     type="text"
                     spellcheck="false"
                     :disabled="!loggingEnabled"
-                    placeholder="Default app log folder"
+                    placeholder="Application debug folder"
                     class="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100 outline-none focus:border-sky-500 disabled:cursor-not-allowed disabled:text-zinc-500"
                   >
                   <button
@@ -821,7 +821,7 @@ function onSave(): void {
                 </div>
                 <p class="text-[11px] text-zinc-500">
                   Silverdaw creates a timestamped subfolder here for each
-                  session. Leave blank to use the app default.
+                  session. By default this is the debug folder beside the app.
                 </p>
               </div>
 

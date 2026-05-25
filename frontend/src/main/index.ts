@@ -369,6 +369,14 @@ const AUTOSAVE_DEFAULT_SECONDS = 30
  * `app.getPath` (only available after `app.whenReady`) so we resolve
  * them lazily the first time we need them rather than at module load.
  */
+function getApplicationDirectory(): string {
+  return app.isPackaged ? dirname(app.getPath('exe')) : pathResolve(__dirname, '..', '..', '..')
+}
+
+function getDefaultDebugLogDirectory(): string {
+  return join(getApplicationDirectory(), 'debug')
+}
+
 function buildDefaultPrefs(): Preferences {
   const home = app.getPath('home')
   // Default to <Music>/Silverdaw so projects live alongside the audio
@@ -394,7 +402,11 @@ function buildDefaultPrefs(): Preferences {
       showLibraryTileImages: true,
       matchProjectTempoOnDrop: true
     },
-    debug: { loggingEnabled: false, devToolsEnabled: false, logDirectory: '' },
+    debug: {
+      loggingEnabled: false,
+      devToolsEnabled: false,
+      logDirectory: getDefaultDebugLogDirectory()
+    },
     toasts: { enabled: true },
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
@@ -471,10 +483,8 @@ function normaliseDebugPrefs(saved: Partial<DebugPrefs> & { enabled?: boolean } 
       : hasSplitFlags
         ? defaults.devToolsEnabled
         : legacyEnabled ?? defaults.devToolsEnabled
-  const logDirectory =
-    typeof saved?.logDirectory === 'string'
-      ? saved.logDirectory.trim()
-      : defaults.logDirectory
+  const savedLogDirectory = typeof saved?.logDirectory === 'string' ? saved.logDirectory.trim() : ''
+  const logDirectory = savedLogDirectory.length > 0 ? savedLogDirectory : defaults.logDirectory
   return { loggingEnabled, devToolsEnabled, logDirectory }
 }
 
@@ -1204,23 +1214,30 @@ app.whenReady().then(async () => {
   // Initialise the cross-layer file logger only when the user has opted
   // in via Preferences. When off, `logMain` / `logRendererLine` / the
   // backend's `silverdaw::log::*` calls all become silent no-ops — so
-  // a normal-use session never writes a `.logs/` directory.
+  // a normal-use session never writes a `debug/` directory.
   if (startupLoggingEnabled) {
-    const defaultLogParent = !app.isPackaged
-      ? pathResolve(__dirname, '..', '..', '..')
-      : pathResolve(app.getPath('userData'))
-    const defaultLogDir = join(defaultLogParent, '.logs')
+    const defaultLogDir = getDefaultDebugLogDirectory()
     const preferredLogDir = prefs.debug.logDirectory.trim()
     const logParent = preferredLogDir.length > 0 ? preferredLogDir : defaultLogDir
-    try {
-      const sessionDir = initLogs(logParent)
+    const userDataFallbackLogDir = join(app.getPath('userData'), 'debug')
+    const candidateLogDirs = Array.from(new Set([logParent, defaultLogDir, userDataFallbackLogDir]))
+    let sessionDir: string | null = null
+    for (const candidate of candidateLogDirs) {
+      try {
+        sessionDir = initLogs(candidate)
+        if (candidate !== logParent) {
+          logMain('WARN ', 'main', `preferred log dir failed, fell back to: ${sessionDir}`)
+        }
+        break
+      } catch (err) {
+        console.error(`[main] failed to initialise log directory ${candidate}:`, err)
+      }
+    }
+    if (sessionDir) {
       logMain('INFO ', 'main', `session log dir: ${sessionDir}`)
       logMain('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node}`)
-    } catch (err) {
-      console.error('[main] failed to initialise preferred log directory; falling back:', err)
-      const sessionDir = initLogs(defaultLogDir)
-      logMain('WARN ', 'main', `preferred log dir failed, fell back to: ${sessionDir}`)
-      logMain('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node}`)
+    } else {
+      console.error('[main] failed to initialise file logging; continuing with file logging disabled')
     }
   } else {
     console.log('[main] file logging disabled (Preferences > Developer > Write diagnostic logs is off)')
@@ -1554,7 +1571,10 @@ app.whenReady().then(async () => {
     const next: DebugPrefs = { ...prefs.debug }
     if (typeof p.loggingEnabled === 'boolean') next.loggingEnabled = p.loggingEnabled
     if (typeof p.devToolsEnabled === 'boolean') next.devToolsEnabled = p.devToolsEnabled
-    if (typeof p.logDirectory === 'string') next.logDirectory = p.logDirectory.trim()
+    if (typeof p.logDirectory === 'string') {
+      const trimmed = p.logDirectory.trim()
+      next.logDirectory = trimmed.length > 0 ? trimmed : getDefaultDebugLogDirectory()
+    }
     if (
       next.loggingEnabled === prefs.debug.loggingEnabled &&
       next.devToolsEnabled === prefs.debug.devToolsEnabled &&
