@@ -157,6 +157,59 @@ describe('projectStore', () => {
     expect(project.tracks[0]?.lengthMs).toBe(10_000)
   })
 
+  it('pastes to the selected track at the playhead even when copied from another track', () => {
+    const project = useProjectStore()
+    const sourceTrackId = project.addTrack()
+    const targetTrackId = project.addTrack()
+    const sourceClipId = project.addClipToTrack(
+      sourceTrackId,
+      {
+        libraryItemId: 'lib-copy',
+        filePath: 'C:\\audio\\copy.wav',
+        fileName: 'copy.wav',
+        durationMs: 1_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+    const blockerId = project.addClipToTrack(
+      sourceTrackId,
+      {
+        libraryItemId: 'lib-blocker',
+        filePath: 'C:\\audio\\blocker.wav',
+        fileName: 'blocker.wav',
+        durationMs: 2_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      1_000
+    )
+    expect(sourceClipId).toBeTruthy()
+    expect(blockerId).toBeTruthy()
+    project.selectClip(sourceClipId)
+    project.selectTrack(sourceTrackId)
+    expect(project.copySelectedClip()).toBe(true)
+    sendMock.mockClear()
+
+    project.selectTrack(targetTrackId)
+    const pastedId = project.pasteClipAtPlayhead(5_000)
+
+    expect(pastedId).toBeTruthy()
+    expect(project.clips[pastedId ?? '']?.trackId).toBe(targetTrackId)
+    expect(project.clips[pastedId ?? '']?.startMs).toBe(5_000)
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_ADD',
+      expect.objectContaining({
+        trackId: targetTrackId,
+        clipId: pastedId,
+        positionMs: 5_000
+      })
+    )
+  })
+
   it('applies reset snapshots across project, library, transport, and bridge requests', () => {
     const project = useProjectStore()
     const library = useLibraryStore()

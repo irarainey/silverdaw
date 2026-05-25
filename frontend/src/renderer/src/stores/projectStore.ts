@@ -342,8 +342,7 @@ interface ProjectState {
 
   /** Currently selected track id (UI-only). The selected track is the
    *  paste target — `pasteClipAtPlayhead` places the new clip on this
-   *  track when set, falling back to the clipboard's source track
-   *  otherwise. Drawn with a highlighted row border. */
+   *  track at the playhead. Drawn with a highlighted row border. */
   selectedTrackId: string | null
 
   /** Local cut / copy buffer. Holds the minimum data needed to mint a
@@ -370,8 +369,8 @@ interface ProjectState {
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
 export interface ClipboardEntry {
   sourceTrackId: string
-  /** Original clip's `startMs` on the source track — used by paste to
-   *  compute "right after the source" as the target slot. */
+  /** Original clip's `startMs` on the source track. Retained for
+   *  future paste variants and diagnostics; paste lands at playhead. */
   sourceStartMs: number
   /** Original clip's `durationMs` (separate from `durationMs` in case
    *  we ever support trimmed pastes). Currently equal. */
@@ -1109,26 +1108,20 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Paste the clipboard clip. Behaviour splits on target track:
-     *
-     *   - Same track as the source: lands immediately after the
-     *     source clip's end position (so repeated Ctrl+V builds a
-     *     back-to-back sequence).
-     *
-     *   - Different track (user selected another row): lands at the
-     *     current playhead position. The "after the source" rule
-     *     doesn't carry across tracks — the user picked the
-     *     destination explicitly, and the playhead is the obvious
-     *     local landing point.
-     *
-     * In either case the slot has to be free on the target track —
+     * Paste the clipboard clip onto the currently selected track at
+     * the playhead. The slot has to be free on the target track —
      * we never overwrite or push another clip. If the slot is taken,
      * the paste is rejected with a toast.
      */
     pasteClipAtPlayhead(positionMs?: number): string | null {
       const cb = this.clipboardClip
       if (!cb) return null
-      const targetTrackId = this.selectedTrackId ?? cb.sourceTrackId
+      const targetTrackId = this.selectedTrackId
+      if (!targetTrackId) {
+        log.warn('project', 'pasteClip: no selected target track')
+        useNotificationsStore().pushError("Can't paste — select a target track first.")
+        return null
+      }
       const track = this.tracks.find((t) => t.id === targetTrackId)
       if (!track) {
         log.warn('project', `pasteClip: target track ${targetTrackId} no longer exists`)
@@ -1154,12 +1147,7 @@ export const useProjectStore = defineStore('project', {
         : 1
       const cbEffDur = cbRatio > 0 ? cb.durationMs / cbRatio : cb.durationMs
 
-      // Position depends on whether we're pasting onto the source
-      // track or a different one.
-      const targetStartMs =
-        targetTrackId === cb.sourceTrackId
-          ? cb.sourceStartMs + cbEffDur
-          : Math.max(0, positionMs ?? 0)
+      const targetStartMs = Math.max(0, positionMs ?? 0)
       const library = useLibraryStore()
       const projectBpm = useTransportStore().bpm
       for (const id of track.clipIds) {
