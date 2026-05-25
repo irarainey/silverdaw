@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
+
 project(SilverdawBackend
     VERSION 1.0.0
     DESCRIPTION "Silverdaw headless audio backend"
@@ -8,6 +12,14 @@ project(SilverdawBackend
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(MSVC)
+    # The Electron/NSIS installer does not bootstrap the Visual C++
+    # Redistributable. Link the backend against the static MSVC runtime
+    # so clean Windows installs don't fail to spawn SilverdawBackend.exe
+    # due to missing MSVCP140/VCRUNTIME DLLs.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 # Export compile_commands.json for clangd / IntelliSense.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
