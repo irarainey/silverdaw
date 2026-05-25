@@ -75,6 +75,8 @@ Silverdaw currently supports the core arrangement workflow:
 
 - Import audio into a project-scoped library and drag it onto the timeline.
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
+  Clip moves and non-linked edge trims snap to the beat grid by default; holding
+  `Alt` switches either drag to freeform 1 ms placement.
 - Move clips across tracks with grid snapping, source-beat snapping and `Alt` bypass.
 - Analyse imported audio for key, BPM, beat positions and variable-tempo status.
 - Non-destructive per-clip warp and pitch settings via Rubber Band. Dropped
@@ -85,6 +87,8 @@ Silverdaw currently supports the core arrangement workflow:
   (clamped 60..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
   a track name and dragging up or down; an emerald drop indicator shows where
   the track will land. Both are persisted with the project and undoable.
+- Edit track gain with the slider or double-click the gain number to type a
+  bounded percentage value directly (0..150).
 - **End-of-project playback** stops automatically: when the playhead reaches the
   project ruler's end, the renderer sends `TRANSPORT_PAUSE` and parks the playhead
   there. The Play button (and the Spacebar shortcut) is disabled while the
@@ -464,6 +468,12 @@ BPM (the common case), every subsequent marker on the clip then lines up exactly
 with a project grid sub-beat. Drag with `Alt` for the legacy 1 ms unsnapped
 behaviour.
 
+Non-linked edge-trim drags use the same project grid by default, snapping the
+dragged edge as the source window changes. Hold `Alt` while trimming for
+freeform 1 ms edge placement. Linked saved-clip instances do not expose timeline
+edge-resize handles; edit their shared window in the Clip Editor or unlink the
+instance first.
+
 ### Processing progress panel
 
 A floating panel in the bottom-right shows each in-flight import or reanalysis
@@ -532,7 +542,10 @@ keyed on the library item id and cached on disk alongside the default 500 peaks/
 cache. Audio-file items open at the same px-per-second scale as the main timeline;
 saved clips open zoomed to fit the cropped range and the bottom-left toggle flips
 between **Clip** view (cropped) and **Source** view (full source for extending the
-window). Auditioning runs through an independent **backend preview voice**
+window). Warped saved clips show a **WARP** pill in the editor header; the
+playhead is shown at the start of the view immediately, and Play becomes
+available once the backend preview voice is ready. Auditioning runs through an
+independent **backend preview voice**
 (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
 `PREVIEW_SEEK` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` / `PREVIEW_POSITION` /
 `PREVIEW_ENDED`) so the main transport is unaffected. A monotonic `generation`
@@ -543,7 +556,7 @@ the same smooth ease-in catch-up the main timeline uses.
 Within the dialog:
 
 - **Transport**: Skip-to-start, Play / Pause, Skip-to-end — the same three icons
-  as the main TransportBar. `Space` toggles play / pause and is scoped to the
+  as the main TransportBar. `Space` toggles play / pause and is captured by the
   dialog while it's open (`uiStore.clipEditorOpen` defers the global handler).
 - **Click** anywhere on the waveform to seek the playhead.
 - **`←` / `→`**: snap the playhead to the previous / next beat on the
@@ -620,8 +633,9 @@ Persisted fields:
 - **Write diagnostic logs** — enables the cross-layer file logger. When on,
   the next launch writes a per-session timestamped folder containing
   `{main,backend,renderer}.log` with aligned millisecond timestamps. The
-  **Log folder** field lets the user choose the parent folder; blank uses the
-  app default.
+  **Log folder** field lets the user choose the parent folder; by default this
+  is the `debug` folder beside the application, and blank entries are normalised
+  back to that default.
 - **Show Developer Tools** — gates the visibility of the **Debug** menu and
   DevTools shortcuts independently of file logging.
 
@@ -691,9 +705,11 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
-| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge (ms-precise; non-destructive — only the window over the source file changes). Disabled on clips linked to a saved-clip library item — right-click ▸ Unlink first, or use the Clip Editor to resize every linked sibling in lockstep. |
+| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved-clip library item — right-click ▸ Unlink first, or use the Clip Editor to resize every linked sibling in lockstep. |
+| `Alt` + drag on clip edge | Trim with 1 ms resolution — the dragged edge stays at the unsnapped position. |
 | Drag the **bottom edge of a track header** (~5 px hit zone) | Resize that track row vertically (60–400 px). Each track's height is persisted with the project and undoable. |
 | Drag the **grip icon** (6-dot handle next to the track name) | Reorder the track. A green drop indicator shows the target slot. Drop on the indicator commits one undoable reorder step. |
+| Double-click a **track gain number** | Type a gain percentage directly. Values are constrained to 0..150, matching the slider range. |
 | Click on **empty area of a track row** | Select that track (highlighted row border), deselect any clip. |
 | Click on **inter-track gap** / below the last track | Deselect both clip and track. |
 | `←` / `→` | Step the playhead one grid line (sub-beat). |
@@ -713,7 +729,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |
 | `Delete` | Delete the selected clip. |
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
-| `Ctrl + V` | Paste the clipboard clip — on the source track it lands immediately after the source clip; on a different (selected) track it lands at the playhead. A toast appears if the slot is already occupied. |
+| `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
 | **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, **Save as sample…**, **Warp settings…** for tempo/pitch controls, plus the disabled placeholder **Transpose…**. Shows **Relink…** at the top when the clip is unresolved. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
@@ -759,9 +775,9 @@ Cut, Copy, Duplicate, Delete, and Split-at-playhead shortcuts; the **selected tr
 and its host track. Clicking an empty area of a track row selects just that track. Clicking
 between tracks clears both.
 
-Copy/paste works across tracks: copy a clip on one track, click another track, paste — the
-new clip lands on the destination track at the playhead. Overlap rules are evaluated only
-on the destination; the source-track's clips don't constrain the new clip's placement.
+Copy/paste is target-driven: copy a clip, select the destination track, place the playhead,
+then paste. The new clip lands on the selected track at the playhead. Overlap rules are
+evaluated only on that destination; the source-track's clips don't constrain placement.
 
 ## Rendering performance
 
@@ -975,8 +991,8 @@ pnpm dist:dir    # win-unpacked only, no NSIS step
   target that runs the backend unit tests and writes reports under the
   build directory's `coverage/` folder. MSVC builds still run the tests,
   but do not provide native coverage reports through this CMake target.
-- **TypeScript / Vue**: `pnpm typecheck` (vue-tsc + tsc --noEmit), `pnpm lint` (ESLint flat
-  config with `eslint-plugin-vue` and `@typescript-eslint`).
+- **TypeScript / Vue**: `pnpm typecheck` (`vue-tsc --noEmit -p tsconfig.web.json --composite false`),
+  `pnpm lint` (ESLint flat config with `eslint-plugin-vue` and `@typescript-eslint`).
 - **Tests**: `pnpm test` runs Vitest over the shared bridge-protocol guards,
   music-time helpers and Pinia stores. `pnpm test:coverage` runs the same
   suite with V8 coverage and writes text, HTML, lcov and JSON-summary reports
