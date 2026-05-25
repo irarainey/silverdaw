@@ -1,16 +1,13 @@
 <script setup lang="ts">
-// Per-clip warp settings dialog. Opens from a right-click ▸ Warp
-// settings… on a timeline clip.
+// Per-clip warp/pitch settings dialog. Opens from the timeline clip context menu.
 //
 // Surface:
 //
 //   ┌───────────────────────────────────────┐
-//   │ Warp settings — <clip name>           │
+//   │ Warp — <clip name>                    │
 //   │  [✔] Warp enabled                     │
 //   │   Mode    ( rhythmic / tonal /        │
 //   │             complex )                 │
-//   │   Pitch   semitones ▆▆▆▆▆ 0           │
-//   │            cents    ▆▆▆▆▆ 0           │
 //   │   Tempo   ( ◯ follow project BPM      │
 //   │              ◯ pin to ___ BPM )       │
 //   └───────────────────────────────────────┘
@@ -33,7 +30,11 @@ import { useUiStore } from '@/stores/uiStore'
 import { effectiveTempoRatio } from '@/lib/warp'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
-const props = defineProps<{ open: boolean; clipId: string | null }>()
+const props = withDefaults(defineProps<{
+  open: boolean
+  clipId: string | null
+  panel?: 'tempo' | 'pitch'
+}>(), { panel: 'tempo' })
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const project = useProjectStore()
@@ -50,6 +51,7 @@ const libItem = computed(() =>
 
 const sourceBpm = computed(() => libItem.value?.bpm)
 const projectBpm = computed(() => transport.bpm)
+const dialogTitle = computed(() => props.panel === 'pitch' ? 'Pitch' : 'Warp')
 
 const enabled = computed({
   get: () => clip.value?.warpEnabled === true,
@@ -71,7 +73,8 @@ const semitones = computed({
   get: () => clip.value?.semitones ?? 0,
   set: (v: number) => {
     if (!props.clipId) return
-    project.setClipWarp(props.clipId, { semitones: clampNumber(v, -12, 12) })
+    const next = clampNumber(v, -12, 12)
+    project.setClipWarp(props.clipId, { semitones: next, warpEnabled: pitchNeedsProcessor(next, cents.value) ? true : undefined })
   }
 })
 
@@ -79,7 +82,8 @@ const cents = computed({
   get: () => clip.value?.cents ?? 0,
   set: (v: number) => {
     if (!props.clipId) return
-    project.setClipWarp(props.clipId, { cents: clampNumber(v, -100, 100) })
+    const next = clampNumber(v, -100, 100)
+    project.setClipWarp(props.clipId, { cents: next, warpEnabled: pitchNeedsProcessor(semitones.value, next) ? true : undefined })
   }
 })
 
@@ -129,6 +133,10 @@ function pinTempo(): void {
 function resetPitch(): void {
   if (!props.clipId) return
   project.setClipWarp(props.clipId, { semitones: 0, cents: 0 })
+}
+
+function pitchNeedsProcessor(semitonesValue: number, centsValue: number): boolean {
+  return semitonesValue !== 0 || centsValue !== 0
 }
 
 const effectiveRatio = computed(() =>
@@ -208,7 +216,7 @@ function onKeydown(ev: KeyboardEvent): void {
             id="clip-warp-title"
             class="truncate text-sm font-semibold tracking-tight text-zinc-100"
           >
-            Warp settings
+            {{ dialogTitle }}
             <span class="ml-2 truncate text-xs font-normal text-zinc-500">
               {{ clip.name || libItem?.name || libItem?.fileName || 'clip' }}
             </span>
@@ -237,19 +245,28 @@ function onKeydown(ev: KeyboardEvent): void {
         <div class="flex flex-col gap-4 px-5 py-4 text-xs">
           <!-- Enabled toggle -->
           <label class="flex items-center gap-2 text-zinc-200">
-            <input
-              v-model="enabled"
-              type="checkbox"
-              class="h-3.5 w-3.5 cursor-pointer"
-            >
-            <span class="font-medium">Enable warp</span>
-            <span class="text-zinc-500">
-              ({{ enabled ? 'on' : 'bypassed' }})
-            </span>
+            <template v-if="panel === 'tempo'">
+              <input
+                v-model="enabled"
+                type="checkbox"
+                class="h-3.5 w-3.5 cursor-pointer"
+              >
+              <span class="font-medium">Enable warp</span>
+              <span class="text-zinc-500">
+                ({{ enabled ? 'on' : 'bypassed' }})
+              </span>
+            </template>
+            <template v-else>
+              <span class="font-medium">Pitch shift</span>
+              <span class="text-zinc-500">changes pitch without changing clip timing</span>
+            </template>
           </label>
 
           <!-- Source / project BPM readout -->
-          <div class="grid grid-cols-2 gap-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-zinc-400">
+          <div
+            v-if="panel === 'tempo'"
+            class="grid grid-cols-2 gap-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-zinc-400"
+          >
             <div>
               <div class="text-[10px] uppercase tracking-wider text-zinc-500">
                 Source BPM
@@ -273,6 +290,7 @@ function onKeydown(ev: KeyboardEvent): void {
 
           <!-- Mode picker -->
           <fieldset
+            v-if="panel === 'tempo'"
             class="flex flex-col gap-1"
             :disabled="!enabled"
             :class="!enabled ? 'opacity-50' : ''"
@@ -299,6 +317,7 @@ function onKeydown(ev: KeyboardEvent): void {
 
           <!-- Tempo source -->
           <fieldset
+            v-if="panel === 'tempo'"
             class="flex flex-col gap-1"
             :disabled="!enabled || !sourceBpm"
             :class="!enabled || !sourceBpm ? 'opacity-50' : ''"
@@ -345,9 +364,8 @@ function onKeydown(ev: KeyboardEvent): void {
 
           <!-- Pitch shift -->
           <fieldset
+            v-if="panel === 'pitch'"
             class="flex flex-col gap-2"
-            :disabled="!enabled"
-            :class="!enabled ? 'opacity-50' : ''"
           >
             <legend class="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500">
               <span>Pitch shift</span>

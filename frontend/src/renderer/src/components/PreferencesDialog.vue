@@ -529,7 +529,7 @@ function onSave(): void {
                     When dragging a clip onto a track, automatically enable
                     warp so its source BPM matches the project BPM. Turn off
                     to drop clips at their native tempo; you can still enable
-                    warp per-clip via right-click ▸ Warp settings.
+                    warp per-clip via right-click ▸ Warp.
                   </span>
                 </span>
               </label>

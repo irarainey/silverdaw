@@ -173,12 +173,13 @@ const contextMenuOpen = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 const contextMenuClipId = ref<string | null>(null)
-// Warp settings dialog. Surfaced from the right-click context menu;
+// Warp / pitch settings dialog. Surfaced from the right-click context menu;
 // driven entirely by `project.setClipWarp` so closing without an
 // explicit "save" doesn't lose anything (every slider change has
 // already committed).
 const warpDialogOpen = ref(false)
 const warpDialogClipId = ref<string | null>(null)
+const warpDialogPanel = ref<'tempo' | 'pitch'>('tempo')
 const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
   const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
   const items: ClipContextMenuItem[] = []
@@ -214,12 +215,8 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
       selectedSwatch: selected
     })
   }
-  // Warp settings — opens the per-clip warp dialog. Enabled now that
-  // the warp engine is wired through the audio path; Transpose stays
-  // disabled until pitch-only without time-stretch ships as a
-  // first-class control.
-  items.push({ command: 'clip.warp', label: 'Warp settings…', separatorAbove: true })
-  items.push({ command: 'clip.transpose', label: 'Transpose…', disabled: true })
+  items.push({ command: 'clip.warp', label: 'Warp…', separatorAbove: true })
+  items.push({ command: 'clip.pitch', label: 'Pitch' })
   items.push({ command: 'clip.saveToLibrary', label: 'Save clip to library', separatorAbove: true })
   // "Unlink from library" only shown when the clip is linked to a
   // saved-clip library entry. Unlinking preserves the current trim
@@ -278,6 +275,11 @@ function onContextMenuCommand(command: string): void {
     project.unlinkClipFromLibrary(clipId)
   } else if (command === 'clip.warp') {
     warpDialogClipId.value = clipId
+    warpDialogPanel.value = 'tempo'
+    warpDialogOpen.value = true
+  } else if (command === 'clip.pitch') {
+    warpDialogClipId.value = clipId
+    warpDialogPanel.value = 'pitch'
     warpDialogOpen.value = true
   } else if (command.startsWith('clip.color:')) {
     const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
@@ -1033,6 +1035,7 @@ function onHeaderResizePointerUp(e: PointerEvent): void {
     <ClipWarpDialog
       :open="warpDialogOpen"
       :clip-id="warpDialogClipId"
+      :panel="warpDialogPanel"
       @close="warpDialogOpen = false"
     />
   </div>
