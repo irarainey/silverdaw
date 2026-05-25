@@ -131,6 +131,32 @@ describe('projectStore', () => {
     })
   })
 
+  it('does not shorten project length below the longest clip end', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'lib-long',
+        filePath: 'C:\\audio\\long.wav',
+        fileName: 'long.wav',
+        durationMs: 2_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      8_000
+    )
+
+    expect(clipId).toBeTruthy()
+    expect(project.longestClipEndMs).toBe(10_000)
+
+    project.setProjectLengthMs(5_000)
+
+    expect(project.durationMs).toBe(10_000)
+    expect(project.tracks[0]?.lengthMs).toBe(10_000)
+  })
+
   it('applies reset snapshots across project, library, transport, and bridge requests', () => {
     const project = useProjectStore()
     const library = useLibraryStore()

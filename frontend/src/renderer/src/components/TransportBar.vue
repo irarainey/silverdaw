@@ -9,6 +9,7 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
@@ -18,6 +19,7 @@ const library = useLibraryStore()
 const transport = useTransportStore()
 const ui = useUiStore()
 const audioDevices = useAudioDeviceStore()
+const notifications = useNotificationsStore()
 
 // ─── Audio output device quick-switch ────────────────────────────────────
 //
@@ -158,7 +160,15 @@ function applyBpm(bpm: number): void {
 }
 
 function applyProjectLength(ms: number): void {
-  project.setProjectLengthMs(ms)
+  const minLengthMs = project.longestClipEndMs
+  const requestedMs = Math.max(0, Math.floor(ms))
+  const nextMs = Math.max(requestedMs, minLengthMs)
+  if (requestedMs < minLengthMs) {
+    notifications.pushInfo(
+      `Project length cannot be shorter than the last clip (${formatTime(minLengthMs)}).`
+    )
+  }
+  project.setProjectLengthMs(nextMs)
   // The setter may clamp upward to fit existing clips; send the final
   // value so the backend and renderer stay aligned.
   sendBridge('PROJECT_SET_LENGTH', { lengthMs: project.durationMs })

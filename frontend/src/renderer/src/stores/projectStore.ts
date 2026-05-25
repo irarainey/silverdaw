@@ -514,6 +514,26 @@ export const useProjectStore = defineStore('project', {
       return max
     },
 
+    /**
+     * Minimum legal project length based only on timeline clips. Track
+     * display length may be longer, but user edits must never shrink the
+     * ruler under the audible/visible end of the latest clip.
+     */
+    longestClipEndMs(state): number {
+      const library = useLibraryStore()
+      const projectBpm = useTransportStore().bpm
+      let max = 0
+      for (const id in state.clips) {
+        const c = state.clips[id]
+        if (!c) continue
+        const libItem = library.items.find((i) => i.id === c.libraryItemId)
+        const effDur = clipEffectiveDurationMs(c, libItem, projectBpm)
+        const end = c.startMs + effDur
+        if (end > max) max = end
+      }
+      return max
+    },
+
     /** True if any track is currently soloed. */
     anySoloed(state): boolean {
       return state.tracks.some((t) => t.soloed)
@@ -1678,7 +1698,7 @@ export const useProjectStore = defineStore('project', {
      */
     setProjectLengthMs(lengthMs: number): void {
       if (this.tracks.length === 0) return
-      const target = Math.max(0, Math.floor(lengthMs))
+      const target = Math.max(this.longestClipEndMs, Math.max(0, Math.floor(lengthMs)))
       const library = useLibraryStore()
       const projectBpm = useTransportStore().bpm
       for (const track of this.tracks) {
