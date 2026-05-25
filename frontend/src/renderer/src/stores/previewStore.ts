@@ -58,19 +58,20 @@ export const usePreviewStore = defineStore('preview', {
       this.positionMs = 0
       this.isPlaying = false
       this.isLoaded = false
-      sendBridge('PREVIEW_LOAD', { libraryItemId: itemId, inMs, durationMs })
-      // Apply warp defaults eagerly so the user hears the warped audio
-      // from the first Play press. Bypass when warp is off / unset —
-      // the backend's preview voice defaults to no-warp already.
-      if (warp && warp.warpEnabled === true) {
-        sendBridge('PREVIEW_SET_WARP', {
-          warpEnabled: true,
-          warpMode: warp.warpMode,
-          tempoRatio: warp.tempoRatio,
-          semitones: warp.semitones,
-          cents: warp.cents
-        })
-      }
+      sendBridge('PREVIEW_LOAD', {
+        libraryItemId: itemId,
+        inMs,
+        durationMs,
+        ...(warp?.warpEnabled === true
+          ? {
+              warpEnabled: true,
+              warpMode: warp.warpMode,
+              tempoRatio: warp.tempoRatio,
+              semitones: warp.semitones,
+              cents: warp.cents
+            }
+          : {})
+      })
     },
     /** Update the preview voice's warp engine while loaded. Mirrors
      *  `setClipWarp` semantics — partial update, `tempoRatio: null`

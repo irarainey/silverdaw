@@ -43,6 +43,9 @@ export interface ClipMovePayload {
    *  about tracks (each clip is its own playable source) so there's no
    *  AudioEngine call; only ProjectState changes. */
   trackId?: string
+  /** True on drag release. Lets the backend reset read-ahead before
+   *  the next Play press instead of doing it synchronously on Play. */
+  commit?: boolean
 }
 
 /** Atomic three-field trim update. Sent by edge-drag trim (and split,
@@ -465,8 +468,10 @@ export interface ProjectMarkerRemovePayload {
 /** Start a preview voice on a library item, optionally windowed to a
  *  selection. `inMs` and `durationMs` are in milliseconds relative to the
  *  source file; `durationMs = 0` (or omitted) plays from `inMs` to the
- *  end of the source. */
-export interface PreviewLoadPayload {
+ *  end of the source. Initial warp fields are applied atomically before
+ *  the backend broadcasts `PREVIEW_STATE`, so the first Play press cannot
+ *  briefly run at the source tempo. */
+export interface PreviewLoadPayload extends PreviewSetWarpPayload {
   libraryItemId: string
   inMs?: number
   durationMs?: number

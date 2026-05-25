@@ -42,36 +42,37 @@ void WarpProcessor::prepareToPlay(int maxBlockSamples)
     if (worstCase <= allocatedBlockSamples) return;
     allocatedBlockSamples = worstCase;
     sourceScratch.assign(static_cast<size_t>(numChannels), std::vector<float>(static_cast<size_t>(worstCase)));
+    discardScratch.assign(static_cast<size_t>(numChannels), std::vector<float>(static_cast<size_t>(worstCase)));
     sourceScratchPtrs.resize(static_cast<size_t>(numChannels));
+    discardScratchPtrs.resize(static_cast<size_t>(numChannels));
     for (int c = 0; c < numChannels; ++c)
     {
         sourceScratchPtrs[c] = sourceScratch[c].data();
+        discardScratchPtrs[c] = discardScratch[c].data();
     }
+    doReset();
 }
 
 void WarpProcessor::doReset()
 {
     if (stretcher == nullptr) return;
     stretcher->reset();
-    // After a reset, `getPreferredStartPad()` is the number of source
-    // samples the stretcher would like to see before any real output is
-    // consumed. We feed silence here as a conservative pre-roll; once
-    // real audio starts flowing through `process()` the stretcher
-    // settles into its steady-state. A future revision can replace this
-    // with actual source pre-roll for click-free seek-to-mid-clip play.
+    // Real-time Rubber Band expects callers to feed preferred input
+    // padding and then discard its reported output delay. Without that
+    // discard, first playback after a seek can emit partially-primed
+    // transient output before the stretched stream has settled.
     const int pad = static_cast<int>(stretcher->getPreferredStartPad());
+    outputDelayToDiscard = static_cast<int>(stretcher->getStartDelay());
     if (pad > 0 && allocatedBlockSamples > 0)
     {
-        // Zero the scratch in place (the constructor already zeroed it
-        // once, but a previous run may have left non-silence behind).
-        for (int c = 0; c < numChannels; ++c)
-        {
-            std::fill(sourceScratch[c].begin(), sourceScratch[c].begin() + std::min(pad, allocatedBlockSamples), 0.0f);
-        }
         int remaining = pad;
         while (remaining > 0)
         {
             const int chunk = std::min(remaining, allocatedBlockSamples);
+            for (int c = 0; c < numChannels; ++c)
+            {
+                std::fill(sourceScratch[c].begin(), sourceScratch[c].begin() + chunk, 0.0f);
+            }
             stretcher->process(sourceScratchPtrs.data(), static_cast<size_t>(chunk), false);
             remaining -= chunk;
         }
@@ -117,23 +118,32 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
         return 0;
     }
 
-    if (resetPending.exchange(false, std::memory_order_acq_rel))
-    {
-        doReset();
-    }
-    if (seekPending.exchange(false, std::memory_order_acq_rel))
+    applyPendingParams();
+
+    const bool wantsSeek = seekPending.exchange(false, std::memory_order_acq_rel);
+    const bool wantsReset = resetPending.exchange(false, std::memory_order_acq_rel);
+    if (wantsSeek)
     {
         nextSourceSample = pendingSourceSeek.load(std::memory_order_acquire);
         doReset();
     }
-
-    applyPendingParams();
+    else if (wantsReset)
+    {
+        doReset();
+    }
 
     int produced = 0;
     int safety = 0;
     while (produced < numOutputSamples && safety++ < 64)
     {
         const int available = static_cast<int>(stretcher->available());
+        if (available > 0 && outputDelayToDiscard > 0)
+        {
+            const int drop = std::min({available, outputDelayToDiscard, allocatedBlockSamples});
+            stretcher->retrieve(discardScratchPtrs.data(), static_cast<size_t>(drop));
+            outputDelayToDiscard -= drop;
+            continue;
+        }
         if (available > 0)
         {
             const int want = std::min(available, numOutputSamples - produced);

@@ -512,24 +512,14 @@ void AudioEngine::rebuildTrackPrefetch(Track& track)
         return;
     }
     const double pos = trackSeekSecondsFor(track, master.getPositionSamples());
-    silverdaw::log::info("engine", "rebuild prefetch (pos=" + juce::String(pos) + ")");
-    // Just re-seek the existing source chain rather than tearing it
-    // down and recreating it. `AudioTransportSource::setPosition`
-    // forwards to its inner `BufferingAudioSource`, which invalidates
-    // its prefetch buffer and asks the read-ahead thread to refill
-    // from the new position — the side-effect we actually want.
-    //
-    // The previous implementation did
-    //   transportSource->setSource(nullptr, ...)
-    //   transportSource->setSource(newSource, 32 k-sample buffer, …)
-    // which forced a *synchronous* initial fill of the new buffering
-    // source on the message thread. For MP3 inputs that turned into
-    // a ~1 s block per call — multiply by N dirty tracks and the
-    // message thread stalled long enough for WebSocket events to
-    // queue up. The setPosition path is non-blocking; the worst case
-    // is a few audio blocks of silence while the read-ahead catches
-    // up, which is still preferable to the stale-prefetch audio we
-    // were originally trying to prevent.
+    silverdaw::log::info("engine", "invalidate prefetch (pos=" + juce::String(pos) + ")");
+    // Force BufferingAudioSource to drop any stale cached blocks after
+    // offset/trim changes without tearing down the source chain. A plain
+    // setPosition(pos) can be a no-op when the master position did not
+    // change, so first jump far outside the current buffer, then return
+    // to the real target. Both calls are non-blocking and let the
+    // read-ahead thread refill from the new OffsetSource mapping.
+    track.transportSource->setPosition(pos + 3600.0);
     track.transportSource->setPosition(pos);
     track.prefetchDirty = false;
 }
@@ -547,21 +537,11 @@ void AudioEngine::flushAllDirtyRebuildsSync()
 
 void AudioEngine::flushDirtyRebuilds()
 {
-    // Process at most ONE dirty track per call. Each
-    // `rebuildTrackPrefetch` blocks the message thread for hundreds
-    // of ms (sometimes north of a second on MP3 sources) while
-    // JUCE's `BufferingAudioSource` is set up and the read-ahead
-    // thread is asked to fill the initial 32 k-sample buffer. If we
-    // looped through every dirty track in one go, the message
-    // thread would be unresponsive for that × N seconds — long
-    // enough that the user's transport-button clicks queue up in
-    // the WebSocket dispatcher and only fire as a burst at the end
-    // (see the diagnostic trace from the 2026-05-19 session).
-    //
-    // Chunking gives the message thread a chance to drain other
-    // pending events (transport clicks, drag updates, etc.) between
-    // each rebuild. The 10 ms re-arm leaves enough slack for several
-    // queued envelopes to dispatch before the next chunk fires.
+    // Process at most ONE dirty track per call. Rebuilding resets the
+    // BufferingAudioSource so paused moves can't leave stale read-ahead
+    // audio that would leak on the next Play. Chunking gives the
+    // message thread a chance to drain transport clicks and drag
+    // updates between dirty tracks.
     Track* dirty = nullptr;
     for (auto& [id, track] : tracks)
     {
@@ -701,6 +681,7 @@ bool AudioEngine::setClipOffsetMs(const juce::String& clipId, double offsetMs)
     // frame. By the time the user presses Play, the offset has been
     // live for many blocks and any prefetch is already coherent.
     track->offsetSource->setOffsetSamples(newOffsetSamples);
+    track->offsetSource->requestWarpReseek();
 
     if (master.isPlaying())
     {
@@ -722,6 +703,14 @@ bool AudioEngine::setClipOffsetMs(const juce::String& clipId, double offsetMs)
         rebuildTimer.startTimer(kRebuildDebounceMs);
     }
 
+    return true;
+}
+
+bool AudioEngine::commitClipOffset(const juce::String& clipId)
+{
+    auto it = tracks.find(clipId);
+    if (it == tracks.end()) return false;
+    rebuildTrackPrefetch(*it->second);
     return true;
 }
 
@@ -832,11 +821,21 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
         const auto& dm = deviceManager.getAudioDeviceSetup();
         const int blockSize = juce::jmax(64, static_cast<int>(dm.bufferSize));
         wp->prepareToPlay(blockSize);
-        // Park the engine's audio thread at nullptr before swapping
-        // — same publish-then-replace discipline as the disable path.
-        track->offsetSource->setWarpProcessor(nullptr);
+        if (tempoRatio.has_value() && *tempoRatio > 0.0)
+        {
+            wp->setTempoRatio(*tempoRatio);
+        }
+        if (semitones.has_value() || cents.has_value())
+        {
+            const double s = semitones.value_or(0.0);
+            const double c = cents.value_or(0.0);
+            const double scale = std::pow(2.0, (s + c / 100.0) / 12.0);
+            wp->setPitchScale(scale);
+        }
+        [[maybe_unused]] auto oldWarp = std::move(track->warp);
         track->warp = std::move(wp);
         track->offsetSource->setWarpProcessor(track->warp.get());
+        track->offsetSource->requestWarpReseek();
         silverdaw::log::info("engine",
             "clip warp built " + clipId + " mode=" + modeStr);
     }
@@ -926,7 +925,12 @@ double AudioEngine::getClipDurationMs(const juce::String& clipId) const
 // -----------------------------------------------------------------------------
 
 bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double durationMs,
-                              juce::String* outError)
+                              juce::String* outError,
+                              std::optional<bool> initialWarpEnabled,
+                              std::optional<juce::String> initialWarpMode,
+                              std::optional<double> initialTempoRatio,
+                              std::optional<double> initialSemitones,
+                              std::optional<double> initialCents)
 {
     // Always start from a clean slate. unloadPreview() handles the case
     // where nothing is currently loaded.
@@ -960,6 +964,28 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
         static_cast<juce::int64>((preview.inMs / 1000.0) * preview.sampleRate));
     preview.offsetSource->setClipDurationSamples(
         static_cast<juce::int64>((preview.durationMs / 1000.0) * preview.sampleRate));
+
+    if (initialWarpEnabled.value_or(false))
+    {
+        const auto modeStr = initialWarpMode.value_or(juce::String("rhythmic"));
+        const auto options = parseWarpMode(modeStr);
+        const int channels = preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
+        auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels), preview.sampleRate, options);
+        const auto& dm = deviceManager.getAudioDeviceSetup();
+        const int blockSize = juce::jmax(64, static_cast<int>(dm.bufferSize));
+        wp->prepareToPlay(blockSize);
+        if (initialTempoRatio.has_value() && *initialTempoRatio > 0.0) wp->setTempoRatio(*initialTempoRatio);
+        if (initialSemitones.has_value() || initialCents.has_value())
+        {
+            const double s = initialSemitones.value_or(0.0);
+            const double c = initialCents.value_or(0.0);
+            wp->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
+        }
+        [[maybe_unused]] auto oldWarp = std::move(preview.warp);
+        preview.warp = std::move(wp);
+        preview.offsetSource->setWarpProcessor(preview.warp.get());
+        preview.offsetSource->requestWarpReseek();
+    }
 
     preview.transportSource = std::make_unique<juce::AudioTransportSource>();
     preview.transportSource->setSource(preview.offsetSource.get(), /*readAheadBufferSize=*/32768,
@@ -1019,9 +1045,17 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
         const auto& dm = deviceManager.getAudioDeviceSetup();
         const int blockSize = juce::jmax(64, static_cast<int>(dm.bufferSize));
         wp->prepareToPlay(blockSize);
-        preview.offsetSource->setWarpProcessor(nullptr);
+        if (tempoRatio.has_value() && *tempoRatio > 0.0) wp->setTempoRatio(*tempoRatio);
+        if (semitones.has_value() || cents.has_value())
+        {
+            const double s = semitones.value_or(0.0);
+            const double c = cents.value_or(0.0);
+            wp->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
+        }
         preview.warp = std::move(wp);
         preview.offsetSource->setWarpProcessor(preview.warp.get());
+        preview.offsetSource->requestWarpReseek();
+        return true;
     }
     if (auto* w = preview.warp.get())
     {
@@ -1032,6 +1066,7 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
             const double c = cents.value_or(0.0);
             w->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
         }
+        preview.offsetSource->requestWarpReseek();
     }
     return true;
 }

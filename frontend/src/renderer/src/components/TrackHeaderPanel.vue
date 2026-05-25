@@ -528,7 +528,7 @@ const dropIndicatorTopPx = computed<number>(() => {
               min="0"
               :max="MAX_TRACK_VOLUME * 100"
               step="1"
-              class="w-9 shrink-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              class="w-7 shrink-0 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               @input="onGainInput"
               @blur="commitGainEdit(track.id)"
               @keydown="(e) => onGainKeydown(e, track.id)"

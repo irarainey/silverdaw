@@ -740,6 +740,17 @@ export const useProjectStore = defineStore('project', {
       )
     },
 
+    commitClipMove(clipId: string): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      sendBridge('CLIP_MOVE', {
+        clipId: clip.id,
+        positionMs: clip.startMs,
+        commit: true
+      })
+      log.debug('project', `commitClipMove id=${clipId} at=${clip.startMs}ms`)
+    },
+
     /**
      * Trim a clip non-destructively. Updates `startMs`, `inMs`, and
      * `durationMs` together — the three fields form an inseparable

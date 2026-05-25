@@ -55,6 +55,29 @@ Where these conflict with each other, the in-repo instruction files win and the 
 11. **Documentation & DX** — README accuracy, install/build/run instructions match `tasks.json`, comment intent (the _why_), public-API doc-comments (JSDoc/TSDoc on exported TS, Doxygen-style on public C++ headers), CONTRIBUTING / AGENTS guidance, `.vscode/tasks.json` discoverability, ergonomics of the dev shell wrapper.
 12. **Concrete changes** — minimal, behaviour-preserving unified diffs for the highest-impact fixes (≤3). Then a phased refactor plan: low-risk wins → structural changes → larger rewrites, each with rationale and effort estimate.
 
+## Required rubber-duck critique
+
+Before finalising the report, always rubber-duck both:
+
+1. the **findings** — especially any major / critical correctness, security,
+   threading, audio, or protocol conclusions; and
+2. the **plan / patches** — especially proposed fixes that touch real-time audio,
+   Electron IPC, bridge contracts, persistence, project recovery, or timeline
+   rendering.
+
+Use model-diverse critique wherever available. Depending on the model running this
+prompt, seek independent opinions from the other strongest perspectives in this
+set: **gpt-5.3-codex**, **opus-4.7**, and **gpt-5.5**. If one or more of those
+models is unavailable, explicitly note that limitation and still perform a
+self-contained adversarial critique before the final answer.
+
+In the final report, include a concise **Rubber-duck validation** note covering:
+
+- which model perspectives were consulted or emulated;
+- any findings that were changed, downgraded, removed, or added as a result;
+- any plan / patch changes made because of the critique; and
+- any unresolved disagreement or uncertainty.
+
 ## Checklist (mark each ✅ / ⚠️ / ❌ with a one-line rationale, per surface where it applies)
 
 - Readability & maintainability

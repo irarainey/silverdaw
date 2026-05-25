@@ -44,6 +44,7 @@ constexpr int kMaxBridgePort = 65535;
 std::mutex bpmJobsMutex;
 std::set<juce::String> bpmJobsInFlight;
 constexpr int kPlayheadUpdateHz = 60;
+constexpr int kPreviewReadyDelayMs = 200;
 // 4 workers keeps peak computation responsive without burning every core
 // on a giant project import. Each job is disk-bound + a tight scan loop,
 // so 4 is plenty even on a 16-core machine.
@@ -52,6 +53,19 @@ constexpr int kPeakWorkerCount = 4;
 std::atomic<bool> g_shouldQuit{false};
 
 void broadcastEditUndoState(silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge);
+
+void broadcastPreviewStateIfCurrent(silverdaw::AudioEngine& engine, silverdaw::BridgeServer& bridge,
+                                    const juce::String& libraryItemId, juce::int64 generation)
+{
+    if (engine.getPreviewGeneration() != generation) return;
+    auto* stateObj = new juce::DynamicObject();
+    if (libraryItemId.isNotEmpty()) stateObj->setProperty("libraryItemId", libraryItemId);
+    stateObj->setProperty("isPlaying", engine.isPreviewPlaying());
+    stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
+    stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
+    stateObj->setProperty("generation", generation);
+    bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+}
 
 double effectivePeaksPerSecond(const silverdaw::waveform::PeaksResult& result)
 {
@@ -1278,6 +1292,10 @@ void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, si
     {
         engine.setClipOffsetMs(clipId, *positionMs);
         projectState.setClipOffsetMs(clipId, *positionMs);
+    }
+    if (static_cast<bool>(payload.getProperty("commit", false)))
+    {
+        engine.commitClipOffset(clipId);
     }
     // Optional cross-track re-parent. Each clip is its own playable source,
     // so the move updates ProjectState and reapplies the destination track's
@@ -2732,17 +2750,38 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             // source path when no cache is available yet.
             const juce::String playbackPath = resolveEnginePlaybackPath(sourcePath, projectState, decodedCache);
             juce::String err;
-            if (!engine.loadPreview(juce::File(playbackPath), inMs, durationMs, &err))
+            std::optional<bool> warpEnabled;
+            std::optional<juce::String> warpMode;
+            std::optional<double> tempoRatio;
+            std::optional<double> semitones;
+            std::optional<double> cents;
+            if (payload.hasProperty("warpEnabled"))
+            {
+                warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
+                if (payload.hasProperty("warpMode"))
+                    warpMode = payload.getProperty("warpMode", juce::var()).toString();
+                if (payload.hasProperty("tempoRatio"))
+                {
+                    const auto& v = payload["tempoRatio"];
+                    if (!v.isVoid() && !v.isUndefined()) tempoRatio = static_cast<double>(v);
+                }
+                if (payload.hasProperty("semitones"))
+                    semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
+                if (payload.hasProperty("cents"))
+                    cents = static_cast<double>(payload.getProperty("cents", 0.0));
+            }
+            if (!engine.loadPreview(juce::File(playbackPath), inMs, durationMs, &err,
+                                    warpEnabled, warpMode, tempoRatio, semitones, cents))
             {
                 silverdaw::log::warn("preview", "PREVIEW_LOAD failed: " + err.toStdString());
             }
-            auto* stateObj = new juce::DynamicObject();
-            stateObj->setProperty("libraryItemId", libraryItemId);
-            stateObj->setProperty("isPlaying", false);
-            stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
-            stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
-            stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
-            bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+            const auto generation = static_cast<juce::int64>(engine.getPreviewGeneration());
+            juce::Timer::callAfterDelay(
+                kPreviewReadyDelayMs,
+                [&engine, &bridge, libraryItemId, generation]
+                {
+                    broadcastPreviewStateIfCurrent(engine, bridge, libraryItemId, generation);
+                });
         }
     }
     else if (type == "PREVIEW_UNLOAD")

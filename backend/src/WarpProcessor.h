@@ -149,6 +149,7 @@ class WarpProcessor
     // Cursor into the source — tracks where the next source read should
     // start so the caller doesn't have to. Audio-thread state only.
     juce::int64 nextSourceSample{0};
+    int outputDelayToDiscard{0};
 
     // Pre-allocated scratch for the source-read callback. Channel-
     // interleaved pointers are computed on the fly; the underlying
@@ -157,6 +158,8 @@ class WarpProcessor
     int allocatedBlockSamples{0};
     std::vector<std::vector<float>> sourceScratch;
     std::vector<float*> sourceScratchPtrs;
+    std::vector<std::vector<float>> discardScratch;
+    std::vector<float*> discardScratchPtrs;
     // Pre-allocated output-pointer scratch so `process()` doesn't have
     // to `new` a `std::vector` per audio block — that would be a
     // realtime safety violation. Sized once in the constructor (length

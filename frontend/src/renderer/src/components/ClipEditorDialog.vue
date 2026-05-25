@@ -37,6 +37,16 @@ const sourceItem = computed<LibraryItem | null>(() => {
 })
 
 const sourceDurationMs = computed(() => sourceItem.value?.durationMs ?? 0)
+const warpActive = computed(() => {
+  const item = props.item
+  if (!item) return false
+  return isWarpActive({
+    warpEnabled: item.warpEnabled,
+    tempoRatio: item.tempoRatio,
+    sourceBpm: libraryItemSourceBpm(item, library.items),
+    projectBpm: transport.bpm
+  })
+})
 
 // The Clip Editor opens with the visible *view bounds* limited to the
 // clip's window so the user isn't presented with the full source for a
@@ -453,6 +463,12 @@ onMounted(() => {
 
 function onWindowKeydownCapture(e: KeyboardEvent): void {
   if (!props.open) return
+  if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!e.repeat) onTogglePlay()
+    return
+  }
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return
   const key = e.key.toLowerCase()
   if (key === 'z' && !e.shiftKey) {
@@ -779,16 +795,14 @@ function drawWaveform(): void {
   }
 
   // --- Playhead --------------------------------------------------------
-  if (preview.isLoaded) {
-    const px = msToX(playheadAbsMs.value)
-    if (px >= 0 && px <= w) {
-      ctx.strokeStyle = '#f97316'
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.moveTo(px, 0)
-      ctx.lineTo(px, h)
-      ctx.stroke()
-    }
+  const px = msToX(playheadAbsMs.value)
+  if (px >= 0 && px <= w) {
+    ctx.strokeStyle = '#f97316'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(px, 0)
+    ctx.lineTo(px, h)
+    ctx.stroke()
   }
 }
 
@@ -1013,6 +1027,7 @@ function onScrollbarMouseDown(e: MouseEvent): void {
 }
 
 function onTogglePlay(): void {
+  if (!preview.isLoaded) return
   if (preview.isPlaying) {
     preview.pause()
     return
@@ -1293,12 +1308,21 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
       >
         <header class="flex items-start justify-between gap-4 border-b border-zinc-800 px-5 py-3">
           <div class="min-w-0">
-            <h2
-              id="clip-editor-title"
-              class="truncate text-base font-semibold text-zinc-100"
-            >
-              {{ libraryItemDisplayName(item) }}
-            </h2>
+            <div class="flex min-w-0 items-center gap-2">
+              <h2
+                id="clip-editor-title"
+                class="truncate text-base font-semibold text-zinc-100"
+              >
+                {{ libraryItemDisplayName(item) }}
+              </h2>
+              <span
+                v-if="warpActive"
+                class="shrink-0 rounded border border-white/90 bg-slate-950 px-2 py-0.5 text-[10px] font-bold leading-none tracking-wide text-yellow-300"
+                title="This clip is warped"
+              >
+                WARP
+              </span>
+            </div>
             <p class="mt-0.5 truncate text-xs text-zinc-500">
               {{ sourceItem.fileName }}
             </p>
@@ -1364,7 +1388,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
               type="button"
               class="rounded p-2 hover:bg-blue-600 hover:text-white"
               :class="preview.isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
-              :title="preview.isPlaying ? 'Pause (Space)' : 'Play (Space)'"
+              :disabled="!preview.isLoaded"
+              :title="!preview.isLoaded ? 'Preparing preview…' : preview.isPlaying ? 'Pause (Space)' : 'Play (Space)'"
               @click="onTogglePlay"
             >
               <svg

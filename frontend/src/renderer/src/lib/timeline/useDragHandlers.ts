@@ -606,6 +606,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (draggedClipId === null) return
     const endClip = project.clips[draggedClipId]
     log.info('drag', `clip drag end id=${draggedClipId} to=${endClip?.startMs ?? '?'}ms`)
+    project.commitClipMove(draggedClipId)
     draggedClipId = null
     stopClipAutoScroll()
     window.removeEventListener('pointermove', onClipPointerMove)

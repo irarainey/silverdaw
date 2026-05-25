@@ -90,6 +90,11 @@ class OffsetSource : public juce::PositionableAudioSource
         warp.store(w, std::memory_order_release);
     }
 
+    void requestWarpReseek() noexcept
+    {
+        warpReseekRequested.store(true, std::memory_order_release);
+    }
+
     void prepareToPlay(int blockSize, double sampleRate) override
     {
         cachedBlockSize.store(blockSize, std::memory_order_relaxed);
@@ -174,7 +179,8 @@ class OffsetSource : public juce::PositionableAudioSource
                 // the stretcher reaches its steady-state quality —
                 // resetting every block was the source of the jittery
                 // audio reported on project reload.
-                if (lastBlockEnded || audibleStart != lastAudibleEnd)
+                const bool forceReseek = warpReseekRequested.exchange(false, std::memory_order_acq_rel);
+                if (forceReseek || lastBlockEnded || audibleStart != lastAudibleEnd)
                 {
                     const double ratio = w->getTempoRatio();
                     const juce::int64 warpedSourcePos =
@@ -312,6 +318,7 @@ class OffsetSource : public juce::PositionableAudioSource
      *  fast path. Lifetime is managed by the owning `Track::warp`
      *  unique_ptr in AudioEngine. */
     std::atomic<WarpProcessor*> warp{nullptr};
+    std::atomic<bool> warpReseekRequested{false};
     /** Bookkeeping so we don't reset the warp processor on every
      *  block during steady-state playback. `lastAudibleEnd` is the
      *  master-clock position one-past-end of the previous block's
@@ -597,6 +604,7 @@ class AudioEngine
      * Returns true if the clip existed.
      */
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
+    bool commitClipOffset(const juce::String& clipId);
 
     /**
      * Atomically update a clip's trim window — used by edge-drag trim,
@@ -665,7 +673,12 @@ class AudioEngine
      *  Returns true on success and increments the preview generation.
      */
     bool loadPreview(const juce::File& filePath, double inMs, double durationMs,
-                     juce::String* outError = nullptr);
+                     juce::String* outError = nullptr,
+                     std::optional<bool> initialWarpEnabled = std::nullopt,
+                     std::optional<juce::String> initialWarpMode = std::nullopt,
+                     std::optional<double> initialTempoRatio = std::nullopt,
+                     std::optional<double> initialSemitones = std::nullopt,
+                     std::optional<double> initialCents = std::nullopt);
 
     /** Detach the preview source from the top mixer and release its
      *  reader. Increments the preview generation so any in-flight async
@@ -890,7 +903,7 @@ class AudioEngine
     /** Compute a per-track transport seek position (in seconds) given the master sample position. */
     double trackSeekSecondsFor(const Track& track, juce::int64 masterSamples) const;
 
-    /** Rebuild a track's BufferingAudioSource so a fresh prefetch starts from the current offset. */
+    /** Invalidate a track's BufferingAudioSource so a fresh prefetch starts from the current offset. */
     void rebuildTrackPrefetch(Track& track);
 
     /** Rebuild every track flagged `prefetchDirty` synchronously,

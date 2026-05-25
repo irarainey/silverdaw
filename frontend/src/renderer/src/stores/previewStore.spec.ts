@@ -40,6 +40,29 @@ describe('previewStore', () => {
     })
   })
 
+  it('includes initial warp settings in PREVIEW_LOAD so first play is warped', () => {
+    const preview = usePreviewStore()
+    preview.load('lib1', 500, 2_000, {
+      warpEnabled: true,
+      warpMode: 'rhythmic',
+      tempoRatio: 0.85,
+      semitones: 1,
+      cents: 25
+    })
+
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_LOAD', {
+      libraryItemId: 'lib1',
+      inMs: 500,
+      durationMs: 2_000,
+      warpEnabled: true,
+      warpMode: 'rhythmic',
+      tempoRatio: 0.85,
+      semitones: 1,
+      cents: 25
+    })
+  })
+
   it('applyState updates state and gates stale generations', () => {
     const preview = usePreviewStore()
     preview.applyState({
