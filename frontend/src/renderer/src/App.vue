@@ -919,15 +919,23 @@ body.is-importing * {
 }
 
 button {
+  appearance: none;
   border: 1px solid rgb(63 63 70);
-  outline: none;
+  outline: none !important;
+  -webkit-tap-highlight-color: transparent;
 }
 
-button:focus,
+button:focus {
+  --tw-ring-shadow: 0 0 #0000 !important;
+  border-color: rgb(63 63 70);
+  box-shadow: none !important;
+  outline: none !important;
+}
+
 button:focus-visible {
   --tw-ring-shadow: 0 0 #0000 !important;
   border-color: rgb(14 165 233);
-  box-shadow: inset 0 0 0 1px rgb(14 165 233 / 0.35) !important;
+  box-shadow: inset 0 0 0 1px rgb(14 165 233 / 0.45) !important;
   outline: none !important;
 }
 
