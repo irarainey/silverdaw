@@ -31,11 +31,10 @@ const SEP: MenuItemDef = { label: null }
 /** Options that influence which menus are visible. */
 export interface BuildMenusOptions {
   /**
-   * When true, append a "Debug" menu containing developer-only items
-   * (Toggle Developer Tools, future log/profile helpers). Sourced from
-   * the startup-snapshot debug flag in `appStore`.
+   * When true, append a "Debug" menu containing DevTools actions. Sourced
+   * from the startup-snapshot developer preference in `appStore`.
    */
-  debugMode: boolean
+  devToolsEnabled: boolean
   /**
    * Recent Projects MRU, head = most recent. Surfaced under
    * File > Recent Projects ▸ as a flyout submenu. The Start Screen
@@ -71,7 +70,7 @@ function buildRecentProjectsSubmenu(paths: string[]): MenuItemDef[] {
 
 /**
  * Build the menu bar for the current session. Called by `AppTitleBar`
- * and `menuShortcuts.registerMenuShortcuts()` with the same `debugMode`
+ * and `menuShortcuts.registerMenuShortcuts()` with the same `devToolsEnabled`
  * snapshot so both consumers see a consistent set of menus + accelerators.
  */
 export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
@@ -133,8 +132,8 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
     }
   ]
 
-  if (opts.debugMode) {
-    // Hidden by default; appears only when "Enable Debugging" is on.
+  if (opts.devToolsEnabled) {
+    // Hidden by default; appears only when "Show Developer Tools" is on.
     // Inserted just before Help so Help stays the rightmost menu and
     // the Debug option reads as a developer add-on rather than core UX.
     menus.splice(menus.length - 1, 0, {

@@ -84,3 +84,15 @@ export interface UiPreferences {
    *  works out of the box. */
   matchProjectTempoOnDrop: boolean
 }
+
+/** Developer diagnostics preferences. These are sampled at startup because
+ *  logging, backend environment variables, and DevTools access are wired
+ *  during process/window creation. */
+export interface DebugPreferences {
+  /** Write main / renderer / backend logs for each session. */
+  loggingEnabled: boolean
+  /** Allow and expose Chromium DevTools controls. */
+  devToolsEnabled: boolean
+  /** Parent folder for per-session log folders. Empty means app default. */
+  logDirectory: string
+}

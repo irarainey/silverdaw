@@ -11,11 +11,11 @@ import { useAppStore } from '@/stores/appStore'
 const project = useProjectStore()
 const appStore = useAppStore()
 
-// Menu list is rebuilt whenever `debugMode` flips. In practice the flag
+// Menu list is rebuilt whenever `devToolsEnabled` flips. In practice the flag
 // is a startup snapshot so this is computed once, but `computed` keeps
 // the dependency wiring honest without any extra cost.
 const visibleMenus = computed(() =>
-  buildMenus({ debugMode: appStore.debugMode, recentProjects: appStore.recentProjects })
+  buildMenus({ devToolsEnabled: appStore.devToolsEnabled, recentProjects: appStore.recentProjects })
 )
 
 /** Per-action dynamic disabled overrides. Menu definitions are static

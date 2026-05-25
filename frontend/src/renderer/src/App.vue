@@ -124,7 +124,7 @@ onMounted(() => {
   unsubscribeOpenFromPath = window.silverdaw.onOpenProjectFromPath((filePath) => {
     void openProjectByPath(filePath)
   })
-  unregisterShortcuts = registerMenuShortcuts({ debugMode: appStore.debugMode })
+  unregisterShortcuts = registerMenuShortcuts({ devToolsEnabled: appStore.devToolsEnabled })
   window.addEventListener('keydown', onGlobalShortcutKey, { capture: true })
   connectBridge()
   startBridgeConnectionTimer()

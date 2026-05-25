@@ -2,7 +2,7 @@
 //
 // Aligns with the JUCE backend's `silverdaw::log` and the renderer's
 // `lib/log.ts`: each silverdaw session writes a single directory under
-// `<repo>/.logs/<ISO-stamp>/` containing
+// `<log-parent>/<ISO-stamp>/` containing
 //
 //   - main.log       — events from this process (this file)
 //   - backend.log    — JUCE backend events (env var `SILVERDAW_LOG_DIR`
@@ -30,16 +30,16 @@ let mainStream: WriteStream | null = null
 let rendererStream: WriteStream | null = null
 
 /**
- * Resolve `<repo>/.logs/<ISO-stamp>/` and open the main + renderer log
+ * Resolve `<logParentDir>/<ISO-stamp>/` and open the main + renderer log
  * streams for append. Returns the absolute session directory path so the
  * caller can export it as `SILVERDAW_LOG_DIR` when spawning the backend.
  *
  * Stamps are filesystem-safe (`:` and `.` replaced with `-`) so the dir
  * works on every platform.
  */
-export function initLogs(repoRoot: string): string {
+export function initLogs(logParentDir: string): string {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  sessionDir = join(repoRoot, '.logs', stamp)
+  sessionDir = join(logParentDir, stamp)
   mkdirSync(sessionDir, { recursive: true })
   mainStream = createWriteStream(join(sessionDir, 'main.log'), { flags: 'a' })
   rendererStream = createWriteStream(join(sessionDir, 'renderer.log'), { flags: 'a' })

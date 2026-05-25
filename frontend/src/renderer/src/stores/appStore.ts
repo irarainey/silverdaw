@@ -1,13 +1,15 @@
 // Application-level shell state.
 //
 // Holds values sampled once at startup that gate UI features. Some
-// (`debugMode`) only take effect on the next launch because they need
+// developer options only take effect on the next launch because they need
 // process-wide bootstrap; others (`toastsEnabled`) are live-updated
 // from the Preferences dialog.
 //
-//   - `debugMode`: mirrors `prefs.debug.enabled` (main process). Controls
-//     the visibility of the Debug menu and whether the cross-layer file
-//     logger is active.
+//   - `loggingEnabled`: mirrors `prefs.debug.loggingEnabled` (main process).
+//     Controls whether the cross-layer file logger is active.
+//
+//   - `devToolsEnabled`: mirrors `prefs.debug.devToolsEnabled` (main process).
+//     Controls visibility of the Debug menu and DevTools shortcuts.
 //
 //   - `toastsEnabled`: mirrors `prefs.toasts.enabled`. When false, the
 //     notifications store silently drops new toasts (events are still
@@ -36,7 +38,8 @@
 import { defineStore } from 'pinia'
 
 interface AppState {
-  debugMode: boolean
+  loggingEnabled: boolean
+  devToolsEnabled: boolean
   toastsEnabled: boolean
   autosaveEnabled: boolean
   autosaveIntervalSeconds: number
@@ -58,7 +61,8 @@ interface AppState {
 
 export const useAppStore = defineStore('app', {
   state: (): AppState => ({
-    debugMode: false,
+    loggingEnabled: false,
+    devToolsEnabled: false,
     toastsEnabled: true,
     autosaveEnabled: true,
     autosaveIntervalSeconds: 30,
@@ -73,19 +77,21 @@ export const useAppStore = defineStore('app', {
       if (this.hydrated) return
       try {
         const [debug, qol, autosave, recents] = await Promise.all([
-          window.silverdaw.getStartupDebugEnabled(),
+          window.silverdaw.getStartupDebugPreferences(),
           window.silverdaw.getQolPrefs(),
           window.silverdaw.getAutosaveConfig(),
           window.silverdaw.getRecentProjects()
         ])
-        this.debugMode = debug
+        this.loggingEnabled = debug.loggingEnabled
+        this.devToolsEnabled = debug.devToolsEnabled
         this.toastsEnabled = qol.toasts.enabled
         this.autosaveEnabled = autosave.enabled
         this.autosaveIntervalSeconds = autosave.intervalSeconds
         this.recentProjects = recents
       } catch (err) {
         console.warn('[appStore] hydrate failed, using defaults:', err)
-        this.debugMode = false
+        this.loggingEnabled = false
+        this.devToolsEnabled = false
         this.toastsEnabled = true
         this.autosaveEnabled = true
         this.autosaveIntervalSeconds = 30

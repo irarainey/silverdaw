@@ -6,7 +6,7 @@
 //   - Interface  → toast notification visibility (applied immediately on Save).
 //   - Paths      → default project / clip directories used by the OS
 //                  open / save dialogs (applied immediately on Save).
-//   - Developer  → cross-layer debug logging + Debug menu (next launch).
+//   - Developer  → diagnostic logs, log folder, and DevTools (next launch).
 
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
@@ -166,7 +166,9 @@ const tabs: Array<{ id: PreferencesTab; label: string }> = [
 ]
 
 // Working copies — edited freely; not persisted until Save.
-const debugEnabled = ref(false)
+const loggingEnabled = ref(false)
+const devToolsEnabled = ref(false)
+const logDirectory = ref('')
 const toastsEnabled = ref(true)
 const followPlayback = ref(true)
 const showLibraryTileImages = ref(true)
@@ -179,7 +181,9 @@ const autosaveIntervalSeconds = ref(30)
 // Snapshot of the values when the dialog opened, used to:
 //   1. Detect whether anything actually changed (Save no-ops if not).
 //   2. Show the "Restart required" notice when debug differs.
-const initialDebug = ref(false)
+const initialLoggingEnabled = ref(false)
+const initialDevToolsEnabled = ref(false)
+const initialLogDirectory = ref('')
 const initialToasts = ref(true)
 const initialFollow = ref(true)
 const initialShowLibraryTileImages = ref(true)
@@ -191,7 +195,9 @@ const initialAutosaveSeconds = ref(30)
 
 const hasChanges = computed(
   () =>
-    debugEnabled.value !== initialDebug.value ||
+    loggingEnabled.value !== initialLoggingEnabled.value ||
+    devToolsEnabled.value !== initialDevToolsEnabled.value ||
+    logDirectory.value !== initialLogDirectory.value ||
     toastsEnabled.value !== initialToasts.value ||
     followPlayback.value !== initialFollow.value ||
     showLibraryTileImages.value !== initialShowLibraryTileImages.value ||
@@ -207,12 +213,14 @@ const hasChanges = computed(
 async function loadCurrent(): Promise<void> {
   try {
     const [debugVal, qol, autosave, audioPref] = await Promise.all([
-      window.silverdaw.getDebugEnabled(),
+      window.silverdaw.getDebugPreferences(),
       window.silverdaw.getQolPrefs(),
       window.silverdaw.getAutosaveConfig(),
       window.silverdaw.getAudioOutput()
     ])
-    debugEnabled.value = debugVal
+    loggingEnabled.value = debugVal.loggingEnabled
+    devToolsEnabled.value = debugVal.devToolsEnabled
+    logDirectory.value = debugVal.logDirectory
     toastsEnabled.value = qol.toasts.enabled
     defaultProjectDir.value = qol.paths.defaultProjectDir
     defaultClipDir.value = qol.paths.defaultClipDir
@@ -227,7 +235,9 @@ async function loadCurrent(): Promise<void> {
     audioOutputTypeName.value = audioPref.typeName
     audioOutputDeviceName.value = audioPref.deviceName
   } catch {
-    debugEnabled.value = false
+    loggingEnabled.value = false
+    devToolsEnabled.value = false
+    logDirectory.value = ''
     toastsEnabled.value = true
     defaultProjectDir.value = ''
     defaultClipDir.value = ''
@@ -242,7 +252,9 @@ async function loadCurrent(): Promise<void> {
   followPlayback.value = ui.followPlayback
   showLibraryTileImages.value = ui.showLibraryTileImages
   matchProjectTempoOnDrop.value = ui.matchProjectTempoOnDrop
-  initialDebug.value = debugEnabled.value
+  initialLoggingEnabled.value = loggingEnabled.value
+  initialDevToolsEnabled.value = devToolsEnabled.value
+  initialLogDirectory.value = logDirectory.value
   initialToasts.value = toastsEnabled.value
   initialFollow.value = followPlayback.value
   initialShowLibraryTileImages.value = showLibraryTileImages.value
@@ -304,6 +316,14 @@ async function chooseClipDir(): Promise<void> {
   if (picked) defaultClipDir.value = picked
 }
 
+async function chooseLogDir(): Promise<void> {
+  const picked = await window.silverdaw.chooseDirectory({
+    title: 'Diagnostic log folder',
+    defaultPath: logDirectory.value || defaultProjectDir.value || undefined
+  })
+  if (picked) logDirectory.value = picked
+}
+
 function onCancel(): void {
   // Discard pending edits — `loadCurrent` will repopulate the refs the
   // next time the dialog opens.
@@ -335,8 +355,16 @@ function onSave(): void {
   if (Object.keys(qolPatch).length > 0) {
     window.silverdaw.setQolPrefs(qolPatch)
   }
-  if (debugEnabled.value !== initialDebug.value) {
-    window.silverdaw.setDebugEnabled(debugEnabled.value)
+  if (
+    loggingEnabled.value !== initialLoggingEnabled.value ||
+    devToolsEnabled.value !== initialDevToolsEnabled.value ||
+    logDirectory.value !== initialLogDirectory.value
+  ) {
+    window.silverdaw.setDebugPreferences({
+      loggingEnabled: loggingEnabled.value,
+      devToolsEnabled: devToolsEnabled.value,
+      logDirectory: logDirectory.value.trim()
+    })
   }
   if (followPlayback.value !== initialFollow.value) {
     // Goes through the uiStore so the transport-bar toggle stays in
@@ -752,27 +780,69 @@ function onSave(): void {
             </section>
 
             <!-- Developer -->
-            <section v-else-if="activeTab === 'developer'">
+            <section
+              v-else-if="activeTab === 'developer'"
+              class="space-y-4"
+            >
               <label class="flex cursor-pointer items-start gap-3">
                 <input
-                  v-model="debugEnabled"
+                  v-model="loggingEnabled"
                   type="checkbox"
                   class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
                 >
                 <span class="flex-1">
-                  <span class="block font-medium text-zinc-200">Enable Debugging</span>
+                  <span class="block font-medium text-zinc-200">Write diagnostic logs</span>
                   <span class="mt-0.5 block text-zinc-500">
-                    Shows the Debug menu (Toggle Developer Tools, …) and writes
-                    per-session diagnostic logs under
-                    <code class="text-zinc-400">.logs/&lt;timestamp&gt;/</code>.
+                    Writes main, renderer, and backend logs for each session.
                     Takes effect the next time Silverdaw is launched.
                   </span>
                 </span>
               </label>
 
+              <div class="space-y-1">
+                <label class="block text-xs font-medium text-zinc-300">Log folder</label>
+                <div class="flex gap-2">
+                  <input
+                    v-model="logDirectory"
+                    type="text"
+                    spellcheck="false"
+                    :disabled="!loggingEnabled"
+                    placeholder="Default app log folder"
+                    class="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100 outline-none focus:border-sky-500 disabled:cursor-not-allowed disabled:text-zinc-500"
+                  >
+                  <button
+                    type="button"
+                    :disabled="!loggingEnabled"
+                    class="rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    @click="chooseLogDir"
+                  >
+                    Browse…
+                  </button>
+                </div>
+                <p class="text-[11px] text-zinc-500">
+                  Silverdaw creates a timestamped subfolder here for each
+                  session. Leave blank to use the app default.
+                </p>
+              </div>
+
+              <label class="flex cursor-pointer items-start gap-3">
+                <input
+                  v-model="devToolsEnabled"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                >
+                <span class="flex-1">
+                  <span class="block font-medium text-zinc-200">Show Developer Tools</span>
+                  <span class="mt-0.5 block text-zinc-500">
+                    Shows the Debug menu and allows DevTools shortcuts in
+                    packaged builds. Enable only when diagnosing the app.
+                  </span>
+                </span>
+              </label>
+
               <p
-                v-if="debugEnabled !== initialDebug"
-                class="mt-3 rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-amber-200"
+                v-if="loggingEnabled !== initialLoggingEnabled || devToolsEnabled !== initialDevToolsEnabled || logDirectory !== initialLogDirectory"
+                class="rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-amber-200"
               >
                 Restart Silverdaw to apply changes.
               </p>

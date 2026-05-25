@@ -9,7 +9,7 @@ import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogL
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
-import type { AudioMetadata } from '../shared/types'
+import type { AudioMetadata, DebugPreferences } from '../shared/types'
 
 // ─── Audio metadata ─────────────────────────────────────────────────────────
 // `AudioMetadata` lives in `src/shared/types.ts` and is shared with preload +
@@ -273,21 +273,11 @@ interface UiPrefs {
   matchProjectTempoOnDrop: boolean
 }
 
-/**
- * Developer / diagnostic preferences. `enabled` gates the entire cross-layer
- * file logger (backend.log + main.log + renderer.log) AND the visibility of
- * the Debug menu (Toggle Developer Tools, etc.). The value is sampled once
- * at startup and persists for the lifetime of the process; toggling it via
- * Preferences takes effect on the NEXT launch (mirroring how a release-mode
- * build is typically distinguished from a debug-mode one).
- */
-interface DebugPrefs {
-  enabled: boolean
-}
+type DebugPrefs = DebugPreferences
 
 /** Toast-notification visibility. `enabled=false` silences every toast
  *  the renderer would otherwise pop — the underlying event is still
- *  written to the log when debug mode is on, so nothing is lost. */
+ *  written to the log when diagnostic logging is on, so nothing is lost. */
 interface ToastPrefs {
   enabled: boolean
 }
@@ -404,7 +394,7 @@ function buildDefaultPrefs(): Preferences {
       showLibraryTileImages: true,
       matchProjectTempoOnDrop: true
     },
-    debug: { enabled: false },
+    debug: { loggingEnabled: false, devToolsEnabled: false, logDirectory: '' },
     toasts: { enabled: true },
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
@@ -422,7 +412,7 @@ let prefs: Preferences = {
     showLibraryTileImages: true,
     matchProjectTempoOnDrop: true
   },
-  debug: { enabled: false },
+  debug: { loggingEnabled: false, devToolsEnabled: false, logDirectory: '' },
   toasts: { enabled: true },
   paths: { defaultProjectDir: '', defaultClipDir: '' },
   autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
@@ -441,14 +431,14 @@ let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null
 let currentClipDir = ''
 
 /**
- * Snapshot of `prefs.debug.enabled` sampled once at startup, AFTER
- * `loadPreferences()` runs. The Debug menu visibility, the cross-layer
- * file logger, and the `SILVERDAW_LOG_DIR` env var passed to the JUCE
- * backend are all gated on this constant — toggling Preferences during
- * the session only updates the saved value and takes effect on the
+ * Snapshots sampled once at startup, AFTER `loadPreferences()` runs.
+ * Logging controls the cross-layer file logger and backend log env var;
+ * DevTools controls the Debug menu and packaged DevTools shortcut gate.
+ * Toggling Preferences updates the saved value and takes effect on the
  * next launch.
  */
-let startupDebugEnabled = false
+let startupLoggingEnabled = false
+let startupDevToolsEnabled = false
 
 function getPrefsPath(): string {
   if (!prefsPath) prefsPath = join(app.getPath('userData'), 'preferences.json')
@@ -462,6 +452,30 @@ function rememberClipDir(pickedFile: string): void {
   if (!pickedFile) return
   const dir = dirname(pickedFile)
   if (dir && dir !== currentClipDir) currentClipDir = dir
+}
+
+function normaliseDebugPrefs(saved: Partial<DebugPrefs> & { enabled?: boolean } | undefined, defaults: DebugPrefs): DebugPrefs {
+  const legacyEnabled = typeof saved?.enabled === 'boolean' ? saved.enabled : undefined
+  const hasSplitFlags =
+    typeof saved?.loggingEnabled === 'boolean' ||
+    typeof saved?.devToolsEnabled === 'boolean'
+  const loggingEnabled =
+    typeof saved?.loggingEnabled === 'boolean'
+      ? saved.loggingEnabled
+      : hasSplitFlags
+        ? defaults.loggingEnabled
+        : legacyEnabled ?? defaults.loggingEnabled
+  const devToolsEnabled =
+    typeof saved?.devToolsEnabled === 'boolean'
+      ? saved.devToolsEnabled
+      : hasSplitFlags
+        ? defaults.devToolsEnabled
+        : legacyEnabled ?? defaults.devToolsEnabled
+  const logDirectory =
+    typeof saved?.logDirectory === 'string'
+      ? saved.logDirectory.trim()
+      : defaults.logDirectory
+  return { loggingEnabled, devToolsEnabled, logDirectory }
 }
 
 async function loadPreferences(): Promise<void> {
@@ -485,7 +499,7 @@ async function loadPreferences(): Promise<void> {
     prefs = {
       window: { ...defaults.window, ...(parsed.window ?? {}) },
       ui: { ...defaults.ui, ...(parsed.ui ?? {}) },
-      debug: { ...defaults.debug, ...(parsed.debug ?? {}) },
+      debug: normaliseDebugPrefs(parsed.debug as (Partial<DebugPrefs> & { enabled?: boolean }) | undefined, defaults.debug),
       toasts: { ...defaults.toasts, ...(parsed.toasts ?? {}) },
       paths: {
         defaultProjectDir:
@@ -780,7 +794,7 @@ function startBackend(): void {
             SILVERDAW_OUTPUT_DEVICE_NAME: prefs.audioOutput.deviceName
           }
         : {}),
-      ...(startupDebugEnabled ? { SILVERDAW_LOG_DIR: getSessionDir() } : {})
+      ...(startupLoggingEnabled ? { SILVERDAW_LOG_DIR: getSessionDir() } : {})
     }
   })
 
@@ -849,12 +863,11 @@ function createWindow(): void {
   // close and relaunch the renderer.
   //
   // Ctrl+Shift+I / F12 (Chromium's default DevTools shortcuts) are also
-  // suppressed when the user has explicitly disabled debug mode in a
-  // PACKAGED install. In dev (`!app.isPackaged`) we always leave them
-  // available — diagnosing renderer issues without DevTools is
-  // unworkable, and there's no end user to protect from the dev menu.
+  // suppressed when the user has not enabled DevTools access in a PACKAGED
+  // install. In dev (`!app.isPackaged`) we always leave them available —
+  // diagnosing renderer issues without DevTools is unworkable.
   const RELOAD_KEYS = new Set(['F5', 'F3'])
-  const blockDevTools = app.isPackaged && !startupDebugEnabled
+  const blockDevTools = app.isPackaged && !startupDevToolsEnabled
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     const isReloadKey = RELOAD_KEYS.has(input.key) ||
@@ -886,11 +899,11 @@ function createWindow(): void {
   })
 
   // In a dev session, auto-open DevTools when the user has explicitly
-  // enabled debug mode in Preferences. Packaged builds never auto-open —
+  // enabled DevTools in Preferences. Packaged builds never auto-open —
   // there's the Debug menu's "Toggle Developer Tools" for that — and an
   // unpackaged session with debug off stays clean too (the user can
   // always toggle the preference and relaunch).
-  if (!app.isPackaged && startupDebugEnabled) {
+  if (!app.isPackaged && startupDevToolsEnabled) {
     mainWindow.webContents.once('did-finish-load', () => {
       mainWindow?.webContents.openDevTools({ mode: 'right' })
     })
@@ -1067,6 +1080,7 @@ function handleMenuAction(action: string): void {
 
     // View
     case 'view.toggleDevTools':
+      if (app.isPackaged && !startupDevToolsEnabled) break
       wc.toggleDevTools()
       break
     case 'view.toggleFullScreen':
@@ -1180,28 +1194,36 @@ app.whenReady().then(async () => {
     app.setAppUserModelId('com.silverdaw.app')
   }
 
-  // Load persisted preferences (window bounds, UI panel sizes, debug
-  // toggle) BEFORE we decide whether to spin up the cross-layer logger
-  // — debug mode is gated on `prefs.debug.enabled` and the snapshot
-  // taken here is what every subsequent component reads.
+  // Load persisted preferences (window bounds, UI panel sizes, developer
+  // options) BEFORE we decide whether to spin up the cross-layer logger
+  // or expose DevTools. These are startup snapshots read by later code.
   await loadPreferences()
-  startupDebugEnabled = prefs.debug.enabled === true
+  startupLoggingEnabled = prefs.debug.loggingEnabled === true
+  startupDevToolsEnabled = prefs.debug.devToolsEnabled === true
 
   // Initialise the cross-layer file logger only when the user has opted
   // in via Preferences. When off, `logMain` / `logRendererLine` / the
   // backend's `silverdaw::log::*` calls all become silent no-ops — so
   // a normal-use session never writes a `.logs/` directory.
-  if (startupDebugEnabled) {
-    // `<repo>` in dev, `userData` in a packaged install — same logic as
-    // before so dev iteration drops logs alongside the source tree.
-    const repoRoot = !app.isPackaged
+  if (startupLoggingEnabled) {
+    const defaultLogParent = !app.isPackaged
       ? pathResolve(__dirname, '..', '..', '..')
       : pathResolve(app.getPath('userData'))
-    const sessionDir = initLogs(repoRoot)
-    logMain('INFO ', 'main', `session log dir: ${sessionDir}`)
-    logMain('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node}`)
+    const defaultLogDir = join(defaultLogParent, '.logs')
+    const preferredLogDir = prefs.debug.logDirectory.trim()
+    const logParent = preferredLogDir.length > 0 ? preferredLogDir : defaultLogDir
+    try {
+      const sessionDir = initLogs(logParent)
+      logMain('INFO ', 'main', `session log dir: ${sessionDir}`)
+      logMain('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node}`)
+    } catch (err) {
+      console.error('[main] failed to initialise preferred log directory; falling back:', err)
+      const sessionDir = initLogs(defaultLogDir)
+      logMain('WARN ', 'main', `preferred log dir failed, fell back to: ${sessionDir}`)
+      logMain('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node}`)
+    }
   } else {
-    console.log('[main] debug logging disabled (Preferences > Enable Debugging is off)')
+    console.log('[main] file logging disabled (Preferences > Developer > Write diagnostic logs is off)')
   }
 
   // Hide the native application menu — we render our own in HTML.
@@ -1515,21 +1537,42 @@ app.whenReady().then(async () => {
     flushPrefsSaveSync()
   })
 
-  // ─── Debug preferences ──────────────────────────────────────────────────
-  // `startupDebugEnabled` is the value sampled at launch and used for
-  // logger init + menu visibility. `prefs.debug.enabled` is the live
-  // persisted value that may differ if the user has toggled it during
-  // this session — the change takes effect on next launch.
+  // ─── Developer preferences ───────────────────────────────────────────────
+  // Startup snapshots gate logger init, backend env, and DevTools access.
+  // Saved values may differ during this session; changes take effect on
+  // next launch.
 
-  ipcMain.handle('debug:getStartupEnabled', () => startupDebugEnabled)
-  ipcMain.handle('debug:getEnabled', () => prefs.debug.enabled === true)
+  ipcMain.handle('debug:getStartupPrefs', () => ({
+    loggingEnabled: startupLoggingEnabled,
+    devToolsEnabled: startupDevToolsEnabled,
+    logDirectory: prefs.debug.logDirectory
+  }))
+  ipcMain.handle('debug:getPrefs', () => ({ ...prefs.debug }))
+  ipcMain.on('debug:setPrefs', (_evt, partial: unknown) => {
+    if (!partial || typeof partial !== 'object') return
+    const p = partial as Partial<DebugPrefs>
+    const next: DebugPrefs = { ...prefs.debug }
+    if (typeof p.loggingEnabled === 'boolean') next.loggingEnabled = p.loggingEnabled
+    if (typeof p.devToolsEnabled === 'boolean') next.devToolsEnabled = p.devToolsEnabled
+    if (typeof p.logDirectory === 'string') next.logDirectory = p.logDirectory.trim()
+    if (
+      next.loggingEnabled === prefs.debug.loggingEnabled &&
+      next.devToolsEnabled === prefs.debug.devToolsEnabled &&
+      next.logDirectory === prefs.debug.logDirectory
+    ) {
+      return
+    }
+    prefs.debug = next
+    // Developer prefs only take effect after a restart, so this must
+    // hit disk before the user immediately quits/relaunches.
+    flushPrefsSaveSync()
+  })
+  // Legacy aliases retained for older renderer code during development.
+  ipcMain.handle('debug:getStartupEnabled', () => startupDevToolsEnabled)
+  ipcMain.handle('debug:getEnabled', () => prefs.debug.loggingEnabled || prefs.debug.devToolsEnabled)
   ipcMain.on('debug:setEnabled', (_evt, value: unknown) => {
     const next = value === true
-    if (prefs.debug.enabled === next) return
-    prefs.debug = { ...prefs.debug, enabled: next }
-    // Debug logging only takes effect after a restart, so this must
-    // hit disk before the user immediately quits/relaunches. The
-    // debounced preference writer can be skipped by process exit.
+    prefs.debug = { ...prefs.debug, loggingEnabled: next, devToolsEnabled: next }
     flushPrefsSaveSync()
   })
 

@@ -1,9 +1,9 @@
 // Preload script - runs in an isolated context with access to Node APIs.
 // Expose only what the renderer needs via `contextBridge`.
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
-import type { AudioMetadata, OpenedAudioFile, UiPreferences } from '../shared/types'
+import type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences } from '../shared/types'
 
-export type { AudioMetadata, OpenedAudioFile, UiPreferences }
+export type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences }
 
 const api = {
   /** Send a menu action ID to the main process. */
@@ -213,19 +213,15 @@ const api = {
    */
   readPeaksCacheFile: (cachePath: string): Promise<ArrayBuffer | null> =>
     ipcRenderer.invoke('peaks:readCacheFile', cachePath),
-  // ─── Debug toggle ──────────────────────────────────────────────────────
-  /**
-   * Resolve the debug flag sampled at startup. This is the value that
-   * gates the Debug menu and the cross-layer file logger for the
-   * lifetime of the current process — toggling the preference in the
-   * Preferences dialog only takes effect on the NEXT launch.
-   */
-  getStartupDebugEnabled: (): Promise<boolean> => ipcRenderer.invoke('debug:getStartupEnabled'),
-  /** Read the currently-saved debug flag (may differ from the startup snapshot). */
-  getDebugEnabled: (): Promise<boolean> => ipcRenderer.invoke('debug:getEnabled'),
-  /** Persist a new debug flag value. Takes effect on the next launch. */
-  setDebugEnabled: (value: boolean): void => {
-    ipcRenderer.send('debug:setEnabled', value)
+  // ─── Developer options ─────────────────────────────────────────────────
+  /** Resolve developer preferences sampled at startup. These values gate
+   * file logging and DevTools visibility for the lifetime of this process. */
+  getStartupDebugPreferences: (): Promise<DebugPreferences> => ipcRenderer.invoke('debug:getStartupPrefs'),
+  /** Read the currently-saved developer prefs (may differ from the startup snapshot). */
+  getDebugPreferences: (): Promise<DebugPreferences> => ipcRenderer.invoke('debug:getPrefs'),
+  /** Persist developer prefs. Takes effect on the next launch. */
+  setDebugPreferences: (partial: Partial<DebugPreferences>): void => {
+    ipcRenderer.send('debug:setPrefs', partial)
   },
   // ─── Quality-of-life preferences ───────────────────────────────────────
   /**
@@ -241,7 +237,7 @@ const api = {
    * Persist one or more QoL preferences. Pass any subset of the keys
    * shown above; absent keys are left unchanged. Changes are written
    * back to `preferences.json` (debounced) and take effect immediately —
-   * unlike the debug flag, none of the QoL settings need a restart.
+   * unlike developer startup options, none of the QoL settings need a restart.
    */
   setQolPrefs: (partial: {
     toasts?: { enabled?: boolean }

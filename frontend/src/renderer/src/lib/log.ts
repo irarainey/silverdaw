@@ -33,8 +33,8 @@ interface LogEntry {
 
 /**
  * Master gate for the renderer-side logger. False until `setLogEnabled`
- * is called with `true` — which `App.vue` does once at mount, only when
- * the startup-snapshot debug flag is on. While disabled, `enqueue` is a
+ * is called with `true` — which `main.ts` does once before mount, only when
+ * the startup-snapshot logging preference is on. While disabled, `enqueue` is a
  * fast no-op so production sessions don't pay the IPC / serialisation
  * cost for log lines that would never be written to disk anyway.
  */

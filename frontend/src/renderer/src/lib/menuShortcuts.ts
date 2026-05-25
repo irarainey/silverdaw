@@ -100,11 +100,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * handler does. Returns a teardown function the caller should invoke
  * on `onBeforeUnmount`.
  *
- * `opts.debugMode` mirrors the same flag that drives Debug menu
+ * `opts.devToolsEnabled` mirrors the same flag that drives Debug menu
  * visibility; the F12 / Toggle Developer Tools accelerator is only
  * bound when the menu it lives in is itself visible.
  */
-export function registerMenuShortcuts(opts: { debugMode: boolean }): () => void {
+export function registerMenuShortcuts(opts: { devToolsEnabled: boolean }): () => void {
   // Pre-parse the menu definitions into a flat list. Disabled items
   // are skipped — their accelerator is shown for documentation only.
   const bindings: { accel: ParsedAccelerator; action: string }[] = []

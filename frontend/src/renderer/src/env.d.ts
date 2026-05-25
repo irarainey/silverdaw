@@ -2,6 +2,7 @@
 
 import type {
   AudioMetadata as SharedAudioMetadata,
+  DebugPreferences as SharedDebugPreferences,
   OpenedAudioFile as SharedOpenedAudioFile,
   UiPreferences as SharedUiPreferences
 } from '@shared/types'
@@ -20,6 +21,7 @@ declare global {
   type OpenedAudioFile = SharedOpenedAudioFile
   type AudioMetadata = SharedAudioMetadata
   type UiPreferences = SharedUiPreferences
+  type DebugPreferences = SharedDebugPreferences
 
   interface Window {
     silverdaw: {
@@ -58,9 +60,9 @@ declare global {
       consumePendingOpenPath(): Promise<string | null>
       onOpenProjectFromPath(handler: (filePath: string) => void): () => void
       readPeaksCacheFile(cachePath: string): Promise<ArrayBuffer | null>
-      getStartupDebugEnabled(): Promise<boolean>
-      getDebugEnabled(): Promise<boolean>
-      setDebugEnabled(value: boolean): void
+      getStartupDebugPreferences(): Promise<DebugPreferences>
+      getDebugPreferences(): Promise<DebugPreferences>
+      setDebugPreferences(partial: Partial<DebugPreferences>): void
       getQolPrefs(): Promise<{
         toasts: { enabled: boolean }
         paths: { defaultProjectDir: string; defaultClipDir: string }
