@@ -724,6 +724,12 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const PAD_X = 4
     const FONT_SIZE = 11
     const APPROX_CHAR_W = 6
+    const LINK_BADGE_FULL_W = 18
+    const WARP_BADGE_FULL_W = 40
+    const STATUS_BADGE_H = 14
+    const STATUS_BADGE_R = 5
+    const BADGE_GAP = 4
+    const NAME_BADGE_GAP = 6
 
     if (clipW < 20) return
 
@@ -758,31 +764,22 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       : libItem ? libraryItemDisplayName(libItem) : clip.fileName
 
     // Reserve room on the right for timeline status badges so the text
-    // doesn't slide under them.
-    const LINK_BADGE_W = isLinked ? 18 : 0
-    const WARP_BADGE_W = warpIsPending ? 18 : warpIsActive ? 42 : 0
-    const BADGES_W = LINK_BADGE_W + WARP_BADGE_W
-    const maxChars = Math.max(
-      1,
-      Math.floor((clipW - PAD_X * 2 - BADGES_W) / APPROX_CHAR_W)
-    )
-    const text =
-      displayName.length > maxChars
-        ? displayName.slice(0, Math.max(1, maxChars - 1)) + '…'
-        : displayName
-
-    const desiredW = Math.min(
-      clipW,
-      text.length * APPROX_CHAR_W + PAD_X * 2 + BADGES_W
-    )
-    const headerBg = new G()
-    headerBg
-      .rect(clipX, clipInnerY, desiredW, HEADER_H)
-      .fill({ color: palette.border, alpha: 0.95 })
-    tracksL.addChild(headerBg)
-
+    // doesn't slide under them. Use the actual Pixi text measurement
+    // rather than a character-count approximation because bold
+    // proportional glyphs can be much wider than the average.
+    const LINK_BADGE_W = isLinked ? LINK_BADGE_FULL_W : 0
+    const WARP_BADGE_W = warpIsPending || warpIsActive ? WARP_BADGE_FULL_W : 0
+    const BADGE_COUNT = (isLinked ? 1 : 0) + (warpIsPending || warpIsActive ? 1 : 0)
+    const BADGES_W =
+      BADGE_COUNT === 0
+        ? 0
+        : NAME_BADGE_GAP +
+          LINK_BADGE_W +
+          WARP_BADGE_W +
+          Math.max(0, BADGE_COUNT - 1) * BADGE_GAP
+    const maxTextW = Math.max(0, clipW - PAD_X * 2 - BADGES_W)
     const label = new T({
-      text,
+      text: displayName,
       style: {
         fontFamily: 'system-ui, -apple-system, sans-serif',
         fontSize: FONT_SIZE,
@@ -791,16 +788,47 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         stroke: { color: 0x09090b, width: 2 }
       }
     })
+    if (label.width > maxTextW) {
+      if (maxTextW <= APPROX_CHAR_W) {
+        label.text = ''
+      } else {
+        let lo = 0
+        let hi = displayName.length
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2)
+          label.text = displayName.slice(0, mid) + '…'
+          if (label.width <= maxTextW) lo = mid
+          else hi = mid - 1
+        }
+        label.text = lo > 0 ? displayName.slice(0, lo) + '…' : ''
+      }
+    }
+
+    const labelW = label.text.length > 0 ? label.width : 0
+    const desiredW = Math.min(clipW, Math.ceil(labelW) + PAD_X * 2 + BADGES_W)
+    const headerBg = new G()
+    headerBg
+      .rect(clipX, clipInnerY, desiredW, HEADER_H)
+      .fill({ color: palette.border, alpha: 0.95 })
+    tracksL.addChild(headerBg)
+
     label.x = Math.round(clipX + PAD_X)
     label.y = Math.round(clipInnerY + (HEADER_H - FONT_SIZE) / 2 - 1)
-    tracksL.addChild(label)
+    if (label.text.length > 0) tracksL.addChild(label)
 
+    let badgeRight = clipX + desiredW - PAD_X
     if (isLinked) {
       const badge = new G()
-      const cx = clipX + desiredW - PAD_X - LINK_BADGE_W / 2
+      const cx = badgeRight - LINK_BADGE_FULL_W / 2
       const cy = clipInnerY + HEADER_H / 2
       badge
-        .roundRect(cx - 7.5, cy - 6, 15, 12, 5)
+        .roundRect(
+          cx - LINK_BADGE_FULL_W / 2,
+          cy - STATUS_BADGE_H / 2,
+          LINK_BADGE_FULL_W,
+          STATUS_BADGE_H,
+          STATUS_BADGE_R
+        )
         .fill({ color: 0x09090b, alpha: 0.85 })
         .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
       badge
@@ -809,13 +837,24 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         .circle(cx + 2.5, cy, 2.3)
         .stroke({ color: 0xffffff, width: 1.5 })
       tracksL.addChild(badge)
+      badgeRight -= LINK_BADGE_FULL_W + BADGE_GAP
     }
     if (warpIsPending) {
       const badge = new G()
-      const cx = clipX + desiredW - PAD_X - LINK_BADGE_W - WARP_BADGE_W / 2
+      const cx = badgeRight - WARP_BADGE_FULL_W / 2
       const cy = clipInnerY + HEADER_H / 2
       const phase = Math.floor(Date.now() / 125) % 8
       const radius = 4.2
+      badge
+        .roundRect(
+          cx - WARP_BADGE_FULL_W / 2,
+          cy - STATUS_BADGE_H / 2,
+          WARP_BADGE_FULL_W,
+          STATUS_BADGE_H,
+          STATUS_BADGE_R
+        )
+        .fill({ color: 0x0f172a, alpha: 0.95 })
+        .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
       for (let i = 0; i < 8; i++) {
         const angle = ((i - phase) / 8) * Math.PI * 2
         const alpha = 0.25 + ((i + 1) / 8) * 0.65
@@ -826,10 +865,16 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       tracksL.addChild(badge)
     } else if (warpIsActive) {
       const bg = new G()
-      const cx = clipX + desiredW - PAD_X - LINK_BADGE_W - WARP_BADGE_W / 2
+      const cx = badgeRight - WARP_BADGE_FULL_W / 2
       const cy = clipInnerY + HEADER_H / 2
       bg
-        .roundRect(cx - 20, cy - 7, 40, 14, 5)
+        .roundRect(
+          cx - WARP_BADGE_FULL_W / 2,
+          cy - STATUS_BADGE_H / 2,
+          WARP_BADGE_FULL_W,
+          STATUS_BADGE_H,
+          STATUS_BADGE_R
+        )
         .fill({ color: 0x0f172a, alpha: 0.95 })
         .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
       tracksL.addChild(bg)
