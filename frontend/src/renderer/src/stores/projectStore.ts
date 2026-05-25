@@ -2185,6 +2185,19 @@ export const useProjectStore = defineStore('project', {
             void refreshLibraryItemMedia(libId, item.filePath)
           }
         }
+        for (const item of library.items) {
+          if (item.kind !== 'saved-clip' || item.bpm !== undefined) continue
+          const source = library.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId)
+          if (!source || typeof source.bpm !== 'number' || source.bpm <= 0) continue
+          library.setItemAnalysis(
+            item.id,
+            source.bpm,
+            source.beatAnchorSec ?? source.beats?.[0] ?? 0,
+            source.beats ?? [],
+            source.variableTempo === true,
+            source.decodedCacheFilePath
+          )
+        }
       }
 
       // Collect ids of clips that still need peaks after reconciliation so
@@ -2250,7 +2263,8 @@ export const useProjectStore = defineStore('project', {
             existing.tempoRatio = typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined
             existing.semitones = typeof c.semitones === 'number' ? c.semitones : undefined
             existing.cents = typeof c.cents === 'number' ? c.cents : undefined
-            existing.pendingAutoWarp = c.pendingAutoWarp === true ? true : undefined
+            existing.pendingAutoWarp =
+              c.pendingAutoWarp === true && existing.warpEnabled !== true ? true : undefined
             if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
             continue
           }
@@ -2279,7 +2293,8 @@ export const useProjectStore = defineStore('project', {
             tempoRatio: typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined,
             semitones: typeof c.semitones === 'number' ? c.semitones : undefined,
             cents: typeof c.cents === 'number' ? c.cents : undefined,
-            pendingAutoWarp: c.pendingAutoWarp === true ? true : undefined
+            pendingAutoWarp:
+              c.pendingAutoWarp === true && c.warpEnabled !== true ? true : undefined
           }
           this.clips[c.id] = placeholder
           track.clipIds.push(c.id)

@@ -567,12 +567,27 @@ double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
 {
     const auto library = root.getChildWithName(kLibrary);
     if (!library.isValid()) return 0.0;
+    juce::String sourceItemId;
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
         if (item.getProperty(kId).toString() == itemId)
         {
-            return static_cast<double>(item.getProperty(kBpm, 0.0));
+            const auto bpm = static_cast<double>(item.getProperty(kBpm, 0.0));
+            if (bpm > 0.0) return bpm;
+            sourceItemId = item.getProperty(kSourceItemId, {}).toString();
+            break;
+        }
+    }
+    if (sourceItemId.isNotEmpty())
+    {
+        for (int i = 0; i < library.getNumChildren(); ++i)
+        {
+            const auto item = library.getChild(i);
+            if (item.getProperty(kId).toString() == sourceItemId)
+            {
+                return static_cast<double>(item.getProperty(kBpm, 0.0));
+            }
         }
     }
     return 0.0;

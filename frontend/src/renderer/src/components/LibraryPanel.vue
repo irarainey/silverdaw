@@ -654,6 +654,13 @@ function onResizePointerUp(): void {
                 <span class="shrink-0 font-mono text-[10px] tabular-nums text-zinc-400">
                   {{ formatClipDuration(item.durationMs) }}
                 </span>
+                <span
+                  v-if="item.warpEnabled === true"
+                  class="shrink-0 rounded border border-yellow-300/80 bg-slate-950 px-1 py-px text-[8px] font-bold leading-none text-yellow-300"
+                  title="Saved with warp settings"
+                >
+                  WARP
+                </span>
                 <button
                   type="button"
                   tabindex="-1"

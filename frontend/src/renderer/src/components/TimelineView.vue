@@ -18,7 +18,7 @@
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
-import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { clipEffectiveDurationMs, isWarpActive, isWarpPending } from '@/lib/warp'
@@ -117,11 +117,12 @@ const setDisplayPositionMs = drawing.setDisplayPositionMs
 const hasPendingWarpClip = computed(() =>
   Object.values(project.clips).some((clip) => {
     const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+    const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
     return isWarpPending({
       warpEnabled: clip.warpEnabled,
       tempoRatio: clip.tempoRatio,
       pendingAutoWarp: clip.pendingAutoWarp,
-      sourceBpm: libItem?.bpm,
+      sourceBpm,
       projectBpm: transport.bpm
     })
   })
@@ -415,17 +416,18 @@ const renameOverlayStyle = computed<Record<string, string> | null>(() => {
     ? clip.name
     : libItem ? libraryItemDisplayName(libItem) : clip.fileName
   const isLinked = libItem?.kind === 'saved-clip'
+  const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
   const warpPending = isWarpPending({
     warpEnabled: clip.warpEnabled,
     tempoRatio: clip.tempoRatio,
     pendingAutoWarp: clip.pendingAutoWarp,
-    sourceBpm: libItem?.bpm,
+    sourceBpm,
     projectBpm: transport.bpm
   })
   const warpActive = !warpPending && isWarpActive({
     warpEnabled: clip.warpEnabled,
     tempoRatio: clip.tempoRatio,
-    sourceBpm: libItem?.bpm,
+    sourceBpm,
     projectBpm: transport.bpm
   })
   const badgeWidth =

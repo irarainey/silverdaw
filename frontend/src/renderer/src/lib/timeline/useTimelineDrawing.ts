@@ -16,7 +16,7 @@
 import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics, Text } from 'pixi.js'
 import { useProjectStore, type Clip, TRACK_PALETTE, PEAKS_PER_SECOND } from '@/stores/projectStore'
-import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
@@ -536,15 +536,16 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       : library.items.find((i) => i.filePath === clip.filePath)
     const effectiveDurMs = clipEffectiveDurationMs(clip, libItem, transport.bpm)
     const w = (effectiveDurMs / 1000) * pxPerSecond.value
+    const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
     const warpRatio = isWarpActive({
       warpEnabled: clip.warpEnabled,
       tempoRatio: clip.tempoRatio,
-      sourceBpm: libItem?.bpm,
+      sourceBpm,
       projectBpm: transport.bpm
     })
       ? effectiveTempoRatio({
           tempoRatio: clip.tempoRatio,
-          sourceBpm: libItem?.bpm,
+          sourceBpm,
           projectBpm: transport.bpm
         })
       : 1
@@ -665,17 +666,17 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // few ms after a split because BTrack's per-beat timestamps
     // wander relative to the implied uniform tempo.
     const beats = libItem?.beats
-    const sourceBpm = libItem?.bpm
+    const markerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
     // Prefer the regression-derived anchor over the first raw
     // detected beat — it's the implied phase of the ideal beat
     // grid and is robust to BTrack's per-beat jitter. Older saved
     // projects without the anchor fall back to `beats[0]`.
     const anchorSec = libItem?.beatAnchorSec ?? beats?.[0]
-    if (beats && beats.length > 0 && sourceBpm && sourceBpm > 0 && anchorSec !== undefined && w > 0) {
+    if (beats && beats.length > 0 && markerSourceBpm && markerSourceBpm > 0 && anchorSec !== undefined && w > 0) {
       const pxPerMs = pxPerSecond.value / 1000
       const inMs = clip.inMs
       const outMs = inMs + clip.durationMs
-      const beatSpacingMs = (60 / sourceBpm) * 1000
+      const beatSpacingMs = (60 / markerSourceBpm) * 1000
       const universalAnchorMs = anchorSec * 1000
       // First synthetic beat ≥ inMs. ceil() can produce a value < inMs
       // when `(inMs - universalAnchorMs)` is exactly on a beat, so we
@@ -734,17 +735,18 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // so the user can tell linked from independent clips at a glance.
     const libItem = library.items.find((i) => i.id === clip.libraryItemId)
     const isLinked = libItem?.kind === 'saved-clip'
+    const headerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
     const warpIsPending = isWarpPending({
       warpEnabled: clip.warpEnabled,
       tempoRatio: clip.tempoRatio,
       pendingAutoWarp: clip.pendingAutoWarp,
-      sourceBpm: libItem?.bpm,
+      sourceBpm: headerSourceBpm,
       projectBpm: transport.bpm
     })
     const warpIsActive = !warpIsPending && isWarpActive({
       warpEnabled: clip.warpEnabled,
       tempoRatio: clip.tempoRatio,
-      sourceBpm: libItem?.bpm,
+      sourceBpm: headerSourceBpm,
       projectBpm: transport.bpm
     })
 

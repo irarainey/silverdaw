@@ -13,7 +13,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { clipEffectiveDurationMs } from '@/lib/warp'
+import { clipEffectiveDurationMs, effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import type { Clip } from '@/stores/projectStore'
 import type { ClipWarpMode, LibraryItemKind } from '@shared/bridge-protocol'
 
@@ -429,6 +429,20 @@ export const useLibraryStore = defineStore('library', {
       const name = customName && customName.length > 0
         ? customName
         : buildSavedClipName(source ?? clip, inMs, durationMs)
+      const projectBpm = useTransportStore().bpm
+      const pinnedTempoRatio =
+        isWarpActive({
+          warpEnabled: clip.warpEnabled,
+          tempoRatio: clip.tempoRatio,
+          sourceBpm: source?.bpm,
+          projectBpm
+        })
+          ? effectiveTempoRatio({
+              tempoRatio: clip.tempoRatio,
+              sourceBpm: source?.bpm,
+              projectBpm
+            })
+          : clip.tempoRatio
       const itemId = this.addItem({
         kind: 'saved-clip',
         name,
@@ -453,7 +467,7 @@ export const useLibraryStore = defineStore('library', {
         // either side do NOT propagate across — warp is per-instance).
         warpEnabled: clip.warpEnabled,
         warpMode: clip.warpMode,
-        tempoRatio: clip.tempoRatio,
+        tempoRatio: pinnedTempoRatio,
         semitones: clip.semitones,
         cents: clip.cents
       })
@@ -1244,6 +1258,17 @@ export function libraryItemDisplayName(item: {
   if (name && name.length > 0) return name
   const title = item.metadata?.title?.trim()
   return title && title.length > 0 ? title : item.fileName
+}
+
+export function libraryItemSourceBpm(
+  item: { bpm?: number; derivedFrom?: SavedClipSource },
+  items: readonly LibraryItem[]
+): number | undefined {
+  if (typeof item.bpm === 'number' && item.bpm > 0) return item.bpm
+  const sourceId = item.derivedFrom?.sourceItemId
+  if (!sourceId) return undefined
+  const source = items.find((candidate) => candidate.id === sourceId)
+  return typeof source?.bpm === 'number' && source.bpm > 0 ? source.bpm : undefined
 }
 
 function buildSavedClipName(

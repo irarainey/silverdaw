@@ -3,8 +3,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
-import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { useTransportStore } from '@/stores/transportStore'
+import { libraryItemDisplayName, libraryItemSourceBpm, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { formatTime } from '@/lib/musicTime'
+import { effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import { send as sendBridge } from '@/lib/bridgeService'
 
 const props = defineProps<{
@@ -17,6 +19,7 @@ const preview = usePreviewStore()
 const library = useLibraryStore()
 const notifications = useNotificationsStore()
 const ui = useUiStore()
+const transport = useTransportStore()
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 const waveformEl = ref<HTMLCanvasElement | null>(null)
@@ -527,10 +530,23 @@ function loadPreviewForView(): void {
   // so the preview voice plays the clip the way the timeline will.
   // Audio-file items don't carry warp metadata, so the spread is a
   // no-op for them.
+  const sourceBpm = libraryItemSourceBpm(item, library.items)
+  const tempoRatio = isWarpActive({
+    warpEnabled: item.warpEnabled,
+    tempoRatio: item.tempoRatio,
+    sourceBpm,
+    projectBpm: transport.bpm
+  })
+    ? effectiveTempoRatio({
+        tempoRatio: item.tempoRatio,
+        sourceBpm,
+        projectBpm: transport.bpm
+      })
+    : item.tempoRatio
   preview.load(src.id, viewInMs.value, viewDurationMs.value, {
     warpEnabled: item.warpEnabled,
     warpMode: item.warpMode,
-    tempoRatio: item.tempoRatio,
+    tempoRatio,
     semitones: item.semitones,
     cents: item.cents
   })
