@@ -77,6 +77,10 @@ Silverdaw currently supports the core arrangement workflow:
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
 - Move clips across tracks with grid snapping, source-beat snapping and `Alt` bypass.
 - Analyse imported audio for key, BPM, beat positions and variable-tempo status.
+- Non-destructive per-clip warp and pitch settings via Rubber Band. Dropped
+  clips can auto-match the project tempo, late auto-warp engages after BPM
+  analysis if needed, and warped clips show a visible **WARP** badge or
+  pending spinner on the timeline.
 - Resize any track row by dragging its bottom edge in the track-header column
   (clamped 60..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
   a track name and dragging up or down; an emerald drop indicator shows where
@@ -86,7 +90,8 @@ Silverdaw currently supports the core arrangement workflow:
   there. The Play button (and the Spacebar shortcut) is disabled while the
   playhead sits at the end — skip back to the start to re-arm playback.
 - **Edit ▸ Crop Project to Last Clip** collapses the project length to the end of
-  the latest clip on any track. No-op when there are no clips.
+  the latest clip on any track. Manual project-length edits are also clamped so
+  the ruler cannot be shortened below the longest clip's effective end.
 - Save reusable saved clips to the library from any timeline clip; saved clips are
   grouped under their source file and can be dragged back to the timeline as a clip
   with the same source window. **Linked saved-clips**: clips dropped from a saved-clip
@@ -125,7 +130,8 @@ Silverdaw currently supports the core arrangement workflow:
   compensates for radio-and-headset latency so it stays in sync with what you
   hear (~250 ms for A2DP, ~400 ms for HFP).
 - Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
-  file association.
+  file association. The backend is statically linked against the MSVC runtime, so
+  a clean Windows install does not need a separate Visual C++ Redistributable.
 - Undo / redo (Ctrl+Z / Ctrl+Y) any project-mutating edit. Covers
   clip add / move / trim / recolour / rename / delete / relink / rebind, track
   add / remove / rename / gain / **resize / reorder**, library
@@ -148,13 +154,14 @@ Playback is always served from the decoded WAV cache; original compressed source
 buffer's latency-hiding contract intact at clip boundaries so back-to-back loops
 play seamlessly.
 
-The main remaining roadmap areas are warp / pitch shifting, region selection on timeline clips, bouncing a
-clip range into a new baked WAV sample (the saved-clip mechanism above is non-destructive only),
-library search / tags / list view, ffmpeg-backed decoding for unsupported formats, mixer
-/ effects / automation, mixdown export, stem separation, loop slicing, a timeline-clip entry point
-into the Clip Editor (today the editor opens from library items only), grouping compound
-operations (split / duplicate) into a single undo step, and a CI matrix that
-enforces a coverage floor over the existing backend and frontend test suites.
+The main remaining roadmap areas are region selection on timeline clips,
+bouncing a clip range into a new baked WAV sample (the saved-clip mechanism
+above is non-destructive only), library search / tags / list view, ffmpeg-backed
+decoding for unsupported formats, mixer / effects / automation, mixdown export,
+stem separation, loop slicing, a timeline-clip entry point into the Clip Editor
+(today the editor opens from library items only), grouping compound operations
+(split / duplicate) into a single undo step, and a CI matrix that enforces a
+coverage floor over the existing backend and frontend test suites.
 
 ## Bridge protocol
 
@@ -204,12 +211,14 @@ the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
   TRACK[id, name, gain, heightPx?]
-    CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?]
+    CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
+         warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?]
   LIBRARY
-    ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
-         sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?,
-         playbackFilePath?, variableTempo?, collapsed?,
-         sourceItemId?, sourceClipId?, sourceInMs?, sourceDurationMs?]
+     ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
+          sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?,
+          playbackFilePath?, variableTempo?, collapsed?,
+          sourceItemId?, sourceClipId?, sourceInMs?, sourceDurationMs?,
+          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?]
   MARKERS
     MARKER[id, positionMs]
 ```
@@ -219,7 +228,9 @@ lives only on the library item. `offsetMs` is the timeline start, `inMs` is wher
 source file playback begins (≥ 0), and `durationMs` is how long the clip plays for from
 that point. Split, duplicate and edge-drag trim all manipulate this window without ever
 re-decoding the source — peaks are computed once per file and the renderer windows into
-them at draw time. `colorIndex` is an optional 0..15 per-clip palette override; when
+them at draw time. Warp fields are non-destructive: `tempoRatio` pins a ratio when set,
+otherwise a warped clip follows `projectBpm / sourceBpm`; pitch is stored as semitone
+and cent offsets. `colorIndex` is an optional 0..15 per-clip palette override; when
 absent the clip inherits its host track's colour. `clipName` is an optional user-set
 display name for the clip (double-click the clip's title strip to rename).
 
@@ -254,7 +265,7 @@ The `LIBRARY` sub-tree carries the user's imported-but-not-yet-placed samples *a
 saved clip so the catalogue survives save / load. Durable library fields are persisted: id,
 kind, source path, display file name, display name override, duration, sample rate, channel
 count, detected key, cached playback path, BPM, beat positions, beat anchor, variable-tempo
-flag, collapse state and (for saved clips) the source-window pointers. Cover art, ID3 tags,
+flag, collapse state, saved-clip warp defaults and (for saved clips) the source-window pointers. Cover art, ID3 tags,
 waveform peaks and playable bytes are not written into the project file; they are re-fetched
 or served from cache on load.
 
@@ -348,19 +359,23 @@ handler in [`main/index.ts`](frontend/src/main/index.ts).
 
 Waveform peaks (mono-mixed `min, max` float32 pairs) are computed once per source
 file and persisted under `%APPDATA%/Silverdaw/peaks/<hash>.peaks`. The default
-resolution is **500 peaks/sec** — enough detail to keep the main timeline crisp
-at 600 % zoom without ballooning the cache. The Clip Editor opportunistically
-requests a higher-resolution **2000 peaks/sec** rendering for the item currently
-on screen via `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_EDITOR_PEAKS_READY`; that
-hi-res cache lives next to the default one on disk (the cache key includes
-`peaksPerSecond`) and is held in renderer memory only while the dialog is open.
-The cache key is a 64-bit hash of `(filePath | mtime | size | peaksPerSecond)` —
-any change to the file or to the requested resolution invalidates the entry
-automatically. The on-disk format is a 24-byte header (magic, version,
-peaksPerSecond, peakCount, sampleRate) followed by `peakCount × 2 × float32`
-little-endian peak values. Versioned so a future format change is detected as a
-miss rather than a corrupted read; the same layout is what the renderer reads
-via the `peaks:readCacheFile` IPC.
+requested resolution is **500 peaks/sec** — enough detail to keep the main
+timeline crisp at 600 % zoom without ballooning the cache. Because peak buckets
+contain a whole number of source samples, the backend reports the **actual**
+peak rate it used in `WAVEFORM_READY`; the renderer uses that rate for
+timeline indexing so long clips do not visually drift against beat markers. The
+Clip Editor opportunistically requests a higher requested **2000 peaks/sec**
+rendering for the item currently on screen via `CLIP_EDITOR_PEAKS_REQUEST` /
+`CLIP_EDITOR_PEAKS_READY`; that hi-res cache lives next to the default one on
+disk (the cache key uses the requested `peaksPerSecond`) and is held in
+renderer memory only while the dialog is open. The cache key is a 64-bit hash of
+`(filePath | mtime | size | requestedPeaksPerSecond)` — any change to the file
+or requested resolution invalidates the entry automatically. The on-disk format
+is a 24-byte header (magic, version, requested peaksPerSecond, peakCount,
+sampleRate) followed by `peakCount × 2 × float32` little-endian peak values.
+Versioned so a future format change is detected as a miss rather than a
+corrupted read; the same layout is what the renderer reads via the
+`peaks:readCacheFile` IPC.
 
 The cache survives backend restarts.
 
@@ -408,7 +423,7 @@ already has a BPM for). The library tile context menu can also send
 decoded-WAV cache, and reruns detection from the current source file. Worker thread
 → decode the file via JUCE → downmix to mono → resample to 44.1 kHz with
 libsamplerate → feed BTrack frame-by-frame at hop=512 recording every
-`beatDueInCurrentFrame()` event. Analysis is capped at the first 2 minutes of audio;
+`beatDueInCurrentFrame()` event. Analysis is capped at the first 60 seconds of audio;
 estimates outside `[40, 240]` BPM are dropped as implausible.
 
 The reported BPM is derived from the **median of beat-to-beat intervals** (not from
@@ -454,8 +469,10 @@ job with three sequential stages so the long-tail analysis isn't invisible:
 2. **Analysing tempo…** — backend's BTrack job (the long stage on long files).
 3. **Analysing beats…** — brief flash while the renderer applies the beat array
    and the markers paint on the clip.
+4. **Applying warp…** — shown when a track import is waiting for late
+   auto-warp after analysis.
 
-The OS busy cursor stays in its `progress` state through all three stages.
+The OS busy cursor stays in its `progress` state through these stages.
 
 ## Library panel
 
@@ -471,7 +488,8 @@ and are grouped underneath the source they came from. Each source group has a
 disclosure chevron that hides / shows its saved-clip list; the open/closed state
 persists with the project. Adding a new saved clip auto-expands the group so the new
 clip is immediately visible. Dragging a saved-clip tile onto a track creates a
-timeline clip with the same source window the saved clip describes.
+timeline clip with the same source window and non-destructive warp defaults the
+saved clip describes.
 
 **Renaming** — single-click the name on any library tile (or pick **Rename…** from
 the right-click menu) to edit it inline. Saved clips inherit a sensible default name
@@ -559,7 +577,7 @@ sidebar:
 - **Project** — default Save / Open / Import directories and background autosave
   configuration.
 - **Audio** — output device selection (see below).
-- **Developer** — the Enable-Debugging toggle.
+- **Developer** — diagnostic logging, log folder and DevTools access.
 
 Persisted fields:
 
@@ -572,8 +590,8 @@ Persisted fields:
 - **Show images on library tiles** — controls whether library tiles show embedded cover
   art or the fallback audio icon. Off makes the library tiles text-only.
 - **Show toast notifications** — pop transient feedback (errors, save acks) in the
-  bottom-right. Off silences them; the underlying events still go to the log when debug
-  mode is enabled.
+  bottom-right. Off silences them; the underlying events still go to the log when
+  diagnostic logging is enabled.
 - **Default project folder** — used as the starting directory for File → Save / Save As /
   Open. Defaults to `<home>/Music/Silverdaw/`, which is created on first launch.
 - **Default clip folder** — starting directory for Add Track from File / library Import.
@@ -584,13 +602,16 @@ Persisted fields:
   "System default". The backend receives the pair as `SILVERDAW_OUTPUT_DEVICE_TYPE` /
   `SILVERDAW_OUTPUT_DEVICE_NAME` env vars at spawn time.
 - **Recent Projects** MRU (max 10, head = most recent, case-insensitive dedupe on Windows).
-- **Enable Debugging** — gates the visibility of the **Debug** menu (Toggle Developer Tools)
-  and the entire cross-layer file logger. Off by default. When on, the next launch writes a
-  per-session `<repo>/.logs/<ISO-timestamp>/{main,backend,renderer}.log` triple with aligned
-  millisecond timestamps so post-mortem analysis is one `cat *.log | sort` away.
+- **Write diagnostic logs** — enables the cross-layer file logger. When on,
+  the next launch writes a per-session timestamped folder containing
+  `{main,backend,renderer}.log` with aligned millisecond timestamps. The
+  **Log folder** field lets the user choose the parent folder; blank uses the
+  app default.
+- **Show Developer Tools** — gates the visibility of the **Debug** menu and
+  DevTools shortcuts independently of file logging.
 
-QoL settings take effect on **Save**; the **Enable Debugging** toggle requires a restart
-and the dialog surfaces that explicitly.
+QoL settings take effect on **Save**; developer settings require a restart and
+the dialog surfaces that explicitly.
 
 ### Audio output device
 
@@ -679,7 +700,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip — on the source track it lands immediately after the source clip; on a different (selected) track it lands at the playhead. A toast appears if the slot is already occupied. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
-| **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, plus disabled placeholders for **Warp settings…**, **Transpose…**, **Bounce to Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
+| **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, **Warp settings…** for tempo/pitch controls, plus disabled placeholders for **Transpose…** and **Bounce to Sample…**. Shows **Relink…** at the top when the clip is unresolved. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
 | Double-click a **library tile** (off the name) | Open the **Clip Editor** for that library item. Use **Show information** from the right-click menu for the read-only info dialog. |
@@ -871,7 +892,9 @@ Outputs land in the repo-root `dist/` directory (gitignored except for a
   also registers `.silverdaw` as a file association so double-clicking a
   project in Explorer launches Silverdaw and opens it (with a single-instance
   lock — a running Silverdaw receives the path instead of a second window
-  starting up).
+  starting up). The packaged backend is statically linked against the MSVC
+  runtime, so users do not need to install the Visual C++ Redistributable
+  separately.
 - `dist/win-unpacked/Silverdaw.exe` — the unpacked app for local smoke
   testing without going through the installer.
 

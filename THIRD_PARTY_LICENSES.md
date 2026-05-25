@@ -27,6 +27,33 @@ satisfy the attribution requirements of those licences.
   text ships alongside the source at
   `backend/build/_deps/ixwebsocket-src/LICENSE.txt`.
 
+### Rubber Band Library — © Chris Cannam and contributors
+
+- **Licence**: GNU General Public License v2 or later (GPL-2.0+).
+- **Project**: <https://breakfastquay.com/rubberband/>
+- **Source**: <https://github.com/breakfastquay/rubberband>
+- **Notice**: Used by the backend for non-destructive time-stretching and
+  pitch shifting. Source is obtained via CMake `FetchContent`; the upstream
+  licence text is included with the fetched source at
+  `backend/build/_deps/rubberband-src/COPYING`.
+
+### libsamplerate — © Erik de Castro Lopo and contributors
+
+- **Licence**: BSD 2-Clause.
+- **Project**: <https://libsndfile.github.io/libsamplerate/>
+- **Source**: <https://github.com/libsndfile/libsamplerate>
+- **Notice**: Used for offline analysis resampling and Rubber Band support.
+  Source is obtained via CMake `FetchContent`.
+
+### BTrack / KISS FFT
+
+- **Licence**: GPL-3.0 for BTrack; BSD-style licence for KISS FFT.
+- **Project**: <https://github.com/adamstark/BTrack>
+- **Notice**: A patched vendored copy lives under `backend/third_party/btrack/`
+  and powers BPM / beat detection. See
+  [`backend/third_party/btrack/PATCHES.md`](backend/third_party/btrack/PATCHES.md)
+  for the local MSVC-compatibility changes.
+
 ## Frontend (Electron + Vue)
 
 ### Electron, Chromium, Node.js
