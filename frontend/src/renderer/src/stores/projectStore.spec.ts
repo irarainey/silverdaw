@@ -210,6 +210,61 @@ describe('projectStore', () => {
     )
   })
 
+  it('does not split linked saved-clip timeline instances', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const trackId = project.addTrack()
+    library.addItem({
+      id: 'source',
+      kind: 'audio-file',
+      filePath: 'C:\\audio\\loop.wav',
+      fileName: 'loop.wav',
+      durationMs: 4_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      fromSnapshot: true
+    })
+    library.addItem({
+      id: 'saved',
+      kind: 'saved-clip',
+      filePath: 'C:\\audio\\loop.wav',
+      fileName: 'loop.wav',
+      durationMs: 2_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      derivedFrom: {
+        sourceItemId: 'source',
+        sourceClipId: 'c1',
+        inMs: 0,
+        durationMs: 2_000
+      },
+      fromSnapshot: true
+    })
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'saved',
+        filePath: 'C:\\audio\\loop.wav',
+        fileName: 'Loop saved',
+        durationMs: 2_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+    sendMock.mockClear()
+
+    const splitId = project.splitClipAt(clipId ?? '', 1_000)
+
+    expect(splitId).toBeNull()
+    expect(project.tracks[0]?.clipIds).toEqual([clipId])
+    expect(sendMock).not.toHaveBeenCalledWith('CLIP_TRIM', expect.anything())
+    expect(sendMock).not.toHaveBeenCalledWith('CLIP_ADD', expect.anything())
+  })
+
   it('applies reset snapshots across project, library, transport, and bridge requests', () => {
     const project = useProjectStore()
     const library = useLibraryStore()

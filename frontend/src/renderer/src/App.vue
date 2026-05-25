@@ -685,6 +685,7 @@ function handleMenuAction(action: string): void {
     const candidateIds = Object.values(project.clips)
       .filter((c) => {
         const libItem = library.items.find((i) => i.id === c.libraryItemId)
+        if (libItem?.kind === 'saved-clip') return false
         const effDur = clipEffectiveDurationMs(c, libItem, transport.bpm)
         return atMs > c.startMs && atMs < c.startMs + effDur
       })

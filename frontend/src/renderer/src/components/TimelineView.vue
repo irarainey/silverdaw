@@ -186,7 +186,13 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
   }
   items.push({ command: 'clip.delete', label: 'Delete' })
   items.push({ command: 'clip.duplicate', label: 'Duplicate', separatorAbove: true })
-  items.push({ command: 'clip.split', label: 'Split at playhead' })
+  const clipParent = clip ? library.items.find((i) => i.id === clip.libraryItemId) : null
+  const isLinkedClip = clipParent?.kind === 'saved-clip'
+  items.push({
+    command: 'clip.split',
+    label: 'Split at playhead',
+    disabled: isLinkedClip
+  })
   // Colour picker — inline 4×8 swatch grid bound to the 16-entry
   // TRACK_PALETTE. Picking a swatch sends `CLIP_COLOR` via
   // setClipColor; the selected outline reflects either the clip's
@@ -220,8 +226,7 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
   // audio-file source — the audio plays identically; only the link
   // is gone (so future edits to the saved-clip stop propagating).
   if (clip) {
-    const parent = library.items.find((i) => i.id === clip.libraryItemId)
-    if (parent?.kind === 'saved-clip') {
+    if (isLinkedClip) {
       items.push({ command: 'clip.unlink', label: 'Unlink from library' })
     }
   }

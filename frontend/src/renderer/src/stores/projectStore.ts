@@ -785,14 +785,19 @@ export const useProjectStore = defineStore('project', {
     splitClipAt(clipId: string, atMs: number): string | null {
       const clip = this.clips[clipId]
       if (!clip) return null
+      const library = useLibraryStore()
+      const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+      if (libItem?.kind === 'saved-clip') {
+        useNotificationsStore().pushError('Linked clips must be edited in the Clip Editor.')
+        log.info('project', `splitClipAt rejected linked clip id=${clipId}`)
+        return null
+      }
       // For warped clips the visible footprint is `nativeDur / ratio`,
       // so the user-visible split position (timeline-time) maps to a
       // source-time offset of `(atMs - clip.startMs) * ratio`. Compute
       // both — `startMs` for the new right-half stays in timeline-time
       // (the visible left edge of the new clip), while `inMs` /
       // `durationMs` must be in source-time for the audio engine.
-      const library = useLibraryStore()
-      const libItem = library.items.find((i) => i.id === clip.libraryItemId)
       const projectBpm = useTransportStore().bpm
       const ratio = isWarpActive({
         warpEnabled: clip.warpEnabled,
