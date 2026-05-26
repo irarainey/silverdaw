@@ -9,6 +9,11 @@ export interface ClipContextMenuItem {
   label: string
   /** When true, the item renders muted and isn't clickable. */
   disabled?: boolean
+  /** Optional tooltip text shown on hover. Use this to disclose
+   *  side-effects or caveats the label can't fit (for example, that
+   *  "Save as sample" bakes the current warp + pitch into a fresh
+   *  independent WAV). */
+  title?: string
   /** Visual rule below the previous item. */
   separatorAbove?: boolean
   /** When provided, the item renders as a label above an inline grid

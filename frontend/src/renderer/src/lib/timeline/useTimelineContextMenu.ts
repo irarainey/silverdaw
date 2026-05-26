@@ -145,7 +145,15 @@ export function useTimelineContextMenu(
     if (clip && isLinkedClip) {
       items.push({ command: 'clip.unlink', label: 'Unlink from library' })
     }
-    items.push({ command: 'clip.saveSample', label: 'Save as sample' })
+    items.push({
+      command: 'clip.saveSample',
+      label: 'Save as sample',
+      title:
+        'Bakes the clip\u2019s current trim, warp, and pitch into a new independent WAV file ' +
+        'under the project\u2019s Samples folder. Re-running it always creates another fresh ' +
+        'sample \u2014 baked samples are not linked back to this clip, so future edits do not ' +
+        'affect previously-baked samples.'
+    })
     return items
   })
 

@@ -149,7 +149,11 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     } else if (item.kind === 'saved-clip') {
         items.push({
             command: 'library.saveSample',
-            label: 'Save as sample'
+            label: 'Save as sample',
+            title:
+                'Bakes the saved clip\u2019s current trim, warp, and pitch into a new independent WAV file. ' +
+                'Re-running it always creates another fresh sample \u2014 baked samples are not linked back ' +
+                'to this clip, so future edits to the saved clip do not affect previously-baked samples.'
         })
     }
     // Saved clips can always be removed — doing so just unlinks any

@@ -160,6 +160,7 @@ onBeforeUnmount(() => {
                 : 'cursor-pointer text-zinc-200 hover:bg-zinc-800 hover:text-zinc-50'
             "
             :disabled="item.disabled"
+            :title="item.title"
             @click="onItemClick(item)"
           >
             {{ item.label }}

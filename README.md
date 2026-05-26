@@ -525,6 +525,14 @@ the project but leaves the WAV file on disk. Warped clips are rendered through
 Rubber Band during the bake so the sample sounds like the clip did on the
 timeline.
 
+> **Re-baking is non-destructive and unlinked.** Every **Save as sample** run
+> creates a *new, independent* WAV — the resulting library item is not linked
+> back to the clip it was baked from. Running it again on the same saved clip
+> always produces a fresh sample (`…-sample-002.wav`, `-003`, …) rather than
+> overwriting the previous one, and future edits to the source clip's trim,
+> warp, or pitch do not propagate to previously-baked samples. To replace an
+> outdated sample, bake a new one and remove the older library entry.
+
 **Renaming** — single-click the name on any library tile (or pick **Rename** from
 the right-click menu) to edit it inline. Saved clips inherit a sensible default name
 based on their source and offset; renaming is the same flow.
