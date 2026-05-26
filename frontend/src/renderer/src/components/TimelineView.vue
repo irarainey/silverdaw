@@ -190,10 +190,15 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
   items.push({ command: 'clip.duplicate', label: 'Duplicate', separatorAbove: true })
   const clipParent = clip ? library.items.find((i) => i.id === clip.libraryItemId) : null
   const isLinkedClip = clipParent?.kind === 'saved-clip'
+  const playheadOverClip =
+    !!clip &&
+    project.selectedTrackId === clip.trackId &&
+    transport.positionMs > clip.startMs &&
+    transport.positionMs < clip.startMs + effectiveClipDurationMs(clip)
   items.push({
     command: 'clip.split',
     label: 'Split at playhead',
-    disabled: isLinkedClip
+    disabled: isLinkedClip || !playheadOverClip
   })
   // Colour picker — inline 4×8 swatch grid bound to the 16-entry
   // TRACK_PALETTE. Picking a swatch sends `CLIP_COLOR` via

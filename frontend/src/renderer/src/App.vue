@@ -676,22 +676,21 @@ function handleMenuAction(action: string): void {
     return
   }
   if (action === 'edit.splitAtPlayhead') {
-    // Split every clip whose timeline window straddles the current
-    // playhead. Same logic as the 'S' accelerator inside the timeline
-    // host — duplicated here so the menu item works even when the
-    // canvas doesn't have keyboard focus.
     const atMs = transport.positionMs
-    const candidateIds = Object.values(project.clips)
-      .filter((c) => {
-        const libItem = library.items.find((i) => i.id === c.libraryItemId)
+    const selectedTrackId = project.selectedTrackId
+    if (!selectedTrackId) return
+    const track = project.tracks.find((candidate) => candidate.id === selectedTrackId)
+    if (!track) return
+    const splitClip = track.clipIds
+      .map((clipId) => project.clips[clipId])
+      .find((clip) => {
+        if (!clip) return false
+        const libItem = library.items.find((i) => i.id === clip.libraryItemId)
         if (libItem?.kind === 'saved-clip') return false
-        const effDur = effectiveClipDurationMs(c)
-        return atMs > c.startMs && atMs < c.startMs + effDur
+        const effDur = effectiveClipDurationMs(clip)
+        return atMs > clip.startMs && atMs < clip.startMs + effDur
       })
-      .map((c) => c.id)
-    for (const id of candidateIds) {
-      project.splitClipAt(id, atMs)
-    }
+    if (splitClip) project.splitClipAt(splitClip.id, atMs)
     return
   }
   if (action === 'edit.cut') {

@@ -254,10 +254,7 @@ function onKeydown(ev: KeyboardEvent): void {
                 type="checkbox"
                 class="h-3.5 w-3.5 cursor-pointer"
               >
-              <span class="font-medium">Enable warp</span>
-              <span class="text-zinc-500">
-                ({{ draftEnabled ? 'on' : 'bypassed' }})
-              </span>
+              <span class="font-medium">Enable Warp</span>
             </template>
             <template v-else>
               <span class="font-medium">Pitch shift</span>
