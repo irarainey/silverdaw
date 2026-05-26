@@ -56,7 +56,8 @@ const app = useAppStore()
 const transport = useTransportStore()
 const audioDevices = useAudioDeviceStore()
 
-const recents = computed(() => app.recentProjects)
+const MAX_STARTUP_RECENTS = 3
+const recents = computed(() => app.recentProjects.slice(0, MAX_STARTUP_RECENTS))
 
 // True when the bridge initial-connect timer expired and the backend
 // never showed up. The whole screen swaps to a focused error mode.
@@ -332,7 +333,7 @@ onBeforeUnmount(() => {
           <div class="px-1 text-xs font-medium uppercase tracking-wider text-zinc-500">
             Recent Projects
           </div>
-          <ul class="silverdaw-scroll max-h-72 overflow-y-auto rounded border border-zinc-800 bg-zinc-900/50">
+          <ul class="rounded border border-zinc-800 bg-zinc-900/50">
             <li
               v-for="(path, idx) in recents"
               :key="path"
