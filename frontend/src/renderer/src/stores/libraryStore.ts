@@ -9,10 +9,12 @@
 
 import { defineStore } from 'pinia'
 import { effectiveClipDurationMs, effectiveClipTempoRatio, isClipTempoWarpActive, useProjectStore } from '@/stores/projectStore'
+import { useTransportStore } from '@/stores/transportStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { shiftedKey } from '@/lib/pitchKey'
+import { effectiveDurationMs } from '@/lib/warp'
 import type { Clip } from '@/stores/projectStore'
 import type { ClipWarpMode, LibraryItemKind } from '@shared/bridge-protocol'
 
@@ -787,6 +789,215 @@ export const useLibraryStore = defineStore('library', {
         `updateSavedClipTrim id=${itemId} in=${trimIn} dur=${trimDur} propagatedTo=${linkedClips.length}`
       )
       return { ok: true }
+    },
+
+    updateSavedClipEdit(
+      itemId: string,
+      patch: {
+        inMs?: number
+        durationMs?: number
+        warpEnabled?: boolean
+        warpMode?: ClipWarpMode
+        tempoRatio?: number | null
+        semitones?: number
+        cents?: number
+      }
+    ): { ok: boolean; conflictingTrackNames?: string[] } {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item || item.kind !== 'saved-clip') return { ok: false }
+
+      const trimIn = Math.max(0, Math.floor(patch.inMs ?? item.derivedFrom?.inMs ?? 0))
+      const trimDur = Math.max(0, Math.floor(patch.durationMs ?? item.derivedFrom?.durationMs ?? item.durationMs))
+      if (trimDur <= 0) return { ok: false }
+
+      const nextWarpEnabled = patch.warpEnabled ?? item.warpEnabled
+      const nextWarpMode = patch.warpMode ?? item.warpMode
+      const nextTempoRatio = patch.tempoRatio !== undefined
+        ? (patch.tempoRatio === null ? undefined : patch.tempoRatio)
+        : item.tempoRatio
+      const nextSemitones = patch.semitones ?? item.semitones
+      const nextCents = patch.cents ?? item.cents
+
+      const project = useProjectStore()
+      const directLinkedClips = Object.values(project.clips).filter(
+        (c) => c?.libraryItemId === itemId
+      )
+      const sourceItemId = item.derivedFrom?.sourceItemId
+      const currentInMs = item.derivedFrom?.inMs ?? 0
+      const currentDurationMs = item.derivedFrom?.durationMs ?? item.durationMs
+      const implicitLinkedClips =
+        sourceItemId
+          ? Object.values(project.clips).filter(
+              (c) =>
+                c?.libraryItemId === sourceItemId &&
+                Math.abs(c.inMs - currentInMs) < 0.5 &&
+                Math.abs(c.durationMs - currentDurationMs) < 0.5
+            )
+          : []
+      const linkedClips = [...directLinkedClips, ...implicitLinkedClips]
+
+      const source = sourceItemId
+        ? this.items.find((candidate) => candidate.id === sourceItemId)
+        : undefined
+      const nextEffectiveDuration = effectiveDurationMs(trimDur, {
+        warpEnabled: nextWarpEnabled,
+        tempoRatio: nextTempoRatio,
+        sourceBpm: source?.bpm,
+        projectBpm: useTransportStore().bpm
+      })
+      const conflictingTrackNames = new Set<string>()
+      for (const c of linkedClips) {
+        if (!c) continue
+        const track = project.tracks.find((t) => t.id === c.trackId)
+        if (!track) continue
+        const newEnd = c.startMs + nextEffectiveDuration
+        let collides = false
+        for (const otherId of track.clipIds) {
+          if (otherId === c.id) continue
+          const other = project.clips[otherId]
+          if (!other) continue
+          const otherEnd = other.startMs + effectiveClipDurationMs(other)
+          if (c.startMs < otherEnd && newEnd > other.startMs) {
+            collides = true
+            break
+          }
+        }
+        if (collides) conflictingTrackNames.add(track.name)
+      }
+      if (conflictingTrackNames.size > 0) {
+        log.warn(
+          'library',
+          `updateSavedClipEdit refused (collisions on ${[...conflictingTrackNames].join(', ')}) id=${itemId}`
+        )
+        return { ok: false, conflictingTrackNames: [...conflictingTrackNames] }
+      }
+
+      const next = item.derivedFrom
+        ? { ...item.derivedFrom, inMs: trimIn, durationMs: trimDur }
+        : { sourceItemId: '', sourceClipId: '', inMs: trimIn, durationMs: trimDur }
+      const trimChanged = Math.abs(trimIn - currentInMs) >= 0.5 || Math.abs(trimDur - currentDurationMs) >= 0.5
+      item.derivedFrom = next
+      item.durationMs = trimDur
+      if (nextWarpEnabled === undefined) delete item.warpEnabled
+      else item.warpEnabled = nextWarpEnabled
+      if (nextWarpMode === undefined) delete item.warpMode
+      else item.warpMode = nextWarpMode
+      if (nextTempoRatio === undefined) delete item.tempoRatio
+      else item.tempoRatio = nextTempoRatio
+      if (nextSemitones === undefined) delete item.semitones
+      else item.semitones = nextSemitones
+      if (nextCents === undefined) delete item.cents
+      else item.cents = nextCents
+      item.key = shiftedKey(source?.key ?? source?.metadata?.key, item.semitones, item.cents) ?? source?.key ?? item.key
+
+      sendBridge('LIBRARY_ADD', {
+        itemId: item.id,
+        filePath: item.filePath,
+        kind: item.kind,
+        name: item.name,
+        fileName: item.fileName,
+        durationMs: item.durationMs,
+        sampleRate: item.sampleRate,
+        channelCount: item.channelCount,
+        key: item.key,
+        sourceItemId: next.sourceItemId,
+        sourceClipId: next.sourceClipId,
+        sourceInMs: next.inMs,
+        sourceDurationMs: next.durationMs,
+        collapsed: item.collapsed,
+        warpEnabled: item.warpEnabled,
+        warpMode: item.warpMode,
+        tempoRatio: item.tempoRatio,
+        semitones: item.semitones,
+        cents: item.cents
+      })
+
+      for (const c of linkedClips) {
+        if (!c) continue
+        let shouldSendTrim = trimChanged
+        if (c.libraryItemId !== itemId) {
+          c.libraryItemId = itemId
+          sendBridge('CLIP_REBIND', { clipId: c.id, libraryItemId: itemId })
+          shouldSendTrim = true
+        }
+        c.inMs = trimIn
+        c.durationMs = trimDur
+        if (shouldSendTrim) {
+          sendBridge('CLIP_TRIM', {
+            clipId: c.id,
+            startMs: c.startMs,
+            inMs: trimIn,
+            durationMs: trimDur
+          })
+        }
+        project.setClipWarp(c.id, {
+          ...(item.warpEnabled !== undefined ? { warpEnabled: item.warpEnabled } : {}),
+          ...(item.warpMode !== undefined ? { warpMode: item.warpMode } : {}),
+          tempoRatio: item.tempoRatio ?? null,
+          ...(item.semitones !== undefined ? { semitones: item.semitones } : {}),
+          ...(item.cents !== undefined ? { cents: item.cents } : {})
+        })
+      }
+      if (linkedClips.length > 0) project.peaksRevision++
+      log.info('library', `updateSavedClipEdit id=${itemId} propagatedTo=${linkedClips.length}`)
+      return { ok: true }
+    },
+
+    updateSavedClipWarp(
+      itemId: string,
+      patch: {
+        warpEnabled?: boolean
+        warpMode?: ClipWarpMode
+        tempoRatio?: number | null
+        semitones?: number
+        cents?: number
+      }
+    ): boolean {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item || item.kind !== 'saved-clip') return false
+      if (patch.warpEnabled !== undefined) item.warpEnabled = patch.warpEnabled
+      if (patch.warpMode !== undefined) item.warpMode = patch.warpMode
+      if (patch.tempoRatio !== undefined) item.tempoRatio = patch.tempoRatio === null ? undefined : patch.tempoRatio
+      if (patch.semitones !== undefined) item.semitones = patch.semitones
+      if (patch.cents !== undefined) item.cents = patch.cents
+      const source = item.derivedFrom?.sourceItemId
+        ? this.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId)
+        : undefined
+      item.key = shiftedKey(source?.key ?? source?.metadata?.key, item.semitones, item.cents) ?? source?.key ?? item.key
+
+      sendBridge('LIBRARY_ADD', {
+        itemId: item.id,
+        filePath: item.filePath,
+        kind: item.kind,
+        name: item.name,
+        fileName: item.fileName,
+        durationMs: item.durationMs,
+        sampleRate: item.sampleRate,
+        channelCount: item.channelCount,
+        key: item.key,
+        sourceItemId: item.derivedFrom?.sourceItemId,
+        sourceClipId: item.derivedFrom?.sourceClipId,
+        sourceInMs: item.derivedFrom?.inMs,
+        sourceDurationMs: item.derivedFrom?.durationMs,
+        collapsed: item.collapsed,
+        warpEnabled: item.warpEnabled,
+        warpMode: item.warpMode,
+        tempoRatio: item.tempoRatio,
+        semitones: item.semitones,
+        cents: item.cents
+      })
+
+      const project = useProjectStore()
+      let propagated = 0
+      for (const clipId in project.clips) {
+        const clip = project.clips[clipId]
+        if (!clip || clip.libraryItemId !== itemId) continue
+        project.setClipWarp(clipId, patch)
+        propagated++
+      }
+      if (propagated > 0) project.peaksRevision++
+      log.info('library', `updateSavedClipWarp id=${itemId} propagatedTo=${propagated}`)
+      return true
     },
 
     /**

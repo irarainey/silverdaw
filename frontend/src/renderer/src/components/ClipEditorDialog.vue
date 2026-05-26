@@ -8,6 +8,9 @@ import { libraryItemDisplayName, libraryItemSourceBpm, useLibraryStore, type Lib
 import { formatTime } from '@/lib/musicTime'
 import { effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { keyBadgeClass } from '@/lib/keyBadge'
+import { keyPresetsFor, shiftedKey } from '@/lib/pitchKey'
+import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
   open: boolean
@@ -37,16 +40,140 @@ const sourceItem = computed<LibraryItem | null>(() => {
 })
 
 const sourceDurationMs = computed(() => sourceItem.value?.durationMs ?? 0)
+const sourceBpm = computed(() => {
+  const item = props.item
+  if (!item) return undefined
+  return libraryItemSourceBpm(item, library.items)
+})
 const warpActive = computed(() => {
   const item = props.item
   if (!item) return false
+  if (item.kind === 'saved-clip') return draftTempoWarpActive.value
   return isWarpActive({
     warpEnabled: item.warpEnabled,
     tempoRatio: item.tempoRatio,
-    sourceBpm: libraryItemSourceBpm(item, library.items),
+    sourceBpm: sourceBpm.value,
     projectBpm: transport.bpm
   })
 })
+
+const draftTempoEnabled = ref(false)
+const draftMode = ref<ClipWarpMode>('rhythmic')
+const draftTempoPinned = ref(false)
+const draftPinnedBpm = ref(120)
+const draftSemitones = ref(0)
+const draftCents = ref(0)
+
+const sourceKey = computed(() => {
+  const item = props.item
+  if (!item) return undefined
+  if (item.kind === 'audio-file') return item.key ?? item.metadata?.key
+  if (item.derivedFrom?.sourceItemId) {
+    const source = library.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId)
+    return source?.key ?? source?.metadata?.key
+  }
+  return item.key ?? item.metadata?.key
+})
+const keyPresets = computed(() => keyPresetsFor(sourceKey.value))
+const currentPitchKey = computed(() => shiftedKey(sourceKey.value, draftSemitones.value, draftCents.value))
+const tempoFollowsProject = computed(() => !draftTempoPinned.value)
+
+function clampNumber(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return 0
+  return Math.max(lo, Math.min(hi, v))
+}
+
+function pitchNeedsProcessor(semitonesValue: number | undefined, centsValue: number | undefined): boolean {
+  return (semitonesValue ?? 0) !== 0 || (centsValue ?? 0) !== 0
+}
+
+function tempoRatioFromPinnedBpm(): number | undefined {
+  const src = sourceBpm.value
+  if (typeof src !== 'number' || src <= 0) return undefined
+  const bpm = clampNumber(draftPinnedBpm.value, 20, 300)
+  return Math.max(0.25, Math.min(4, bpm / src))
+}
+
+const draftEffectiveRatio = computed(() => {
+  if (!draftTempoEnabled.value) return 1
+  return effectiveTempoRatio({
+    tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : undefined,
+    sourceBpm: sourceBpm.value,
+    projectBpm: transport.bpm
+  })
+})
+
+const draftEffectiveBpm = computed(() => {
+  const src = sourceBpm.value
+  if (typeof src !== 'number' || src <= 0) return null
+  return Math.round(src * draftEffectiveRatio.value * 100) / 100
+})
+
+const draftTempoWarpActive = computed(() =>
+  isWarpActive({
+    warpEnabled: draftTempoEnabled.value,
+    tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : undefined,
+    sourceBpm: sourceBpm.value,
+    projectBpm: transport.bpm
+  })
+)
+
+const draftProcessorEnabled = computed(() =>
+  draftTempoEnabled.value || pitchNeedsProcessor(draftSemitones.value, draftCents.value)
+)
+
+function previewTempoRatio(): number | undefined {
+  if (draftTempoEnabled.value) return draftEffectiveRatio.value
+  return pitchNeedsProcessor(draftSemitones.value, draftCents.value) ? 1 : undefined
+}
+
+function currentItemHasTempoWarp(item: LibraryItem): boolean {
+  const pitchOnlyProcessor = pitchNeedsProcessor(item.semitones, item.cents) && item.tempoRatio === 1
+  return item.warpEnabled === true && !pitchOnlyProcessor
+}
+
+function initialiseWarpDraft(): void {
+  const item = props.item
+  if (!item || item.kind !== 'saved-clip') {
+    draftTempoEnabled.value = false
+    draftMode.value = 'rhythmic'
+    draftTempoPinned.value = false
+    draftPinnedBpm.value = Math.round(transport.bpm * 100) / 100
+    draftSemitones.value = 0
+    draftCents.value = 0
+    return
+  }
+  draftTempoEnabled.value = currentItemHasTempoWarp(item)
+  draftMode.value = item.warpMode ?? 'rhythmic'
+  draftTempoPinned.value = typeof item.tempoRatio === 'number' && item.tempoRatio > 0 && item.tempoRatio !== 1
+  const src = sourceBpm.value
+  if (draftTempoPinned.value && typeof src === 'number' && src > 0 && typeof item.tempoRatio === 'number') {
+    draftPinnedBpm.value = Math.round(src * item.tempoRatio * 100) / 100
+  } else {
+    draftPinnedBpm.value = Math.round(transport.bpm * 100) / 100
+  }
+  draftSemitones.value = item.semitones ?? 0
+  draftCents.value = item.cents ?? 0
+}
+
+function followProjectBpm(): void {
+  draftTempoPinned.value = false
+}
+
+function pinTempo(): void {
+  const src = sourceBpm.value
+  const proj = transport.bpm
+  if (typeof src !== 'number' || src <= 0 || typeof proj !== 'number' || proj <= 0) return
+  draftTempoPinned.value = true
+  if (!Number.isFinite(draftPinnedBpm.value) || draftPinnedBpm.value <= 0) {
+    draftPinnedBpm.value = Math.round(proj * 100) / 100
+  }
+}
+
+function applyKeyPreset(semitones: number): void {
+  draftSemitones.value = semitones
+  draftCents.value = 0
+}
 
 // The Clip Editor opens with the visible *view bounds* limited to the
 // clip's window so the user isn't presented with the full source for a
@@ -102,6 +229,7 @@ const MAX_ZOOM = 64
 const zoom = ref(1)
 const scrollMs = ref(0)
 const canvasCssWidth = ref(0)
+let lastPreviewLoadKey = ''
 
 const basePxPerMs = computed(() => {
   const item = props.item
@@ -259,9 +387,28 @@ const hasSelectionChanged = computed(() => {
   return false
 })
 
-const canApplyTrim = computed(() => {
+const hasWarpPitchChanged = computed(() => {
   const item = props.item
-  return !!item && item.kind === 'saved-clip' && hasSelectionChanged.value
+  if (!item || item.kind !== 'saved-clip') return false
+  const currentTempoEnabled = currentItemHasTempoWarp(item)
+  const currentTempoPinned = typeof item.tempoRatio === 'number' && item.tempoRatio > 0 && item.tempoRatio !== 1
+  const currentPinnedBpm =
+    currentTempoPinned && typeof sourceBpm.value === 'number' && sourceBpm.value > 0 && typeof item.tempoRatio === 'number'
+      ? Math.round(sourceBpm.value * item.tempoRatio * 100) / 100
+      : Math.round(transport.bpm * 100) / 100
+  return (
+    draftTempoEnabled.value !== currentTempoEnabled ||
+    draftMode.value !== (item.warpMode ?? 'rhythmic') ||
+    draftTempoPinned.value !== currentTempoPinned ||
+    Math.abs(draftPinnedBpm.value - currentPinnedBpm) > 0.005 ||
+    draftSemitones.value !== (item.semitones ?? 0) ||
+    draftCents.value !== (item.cents ?? 0)
+  )
+})
+
+const canSaveChanges = computed(() => {
+  const item = props.item
+  return !!item && item.kind === 'saved-clip' && (hasSelectionChanged.value || hasWarpPitchChanged.value)
 })
 
 // Non-destructive crop: snap the cropped working view to the current
@@ -310,6 +457,7 @@ watch(
       viewExpanded.value = false
       resetZoom()
       initSelectionForItem()
+      initialiseWarpDraft()
       loopEnabled.value = false
       lastHiResRequestKey = ''
       cropUndoStack.value = []
@@ -324,6 +472,7 @@ watch(
       loadPreviewForView()
     } else {
       preview.unload()
+      lastPreviewLoadKey = ''
       library.setEditorHiResPeaks(null)
       lastHiResRequestKey = ''
       cropUndoStack.value = []
@@ -338,13 +487,43 @@ watch(
     if (!props.open) return
     viewExpanded.value = false
     resetZoom()
+    lastPreviewLoadKey = ''
     initSelectionForItem()
+    initialiseWarpDraft()
     lastHiResRequestKey = ''
     cropUndoStack.value = []
     cropRedoStack.value = []
     library.setEditorHiResPeaks(null)
     drawWaveform()
     loadPreviewForView()
+  }
+)
+
+watch(
+  [draftTempoEnabled, draftMode, draftTempoPinned, draftPinnedBpm, draftSemitones, draftCents],
+  () => {
+    if (!props.open || props.item?.kind !== 'saved-clip' || !preview.isLoaded) return
+    preview.setWarp({
+      warpEnabled: draftProcessorEnabled.value,
+      warpMode: draftMode.value,
+      tempoRatio: previewTempoRatio() ?? null,
+      semitones: clampNumber(draftSemitones.value, -12, 12),
+      cents: clampNumber(draftCents.value, -100, 100)
+    })
+  }
+)
+
+watch(
+  () => preview.isLoaded,
+  (loaded) => {
+    if (!loaded || !props.open || props.item?.kind !== 'saved-clip') return
+    preview.setWarp({
+      warpEnabled: draftProcessorEnabled.value,
+      warpMode: draftMode.value,
+      tempoRatio: previewTempoRatio() ?? null,
+      semitones: clampNumber(draftSemitones.value, -12, 12),
+      cents: clampNumber(draftCents.value, -100, 100)
+    })
   }
 )
 
@@ -546,26 +725,48 @@ function loadPreviewForView(): void {
   // so the preview voice plays the clip the way the timeline will.
   // Audio-file items don't carry warp metadata, so the spread is a
   // no-op for them.
-  const sourceBpm = libraryItemSourceBpm(item, library.items)
+  const previewSourceBpm = libraryItemSourceBpm(item, library.items)
   const tempoRatio = isWarpActive({
     warpEnabled: item.warpEnabled,
     tempoRatio: item.tempoRatio,
-    sourceBpm,
+    sourceBpm: previewSourceBpm,
     projectBpm: transport.bpm
   })
     ? effectiveTempoRatio({
         tempoRatio: item.tempoRatio,
-        sourceBpm,
+        sourceBpm: previewSourceBpm,
         projectBpm: transport.bpm
       })
     : item.tempoRatio
-  preview.load(src.id, viewInMs.value, viewDurationMs.value, {
-    warpEnabled: item.warpEnabled,
-    warpMode: item.warpMode,
-    tempoRatio,
-    semitones: item.semitones,
-    cents: item.cents
+  const warp = item.kind === 'saved-clip'
+    ? {
+        warpEnabled: draftProcessorEnabled.value,
+        warpMode: draftMode.value,
+        tempoRatio: previewTempoRatio(),
+        semitones: draftSemitones.value,
+        cents: draftCents.value
+      }
+    : {
+        warpEnabled: item.warpEnabled,
+        warpMode: item.warpMode,
+        tempoRatio,
+        semitones: item.semitones,
+        cents: item.cents
+      }
+  const loadKey = JSON.stringify({
+    sourceId: src.id,
+    inMs: viewInMs.value,
+    durationMs: viewDurationMs.value,
+    warp
   })
+  if (loadKey === lastPreviewLoadKey) return
+  lastPreviewLoadKey = loadKey
+  preview.load(
+    src.id,
+    viewInMs.value,
+    viewDurationMs.value,
+    warp
+  )
 }
 
 // On-demand high-resolution peaks for the Clip Editor. The default
@@ -1216,15 +1417,34 @@ function redoCropLocal(): void {
   restoreCropSnapshot(snap)
 }
 
-function onApplyTrim(): void {
+function savedClipWarpPatch(): {
+  warpEnabled: boolean
+  warpMode: ClipWarpMode
+  tempoRatio: number | null
+  semitones: number
+  cents: number
+} {
+  const nextSemitones = clampNumber(draftSemitones.value, -12, 12)
+  const nextCents = clampNumber(draftCents.value, -100, 100)
+  const pitchActive = pitchNeedsProcessor(nextSemitones, nextCents)
+  return {
+    warpEnabled: draftTempoEnabled.value || pitchActive,
+    warpMode: draftMode.value,
+    tempoRatio: draftTempoEnabled.value
+      ? (draftTempoPinned.value ? tempoRatioFromPinnedBpm() ?? null : null)
+      : (pitchActive ? 1 : null),
+    semitones: nextSemitones,
+    cents: nextCents
+  }
+}
+
+function onSaveChanges(): void {
   const item = props.item
   if (!item) return
-  // Apply trim commits whatever the user is currently looking at.
-  // After Crop operations the cropped view IS the working state; if
-  // there's a still-narrower selection inside it, use that as the
-  // commit target instead (matches the user's mental "save the
-  // selection" model). Falls back to the cropped view bounds when
-  // there's no narrowing selection.
+  if (item.kind !== 'saved-clip') return
+  // Save commits the whole Clip Editor draft atomically. Until this
+  // point, trim/crop/warp/pitch only affect the local view and preview
+  // voice; linked timeline clips and the library item remain untouched.
   const targetIn =
     canApplyCrop.value || selectionDurationMs.value > 0
       ? selectionInMs.value
@@ -1233,16 +1453,20 @@ function onApplyTrim(): void {
     canApplyCrop.value || selectionDurationMs.value > 0
       ? selectionDurationMs.value
       : cropViewDurationMs.value
-  const result = library.updateSavedClipTrim(item.id, targetIn, targetDur)
+  const result = library.updateSavedClipEdit(item.id, {
+    inMs: targetIn,
+    durationMs: targetDur,
+    ...savedClipWarpPatch()
+  })
   if (result.ok) {
-    notifications.pushInfo(`Updated trim for "${libraryItemDisplayName(item)}".`)
+    notifications.pushInfo(`Saved changes for "${libraryItemDisplayName(item)}".`)
     emit('close')
   } else if (result.conflictingTrackNames && result.conflictingTrackNames.length > 0) {
     notifications.pushError(
-      `Cannot apply trim — it would overlap clips on ${result.conflictingTrackNames.join(', ')}.`
+      `Cannot save changes — they would overlap clips on ${result.conflictingTrackNames.join(', ')}.`
     )
   } else {
-    notifications.pushError('Cannot apply trim — invalid selection.')
+    notifications.pushError('Cannot save changes — invalid edit.')
   }
 }
 
@@ -1379,94 +1603,299 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
           <div class="justify-self-end" />
         </header>
 
-        <div class="flex flex-1 flex-col gap-3 px-5 py-4">
-          <canvas
-            ref="waveformEl"
-            class="h-[min(364px,36vh)] w-full cursor-crosshair rounded border border-zinc-800 bg-zinc-950"
-            @mousedown="onCanvasMouseDown"
-            @wheel="onCanvasWheel"
-          />
-          <div
-            class="relative h-2 w-full cursor-pointer rounded bg-zinc-900"
-            :title="`Scroll (zoom ${zoomPercent}%)`"
-            @mousedown="onScrollbarMouseDown"
-          >
-            <div
-              class="absolute top-0 h-full rounded bg-zinc-600 hover:bg-zinc-500"
-              :style="{
-                left: viewDurationMs > 0 ? `${(scrollMs / viewDurationMs) * 100}%` : '0%',
-                width: viewDurationMs > 0
-                  ? `${Math.max(2, (visibleDurationMs / viewDurationMs) * 100)}%`
-                  : '100%'
-              }"
+        <div class="flex min-h-0 flex-1 gap-4 px-5 py-4">
+          <div class="flex min-w-0 flex-1 flex-col gap-3">
+            <canvas
+              ref="waveformEl"
+              class="h-[min(364px,36vh)] w-full cursor-crosshair rounded border border-zinc-800 bg-zinc-950"
+              @mousedown="onCanvasMouseDown"
+              @wheel="onCanvasWheel"
             />
-          </div>
-          <div class="flex items-center justify-between gap-4 text-xs text-zinc-400">
-            <div class="flex min-w-0 items-center gap-6">
-              <div>
-                <span class="text-zinc-500">Selection start:</span>
-                <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionInMs - viewInMs) }}</span>
+            <div
+              class="relative h-2 w-full cursor-pointer rounded bg-zinc-900"
+              :title="`Scroll (zoom ${zoomPercent}%)`"
+              @mousedown="onScrollbarMouseDown"
+            >
+              <div
+                class="absolute top-0 h-full rounded bg-zinc-600 hover:bg-zinc-500"
+                :style="{
+                  left: viewDurationMs > 0 ? `${(scrollMs / viewDurationMs) * 100}%` : '0%',
+                  width: viewDurationMs > 0
+                    ? `${Math.max(2, (visibleDurationMs / viewDurationMs) * 100)}%`
+                    : '100%'
+                }"
+              />
+            </div>
+            <div class="flex items-center justify-between gap-4 text-xs text-zinc-400">
+              <div class="flex min-w-0 items-center gap-6">
+                <div>
+                  <span class="text-zinc-500">Selection start:</span>
+                  <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionInMs - viewInMs) }}</span>
+                </div>
+                <div>
+                  <span class="text-zinc-500">Selection end:</span>
+                  <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionEndMs - viewInMs) }}</span>
+                </div>
+                <div>
+                  <span class="text-zinc-500">Length:</span>
+                  <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionDurationMs) }}</span>
+                </div>
+                <div>
+                  <span class="text-zinc-500">Playhead:</span>
+                  <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(playheadAbsMs - viewInMs) }}</span>
+                </div>
               </div>
-              <div>
-                <span class="text-zinc-500">Selection end:</span>
-                <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionEndMs - viewInMs) }}</span>
-              </div>
-              <div>
-                <span class="text-zinc-500">Length:</span>
-                <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionDurationMs) }}</span>
-              </div>
-              <div>
-                <span class="text-zinc-500">Playhead:</span>
-                <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(playheadAbsMs - viewInMs) }}</span>
+              <div class="flex shrink-0 items-center gap-1">
+                <!-- Non-destructive crop: narrows the working view to the
+                     current selection so the user can audition/tweak before
+                     committing. Local Ctrl+Z / Ctrl+Y undo/redo while the
+                     dialog is open. Closing without Save discards every crop. -->
+                <button
+                  type="button"
+                  class="rounded px-2 py-1 text-[11px] font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  :disabled="!canApplyCrop"
+                  title="Crop the working view to the selection (Ctrl+Z to undo)"
+                  @click="onApplyCrop"
+                >
+                  Crop
+                </button>
+                <button
+                  v-if="item.kind === 'saved-clip'"
+                  type="button"
+                  class="rounded px-2 py-1 text-[11px] font-medium"
+                  :class="
+                    viewExpanded
+                      ? 'bg-blue-600 text-white hover:bg-blue-500'
+                      : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+                  "
+                  :title="
+                    viewExpanded
+                      ? 'Showing full source — click to crop back to the clip'
+                      : 'Show full source so you can extend the clip past its current bounds'
+                  "
+                  @click="viewExpanded = !viewExpanded"
+                >
+                  {{ viewExpanded ? 'Clip' : 'Source' }}
+                </button>
+                <button
+                  type="button"
+                  class="ml-1 flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Zoom out (-)"
+                  :disabled="zoom <= 1.0001"
+                  @click="zoomOut"
+                >
+                  <span class="text-base leading-none">−</span>
+                </button>
+                <button
+                  type="button"
+                  class="rounded bg-zinc-800 px-2 py-1 font-mono text-[11px] tabular-nums text-zinc-200 hover:bg-zinc-700"
+                  title="Reset zoom (0)"
+                  @click="resetZoom"
+                >
+                  {{ zoomPercent }}%
+                </button>
+                <button
+                  type="button"
+                  class="flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Zoom in (+)"
+                  :disabled="zoom >= MAX_ZOOM - 0.01"
+                  @click="zoomIn"
+                >
+                  <span class="text-base leading-none">+</span>
+                </button>
               </div>
             </div>
-            <div class="flex shrink-0 items-center gap-1">
-              <button
-                v-if="item.kind === 'saved-clip'"
-                type="button"
-                class="rounded px-2 py-1 text-[11px] font-medium"
-                :class="
-                  viewExpanded
-                    ? 'bg-blue-600 text-white hover:bg-blue-500'
-                    : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
-                "
-                :title="
-                  viewExpanded
-                    ? 'Showing full source — click to crop back to the clip'
-                    : 'Show full source so you can extend the clip past its current bounds'
-                "
-                @click="viewExpanded = !viewExpanded"
-              >
-                {{ viewExpanded ? 'Clip' : 'Source' }}
-              </button>
-              <button
-                type="button"
-                class="ml-1 flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-                title="Zoom out (-)"
-                :disabled="zoom <= 1.0001"
-                @click="zoomOut"
-              >
-                <span class="text-base leading-none">−</span>
-              </button>
-              <button
-                type="button"
-                class="rounded bg-zinc-800 px-2 py-1 font-mono text-[11px] tabular-nums text-zinc-200 hover:bg-zinc-700"
-                title="Reset zoom (0)"
-                @click="resetZoom"
-              >
-                {{ zoomPercent }}%
-              </button>
-              <button
-                type="button"
-                class="flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-                title="Zoom in (+)"
-                :disabled="zoom >= MAX_ZOOM - 0.01"
-                @click="zoomIn"
-              >
-                <span class="text-base leading-none">+</span>
-              </button>
-            </div>
           </div>
+
+          <aside
+            v-if="item.kind === 'saved-clip'"
+            class="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto rounded border border-zinc-800 bg-zinc-950/40 p-4 text-xs"
+          >
+            <div>
+              <h3 class="text-sm font-semibold text-zinc-100">
+                Clip settings
+              </h3>
+              <p class="mt-1 text-[11px] leading-4 text-zinc-500">
+                Changes are preview-only until Save. Cancel leaves the saved clip and linked timeline clips untouched.
+              </p>
+            </div>
+
+            <section class="rounded border border-zinc-800 bg-zinc-900/70 p-3">
+              <label class="flex items-center gap-2 text-zinc-200">
+                <input
+                  v-model="draftTempoEnabled"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 cursor-pointer"
+                >
+                <span class="font-medium">Enable Warp</span>
+              </label>
+
+              <div class="mt-3 grid grid-cols-2 gap-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-zinc-400">
+                <div>
+                  <div class="text-[10px] uppercase tracking-wider text-zinc-500">
+                    Source BPM
+                  </div>
+                  <div class="font-mono text-zinc-200">
+                    {{ sourceBpm ? sourceBpm.toFixed(2) : '—' }}
+                  </div>
+                </div>
+                <div>
+                  <div class="text-[10px] uppercase tracking-wider text-zinc-500">
+                    Effective BPM
+                  </div>
+                  <div class="font-mono text-zinc-200">
+                    {{ draftEffectiveBpm !== null ? draftEffectiveBpm.toFixed(2) : '—' }}
+                    <span class="ml-1 text-[10px] text-zinc-500">
+                      ({{ draftEffectiveRatio.toFixed(2) }}×)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <fieldset
+                class="mt-3 flex flex-col gap-1"
+                :disabled="!draftTempoEnabled"
+                :class="!draftTempoEnabled ? 'opacity-50' : ''"
+              >
+                <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
+                  Mode
+                </legend>
+                <div class="flex gap-1">
+                  <button
+                    v-for="m in (['rhythmic', 'tonal', 'complex'] as ClipWarpMode[])"
+                    :key="m"
+                    type="button"
+                    class="flex-1 rounded border px-2 py-1 text-xs capitalize transition-colors"
+                    :class="draftMode === m
+                      ? 'border-sky-500 bg-sky-600/30 text-zinc-100'
+                      : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                    "
+                    @click="draftMode = m"
+                  >
+                    {{ m }}
+                  </button>
+                </div>
+              </fieldset>
+
+              <fieldset
+                class="mt-3 flex flex-col gap-1"
+                :disabled="!draftTempoEnabled || !sourceBpm"
+                :class="!draftTempoEnabled || !sourceBpm ? 'opacity-50' : ''"
+              >
+                <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
+                  Tempo
+                </legend>
+                <label class="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    :checked="tempoFollowsProject"
+                    @change="followProjectBpm()"
+                  >
+                  <span class="text-zinc-200">Follow project BPM</span>
+                  <span class="ml-auto text-[10px] text-zinc-500">
+                    ({{ transport.bpm.toFixed(2) }})
+                  </span>
+                </label>
+                <label class="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    :checked="!tempoFollowsProject"
+                    @change="pinTempo()"
+                  >
+                  <span class="text-zinc-200">Pin to</span>
+                  <input
+                    v-model.number="draftPinnedBpm"
+                    type="number"
+                    min="20"
+                    max="300"
+                    step="0.01"
+                    :disabled="tempoFollowsProject"
+                    class="w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+                  >
+                  <span class="text-[10px] text-zinc-500">BPM</span>
+                </label>
+              </fieldset>
+            </section>
+
+            <section class="rounded border border-zinc-800 bg-zinc-900/70 p-3">
+              <div class="font-medium text-zinc-200">
+                Pitch shift
+              </div>
+              <fieldset class="mt-3 flex flex-col gap-2">
+                <label class="flex items-center gap-2">
+                  <span class="w-16 text-zinc-400">Semitones</span>
+                  <input
+                    v-model.number="draftSemitones"
+                    type="range"
+                    min="-12"
+                    max="12"
+                    step="1"
+                    class="pitch-range-input h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
+                  >
+                  <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
+                    {{ draftSemitones > 0 ? '+' : '' }}{{ draftSemitones }}
+                  </span>
+                </label>
+                <label class="flex items-center gap-2">
+                  <span class="w-16 text-zinc-400">Cents</span>
+                  <input
+                    v-model.number="draftCents"
+                    type="range"
+                    min="-100"
+                    max="100"
+                    step="1"
+                    class="pitch-range-input h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
+                  >
+                  <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
+                    {{ draftCents > 0 ? '+' : '' }}{{ draftCents }}
+                  </span>
+                </label>
+              </fieldset>
+
+              <div
+                v-if="currentPitchKey"
+                class="mt-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-[11px] text-zinc-400"
+              >
+                Current pitch:
+                <span :class="keyBadgeClass(currentPitchKey)">{{ currentPitchKey }}</span>
+              </div>
+
+              <div class="mt-3 rounded border border-zinc-800 bg-zinc-950/50 p-3">
+                <div class="mb-2 flex items-center justify-between gap-2">
+                  <div class="text-[10px] uppercase tracking-wider text-zinc-500">
+                    Key presets
+                  </div>
+                  <div
+                    v-if="sourceKey"
+                    class="text-[10px] text-zinc-500"
+                  >
+                    Source: <span :class="keyBadgeClass(sourceKey)">{{ sourceKey }}</span>
+                  </div>
+                </div>
+                <div
+                  v-if="keyPresets.length > 0"
+                  class="grid grid-cols-4 gap-1"
+                >
+                  <button
+                    v-for="preset in keyPresets"
+                    :key="preset.note"
+                    type="button"
+                    class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+                    :title="`${sourceKey} → ${preset.label} (${preset.semitones > 0 ? '+' : ''}${preset.semitones} semitones)`"
+                    @click="applyKeyPreset(preset.semitones)"
+                  >
+                    {{ preset.label.replace(' major', '').replace(' minor', 'm') }}
+                  </button>
+                </div>
+                <p
+                  v-else
+                  class="text-[11px] text-zinc-500"
+                >
+                  No source key has been detected yet. Reanalyse the source file to generate key presets.
+                </p>
+              </div>
+            </section>
+          </aside>
         </div>
 
         <footer class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
@@ -1475,33 +1904,20 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             class="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
             @click="emit('close')"
           >
-            Close
-          </button>
-          <!-- Non-destructive crop: narrows the working view to the
-               current selection so the user can audition/tweak before
-               committing. Local Ctrl+Z / Ctrl+Y undo/redo while the
-               dialog is open. Closing without Apply trim discards
-               every crop — the library entry is untouched. -->
-          <button
-            type="button"
-            class="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-            :disabled="!canApplyCrop"
-            title="Crop the working view to the selection (Ctrl+Z to undo)"
-            @click="onApplyCrop"
-          >
-            Crop
+            {{ item.kind === 'saved-clip' ? 'Cancel' : 'Close' }}
           </button>
           <button
             v-if="item.kind === 'saved-clip'"
             type="button"
-            class="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-            :disabled="!canApplyTrim"
-            title="Save changes to the library and apply to every linked timeline clip"
-            @click="onApplyTrim"
+            class="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="!canSaveChanges"
+            title="Save all Clip Editor changes to the library and linked timeline clips"
+            @click="onSaveChanges"
           >
-            Apply trim
+            Save changes
           </button>
           <button
+            v-else
             type="button"
             class="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
             :disabled="!canSaveAsNew"
@@ -1514,3 +1930,38 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
     </div>
   </Transition>
 </template>
+
+<style scoped>
+.pitch-range-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #e4e4e7;
+  border: 1px solid #71717a;
+  cursor: pointer;
+  margin-top: -5px;
+}
+
+.pitch-range-input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #e4e4e7;
+  border: 1px solid #71717a;
+  cursor: pointer;
+}
+
+.pitch-range-input::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 9999px;
+  background: #3f3f46;
+}
+
+.pitch-range-input::-moz-range-track {
+  height: 3px;
+  border-radius: 9999px;
+  background: #3f3f46;
+}
+</style>

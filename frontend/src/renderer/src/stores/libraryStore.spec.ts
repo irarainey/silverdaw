@@ -636,4 +636,168 @@ describe('libraryStore', () => {
       derivedFrom: { inMs: 1_000, durationMs: 2_000 }
     })
   })
+
+  it('commits saved-clip trim, warp, and pitch as one editor save', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      key: 'C major',
+      fromSnapshot: true
+    })
+    library.items.find((item) => item.id === sourceId)!.bpm = 100
+    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const trackId = project.addTrack()
+    const saved = library.items.find((item) => item.id === savedId)!
+    const clipId = project.addClipFromLibrary(
+      trackId,
+      {
+        id: savedId,
+        kind: 'saved-clip',
+        filePath: saved.filePath,
+        fileName: saved.fileName,
+        durationMs: saved.durationMs,
+        sampleRate: saved.sampleRate,
+        channelCount: saved.channelCount,
+        peaks: saved.peaks,
+        derivedFrom: saved.derivedFrom
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    const result = library.updateSavedClipEdit(savedId, {
+      inMs: 1_500,
+      durationMs: 3_000,
+      warpEnabled: true,
+      warpMode: 'tonal',
+      tempoRatio: 2,
+      semitones: 2,
+      cents: 10
+    })
+
+    expect(result.ok).toBe(true)
+    expect(library.items.find((i) => i.id === savedId)).toMatchObject({
+      durationMs: 3_000,
+      derivedFrom: { inMs: 1_500, durationMs: 3_000 },
+      warpEnabled: true,
+      warpMode: 'tonal',
+      tempoRatio: 2,
+      semitones: 2,
+      cents: 10,
+      key: 'D major +10c'
+    })
+    expect(project.clips[clipId]).toMatchObject({
+      inMs: 1_500,
+      durationMs: 3_000,
+      warpEnabled: true,
+      warpMode: 'tonal',
+      tempoRatio: 2,
+      semitones: 2,
+      cents: 10
+    })
+    expect(sendMock).toHaveBeenCalledWith(
+      'LIBRARY_ADD',
+      expect.objectContaining({
+        itemId: savedId,
+        sourceInMs: 1_500,
+        sourceDurationMs: 3_000,
+        warpEnabled: true,
+        warpMode: 'tonal',
+        tempoRatio: 2,
+        semitones: 2,
+        cents: 10
+      })
+    )
+    expect(sendMock).toHaveBeenCalledWith('CLIP_TRIM', {
+      clipId,
+      startMs: 0,
+      inMs: 1_500,
+      durationMs: 3_000
+    })
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_SET_WARP',
+      expect.objectContaining({
+        clipId,
+        warpEnabled: true,
+        warpMode: 'tonal',
+        tempoRatio: 2,
+        semitones: 2,
+        cents: 10
+      })
+    )
+  })
+
+  it('refuses a saved-clip editor save when new warp timing would collide', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    library.items.find((item) => item.id === sourceId)!.bpm = 100
+    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 1_000)!
+    const trackId = project.addTrack()
+    const saved = library.items.find((item) => item.id === savedId)!
+    project.addClipFromLibrary(
+      trackId,
+      {
+        id: savedId,
+        kind: 'saved-clip',
+        filePath: saved.filePath,
+        fileName: saved.fileName,
+        durationMs: saved.durationMs,
+        sampleRate: saved.sampleRate,
+        channelCount: saved.channelCount,
+        peaks: saved.peaks,
+        derivedFrom: saved.derivedFrom
+      },
+      0
+    )
+    project.addClipFromLibrary(
+      trackId,
+      {
+        id: sourceId!,
+        kind: 'audio-file',
+        filePath: 'C:\\audio\\source.wav',
+        fileName: 'source.wav',
+        durationMs: 1_000,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1])
+      },
+      1_500
+    )
+    sendMock.mockClear()
+
+    const result = library.updateSavedClipEdit(savedId, {
+      inMs: 1_000,
+      durationMs: 1_000,
+      warpEnabled: true,
+      warpMode: 'rhythmic',
+      tempoRatio: 0.5,
+      semitones: 0,
+      cents: 0
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.conflictingTrackNames).toBeDefined()
+    expect(library.items.find((i) => i.id === savedId)).toMatchObject({
+      durationMs: 1_000,
+      derivedFrom: { inMs: 1_000, durationMs: 1_000 },
+      warpEnabled: undefined,
+      tempoRatio: undefined
+    })
+    expect(sendMock).not.toHaveBeenCalled()
+  })
 })

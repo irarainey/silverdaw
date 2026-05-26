@@ -27,9 +27,10 @@ import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = withDefaults(defineProps<{
   open: boolean
-  clipId: string | null
+  clipId?: string | null
+  itemId?: string | null
   panel?: 'tempo' | 'pitch'
-}>(), { panel: 'tempo' })
+}>(), { clipId: null, itemId: null, panel: 'tempo' })
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const project = useProjectStore()
@@ -41,7 +42,9 @@ const dialogEl = ref<HTMLDivElement | null>(null)
 
 const clip = computed(() => (props.clipId ? project.clips[props.clipId] : undefined))
 const libItem = computed(() =>
-  clip.value ? library.items.find((i) => i.id === clip.value!.libraryItemId) : undefined
+  props.itemId
+    ? library.items.find((i) => i.id === props.itemId)
+    : clip.value ? library.items.find((i) => i.id === clip.value!.libraryItemId) : undefined
 )
 
 const sourceBpm = computed(() => libItem.value?.bpm)
@@ -133,7 +136,7 @@ function tempoRatioFromPinnedBpm(): number | undefined {
 }
 
 function initialiseDraft(): void {
-  const c = clip.value
+  const c = clip.value ?? libItem.value
   draftEnabled.value = c?.warpEnabled === true
   draftMode.value = c?.warpMode ?? 'rhythmic'
   draftTempoPinned.value = typeof c?.tempoRatio === 'number' && c.tempoRatio > 0
@@ -148,21 +151,24 @@ function initialiseDraft(): void {
 }
 
 function save(): void {
-  if (!props.clipId) return
   if (props.panel === 'tempo') {
-    project.setClipWarp(props.clipId, {
+    const patch = {
       warpEnabled: draftEnabled.value,
       warpMode: draftMode.value,
       tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : null
-    })
+    }
+    if (props.itemId) library.updateSavedClipWarp(props.itemId, patch)
+    else if (props.clipId) project.setClipWarp(props.clipId, patch)
   } else {
     const nextSemitones = clampNumber(draftSemitones.value, -12, 12)
     const nextCents = clampNumber(draftCents.value, -100, 100)
-    project.setClipWarp(props.clipId, {
+    const patch = {
       semitones: nextSemitones,
       cents: nextCents,
       warpEnabled: pitchNeedsProcessor(nextSemitones, nextCents) ? true : undefined
-    })
+    }
+    if (props.itemId) library.updateSavedClipWarp(props.itemId, patch)
+    else if (props.clipId) project.setClipWarp(props.clipId, patch)
   }
   emit('close')
 }
@@ -186,7 +192,7 @@ watch(
 )
 
 watch(
-  () => [props.clipId, props.panel] as const,
+  () => [props.clipId, props.itemId, props.panel] as const,
   () => {
     if (props.open) initialiseDraft()
   }
@@ -218,7 +224,7 @@ function onKeydown(ev: KeyboardEvent): void {
     leave-to-class="opacity-0"
   >
     <div
-      v-if="open && clip"
+      v-if="open && (clip || libItem)"
       class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/40"
       role="dialog"
       aria-modal="true"

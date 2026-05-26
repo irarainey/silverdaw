@@ -84,7 +84,7 @@ export const usePreviewStore = defineStore('preview', {
       semitones?: number
       cents?: number
     }): void {
-      if (!this.isLoaded && !this.itemId) return
+      if (!this.isLoaded) return
       sendBridge('PREVIEW_SET_WARP', {
         warpEnabled: patch.warpEnabled,
         warpMode: patch.warpMode,

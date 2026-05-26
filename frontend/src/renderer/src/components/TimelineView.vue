@@ -220,9 +220,14 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
       selectedSwatch: selected
     })
   }
-  items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true })
-  items.push({ command: 'clip.pitch', label: 'Pitch' })
-  items.push({ command: 'clip.saveToLibrary', label: 'Save clip to library', separatorAbove: true })
+  items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true, disabled: isLinkedClip })
+  items.push({ command: 'clip.pitch', label: 'Pitch', disabled: isLinkedClip })
+  items.push({
+    command: 'clip.saveToLibrary',
+    label: 'Save clip to library',
+    separatorAbove: true,
+    disabled: isLinkedClip
+  })
   // "Unlink from library" only shown when the clip is linked to a
   // saved-clip library entry. Unlinking preserves the current trim
   // window and rebinds the clip to the saved-clip's underlying

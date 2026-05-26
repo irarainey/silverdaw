@@ -98,6 +98,33 @@ describe('previewStore', () => {
     expect(sendMock).toHaveBeenCalledWith('PREVIEW_SEEK', { positionMs: 1_000 })
   })
 
+  it('does not send live warp updates until the preview is loaded', () => {
+    const preview = usePreviewStore()
+    preview.load('lib1', 0, 1_000)
+    sendMock.mockClear()
+
+    preview.setWarp({ warpEnabled: false, tempoRatio: null, semitones: 0, cents: 0 })
+
+    expect(sendMock).not.toHaveBeenCalled()
+
+    preview.applyState({
+      libraryItemId: 'lib1',
+      isPlaying: false,
+      isLoaded: true,
+      durationMs: 1_000,
+      generation: 1
+    })
+    preview.setWarp({ warpEnabled: true, warpMode: 'rhythmic', tempoRatio: 1.2 })
+
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_SET_WARP', {
+      warpEnabled: true,
+      warpMode: 'rhythmic',
+      tempoRatio: 1.2,
+      semitones: undefined,
+      cents: undefined
+    })
+  })
+
   it('unload sends PREVIEW_UNLOAD and clears local state', () => {
     const preview = usePreviewStore()
     preview.load('lib1', 0, 1_000)
