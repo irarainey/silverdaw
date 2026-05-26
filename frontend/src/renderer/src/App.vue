@@ -13,7 +13,7 @@ import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import RelinkDialog from '@/components/RelinkDialog.vue'
 import RecoveryDialog, { type RecoverableEntry } from '@/components/RecoveryDialog.vue'
 import StartupScreen from '@/components/StartupScreen.vue'
-import { useProjectStore } from '@/stores/projectStore'
+import { effectiveClipDurationMs, useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
@@ -23,7 +23,6 @@ import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
-import { clipEffectiveDurationMs } from '@/lib/warp'
 import { useAppStore } from '@/stores/appStore'
 
 const project = useProjectStore()
@@ -686,7 +685,7 @@ function handleMenuAction(action: string): void {
       .filter((c) => {
         const libItem = library.items.find((i) => i.id === c.libraryItemId)
         if (libItem?.kind === 'saved-clip') return false
-        const effDur = clipEffectiveDurationMs(c, libItem, transport.bpm)
+        const effDur = effectiveClipDurationMs(c)
         return atMs > c.startMs && atMs < c.startMs + effDur
       })
       .map((c) => c.id)
@@ -728,8 +727,7 @@ function handleMenuAction(action: string): void {
     // shorter tracks honest as well.
     let maxEndMs = 0
     for (const clip of Object.values(project.clips)) {
-      const libItem = library.items.find((i) => i.id === clip.libraryItemId)
-      const effDur = clipEffectiveDurationMs(clip, libItem, transport.bpm)
+      const effDur = effectiveClipDurationMs(clip)
       const end = clip.startMs + effDur
       if (end > maxEndMs) maxEndMs = end
     }
@@ -842,7 +840,10 @@ function onUnsavedPromptCancel(): void {
 
 <template>
   <div class="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-    <AppTitleBar ref="titleBarRef" />
+    <AppTitleBar
+      ref="titleBarRef"
+      :window-controls-disabled="isShortcutModalOpen()"
+    />
 
     <TransportBar />
 

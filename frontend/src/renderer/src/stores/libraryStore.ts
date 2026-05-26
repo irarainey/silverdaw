@@ -8,12 +8,10 @@
 // tracks doesn't re-decode the file five times.
 
 import { defineStore } from 'pinia'
-import { useProjectStore } from '@/stores/projectStore'
-import { useTransportStore } from '@/stores/transportStore'
+import { effectiveClipDurationMs, effectiveClipTempoRatio, isClipTempoWarpActive, useProjectStore } from '@/stores/projectStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { clipEffectiveDurationMs, effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import type { Clip } from '@/stores/projectStore'
 import type { ClipWarpMode, LibraryItemKind } from '@shared/bridge-protocol'
 
@@ -439,20 +437,8 @@ export const useLibraryStore = defineStore('library', {
       const name = customName && customName.length > 0
         ? customName
         : buildSavedClipName(source ?? clip, inMs, durationMs)
-      const projectBpm = useTransportStore().bpm
       const pinnedTempoRatio =
-        isWarpActive({
-          warpEnabled: clip.warpEnabled,
-          tempoRatio: clip.tempoRatio,
-          sourceBpm: source?.bpm,
-          projectBpm
-        })
-          ? effectiveTempoRatio({
-              tempoRatio: clip.tempoRatio,
-              sourceBpm: source?.bpm,
-              projectBpm
-            })
-          : clip.tempoRatio
+        isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : clip.tempoRatio
       const itemId = this.addItem({
         kind: 'saved-clip',
         name,
@@ -686,23 +672,18 @@ export const useLibraryStore = defineStore('library', {
           : []
       const linkedClips = [...directLinkedClips, ...implicitLinkedClips]
       const conflictingTrackNames = new Set<string>()
-      const projectBpm = useTransportStore().bpm
       for (const c of linkedClips) {
         if (!c) continue
         const track = project.tracks.find((t) => t.id === c.trackId)
         if (!track) continue
-        const newEnd = c.startMs + clipEffectiveDurationMs(
-          { ...c, durationMs: trimDur },
-          item,
-          projectBpm
-        )
+        const ratio = isClipTempoWarpActive(c) ? effectiveClipTempoRatio(c) : 1
+        const newEnd = c.startMs + trimDur / ratio
         let collides = false
         for (const otherId of track.clipIds) {
           if (otherId === c.id) continue
           const other = project.clips[otherId]
           if (!other) continue
-          const otherLibItem = this.items.find((i) => i.id === other.libraryItemId)
-          const otherEnd = other.startMs + clipEffectiveDurationMs(other, otherLibItem, projectBpm)
+          const otherEnd = other.startMs + effectiveClipDurationMs(other)
           if (c.startMs < otherEnd && newEnd > other.startMs) {
             collides = true
             break

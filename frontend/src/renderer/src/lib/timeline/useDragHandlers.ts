@@ -16,14 +16,13 @@
 
 import { onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Application } from 'pixi.js'
-import { useProjectStore } from '@/stores/projectStore'
+import { effectiveClipTempoRatio, isClipTempoWarpActive, useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { RULER_HEIGHT, SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from './constants'
 import { trackIndexAtWorldY } from './trackLayout'
-import { effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import type { GridGeometry } from './useGridGeometry'
 
 /** Edge-zone width in PIXELS for trim-vs-move hit detection. A click
@@ -560,6 +559,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     durationMs: number
     warpEnabled?: boolean
     tempoRatio?: number
+    effectiveTempoRatio?: number
+    effectiveWarpActive?: boolean
   }): number | null {
     // Resolve via the authoritative `libraryItemId` first (saved-clip
     // siblings can share a filePath; only the parent carries the BPM
@@ -587,18 +588,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const sourceOffsetMs = firstBeatMs - inMs
     // Convert source-time offset to timeline-time. Un-warped clips
     // get `ratio === 1` and the value is unchanged.
-    const ratio = isWarpActive({
-      warpEnabled: clip.warpEnabled,
-      tempoRatio: clip.tempoRatio,
-      sourceBpm,
-      projectBpm: transport.bpm
-    })
-      ? effectiveTempoRatio({
-          tempoRatio: clip.tempoRatio,
-          sourceBpm,
-          projectBpm: transport.bpm
-        })
-      : 1
+    const ratio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
     return sourceOffsetMs / ratio
   }
 
@@ -692,20 +682,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     // resolution when Alt is held). The clip's `inMs` / `durationMs`
     // are SOURCE-time fields, so warped clips convert the snapped
     // timeline delta through the current tempo ratio before writing.
-    const libItem = library.items.find((i) => i.id === clip.libraryItemId)
-    const ratio =
-      isWarpActive({
-        warpEnabled: clip.warpEnabled,
-        tempoRatio: clip.tempoRatio,
-        sourceBpm: libItem?.bpm,
-        projectBpm: transport.bpm
-      })
-        ? effectiveTempoRatio({
-            tempoRatio: clip.tempoRatio,
-            sourceBpm: libItem?.bpm,
-            projectBpm: transport.bpm
-          })
-        : 1
+    const ratio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
 
     if (trimEdge === 'left') {
       const rawLeftMs = trimOrigStartMs + (pointerMs - trimPointerStartMs)

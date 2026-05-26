@@ -17,11 +17,11 @@
 // pointer handling lives in `useScrollbarDrag`.
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
+import { effectiveClipDurationMs, isClipTempoWarpActive, useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
-import { clipEffectiveDurationMs, isWarpActive, isWarpPending } from '@/lib/warp'
+import { isWarpPending } from '@/lib/warp'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 import ClipWarpDialog from '@/components/ClipWarpDialog.vue'
@@ -412,7 +412,7 @@ const renameOverlayStyle = computed<Record<string, string> | null>(() => {
   const padding = 4
   const innerY = rowWorldY + padding
   const libItem = library.items.find((i) => i.id === clip.libraryItemId)
-  const effectiveDurMs = clipEffectiveDurationMs(clip, libItem, transport.bpm)
+  const effectiveDurMs = effectiveClipDurationMs(clip)
   const clipWidthPx = (effectiveDurMs / 1000) * pxPerSecond.value
   const displayName = clip.name?.trim()
     ? clip.name
@@ -426,12 +426,7 @@ const renameOverlayStyle = computed<Record<string, string> | null>(() => {
     sourceBpm,
     projectBpm: transport.bpm
   })
-  const warpActive = !warpPending && isWarpActive({
-    warpEnabled: clip.warpEnabled,
-    tempoRatio: clip.tempoRatio,
-    sourceBpm,
-    projectBpm: transport.bpm
-  })
+  const warpActive = !warpPending && isClipTempoWarpActive(clip)
   const badgeWidth =
     (isLinked ? CLIP_HEADER_LINK_BADGE_W : 0) +
     (warpPending ? CLIP_HEADER_WARP_PENDING_BADGE_W : warpActive ? CLIP_HEADER_WARP_ACTIVE_BADGE_W : 0)

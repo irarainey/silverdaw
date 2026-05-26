@@ -546,7 +546,10 @@ function dispatch(msg: BridgeInboundMessage): void {
           tempoRatio: msg.payload.tempoRatio,
           semitones: msg.payload.semitones,
           cents: msg.payload.cents,
-          pendingAutoWarp: msg.payload.pendingAutoWarp
+          pendingAutoWarp: msg.payload.pendingAutoWarp,
+          effectiveDurationMs: msg.payload.effectiveDurationMs,
+          effectiveTempoRatio: msg.payload.effectiveTempoRatio,
+          effectiveWarpActive: msg.payload.effectiveWarpActive
         },
         { localOnly: true }
       )

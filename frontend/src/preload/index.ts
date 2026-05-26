@@ -10,6 +10,15 @@ const api = {
   menuAction: (action: string): void => {
     ipcRenderer.send('menu:action', action)
   },
+  minimizeWindow: (): void => {
+    ipcRenderer.send('window:minimize')
+  },
+  toggleMaximizeWindow: (): void => {
+    ipcRenderer.send('window:toggleMaximize')
+  },
+  closeWindow: (): void => {
+    ipcRenderer.send('window:close')
+  },
   /**
    * Show an OS open dialog for an audio file and return its raw bytes.
    * Resolves to `null` if the user cancels.

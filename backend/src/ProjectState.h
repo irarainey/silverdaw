@@ -228,6 +228,18 @@ class ProjectState : public juce::ValueTree::Listener
      *  change live-re-stretches the whole timeline in lockstep. */
     void forEachWarpClip(const std::function<void(const WarpClipInfo&)>& visitor) const;
 
+    struct EffectiveClipTiming
+    {
+        double tempoRatio = 1.0;
+        double durationMs = 0.0;
+        bool warpActive = false;
+    };
+
+    /** Backend-authoritative effective timing for a clip. `durationMs`
+     *  is the timeline/output footprint, while the stored clip
+     *  `durationMs` remains the source-time window. */
+    EffectiveClipTiming getClipEffectiveTiming(const juce::String& clipId) const;
+
     /** Source BPM (from the library item) in beats-per-minute. 0 if
      *  the item is unknown or its BPM hasn't been detected yet. */
     double getLibraryItemBpm(const juce::String& itemId) const;

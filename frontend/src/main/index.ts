@@ -81,9 +81,7 @@ function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
 }
 
 // ─── Theme / colours (kept in sync with the renderer Tailwind palette) ──────
-const TITLE_BAR_HEIGHT = 36
 const COLOUR_BG = '#18181b' // zinc-900
-const COLOUR_FG = '#d4d4d8' // zinc-300
 
 // File extensions accepted by every audio open-dialog and (later) by the
 // path-validation guard on `audio:readFile` / `audio:readMetadata`. Keep in
@@ -845,10 +843,7 @@ function createWindow(): void {
     icon,
     show: false,
     titleBarStyle: 'hidden',
-    titleBarOverlay:
-      process.platform === 'win32' || process.platform === 'linux'
-        ? { color: COLOUR_BG, symbolColor: COLOUR_FG, height: TITLE_BAR_HEIGHT }
-        : undefined,
+    titleBarOverlay: undefined,
     trafficLightPosition: { x: 12, y: 11 },
     webPreferences: {
       // electron-vite emits the preload bundle as `index.cjs` (CommonJS).
@@ -1545,6 +1540,20 @@ app.whenReady().then(async () => {
   // Hand the renderer its persisted preferences (UI panel sizes etc.) on
   // request. Window bounds are applied by main so they aren't included.
   ipcMain.handle('prefs:getUi', () => prefs.ui)
+
+  ipcMain.on('window:minimize', () => {
+    mainWindow?.minimize()
+  })
+
+  ipcMain.on('window:toggleMaximize', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMaximized()) mainWindow.unmaximize()
+    else mainWindow.maximize()
+  })
+
+  ipcMain.on('window:close', () => {
+    mainWindow?.webContents.send('menu:action', 'app.requestClose')
+  })
 
   // Update one or more UI preference keys. Explicit Preferences-dialog saves
   // should be durable immediately; high-frequency window bounds still use the

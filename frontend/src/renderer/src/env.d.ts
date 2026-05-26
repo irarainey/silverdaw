@@ -26,6 +26,9 @@ declare global {
   interface Window {
     silverdaw: {
       menuAction(action: string): void
+      minimizeWindow(): void
+      toggleMaximizeWindow(): void
+      closeWindow(): void
       openAudioFile(): Promise<OpenedAudioFile | null>
       openAudioFiles(): Promise<OpenedAudioFile[]>
       chooseAudioFile(args: { title?: string; defaultPath?: string }): Promise<string | null>

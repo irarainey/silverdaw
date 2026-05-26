@@ -563,6 +563,43 @@ void ProjectState::forEachWarpClip(const std::function<void(const WarpClipInfo&)
     }
 }
 
+ProjectState::EffectiveClipTiming ProjectState::getClipEffectiveTiming(const juce::String& clipId) const
+{
+    EffectiveClipTiming out;
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return out;
+
+    out.durationMs = static_cast<double>(clip.getProperty(kDurationMs, 0.0));
+    if (!static_cast<bool>(clip.getProperty(kWarpEnabled, false)))
+    {
+        return out;
+    }
+
+    double ratio = 1.0;
+    if (clip.hasProperty(kTempoRatio))
+    {
+        ratio = static_cast<double>(clip.getProperty(kTempoRatio, 1.0));
+    }
+    else
+    {
+        const auto libraryItemId = clip.getProperty(kLibraryItemId, {}).toString();
+        const double sourceBpm = getLibraryItemBpm(libraryItemId);
+        const double projectBpm = getBpm();
+        if (sourceBpm > 0.0 && projectBpm > 0.0)
+        {
+            ratio = projectBpm / sourceBpm;
+        }
+    }
+
+    out.tempoRatio = ratio > 0.0 ? ratio : 1.0;
+    out.warpActive = std::abs(out.tempoRatio - 1.0) > 1.0e-4;
+    if (out.warpActive)
+    {
+        out.durationMs = out.durationMs / out.tempoRatio;
+    }
+    return out;
+}
+
 double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
 {
     const auto library = root.getChildWithName(kLibrary);
@@ -1471,6 +1508,10 @@ juce::var ProjectState::tracksAsJson() const
             clipObj->setProperty("offsetMs", static_cast<double>(clip.getProperty(kOffsetMs, 0.0)));
             clipObj->setProperty("inMs", static_cast<double>(clip.getProperty(kInMs, 0.0)));
             clipObj->setProperty("durationMs", static_cast<double>(clip.getProperty(kDurationMs, 0.0)));
+            const auto effectiveTiming = getClipEffectiveTiming(clip.getProperty(kId).toString());
+            clipObj->setProperty("effectiveTempoRatio", effectiveTiming.tempoRatio);
+            clipObj->setProperty("effectiveDurationMs", effectiveTiming.durationMs);
+            clipObj->setProperty("effectiveWarpActive", effectiveTiming.warpActive);
             // Only emit `colorIndex` when explicitly set so the renderer
             // can distinguish "inherit from track" (property absent)
             // from "user picked a colour".

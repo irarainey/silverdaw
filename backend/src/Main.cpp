@@ -67,6 +67,29 @@ void broadcastPreviewStateIfCurrent(silverdaw::AudioEngine& engine, silverdaw::B
     bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
 }
 
+std::unique_ptr<juce::DynamicObject> buildClipWarpAppliedPayload(
+    silverdaw::ProjectState& projectState, const juce::String& clipId)
+{
+    auto obj = std::make_unique<juce::DynamicObject>();
+    obj->setProperty("clipId", clipId);
+    projectState.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            if (info.clipId != clipId) return;
+            obj->setProperty("warpEnabled", info.warpEnabled);
+            obj->setProperty("warpMode", info.warpMode);
+            obj->setProperty("tempoRatio", info.tempoRatioPinned ? juce::var(info.tempoRatio) : juce::var());
+            obj->setProperty("semitones", info.semitones);
+            obj->setProperty("cents", info.cents);
+            obj->setProperty("pendingAutoWarp", info.pendingAutoWarp);
+        });
+    const auto timing = projectState.getClipEffectiveTiming(clipId);
+    obj->setProperty("effectiveDurationMs", timing.durationMs);
+    obj->setProperty("effectiveTempoRatio", timing.tempoRatio);
+    obj->setProperty("effectiveWarpActive", timing.warpActive);
+    return obj;
+}
+
 double effectivePeaksPerSecond(const silverdaw::waveform::PeaksResult& result)
 {
     if (result.sampleRate <= 0.0 || result.peaksPerSecond <= 0) return static_cast<double>(result.peaksPerSecond);
@@ -674,11 +697,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                                 /*pendingAutoWarp=*/false);
                             engine.setClipWarp(info.clipId, true,
                                 juce::String("rhythmic"), ratio, std::nullopt, std::nullopt);
-                            auto wp = std::make_unique<juce::DynamicObject>();
-                            wp->setProperty("clipId", info.clipId);
-                            wp->setProperty("warpEnabled", true);
-                            wp->setProperty("warpMode", juce::String("rhythmic"));
-                            wp->setProperty("pendingAutoWarp", false);
+                            auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
                             bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
                             ++flipped;
                             DBG("[warp/late-flip]   → ENGAGED clip=" + info.clipId
@@ -2526,6 +2545,8 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             // WarpProcessor lifetime; it builds one lazily when
             // warp is first enabled and tears it down when disabled.
             engine.setClipWarp(clipId, warpEnabled, warpMode, effectiveRatio, semitones, cents);
+            auto appliedPayload = buildClipWarpAppliedPayload(projectState, clipId);
+            bridge.broadcast("CLIP_WARP_APPLIED", juce::var(appliedPayload.release()));
         }
     }
     else if (type == "CLIP_SAVE_AS_SAMPLE")
@@ -3007,6 +3028,8 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                         const double ratio = bpm / sourceBpm;
                         engine.setClipWarp(info.clipId, std::nullopt, std::nullopt,
                                            ratio, std::nullopt, std::nullopt);
+                        auto appliedPayload = buildClipWarpAppliedPayload(projectState, info.clipId);
+                        bridge.broadcast("CLIP_WARP_APPLIED", juce::var(appliedPayload.release()));
                     });
             }
         }

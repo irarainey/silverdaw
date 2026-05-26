@@ -14,7 +14,6 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { ClipWarpMode, ProjectStatePayload } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
-import { clipEffectiveDurationMs, effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 
 export interface Clip {
   readonly id: string
@@ -91,6 +90,11 @@ export interface Clip {
    *  was detected. Cleared automatically by `LIBRARY_ITEM_ANALYSIS`
    *  (auto-flip warp on) or by any manual warp edit (user opt-out). */
   pendingAutoWarp?: boolean
+  /** Backend-authoritative effective timing. `durationMs` above remains
+   *  source-time; this is the rendered/audible timeline footprint. */
+  effectiveDurationMs?: number
+  effectiveTempoRatio?: number
+  effectiveWarpActive?: boolean
 }
 
 export interface Marker {
@@ -391,6 +395,9 @@ export interface ClipboardEntry {
   tempoRatio?: number
   semitones?: number
   cents?: number
+  effectiveDurationMs?: number
+  effectiveTempoRatio?: number
+  effectiveWarpActive?: boolean
 }
 
 /** Default name shown in the title bar before a project is named or loaded. */
@@ -422,6 +429,22 @@ const pendingAutosaveResolvers = new Map<
   string,
   (result: { ok: boolean; error?: string }) => void
 >()
+
+export function effectiveClipDurationMs(clip: { durationMs: number; effectiveDurationMs?: number }): number {
+  return typeof clip.effectiveDurationMs === 'number' && clip.effectiveDurationMs > 0
+    ? clip.effectiveDurationMs
+    : clip.durationMs
+}
+
+export function effectiveClipTempoRatio(clip: { effectiveTempoRatio?: number }): number {
+  return typeof clip.effectiveTempoRatio === 'number' && clip.effectiveTempoRatio > 0
+    ? clip.effectiveTempoRatio
+    : 1
+}
+
+export function isClipTempoWarpActive(clip: { effectiveWarpActive?: boolean }): boolean {
+  return clip.effectiveWarpActive === true
+}
 
 /**
  * Return the position closest to `desiredStartMs` on `trackId` where a
@@ -516,14 +539,9 @@ export const useProjectStore = defineStore('project', {
      * extend past that.
      */
     durationMs(state): number {
-      // Walk every clip and compute its effective timeline end. Warped
-      // clips show on the timeline at `native / tempoRatio` so their
-      // contribution to the project duration is the warped length —
-      // anything else would let a clip overhang the project ruler.
-      // Native (un-warped) clips fall through `clipEffectiveDurationMs`
-      // unchanged because `isWarpActive` returns false for them.
-      const library = useLibraryStore()
-      const projectBpm = useTransportStore().bpm
+      // Walk every clip and compute its backend-authoritative effective
+      // timeline end. Source-time duration stays on `durationMs`;
+      // `effectiveDurationMs` is the rendered/audible footprint.
       let max = 0
       for (const t of state.tracks) {
         if (t.lengthMs > max) max = t.lengthMs
@@ -531,8 +549,7 @@ export const useProjectStore = defineStore('project', {
       for (const id in state.clips) {
         const c = state.clips[id]
         if (!c) continue
-        const libItem = library.items.find((i) => i.id === c.libraryItemId)
-        const effDur = clipEffectiveDurationMs(c, libItem, projectBpm)
+        const effDur = effectiveClipDurationMs(c)
         const end = c.startMs + effDur
         if (end > max) max = end
       }
@@ -545,14 +562,11 @@ export const useProjectStore = defineStore('project', {
      * ruler under the audible/visible end of the latest clip.
      */
     longestClipEndMs(state): number {
-      const library = useLibraryStore()
-      const projectBpm = useTransportStore().bpm
       let max = 0
       for (const id in state.clips) {
         const c = state.clips[id]
         if (!c) continue
-        const libItem = library.items.find((i) => i.id === c.libraryItemId)
-        const effDur = clipEffectiveDurationMs(c, libItem, projectBpm)
+        const effDur = effectiveClipDurationMs(c)
         const end = c.startMs + effDur
         if (end > max) max = end
       }
@@ -645,8 +659,7 @@ export const useProjectStore = defineStore('project', {
       track.clipIds.push(clipId)
 
       // Grow the visible track length if this clip extends past the end.
-      const libItem = useLibraryStore().items.find((i) => i.id === clip.libraryItemId)
-      const clipEnd = clip.startMs + clipEffectiveDurationMs(clip, libItem, useTransportStore().bpm)
+      const clipEnd = clip.startMs + effectiveClipDurationMs(clip)
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
 
       // If the track was previously unnamed (default "Track N") and this is
@@ -690,17 +703,14 @@ export const useProjectStore = defineStore('project', {
       if (!destTrack) return
 
       // Bump-clamp into the gap nearest the desired position.
-      const library = useLibraryStore()
-      const projectBpm = useTransportStore().bpm
-      const effectiveClipDurationMs = (c: Clip): number =>
-        clipEffectiveDurationMs(c, library.items.find((i) => i.id === c.libraryItemId), projectBpm)
+      const resolveDurationMs = (c: Clip): number => effectiveClipDurationMs(c)
       const target = findClipSlot(
         this,
         destTrack.id,
         clipId,
         startMs,
-        effectiveClipDurationMs(clip),
-        effectiveClipDurationMs
+        resolveDurationMs(clip),
+        resolveDurationMs
       )
       if (target === null) return // no gap big enough — keep current position
 
@@ -775,8 +785,7 @@ export const useProjectStore = defineStore('project', {
 
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (track) {
-        const libItem = useLibraryStore().items.find((i) => i.id === clip.libraryItemId)
-        const clipEnd = clip.startMs + clipEffectiveDurationMs(clip, libItem, useTransportStore().bpm)
+        const clipEnd = clip.startMs + effectiveClipDurationMs(clip)
         if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
       }
 
@@ -816,19 +825,7 @@ export const useProjectStore = defineStore('project', {
       // both — `startMs` for the new right-half stays in timeline-time
       // (the visible left edge of the new clip), while `inMs` /
       // `durationMs` must be in source-time for the audio engine.
-      const projectBpm = useTransportStore().bpm
-      const ratio = isWarpActive({
-        warpEnabled: clip.warpEnabled,
-        tempoRatio: clip.tempoRatio,
-        sourceBpm: libItem?.bpm,
-        projectBpm
-      })
-        ? effectiveTempoRatio({
-            tempoRatio: clip.tempoRatio,
-            sourceBpm: libItem?.bpm,
-            projectBpm
-          })
-        : 1
+      const ratio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
       const effectiveDurMs = clip.durationMs / ratio
       const clipEnd = clip.startMs + effectiveDurMs
       // Need a strict-interior split: a split exactly at either edge
@@ -875,7 +872,10 @@ export const useProjectStore = defineStore('project', {
         tempoRatio: clip.tempoRatio,
         semitones: clip.semitones,
         cents: clip.cents,
-        pendingAutoWarp: clip.pendingAutoWarp
+        pendingAutoWarp: clip.pendingAutoWarp,
+        effectiveDurationMs: clip.effectiveDurationMs,
+        effectiveTempoRatio: clip.effectiveTempoRatio,
+        effectiveWarpActive: clip.effectiveWarpActive
       }
       this.clips[newId] = right
       const insertAt = track.clipIds.indexOf(clipId)
@@ -939,13 +939,9 @@ export const useProjectStore = defineStore('project', {
       // Use effective (post-warp) durations everywhere we reason about
       // timeline placement and overlap. `tail.durationMs` is the
       // source-time length; we want the visible footprint.
-      const library = useLibraryStore()
-      const projectBpm = useTransportStore().bpm
-      const tailLib = library.items.find((i) => i.id === tail.libraryItemId)
-      const tailEffDur = clipEffectiveDurationMs(tail, tailLib, projectBpm)
+      const tailEffDur = effectiveClipDurationMs(tail)
       const newStartMs = tail.startMs + tailEffDur
-      const clipLib = library.items.find((i) => i.id === clip.libraryItemId)
-      const clipEffDur = clipEffectiveDurationMs(clip, clipLib, projectBpm)
+      const clipEffDur = effectiveClipDurationMs(clip)
       // The duplicate must fit immediately after the current tail. We do
       // not search other gaps because repeated Duplicate is an append
       // gesture; if something blocks the chain, tell the user.
@@ -953,8 +949,7 @@ export const useProjectStore = defineStore('project', {
         if (id === clipId || id === tail.id) continue
         const c = this.clips[id]
         if (!c) continue
-        const cLib = library.items.find((i) => i.id === c.libraryItemId)
-        const cEffDur = clipEffectiveDurationMs(c, cLib, projectBpm)
+        const cEffDur = effectiveClipDurationMs(c)
         const cEnd = c.startMs + cEffDur
         if (newStartMs < cEnd && newStartMs + clipEffDur > c.startMs) {
           useNotificationsStore().pushError('Not enough space to duplicate clip after the last duplicate.')
@@ -1110,7 +1105,10 @@ export const useProjectStore = defineStore('project', {
         warpMode: clip.warpMode,
         tempoRatio: clip.tempoRatio,
         semitones: clip.semitones,
-        cents: clip.cents
+        cents: clip.cents,
+        effectiveDurationMs: clip.effectiveDurationMs,
+        effectiveTempoRatio: clip.effectiveTempoRatio,
+        effectiveWarpActive: clip.effectiveWarpActive
       }
       log.info('project', `copySelectedClip id=${id}`)
       return true
@@ -1155,29 +1153,16 @@ export const useProjectStore = defineStore('project', {
       // footprint, which is what targetStartMs + overlap checks
       // operate in. Source-time `durationMs` would over/under-count
       // a warped clip's timeline length.
-      const cbLib = useLibraryStore().items.find((i) => i.id === cb.libraryItemId)
-      const cbRatio = isWarpActive({
-        warpEnabled: cb.warpEnabled,
-        tempoRatio: cb.tempoRatio,
-        sourceBpm: cbLib?.bpm,
-        projectBpm: useTransportStore().bpm
-      })
-        ? effectiveTempoRatio({
-            tempoRatio: cb.tempoRatio,
-            sourceBpm: cbLib?.bpm,
-            projectBpm: useTransportStore().bpm
-          })
-        : 1
-      const cbEffDur = cbRatio > 0 ? cb.durationMs / cbRatio : cb.durationMs
+      const cbEffDur =
+        typeof cb.effectiveDurationMs === 'number' && cb.effectiveDurationMs > 0
+          ? cb.effectiveDurationMs
+          : cb.durationMs
 
       const targetStartMs = Math.max(0, positionMs ?? 0)
-      const library = useLibraryStore()
-      const projectBpm = useTransportStore().bpm
       for (const id of track.clipIds) {
         const c = this.clips[id]
         if (!c) continue
-        const cLib = library.items.find((i) => i.id === c.libraryItemId)
-        const cEffDur = clipEffectiveDurationMs(c, cLib, projectBpm)
+        const cEffDur = effectiveClipDurationMs(c)
         const cEnd = c.startMs + cEffDur
         if (targetStartMs < cEnd && targetStartMs + cbEffDur > c.startMs) {
           useNotificationsStore().pushError('Not enough space to paste clip on this track.')
@@ -1211,7 +1196,10 @@ export const useProjectStore = defineStore('project', {
         warpMode: cb.warpMode,
         tempoRatio: cb.tempoRatio,
         semitones: cb.semitones,
-        cents: cb.cents
+        cents: cb.cents,
+        effectiveDurationMs: cb.effectiveDurationMs,
+        effectiveTempoRatio: cb.effectiveTempoRatio,
+        effectiveWarpActive: cb.effectiveWarpActive
       }
       const peakSource = Object.values(this.clips).find(
         (c) => c.libraryItemId === cb.libraryItemId && c.peaks.length > 0
@@ -1402,6 +1390,9 @@ export const useProjectStore = defineStore('project', {
         semitones?: number
         cents?: number
         pendingAutoWarp?: boolean
+        effectiveDurationMs?: number
+        effectiveTempoRatio?: number
+        effectiveWarpActive?: boolean
       },
       opts?: { localOnly?: boolean }
     ): void {
@@ -1417,6 +1408,9 @@ export const useProjectStore = defineStore('project', {
       if (patch.pendingAutoWarp !== undefined) {
         clip.pendingAutoWarp = patch.pendingAutoWarp ? true : undefined
       }
+      if (patch.effectiveDurationMs !== undefined) clip.effectiveDurationMs = patch.effectiveDurationMs
+      if (patch.effectiveTempoRatio !== undefined) clip.effectiveTempoRatio = patch.effectiveTempoRatio
+      if (patch.effectiveWarpActive !== undefined) clip.effectiveWarpActive = patch.effectiveWarpActive
       // Any explicit warp-field edit clears the "waiting for analysis"
       // flag so a late-arriving LIBRARY_ITEM_ANALYSIS can't override
       // the latest state.
@@ -1468,15 +1462,12 @@ export const useProjectStore = defineStore('project', {
     wouldClipOverlap(trackId: string, startMs: number, durationMs: number): boolean {
       const track = this.tracks.find((t) => t.id === trackId)
       if (!track) return false
-      const library = useLibraryStore()
-      const projectBpm = useTransportStore().bpm
       const newStart = Math.max(0, startMs)
       const newEnd = newStart + durationMs
       for (const otherId of track.clipIds) {
         const other = this.clips[otherId]
         if (!other) continue
-        const otherLibItem = library.items.find((i) => i.id === other.libraryItemId)
-        const otherEffDur = clipEffectiveDurationMs(other, otherLibItem, projectBpm)
+        const otherEffDur = effectiveClipDurationMs(other)
         const otherEnd = other.startMs + otherEffDur
         // Overlap if ranges intersect; touching edges (newEnd === other.startMs
         // or newStart === otherEnd) are allowed.
@@ -1746,8 +1737,6 @@ export const useProjectStore = defineStore('project', {
     setProjectLengthMs(lengthMs: number): void {
       if (this.tracks.length === 0) return
       const target = Math.max(this.longestClipEndMs, Math.max(0, Math.floor(lengthMs)))
-      const library = useLibraryStore()
-      const projectBpm = useTransportStore().bpm
       for (const track of this.tracks) {
         let minLength = 0
         for (const clipId of track.clipIds) {
@@ -1757,8 +1746,7 @@ export const useProjectStore = defineStore('project', {
           // a shorter warped clip doesn't artificially keep the track
           // longer than necessary, and a stretched warped clip can't
           // be cropped under its audible end.
-          const libItem = library.items.find((i) => i.id === clip.libraryItemId)
-          const effDur = clipEffectiveDurationMs(clip, libItem, projectBpm)
+          const effDur = effectiveClipDurationMs(clip)
           const end = clip.startMs + effDur
           if (end > minLength) minLength = end
         }
@@ -2282,6 +2270,12 @@ export const useProjectStore = defineStore('project', {
             existing.tempoRatio = typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined
             existing.semitones = typeof c.semitones === 'number' ? c.semitones : undefined
             existing.cents = typeof c.cents === 'number' ? c.cents : undefined
+            existing.effectiveDurationMs =
+              typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined
+            existing.effectiveTempoRatio =
+              typeof c.effectiveTempoRatio === 'number' ? c.effectiveTempoRatio : undefined
+            existing.effectiveWarpActive =
+              typeof c.effectiveWarpActive === 'boolean' ? c.effectiveWarpActive : undefined
             existing.pendingAutoWarp =
               c.pendingAutoWarp === true && existing.warpEnabled !== true ? true : undefined
             if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
@@ -2312,6 +2306,12 @@ export const useProjectStore = defineStore('project', {
             tempoRatio: typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined,
             semitones: typeof c.semitones === 'number' ? c.semitones : undefined,
             cents: typeof c.cents === 'number' ? c.cents : undefined,
+            effectiveDurationMs:
+              typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined,
+            effectiveTempoRatio:
+              typeof c.effectiveTempoRatio === 'number' ? c.effectiveTempoRatio : undefined,
+            effectiveWarpActive:
+              typeof c.effectiveWarpActive === 'boolean' ? c.effectiveWarpActive : undefined,
             pendingAutoWarp:
               c.pendingAutoWarp === true && c.warpEnabled !== true ? true : undefined
           }

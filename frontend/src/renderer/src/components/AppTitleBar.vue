@@ -8,6 +8,10 @@ import iconUrl from '@resources/icons/32x32.png'
 import { useProjectStore, DEFAULT_PROJECT_NAME } from '@/stores/projectStore'
 import { useAppStore } from '@/stores/appStore'
 
+defineProps<{
+  windowControlsDisabled?: boolean
+}>()
+
 const project = useProjectStore()
 const appStore = useAppStore()
 
@@ -107,6 +111,18 @@ function invoke(item: MenuItemDef): void {
   // synthetic actions on the same `menu:action` channel so App.vue
   // sees a single dispatch point.
   window.silverdaw.menuAction(item.action)
+}
+
+function minimizeWindow(): void {
+  window.silverdaw.minimizeWindow()
+}
+
+function toggleMaximizeWindow(): void {
+  window.silverdaw.toggleMaximizeWindow()
+}
+
+function requestCloseWindow(): void {
+  window.silverdaw.closeWindow()
 }
 
 async function startRename(): Promise<void> {
@@ -339,7 +355,83 @@ defineExpose({ startRename })
       </div>
     </div>
 
-    <!-- Drag spacer; window-controls-overlay reserves space on the right automatically. -->
+    <!-- Drag spacer + renderer-owned window controls. Native window-controls-overlay
+         is disabled so modal dialogs can make these buttons inaccessible. -->
     <div class="flex-1" />
+    <div
+      class="flex h-full items-stretch"
+      style="-webkit-app-region: no-drag"
+    >
+      <button
+        type="button"
+        data-borderless-button="true"
+        class="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-0"
+        :disabled="windowControlsDisabled"
+        aria-label="Minimize"
+        title="Minimize"
+        @click="minimizeWindow"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          class="h-3.5 w-3.5"
+          aria-hidden="true"
+        >
+          <path
+            d="M3 8h10"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+          />
+        </svg>
+      </button>
+      <button
+        type="button"
+        data-borderless-button="true"
+        class="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-0"
+        :disabled="windowControlsDisabled"
+        aria-label="Maximize or restore"
+        title="Maximize / Restore"
+        @click="toggleMaximizeWindow"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          class="h-3.5 w-3.5"
+          fill="none"
+          aria-hidden="true"
+        >
+          <rect
+            x="4"
+            y="4"
+            width="8"
+            height="8"
+            rx="0.75"
+            stroke="currentColor"
+            stroke-width="1.4"
+          />
+        </svg>
+      </button>
+      <button
+        type="button"
+        data-borderless-button="true"
+        class="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-red-600 hover:text-white disabled:pointer-events-none disabled:opacity-0"
+        :disabled="windowControlsDisabled"
+        aria-label="Close"
+        title="Close"
+        @click="requestCloseWindow"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          class="h-3.5 w-3.5"
+          aria-hidden="true"
+        >
+          <path
+            d="M4.25 4.25l7.5 7.5M11.75 4.25l-7.5 7.5"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+          />
+        </svg>
+      </button>
+    </div>
   </header>
 </template>

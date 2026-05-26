@@ -15,7 +15,15 @@
 
 import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics, Text } from 'pixi.js'
-import { useProjectStore, type Clip, TRACK_PALETTE, PEAKS_PER_SECOND } from '@/stores/projectStore'
+import {
+  effectiveClipDurationMs,
+  effectiveClipTempoRatio,
+  isClipTempoWarpActive,
+  useProjectStore,
+  type Clip,
+  TRACK_PALETTE,
+  PEAKS_PER_SECOND
+} from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -39,7 +47,7 @@ import {
   TRACK_HEADER_BG
 } from './constants'
 import { trackHeightOf, buildTrackRowLayout } from './trackLayout'
-import { clipEffectiveDurationMs, effectiveTempoRatio, isWarpActive, isWarpPending } from '@/lib/warp'
+import { isWarpPending } from '@/lib/warp'
 import type { ClipHitRegion } from './useDragHandlers'
 import type { DropPreview } from './useDropZone'
 import type { GridGeometry } from './useGridGeometry'
@@ -534,21 +542,9 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const libItem = clip.libraryItemId
       ? library.items.find((i) => i.id === clip.libraryItemId)
       : library.items.find((i) => i.filePath === clip.filePath)
-    const effectiveDurMs = clipEffectiveDurationMs(clip, libItem, transport.bpm)
+    const effectiveDurMs = effectiveClipDurationMs(clip)
     const w = (effectiveDurMs / 1000) * pxPerSecond.value
-    const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
-    const warpRatio = isWarpActive({
-      warpEnabled: clip.warpEnabled,
-      tempoRatio: clip.tempoRatio,
-      sourceBpm,
-      projectBpm: transport.bpm
-    })
-      ? effectiveTempoRatio({
-          tempoRatio: clip.tempoRatio,
-          sourceBpm,
-          projectBpm: transport.bpm
-        })
-      : 1
+    const warpRatio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
 
     // Generous world-space cull: anything entirely outside the current
     // viewport plus one viewport's worth of margin on each side is
@@ -749,12 +745,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       sourceBpm: headerSourceBpm,
       projectBpm: transport.bpm
     })
-    const warpIsActive = !warpIsPending && isWarpActive({
-      warpEnabled: clip.warpEnabled,
-      tempoRatio: clip.tempoRatio,
-      sourceBpm: headerSourceBpm,
-      projectBpm: transport.bpm
-    })
+    const warpIsActive = !warpIsPending && isClipTempoWarpActive(clip)
 
     // Prefer the clip's own custom name (set via inline rename on the
     // timeline) first. Otherwise fall back to the parent library

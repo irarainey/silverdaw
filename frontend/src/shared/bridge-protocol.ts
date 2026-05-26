@@ -638,6 +638,12 @@ export interface ProjectStateClip {
    *  peaks through the library. */
   libraryItemId: string
   offsetMs: number
+  /** Backend-authoritative timeline/output duration after warp. */
+  effectiveDurationMs?: number
+  /** Backend-authoritative tempo ratio used for timing. */
+  effectiveTempoRatio?: number
+  /** True when tempo warp changes the timeline/output duration. */
+  effectiveWarpActive?: boolean
   durationMs: number
   /** Where in the source file this clip starts reading (trim offset).
    *  Optional: omitted on un-trimmed clips; the renderer falls back to 0. */
@@ -913,6 +919,9 @@ export interface ClipWarpAppliedPayload {
   semitones?: number
   cents?: number
   pendingAutoWarp?: boolean
+  effectiveDurationMs?: number
+  effectiveTempoRatio?: number
+  effectiveWarpActive?: boolean
 }
 
 /** Broadcast on every preview load/play/pause/stop/unload transition. */
@@ -1207,6 +1216,9 @@ export function isProjectStatePayload(value: unknown): value is ProjectStatePayl
         return false
       }
       if (c.inMs !== undefined && typeof c.inMs !== 'number') return false
+      if (c.effectiveDurationMs !== undefined && typeof c.effectiveDurationMs !== 'number') return false
+      if (c.effectiveTempoRatio !== undefined && typeof c.effectiveTempoRatio !== 'number') return false
+      if (c.effectiveWarpActive !== undefined && typeof c.effectiveWarpActive !== 'boolean') return false
       if (c.colorIndex !== undefined && typeof c.colorIndex !== 'number') return false
       if (c.name !== undefined && typeof c.name !== 'string') return false
       if (c.unresolved !== undefined && typeof c.unresolved !== 'boolean') return false
@@ -1369,6 +1381,9 @@ export function isClipWarpAppliedPayload(value: unknown): value is ClipWarpAppli
   if (value.semitones !== undefined && typeof value.semitones !== 'number') return false
   if (value.cents !== undefined && typeof value.cents !== 'number') return false
   if (value.pendingAutoWarp !== undefined && typeof value.pendingAutoWarp !== 'boolean') return false
+  if (value.effectiveDurationMs !== undefined && typeof value.effectiveDurationMs !== 'number') return false
+  if (value.effectiveTempoRatio !== undefined && typeof value.effectiveTempoRatio !== 'number') return false
+  if (value.effectiveWarpActive !== undefined && typeof value.effectiveWarpActive !== 'boolean') return false
   return true
 }
 
