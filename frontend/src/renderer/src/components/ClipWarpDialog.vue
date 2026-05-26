@@ -17,9 +17,11 @@
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
-import { useLibraryStore } from '@/stores/libraryStore'
+import { libraryItemDisplayName, useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { keyBadgeClass } from '@/lib/keyBadge'
+import { keyPresetsFor, shiftedKey } from '@/lib/pitchKey'
 import { effectiveTempoRatio } from '@/lib/warp'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
@@ -45,6 +47,11 @@ const libItem = computed(() =>
 const sourceBpm = computed(() => libItem.value?.bpm)
 const projectBpm = computed(() => transport.bpm)
 const dialogTitle = computed(() => props.panel === 'pitch' ? 'Pitch' : 'Warp')
+const clipTitle = computed(() => {
+  const custom = clip.value?.name?.trim()
+  if (custom) return custom
+  return libItem.value ? libraryItemDisplayName(libItem.value) : 'clip'
+})
 
 const draftEnabled = ref(false)
 const draftMode = ref<ClipWarpMode>('rhythmic')
@@ -52,6 +59,18 @@ const draftTempoPinned = ref(false)
 const draftPinnedBpm = ref(120)
 const draftSemitones = ref(0)
 const draftCents = ref(0)
+
+const sourceKey = computed(() => {
+  const item = libItem.value
+  if (!item) return undefined
+  if (item.key || item.metadata?.key) return item.key ?? item.metadata?.key
+  const sourceId = item.derivedFrom?.sourceItemId
+  if (!sourceId) return undefined
+  const source = library.items.find((candidate) => candidate.id === sourceId)
+  return source?.key ?? source?.metadata?.key
+})
+const keyPresets = computed(() => keyPresetsFor(sourceKey.value))
+const currentPitchKey = computed(() => shiftedKey(sourceKey.value, draftSemitones.value, draftCents.value))
 
 // Tempo source: either "follow project BPM" (no `tempoRatio` on the
 // clip) or "pin to a specific source BPM" (`tempoRatio` is set).
@@ -78,13 +97,13 @@ function pinTempo(): void {
   }
 }
 
-function resetPitch(): void {
-  draftSemitones.value = 0
-  draftCents.value = 0
-}
-
 function pitchNeedsProcessor(semitonesValue: number, centsValue: number): boolean {
   return semitonesValue !== 0 || centsValue !== 0
+}
+
+function applyKeyPreset(semitones: number): void {
+  draftSemitones.value = semitones
+  draftCents.value = 0
 }
 
 const effectiveRatio = computed(() =>
@@ -213,34 +232,16 @@ function onKeydown(ev: KeyboardEvent): void {
         @keydown="onKeydown"
       >
         <!-- Header -->
-        <div class="flex items-baseline justify-between border-b border-zinc-800 px-5 py-3">
+        <div class="border-b border-zinc-800 px-5 py-3">
           <h1
             id="clip-warp-title"
             class="truncate text-sm font-semibold tracking-tight text-zinc-100"
           >
             {{ dialogTitle }}
             <span class="ml-2 truncate text-xs font-normal text-zinc-500">
-              {{ clip.name || libItem?.name || libItem?.fileName || 'clip' }}
+              {{ clipTitle }}
             </span>
           </h1>
-          <button
-            type="button"
-            data-borderless-button="true"
-            class="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-            title="Close"
-            @click="cancel"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              class="h-3.5 w-3.5"
-            >
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
-          </button>
         </div>
 
         <!-- Body -->
@@ -260,7 +261,6 @@ function onKeydown(ev: KeyboardEvent): void {
             </template>
             <template v-else>
               <span class="font-medium">Pitch shift</span>
-              <span class="text-zinc-500">changes pitch without changing clip timing</span>
             </template>
           </label>
 
@@ -369,18 +369,6 @@ function onKeydown(ev: KeyboardEvent): void {
             v-if="panel === 'pitch'"
             class="flex flex-col gap-2"
           >
-            <legend class="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500">
-              <span>Pitch shift</span>
-              <button
-                type="button"
-                data-borderless-button="true"
-                class="text-[10px] normal-case tracking-normal text-zinc-500 hover:text-zinc-200"
-                title="Reset pitch to zero"
-                @click="resetPitch"
-              >
-                reset
-              </button>
-            </legend>
             <label class="flex items-center gap-2">
               <span class="w-16 text-zinc-400">Semitones</span>
               <input
@@ -409,6 +397,47 @@ function onKeydown(ev: KeyboardEvent): void {
                 {{ draftCents > 0 ? '+' : '' }}{{ draftCents }}
               </span>
             </label>
+            <div
+              v-if="currentPitchKey"
+              class="rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-[11px] text-zinc-400"
+            >
+              Current pitch:
+              <span :class="keyBadgeClass(currentPitchKey)">{{ currentPitchKey }}</span>
+            </div>
+            <div class="mt-2 rounded border border-zinc-800 bg-zinc-950/50 p-3">
+              <div class="mb-2 flex items-center justify-between gap-2">
+                <div class="text-[10px] uppercase tracking-wider text-zinc-500">
+                  Key presets
+                </div>
+                <div
+                  v-if="sourceKey"
+                  class="text-[10px] text-zinc-500"
+                >
+                  Source: <span :class="keyBadgeClass(sourceKey)">{{ sourceKey }}</span>
+                </div>
+              </div>
+              <div
+                v-if="keyPresets.length > 0"
+                class="grid grid-cols-4 gap-1"
+              >
+                <button
+                  v-for="preset in keyPresets"
+                  :key="preset.note"
+                  type="button"
+                  class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+                  :title="`${sourceKey} → ${preset.label} (${preset.semitones > 0 ? '+' : ''}${preset.semitones} semitones)`"
+                  @click="applyKeyPreset(preset.semitones)"
+                >
+                  {{ preset.label.replace(' major', '').replace(' minor', 'm') }}
+                </button>
+              </div>
+              <p
+                v-else
+                class="text-[11px] text-zinc-500"
+              >
+                No source key has been detected yet. Reanalyse the source file to generate key presets.
+              </p>
+            </div>
           </fieldset>
         </div>
 

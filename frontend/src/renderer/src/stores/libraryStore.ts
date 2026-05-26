@@ -12,6 +12,7 @@ import { effectiveClipDurationMs, effectiveClipTempoRatio, isClipTempoWarpActive
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { shiftedKey } from '@/lib/pitchKey'
 import type { Clip } from '@/stores/projectStore'
 import type { ClipWarpMode, LibraryItemKind } from '@shared/bridge-protocol'
 
@@ -427,8 +428,6 @@ export const useLibraryStore = defineStore('library', {
           item.derivedFrom?.inMs === inMs &&
           item.derivedFrom?.durationMs === durationMs
       )
-      if (existing) return existing.id
-
       // Prefer the clip's own custom name (set via inline rename on the
        // timeline) so the saved-clip library item inherits whatever the
        // user already chose to call it. Falls back to an auto-generated
@@ -439,6 +438,36 @@ export const useLibraryStore = defineStore('library', {
         : buildSavedClipName(source ?? clip, inMs, durationMs)
       const pinnedTempoRatio =
         isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : clip.tempoRatio
+      const shiftedClipKey = shiftedKey(source?.key ?? source?.metadata?.key, clip.semitones, clip.cents)
+      if (existing) {
+        existing.key = shiftedClipKey ?? source?.key
+        existing.semitones = clip.semitones
+        existing.cents = clip.cents
+        existing.warpEnabled = clip.warpEnabled
+        existing.warpMode = clip.warpMode
+        existing.tempoRatio = pinnedTempoRatio
+        sendBridge('LIBRARY_ADD', {
+          itemId: existing.id,
+          filePath: existing.filePath,
+          kind: existing.kind,
+          name: existing.name,
+          fileName: existing.fileName,
+          durationMs: existing.durationMs,
+          sampleRate: existing.sampleRate,
+          channelCount: existing.channelCount,
+          key: existing.key,
+          sourceItemId: existing.derivedFrom?.sourceItemId,
+          sourceClipId: existing.derivedFrom?.sourceClipId,
+          sourceInMs: existing.derivedFrom?.inMs,
+          sourceDurationMs: existing.derivedFrom?.durationMs,
+          warpEnabled: existing.warpEnabled,
+          warpMode: existing.warpMode,
+          tempoRatio: existing.tempoRatio,
+          semitones: existing.semitones,
+          cents: existing.cents
+        })
+        return existing.id
+      }
       const itemId = this.addItem({
         kind: 'saved-clip',
         name,
@@ -450,7 +479,7 @@ export const useLibraryStore = defineStore('library', {
         peaks: clip.peaks,
         peaksPerSecond: clip.peaksPerSecond,
         playbackFilePath: source?.playbackFilePath ?? clip.playbackFilePath ?? clip.filePath,
-        key: source?.key,
+        key: shiftedClipKey ?? source?.key,
         derivedFrom: {
           sourceItemId,
           sourceClipId: clip.id,
@@ -476,6 +505,7 @@ export const useLibraryStore = defineStore('library', {
         const item = this.items.find((i) => i.id === itemId)
         if (item) {
           if (source.decodedCacheFilePath) item.decodedCacheFilePath = source.decodedCacheFilePath
+          if (shiftedClipKey) item.key = shiftedClipKey
           if (source.bpm !== undefined) item.bpm = source.bpm
           if (source.beats !== undefined) item.beats = source.beats.slice()
           if (source.beatAnchorSec !== undefined) item.beatAnchorSec = source.beatAnchorSec

@@ -1,5 +1,5 @@
 const KEY_BADGE_BASE_CLASS =
-  'whitespace-nowrap rounded border px-1 py-0.5 text-[9px] tracking-wide shadow-sm'
+  'whitespace-nowrap rounded border px-1 py-0.5 text-[9px] leading-none tracking-wide shadow-sm'
 const KEY_BADGE_FALLBACK_CLASS = 'border-zinc-700 bg-zinc-800 text-zinc-300'
 
 const KEY_BADGE_CLASSES: Record<string, { major: string; minor: string }> = {

@@ -726,6 +726,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const STATUS_BADGE_R = 5
     const BADGE_GAP = 4
     const NAME_BADGE_GAP = 6
+    const PITCH_BADGE_FULL_W = 18
 
     if (clipW < 20) return
 
@@ -760,12 +761,15 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // proportional glyphs can be much wider than the average.
     const LINK_BADGE_W = isLinked ? LINK_BADGE_FULL_W : 0
     const WARP_BADGE_W = warpIsPending || warpIsActive ? WARP_BADGE_FULL_W : 0
-    const BADGE_COUNT = (isLinked ? 1 : 0) + (warpIsPending || warpIsActive ? 1 : 0)
+    const pitchShifted = (clip.semitones ?? 0) !== 0 || (clip.cents ?? 0) !== 0
+    const PITCH_BADGE_W = pitchShifted ? PITCH_BADGE_FULL_W : 0
+    const BADGE_COUNT = (isLinked ? 1 : 0) + (pitchShifted ? 1 : 0) + (warpIsPending || warpIsActive ? 1 : 0)
     const BADGES_W =
       BADGE_COUNT === 0
         ? 0
         : NAME_BADGE_GAP +
           LINK_BADGE_W +
+          PITCH_BADGE_W +
           WARP_BADGE_W +
           Math.max(0, BADGE_COUNT - 1) * BADGE_GAP
     const maxTextW = Math.max(0, clipW - PAD_X * 2 - BADGES_W)
@@ -829,6 +833,35 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         .stroke({ color: 0xffffff, width: 1.5 })
       tracksL.addChild(badge)
       badgeRight -= LINK_BADGE_FULL_W + BADGE_GAP
+    }
+    if (pitchShifted) {
+      const bg = new G()
+      const cx = badgeRight - PITCH_BADGE_FULL_W / 2
+      const cy = clipInnerY + HEADER_H / 2
+      bg
+        .roundRect(
+          cx - PITCH_BADGE_FULL_W / 2,
+          cy - STATUS_BADGE_H / 2,
+          PITCH_BADGE_FULL_W,
+          STATUS_BADGE_H,
+          STATUS_BADGE_R
+        )
+        .fill({ color: 0x18181b, alpha: 0.95 })
+        .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
+      tracksL.addChild(bg)
+      const badge = new T({
+        text: '♪',
+        style: {
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          fontSize: 11,
+          fontWeight: '700',
+          fill: 0xffffff
+        }
+      })
+      badge.x = Math.round(cx - 4)
+      badge.y = Math.round(cy - 8)
+      tracksL.addChild(badge)
+      badgeRight -= PITCH_BADGE_FULL_W + BADGE_GAP
     }
     if (warpIsPending) {
       const badge = new G()

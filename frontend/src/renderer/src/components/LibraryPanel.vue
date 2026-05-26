@@ -19,6 +19,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoLibrary, reanalyseLibraryItem } from '@/lib/importAudio'
 import { log } from '@/lib/log'
 import { keyBadgeClass } from '@/lib/keyBadge'
+import { effectiveTempoRatio } from '@/lib/warp'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
@@ -118,6 +119,11 @@ onBeforeUnmount(() => {
 const itemCount = computed(() => library.items.length)
 const infoItem = computed(() => library.items.find((item) => item.id === infoItemId.value) ?? null)
 const editorItem = computed(() => library.items.find((item) => item.id === editorItemId.value) ?? null)
+
+const SAVED_CLIP_PILL_CLASS =
+    'shrink-0 whitespace-nowrap rounded border px-1 py-0.5 text-[9px] leading-none shadow-sm'
+const SAVED_CLIP_BPM_PILL_CLASS =
+    `${SAVED_CLIP_PILL_CLASS} border-zinc-700 bg-zinc-800 text-zinc-300`
 const contextMenuItem = computed(() =>
     contextMenu.value ? library.items.find((item) => item.id === contextMenu.value?.itemId) ?? null : null
 )
@@ -339,7 +345,7 @@ function formatClipDuration(ms: number): string {
     const safe = Math.max(0, ms)
     if (safe < 60_000) {
         const seconds = safe / 1000
-        return `${seconds.toFixed(seconds < 10 ? 2 : 1)}s`
+        return seconds.toFixed(seconds < 10 ? 2 : 1)
     }
     const totalSeconds = Math.floor(safe / 1000)
     const minutes = Math.floor(totalSeconds / 60)
@@ -364,11 +370,19 @@ function childItems(source: LibraryItem): LibraryItem[] {
     return library.items.filter((item) => item.derivedFrom?.sourceItemId === source.id)
 }
 
-function sourceWindowLabel(item: LibraryItem): string {
-    if (!item.derivedFrom) return ''
-    const start = item.derivedFrom.inMs
-    const end = start + item.derivedFrom.durationMs
-    return `${formatDuration(start)} – ${formatDuration(end)}`
+function savedClipEffectiveBpm(item: LibraryItem): number | undefined {
+    if (item.kind !== 'saved-clip' || item.warpEnabled !== true) return undefined
+    const source = item.derivedFrom?.sourceItemId
+        ? library.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId)
+        : undefined
+    const sourceBpm = item.bpm ?? source?.bpm
+    if (typeof sourceBpm !== 'number' || sourceBpm <= 0) return undefined
+    const ratio = effectiveTempoRatio({
+        tempoRatio: item.tempoRatio,
+        sourceBpm,
+        projectBpm: sourceBpm
+    })
+    return sourceBpm * ratio
 }
 
 // ─── Resize handle (top edge of the panel) ────────────────────────────────
@@ -457,7 +471,7 @@ function onResizePointerUp(): void {
         <div
           v-for="source in sourceItems"
           :key="source.id"
-          class="library-group flex w-72 max-w-full shrink-0 flex-col overflow-hidden rounded-md border"
+          class="library-group flex w-[240px] max-w-full shrink-0 flex-col overflow-hidden rounded-md border"
           :class="
             childItems(source).length > 0
               ? 'border-zinc-800 bg-zinc-950/50'
@@ -466,7 +480,7 @@ function onResizePointerUp(): void {
         >
           <div
             draggable="true"
-            class="library-item group relative flex h-22 cursor-grab select-none items-stretch overflow-hidden bg-zinc-950/60 text-left transition-colors hover:bg-zinc-900 active:cursor-grabbing"
+            class="library-item group relative flex cursor-grab select-none items-stretch overflow-hidden bg-zinc-950/60 text-left transition-colors hover:bg-zinc-900 active:cursor-grabbing"
             @dragstart="(e) => onItemDragStart(e, source)"
             @dragend="onItemDragEnd"
             @dblclick="openItemEditor(source)"
@@ -475,7 +489,7 @@ function onResizePointerUp(): void {
             <!-- Cover art thumbnail (or fallback) on the left edge. -->
             <div
               v-if="ui.showLibraryTileImages"
-              class="flex h-full w-15 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
+              class="flex aspect-square w-[75px] shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
             >
               <img
                 v-if="source.coverArtUrl"
@@ -526,8 +540,8 @@ function onResizePointerUp(): void {
                 {{ displayArtist(source) }}
               </div>
               <div class="mt-auto flex items-center justify-between gap-2 text-[10px] text-zinc-500">
-                <span class="flex items-center gap-2 font-mono tabular-nums">
-                  <span>{{ formatDuration(source.durationMs) }}</span>
+                <span class="font-mono tabular-nums">{{ formatDuration(source.durationMs) }}</span>
+                <span class="ml-auto flex items-center gap-1">
                   <span
                     v-if="source.key"
                     :class="keyBadgeClass(source.key)"
@@ -537,11 +551,10 @@ function onResizePointerUp(): void {
                   </span>
                   <span
                     v-if="source.bpm"
-                    class="whitespace-nowrap rounded px-1 py-0.5 text-[9px] uppercase tracking-wide"
                     :class="
                       source.variableTempo
-                        ? 'bg-amber-900/60 text-amber-200'
-                        : 'bg-zinc-800 text-zinc-300'
+                        ? `${SAVED_CLIP_PILL_CLASS} border-amber-800 bg-amber-900/60 text-amber-200`
+                        : SAVED_CLIP_BPM_PILL_CLASS
                     "
                     :title="
                       source.variableTempo
@@ -555,29 +568,6 @@ function onResizePointerUp(): void {
                     >~</span>{{ source.bpm.toFixed(2) }} BPM
                   </span>
                 </span>
-                <button
-                  type="button"
-                  tabindex="-1"
-                  :disabled="library.isItemInUse(source.id)"
-                  class="rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:text-zinc-700 disabled:hover:bg-transparent disabled:hover:text-zinc-700"
-                  :title="library.isItemInUse(source.id) ? 'In use - remove track clips and saved clips first' : 'Remove from library'"
-                  @click="library.removeItem(source.id)"
-                  @mousedown.stop
-                  @contextmenu.stop.prevent
-                  @dragstart.stop.prevent
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    class="h-3 w-3"
-                    aria-hidden="true"
-                  >
-                    <path
-                      d="M18.3 5.71L12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.3 19.71 2.88 18.3 9.17 12 2.88 5.71 4.3 4.29 10.59 10.6l6.3-6.3z"
-                    />
-                  </svg>
-                </button>
               </div>
             </div>
           </div>
@@ -614,7 +604,7 @@ function onResizePointerUp(): void {
                 v-for="item in childItems(source)"
                 :key="item.id"
                 draggable="true"
-                class="saved-clip group flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
+                class="saved-clip group relative flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 pr-1 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
                 @dragstart="(e) => onItemDragStart(e, item)"
                 @dragend="onItemDragEnd"
                 @dblclick="openItemEditor(item)"
@@ -648,45 +638,25 @@ function onResizePointerUp(): void {
                     {{ displayTitle(item) }}
                   </div>
                   <div class="min-w-0 truncate font-mono text-[10px] tabular-nums text-zinc-500">
-                    {{ sourceWindowLabel(item) }}
+                    {{ formatClipDuration(item.durationMs) }}
                   </div>
                 </div>
-                <span class="shrink-0 font-mono text-[10px] tabular-nums text-zinc-400">
-                  {{ formatClipDuration(item.durationMs) }}
-                </span>
-                <span
-                  v-if="item.warpEnabled === true"
-                  class="shrink-0 rounded border border-yellow-300/80 bg-slate-950 px-1 py-px text-[8px] font-bold leading-none text-yellow-300"
-                  title="Saved with warp settings"
-                >
-                  WARP
-                </span>
-                <button
-                  type="button"
-                  tabindex="-1"
-                  class="shrink-0 rounded p-0.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-100 group-hover:opacity-100"
-                  :title="
-                    library.isItemInUse(item.id)
-                      ? 'Remove saved clip from library (timeline clips will become independent)'
-                      : 'Remove saved clip from library'
-                  "
-                  @click="library.removeItem(item.id)"
-                  @mousedown.stop
-                  @contextmenu.stop.prevent
-                  @dragstart.stop.prevent
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    class="h-3 w-3"
-                    aria-hidden="true"
+                <div class="ml-auto flex shrink-0 items-center gap-1">
+                  <span
+                    v-if="item.key && ((item.semitones ?? 0) !== 0 || (item.cents ?? 0) !== 0)"
+                    :class="keyBadgeClass(item.key)"
+                    title="Clip pitch key"
                   >
-                    <path
-                      d="M18.3 5.71L12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.3 19.71 2.88 18.3 9.17 12 2.88 5.71 4.3 4.29 10.59 10.6l6.3-6.3z"
-                    />
-                  </svg>
-                </button>
+                    {{ item.key }}
+                  </span>
+                  <span
+                    v-if="savedClipEffectiveBpm(item)"
+                    :class="SAVED_CLIP_BPM_PILL_CLASS"
+                    title="Warped clip tempo"
+                  >
+                    {{ savedClipEffectiveBpm(item)?.toFixed(2) }} BPM
+                  </span>
+                </div>
               </div>
             </template>
           </div>
@@ -695,7 +665,7 @@ function onResizePointerUp(): void {
         <!-- Orphan saved clips: source file was removed from the library. -->
         <div
           v-if="orphanSavedClipItems.length > 0"
-          class="library-group flex w-72 max-w-full shrink-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/50"
+          class="library-group flex w-[240px] max-w-full shrink-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/50"
         >
           <div class="px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
             Saved clips (source missing)
