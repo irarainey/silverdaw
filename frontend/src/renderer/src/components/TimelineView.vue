@@ -120,8 +120,8 @@ const setDisplayPositionMs = drawing.setDisplayPositionMs
 
 const hasPendingWarpClip = computed(() =>
   Object.values(project.clips).some((clip) => {
-    const libItem = library.items.find((i) => i.id === clip.libraryItemId)
-    const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
+    const libItem = library.byId[clip.libraryItemId]
+    const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
     return isWarpPending({
       warpEnabled: clip.warpEnabled,
       tempoRatio: clip.tempoRatio,
@@ -334,14 +334,14 @@ const renameOverlayStyle = computed<Record<string, string> | null>(() => {
   const rowWorldY = trackTopWorldYAt(project.tracks, trackIndex)
   const padding = 4
   const innerY = rowWorldY + padding
-  const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+  const libItem = library.byId[clip.libraryItemId]
   const effectiveDurMs = effectiveClipDurationMs(clip)
   const clipWidthPx = (effectiveDurMs / 1000) * pxPerSecond.value
   const displayName = clip.name?.trim()
     ? clip.name
     : libItem ? libraryItemDisplayName(libItem) : clip.fileName
   const isLinked = libItem?.kind === 'saved-clip'
-  const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
+  const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
   const warpPending = isWarpPending({
     warpEnabled: clip.warpEnabled,
     tempoRatio: clip.tempoRatio,
@@ -545,8 +545,8 @@ watch(
 watch(
   () => Object.values(project.clips)
     .map((clip) => {
-      const item = library.items.find((candidate) => candidate.id === clip.libraryItemId)
-      const sourceBpm = item ? libraryItemSourceBpm(item, library.items) : undefined
+      const item = library.byId[clip.libraryItemId]
+      const sourceBpm = item ? libraryItemSourceBpm(item, library.byId) : undefined
       return [
         clip.id,
         clip.libraryItemId,

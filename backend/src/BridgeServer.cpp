@@ -278,9 +278,11 @@ void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
 
     const auto serialised = juce::JSON::toString(juce::var(envelope), true).toStdString();
 
-    // Skip the 60 Hz playhead chatter; everything else is rare enough
-    // that one line per envelope is useful for diagnostics.
-    if (type != "PLAYHEAD_UPDATE")
+    // Skip the 60 Hz playhead and preview-position chatter; both fire
+    // up to 60×/sec while a transport is playing and would otherwise
+    // dominate the log file. Everything else is rare enough that one
+    // line per envelope is useful for diagnostics.
+    if (type != "PLAYHEAD_UPDATE" && type != "PREVIEW_POSITION")
     {
         silverdaw::log::info("bridge", "broadcast " + type + " bytes=" + juce::String(static_cast<int>(serialised.size())));
     }

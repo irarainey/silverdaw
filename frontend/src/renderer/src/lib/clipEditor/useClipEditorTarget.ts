@@ -53,7 +53,7 @@ export function useClipEditorTarget(
 
   const editorItem = computed<LibraryItem | null>(() => {
     const clip = timelineClip.value
-    if (clip) return library.items.find((i) => i.id === clip.libraryItemId) ?? null
+    if (clip) return library.byId[clip.libraryItemId] ?? null
     return itemRef.value ?? null
   })
 
@@ -84,7 +84,7 @@ export function useClipEditorTarget(
     const entry = editorItem.value
     if (!entry) return null
     if (entry.kind === 'saved-clip' && entry.derivedFrom?.sourceItemId) {
-      return library.items.find((i) => i.id === entry.derivedFrom?.sourceItemId) ?? entry
+      return library.byId[entry.derivedFrom?.sourceItemId] ?? entry
     }
     return entry
   })
@@ -93,7 +93,7 @@ export function useClipEditorTarget(
   const sourceBpm = computed(() => {
     const entry = editorItem.value
     if (!entry) return undefined
-    return libraryItemSourceBpm(entry, library.items)
+    return libraryItemSourceBpm(entry, library.byId)
   })
   const sourceKey = computed(() => {
     const source = sourceItem.value

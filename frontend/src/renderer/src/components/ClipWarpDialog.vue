@@ -43,8 +43,8 @@ const dialogEl = ref<HTMLDivElement | null>(null)
 const clip = computed(() => (props.clipId ? project.clips[props.clipId] : undefined))
 const libItem = computed(() =>
   props.itemId
-    ? library.items.find((i) => i.id === props.itemId)
-    : clip.value ? library.items.find((i) => i.id === clip.value!.libraryItemId) : undefined
+    ? library.byId[props.itemId]
+    : clip.value ? library.byId[clip.value!.libraryItemId] : undefined
 )
 
 const sourceBpm = computed(() => libItem.value?.bpm)
@@ -69,7 +69,7 @@ const sourceKey = computed(() => {
   if (item.key || item.metadata?.key) return item.key ?? item.metadata?.key
   const sourceId = item.derivedFrom?.sourceItemId
   if (!sourceId) return undefined
-  const source = library.items.find((candidate) => candidate.id === sourceId)
+  const source = library.byId[sourceId]
   return source?.key ?? source?.metadata?.key
 })
 const keyPresets = computed(() => keyPresetsFor(sourceKey.value))

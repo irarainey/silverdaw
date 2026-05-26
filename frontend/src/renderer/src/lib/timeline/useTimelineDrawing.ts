@@ -24,7 +24,7 @@ import {
   TRACK_PALETTE,
   PEAKS_PER_SECOND
 } from '@/stores/projectStore'
-import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm, type LibraryItem } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
@@ -541,7 +541,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     const absX = headerWidth() + (clip.startMs / 1000) * pxPerSecond.value
     const libItem = clip.libraryItemId
-      ? library.items.find((i) => i.id === clip.libraryItemId)
+      ? library.byId[clip.libraryItemId]
       : library.items.find((i) => i.filePath === clip.filePath)
     const effectiveDurMs = effectiveClipDurationMs(clip)
     const w = (effectiveDurMs / 1000) * pxPerSecond.value
@@ -613,7 +613,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     if (libItem?.kind === 'saved-clip' && (!baseLibLod || baseLibLod.length <= 1)) {
       const sourceId = libItem.derivedFrom?.sourceItemId
       if (sourceId) {
-        const source = library.items.find((i) => i.id === sourceId)
+        const source = library.byId[sourceId]
         if (source) sourceLodOwner = source
       }
     }
@@ -699,7 +699,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // few ms after a split because BTrack's per-beat timestamps
     // wander relative to the implied uniform tempo.
     const beats = libItem?.beats
-    const markerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
+    const markerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
     // Prefer the regression-derived anchor over the first raw
     // detected beat — it's the implied phase of the ideal beat
     // grid and is robust to BTrack's per-beat jitter. Older saved
@@ -721,16 +721,25 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       const minMarkerSpacingPx = 4
       const markers = new G()
       let drew = 0
-      let lastMarkerPx = Number.NEGATIVE_INFINITY
-      for (let beatMs = firstBeatMs; beatMs <= outMs; beatMs += beatSpacingMs) {
+      // Stride-step: when zoomed out, the per-beat loop would iterate
+      // every beat in the clip just to skip 95% of them via the
+      // `minMarkerSpacingPx` guard. Pre-compute the integer stride
+      // (in beats) that already satisfies the min-spacing rule and
+      // step by that, so a 5-minute clip at 120 BPM doesn't burn 600
+      // iterations per redraw when only a handful of markers fit.
+      // `pxPerBeat = beatSpacingMs / warpRatio * pxPerMs` is the on-
+      // screen distance between successive beats.
+      const pxPerBeat = (beatSpacingMs / warpRatio) * pxPerMs
+      const beatStride =
+        pxPerBeat > 0 ? Math.max(1, Math.ceil(minMarkerSpacingPx / pxPerBeat)) : 1
+      const stepMs = beatSpacingMs * beatStride
+      for (let beatMs = firstBeatMs; beatMs <= outMs; beatMs += stepMs) {
         const offsetInClipMs = beatMs - inMs
         if (offsetInClipMs < 0) continue
         const x = absX + (offsetInClipMs / warpRatio) * pxPerMs
-        if (x - lastMarkerPx < minMarkerSpacingPx) continue
         markers.moveTo(x + 0.5, innerY + 1).lineTo(x + 0.5, innerY + innerH - 1)
-        lastMarkerPx = x
         ++drew
-        if (beatSpacingMs <= 0) break
+        if (stepMs <= 0) break
       }
       if (drew > 0) {
         markers.stroke({ color: 0xffffff, width: 1, alpha: 0.4 })
@@ -738,7 +747,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       }
     }
 
-    drawClipHeader(clip, absX, innerY, w, palette)
+    drawClipHeader(clip, absX, innerY, w, palette, libItem, markerSourceBpm)
   }
 
   function drawClipHeader(
@@ -746,7 +755,9 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     clipX: number,
     clipInnerY: number,
     clipW: number,
-    palette: (typeof TRACK_PALETTE)[number]
+    palette: (typeof TRACK_PALETTE)[number],
+    libItem: LibraryItem | undefined,
+    headerSourceBpm: number | undefined
   ): void {
     const tracksL = tracksLayer.value
     const G = GraphicsCtor.value
@@ -767,15 +778,9 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     if (clipW < 20) return
 
-    // Resolve the parent library item by id (the authoritative link
-    // recorded in the project file). When the parent is a saved-clip
-    // the clip is "linked" — edits in the Clip Editor propagate to
-    // every sibling sharing the same `libraryItemId`. We surface this
-    // with a small chain-link badge at the right edge of the header
-    // so the user can tell linked from independent clips at a glance.
-    const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+    // Library-item + source-BPM lookups are passed in from `drawClip` so
+    // both functions share a single resolution per clip per redraw.
     const isLinked = libItem?.kind === 'saved-clip'
-    const headerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.items) : undefined
     const warpIsPending = isWarpPending({
       warpEnabled: clip.warpEnabled,
       tempoRatio: clip.tempoRatio,

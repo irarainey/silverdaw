@@ -337,7 +337,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   function isClipLinkedToSavedClip(clip: { libraryItemId?: string }): boolean {
     const libId = clip.libraryItemId
     if (!libId) return false
-    const item = library.items.find((i) => i.id === libId)
+    const item = library.byId[libId]
     return item?.kind === 'saved-clip'
   }
 
@@ -567,7 +567,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     // analysis). Fall back to filePath lookup for legacy / unsaved
     // states where libraryItemId hasn't been resolved yet.
     const itemById = clip.libraryItemId
-      ? library.items.find((i) => i.id === clip.libraryItemId)
+      ? library.byId[clip.libraryItemId]
       : undefined
     const item = itemById ?? library.items.find((i) => i.filePath === clip.filePath)
     const beats = item?.beats

@@ -90,7 +90,7 @@ export function useTimelineContextMenu(
   const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
     const items: ClipContextMenuItem[] = []
-    const clipParent = clip ? library.items.find((i) => i.id === clip.libraryItemId) : null
+    const clipParent = clip ? library.byId[clip.libraryItemId] : null
     if (clip?.unresolved) {
       items.push({ command: 'clip.relink', label: 'Relink' })
     }

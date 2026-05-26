@@ -1531,12 +1531,12 @@ export function libraryItemDisplayName(item: {
 
 export function libraryItemSourceBpm(
   item: { bpm?: number; derivedFrom?: SavedClipSource },
-  items: readonly LibraryItem[]
+  byId: Readonly<Record<string, LibraryItem>>
 ): number | undefined {
   if (typeof item.bpm === 'number' && item.bpm > 0) return item.bpm
   const sourceId = item.derivedFrom?.sourceItemId
   if (!sourceId) return undefined
-  const source = items.find((candidate) => candidate.id === sourceId)
+  const source = byId[sourceId]
   return typeof source?.bpm === 'number' && source.bpm > 0 ? source.bpm : undefined
 }
 

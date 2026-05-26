@@ -117,15 +117,15 @@ onBeforeUnmount(() => {
 })
 
 const itemCount = computed(() => library.items.length)
-const infoItem = computed(() => library.items.find((item) => item.id === infoItemId.value) ?? null)
-const editorItem = computed(() => library.items.find((item) => item.id === editorItemId.value) ?? null)
+const infoItem = computed(() => (infoItemId.value ? library.byId[infoItemId.value] ?? null : null))
+const editorItem = computed(() => (editorItemId.value ? library.byId[editorItemId.value] ?? null : null))
 
 const SAVED_CLIP_PILL_CLASS =
     'shrink-0 whitespace-nowrap rounded border px-1 py-0.5 text-[9px] leading-none shadow-sm'
 const SAVED_CLIP_BPM_PILL_CLASS =
     `${SAVED_CLIP_PILL_CLASS} border-zinc-700 bg-zinc-800 text-zinc-300`
 const contextMenuItem = computed(() =>
-    contextMenu.value ? library.items.find((item) => item.id === contextMenu.value?.itemId) ?? null : null
+    contextMenu.value ? library.byId[contextMenu.value?.itemId] ?? null : null
 )
 const sourceItems = computed(() => library.items.filter((item) => item.kind === 'audio-file'))
 const orphanSavedClipItems = computed(() =>
@@ -376,7 +376,7 @@ function childItems(source: LibraryItem): LibraryItem[] {
 function savedClipEffectiveBpm(item: LibraryItem): number | undefined {
     if (item.kind !== 'saved-clip' || item.warpEnabled !== true) return undefined
     const source = item.derivedFrom?.sourceItemId
-        ? library.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId)
+        ? library.byId[item.derivedFrom?.sourceItemId]
         : undefined
     const sourceBpm = item.bpm ?? source?.bpm
     if (typeof sourceBpm !== 'number' || sourceBpm <= 0) return undefined

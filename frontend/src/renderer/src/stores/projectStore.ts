@@ -813,7 +813,7 @@ export const useProjectStore = defineStore('project', {
       const clip = this.clips[clipId]
       if (!clip) return null
       const library = useLibraryStore()
-      const libItem = library.items.find((i) => i.id === clip.libraryItemId)
+      const libItem = library.byId[clip.libraryItemId]
       if (libItem?.kind === 'saved-clip') {
         useNotificationsStore().pushError('Linked clips must be edited in the Clip Editor.')
         log.info('project', `splitClipAt rejected linked clip id=${clipId}`)
@@ -1355,7 +1355,7 @@ export const useProjectStore = defineStore('project', {
       const clip = this.clips[clipId]
       if (!clip) return false
       const library = useLibraryStore()
-      const parent = library.items.find((i) => i.id === clip.libraryItemId)
+      const parent = library.byId[clip.libraryItemId]
       if (!parent || parent.kind !== 'saved-clip') return false
       const fallbackParentId = parent.derivedFrom?.sourceItemId
       if (!fallbackParentId) return false
@@ -2194,7 +2194,9 @@ export const useProjectStore = defineStore('project', {
         }
         for (const item of library.items) {
           if (item.kind !== 'saved-clip' || item.bpm !== undefined) continue
-          const source = library.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId)
+          const sourceId = item.derivedFrom?.sourceItemId
+          if (!sourceId) continue
+          const source = library.byId[sourceId]
           if (!source || typeof source.bpm !== 'number' || source.bpm <= 0) continue
           library.setItemAnalysis(
             item.id,
@@ -2248,7 +2250,7 @@ export const useProjectStore = defineStore('project', {
           // in this snapshot apply so the lookup should succeed; if a
           // clip somehow points at an unknown library item we skip it
           // rather than minting a phantom library entry.
-          const libItem = library.items.find((i) => i.id === c.libraryItemId)
+          const libItem = library.byId[c.libraryItemId]
           if (!libItem) {
             log.warn(
               'project',

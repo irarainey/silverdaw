@@ -526,7 +526,7 @@ function loadPreviewForView(): void {
   // so the preview voice plays the clip the way the timeline will.
   // Audio-file items don't carry warp metadata, so the spread is a
   // no-op for them.
-  const previewSourceBpm = libraryItemSourceBpm(entry, library.items)
+  const previewSourceBpm = libraryItemSourceBpm(entry, library.byId)
   const current = timelineClip.value ?? entry
   const tempoRatio = isWarpActive({
     warpEnabled: current.warpEnabled,

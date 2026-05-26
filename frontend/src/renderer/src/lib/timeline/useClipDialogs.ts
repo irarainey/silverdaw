@@ -49,7 +49,7 @@ export function useClipDialogs(): ClipDialogs {
     if (!clipId) return null
     const clip = project.clips[clipId]
     if (!clip) return null
-    return library.items.find((item) => item.id === clip.libraryItemId) ?? null
+    return library.byId[clip.libraryItemId] ?? null
   }
 
   const editorItem = computed(() => resolveItem(editorClipId.value))

@@ -21,7 +21,7 @@ const clip = computed(() => props.clipId ? project.clips[props.clipId] ?? null :
 const sourceItem = computed(() => {
   const item = props.item
   if (!item?.derivedFrom?.sourceItemId) return null
-  return library.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId) ?? null
+  return library.byId[item.derivedFrom?.sourceItemId] ?? null
 })
 const displayTitle = computed(() => {
   const item = props.item
