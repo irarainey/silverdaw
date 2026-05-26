@@ -1303,11 +1303,11 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex max-h-[90vh] w-[min(1100px,94vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="flex h-[min(980px,96vh)] w-[min(1440px,98vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
         @keydown="onKeydown"
       >
-        <header class="flex items-start justify-between gap-4 border-b border-zinc-800 px-5 py-3">
-          <div class="min-w-0">
+        <header class="grid grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-zinc-800 px-5 py-3">
+          <div class="min-w-0 justify-self-start">
             <div class="flex min-w-0 items-center gap-2">
               <h2
                 id="clip-editor-title"
@@ -1327,52 +1327,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
               {{ sourceItem.fileName }}
             </p>
           </div>
-        </header>
-
-        <div class="flex flex-1 flex-col gap-3 px-5 py-4">
-          <canvas
-            ref="waveformEl"
-            class="h-48 w-full cursor-crosshair rounded border border-zinc-800 bg-zinc-950"
-            @mousedown="onCanvasMouseDown"
-            @wheel="onCanvasWheel"
-          />
-          <div
-            class="relative h-2 w-full cursor-pointer rounded bg-zinc-900"
-            :title="`Scroll (zoom ${zoomPercent}%)`"
-            @mousedown="onScrollbarMouseDown"
-          >
-            <div
-              class="absolute top-0 h-full rounded bg-zinc-600 hover:bg-zinc-500"
-              :style="{
-                left: viewDurationMs > 0 ? `${(scrollMs / viewDurationMs) * 100}%` : '0%',
-                width: viewDurationMs > 0
-                  ? `${Math.max(2, (visibleDurationMs / viewDurationMs) * 100)}%`
-                  : '100%'
-              }"
-            />
-          </div>
-          <div class="flex items-center gap-6 text-xs text-zinc-400">
-            <div>
-              <span class="text-zinc-500">Selection start:</span>
-              <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionInMs - viewInMs) }}</span>
-            </div>
-            <div>
-              <span class="text-zinc-500">Selection end:</span>
-              <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionEndMs - viewInMs) }}</span>
-            </div>
-            <div>
-              <span class="text-zinc-500">Length:</span>
-              <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionDurationMs) }}</span>
-            </div>
-            <div>
-              <span class="text-zinc-500">Playhead:</span>
-              <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(playheadAbsMs - viewInMs) }}</span>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-1">
+          <div class="flex items-center gap-1 justify-self-center">
             <button
               type="button"
+              data-borderless-button="true"
               class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
               title="Skip to start"
               @click="onSkipToStart"
@@ -1386,6 +1344,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             </button>
             <button
               type="button"
+              data-borderless-button="true"
               class="rounded p-2 hover:bg-blue-600 hover:text-white"
               :class="preview.isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
               :disabled="!preview.isLoaded"
@@ -1409,6 +1368,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             </button>
             <button
               type="button"
+              data-borderless-button="true"
               class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
               title="Skip to end"
               @click="onSkipToEnd"
@@ -1422,6 +1382,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             </button>
             <button
               type="button"
+              data-borderless-button="true"
               class="ml-1 rounded p-2 hover:bg-zinc-800"
               :class="loopEnabled ? 'bg-blue-600 text-white hover:bg-blue-500' : 'text-zinc-300 hover:text-zinc-100'"
               :title="loopEnabled ? 'Loop on (L)' : 'Loop off (L)'"
@@ -1434,7 +1395,52 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                 class="h-5 w-5"
               ><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>
             </button>
-            <div class="ml-auto flex items-center gap-1">
+          </div>
+          <div class="justify-self-end" />
+        </header>
+
+        <div class="flex flex-1 flex-col gap-3 px-5 py-4">
+          <canvas
+            ref="waveformEl"
+            class="h-[min(364px,36vh)] w-full cursor-crosshair rounded border border-zinc-800 bg-zinc-950"
+            @mousedown="onCanvasMouseDown"
+            @wheel="onCanvasWheel"
+          />
+          <div
+            class="relative h-2 w-full cursor-pointer rounded bg-zinc-900"
+            :title="`Scroll (zoom ${zoomPercent}%)`"
+            @mousedown="onScrollbarMouseDown"
+          >
+            <div
+              class="absolute top-0 h-full rounded bg-zinc-600 hover:bg-zinc-500"
+              :style="{
+                left: viewDurationMs > 0 ? `${(scrollMs / viewDurationMs) * 100}%` : '0%',
+                width: viewDurationMs > 0
+                  ? `${Math.max(2, (visibleDurationMs / viewDurationMs) * 100)}%`
+                  : '100%'
+              }"
+            />
+          </div>
+          <div class="flex items-center justify-between gap-4 text-xs text-zinc-400">
+            <div class="flex min-w-0 items-center gap-6">
+              <div>
+                <span class="text-zinc-500">Selection start:</span>
+                <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionInMs - viewInMs) }}</span>
+              </div>
+              <div>
+                <span class="text-zinc-500">Selection end:</span>
+                <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionEndMs - viewInMs) }}</span>
+              </div>
+              <div>
+                <span class="text-zinc-500">Length:</span>
+                <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionDurationMs) }}</span>
+              </div>
+              <div>
+                <span class="text-zinc-500">Playhead:</span>
+                <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(playheadAbsMs - viewInMs) }}</span>
+              </div>
+            </div>
+            <div class="flex shrink-0 items-center gap-1">
               <button
                 v-if="item.kind === 'saved-clip'"
                 type="button"
