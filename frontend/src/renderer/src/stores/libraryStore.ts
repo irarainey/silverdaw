@@ -207,6 +207,45 @@ function touchTimelineClipsForLibraryItem(itemId: string): number {
   return count
 }
 
+/**
+ * Discover every timeline clip that should be treated as a "linked
+ * sibling" of a saved-clip library item, for trim/warp/pitch
+ * propagation. Two pools are merged:
+ *
+ *  1. **Direct links** — timeline clips whose `libraryItemId` points
+ *     straight at the saved-clip item. The canonical case after the
+ *     saveClipToLibrary rebind landed.
+ *  2. **Implicit links** — legacy projects (created before the rebind)
+ *     have timeline clips that still point at the underlying
+ *     audio-file source but happen to share the saved-clip's exact
+ *     `derivedFrom` window. They are adopted as linked siblings on
+ *     the next edit so the project file becomes structurally correct.
+ *
+ * Returns the merged array. Callers that need to write may also call
+ * `CLIP_REBIND` for any clip whose `libraryItemId` doesn't already
+ * equal `savedClipItem.id`.
+ */
+function findLinkedTimelineClips(
+  savedClipItem: LibraryItem
+): Clip[] {
+  const project = useProjectStore()
+  const directLinkedClips = Object.values(project.clips).filter(
+    (c): c is Clip => c?.libraryItemId === savedClipItem.id
+  )
+  const sourceItemId = savedClipItem.derivedFrom?.sourceItemId
+  if (!sourceItemId) return directLinkedClips
+  const currentInMs = savedClipItem.derivedFrom?.inMs ?? 0
+  const currentDurationMs = savedClipItem.derivedFrom?.durationMs ?? savedClipItem.durationMs
+  const implicitLinkedClips = Object.values(project.clips).filter(
+    (c): c is Clip =>
+      !!c &&
+      c.libraryItemId === sourceItemId &&
+      Math.abs(c.inMs - currentInMs) < 0.5 &&
+      Math.abs(c.durationMs - currentDurationMs) < 0.5
+  )
+  return [...directLinkedClips, ...implicitLinkedClips]
+}
+
 export const useLibraryStore = defineStore('library', {
   state: (): LibraryState => ({
     items: [],
@@ -681,38 +720,13 @@ export const useLibraryStore = defineStore('library', {
       if (trimDur <= 0) return { ok: false }
 
       // Saved-clip trim edits propagate to every linked timeline clip
-      // (clips whose `libraryItemId === item.id`). Before applying the
-      // edit, verify the new duration won't make any linked sibling
-      // overlap a neighbour on its track. Refuse the whole edit if
-      // any sibling would collide — predictable and non-destructive,
-      // and the user can move the conflicting neighbour aside before
-      // retrying.
+      // (see `findLinkedTimelineClips`). Before applying the edit,
+      // verify the new duration won't make any linked sibling overlap
+      // a neighbour on its track. Refuse the whole edit if any sibling
+      // would collide — predictable and non-destructive, and the user
+      // can move the conflicting neighbour aside before retrying.
       const project = useProjectStore()
-      const directLinkedClips = Object.values(project.clips).filter(
-        (c) => c?.libraryItemId === itemId
-      )
-      // Legacy projects (created before the saveClipToLibrary rebind
-      // landed) hold timeline clips that still point at the underlying
-      // audio-file source but happen to share the exact window we're
-      // about to edit. Treat those as "implicitly linked" — adopt them
-      // as proper linked siblings by rebinding (so the project file
-      // becomes structurally correct) and propagate the trim. Match
-      // is by current `derivedFrom` window against the source-bound
-      // clip's `(inMs, durationMs)` so we don't accidentally absorb
-      // unrelated clips.
-      const sourceItemId = item.derivedFrom?.sourceItemId
-      const currentInMs = item.derivedFrom?.inMs ?? 0
-      const currentDurationMs = item.derivedFrom?.durationMs ?? item.durationMs
-      const implicitLinkedClips =
-        sourceItemId
-          ? Object.values(project.clips).filter(
-              (c) =>
-                c?.libraryItemId === sourceItemId &&
-                Math.abs(c.inMs - currentInMs) < 0.5 &&
-                Math.abs(c.durationMs - currentDurationMs) < 0.5
-            )
-          : []
-      const linkedClips = [...directLinkedClips, ...implicitLinkedClips]
+      const linkedClips = findLinkedTimelineClips(item)
       const conflictingTrackNames = new Set<string>()
       for (const c of linkedClips) {
         if (!c) continue
@@ -829,23 +843,9 @@ export const useLibraryStore = defineStore('library', {
       const nextCents = patch.cents ?? item.cents
 
       const project = useProjectStore()
-      const directLinkedClips = Object.values(project.clips).filter(
-        (c) => c?.libraryItemId === itemId
-      )
-      const sourceItemId = item.derivedFrom?.sourceItemId
-      const currentInMs = item.derivedFrom?.inMs ?? 0
-      const currentDurationMs = item.derivedFrom?.durationMs ?? item.durationMs
-      const implicitLinkedClips =
-        sourceItemId
-          ? Object.values(project.clips).filter(
-              (c) =>
-                c?.libraryItemId === sourceItemId &&
-                Math.abs(c.inMs - currentInMs) < 0.5 &&
-                Math.abs(c.durationMs - currentDurationMs) < 0.5
-            )
-          : []
-      const linkedClips = [...directLinkedClips, ...implicitLinkedClips]
+      const linkedClips = findLinkedTimelineClips(item)
 
+      const sourceItemId = item.derivedFrom?.sourceItemId
       const source = sourceItemId
         ? this.items.find((candidate) => candidate.id === sourceItemId)
         : undefined
@@ -885,7 +885,9 @@ export const useLibraryStore = defineStore('library', {
       const next = item.derivedFrom
         ? { ...item.derivedFrom, inMs: trimIn, durationMs: trimDur }
         : { sourceItemId: '', sourceClipId: '', inMs: trimIn, durationMs: trimDur }
-      const trimChanged = Math.abs(trimIn - currentInMs) >= 0.5 || Math.abs(trimDur - currentDurationMs) >= 0.5
+      const prevInMs = item.derivedFrom?.inMs ?? 0
+      const prevDurationMs = item.derivedFrom?.durationMs ?? item.durationMs
+      const trimChanged = Math.abs(trimIn - prevInMs) >= 0.5 || Math.abs(trimDur - prevDurationMs) >= 0.5
       item.derivedFrom = next
       item.durationMs = trimDur
       if (nextWarpEnabled === undefined) delete item.warpEnabled

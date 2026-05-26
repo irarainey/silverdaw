@@ -772,6 +772,32 @@ RubberBand::RubberBandStretcher::Options parseWarpMode(const juce::String& mode)
     // Default — rhythmic. Suits drums and most general material.
     return O::OptionEngineFaster | O::OptionTransientsCrisp;
 }
+
+// Build a freshly-prepared WarpProcessor with optional tempo and pitch
+// pre-applied. Shared between the per-clip and preview-voice rebuild
+// paths so they cannot drift in how they translate (mode, semitones,
+// cents, tempoRatio) into a constructed processor.
+std::unique_ptr<WarpProcessor> makeWarpProcessor(
+    int channels, double sampleRate, int blockSize,
+    const juce::String& mode,
+    std::optional<double> tempoRatio,
+    std::optional<double> semitones,
+    std::optional<double> cents)
+{
+    const auto options = parseWarpMode(mode);
+    auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels),
+                                              sampleRate > 0 ? sampleRate : 44100.0,
+                                              options);
+    wp->prepareToPlay(juce::jmax(64, blockSize));
+    if (tempoRatio.has_value() && *tempoRatio > 0.0) wp->setTempoRatio(*tempoRatio);
+    if (semitones.has_value() || cents.has_value())
+    {
+        const double s = semitones.value_or(0.0);
+        const double c = cents.value_or(0.0);
+        wp->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
+    }
+    return wp;
+}
 } // namespace
 
 bool AudioEngine::setClipWarp(const juce::String& clipId,
@@ -811,26 +837,10 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
     if (needRebuild)
     {
         const auto modeStr = mode.value_or(juce::String("rhythmic"));
-        const auto options = parseWarpMode(modeStr);
-        const int channels = juce::jmax(1, track->numChannels);
-        const double sr = track->sampleRate > 0 ? track->sampleRate : 44100.0;
-        auto wp = std::make_unique<WarpProcessor>(channels, sr, options);
-        // Pre-size the processor for the engine's current block size
-        // so the first audio block doesn't have to grow buffers.
         const auto& dm = deviceManager.getAudioDeviceSetup();
-        const int blockSize = juce::jmax(64, static_cast<int>(dm.bufferSize));
-        wp->prepareToPlay(blockSize);
-        if (tempoRatio.has_value() && *tempoRatio > 0.0)
-        {
-            wp->setTempoRatio(*tempoRatio);
-        }
-        if (semitones.has_value() || cents.has_value())
-        {
-            const double s = semitones.value_or(0.0);
-            const double c = cents.value_or(0.0);
-            const double scale = std::pow(2.0, (s + c / 100.0) / 12.0);
-            wp->setPitchScale(scale);
-        }
+        auto wp = makeWarpProcessor(track->numChannels, track->sampleRate,
+                                    static_cast<int>(dm.bufferSize), modeStr,
+                                    tempoRatio, semitones, cents);
         [[maybe_unused]] auto oldWarp = std::move(track->warp);
         track->warp = std::move(wp);
         track->offsetSource->setWarpProcessor(track->warp.get());
@@ -968,19 +978,11 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     {
         const auto modeStr = initialWarpMode.value_or(juce::String("rhythmic"));
         preview.warpMode = modeStr;
-        const auto options = parseWarpMode(modeStr);
         const int channels = preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
-        auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels), preview.sampleRate, options);
         const auto& dm = deviceManager.getAudioDeviceSetup();
-        const int blockSize = juce::jmax(64, static_cast<int>(dm.bufferSize));
-        wp->prepareToPlay(blockSize);
-        if (initialTempoRatio.has_value() && *initialTempoRatio > 0.0) wp->setTempoRatio(*initialTempoRatio);
-        if (initialSemitones.has_value() || initialCents.has_value())
-        {
-            const double s = initialSemitones.value_or(0.0);
-            const double c = initialCents.value_or(0.0);
-            wp->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
-        }
+        auto wp = makeWarpProcessor(channels, preview.sampleRate,
+                                    static_cast<int>(dm.bufferSize), modeStr,
+                                    initialTempoRatio, initialSemitones, initialCents);
         [[maybe_unused]] auto oldWarp = std::move(preview.warp);
         preview.warp = std::move(wp);
         preview.offsetSource->setWarpProcessor(preview.warp.get());
@@ -1040,20 +1042,11 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
     const bool needRebuild = (preview.warp == nullptr) || (requestedMode != preview.warpMode);
     if (needRebuild)
     {
-        const auto options = parseWarpMode(requestedMode);
         const int channels = preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
-        const double sr = preview.sampleRate > 0 ? preview.sampleRate : 44100.0;
-        auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels), sr, options);
         const auto& dm = deviceManager.getAudioDeviceSetup();
-        const int blockSize = juce::jmax(64, static_cast<int>(dm.bufferSize));
-        wp->prepareToPlay(blockSize);
-        if (tempoRatio.has_value() && *tempoRatio > 0.0) wp->setTempoRatio(*tempoRatio);
-        if (semitones.has_value() || cents.has_value())
-        {
-            const double s = semitones.value_or(0.0);
-            const double c = cents.value_or(0.0);
-            wp->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
-        }
+        auto wp = makeWarpProcessor(channels, preview.sampleRate,
+                                    static_cast<int>(dm.bufferSize), requestedMode,
+                                    tempoRatio, semitones, cents);
         auto oldWarp = std::move(preview.warp);
         preview.warp = std::move(wp);
         preview.warpMode = requestedMode;
