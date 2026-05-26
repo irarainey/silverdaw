@@ -109,7 +109,7 @@ Silverdaw currently supports the core arrangement workflow:
   dependent timeline clip is silently unlinked first so the audio plays on as an
   independent clip referencing the underlying source file.
 - Bake timeline clips or saved-clip library items into new WAV samples with
-  **Save as sample…**. The generated file is written under a `Samples` folder
+  **Save as sample**. The generated file is written under a `Samples` folder
   and added back to the library as a normal audio-file item. Warped clips are
   rendered through Rubber Band so the baked sample matches the current
   tempo/pitch state.
@@ -300,7 +300,7 @@ gets an `unresolved: true` flag in the `PROJECT_STATE` snapshot. The renderer:
   gets re-decoded) and rebuilds every clip referencing that item against the new file,
   then rebroadcasts `PROJECT_STATE` which clears the `unresolved` flag on each clip.
 - Surfaces a single info toast summarising the count.
-- Lets the user re-enter the relink flow later via the **Relink…** entry on any
+- Lets the user re-enter the relink flow later via the **Relink** entry on any
   unresolved clip's right-click menu.
 
 **Dirty tracking** is content-based. `ProjectState` snapshots its `ValueTree` on
@@ -506,7 +506,7 @@ timeline clip with the same source window and non-destructive warp defaults the
 saved clip describes.
 
 **Samples** — right-click a timeline clip or a saved-clip library tile and choose
-**Save as sample…** to bake a new WAV. Silverdaw writes the file to
+**Save as sample** to bake a new WAV. Silverdaw writes the file to
 `Samples\<name>-sample-001.wav` under the current project folder, or under the
 default project folder when the project has not been saved yet. The numeric
 suffix increments for duplicate base names. The baked WAV is added as a normal
@@ -515,7 +515,7 @@ the project but leaves the WAV file on disk. Warped clips are rendered through
 Rubber Band during the bake so the sample sounds like the clip did on the
 timeline.
 
-**Renaming** — single-click the name on any library tile (or pick **Rename…** from
+**Renaming** — single-click the name on any library tile (or pick **Rename** from
 the right-click menu) to edit it inline. Saved clips inherit a sensible default name
 based on their source and offset; renaming is the same flow.
 
@@ -525,12 +525,12 @@ BPM/beat/key metadata, tag metadata, cover art and which tracks currently use th
 library item — pick **Show information** from the tile's right-click context menu.
 The right-click context menu also includes **Reanalyse file** (audio-file items
 only), which refreshes the decoded cache, BPM/beat analysis and musical key, and
-**Remove**. Saved-clip tiles also include **Save as sample…**. Removal is gated
+**Remove**. Saved-clip tiles also include **Save as sample**. Removal is gated
 for audio-file source items while they're in use by a timeline clip; saved-clip
 items can always be removed (every linked timeline clip is silently unlinked
 first and continues playing from the underlying source).
 
-**Clip Editor** — double-click a library tile (or pick **Open in editor…** from its
+**Clip Editor** — double-click a library tile (or pick **Open in editor** from its
 right-click menu) to open the **Clip Editor** dialog. The dialog renders the source
 waveform with an adaptive time ruler, faint beat lines extrapolated from the
 detected BPM, and zoom + horizontal scroll (`+` / `-` / `0`, mouse-wheel anchored at
@@ -731,11 +731,11 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
-| **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, **Save as sample…**, **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. Warp and Pitch dialogs are transactional: **Save** applies changes, **Cancel** / close discards them. Shows **Relink…** at the top when the clip is unresolved. |
+| **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, **Save as sample**, **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. Warp and Pitch dialogs are transactional: **Save** applies changes, **Cancel** / close discards them. Shows **Relink** at the top when the clip is unresolved. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
 | Double-click a **library tile** (off the name) | Open the **Clip Editor** for that library item. Use **Show information** from the right-click menu for the read-only info dialog. |
-| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename…**, **Reanalyse file** (audio-file items only), **Save as sample…** (saved-clip items only), and **Remove**. Removal is gated only for audio-file sources that are still in use by a timeline clip; saved-clip removal silently unlinks dependent clips. |
+| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename**, **Reanalyse file** (audio-file items only), **Save as sample** (saved-clip items only), and **Remove**. Removal is gated only for audio-file sources that are still in use by a timeline clip; saved-clip removal silently unlinks dependent clips. |
 
 ### Clip Editor
 

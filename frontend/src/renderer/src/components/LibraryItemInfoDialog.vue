@@ -9,6 +9,7 @@ import { effectiveTempoRatio } from '@/lib/warp'
 const props = defineProps<{
   open: boolean
   item: LibraryItem | null
+  clipId?: string | null
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -16,10 +17,29 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const project = useProjectStore()
 const library = useLibraryStore()
 const dialogEl = ref<HTMLDivElement | null>(null)
+const clip = computed(() => props.clipId ? project.clips[props.clipId] ?? null : null)
 const sourceItem = computed(() => {
   const item = props.item
   if (!item?.derivedFrom?.sourceItemId) return null
   return library.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId) ?? null
+})
+const displayTitle = computed(() => {
+  const item = props.item
+  if (!item) return ''
+  if (clip.value?.name?.trim()) return clip.value.name.trim()
+  return libraryItemDisplayName(item)
+})
+const infoSettings = computed(() => clip.value ?? props.item)
+const instanceRows = computed(() => {
+  const c = clip.value
+  if (!c) return []
+  const track = project.tracks.find((candidate) => candidate.id === c.trackId)
+  return [
+    ['Track', track?.name],
+    ['Start', formatTime(c.startMs)],
+    ['Source window', `${formatTime(c.inMs)} - ${formatTime(c.inMs + c.durationMs)}`],
+    ['Clip duration', formatPreciseDuration(c.durationMs)]
+  ].filter((row): row is [string, string] => typeof row[1] === 'string' && row[1].length > 0)
 })
 
 const usages = computed(() => {
@@ -62,26 +82,32 @@ const usages = computed(() => {
 })
 
 const pitchShifted = computed(() => {
-  const item = props.item
-  return item?.kind === 'saved-clip' && ((item.semitones ?? 0) !== 0 || (item.cents ?? 0) !== 0)
+  const current = infoSettings.value
+  return !!current && ((current.semitones ?? 0) !== 0 || (current.cents ?? 0) !== 0)
 })
 const displayKey = computed(() => {
   const item = props.item
   if (!item) return undefined
+  const current = infoSettings.value
   if (pitchShifted.value) {
-    return shiftedKey(sourceItem.value?.key ?? sourceItem.value?.metadata?.key, item.semitones, item.cents)
+    return shiftedKey(
+      sourceItem.value?.key ?? sourceItem.value?.metadata?.key ?? item.key ?? item.metadata?.key,
+      current?.semitones,
+      current?.cents
+    )
   }
   return item.key ?? item.metadata?.key
 })
 const warpedBpm = computed(() => {
   const item = props.item
-  if (!item || item.kind !== 'saved-clip' || item.warpEnabled !== true) return undefined
+  const current = infoSettings.value
+  if (!item || !current || current.warpEnabled !== true) return undefined
   const sourceBpm = item.bpm ?? sourceItem.value?.bpm
   if (typeof sourceBpm !== 'number' || sourceBpm <= 0) return undefined
-  const ratio = effectiveTempoRatio({ tempoRatio: item.tempoRatio, sourceBpm, projectBpm: sourceBpm })
+  const ratio = effectiveTempoRatio({ tempoRatio: current.tempoRatio, sourceBpm, projectBpm: sourceBpm })
   return sourceBpm * ratio
 })
-const bpmLabel = computed(() => props.item?.kind === 'saved-clip' && warpedBpm.value ? 'Warped BPM' : 'Detected BPM')
+const bpmLabel = computed(() => warpedBpm.value ? 'Warped BPM' : 'Detected BPM')
 const keyLabel = computed(() => pitchShifted.value ? 'Shifted key' : 'Detected key')
 const displayDecodedCachePath = computed(() => {
   const item = props.item
@@ -206,7 +232,7 @@ function channelLabel(count: number): string {
               id="clip-info-title"
               class="truncate text-base font-semibold text-zinc-100"
             >
-              {{ libraryItemDisplayName(item) }}
+              {{ displayTitle }}
             </h2>
             <p
               v-if="item.metadata?.artist"
@@ -246,6 +272,17 @@ function channelLabel(count: number): string {
                 Type
               </dt>
               <dd>{{ item.kind === 'saved-clip' ? 'Saved clip' : 'Audio file' }}</dd>
+              <template v-if="clip">
+                <template
+                  v-for="row in instanceRows"
+                  :key="row[0]"
+                >
+                  <dt class="text-zinc-500">
+                    {{ row[0] }}
+                  </dt>
+                  <dd>{{ row[1] }}</dd>
+                </template>
+              </template>
               <dt
                 v-if="sourceItem"
                 class="text-zinc-500"
@@ -324,7 +361,10 @@ function channelLabel(count: number): string {
             </dl>
           </section>
 
-          <section class="mt-5">
+          <section
+            v-if="!clip"
+            class="mt-5"
+          >
             <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
               Used on tracks
             </h3>

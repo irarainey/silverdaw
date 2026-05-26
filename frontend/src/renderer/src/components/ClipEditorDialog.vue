@@ -4,9 +4,10 @@ import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { effectiveClipDurationMs, useProjectStore, type Clip } from '@/stores/projectStore'
 import { libraryItemDisplayName, libraryItemSourceBpm, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { formatTime } from '@/lib/musicTime'
-import { effectiveTempoRatio, isWarpActive } from '@/lib/warp'
+import { effectiveDurationMs, effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { keyPresetsFor, shiftedKey } from '@/lib/pitchKey'
@@ -14,11 +15,13 @@ import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
   open: boolean
-  item: LibraryItem | null
+  item?: LibraryItem | null
+  clipId?: string | null
 }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const preview = usePreviewStore()
+const project = useProjectStore()
 const library = useLibraryStore()
 const notifications = useNotificationsStore()
 const ui = useUiStore()
@@ -27,31 +30,58 @@ const transport = useTransportStore()
 const dialogEl = ref<HTMLDivElement | null>(null)
 const waveformEl = ref<HTMLCanvasElement | null>(null)
 
-// The source file we always show. For audio-file items this is the item
-// itself; for saved-clip items it's the parent audio-file. Selection
-// markers are positioned within this source.
+type EditorMode = 'source-library' | 'saved-library' | 'timeline-linked' | 'timeline-unlinked'
+
+const timelineClip = computed<Clip | null>(() =>
+  props.clipId ? project.clips[props.clipId] ?? null : null
+)
+const editorItem = computed<LibraryItem | null>(() => {
+  const clip = timelineClip.value
+  if (clip) return library.items.find((i) => i.id === clip.libraryItemId) ?? null
+  return props.item ?? null
+})
+const editorMode = computed<EditorMode | null>(() => {
+  const clip = timelineClip.value
+  const entry = editorItem.value
+  if (!entry) return null
+  if (clip) return entry.kind === 'saved-clip' ? 'timeline-linked' : 'timeline-unlinked'
+  return entry.kind === 'saved-clip' ? 'saved-library' : 'source-library'
+})
+const editsExistingClip = computed(() => editorMode.value !== 'source-library')
+const editsSavedClipLibrary = computed(() => editorMode.value === 'saved-library' || editorMode.value === 'timeline-linked')
+const editsSingleTimelineClip = computed(() => editorMode.value === 'timeline-unlinked')
+const titleText = computed(() => {
+  const clip = timelineClip.value
+  const entry = editorItem.value
+  if (clip?.name?.trim()) return clip.name.trim()
+  return entry ? libraryItemDisplayName(entry) : ''
+})
+
+// The source file we always show. For audio-file items and unlinked
+// timeline clips this is the item itself; for saved clips it's the
+// parent audio-file. Selection markers are positioned within this source.
 const sourceItem = computed<LibraryItem | null>(() => {
-  const item = props.item
-  if (!item) return null
-  if (item.kind === 'saved-clip' && item.derivedFrom?.sourceItemId) {
-    return library.items.find((i) => i.id === item.derivedFrom?.sourceItemId) ?? item
+  const entry = editorItem.value
+  if (!entry) return null
+  if (entry.kind === 'saved-clip' && entry.derivedFrom?.sourceItemId) {
+    return library.items.find((i) => i.id === entry.derivedFrom?.sourceItemId) ?? entry
   }
-  return item
+  return entry
 })
 
 const sourceDurationMs = computed(() => sourceItem.value?.durationMs ?? 0)
 const sourceBpm = computed(() => {
-  const item = props.item
-  if (!item) return undefined
-  return libraryItemSourceBpm(item, library.items)
+  const entry = editorItem.value
+  if (!entry) return undefined
+  return libraryItemSourceBpm(entry, library.items)
 })
 const warpActive = computed(() => {
-  const item = props.item
-  if (!item) return false
-  if (item.kind === 'saved-clip') return draftTempoWarpActive.value
+  const entry = editorItem.value
+  if (!entry) return false
+  if (editsExistingClip.value) return draftTempoWarpActive.value
   return isWarpActive({
-    warpEnabled: item.warpEnabled,
-    tempoRatio: item.tempoRatio,
+    warpEnabled: entry.warpEnabled,
+    tempoRatio: entry.tempoRatio,
     sourceBpm: sourceBpm.value,
     projectBpm: transport.bpm
   })
@@ -65,14 +95,8 @@ const draftSemitones = ref(0)
 const draftCents = ref(0)
 
 const sourceKey = computed(() => {
-  const item = props.item
-  if (!item) return undefined
-  if (item.kind === 'audio-file') return item.key ?? item.metadata?.key
-  if (item.derivedFrom?.sourceItemId) {
-    const source = library.items.find((candidate) => candidate.id === item.derivedFrom?.sourceItemId)
-    return source?.key ?? source?.metadata?.key
-  }
-  return item.key ?? item.metadata?.key
+  const source = sourceItem.value
+  return source?.key ?? source?.metadata?.key
 })
 const keyPresets = computed(() => keyPresetsFor(sourceKey.value))
 const currentPitchKey = computed(() => shiftedKey(sourceKey.value, draftSemitones.value, draftCents.value))
@@ -127,14 +151,19 @@ function previewTempoRatio(): number | undefined {
   return pitchNeedsProcessor(draftSemitones.value, draftCents.value) ? 1 : undefined
 }
 
-function currentItemHasTempoWarp(item: LibraryItem): boolean {
-  const pitchOnlyProcessor = pitchNeedsProcessor(item.semitones, item.cents) && item.tempoRatio === 1
-  return item.warpEnabled === true && !pitchOnlyProcessor
+function currentHasTempoWarp(current: {
+  warpEnabled?: boolean
+  tempoRatio?: number
+  semitones?: number
+  cents?: number
+}): boolean {
+  const pitchOnlyProcessor = pitchNeedsProcessor(current.semitones, current.cents) && current.tempoRatio === 1
+  return current.warpEnabled === true && !pitchOnlyProcessor
 }
 
 function initialiseWarpDraft(): void {
-  const item = props.item
-  if (!item || item.kind !== 'saved-clip') {
+  const current = timelineClip.value ?? editorItem.value
+  if (!current || !editsExistingClip.value) {
     draftTempoEnabled.value = false
     draftMode.value = 'rhythmic'
     draftTempoPinned.value = false
@@ -143,17 +172,17 @@ function initialiseWarpDraft(): void {
     draftCents.value = 0
     return
   }
-  draftTempoEnabled.value = currentItemHasTempoWarp(item)
-  draftMode.value = item.warpMode ?? 'rhythmic'
-  draftTempoPinned.value = typeof item.tempoRatio === 'number' && item.tempoRatio > 0 && item.tempoRatio !== 1
+  draftTempoEnabled.value = currentHasTempoWarp(current)
+  draftMode.value = current.warpMode ?? 'rhythmic'
+  draftTempoPinned.value = typeof current.tempoRatio === 'number' && current.tempoRatio > 0 && current.tempoRatio !== 1
   const src = sourceBpm.value
-  if (draftTempoPinned.value && typeof src === 'number' && src > 0 && typeof item.tempoRatio === 'number') {
-    draftPinnedBpm.value = Math.round(src * item.tempoRatio * 100) / 100
+  if (draftTempoPinned.value && typeof src === 'number' && src > 0 && typeof current.tempoRatio === 'number') {
+    draftPinnedBpm.value = Math.round(src * current.tempoRatio * 100) / 100
   } else {
     draftPinnedBpm.value = Math.round(transport.bpm * 100) / 100
   }
-  draftSemitones.value = item.semitones ?? 0
-  draftCents.value = item.cents ?? 0
+  draftSemitones.value = current.semitones ?? 0
+  draftCents.value = current.cents ?? 0
 }
 
 function followProjectBpm(): void {
@@ -198,15 +227,13 @@ const cropViewDurationMs = ref(0)
 // - saved-clip: the cropped-view bounds by default; full source when
 //   `viewExpanded` is true.
 const viewInMs = computed(() => {
-  const item = props.item
-  if (!item) return 0
-  if (item.kind === 'saved-clip' && !viewExpanded.value) return cropViewInMs.value
+  if (!editorItem.value) return 0
+  if (editsExistingClip.value && !viewExpanded.value) return cropViewInMs.value
   return 0
 })
 const viewDurationMs = computed(() => {
-  const item = props.item
-  if (!item) return 0
-  if (item.kind === 'saved-clip' && !viewExpanded.value) {
+  if (!editorItem.value) return 0
+  if (editsExistingClip.value && !viewExpanded.value) {
     return cropViewDurationMs.value
   }
   return sourceDurationMs.value
@@ -232,9 +259,8 @@ const canvasCssWidth = ref(0)
 let lastPreviewLoadKey = ''
 
 const basePxPerMs = computed(() => {
-  const item = props.item
-  if (!item) return 0
-  if (item.kind === 'audio-file') {
+  if (!editorItem.value) return 0
+  if (!editsExistingClip.value) {
     // Match the timeline's px/s. Fall back to 100 px/s (the default) if
     // we haven't observed a live value yet.
     return Math.max(0.001, (ui.zoomPxPerSecond || 100) / 1000)
@@ -343,9 +369,8 @@ function autoFollowPlayhead(): void {
 function enforceSelectionPlaybackBounds(): void {
   if (!preview.isPlaying) return
 
-  const item = props.item
-  if (!item) return
-  const isSavedClip = item.kind === 'saved-clip'
+  if (!editorItem.value) return
+  const isSavedClip = editsExistingClip.value
   const hasSel = hasPlaybackSelection.value
   // Loop applies whenever there's a selection, OR for a saved clip with
   // no selection (loops the whole clip). Source files only loop when
@@ -378,37 +403,38 @@ const selectionEndMs = computed(() => selectionInMs.value + selectionDurationMs.
 // user clicked Crop one or more times). Apply trim is enabled in
 // either case — the act of Apply uses the current selection.
 const hasSelectionChanged = computed(() => {
-  const item = props.item
-  if (!item || item.kind !== 'saved-clip') return false
-  const origIn = item.derivedFrom?.inMs ?? 0
-  const origDur = item.derivedFrom?.durationMs ?? item.durationMs
+  if (!editsExistingClip.value) return false
+  const clip = timelineClip.value
+  const entry = editorItem.value
+  if (!entry) return false
+  const origIn = clip?.inMs ?? entry.derivedFrom?.inMs ?? 0
+  const origDur = clip?.durationMs ?? entry.derivedFrom?.durationMs ?? entry.durationMs
   if (selectionInMs.value !== origIn || selectionDurationMs.value !== origDur) return true
   if (cropViewInMs.value !== origIn || cropViewDurationMs.value !== origDur) return true
   return false
 })
 
 const hasWarpPitchChanged = computed(() => {
-  const item = props.item
-  if (!item || item.kind !== 'saved-clip') return false
-  const currentTempoEnabled = currentItemHasTempoWarp(item)
-  const currentTempoPinned = typeof item.tempoRatio === 'number' && item.tempoRatio > 0 && item.tempoRatio !== 1
+  const current = timelineClip.value ?? editorItem.value
+  if (!current || !editsExistingClip.value) return false
+  const currentTempoEnabled = currentHasTempoWarp(current)
+  const currentTempoPinned = typeof current.tempoRatio === 'number' && current.tempoRatio > 0 && current.tempoRatio !== 1
   const currentPinnedBpm =
-    currentTempoPinned && typeof sourceBpm.value === 'number' && sourceBpm.value > 0 && typeof item.tempoRatio === 'number'
-      ? Math.round(sourceBpm.value * item.tempoRatio * 100) / 100
+    currentTempoPinned && typeof sourceBpm.value === 'number' && sourceBpm.value > 0 && typeof current.tempoRatio === 'number'
+      ? Math.round(sourceBpm.value * current.tempoRatio * 100) / 100
       : Math.round(transport.bpm * 100) / 100
   return (
     draftTempoEnabled.value !== currentTempoEnabled ||
-    draftMode.value !== (item.warpMode ?? 'rhythmic') ||
+    draftMode.value !== (current.warpMode ?? 'rhythmic') ||
     draftTempoPinned.value !== currentTempoPinned ||
     Math.abs(draftPinnedBpm.value - currentPinnedBpm) > 0.005 ||
-    draftSemitones.value !== (item.semitones ?? 0) ||
-    draftCents.value !== (item.cents ?? 0)
+    draftSemitones.value !== (current.semitones ?? 0) ||
+    draftCents.value !== (current.cents ?? 0)
   )
 })
 
 const canSaveChanges = computed(() => {
-  const item = props.item
-  return !!item && item.kind === 'saved-clip' && (hasSelectionChanged.value || hasWarpPitchChanged.value)
+  return editsExistingClip.value && (hasSelectionChanged.value || hasWarpPitchChanged.value)
 })
 
 // Non-destructive crop: snap the cropped working view to the current
@@ -416,7 +442,7 @@ const canSaveChanges = computed(() => {
 // before committing it to the library. Enabled whenever there's a
 // narrowing selection (selection strictly inside the cropped view).
 const canApplyCrop = computed(() => {
-  if (!props.item) return false
+  if (!editorItem.value) return false
   if (selectionDurationMs.value <= 0) return false
   return (
     selectionInMs.value > cropViewInMs.value + 0.5 ||
@@ -425,7 +451,7 @@ const canApplyCrop = computed(() => {
 })
 
 const canSaveAsNew = computed(() => {
-  return !!sourceItem.value && selectionDurationMs.value > 0
+  return editorMode.value === 'source-library' && !!sourceItem.value && selectionDurationMs.value > 0
 })
 
 const playheadAbsMs = computed(() => viewInMs.value + preview.positionMs)
@@ -482,7 +508,7 @@ watch(
 )
 
 watch(
-  () => props.item?.id,
+  [() => props.item?.id, () => props.clipId],
   () => {
     if (!props.open) return
     viewExpanded.value = false
@@ -502,21 +528,8 @@ watch(
 watch(
   [draftTempoEnabled, draftMode, draftTempoPinned, draftPinnedBpm, draftSemitones, draftCents],
   () => {
-    if (!props.open || props.item?.kind !== 'saved-clip' || !preview.isLoaded) return
-    preview.setWarp({
-      warpEnabled: draftProcessorEnabled.value,
-      warpMode: draftMode.value,
-      tempoRatio: previewTempoRatio() ?? null,
-      semitones: clampNumber(draftSemitones.value, -12, 12),
-      cents: clampNumber(draftCents.value, -100, 100)
-    })
-  }
-)
-
-watch(
-  () => preview.isLoaded,
-  (loaded) => {
-    if (!loaded || !props.open || props.item?.kind !== 'saved-clip') return
+    if (!props.open || !editsExistingClip.value) return
+    if (!preview.isLoaded) return
     preview.setWarp({
       warpEnabled: draftProcessorEnabled.value,
       warpMode: draftMode.value,
@@ -606,10 +619,8 @@ watch(
   () => preview.endedCount,
   (n, prev) => {
     if (n === prev) return
-    const item = props.item
-    if (!item) return
-    const isSavedClip = item.kind === 'saved-clip'
-    const looping = loopEnabled.value && (hasPlaybackSelection.value || isSavedClip)
+    if (!editorItem.value) return
+    const looping = loopEnabled.value && (hasPlaybackSelection.value || editsExistingClip.value)
     if (!looping) return
     const startRel = Math.max(0, playbackStartMs.value - viewInMs.value)
     preview.seek(startRel)
@@ -686,17 +697,18 @@ onBeforeUnmount(() => {
 })
 
 function initSelectionForItem(): void {
-  const item = props.item
-  if (!item) {
+  const entry = editorItem.value
+  if (!entry) {
     selectionInMs.value = 0
     selectionDurationMs.value = 0
     cropViewInMs.value = 0
     cropViewDurationMs.value = 0
     return
   }
-  if (item.kind === 'saved-clip') {
-    const persistedIn = item.derivedFrom?.inMs ?? 0
-    const persistedDur = item.derivedFrom?.durationMs ?? item.durationMs
+  const clip = timelineClip.value
+  if (editsExistingClip.value) {
+    const persistedIn = clip?.inMs ?? entry.derivedFrom?.inMs ?? 0
+    const persistedDur = clip?.durationMs ?? entry.derivedFrom?.durationMs ?? entry.durationMs
     cropViewInMs.value = persistedIn
     cropViewDurationMs.value = persistedDur
     selectionInMs.value = persistedIn
@@ -716,8 +728,8 @@ function initSelectionForItem(): void {
 // passive marker indicating what would be saved/applied; the playhead is a
 // free cursor anywhere inside the view.
 function loadPreviewForView(): void {
-  const item = props.item
-  if (!item) return
+  const entry = editorItem.value
+  if (!entry) return
   const src = sourceItem.value
   if (!src) return
   // Pass any warp defaults stored on the library item (saved-clips
@@ -725,20 +737,21 @@ function loadPreviewForView(): void {
   // so the preview voice plays the clip the way the timeline will.
   // Audio-file items don't carry warp metadata, so the spread is a
   // no-op for them.
-  const previewSourceBpm = libraryItemSourceBpm(item, library.items)
+  const previewSourceBpm = libraryItemSourceBpm(entry, library.items)
+  const current = timelineClip.value ?? entry
   const tempoRatio = isWarpActive({
-    warpEnabled: item.warpEnabled,
-    tempoRatio: item.tempoRatio,
+    warpEnabled: current.warpEnabled,
+    tempoRatio: current.tempoRatio,
     sourceBpm: previewSourceBpm,
     projectBpm: transport.bpm
   })
     ? effectiveTempoRatio({
-        tempoRatio: item.tempoRatio,
+        tempoRatio: current.tempoRatio,
         sourceBpm: previewSourceBpm,
         projectBpm: transport.bpm
       })
-    : item.tempoRatio
-  const warp = item.kind === 'saved-clip'
+    : current.tempoRatio
+  const warp = editsExistingClip.value
     ? {
         warpEnabled: draftProcessorEnabled.value,
         warpMode: draftMode.value,
@@ -747,11 +760,11 @@ function loadPreviewForView(): void {
         cents: draftCents.value
       }
     : {
-        warpEnabled: item.warpEnabled,
-        warpMode: item.warpMode,
+        warpEnabled: current.warpEnabled,
+        warpMode: current.warpMode,
         tempoRatio,
-        semitones: item.semitones,
-        cents: item.cents
+        semitones: current.semitones,
+        cents: current.cents
       }
   const loadKey = JSON.stringify({
     sourceId: src.id,
@@ -945,13 +958,13 @@ function drawWaveform(): void {
   }
 
   // --- Selection overlay -----------------------------------------------
-  // audio-file always shows handles; saved-clip shows handles only after
+  // Source-file editing always shows handles; existing clips show handles only after
   // the user has narrowed the selection inside the cropped view.
   const fullVIn = viewInMs.value
   const fullVEnd = viewEndMs.value
   const isSubSelection =
     selectionInMs.value > fullVIn + 0.5 || selectionEndMs.value < fullVEnd - 0.5
-  const showHandles = props.item?.kind === 'audio-file' || isSubSelection
+  const showHandles = !editsExistingClip.value || isSubSelection
   if (selectionDurationMs.value > 0 && showHandles) {
     const sx = msToX(selectionInMs.value)
     const ex = msToX(selectionEndMs.value)
@@ -1233,12 +1246,10 @@ function onTogglePlay(): void {
     preview.pause()
     return
   }
-  const item = props.item
-  const isSavedClip = item?.kind === 'saved-clip'
   const hasSel = hasPlaybackSelection.value
   // Bound playback by the selection if narrowed, or by the full clip
   // when looping a saved clip with no selection.
-  const bounded = hasSel || (isSavedClip && loopEnabled.value)
+  const bounded = hasSel || (editsExistingClip.value && loopEnabled.value)
   if (bounded) {
     const startRel = playbackStartMs.value - viewInMs.value
     const endRel = playbackEndMs.value - viewInMs.value
@@ -1438,28 +1449,73 @@ function savedClipWarpPatch(): {
   }
 }
 
+function draftTargetWindow(): { inMs: number; durationMs: number } {
+  return {
+    inMs:
+      canApplyCrop.value || selectionDurationMs.value > 0
+        ? selectionInMs.value
+        : cropViewInMs.value,
+    durationMs:
+      canApplyCrop.value || selectionDurationMs.value > 0
+        ? selectionDurationMs.value
+        : cropViewDurationMs.value
+  }
+}
+
+function conflictingTrackNameForTimelineClip(clip: Clip, nextDurationMs: number, tempoRatio: number | null): string | null {
+  const track = project.tracks.find((candidate) => candidate.id === clip.trackId)
+  if (!track) return null
+  const effectiveMs = effectiveDurationMs(nextDurationMs, {
+    warpEnabled: draftTempoEnabled.value,
+    tempoRatio: tempoRatio ?? undefined,
+    sourceBpm: sourceBpm.value,
+    projectBpm: transport.bpm
+  })
+  const nextStart = clip.startMs
+  const nextEnd = nextStart + effectiveMs
+  for (const otherId of track.clipIds) {
+    if (otherId === clip.id) continue
+    const other = project.clips[otherId]
+    if (!other) continue
+    const otherEnd = other.startMs + effectiveClipDurationMs(other)
+    if (nextStart < otherEnd && nextEnd > other.startMs) return track.name
+  }
+  return null
+}
+
 function onSaveChanges(): void {
-  const item = props.item
-  if (!item) return
-  if (item.kind !== 'saved-clip') return
+  const entry = editorItem.value
+  if (!entry) return
   // Save commits the whole Clip Editor draft atomically. Until this
   // point, trim/crop/warp/pitch only affect the local view and preview
-  // voice; linked timeline clips and the library item remain untouched.
-  const targetIn =
-    canApplyCrop.value || selectionDurationMs.value > 0
-      ? selectionInMs.value
-      : cropViewInMs.value
-  const targetDur =
-    canApplyCrop.value || selectionDurationMs.value > 0
-      ? selectionDurationMs.value
-      : cropViewDurationMs.value
-  const result = library.updateSavedClipEdit(item.id, {
+  // voice; timeline clips and library items remain untouched.
+  const { inMs: targetIn, durationMs: targetDur } = draftTargetWindow()
+  const warpPatch = savedClipWarpPatch()
+  if (editsSingleTimelineClip.value) {
+    const clip = timelineClip.value
+    if (!clip) {
+      notifications.pushError('Cannot save changes — clip is no longer available.')
+      return
+    }
+    const conflictTrack = conflictingTrackNameForTimelineClip(clip, targetDur, warpPatch.tempoRatio)
+    if (conflictTrack) {
+      notifications.pushError(`Cannot save changes — they would overlap clips on ${conflictTrack}.`)
+      return
+    }
+    project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
+    project.setClipWarp(clip.id, warpPatch)
+    notifications.pushInfo(`Saved changes for "${titleText.value}".`)
+    emit('close')
+    return
+  }
+  if (!editsSavedClipLibrary.value) return
+  const result = library.updateSavedClipEdit(entry.id, {
     inMs: targetIn,
     durationMs: targetDur,
-    ...savedClipWarpPatch()
+    ...warpPatch
   })
   if (result.ok) {
-    notifications.pushInfo(`Saved changes for "${libraryItemDisplayName(item)}".`)
+    notifications.pushInfo(`Saved changes for "${titleText.value}".`)
     emit('close')
   } else if (result.conflictingTrackNames && result.conflictingTrackNames.length > 0) {
     notifications.pushError(
@@ -1498,7 +1554,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
     leave-to-class="opacity-0"
   >
     <div
-      v-if="open && item && sourceItem"
+      v-if="open && editorItem && sourceItem"
       class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50"
       role="dialog"
       aria-modal="true"
@@ -1517,7 +1573,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                 id="clip-editor-title"
                 class="truncate text-base font-semibold text-zinc-100"
               >
-                {{ libraryItemDisplayName(item) }}
+                {{ titleText }}
               </h2>
               <span
                 v-if="warpActive"
@@ -1660,7 +1716,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                   Crop
                 </button>
                 <button
-                  v-if="item.kind === 'saved-clip'"
+                  v-if="editsExistingClip"
                   type="button"
                   class="rounded px-2 py-1 text-[11px] font-medium"
                   :class="
@@ -1708,7 +1764,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
           </div>
 
           <aside
-            v-if="item.kind === 'saved-clip'"
+            v-if="editsExistingClip"
             class="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto rounded border border-zinc-800 bg-zinc-950/40 p-4 text-xs"
           >
             <div>
@@ -1716,7 +1772,13 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                 Clip settings
               </h3>
               <p class="mt-1 text-[11px] leading-4 text-zinc-500">
-                Changes are preview-only until Save. Cancel leaves the saved clip and linked timeline clips untouched.
+                Changes are preview-only until Save.
+                <template v-if="editsSavedClipLibrary">
+                  Saving updates every linked timeline clip.
+                </template>
+                <template v-else>
+                  Saving updates only this timeline clip.
+                </template>
               </p>
             </div>
 
@@ -1904,17 +1966,19 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             class="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
             @click="emit('close')"
           >
-            {{ item.kind === 'saved-clip' ? 'Cancel' : 'Close' }}
+            {{ editsExistingClip ? 'Cancel' : 'Close' }}
           </button>
           <button
-            v-if="item.kind === 'saved-clip'"
+            v-if="editsExistingClip"
             type="button"
             class="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
             :disabled="!canSaveChanges"
-            title="Save all Clip Editor changes to the library and linked timeline clips"
+            :title="editsSavedClipLibrary
+              ? 'Save changes to the library and every linked timeline clip'
+              : 'Save changes to this timeline clip only'"
             @click="onSaveChanges"
           >
-            Save changes
+            Save
           </button>
           <button
             v-else

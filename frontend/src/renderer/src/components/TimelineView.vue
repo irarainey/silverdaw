@@ -25,6 +25,8 @@ import { isWarpPending } from '@/lib/warp'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 import ClipWarpDialog from '@/components/ClipWarpDialog.vue'
+import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
+import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 import {
   DEFAULT_PX_PER_SECOND,
   RULER_HEIGHT,
@@ -180,15 +182,28 @@ const contextMenuClipId = ref<string | null>(null)
 const warpDialogOpen = ref(false)
 const warpDialogClipId = ref<string | null>(null)
 const warpDialogPanel = ref<'tempo' | 'pitch'>('tempo')
+const editorClipId = ref<string | null>(null)
+const infoClipId = ref<string | null>(null)
+const editorItem = computed(() => {
+  const clip = editorClipId.value ? project.clips[editorClipId.value] : null
+  return clip ? library.items.find((item) => item.id === clip.libraryItemId) ?? null : null
+})
+const infoItem = computed(() => {
+  const clip = infoClipId.value ? project.clips[infoClipId.value] : null
+  return clip ? library.items.find((item) => item.id === clip.libraryItemId) ?? null : null
+})
 const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
   const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
   const items: ClipContextMenuItem[] = []
+  const clipParent = clip ? library.items.find((i) => i.id === clip.libraryItemId) : null
   if (clip?.unresolved) {
-    items.push({ command: 'clip.relink', label: 'Relink…' })
+    items.push({ command: 'clip.relink', label: 'Relink' })
   }
+  const hasLibraryItem = !!clipParent
+  items.push({ command: 'clip.openEditor', label: 'Open in editor', disabled: !clip || clip.unresolved || !hasLibraryItem })
+  items.push({ command: 'clip.info', label: 'Show information', disabled: !clip || clip.unresolved || !hasLibraryItem })
   items.push({ command: 'clip.delete', label: 'Delete' })
   items.push({ command: 'clip.duplicate', label: 'Duplicate', separatorAbove: true })
-  const clipParent = clip ? library.items.find((i) => i.id === clip.libraryItemId) : null
   const isLinkedClip = clipParent?.kind === 'saved-clip'
   const playheadOverClip =
     !!clip &&
@@ -240,7 +255,7 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
   }
   items.push({
     command: 'clip.saveSample',
-    label: 'Save as sample…'
+    label: 'Save as sample'
   })
   return items
 })
@@ -271,7 +286,11 @@ function onContextMenu(e: MouseEvent): void {
 function onContextMenuCommand(command: string): void {
   const clipId = contextMenuClipId.value
   if (!clipId) return
-  if (command === 'clip.delete') {
+  if (command === 'clip.openEditor') {
+    editorClipId.value = clipId
+  } else if (command === 'clip.info') {
+    infoClipId.value = clipId
+  } else if (command === 'clip.delete') {
     project.removeClip(clipId)
   } else if (command === 'clip.duplicate') {
     project.duplicateClip(clipId)
@@ -370,6 +389,24 @@ function onDoubleClick(e: MouseEvent): void {
       ) {
         e.preventDefault()
         startClipRename(r.clipId)
+        return
+      }
+    }
+    for (let i = clipHitRegions.length - 1; i >= 0; i--) {
+      const r = clipHitRegions[i]
+      if (!r) continue
+      if (
+        worldX >= r.x &&
+        worldX <= r.x + r.w &&
+        worldY >= r.y &&
+        worldY <= r.y + r.h
+      ) {
+        const clip = project.clips[r.clipId]
+        const hasLibraryItem = clip ? library.items.some((candidate) => candidate.id === clip.libraryItemId) : false
+        if (clip && !clip.unresolved && hasLibraryItem) {
+          e.preventDefault()
+          editorClipId.value = r.clipId
+        }
         return
       }
     }
@@ -1042,6 +1079,18 @@ function onHeaderResizePointerUp(e: PointerEvent): void {
       :clip-id="warpDialogClipId"
       :panel="warpDialogPanel"
       @close="warpDialogOpen = false"
+    />
+    <LibraryItemInfoDialog
+      :open="infoClipId !== null && infoItem !== null"
+      :item="infoItem"
+      :clip-id="infoClipId"
+      @close="infoClipId = null"
+    />
+    <ClipEditorDialog
+      :open="editorClipId !== null && editorItem !== null"
+      :item="editorItem"
+      :clip-id="editorClipId"
+      @close="editorClipId = null"
     />
   </div>
 </template>

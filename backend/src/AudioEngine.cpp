@@ -968,6 +968,7 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     if (initialWarpEnabled.value_or(false))
     {
         const auto modeStr = initialWarpMode.value_or(juce::String("rhythmic"));
+        preview.warpMode = modeStr;
         const auto options = parseWarpMode(modeStr);
         const int channels = preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
         auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels), preview.sampleRate, options);
@@ -1013,10 +1014,12 @@ void AudioEngine::unloadPreview()
     }
     preview.offsetSource.reset();
     preview.warp.reset();
+    preview.retiredWarps.clear();
     preview.readerSource.reset();
     preview.inMs = 0.0;
     preview.durationMs = 0.0;
     preview.sourceDurationMs = 0.0;
+    preview.warpMode = "rhythmic";
     previewGeneration.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -1031,14 +1034,14 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
     if (!wantEnabled)
     {
         preview.offsetSource->setWarpProcessor(nullptr);
-        preview.warp.reset();
+        if (preview.warp != nullptr) preview.retiredWarps.push_back(std::move(preview.warp));
         return true;
     }
-    const bool needRebuild = (preview.warp == nullptr) || mode.has_value();
+    const juce::String requestedMode = mode.has_value() ? *mode : preview.warpMode;
+    const bool needRebuild = (preview.warp == nullptr) || (requestedMode != preview.warpMode);
     if (needRebuild)
     {
-        const auto modeStr = mode.value_or(juce::String("rhythmic"));
-        const auto options = parseWarpMode(modeStr);
+        const auto options = parseWarpMode(requestedMode);
         const int channels = preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
         const double sr = preview.sampleRate > 0 ? preview.sampleRate : 44100.0;
         auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels), sr, options);
@@ -1052,8 +1055,11 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
             const double c = cents.value_or(0.0);
             wp->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
         }
+        auto oldWarp = std::move(preview.warp);
         preview.warp = std::move(wp);
+        preview.warpMode = requestedMode;
         preview.offsetSource->setWarpProcessor(preview.warp.get());
+        if (oldWarp != nullptr) preview.retiredWarps.push_back(std::move(oldWarp));
         preview.offsetSource->requestWarpReseek();
         return true;
     }

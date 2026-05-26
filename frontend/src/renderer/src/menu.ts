@@ -85,15 +85,15 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
       label: 'File',
       items: [
         { label: 'New Project', action: 'file.newProject', accelerator: 'Ctrl+N' },
-        { label: 'Open Project...', action: 'file.openProject', accelerator: 'Ctrl+O' },
+        { label: 'Open Project', action: 'file.openProject', accelerator: 'Ctrl+O' },
         recentMenuItem,
         SEP,
         { label: 'Save', action: 'file.save', accelerator: 'Ctrl+S' },
-        { label: 'Save As...', action: 'file.saveAs', accelerator: 'Ctrl+Shift+S' },
-        { label: 'Rename Project...', action: 'file.renameProject', accelerator: 'F2' },
+        { label: 'Save As', action: 'file.saveAs', accelerator: 'Ctrl+Shift+S' },
+        { label: 'Rename Project', action: 'file.renameProject', accelerator: 'F2' },
         SEP,
         { label: 'Add Track', action: 'file.addTrack', accelerator: 'Ctrl+T' },
-        { label: 'Export Mixdown...', action: 'file.exportMixdown', disabled: true },
+        { label: 'Export Mixdown', action: 'file.exportMixdown', disabled: true },
         SEP,
         { label: 'Exit', action: 'file.exit' }
       ]
@@ -114,7 +114,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         SEP,
         { label: 'Crop Project to Last Clip', action: 'edit.cropProjectToLastClip' },
         SEP,
-        { label: 'Preferences...', action: 'edit.preferences' }
+        { label: 'Preferences', action: 'edit.preferences' }
       ]
     },
     {
@@ -125,7 +125,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
       label: 'Help',
       items: [
         { label: 'Documentation', action: 'help.docs' },
-        { label: 'Report an Issue...', action: 'help.reportIssue' },
+        { label: 'Report an Issue', action: 'help.reportIssue' },
         SEP,
         { label: 'About Silverdaw', action: 'help.about' }
       ]

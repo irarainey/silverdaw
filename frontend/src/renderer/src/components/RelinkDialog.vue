@@ -13,7 +13,7 @@
 // When the list becomes empty the dialog auto-closes.
 //
 // The dialog is also reachable later (after closing without
-// relinking everything) via the "Relink…" item on the right-click
+// relinking everything) via the "Relink" item on the right-click
 // clip context menu — so dismissing this dialog isn't a one-shot.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'

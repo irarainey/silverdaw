@@ -1017,6 +1017,11 @@ class AudioEngine
          *  non-owning atomic pointer to the same instance so the
          *  audio thread can fast-path it on every block. */
         std::unique_ptr<WarpProcessor> warp;
+        /** Old preview warp processors are retained until the preview is
+         *  unloaded so the audio thread cannot observe a freed processor
+         *  after an atomic pointer swap. */
+        std::vector<std::unique_ptr<WarpProcessor>> retiredWarps;
+        juce::String warpMode{"rhythmic"};
         double sampleRate = 44100.0;
         double inMs = 0.0;
         double durationMs = 0.0;

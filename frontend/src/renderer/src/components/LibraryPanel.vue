@@ -140,16 +140,16 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     if (!item) return []
     const inUse = library.isItemInUse(item.id)
     const items: ClipContextMenuItem[] = [
-        { command: 'library.edit', label: 'Open in editor…' },
+        { command: 'library.edit', label: 'Open in editor' },
         { command: 'library.info', label: 'Show information' },
-        { command: 'library.rename', label: 'Rename…', separatorAbove: true }
+        { command: 'library.rename', label: 'Rename', separatorAbove: true }
     ]
     if (item.kind === 'audio-file') {
         items.push({ command: 'library.reanalyse', label: 'Reanalyse file' })
     } else if (item.kind === 'saved-clip') {
         items.push({
             command: 'library.saveSample',
-            label: 'Save as sample…'
+            label: 'Save as sample'
         })
     }
     // Saved clips can always be removed — doing so just unlinks any
