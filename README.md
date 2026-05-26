@@ -99,8 +99,8 @@ Silverdaw currently supports the core arrangement workflow:
 - Save reusable saved clips to the library from any timeline clip; saved clips are
   grouped under their source file and can be dragged back to the timeline as a clip
   with the same source window. **Linked saved-clips**: clips dropped from a saved-clip
-  library tile remember that link; the Clip Editor's **Crop** previews a new window
-  inside the dialog only, while **Apply trim** propagates the new window to every
+  library tile remember that link; the Clip Editor batches trim, warp and pitch edits
+  into a single transactional draft and the **Save** button propagates them to every
   linked timeline instance in lockstep, unless a collision would result (in which
   case the user is prompted and the edit is rejected). Linked clips show a small
   chain badge in their title strip and are locked against edge-resize on the timeline
@@ -153,8 +153,8 @@ Silverdaw currently supports the core arrangement workflow:
   so navigating around doesn't pollute the history. The **Clip Editor
   Crop** workflow keeps a dialog-local undo stack so the user can
   tweak a crop with Ctrl+Z/Y inside the dialog without touching the
-  project-level history; only when the user clicks **Apply trim** or
-  **Save as new** does the change land in the main undo stack.
+  project-level history; only when the user clicks **Save** or
+  **Save as new clip** does the change land in the main undo stack.
   Compound operations like clip split / duplicate currently emit
   multiple undo steps; bundling them is a follow-up.
 
@@ -165,11 +165,10 @@ play seamlessly.
 
 The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, ffmpeg-backed decoding for unsupported formats,
-mixer / effects / automation, mixdown export, stem separation, loop slicing, a
-timeline-clip entry point into the Clip Editor (today the editor opens from
-library items only), grouping compound operations (split / duplicate) into a
-single undo step, and a CI matrix that enforces a coverage floor over the
-existing backend and frontend test suites.
+mixer / effects / automation, mixdown export, stem separation, loop slicing,
+grouping compound operations (split / duplicate) into a single undo step, and
+a CI matrix that enforces a coverage floor over the existing backend and
+frontend test suites.
 
 ## Bridge protocol
 
@@ -220,7 +219,8 @@ the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
   TRACK[id, name, gain, heightPx?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
-         warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?]
+         warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
+         effectiveDurationMs?, effectiveTempoRatio?, effectiveWarpActive?]
   LIBRARY
      ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
           sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?,
@@ -241,6 +241,16 @@ otherwise a warped clip follows `projectBpm / sourceBpm`; pitch is stored as sem
 and cent offsets. `colorIndex` is an optional 0..15 per-clip palette override; when
 absent the clip inherits its host track's colour. `clipName` is an optional user-set
 display name for the clip (double-click the clip's title strip to rename).
+
+`effectiveDurationMs`, `effectiveTempoRatio` and `effectiveWarpActive` are
+**backend-authoritative** effective timing fields. They are computed by
+`ProjectState::computeClipEffectiveTiming` from the source BPM, current warp
+state and project BPM, and emitted on every clip in `PROJECT_STATE` plus the
+`CLIP_WARP_APPLIED` payload. The frontend uses them as the single source of
+truth for the rendered/audible timeline footprint of a warped clip — drawing,
+collision checks, split / duplicate / paste maths, and Clip Editor
+overlap-validation all read from these fields rather than recomputing the
+ratio in the renderer.
 
 `ITEM.kind` is either `audio-file` (a normal imported source) or `saved-clip` (a
 reusable region derived from a timeline clip). Saved-clip items share `filePath` with
@@ -530,28 +540,56 @@ for audio-file source items while they're in use by a timeline clip; saved-clip
 items can always be removed (every linked timeline clip is silently unlinked
 first and continues playing from the underlying source).
 
-**Clip Editor** — double-click a library tile (or pick **Open in editor** from its
-right-click menu) to open the **Clip Editor** dialog. The dialog renders the source
-waveform with an adaptive time ruler, faint beat lines extrapolated from the
-detected BPM, and zoom + horizontal scroll (`+` / `-` / `0`, mouse-wheel anchored at
-the pointer, `Shift+wheel` to pan; capped at **64× / 6400 %** so even narrow saved
-clips can be inspected sample-precise). Once zoom or selection narrows past a
-threshold the dialog opportunistically requests a **2000 peaks/sec** rendering for
-the item on screen so the waveform stays crisp at deep zoom; the request is
-keyed on the library item id and cached on disk alongside the default 500 peaks/sec
-cache. Audio-file items open at the same px-per-second scale as the main timeline;
-saved clips open zoomed to fit the cropped range and the bottom-left toggle flips
-between **Clip** view (cropped) and **Source** view (full source for extending the
-window). Warped saved clips show a **WARP** pill in the editor header; the
-playhead is shown at the start of the view immediately, and Play becomes
-available once the backend preview voice is ready. Auditioning runs through an
-independent **backend preview voice**
-(`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
-`PREVIEW_SEEK` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` / `PREVIEW_POSITION` /
-`PREVIEW_ENDED`) so the main transport is unaffected. A monotonic `generation`
-counter on the preview voice means stale events for a preview the user has already
-closed are silently dropped. While playing the canvas follows the playhead with
-the same smooth ease-in catch-up the main timeline uses.
+**Clip Editor** — the same dialog opens from four entry surfaces:
+
+- Double-click a **library tile**, or pick **Open in editor** from its
+  right-click menu, to edit the source / saved-clip item.
+- Double-click a **timeline clip body** (anywhere other than the title strip,
+  which still inline-renames), or pick **Open in editor** from the clip's
+  right-click menu, to edit that timeline clip — its window, warp and pitch.
+
+The dialog renders the source waveform with an adaptive time ruler, faint
+beat lines extrapolated from the detected BPM, and zoom + horizontal scroll
+(`+` / `-` / `0`, mouse-wheel anchored at the pointer, `Shift+wheel` to pan;
+capped at **64× / 6400 %** so even narrow saved clips can be inspected
+sample-precise). Once zoom or selection narrows past a threshold the dialog
+opportunistically requests a **2000 peaks/sec** rendering for the item on
+screen so the waveform stays crisp at deep zoom; the request is keyed on the
+library item id and cached on disk alongside the default 500 peaks/sec cache.
+Audio-file items open at the same px-per-second scale as the main timeline;
+existing clips (saved-clip library items, linked timeline clips, and
+unlinked timeline clips) open zoomed to fit their window and the **Source**
+/ **Clip** toggle flips between full-source view (so the window can be
+extended beyond the current bounds) and the cropped view. Warped clips show
+a **WARP** pill in the editor header; the playhead is shown at the start of
+the view immediately, and Play becomes available once the backend preview
+voice is ready. Auditioning runs through an independent **backend preview
+voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
+`PREVIEW_SEEK` / `PREVIEW_SET_WARP` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` /
+`PREVIEW_POSITION` / `PREVIEW_ENDED`) so the main transport is unaffected. A
+monotonic `generation` counter on the preview voice means stale events for a
+preview the user has already closed are silently dropped. While playing the
+canvas follows the playhead with the same smooth ease-in catch-up the main
+timeline uses.
+
+The dialog is **transactional**. Whenever it opens on an existing clip
+(saved-clip library item, linked timeline clip, or unlinked timeline clip)
+every edit — trim window, crop view, warp settings, pitch settings — is held
+as a local draft that affects only the preview voice. The footer shows
+**Cancel** + **Save**. **Save** commits the whole draft atomically; **Cancel**
+(and `Esc`) discard it without touching the library item or the timeline.
+Save scope depends on the target:
+
+- Saved-clip library item or linked timeline clip → updates the library item
+  and propagates the new window + warp + pitch to every linked timeline
+  instance in lockstep, refused with a toast if any sibling would collide
+  with a neighbour on its track.
+- Unlinked timeline clip → updates only that one clip after the same
+  collision check.
+
+For source audio-file library items the footer instead shows **Close** +
+**Save as new clip**, which writes a fresh saved-clip entry from the current
+selection without modifying the source.
 
 Within the dialog:
 
@@ -575,21 +613,26 @@ Within the dialog:
 - **Selection edges** carry triangular handles at the top and bottom for
   fine-tuning. Drag a handle to adjust just that edge of the selection without
   redrawing the whole range.
-- **Crop** (`Crop` button) narrows the in-dialog view to the current selection
-  without writing anything to the project — purely a non-destructive preview
-  zoom. Ctrl+Z / Ctrl+Y inside the dialog walk a dialog-local Crop history so
-  the user can experiment freely. **Source** / **Clip** toggle flips between
-  full-source view (so the window can be extended beyond the saved clip's
-  current bounds) and the cropped view; switching back from Source carries the
-  most recently selected range with you so a wider selection on the source
-  can be tightened up at clip-level zoom.
-- **Save as new clip**: writes a new saved-clip entry to the library from the
-  current selection.
-- **Apply trim** (saved clips only): updates the saved-clip's `derivedFrom`
-  window in place and pushes the new trim to every linked timeline clip
-  atomically. Refused with a toast if the new window would cause one of the
-  linked clips to collide with a neighbour on its track — the user resolves
-  the collision (or unlinks the offending clip) and retries.
+- **Crop** lives in the inline clip-controls row beside the **Source / Clip**
+  toggle and the zoom controls. It narrows the in-dialog view to the current
+  selection without writing anything to the project — purely a non-destructive
+  preview zoom. Ctrl+Z / Ctrl+Y inside the dialog walk a dialog-local Crop
+  history so the user can experiment freely. **Source** / **Clip** flips between
+  full-source view (so the window can be extended beyond the current bounds)
+  and the cropped view; switching back from Source carries the most recently
+  selected range with you so a wider selection on the source can be tightened
+  up at clip-level zoom.
+- **Warp + Pitch inspector** (existing-clip targets only): a right-hand panel
+  exposes draft controls for **Enable Warp**, warp **Mode** (rhythmic / tonal
+  / complex), tempo (**Follow project BPM** or **Pin to** a specific BPM),
+  pitch **Semitones** / **Cents** range sliders, and **Key presets** computed
+  from the source's detected key. Source BPM, effective BPM + ratio and the
+  current pitched key are shown alongside the controls. Slider movement
+  updates the preview voice **live** — Rubber Band's
+  `setTimeRatio` / `setPitchScale` are applied as atomic parameter changes
+  with no reseek or history flush, so the audio stays continuous through
+  drags and loops. The renderer coalesces draft updates to roughly 30 Hz so
+  Rubber Band isn't re-tuned per pointer event.
 
 ## Preferences
 
@@ -731,7 +774,8 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
-| **Right-click on a clip** | Open the context menu: **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, **Save as sample**, **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. Warp and Pitch dialogs are transactional: **Save** applies changes, **Cancel** / close discards them. Shows **Relink** at the top when the clip is unresolved. |
+| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, **Save as sample**, **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. Warp and Pitch are disabled for clips linked to a saved-clip library item — edit those in the Clip Editor where the Save propagates to every linked sibling. Shows **Relink** at the top when the clip is unresolved. |
+| Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, crop, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
 | Double-click a **library tile** (off the name) | Open the **Clip Editor** for that library item. Use **Show information** from the right-click menu for the read-only info dialog. |
