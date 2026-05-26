@@ -28,6 +28,7 @@ import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
+import { pickPeaksLod } from '@/lib/peaksLod'
 import {
   GRID_BAR,
   GRID_BEAT,
@@ -602,7 +603,44 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     //     waveform to "drift" leftward off its clip block at high
     //     zoom.
     const wave = new G()
-    const peaks = clip.peaks
+    const baseLibPeaks = libItem?.peaks
+    const baseLibPps = libItem?.peaksPerSecond
+    const baseLibLod = libItem?.peaksLod
+    // For saved-clip items, peaks live on the source audio-file item.
+    // Look up the LOD pyramid there if the saved clip has no peaks of
+    // its own (the common case after the rebind refactor).
+    let sourceLodOwner = libItem
+    if (libItem?.kind === 'saved-clip' && (!baseLibLod || baseLibLod.length <= 1)) {
+      const sourceId = libItem.derivedFrom?.sourceItemId
+      if (sourceId) {
+        const source = library.items.find((i) => i.id === sourceId)
+        if (source) sourceLodOwner = source
+      }
+    }
+    // Drawing reads from a single peaks array + ppS, picked from the
+    // LOD pyramid where available so each pixel column covers ~1–2
+    // peaks. Falls back to the clip's own (or library item's) base
+    // peaks when no pyramid has been built yet.
+    let peaks: Float32Array = clip.peaks
+    let peaksPerSecond = clip.peaksPerSecond ?? baseLibPps ?? PEAKS_PER_SECOND
+    const lod = sourceLodOwner?.peaksLod ?? (baseLibLod ?? undefined)
+    if (lod && lod.length > 0 && pxPerSecond.value > 0) {
+      // The clip's draw pixel-per-source-second is `pxPerSecond / warpRatio`
+      // — a warped clip's pixel column covers `warpRatio` more source
+      // time than an unwarped clip, so we want a finer LOD on warped
+      // clips by that factor. `warpRatio = 1` gives the unwarped path.
+      const drawPxPerSrcSec = pxPerSecond.value / warpRatio
+      const picked = pickPeaksLod(lod, drawPxPerSrcSec, peaksPerSecond)
+      if (picked.peaks.length >= 4 && picked.peaksPerSecond > 0) {
+        peaks = picked.peaks
+        peaksPerSecond = picked.peaksPerSecond
+      }
+    } else if (baseLibPeaks && baseLibPeaks.length >= 4 && clip.peaks.length === 0) {
+      // Saved-clip / placeholder clip falls back to the source audio-file's
+      // raw peaks until its own peaks land.
+      peaks = baseLibPeaks
+      peaksPerSecond = baseLibPps ?? PEAKS_PER_SECOND
+    }
     const peakCount = peaks.length / 2
     const half = innerH / 2 - 2
 
@@ -615,7 +653,6 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       // Convert the clip's
       // `[inMs, inMs + durationMs]` ms-window into peak indices and
       // distribute those across the clip's pixel width.
-      const peaksPerSecond = clip.peaksPerSecond ?? libItem?.peaksPerSecond ?? PEAKS_PER_SECOND
       const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * peaksPerSecond))
       const endPeak = Math.min(
         peakCount,

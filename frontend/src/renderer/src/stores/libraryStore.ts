@@ -15,6 +15,7 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveDurationMs } from '@/lib/warp'
+import { buildPeaksLodPyramid } from '@/lib/peaksLod'
 import type { Clip } from '@/stores/projectStore'
 import type { ClipWarpMode, LibraryItemKind } from '@shared/bridge-protocol'
 
@@ -47,6 +48,15 @@ export interface LibraryItem {
    */
   peaks: Float32Array
   peaksPerSecond?: number
+  /**
+   * Derived level-of-detail (LOD) peak pyramid. `peaksLod[0]` is the
+   * base array (same reference as `peaks`); subsequent entries are
+   * progressively coarser downsamples built once when peaks arrive,
+   * so the timeline can pick a level near one peak per pixel at the
+   * current zoom. Shared across every timeline clip that references
+   * this library item.
+   */
+  peaksLod?: import('@/lib/peaksLod').PeaksLodLayer[]
   /**
    * Detected BPM (rounded to 2 d.p.) from the backend's BTrack-based
    * estimator. `undefined` until the worker job finishes. The library
@@ -1304,6 +1314,26 @@ export const useLibraryStore = defineStore('library', {
       item.peaks = peaks
       if (typeof peaksPerSecond === 'number' && peaksPerSecond > 0) item.peaksPerSecond = peaksPerSecond
       if (sampleRate > 0) item.sampleRate = sampleRate
+      // Build the LOD pyramid eagerly. Downsampling is O(N) per level
+      // and runs once per source-file peaks arrival; the pyramid is
+      // shared by every timeline clip that references this item.
+      // A queued microtask defers the work past the current frame so
+      // the watcher chain that fires on peaks arrival doesn't pay the
+      // cost in-line.
+      const itemPps = item.peaksPerSecond
+      if (peaks.length >= 4 && typeof itemPps === 'number' && itemPps > 0) {
+        const buildLod = (): void => {
+          // The library item may have been removed while we were
+          // queued; bail out if so.
+          const live = this.items.find((i) => i.id === itemId)
+          if (!live || live.peaks !== peaks) return
+          live.peaksLod = buildPeaksLodPyramid(peaks, itemPps)
+        }
+        if (typeof queueMicrotask === 'function') queueMicrotask(buildLod)
+        else buildLod()
+      } else {
+        item.peaksLod = undefined
+      }
       log.debug('library', `setItemPeaks id=${itemId} peaks=${peaks.length / 2} sr=${sampleRate} pps=${item.peaksPerSecond ?? 'undef'}`)
     },
 

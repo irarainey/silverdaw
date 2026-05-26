@@ -11,6 +11,7 @@ import { effectiveDurationMs, effectiveTempoRatio, isWarpActive } from '@/lib/wa
 import { send as sendBridge } from '@/lib/bridgeService'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { keyPresetsFor, shiftedKey } from '@/lib/pitchKey'
+import { pickPeaksLod } from '@/lib/peaksLod'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
@@ -920,19 +921,46 @@ function drawWaveform(): void {
   ctx.stroke()
 
   // --- Waveform peaks --------------------------------------------------
-  // Prefer the editor's high-resolution peaks (computed on demand when
-  // the user zooms in past EDITOR_HI_RES_ZOOM_THRESHOLD) over the
-  // shared default-resolution peaks on the library item. Both are
-  // alternating min/max float pairs covering the whole source.
+  // The editor has three potential peak sources, in order of preference:
+  //   1. editorHiResPeaks — backend-rebuilt 2000 ppS rendering requested
+  //      on demand when the user zooms in past EDITOR_HI_RES_ZOOM_THRESHOLD.
+  //   2. The library item's LOD pyramid — picked by current px/sec so
+  //      zoomed-out views walk a coarser level instead of millions of
+  //      base peaks per redraw.
+  //   3. The library item's base peaks (`src.peaks`) as a fallback.
+  // The picker uses the same hysteresis as the main timeline so zoom
+  // drags don't flicker between adjacent levels.
   const hiRes = library.editorHiResPeaks
-  const peaks =
-    hiRes && hiRes.libraryItemId === src.id && hiRes.peaks.length >= 2
-      ? hiRes.peaks
-      : src.peaks
+  const usingHiRes = hiRes && hiRes.libraryItemId === src.id && hiRes.peaks.length >= 2
+  // Convert visible-ms-per-canvas-pixel into px-per-source-second so the
+  // LOD picker speaks the same units as the main timeline.
+  const canvasPxPerSourceSec = vDur > 0 ? (w / vDur) * 1000 : 0
+  let peaks: Float32Array
+  let peaksPerSec: number
+  if (usingHiRes) {
+    peaks = hiRes!.peaks
+    peaksPerSec = hiRes!.peaksPerSecond
+  } else if (src.peaksLod && src.peaksLod.length > 0 && canvasPxPerSourceSec > 0) {
+    const picked = pickPeaksLod(src.peaksLod, canvasPxPerSourceSec)
+    peaks = picked.peaks
+    peaksPerSec = picked.peaksPerSecond
+  } else {
+    peaks = src.peaks
+    peaksPerSec = src.peaksPerSecond ?? 0
+  }
   if (peaks && peaks.length >= 2 && sourceTotal > 0) {
     const pairs = Math.floor(peaks.length / 2)
-    const peakStart = (vIn / sourceTotal) * pairs
-    const peakSpan = (vDur / sourceTotal) * pairs
+    // Map each canvas column to a peak index. When the LOD's actual
+    // ppS is known, use it for a sample-accurate mapping (so transients
+    // do not drift against the ruler/beat grid). Otherwise fall back
+    // to the legacy proportional mapping over `sourceTotal`.
+    const useRate = peaksPerSec > 0
+    const peakStart = useRate
+      ? (vIn / 1000) * peaksPerSec
+      : (vIn / sourceTotal) * pairs
+    const peakSpan = useRate
+      ? (vDur / 1000) * peaksPerSec
+      : (vDur / sourceTotal) * pairs
     ctx.fillStyle = '#3b82f6'
     for (let x = 0; x < w; x++) {
       const i = Math.floor(peakStart + (x / w) * peakSpan)
