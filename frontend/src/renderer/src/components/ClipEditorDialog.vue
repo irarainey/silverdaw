@@ -257,6 +257,31 @@ const zoom = ref(1)
 const scrollMs = ref(0)
 const canvasCssWidth = ref(0)
 let lastPreviewLoadKey = ''
+let previewWarpUpdateTimer: number | null = null
+
+function clearPreviewWarpUpdateTimer(): void {
+  if (previewWarpUpdateTimer === null) return
+  window.clearTimeout(previewWarpUpdateTimer)
+  previewWarpUpdateTimer = null
+}
+
+function sendDraftPreviewWarp(): void {
+  previewWarpUpdateTimer = null
+  if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
+  preview.setWarp({
+    warpEnabled: draftProcessorEnabled.value,
+    warpMode: draftMode.value,
+    tempoRatio: previewTempoRatio() ?? null,
+    semitones: clampNumber(draftSemitones.value, -12, 12),
+    cents: clampNumber(draftCents.value, -100, 100)
+  })
+}
+
+function scheduleDraftPreviewWarp(): void {
+  if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
+  if (previewWarpUpdateTimer !== null) return
+  previewWarpUpdateTimer = window.setTimeout(sendDraftPreviewWarp, 33)
+}
 
 const basePxPerMs = computed(() => {
   if (!editorItem.value) return 0
@@ -497,6 +522,7 @@ watch(
       dialogEl.value?.focus()
       loadPreviewForView()
     } else {
+      clearPreviewWarpUpdateTimer()
       preview.unload()
       lastPreviewLoadKey = ''
       library.setEditorHiResPeaks(null)
@@ -528,15 +554,7 @@ watch(
 watch(
   [draftTempoEnabled, draftMode, draftTempoPinned, draftPinnedBpm, draftSemitones, draftCents],
   () => {
-    if (!props.open || !editsExistingClip.value) return
-    if (!preview.isLoaded) return
-    preview.setWarp({
-      warpEnabled: draftProcessorEnabled.value,
-      warpMode: draftMode.value,
-      tempoRatio: previewTempoRatio() ?? null,
-      semitones: clampNumber(draftSemitones.value, -12, 12),
-      cents: clampNumber(draftCents.value, -100, 100)
-    })
+    scheduleDraftPreviewWarp()
   }
 )
 
@@ -688,6 +706,7 @@ watch(
 
 onBeforeUnmount(() => {
   ui.clipEditorOpen = false
+  clearPreviewWarpUpdateTimer()
   preview.unload()
   window.removeEventListener('keydown', onWindowKeydownCapture, { capture: true })
   if (resizeObserver) {

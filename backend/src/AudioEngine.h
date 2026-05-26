@@ -167,7 +167,7 @@ class OffsetSource : public juce::PositionableAudioSource
             // Read from the source at: how-far-into-the-clip + in-source-offset.
             const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
             auto* w = currentWarp;
-            if (w != nullptr && w->isActive())
+            if (w != nullptr)
             {
                 // Warp path. The processor owns the source cursor and
                 // advances it internally as it consumes input. We only
