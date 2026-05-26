@@ -12,6 +12,11 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { pickPeaksLod } from '@/lib/peaksLod'
 import { useClipEditorTarget } from '@/lib/clipEditor/useClipEditorTarget'
 import {
+  MAX_ZOOM,
+  useClipEditorViewport,
+  type CropSnapshot
+} from '@/lib/clipEditor/useClipEditorViewport'
+import {
   clampNumber,
   currentHasTempoWarp,
   pitchNeedsProcessor,
@@ -84,58 +89,46 @@ const warpActive = computed(() => {
   })
 })
 
-// The Clip Editor opens with the visible *view bounds* limited to the
-// clip's window so the user isn't presented with the full source for a
-// small clip. `viewExpanded` lifts that limit to expose the full source
-// — needed when the user wants to EXTEND (not just crop) a saved
-// clip's window. The selection stays where it was, so the existing
-// edge handles can simply be dragged outward to grow the saved clip.
-const viewExpanded = ref(false)
-
-// The cropped-view bounds for saved-clips. Starts at the persisted
-// `derivedFrom` window but can be updated mid-edit — specifically
-// when the user expands to Source view, grows the selection to a
-// bigger range, and toggles back: the cropped view snaps to the new
-// selection so the canvas shows that range zoomed in for fine
-// tuning. Persistence still lives on the library item; the user
-// commits via "Apply trim".
-const cropViewInMs = ref(0)
-const cropViewDurationMs = ref(0)
-
-// Visible window on the canvas, in ms relative to the source.
-// - audio-file: always the full source.
-// - saved-clip: the cropped-view bounds by default; full source when
-//   `viewExpanded` is true.
-const viewInMs = computed(() => {
-  if (!editorItem.value) return 0
-  if (editsExistingClip.value && !viewExpanded.value) return cropViewInMs.value
-  return 0
+// Viewport, zoom, scroll, and selection state for the canvas live in
+// a composable. The dialog still drives the canvas DOM and the mouse
+// handlers, but the math + bounds + multi-field transitions are
+// owned (and unit-tested) in `useClipEditorViewport`.
+const viewport = useClipEditorViewport({
+  editorItem,
+  editsExistingClip,
+  timelineClip,
+  sourceDurationMs,
+  uiZoomPxPerSecond: toRef(ui, 'zoomPxPerSecond')
 })
-const viewDurationMs = computed(() => {
-  if (!editorItem.value) return 0
-  if (editsExistingClip.value && !viewExpanded.value) {
-    return cropViewDurationMs.value
-  }
-  return sourceDurationMs.value
-})
-const viewEndMs = computed(() => viewInMs.value + viewDurationMs.value)
+const {
+  viewExpanded,
+  cropViewInMs,
+  cropViewDurationMs,
+  selectionInMs,
+  selectionDurationMs,
+  zoom,
+  scrollMs,
+  canvasCssWidth,
+  viewInMs,
+  viewDurationMs,
+  viewEndMs,
+  basePxPerMs: _basePxPerMs,
+  visibleDurationMs,
+  maxScrollMs,
+  visibleInMs,
+  visibleEndMs,
+  zoomPercent,
+  selectionEndMs,
+  hasPlaybackSelection,
+  playbackStartMs,
+  playbackEndMs,
+  resetZoom,
+  setZoomAnchored,
+  zoomIn,
+  zoomOut
+} = viewport
+void _basePxPerMs
 
-// Zoom is expressed as a multiplier of a per-item "base scale".
-//
-// - audio-file (full source): the base scale matches the main timeline's
-//   pixels-per-second (`ui.zoomPxPerSecond`). zoom=1 → identical scale to
-//   the timeline. The canvas only shows a window of the source; the user
-//   scrolls horizontally to see the rest.
-// - saved-clip: the base scale is whatever fits the cropped clip range
-//   exactly into the canvas. zoom=1 → entire clip visible.
-//
-// Both cases cap at 64× (6400%) and never zoom out below 1× (the base scale
-// for that item).
-const MIN_ZOOM = 1
-const MAX_ZOOM = 64
-const zoom = ref(1)
-const scrollMs = ref(0)
-const canvasCssWidth = ref(0)
 let lastPreviewLoadKey = ''
 let previewWarpUpdateTimer: number | null = null
 
@@ -161,67 +154,6 @@ function scheduleDraftPreviewWarp(): void {
   if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
   if (previewWarpUpdateTimer !== null) return
   previewWarpUpdateTimer = window.setTimeout(sendDraftPreviewWarp, 33)
-}
-
-const basePxPerMs = computed(() => {
-  if (!editorItem.value) return 0
-  if (!editsExistingClip.value) {
-    // Match the timeline's px/s. Fall back to 100 px/s (the default) if
-    // we haven't observed a live value yet.
-    return Math.max(0.001, (ui.zoomPxPerSecond || 100) / 1000)
-  }
-  // saved-clip: fit the cropped range exactly into the canvas.
-  const w = canvasCssWidth.value
-  const dur = viewDurationMs.value
-  return w > 0 && dur > 0 ? w / dur : 0
-})
-
-const visibleDurationMs = computed(() => {
-  const w = canvasCssWidth.value
-  const px = basePxPerMs.value
-  const fullDur = viewDurationMs.value
-  if (w <= 0 || px <= 0 || fullDur <= 0) return fullDur
-  const dur = w / (px * zoom.value)
-  return Math.min(fullDur, dur)
-})
-const maxScrollMs = computed(() => Math.max(0, viewDurationMs.value - visibleDurationMs.value))
-const visibleInMs = computed(() => viewInMs.value + Math.min(maxScrollMs.value, Math.max(0, scrollMs.value)))
-const visibleEndMs = computed(() => visibleInMs.value + visibleDurationMs.value)
-const zoomPercent = computed(() => Math.round(zoom.value * 100))
-
-function resetZoom(): void {
-  zoom.value = 1
-  scrollMs.value = 0
-}
-
-function setZoomAnchored(nextZoom: number, anchorMs: number): void {
-  const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom))
-  if (z === zoom.value) return
-  const w = canvasCssWidth.value
-  const px = basePxPerMs.value
-  const fullDur = viewDurationMs.value
-  if (w <= 0 || px <= 0 || fullDur <= 0) {
-    zoom.value = z
-    return
-  }
-  const prevVisibleDur = Math.min(fullDur, w / (px * zoom.value))
-  const anchorFrac = prevVisibleDur > 0
-    ? (anchorMs - visibleInMs.value) / prevVisibleDur
-    : 0.5
-  zoom.value = z
-  const newVisibleDur = Math.min(fullDur, w / (px * z))
-  const newLeftMs = (anchorMs - viewInMs.value) - anchorFrac * newVisibleDur
-  const maxScroll = Math.max(0, fullDur - newVisibleDur)
-  scrollMs.value = Math.max(0, Math.min(maxScroll, newLeftMs))
-}
-
-function zoomIn(): void {
-  const center = visibleInMs.value + visibleDurationMs.value / 2
-  setZoomAnchored(zoom.value * 1.5, center)
-}
-function zoomOut(): void {
-  const center = visibleInMs.value + visibleDurationMs.value / 2
-  setZoomAnchored(zoom.value / 1.5, center)
 }
 
 // While the preview is playing, keep the playhead visible on the canvas
@@ -297,10 +229,10 @@ function enforceSelectionPlaybackBounds(): void {
   }
 }
 
-// Selection window in ms relative to the source. Always lives within [viewInMs, viewEndMs].
-const selectionInMs = ref(0)
-const selectionDurationMs = ref(0)
-const selectionEndMs = computed(() => selectionInMs.value + selectionDurationMs.value)
+// Selection / playback range computeds owned by `useClipEditorViewport`;
+// `selectionInMs` / `selectionDurationMs` / `selectionEndMs` /
+// `hasPlaybackSelection` / `playbackStartMs` / `playbackEndMs` are
+// destructured at the top of this <script setup>.
 
 // Has the user changed anything from the persisted saved-clip window?
 // True when EITHER the selection is narrower than the cropped view,
@@ -360,23 +292,6 @@ const canSaveAsNew = computed(() => {
 })
 
 const playheadAbsMs = computed(() => viewInMs.value + preview.positionMs)
-
-// True when the user has narrowed the view with a real selection.
-// Playback honours this range: play loops within [selectionInMs, selectionEndMs].
-const hasPlaybackSelection = computed(() => {
-  if (selectionDurationMs.value <= 0) return false
-  return (
-    selectionInMs.value > viewInMs.value + 0.5 ||
-    selectionEndMs.value < viewEndMs.value - 0.5
-  )
-})
-
-const playbackStartMs = computed(() =>
-  hasPlaybackSelection.value ? selectionInMs.value : viewInMs.value
-)
-const playbackEndMs = computed(() =>
-  hasPlaybackSelection.value ? selectionEndMs.value : viewEndMs.value
-)
 
 const loopEnabled = ref(false)
 
@@ -457,11 +372,9 @@ watch(viewExpanded, async (expanded) => {
   if (!expanded) {
     // Snap the cropped view to the user's current selection so it
     // becomes the new focused range. Fall back to keeping the
-    // existing crop when the selection has been cleared.
-    if (selectionDurationMs.value > 0) {
-      cropViewInMs.value = Math.max(0, selectionInMs.value)
-      cropViewDurationMs.value = Math.max(0, selectionDurationMs.value)
-    }
+    // existing crop when the selection has been cleared (the
+    // composable's helper is a no-op in that case).
+    viewport.snapCropViewToSelection()
   }
   resetZoom()
   scrollMs.value = 0
@@ -596,30 +509,7 @@ onBeforeUnmount(() => {
 })
 
 function initSelectionForItem(): void {
-  const entry = editorItem.value
-  if (!entry) {
-    selectionInMs.value = 0
-    selectionDurationMs.value = 0
-    cropViewInMs.value = 0
-    cropViewDurationMs.value = 0
-    return
-  }
-  const clip = timelineClip.value
-  if (editsExistingClip.value) {
-    const persistedIn = clip?.inMs ?? entry.derivedFrom?.inMs ?? 0
-    const persistedDur = clip?.durationMs ?? entry.derivedFrom?.durationMs ?? entry.durationMs
-    cropViewInMs.value = persistedIn
-    cropViewDurationMs.value = persistedDur
-    selectionInMs.value = persistedIn
-    selectionDurationMs.value = persistedDur
-  } else {
-    // The main source is immutable — open with no selection. The user
-    // drags on the waveform to mark a range, then "Save as new clip".
-    cropViewInMs.value = 0
-    cropViewDurationMs.value = sourceDurationMs.value
-    selectionInMs.value = 0
-    selectionDurationMs.value = 0
-  }
+  viewport.initialiseForItem()
 }
 
 // The preview is always loaded for the full clip view (the source range for
@@ -1299,31 +1189,15 @@ function onKeydown(e: KeyboardEvent): void {
 // UndoManager and gets its own undo step there. We keep this stack
 // scoped to the dialog so closing it discards any uncommitted crops
 // — the library entry hasn't been touched.
-interface CropSnapshot {
-  cropViewInMs: number
-  cropViewDurationMs: number
-  selectionInMs: number
-  selectionDurationMs: number
-}
 const cropUndoStack = ref<CropSnapshot[]>([])
 const cropRedoStack = ref<CropSnapshot[]>([])
 
 function captureCropSnapshot(): CropSnapshot {
-  return {
-    cropViewInMs: cropViewInMs.value,
-    cropViewDurationMs: cropViewDurationMs.value,
-    selectionInMs: selectionInMs.value,
-    selectionDurationMs: selectionDurationMs.value
-  }
+  return viewport.captureCropSnapshot()
 }
 
 function restoreCropSnapshot(snap: CropSnapshot): void {
-  cropViewInMs.value = snap.cropViewInMs
-  cropViewDurationMs.value = snap.cropViewDurationMs
-  selectionInMs.value = snap.selectionInMs
-  selectionDurationMs.value = snap.selectionDurationMs
-  resetZoom()
-  scrollMs.value = 0
+  viewport.restoreCropSnapshot(snap)
   drawWaveform()
   loadPreviewForView()
 }
@@ -1335,7 +1209,6 @@ function onApplyCrop(): void {
   cropViewInMs.value = Math.max(0, selectionInMs.value)
   cropViewDurationMs.value = Math.max(0, selectionDurationMs.value)
   resetZoom()
-  scrollMs.value = 0
   drawWaveform()
   loadPreviewForView()
 }
