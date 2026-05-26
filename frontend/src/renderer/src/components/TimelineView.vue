@@ -215,7 +215,7 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
       selectedSwatch: selected
     })
   }
-  items.push({ command: 'clip.warp', label: 'Warp…', separatorAbove: true })
+  items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true })
   items.push({ command: 'clip.pitch', label: 'Pitch' })
   items.push({ command: 'clip.saveToLibrary', label: 'Save clip to library', separatorAbove: true })
   // "Unlink from library" only shown when the clip is linked to a

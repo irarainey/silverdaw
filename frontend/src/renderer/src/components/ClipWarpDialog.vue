@@ -12,15 +12,8 @@
 //   │              ◯ pin to ___ BPM )       │
 //   └───────────────────────────────────────┘
 //
-// Every control commits through `projectStore.setClipWarp(clipId, patch)`
-// which both updates the local store and fires CLIP_SET_WARP on the bridge.
-// The backend coalesces same-clip CLIP_SET_WARP envelopes within 500 ms
-// so dragging a slider produces one undo step per gesture rather than
-// thirty.
-//
-// We don't add a "Cancel" button — every change is live and reversible
-// via the project undo stack. Closing the dialog leaves the clip in its
-// current state, the same as any other property edit on the timeline.
+// Edits are held locally until Save. Cancel / Escape / backdrop close discard
+// the draft so the dialog behaves like the rest of the app's modal editors.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -53,86 +46,41 @@ const sourceBpm = computed(() => libItem.value?.bpm)
 const projectBpm = computed(() => transport.bpm)
 const dialogTitle = computed(() => props.panel === 'pitch' ? 'Pitch' : 'Warp')
 
-const enabled = computed({
-  get: () => clip.value?.warpEnabled === true,
-  set: (v: boolean) => {
-    if (!props.clipId) return
-    project.setClipWarp(props.clipId, { warpEnabled: v })
-  }
-})
-
-const mode = computed<ClipWarpMode>({
-  get: () => clip.value?.warpMode ?? 'rhythmic',
-  set: (v: ClipWarpMode) => {
-    if (!props.clipId) return
-    project.setClipWarp(props.clipId, { warpMode: v })
-  }
-})
-
-const semitones = computed({
-  get: () => clip.value?.semitones ?? 0,
-  set: (v: number) => {
-    if (!props.clipId) return
-    const next = clampNumber(v, -12, 12)
-    project.setClipWarp(props.clipId, { semitones: next, warpEnabled: pitchNeedsProcessor(next, cents.value) ? true : undefined })
-  }
-})
-
-const cents = computed({
-  get: () => clip.value?.cents ?? 0,
-  set: (v: number) => {
-    if (!props.clipId) return
-    const next = clampNumber(v, -100, 100)
-    project.setClipWarp(props.clipId, { cents: next, warpEnabled: pitchNeedsProcessor(semitones.value, next) ? true : undefined })
-  }
-})
+const draftEnabled = ref(false)
+const draftMode = ref<ClipWarpMode>('rhythmic')
+const draftTempoPinned = ref(false)
+const draftPinnedBpm = ref(120)
+const draftSemitones = ref(0)
+const draftCents = ref(0)
 
 // Tempo source: either "follow project BPM" (no `tempoRatio` on the
 // clip) or "pin to a specific source BPM" (`tempoRatio` is set).
-const tempoFollowsProject = computed(() => clip.value?.tempoRatio === undefined)
+const tempoFollowsProject = computed(() => !draftTempoPinned.value)
 
 /** When pinned, the BPM the clip plays AT — derived from `tempoRatio`
  *  and the source BPM via `pinnedBpm = sourceBpm * tempoRatio`. We
  *  surface BPM rather than ratio in the UI because the user thinks
  *  in tempos, not in stretch factors. */
-const pinnedBpm = computed({
-  get: () => {
-    const ratio = clip.value?.tempoRatio
-    const src = sourceBpm.value
-    if (typeof ratio === 'number' && typeof src === 'number' && src > 0) {
-      return Math.round(src * ratio * 100) / 100
-    }
-    return projectBpm.value ?? 120
-  },
-  set: (bpm: number) => {
-    if (!props.clipId) return
-    const src = sourceBpm.value
-    if (typeof src !== 'number' || src <= 0) return
-    const ratio = Math.max(0.25, Math.min(4, bpm / src))
-    project.setClipWarp(props.clipId, { tempoRatio: ratio })
-  }
-})
-
 function followProjectBpm(): void {
-  if (!props.clipId) return
-  // `null` clears the pin so the clip reverts to live-tracking project BPM.
-  project.setClipWarp(props.clipId, { tempoRatio: null })
+  draftTempoPinned.value = false
 }
 
 function pinTempo(): void {
-  if (!props.clipId) return
   const src = sourceBpm.value
   const proj = projectBpm.value
   if (typeof src !== 'number' || src <= 0 || typeof proj !== 'number' || proj <= 0) return
   // Pin at the current effective ratio (which is `projectBpm/sourceBpm`
   // if not already pinned) so flipping the toggle on doesn't audibly
   // change anything until the user moves the slider.
-  project.setClipWarp(props.clipId, { tempoRatio: proj / src })
+  draftTempoPinned.value = true
+  if (!Number.isFinite(draftPinnedBpm.value) || draftPinnedBpm.value <= 0) {
+    draftPinnedBpm.value = Math.round(proj * 100) / 100
+  }
 }
 
 function resetPitch(): void {
-  if (!props.clipId) return
-  project.setClipWarp(props.clipId, { semitones: 0, cents: 0 })
+  draftSemitones.value = 0
+  draftCents.value = 0
 }
 
 function pitchNeedsProcessor(semitonesValue: number, centsValue: number): boolean {
@@ -141,7 +89,7 @@ function pitchNeedsProcessor(semitonesValue: number, centsValue: number): boolea
 
 const effectiveRatio = computed(() =>
   effectiveTempoRatio({
-    tempoRatio: clip.value?.tempoRatio,
+    tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : undefined,
     sourceBpm: sourceBpm.value,
     projectBpm: projectBpm.value
   })
@@ -158,6 +106,52 @@ function clampNumber(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
 }
 
+function tempoRatioFromPinnedBpm(): number | undefined {
+  const src = sourceBpm.value
+  if (typeof src !== 'number' || src <= 0) return undefined
+  const bpm = clampNumber(draftPinnedBpm.value, 20, 300)
+  return Math.max(0.25, Math.min(4, bpm / src))
+}
+
+function initialiseDraft(): void {
+  const c = clip.value
+  draftEnabled.value = c?.warpEnabled === true
+  draftMode.value = c?.warpMode ?? 'rhythmic'
+  draftTempoPinned.value = typeof c?.tempoRatio === 'number' && c.tempoRatio > 0
+  const src = sourceBpm.value
+  if (draftTempoPinned.value && typeof src === 'number' && src > 0 && typeof c?.tempoRatio === 'number') {
+    draftPinnedBpm.value = Math.round(src * c.tempoRatio * 100) / 100
+  } else {
+    draftPinnedBpm.value = Math.round((projectBpm.value ?? 120) * 100) / 100
+  }
+  draftSemitones.value = c?.semitones ?? 0
+  draftCents.value = c?.cents ?? 0
+}
+
+function save(): void {
+  if (!props.clipId) return
+  if (props.panel === 'tempo') {
+    project.setClipWarp(props.clipId, {
+      warpEnabled: draftEnabled.value,
+      warpMode: draftMode.value,
+      tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : null
+    })
+  } else {
+    const nextSemitones = clampNumber(draftSemitones.value, -12, 12)
+    const nextCents = clampNumber(draftCents.value, -100, 100)
+    project.setClipWarp(props.clipId, {
+      semitones: nextSemitones,
+      cents: nextCents,
+      warpEnabled: pitchNeedsProcessor(nextSemitones, nextCents) ? true : undefined
+    })
+  }
+  emit('close')
+}
+
+function cancel(): void {
+  emit('close')
+}
+
 // Suppress global Spacebar play / Esc handlers while the dialog is open.
 // Same plumbing the Clip Editor uses; we lean on it to keep slider
 // drags from accidentally toggling playback.
@@ -166,8 +160,16 @@ watch(
   (now) => {
     ui.clipEditorOpen = now
     if (now) {
+      initialiseDraft()
       void dialogEl.value?.focus()
     }
+  }
+)
+
+watch(
+  () => [props.clipId, props.panel] as const,
+  () => {
+    if (props.open) initialiseDraft()
   }
 )
 
@@ -182,7 +184,7 @@ onBeforeUnmount(() => {
 function onKeydown(ev: KeyboardEvent): void {
   if (ev.key === 'Escape') {
     ev.preventDefault()
-    emit('close')
+    cancel()
   }
 }
 </script>
@@ -202,7 +204,7 @@ function onKeydown(ev: KeyboardEvent): void {
       role="dialog"
       aria-modal="true"
       aria-labelledby="clip-warp-title"
-      @click.self="emit('close')"
+      @click.self="cancel"
     >
       <div
         ref="dialogEl"
@@ -226,7 +228,7 @@ function onKeydown(ev: KeyboardEvent): void {
             data-borderless-button="true"
             class="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
             title="Close"
-            @click="emit('close')"
+            @click="cancel"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -247,13 +249,13 @@ function onKeydown(ev: KeyboardEvent): void {
           <label class="flex items-center gap-2 text-zinc-200">
             <template v-if="panel === 'tempo'">
               <input
-                v-model="enabled"
+                v-model="draftEnabled"
                 type="checkbox"
                 class="h-3.5 w-3.5 cursor-pointer"
               >
               <span class="font-medium">Enable warp</span>
               <span class="text-zinc-500">
-                ({{ enabled ? 'on' : 'bypassed' }})
+                ({{ draftEnabled ? 'on' : 'bypassed' }})
               </span>
             </template>
             <template v-else>
@@ -292,8 +294,8 @@ function onKeydown(ev: KeyboardEvent): void {
           <fieldset
             v-if="panel === 'tempo'"
             class="flex flex-col gap-1"
-            :disabled="!enabled"
-            :class="!enabled ? 'opacity-50' : ''"
+            :disabled="!draftEnabled"
+            :class="!draftEnabled ? 'opacity-50' : ''"
           >
             <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
               Mode
@@ -304,11 +306,11 @@ function onKeydown(ev: KeyboardEvent): void {
                 :key="m"
                 type="button"
                 class="flex-1 rounded border px-2 py-1 text-xs capitalize transition-colors"
-                :class="mode === m
+                :class="draftMode === m
                   ? 'border-sky-500 bg-sky-600/30 text-zinc-100'
                   : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
                 "
-                @click="mode = m"
+                @click="draftMode = m"
               >
                 {{ m }}
               </button>
@@ -319,8 +321,8 @@ function onKeydown(ev: KeyboardEvent): void {
           <fieldset
             v-if="panel === 'tempo'"
             class="flex flex-col gap-1"
-            :disabled="!enabled || !sourceBpm"
-            :class="!enabled || !sourceBpm ? 'opacity-50' : ''"
+            :disabled="!draftEnabled || !sourceBpm"
+            :class="!draftEnabled || !sourceBpm ? 'opacity-50' : ''"
           >
             <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
               Tempo
@@ -344,7 +346,7 @@ function onKeydown(ev: KeyboardEvent): void {
               >
               <span class="text-zinc-200">Pin to</span>
               <input
-                v-model.number="pinnedBpm"
+                v-model.number="draftPinnedBpm"
                 type="number"
                 min="20"
                 max="300"
@@ -382,7 +384,7 @@ function onKeydown(ev: KeyboardEvent): void {
             <label class="flex items-center gap-2">
               <span class="w-16 text-zinc-400">Semitones</span>
               <input
-                v-model.number="semitones"
+                v-model.number="draftSemitones"
                 type="range"
                 min="-12"
                 max="12"
@@ -390,13 +392,13 @@ function onKeydown(ev: KeyboardEvent): void {
                 class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
               >
               <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
-                {{ semitones > 0 ? '+' : '' }}{{ semitones }}
+                {{ draftSemitones > 0 ? '+' : '' }}{{ draftSemitones }}
               </span>
             </label>
             <label class="flex items-center gap-2">
               <span class="w-16 text-zinc-400">Cents</span>
               <input
-                v-model.number="cents"
+                v-model.number="draftCents"
                 type="range"
                 min="-100"
                 max="100"
@@ -404,20 +406,27 @@ function onKeydown(ev: KeyboardEvent): void {
                 class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
               >
               <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
-                {{ cents > 0 ? '+' : '' }}{{ cents }}
+                {{ draftCents > 0 ? '+' : '' }}{{ draftCents }}
               </span>
             </label>
           </fieldset>
         </div>
 
         <!-- Footer -->
-        <div class="flex justify-end border-t border-zinc-800 px-5 py-3">
+        <div class="flex justify-end gap-2 border-t border-zinc-800 px-5 py-3">
           <button
             type="button"
             class="rounded bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
-            @click="emit('close')"
+            @click="cancel"
           >
-            Close
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500"
+            @click="save"
+          >
+            Save
           </button>
         </div>
       </div>

@@ -1666,7 +1666,7 @@ export const useProjectStore = defineStore('project', {
       }
       // Project-tempo auto-match is gated by the user preference. When
       // off, the clip drops at native rate and the user can still
-      // engage warp manually via right-click ▸ Warp settings.
+      // engage warp manually via right-click -> Warp.
       const ui = useUiStore()
       if (!ui.matchProjectTempoOnDrop) {
         log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (matchProjectTempoOnDrop pref OFF)`)
@@ -1733,7 +1733,7 @@ export const useProjectStore = defineStore('project', {
         warpMode: 'rhythmic',
         // Leave `tempoRatio` undefined so the clip continues to follow
         // project BPM changes — pinning is a user-driven choice via
-        // the Warp settings dialog.
+        // the Warp dialog.
       })
     },
 
