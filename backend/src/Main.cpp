@@ -489,6 +489,46 @@ std::optional<double> tryGetNumber(const juce::var& payload, const char* key)
 }
 
 /**
+ * Extract a string field from a bridge payload, validating that the
+ * underlying `juce::var` actually holds a string. Returns
+ * `std::nullopt` (and logs) when the field is missing or wrong-typed
+ * — avoids the silent coercion of `var::toString()` on objects,
+ * arrays, numbers, etc. Accepts empty strings; the caller can decide
+ * whether an empty value is meaningful (use `tryGetRequiredString`
+ * for the common "must be non-empty" dispatch case).
+ */
+std::optional<juce::String> tryGetString(const juce::var& payload, const char* key)
+{
+    const juce::var v = payload.getProperty(key, juce::var());
+    if (v.isString())
+    {
+        return v.toString();
+    }
+    silverdaw::log::warn("bridge", juce::String("field '") + key + "' missing or non-string; envelope ignored");
+    return std::nullopt;
+}
+
+/**
+ * As `tryGetString`, but additionally rejects empty strings. Use at
+ * dispatch sites where the field gates a state mutation (clip / track
+ * / library / file-path lookups) and an empty value would silently
+ * no-op or operate on the wrong target.
+ */
+std::optional<juce::String> tryGetRequiredString(const juce::var& payload, const char* key)
+{
+    auto s = tryGetString(payload, key);
+    if (!s || s->isEmpty())
+    {
+        if (s) // logged for the wrong-type case inside `tryGetString`; only log here for the empty case.
+        {
+            silverdaw::log::warn("bridge", juce::String("field '") + key + "' is empty; envelope ignored");
+        }
+        return std::nullopt;
+    }
+    return s;
+}
+
+/**
  * Compute or load peaks for `filePath` and notify clients that a fresh
  * cache file is on disk via a tiny `WAVEFORM_READY` text envelope. The
  * renderer reads the on-disk bytes via main's IPC — bulk data never
@@ -1010,9 +1050,9 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
                    silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
                    const silverdaw::DecodedCache& decodedCache)
 {
-    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
-    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
-    const juce::String libraryItemId = payload.getProperty("libraryItemId", juce::var()).toString();
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
     if (trackId.isEmpty() || clipId.isEmpty() || libraryItemId.isEmpty())
     {
         silverdaw::log::warn("bridge", "CLIP_ADD missing trackId / clipId / libraryItemId");
@@ -1146,7 +1186,7 @@ void handleWaveformRequest(const juce::var& payload, silverdaw::AudioEngine& eng
                            silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                            juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
 {
-    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     if (clipId.isEmpty())
     {
         return;
@@ -1287,7 +1327,7 @@ void handleClipEditorPeaksRequest(const juce::var& payload, silverdaw::AudioEngi
                                    silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                                    juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
 {
-    const juce::String libraryItemId = payload.getProperty("libraryItemId", juce::var()).toString();
+    const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
     const int peaksPerSecond =
         juce::jmax(silverdaw::waveform::kDefaultPeaksPerSecond,
                    juce::jmin(20000, static_cast<int>(payload.getProperty("peaksPerSecond", 0))));
@@ -1301,7 +1341,7 @@ void handleClipEditorPeaksRequest(const juce::var& payload, silverdaw::AudioEngi
 
 void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState)
 {
-    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     if (clipId.isEmpty())
     {
         return;
@@ -1319,7 +1359,7 @@ void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, si
     // Optional cross-track re-parent. Each clip is its own playable source,
     // so the move updates ProjectState and reapplies the destination track's
     // effective gain to keep mute / solo audibility correct.
-    const juce::String newTrackId = payload.getProperty("trackId", juce::var()).toString();
+    const juce::String newTrackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
     if (newTrackId.isNotEmpty())
     {
         if (projectState.setClipTrack(clipId, newTrackId))
@@ -1331,7 +1371,7 @@ void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, si
 
 void handleClipTrim(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState)
 {
-    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     if (clipId.isEmpty())
     {
         return;
@@ -1349,7 +1389,7 @@ void handleClipTrim(const juce::var& payload, silverdaw::AudioEngine& engine, si
 
 void handleClipColor(const juce::var& payload, silverdaw::ProjectState& projectState)
 {
-    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     if (clipId.isEmpty())
     {
         return;
@@ -1363,14 +1403,14 @@ void handleClipColor(const juce::var& payload, silverdaw::ProjectState& projectS
 
 void handleTrackAdd(const juce::var& payload, silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
 {
-    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
     if (trackId.isEmpty())
     {
         return;
     }
     const bool existed = projectState.hasTrack(trackId);
     const bool ok = projectState.addTrack(trackId);
-    const juce::String name = payload.getProperty("name", juce::var()).toString();
+    const juce::String name = tryGetRequiredString(payload, "name").value_or(juce::String{});
     if (ok && !existed && name.trim().isNotEmpty())
     {
         projectState.setTrackName(trackId, name);
@@ -1384,7 +1424,7 @@ void handleTrackAdd(const juce::var& payload, silverdaw::ProjectState& projectSt
 void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                        silverdaw::BridgeServer& bridge)
 {
-    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
     if (trackId.isEmpty())
     {
         return;
@@ -1406,8 +1446,8 @@ void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
 
 void handleTrackRename(const juce::var& payload, silverdaw::ProjectState& projectState)
 {
-    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
-    const juce::String name = payload.getProperty("name", juce::var()).toString();
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    const juce::String name = tryGetRequiredString(payload, "name").value_or(juce::String{});
     if (trackId.isEmpty() || name.trim().isEmpty())
     {
         return;
@@ -1418,7 +1458,7 @@ void handleTrackRename(const juce::var& payload, silverdaw::ProjectState& projec
 void handleClipRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
                       silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
 {
-    const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     if (clipId.isEmpty())
     {
         return;
@@ -1438,7 +1478,7 @@ void handleClipRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
 void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                      silverdaw::BridgeServer& bridge)
 {
-    const juce::String trackId = payload.getProperty("trackId", juce::var()).toString();
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
     if (trackId.isEmpty())
     {
         return;
@@ -1536,8 +1576,8 @@ void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& e
                              const ProjectSession& session, juce::ThreadPool& peakPool,
                              const silverdaw::DecodedCache& decodedCache)
 {
-    const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
-    const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
+    const juce::String filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
     if (itemId.isEmpty() || filePath.isEmpty())
     {
         return;
@@ -1725,7 +1765,7 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
                        ProjectSession& session, juce::ThreadPool& peakPool,
                        const silverdaw::DecodedCache& decodedCache)
 {
-    const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    const juce::String filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
     if (filePath.isEmpty())
     {
         auto* p = new juce::DynamicObject();
@@ -1776,7 +1816,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
                        silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                        ProjectSession& session, bool isSaveAs)
 {
-    juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    juce::String filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
     if (filePath.isEmpty())
     {
         // PROJECT_SAVE with no path falls back to the current project's
@@ -1850,7 +1890,7 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
                                 silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                                 const ProjectSession& session)
 {
-    juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    juce::String filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
     if (filePath.isEmpty())
     {
         filePath = session.currentPath;
@@ -1886,7 +1926,7 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
 void handleProjectRename(const juce::var& payload, silverdaw::ProjectState& projectState,
                          silverdaw::BridgeServer& bridge)
 {
-    const juce::String name = payload.getProperty("name", juce::var()).toString();
+    const juce::String name = tryGetRequiredString(payload, "name").value_or(juce::String{});
     projectState.setName(name);
     auto* p = new juce::DynamicObject();
     p->setProperty("name", projectState.getName());
@@ -2037,7 +2077,7 @@ void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& e
 void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
 {
-    const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
+    const juce::String filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
     auto* p = new juce::DynamicObject();
     p->setProperty("filePath", filePath);
     if (filePath.isEmpty())
@@ -2084,7 +2124,7 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
                                ProjectSession& session, juce::ThreadPool& peakPool,
                                const silverdaw::DecodedCache& decodedCache)
 {
-    const juce::String autosavePath = payload.getProperty("autosavePath", juce::var()).toString();
+    const juce::String autosavePath = tryGetRequiredString(payload, "autosavePath").value_or(juce::String{});
     const juce::var originalVar = payload.getProperty("originalPath", juce::var());
     const juce::String originalPath = originalVar.isString() ? originalVar.toString() : juce::String();
 
@@ -2434,15 +2474,15 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "CLIP_RENAME")
     {
-        const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
-        const juce::String name = payload.getProperty("name", juce::var()).toString();
+        const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+        const juce::String name = tryGetRequiredString(payload, "name").value_or(juce::String{});
         silverdaw::log::info("bridge", "recv CLIP_RENAME clipId=" + clipId + " name=" + name);
         projectState.setClipName(clipId, name);
     }
     else if (type == "CLIP_REBIND")
     {
-        const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
-        const juce::String libraryItemId = payload.getProperty("libraryItemId", juce::var()).toString();
+        const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+        const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
         silverdaw::log::info("bridge", "recv CLIP_REBIND clipId=" + clipId + " libraryItemId=" +
                                            libraryItemId);
         if (clipId.isNotEmpty() && libraryItemId.isNotEmpty())
@@ -2452,7 +2492,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "CLIP_SET_WARP")
     {
-        const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
+        const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
         silverdaw::log::info("bridge", "recv CLIP_SET_WARP clipId=" + clipId);
         if (clipId.isNotEmpty())
         {
@@ -2461,7 +2501,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                 warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
             std::optional<juce::String> warpMode;
             if (payload.hasProperty("warpMode"))
-                warpMode = payload.getProperty("warpMode", juce::var()).toString();
+                warpMode = tryGetRequiredString(payload, "warpMode").value_or(juce::String{});
             // `tempoRatio: null` clears the override (clip reverts to
             // project-BPM tracking); a finite number pins the ratio.
             std::optional<double> tempoRatio;
@@ -2544,10 +2584,10 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "CLIP_SAVE_AS_SAMPLE")
     {
-        const juce::String clipId = payload.getProperty("clipId", juce::var()).toString();
-        const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
-        const juce::String sampleName = payload.getProperty("sampleName", juce::var()).toString();
-        const juce::String outputDir = payload.getProperty("outputDir", juce::var()).toString();
+        const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+        const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
+        const juce::String sampleName = tryGetRequiredString(payload, "sampleName").value_or(juce::String{});
+        const juce::String outputDir = tryGetRequiredString(payload, "outputDir").value_or(juce::String{});
         if (clipId.isEmpty() || itemId.isEmpty() || outputDir.isEmpty()) return;
         std::optional<SampleWarpOptions> sampleWarp;
         projectState.forEachWarpClip(
@@ -2579,10 +2619,10 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "LIBRARY_ITEM_SAVE_AS_SAMPLE")
     {
-        const juce::String libraryItemId = payload.getProperty("libraryItemId", juce::var()).toString();
-        const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
-        const juce::String sampleName = payload.getProperty("sampleName", juce::var()).toString();
-        const juce::String outputDir = payload.getProperty("outputDir", juce::var()).toString();
+        const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
+        const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
+        const juce::String sampleName = tryGetRequiredString(payload, "sampleName").value_or(juce::String{});
+        const juce::String outputDir = tryGetRequiredString(payload, "outputDir").value_or(juce::String{});
         if (libraryItemId.isEmpty() || itemId.isEmpty() || outputDir.isEmpty()) return;
         juce::var found;
         const auto library = projectState.libraryAsJson();
@@ -2630,18 +2670,18 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "LIBRARY_ADD")
     {
-        const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
-        const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
-        const juce::String fileName = payload.getProperty("fileName", juce::var()).toString();
+        const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
+        const juce::String filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
+        const juce::String fileName = tryGetRequiredString(payload, "fileName").value_or(juce::String{});
         const double durationMs = static_cast<double>(payload.getProperty("durationMs", 0.0));
         const int sampleRate = static_cast<int>(payload.getProperty("sampleRate", 0));
         const int channelCount = static_cast<int>(payload.getProperty("channelCount", 0));
-        const juce::String playbackPath = payload.getProperty("playbackFilePath", juce::var()).toString();
-        const juce::String key = payload.getProperty("key", juce::var()).toString();
-        const juce::String kind = payload.getProperty("kind", juce::var()).toString();
-        const juce::String displayName = payload.getProperty("name", juce::var()).toString();
-        const juce::String sourceItemId = payload.getProperty("sourceItemId", juce::var()).toString();
-        const juce::String sourceClipId = payload.getProperty("sourceClipId", juce::var()).toString();
+        const juce::String playbackPath = tryGetRequiredString(payload, "playbackFilePath").value_or(juce::String{});
+        const juce::String key = tryGetRequiredString(payload, "key").value_or(juce::String{});
+        const juce::String kind = tryGetRequiredString(payload, "kind").value_or(juce::String{});
+        const juce::String displayName = tryGetRequiredString(payload, "name").value_or(juce::String{});
+        const juce::String sourceItemId = tryGetRequiredString(payload, "sourceItemId").value_or(juce::String{});
+        const juce::String sourceClipId = tryGetRequiredString(payload, "sourceClipId").value_or(juce::String{});
         const double sourceInMs = payload.hasProperty("sourceInMs")
                                       ? static_cast<double>(payload.getProperty("sourceInMs", 0.0))
                                       : -1.0;
@@ -2665,7 +2705,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                 warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
             std::optional<juce::String> warpMode;
             if (payload.hasProperty("warpMode"))
-                warpMode = payload.getProperty("warpMode", juce::var()).toString();
+                warpMode = tryGetRequiredString(payload, "warpMode").value_or(juce::String{});
             std::optional<double> tempoRatio;
             bool tempoRatioClear = false;
             if (payload.hasProperty("tempoRatio"))
@@ -2696,24 +2736,24 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "LIBRARY_REMOVE")
     {
-        const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
+        const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
         silverdaw::log::info("bridge", "recv LIBRARY_REMOVE itemId=" + itemId);
         projectState.removeLibraryItem(itemId);
     }
     else if (type == "LIBRARY_REANALYSE")
     {
-        const juce::String itemId = payload.getProperty("itemId", juce::var()).toString();
-        const juce::String filePath = payload.getProperty("filePath", juce::var()).toString();
-        const juce::String fileName = payload.getProperty("fileName", juce::var()).toString();
+        const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
+        const juce::String filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
+        const juce::String fileName = tryGetRequiredString(payload, "fileName").value_or(juce::String{});
         const double durationMs = static_cast<double>(payload.getProperty("durationMs", 0.0));
         const int sampleRate = static_cast<int>(payload.getProperty("sampleRate", 0));
         const int channelCount = static_cast<int>(payload.getProperty("channelCount", 0));
-        const juce::String playbackPath = payload.getProperty("playbackFilePath", juce::var()).toString();
+        const juce::String playbackPath = tryGetRequiredString(payload, "playbackFilePath").value_or(juce::String{});
         silverdaw::log::info("bridge", "recv LIBRARY_REANALYSE itemId=" + itemId);
         projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath);
         if (payload.hasProperty("key"))
         {
-            projectState.setLibraryItemKey(itemId, payload.getProperty("key", juce::var()).toString());
+            projectState.setLibraryItemKey(itemId, tryGetRequiredString(payload, "key").value_or(juce::String{}));
         }
         const juce::String analysisPath = playbackPath.isNotEmpty() ? playbackPath : filePath;
         forceLibraryItemAnalysis(itemId, analysisPath, engine, projectState, bridge, peakPool, decodedCache);
@@ -2746,7 +2786,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "PREVIEW_LOAD")
     {
-        const juce::String libraryItemId = payload.getProperty("libraryItemId", juce::var()).toString();
+        const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
         const double inMs = static_cast<double>(payload.getProperty("inMs", 0.0));
         const double durationMs = static_cast<double>(payload.getProperty("durationMs", 0.0));
         silverdaw::log::info("bridge", "recv PREVIEW_LOAD libraryItemId=" + libraryItemId +
@@ -2773,7 +2813,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             {
                 warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
                 if (payload.hasProperty("warpMode"))
-                    warpMode = payload.getProperty("warpMode", juce::var()).toString();
+                    warpMode = tryGetRequiredString(payload, "warpMode").value_or(juce::String{});
                 if (payload.hasProperty("tempoRatio"))
                 {
                     const auto& v = payload["tempoRatio"];
@@ -2861,7 +2901,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
         std::optional<juce::String> warpMode;
         if (payload.hasProperty("warpMode"))
-            warpMode = payload.getProperty("warpMode", juce::var()).toString();
+            warpMode = tryGetRequiredString(payload, "warpMode").value_or(juce::String{});
         std::optional<double> tempoRatio;
         if (payload.hasProperty("tempoRatio"))
         {
@@ -2899,7 +2939,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "TRACK_SET_HEIGHT")
     {
-        const auto trackId = payload.getProperty("trackId", juce::var()).toString();
+        const auto trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
         const auto heightVar = tryGetNumber(payload, "heightPx");
         silverdaw::log::debug("bridge", "recv TRACK_SET_HEIGHT trackId=" + trackId +
                                             " heightPx=" + payload.getProperty("heightPx", "").toString());
@@ -2910,7 +2950,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "TRACK_REORDER")
     {
-        const auto trackId = payload.getProperty("trackId", juce::var()).toString();
+        const auto trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
         const auto idxVar = tryGetNumber(payload, "newIndex");
         silverdaw::log::info("bridge", "recv TRACK_REORDER trackId=" + trackId +
                                            " newIndex=" + payload.getProperty("newIndex", "").toString());
@@ -3042,7 +3082,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "PROJECT_MARKER_ADD")
     {
-        const auto markerId = payload.getProperty("markerId", juce::var()).toString();
+        const auto markerId = tryGetRequiredString(payload, "markerId").value_or(juce::String{});
         const auto posVar = payload.getProperty("positionMs", juce::var());
         if (!markerId.isEmpty() && (posVar.isDouble() || posVar.isInt() || posVar.isInt64()))
         {
@@ -3055,7 +3095,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "PROJECT_MARKER_MOVE")
     {
-        const auto markerId = payload.getProperty("markerId", juce::var()).toString();
+        const auto markerId = tryGetRequiredString(payload, "markerId").value_or(juce::String{});
         const auto posVar = payload.getProperty("positionMs", juce::var());
         if (!markerId.isEmpty() && (posVar.isDouble() || posVar.isInt() || posVar.isInt64()))
         {
@@ -3068,7 +3108,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "PROJECT_MARKER_REMOVE")
     {
-        const auto markerId = payload.getProperty("markerId", juce::var()).toString();
+        const auto markerId = tryGetRequiredString(payload, "markerId").value_or(juce::String{});
         if (markerId.isNotEmpty())
         {
             projectState.removeMarker(markerId);
