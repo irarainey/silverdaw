@@ -38,7 +38,6 @@
 
 namespace
 {
-constexpr int kDefaultBridgePort = 8765;
 constexpr int kMinBridgePort = 1024;
 constexpr int kMaxBridgePort = 65535;
 std::mutex bpmJobsMutex;
@@ -271,16 +270,18 @@ void onSignal(int /*sig*/)
 }
 
 /**
- * Parse an integer port from a string. Returns the parsed value on success,
- * or `kDefaultBridgePort` on any failure (out of range / non-numeric /
- * trailing garbage). A warning is emitted on stderr in the failure path so
- * silent fallbacks remain debuggable.
+ * Parse an integer port from a string. Returns the parsed value on
+ * success, or `-1` on any failure (empty / non-numeric / trailing
+ * garbage / out of `[kMinBridgePort, kMaxBridgePort]`). A warning is
+ * logged so silent fallbacks remain debuggable.
  */
 int parsePort(std::string_view value, std::string_view source)
 {
     if (value.empty())
     {
-        return kDefaultBridgePort;
+        silverdaw::log::warn("main",
+                             juce::String("empty port value from ") + juce::String(std::string(source)));
+        return -1;
     }
 
     int port = 0;
@@ -297,9 +298,8 @@ int parsePort(std::string_view value, std::string_view source)
     {
         silverdaw::log::warn("main",
                              juce::String("invalid port from ") + juce::String(std::string(source)) + " (" +
-                                 juce::String(std::string(value)) + "): " + juce::String(e.what()) +
-                                 "; using default " + juce::String(kDefaultBridgePort));
-        return kDefaultBridgePort;
+                                 juce::String(std::string(value)) + "): " + juce::String(e.what()));
+        return -1;
     }
 
     if (port < kMinBridgePort || port > kMaxBridgePort)
@@ -307,23 +307,22 @@ int parsePort(std::string_view value, std::string_view source)
         silverdaw::log::warn("main",
                              juce::String("port ") + juce::String(port) + " from " +
                                  juce::String(std::string(source)) + " outside [" +
-                                 juce::String(kMinBridgePort) + ", " + juce::String(kMaxBridgePort) +
-                                 "]; using default " + juce::String(kDefaultBridgePort));
-        return kDefaultBridgePort;
+                                 juce::String(kMinBridgePort) + ", " + juce::String(kMaxBridgePort) + "]");
+        return -1;
     }
 
     return port;
 }
 
 /**
- * Resolve the bridge listen port. Precedence (highest first):
- *   1. `--port <N>` or `--port=N` command-line argument
- *   2. `SILVERDAW_BRIDGE_PORT` environment variable
- *   3. compiled-in default (`kDefaultBridgePort`)
+ * Resolve the bridge listen port from `--port <N>` / `--port=N`. The
+ * Electron main process is the single source of truth for the port —
+ * it picks an unused loopback port (so multiple Silverdaw instances
+ * can coexist) and passes it to every spawned backend via `--port`.
  *
- * The Electron main process picks an unused loopback port and passes it
- * via `--port` so multiple Silverdaw instances can run side-by-side without
- * colliding on 8765.
+ * Returns `-1` when `--port` is missing or invalid; `runBackend` then
+ * refuses to start. There is no compiled-in default and no env-var
+ * fallback: a missing `--port` is always a configuration bug.
  */
 // `argv` is necessarily a C-style array — that's the only legal signature for
 // `main` and forwarded helpers. clang-tidy's modernize check doesn't model that.
@@ -344,15 +343,11 @@ int resolveBridgePort(int argc, char* argv[])
         }
     }
 
-    // JUCE's wrapper is portable AND silences the MSVC "getenv is unsafe"
-    // deprecation noise without a per-translation-unit pragma.
-    const juce::String envValue = juce::SystemStats::getEnvironmentVariable("SILVERDAW_BRIDGE_PORT", {});
-    if (envValue.isNotEmpty())
-    {
-        return parsePort(envValue.toStdString(), "SILVERDAW_BRIDGE_PORT");
-    }
-
-    return kDefaultBridgePort;
+    silverdaw::log::error("main",
+                          juce::String("missing required --port <N> argument (range [") +
+                              juce::String(kMinBridgePort) + ", " + juce::String(kMaxBridgePort) +
+                              "]); refusing to start");
+    return -1;
 }
 
 /**
@@ -3140,6 +3135,15 @@ int runBackend(int argc, char* argv[])
     silverdaw::log::info("main", banner);
 
     const int bridgePort = resolveBridgePort(argc, argv);
+    if (bridgePort < 0)
+    {
+        // `resolveBridgePort` already logged the reason. Print a one-line
+        // hint to stderr too so a stand-alone manual run sees the failure
+        // even when file logging is disabled.
+        std::cerr << "[main] missing or invalid --port; expected: " << argv[0]
+                  << " --port <" << kMinBridgePort << "-" << kMaxBridgePort << ">\n";
+        return 2;
+    }
     const juce::String bridgeToken = resolveBridgeToken(argc, argv);
 
     // Initialises MessageManager, JUCE singletons, etc. Required even for headless apps.

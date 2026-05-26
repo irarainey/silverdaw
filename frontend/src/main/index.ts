@@ -159,12 +159,14 @@ let mainWindow: BrowserWindow | null = null
 let userConfirmedClose = false
 
 // ─── Backend bridge port ────────────────────────────────────────────────────
-// The JUCE backend listens on `ws://127.0.0.1:<bridgePort>`. The port is
-// resolvable via `SILVERDAW_BRIDGE_PORT` so multiple Silverdaw instances (or a
-// stand-alone backend used for debugging) can avoid colliding on 8765.
-// Main passes the same value to the backend via `--port` AND exposes it to
-// the renderer through `bridge:getPort`, so all three processes agree on
-// one canonical source of truth.
+// The JUCE backend listens on `ws://127.0.0.1:<bridgePort>`. Main is the
+// single source of truth: it probes for a free loopback port (starting at
+// `DEFAULT_BRIDGE_PORT`, walking 20 ports to dodge a leftover Silverdaw),
+// passes the chosen value to every spawned backend via `--port`, and
+// exposes the same value to the renderer through `bridge:getPort`. The
+// `SILVERDAW_BRIDGE_PORT` env var bypasses the probe so a developer can
+// pin a specific port for stand-alone debugging; it has no effect on the
+// backend itself (the backend always reads `--port`).
 const DEFAULT_BRIDGE_PORT = 8765
 const MIN_BRIDGE_PORT = 1024
 const MAX_BRIDGE_PORT = 65535
