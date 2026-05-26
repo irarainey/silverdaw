@@ -34,6 +34,8 @@
 // env var to the backend). Pre-AUTH socket activity is closed without
 // reply. See `backend/src/BridgeServer.cpp::onIncomingFromClient`.
 
+import { z } from 'zod'
+
 // ─── Renderer → Backend (outbound) ──────────────────────────────────────────
 
 export interface ClipAddPayload {
@@ -561,27 +563,41 @@ export type BridgeOutboundArgs<K extends BridgeOutboundType> =
   BridgeOutboundMap[K] extends undefined ? [type: K] : [type: K, payload: BridgeOutboundMap[K]]
 
 // ─── Backend → Renderer (inbound) ───────────────────────────────────────────
+//
+// Inbound payloads are defined as `zod` schemas. The exported TypeScript
+// types are derived via `z.infer<...>` so the schema is the single source
+// of truth — there is no separate hand-written interface to drift away
+// from the runtime guard. Each guard at the bottom of the file is a
+// thin `safeParse(...).success` wrapper over the matching schema.
 
-export interface ReadyPayload {
-  version: string
-}
+/** Discriminator for the per-clip warp processor mode. Mirrors the
+ *  outbound `ClipWarpMode` union; defined here as its own schema so the
+ *  inbound shapes don't import the outbound type alias. */
+const clipWarpModeSchema = z.enum(['rhythmic', 'tonal', 'complex'])
 
-export interface PlayheadUpdatePayload {
-  positionMs: number
-  isPlaying: boolean
-}
+export const ReadyPayloadSchema = z.object({
+  version: z.string()
+})
+export type ReadyPayload = z.infer<typeof ReadyPayloadSchema>
 
-export interface ClipAckPayload {
-  trackId: string
-  clipId: string
-  libraryItemId: string
-  ok: boolean
+export const PlayheadUpdatePayloadSchema = z.object({
+  positionMs: z.number(),
+  isPlaying: z.boolean()
+})
+export type PlayheadUpdatePayload = z.infer<typeof PlayheadUpdatePayloadSchema>
+
+export const ClipAckPayloadSchema = z.object({
+  trackId: z.string(),
+  clipId: z.string(),
+  libraryItemId: z.string(),
+  ok: z.boolean(),
   /**
    * Backend-supplied error message. Present iff `ok === false`.
    * Surfaced through `notificationsStore.pushError(...)` in the renderer.
    */
-  error?: string
-}
+  error: z.string().optional()
+})
+export type ClipAckPayload = z.infer<typeof ClipAckPayloadSchema>
 
 /**
  * Backend ack for a prior `TRACK_ADD` envelope. `ok === false` means the
@@ -589,10 +605,11 @@ export interface ClipAckPayload {
  * because the renderer generates the trackId locally and addTrack on
  * the backend is idempotent.
  */
-export interface TrackAddedPayload {
-  trackId: string
-  ok: boolean
-}
+export const TrackAddedPayloadSchema = z.object({
+  trackId: z.string(),
+  ok: z.boolean()
+})
+export type TrackAddedPayload = z.infer<typeof TrackAddedPayloadSchema>
 
 /**
  * Backend ack for a prior `TRACK_REMOVE` envelope. `ok === false` means the
@@ -600,18 +617,20 @@ export interface TrackAddedPayload {
  * of sync). The renderer has already optimistically removed the row, so a
  * negative ack is logged but otherwise non-fatal.
  */
-export interface TrackRemovedPayload {
-  trackId: string
-  ok: boolean
-}
+export const TrackRemovedPayloadSchema = z.object({
+  trackId: z.string(),
+  ok: z.boolean()
+})
+export type TrackRemovedPayload = z.infer<typeof TrackRemovedPayloadSchema>
 
 /** Backend ack for `CLIP_REMOVE`. `ok=false` means the clip id was
  *  unknown to the project tree. The renderer logs but doesn't re-add
  *  the clip — local optimistic removal already happened. */
-export interface ClipRemovedPayload {
-  clipId: string
-  ok: boolean
-}
+export const ClipRemovedPayloadSchema = z.object({
+  clipId: z.string(),
+  ok: z.boolean()
+})
+export type ClipRemovedPayload = z.infer<typeof ClipRemovedPayloadSchema>
 
 /**
  * Backend ack for a prior `TRACK_GAIN` envelope, echoing the gain value
@@ -620,27 +639,30 @@ export interface ClipRemovedPayload {
  * false` means the track id was unknown — gain mismatches are logged as a
  * warning, not surfaced to the user.
  */
-export interface TrackGainAppliedPayload {
-  trackId: string
+export const TrackGainAppliedPayloadSchema = z.object({
+  trackId: z.string(),
   /** Linear gain actually applied on the backend. */
-  gain: number
-  ok: boolean
-}
+  gain: z.number(),
+  ok: z.boolean()
+})
+export type TrackGainAppliedPayload = z.infer<typeof TrackGainAppliedPayloadSchema>
 
-export interface ProjectViewStateSavedPayload {
-  filePath: string
-  ok: boolean
-  error?: string
-}
+export const ProjectViewStateSavedPayloadSchema = z.object({
+  filePath: z.string(),
+  ok: z.boolean(),
+  error: z.string().optional()
+})
+export type ProjectViewStateSavedPayload = z.infer<typeof ProjectViewStateSavedPayloadSchema>
 
 /** Ack for `PROJECT_AUTOSAVE`. Carries no `PROJECT_STATE` or
  *  `PROJECT_DIRTY` follow-up: autosave is deliberately invisible to the
  *  user-facing project lifecycle. */
-export interface ProjectAutosavedPayload {
-  filePath: string
-  ok: boolean
-  error?: string
-}
+export const ProjectAutosavedPayloadSchema = z.object({
+  filePath: z.string(),
+  ok: z.boolean(),
+  error: z.string().optional()
+})
+export type ProjectAutosavedPayload = z.infer<typeof ProjectAutosavedPayloadSchema>
 
 /**
  * Initial backend-authoritative project snapshot sent by the bridge
@@ -654,68 +676,156 @@ export interface ProjectAutosavedPayload {
  * payload but won't render until backend-supplied peaks arrive (Phase 1
  * todo: backend-waveform-data).
  */
-export interface ProjectStateClip {
-  id: string
+export const ProjectStateClipSchema = z.object({
+  id: z.string(),
   /** Library item this clip plays from. Source-of-truth for the
    *  underlying audio file; the renderer resolves filePath / fileName /
    *  peaks through the library. */
-  libraryItemId: string
-  offsetMs: number
+  libraryItemId: z.string(),
+  offsetMs: z.number(),
   /** Backend-authoritative timeline/output duration after warp. */
-  effectiveDurationMs?: number
+  effectiveDurationMs: z.number().optional(),
   /** Backend-authoritative tempo ratio used for timing. */
-  effectiveTempoRatio?: number
+  effectiveTempoRatio: z.number().optional(),
   /** True when tempo warp changes the timeline/output duration. */
-  effectiveWarpActive?: boolean
-  durationMs: number
+  effectiveWarpActive: z.boolean().optional(),
+  durationMs: z.number(),
   /** Where in the source file this clip starts reading (trim offset).
    *  Optional: omitted on un-trimmed clips; the renderer falls back to 0. */
-  inMs?: number
+  inMs: z.number().optional(),
   /** Per-clip palette index override (0..15). Absent means the clip
    *  inherits the host track's colour. */
-  colorIndex?: number
+  colorIndex: z.number().optional(),
   /** User-facing display name override (set via inline rename on the
    *  timeline). Absent means use the library item title / filename. */
-  name?: string
+  name: z.string().optional(),
   /** True when the library item's source file no longer exists on
    *  disk. Renderer renders the clip greyed-out and surfaces a
    *  "Locate files…" toast; engine playback skips it. */
-  unresolved?: boolean
+  unresolved: z.boolean().optional(),
   /** Per-clip warp + pitch settings. All five fields are optional and
    *  default to the no-warp identity (`warpEnabled=false`,
    *  `tempoRatio=1`, `semitones=0`, `cents=0`). Omitted on clips that
    *  have never had warp touched so older project files round-trip
    *  unchanged. See `ClipSetWarpPayload` for the semantics of each
    *  field. */
-  warpEnabled?: boolean
-  warpMode?: ClipWarpMode
-  tempoRatio?: number
-  semitones?: number
-  cents?: number
+  warpEnabled: z.boolean().optional(),
+  warpMode: clipWarpModeSchema.optional(),
+  tempoRatio: z.number().optional(),
+  semitones: z.number().optional(),
+  cents: z.number().optional(),
   /** Renderer-bookkeeping flag: clip was dropped before its source
    *  BPM was detected. Cleared by the backend's `LIBRARY_ITEM_ANALYSIS`
    *  handler when it auto-flips warp on, or by any explicit
    *  `CLIP_SET_WARP` from the user. */
-  pendingAutoWarp?: boolean
-}
+  pendingAutoWarp: z.boolean().optional()
+})
+export type ProjectStateClip = z.infer<typeof ProjectStateClipSchema>
 
-export interface ProjectStateTrack {
-  id: string
+export const ProjectStateTrackSchema = z.object({
+  id: z.string(),
   /** Persisted user-facing track name. Optional for projects saved before this field existed. */
-  name?: string
-  gain: number
+  name: z.string().optional(),
+  gain: z.number(),
   /** Persisted row height in CSS pixels. Optional for projects saved
    *  before per-track height existed (and for tracks that have never
    *  been resized — the renderer falls back to its default). */
-  heightPx?: number
-  clips: ProjectStateClip[]
-}
+  heightPx: z.number().optional(),
+  clips: z.array(ProjectStateClipSchema)
+})
+export type ProjectStateTrack = z.infer<typeof ProjectStateTrackSchema>
 
-export interface ProjectStatePayload {
+export const ProjectStateMarkerSchema = z.object({
+  id: z.string(),
+  positionMs: z.number()
+})
+export type ProjectStateMarker = z.infer<typeof ProjectStateMarkerSchema>
+
+export type LibraryItemKind = 'audio-file' | 'saved-clip'
+const libraryItemKindSchema = z.enum(['audio-file', 'saved-clip'])
+
+export const ProjectStateLibraryItemSchema = z
+  .object({
+    id: z.string(),
+    filePath: z.string(),
+    /** Library item kind. Older projects omit this and are treated as whole audio files. */
+    kind: libraryItemKindSchema.optional(),
+    /** User-facing name. Saved clips use this for their reusable clip name. */
+    name: z.string().optional(),
+    /** Display file name captured when the item entered the library. */
+    fileName: z.string().optional(),
+    /** Source duration in milliseconds. Optional for older saved projects. */
+    durationMs: z.number().optional(),
+    /** Source sample rate. Optional for older saved projects. */
+    sampleRate: z.number().optional(),
+    /** Source channel count. Optional for older saved projects. */
+    channelCount: z.number().optional(),
+    /** Detected musical key, e.g. `C minor`. Optional when detection is inconclusive. */
+    key: z.string().optional(),
+    /** Detected BPM (rounded to 2 d.p. on disk). Absent until the
+     *  backend's BPM detection job finishes for this file. */
+    bpm: z.number().optional(),
+    /** Detected beat positions in seconds from the start of the source
+     *  file. Absent for items without BPM detection results yet. */
+    beats: z.array(z.number()).optional(),
+    /** Regression-derived "ideal beat 0" anchor (seconds; can be
+     *  negative). Used with `bpm` to lay out the synthesised marker
+     *  grid robustly against per-beat jitter. */
+    beatAnchorSec: z.number().optional(),
+    /** Cache path the backend has decoded this source into. Future
+     *  clips of this file should use this path so the audio engine
+     *  reads cheap PCM instead of decoding the original. */
+    playbackFilePath: z.string().optional(),
+    /** True when BTrack's running tempo estimate fluctuated by more than
+     *  ~2 % over the analysis window — the project-BPM seeder skips
+     *  these and the library tile shows a "variable" badge. */
+    variableTempo: z.boolean().optional(),
+    /** Parent source library item for saved clips. */
+    sourceItemId: z.string().optional(),
+    /** Timeline clip that originally produced this saved clip, when known. */
+    sourceClipId: z.string().optional(),
+    /** Start of the saved clip window inside the source file. */
+    sourceInMs: z.number().optional(),
+    /** Duration of the saved clip window inside the source file. */
+    sourceDurationMs: z.number().optional(),
+    /** Source-group disclosure state. True when the user has collapsed
+     *  the source's saved-clip list in the library panel. */
+    collapsed: z.boolean().optional(),
+    unresolved: z.boolean().optional(),
+    /** **Saved-clip default warp settings.** Copied onto a fresh timeline
+     *  clip when the saved-clip tile is dragged in (copy-on-drop, not
+     *  live link — changing these later does NOT propagate to existing
+     *  timeline instances). Only meaningful when `kind === 'saved-clip'`;
+     *  ignored on audio-file items. See `ClipSetWarpPayload` for field
+     *  semantics. */
+    warpEnabled: z.boolean().optional(),
+    warpMode: clipWarpModeSchema.optional(),
+    tempoRatio: z.number().optional(),
+    semitones: z.number().optional(),
+    cents: z.number().optional()
+  })
+  // Saved-clip items must carry their window pointers. The original
+  // hand-written guard enforced this via an extra branch; `superRefine`
+  // expresses it at runtime without complicating the inferred type
+  // (the renderer treats the window fields as optional on the type
+  // because audio-file items legitimately omit them).
+  .superRefine((item, ctx) => {
+    if (item.kind === 'saved-clip') {
+      if (typeof item.sourceInMs !== 'number') {
+        ctx.addIssue({ code: 'custom', path: ['sourceInMs'], message: 'required when kind === saved-clip' })
+      }
+      if (typeof item.sourceDurationMs !== 'number') {
+        ctx.addIssue({ code: 'custom', path: ['sourceDurationMs'], message: 'required when kind === saved-clip' })
+      }
+    }
+  })
+export type ProjectStateLibraryItem = z.infer<typeof ProjectStateLibraryItemSchema>
+
+export const ProjectStatePayloadSchema = z.object({
   /** Absolute path to the current `.silverdaw` file, or `null` for an unsaved project. */
-  filePath: string | null
+  filePath: z.string().nullable(),
   /** User-facing project name. `Untitled` for a freshly-created project. */
-  name: string
+  name: z.string(),
   /**
    * Renderer hint — when true, wipe optimistic local state (tracks, clips,
    * library, selection, transport) before applying this snapshot. Sent on
@@ -723,7 +833,7 @@ export interface ProjectStatePayload {
    * where the renderer treats the snapshot as additive (see
    * `projectStore.applyProjectStateSnapshot`).
    */
-  reset?: boolean
+  reset: z.boolean().optional(),
   /**
    * Authoritative-reconcile hint used by Undo/Redo: replace tracks /
    * clips / library / markers wholesale (so things that disappeared
@@ -732,23 +842,23 @@ export interface ProjectStatePayload {
    * communicated separately by the backend via `PROJECT_DIRTY` and the
    * undo / redo handler explicitly resends it after the snapshot.
    */
-  softReplace?: boolean
+  softReplace: z.boolean().optional(),
   /**
    * Horizontal zoom level (px-per-second) persisted with the project.
    * Optional: omitted on a snapshot for a project that hasn't yet set a
    * zoom (the renderer keeps its current zoom in that case).
    */
-  viewPxPerSecond?: number
+  viewPxPerSecond: z.number().optional(),
   /** Horizontal scroll position (px) persisted with the project. */
-  viewScrollX?: number
+  viewScrollX: z.number().optional(),
   /** Last playhead position (ms) persisted with the project. */
-  playheadMs?: number
+  playheadMs: z.number().optional(),
   /** Project tempo (BPM) persisted with the project. */
-  bpm?: number
+  bpm: z.number().optional(),
   /** User-set project length (ms) persisted with the project. */
-  projectLengthMs?: number
+  projectLengthMs: z.number().optional(),
   /** User-created timeline markers. */
-  markers?: ProjectStateMarker[]
+  markers: z.array(ProjectStateMarkerSchema).optional(),
   /**
    * Library catalogue persisted with the project. Each entry is the
    * `(id, filePath)` pair the renderer originally created the item
@@ -757,101 +867,39 @@ export interface ProjectStatePayload {
    * Cover art / ID3 metadata is NOT in here; the renderer re-fetches
    * it on load via the existing `audio:readMetadata` IPC.
    */
-  library?: ProjectStateLibraryItem[]
-  tracks: ProjectStateTrack[]
-}
+  library: z.array(ProjectStateLibraryItemSchema).optional(),
+  tracks: z.array(ProjectStateTrackSchema)
+})
+export type ProjectStatePayload = z.infer<typeof ProjectStatePayloadSchema>
 
-export interface ProjectStateMarker {
-  id: string
-  positionMs: number
-}
+export const ProjectSavedPayloadSchema = z.object({
+  filePath: z.string(),
+  ok: z.boolean(),
+  error: z.string().optional()
+})
+export type ProjectSavedPayload = z.infer<typeof ProjectSavedPayloadSchema>
 
-export interface ProjectStateLibraryItem {
-  id: string
-  filePath: string
-  /** Library item kind. Older projects omit this and are treated as whole audio files. */
-  kind?: LibraryItemKind
-  /** User-facing name. Saved clips use this for their reusable clip name. */
-  name?: string
-  /** Display file name captured when the item entered the library. */
-  fileName?: string
-  /** Source duration in milliseconds. Optional for older saved projects. */
-  durationMs?: number
-  /** Source sample rate. Optional for older saved projects. */
-  sampleRate?: number
-  /** Source channel count. Optional for older saved projects. */
-  channelCount?: number
-  /** Detected musical key, e.g. `C minor`. Optional when detection is inconclusive. */
-  key?: string
-  /** Detected BPM (rounded to 2 d.p. on disk). Absent until the
-   *  backend's BPM detection job finishes for this file. */
-  bpm?: number
-  /** Detected beat positions in seconds from the start of the source
-   *  file. Absent for items without BPM detection results yet. */
-  beats?: number[]
-  /** Regression-derived "ideal beat 0" anchor (seconds; can be
-   *  negative). Used with `bpm` to lay out the synthesised marker
-   *  grid robustly against per-beat jitter. */
-  beatAnchorSec?: number
-  /** Cache path the backend has decoded this source into. Future
-   *  clips of this file should use this path so the audio engine
-   *  reads cheap PCM instead of decoding the original. */
-  playbackFilePath?: string
-  /** True when BTrack's running tempo estimate fluctuated by more than
-   *  ~2 % over the analysis window — the project-BPM seeder skips
-   *  these and the library tile shows a "variable" badge. */
-  variableTempo?: boolean
-  /** Parent source library item for saved clips. */
-  sourceItemId?: string
-  /** Timeline clip that originally produced this saved clip, when known. */
-  sourceClipId?: string
-  /** Start of the saved clip window inside the source file. */
-  sourceInMs?: number
-  /** Duration of the saved clip window inside the source file. */
-  sourceDurationMs?: number
-  /** Source-group disclosure state. True when the user has collapsed
-   *  the source's saved-clip list in the library panel. */
-  collapsed?: boolean
-  unresolved?: boolean
-  /** **Saved-clip default warp settings.** Copied onto a fresh timeline
-   *  clip when the saved-clip tile is dragged in (copy-on-drop, not
-   *  live link — changing these later does NOT propagate to existing
-   *  timeline instances). Only meaningful when `kind === 'saved-clip'`;
-   *  ignored on audio-file items. See `ClipSetWarpPayload` for field
-   *  semantics. */
-  warpEnabled?: boolean
-  warpMode?: ClipWarpMode
-  tempoRatio?: number
-  semitones?: number
-  cents?: number
-}
-
-export type LibraryItemKind = 'audio-file' | 'saved-clip'
-
-export interface ProjectSavedPayload {
-  filePath: string
-  ok: boolean
-  error?: string
-}
-
-export interface ProjectLoadFailedPayload {
-  filePath: string
-  error: string
-}
+export const ProjectLoadFailedPayloadSchema = z.object({
+  filePath: z.string(),
+  error: z.string()
+})
+export type ProjectLoadFailedPayload = z.infer<typeof ProjectLoadFailedPayloadSchema>
 
 export interface ProjectRenamePayload {
   name: string
 }
 
-export interface ProjectRenamedPayload {
-  name: string
-  ok: boolean
-}
+export const ProjectRenamedPayloadSchema = z.object({
+  name: z.string(),
+  ok: z.boolean()
+})
+export type ProjectRenamedPayload = z.infer<typeof ProjectRenamedPayloadSchema>
 
 /** Backend notification that the project's dirty flag has transitioned. */
-export interface ProjectDirtyPayload {
-  dirty: boolean
-}
+export const ProjectDirtyPayloadSchema = z.object({
+  dirty: z.boolean()
+})
+export type ProjectDirtyPayload = z.infer<typeof ProjectDirtyPayloadSchema>
 
 /**
  * Backend notification that a fresh on-disk peaks cache file is ready
@@ -862,45 +910,64 @@ export interface ProjectDirtyPayload {
  * layout is fixed: a 24-byte header followed by `peakCount * 2`
  * little-endian float32 peak values (`min, max, min, max, …`).
  */
-export interface WaveformReadyPayload {
-  clipId: string
+export const WaveformReadyPayloadSchema = z.object({
+  clipId: z.string(),
   /** Absolute path of the cache file under `%APPDATA%/Silverdaw/peaks/`. */
-  cachePath: string
+  cachePath: z.string(),
   /** Number of (min, max) pairs in the file (NOT bytes, NOT individual floats). */
-  peakCount: number
-  peaksPerSecond: number
-  sampleRate: number
-}
+  peakCount: z.number(),
+  peaksPerSecond: z.number(),
+  sampleRate: z.number()
+})
+export type WaveformReadyPayload = z.infer<typeof WaveformReadyPayloadSchema>
 
 /** Backend notification that a Clip Editor high-resolution peaks job
  *  has completed. Same disk-cache layout as `WAVEFORM_READY`, just
  *  keyed against the library item rather than a specific timeline
  *  clip (because every saved-clip sharing this source can reuse the
  *  same peaks file). */
-export interface ClipEditorPeaksReadyPayload {
-  libraryItemId: string
-  cachePath: string
-  peakCount: number
-  peaksPerSecond: number
-  sampleRate: number
-}
+export const ClipEditorPeaksReadyPayloadSchema = z.object({
+  libraryItemId: z.string(),
+  cachePath: z.string(),
+  peakCount: z.number(),
+  peaksPerSecond: z.number(),
+  sampleRate: z.number()
+})
+export type ClipEditorPeaksReadyPayload = z.infer<typeof ClipEditorPeaksReadyPayloadSchema>
 
-export interface SampleSavedPayload {
-  clipId?: string
-  libraryItemId?: string
-  itemId: string
-  filePath: string
-  fileName: string
-  name: string
-  durationMs: number
-  sampleRate: number
-  channelCount: number
-  cachePath: string
-  peakCount: number
-  peaksPerSecond: number
-  ok: boolean
-  error?: string
-}
+// SAMPLE_SAVED has two shapes depending on `ok`: a failure ack carries
+// only `itemId`/`ok`/`error`, while a success ack carries the full
+// baked-sample metadata. Modelling this as a discriminated union both
+// captures the runtime invariant AND lets `z.infer` express the
+// conditional in TypeScript.
+const SampleSavedFailureSchema = z.object({
+  clipId: z.string().optional(),
+  libraryItemId: z.string().optional(),
+  itemId: z.string(),
+  ok: z.literal(false),
+  error: z.string().optional()
+})
+const SampleSavedSuccessSchema = z.object({
+  clipId: z.string().optional(),
+  libraryItemId: z.string().optional(),
+  itemId: z.string(),
+  ok: z.literal(true),
+  filePath: z.string(),
+  fileName: z.string(),
+  name: z.string(),
+  durationMs: z.number(),
+  sampleRate: z.number(),
+  channelCount: z.number(),
+  cachePath: z.string(),
+  peakCount: z.number(),
+  peaksPerSecond: z.number(),
+  error: z.string().optional()
+})
+export const SampleSavedPayloadSchema = z.discriminatedUnion('ok', [
+  SampleSavedSuccessSchema,
+  SampleSavedFailureSchema
+])
+export type SampleSavedPayload = z.infer<typeof SampleSavedPayloadSchema>
 
 /** Backend notification that BPM + beat-position detection has completed
  *  for a library item. `beats` is an array of times (in seconds from
@@ -908,80 +975,87 @@ export interface SampleSavedPayload {
  *  `variableTempo` is `true` when the running tempo estimate fluctuated
  *  enough over the analysis window to make a single project-BPM seed
  *  misleading. */
-export interface LibraryItemAnalysisPayload {
-  itemId: string
-  bpm: number
+export const LibraryItemAnalysisPayloadSchema = z.object({
+  itemId: z.string(),
+  bpm: z.number(),
   /** Regression-derived "ideal beat 0" anchor (seconds, may be
    *  negative). Renderer-side beat-marker grid uses this for
    *  phase. */
-  beatAnchorSec: number
-  beats: number[]
-  variableTempo: boolean
+  beatAnchorSec: z.number(),
+  beats: z.array(z.number()),
+  variableTempo: z.boolean(),
   /** Path to the decoded-WAV cache the backend has written for this
    *  source file. Future clip adds should use this path so the
    *  audio engine reads cheap PCM instead of decoding MP3 / WMA on
    *  the read-ahead thread. */
-  playbackFilePath?: string
-}
+  playbackFilePath: z.string().optional()
+})
+export type LibraryItemAnalysisPayload = z.infer<typeof LibraryItemAnalysisPayloadSchema>
 
 /** Backend notification that it just seeded the project BPM (e.g. from
  *  the first import on an empty project). The renderer updates its
  *  `projectStore.bpm` mirror without re-broadcasting `PROJECT_SET_BPM`. */
-export interface ProjectBpmAppliedPayload {
-  bpm: number
-}
+export const ProjectBpmAppliedPayloadSchema = z.object({
+  bpm: z.number()
+})
+export type ProjectBpmAppliedPayload = z.infer<typeof ProjectBpmAppliedPayloadSchema>
 
 /** Backend notification that a clip's warp settings changed
  *  server-side (e.g. late auto-warp once source BPM analysis lands). */
-export interface ClipWarpAppliedPayload {
-  clipId: string
-  warpEnabled?: boolean
-  warpMode?: ClipWarpMode
+export const ClipWarpAppliedPayloadSchema = z.object({
+  clipId: z.string(),
+  warpEnabled: z.boolean().optional(),
+  warpMode: clipWarpModeSchema.optional(),
   /** `null` clears the pinned override; absent means "no change". */
-  tempoRatio?: number | null
-  semitones?: number
-  cents?: number
-  pendingAutoWarp?: boolean
-  effectiveDurationMs?: number
-  effectiveTempoRatio?: number
-  effectiveWarpActive?: boolean
-}
+  tempoRatio: z.number().nullable().optional(),
+  semitones: z.number().optional(),
+  cents: z.number().optional(),
+  pendingAutoWarp: z.boolean().optional(),
+  effectiveDurationMs: z.number().optional(),
+  effectiveTempoRatio: z.number().optional(),
+  effectiveWarpActive: z.boolean().optional()
+})
+export type ClipWarpAppliedPayload = z.infer<typeof ClipWarpAppliedPayloadSchema>
 
 /** Broadcast on every preview load/play/pause/stop/unload transition. */
-export interface PreviewStatePayload {
+export const PreviewStatePayloadSchema = z.object({
   /** Echoed back from the most recent PREVIEW_LOAD; absent on unload. */
-  libraryItemId?: string
-  isPlaying: boolean
-  isLoaded: boolean
-  durationMs: number
+  libraryItemId: z.string().optional(),
+  isPlaying: z.boolean(),
+  isLoaded: z.boolean(),
+  durationMs: z.number(),
   /** Monotonic counter. Increments on every load/unload; the renderer
    *  uses it to discard stale state for a preview the user has already
    *  closed. */
-  generation: number
-}
+  generation: z.number()
+})
+export type PreviewStatePayload = z.infer<typeof PreviewStatePayloadSchema>
 
 /** Preview-position tick while the preview transport is playing. */
-export interface PreviewPositionPayload {
-  positionMs: number
-  isPlaying: boolean
-  generation: number
-}
+export const PreviewPositionPayloadSchema = z.object({
+  positionMs: z.number(),
+  isPlaying: z.boolean(),
+  generation: z.number()
+})
+export type PreviewPositionPayload = z.infer<typeof PreviewPositionPayloadSchema>
 
 /** Broadcast when the preview reaches the end of its selection window. */
-export interface PreviewEndedPayload {
-  generation: number
-}
+export const PreviewEndedPayloadSchema = z.object({
+  generation: z.number()
+})
+export type PreviewEndedPayload = z.infer<typeof PreviewEndedPayloadSchema>
 
 /** One device-type group inside `AudioDevicesListPayload`. */
-export interface AudioDeviceTypeListing {
+export const AudioDeviceTypeListingSchema = z.object({
   /** Backend-side type name as JUCE reports it ("Windows Audio",
    *  "DirectSound", "ASIO", …). Used as the discriminator when
    *  picking a device with `AUDIO_DEVICE_SELECT`. */
-  name: string
+  name: z.string(),
   /** Output device names available under this type. May be empty
    *  (e.g. ASIO type is present but no ASIO drivers installed). */
-  devices: string[]
-}
+  devices: z.array(z.string())
+})
+export type AudioDeviceTypeListing = z.infer<typeof AudioDeviceTypeListingSchema>
 
 /**
  * Snapshot of available audio output devices plus the currently
@@ -989,47 +1063,69 @@ export interface AudioDeviceTypeListing {
  * successful device switch, and after JUCE's `audioDeviceListChanged`
  * fires (USB plug / unplug, Windows audio-config reload).
  */
-export interface AudioDevicesListPayload {
-  types: AudioDeviceTypeListing[]
+export const AudioDevicesListPayloadSchema = z.object({
+  types: z.array(AudioDeviceTypeListingSchema),
   /** Active device type, or null when the backend has no device open. */
-  currentTypeName: string | null
+  currentTypeName: z.string().nullable(),
   /** Active output device name, or null when the backend has no device
    *  open. Empty string is treated the same as null. */
-  currentDeviceName: string | null
-  currentSampleRate?: number
-  currentBufferSize?: number
+  currentDeviceName: z.string().nullable(),
+  currentSampleRate: z.number().optional(),
+  currentBufferSize: z.number().optional(),
   /** Total effective output latency in ms — what the backend will
    *  subtract from the broadcast playhead while playing. Sum of the
    *  driver's own report + the Bluetooth heuristic baseline. Absent
    *  / 0 means "negligible, no compensation applied". */
-  outputLatencyMs?: number
+  outputLatencyMs: z.number().optional(),
   /** Just the Bluetooth-heuristic component, in ms. Non-zero means
    *  "the driver under-reports and we've added a baseline guess for
    *  the radio/headset pipeline". Surfaces a small "BT" hint next to
    *  the latency readout. */
-  heuristicExtraLatencyMs?: number
+  heuristicExtraLatencyMs: z.number().optional(),
   /** True iff the backend tried to honour a persisted device preference
    *  on startup but the saved device wasn't available — useful for the
    *  renderer to pop a one-shot "your saved device wasn't connected;
    *  using default" toast. Cleared by the backend on the next switch. */
-  fellBackToDefault?: boolean
+  fellBackToDefault: z.boolean().optional(),
   /** True when this snapshot is the partial pre-scan list broadcast
    *  during boot, while the full device scan is still pending. The
    *  renderer surfaces a small "Scanning audio devices…" hint on the
    *  startup overlay until the follow-up snapshot arrives with the
    *  flag absent / false. */
-  scanInProgress?: boolean
-}
+  scanInProgress: z.boolean().optional()
+})
+export type AudioDevicesListPayload = z.infer<typeof AudioDevicesListPayloadSchema>
 
 /** Ack for an `AUDIO_DEVICE_SELECT`. On `ok: true` it's followed by a
  *  refreshed `AUDIO_DEVICES_LIST`; on `ok: false` the backend rolled
  *  the device setup back to whatever was active before the request. */
-export interface AudioDeviceChangedPayload {
-  typeName: string | null
-  deviceName: string | null
-  ok: boolean
-  error?: string
-}
+export const AudioDeviceChangedPayloadSchema = z.object({
+  typeName: z.string().nullable(),
+  deviceName: z.string().nullable(),
+  ok: z.boolean(),
+  error: z.string().optional()
+})
+export type AudioDeviceChangedPayload = z.infer<typeof AudioDeviceChangedPayloadSchema>
+
+/**
+ * Mirror of the backend's `juce::UndoManager` head state. Broadcast on
+ * AUTH-connect right after the first `PROJECT_STATE`, after every
+ * project-mutating envelope, and after `EDIT_UNDO` / `EDIT_REDO`. The
+ * renderer surfaces the boolean flags on the Edit menu (Undo / Redo
+ * grey out when their respective flag is false) and the label fields
+ * power optional menu hints like "Undo Move clip".
+ */
+export const EditUndoStatePayloadSchema = z.object({
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
+  /** Description of the transaction that would be undone next, or
+   *  absent when `canUndo === false`. */
+  undoLabel: z.string().optional(),
+  /** Description of the transaction that would be redone next, or
+   *  absent when `canRedo === false`. */
+  redoLabel: z.string().optional()
+})
+export type EditUndoStatePayload = z.infer<typeof EditUndoStatePayloadSchema>
 
 export interface BridgeInboundMap {
   READY: ReadyPayload
@@ -1059,25 +1155,6 @@ export interface BridgeInboundMap {
   AUDIO_DEVICES_LIST: AudioDevicesListPayload
   AUDIO_DEVICE_CHANGED: AudioDeviceChangedPayload
   EDIT_UNDO_STATE: EditUndoStatePayload
-}
-
-/**
- * Mirror of the backend's `juce::UndoManager` head state. Broadcast on
- * AUTH-connect right after the first `PROJECT_STATE`, after every
- * project-mutating envelope, and after `EDIT_UNDO` / `EDIT_REDO`. The
- * renderer surfaces the boolean flags on the Edit menu (Undo / Redo
- * grey out when their respective flag is false) and the label fields
- * power optional menu hints like "Undo Move clip".
- */
-export interface EditUndoStatePayload {
-  canUndo: boolean
-  canRedo: boolean
-  /** Description of the transaction that would be undone next, or
-   *  absent when `canUndo === false`. */
-  undoLabel?: string
-  /** Description of the transaction that would be redone next, or
-   *  absent when `canRedo === false`. */
-  redoLabel?: string
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -1131,350 +1208,143 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'EDIT_UNDO_STATE'
 ])
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 /** Narrow an unknown string to the inbound type union. */
 export function isBridgeInboundType(value: unknown): value is BridgeInboundType {
   return typeof value === 'string' && INBOUND_TYPES.has(value as BridgeInboundType)
 }
 
+// Each guard delegates to its matching zod schema. `safeParse(...).success`
+// returns a boolean and acts as the type predicate; the schema is the
+// single source of truth for what a valid payload looks like.
+
 /** Guard for `ReadyPayload`. */
 export function isReadyPayload(value: unknown): value is ReadyPayload {
-  return isPlainObject(value) && typeof value.version === 'string'
+  return ReadyPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `PlayheadUpdatePayload`. */
 export function isPlayheadUpdatePayload(value: unknown): value is PlayheadUpdatePayload {
-  return (
-    isPlainObject(value) &&
-    typeof value.positionMs === 'number' &&
-    typeof value.isPlaying === 'boolean'
-  )
+  return PlayheadUpdatePayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ClipAckPayload`. */
 export function isClipAckPayload(value: unknown): value is ClipAckPayload {
-  return (
-    isPlainObject(value) &&
-    typeof value.trackId === 'string' &&
-    typeof value.clipId === 'string' &&
-    typeof value.libraryItemId === 'string' &&
-    typeof value.ok === 'boolean' &&
-    (value.error === undefined || typeof value.error === 'string')
-  )
+  return ClipAckPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `TrackAddedPayload`. */
 export function isTrackAddedPayload(value: unknown): value is TrackAddedPayload {
-  return isPlainObject(value) && typeof value.trackId === 'string' && typeof value.ok === 'boolean'
+  return TrackAddedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ProjectStatePayload`. */
 export function isProjectStatePayload(value: unknown): value is ProjectStatePayload {
-  if (!isPlainObject(value)) return false
-  if (value.filePath !== null && typeof value.filePath !== 'string') return false
-  if (typeof value.name !== 'string') return false
-  if (value.reset !== undefined && typeof value.reset !== 'boolean') return false
-  if (value.viewPxPerSecond !== undefined && typeof value.viewPxPerSecond !== 'number') return false
-  if (value.viewScrollX !== undefined && typeof value.viewScrollX !== 'number') return false
-  if (value.playheadMs !== undefined && typeof value.playheadMs !== 'number') return false
-  if (value.bpm !== undefined && typeof value.bpm !== 'number') return false
-  if (value.projectLengthMs !== undefined && typeof value.projectLengthMs !== 'number') return false
-  if (value.markers !== undefined) {
-    if (!Array.isArray(value.markers)) return false
-    for (const marker of value.markers) {
-      if (!isPlainObject(marker)) return false
-      if (typeof marker.id !== 'string' || typeof marker.positionMs !== 'number') return false
-    }
-  }
-  if (value.library !== undefined) {
-    if (!Array.isArray(value.library)) return false
-    for (const item of value.library) {
-      if (!isPlainObject(item)) return false
-      if (typeof item.id !== 'string' || typeof item.filePath !== 'string') return false
-      if (item.kind !== undefined && item.kind !== 'audio-file' && item.kind !== 'saved-clip') return false
-      if (item.name !== undefined && typeof item.name !== 'string') return false
-      if (item.fileName !== undefined && typeof item.fileName !== 'string') return false
-      if (item.durationMs !== undefined && typeof item.durationMs !== 'number') return false
-      if (item.sampleRate !== undefined && typeof item.sampleRate !== 'number') return false
-      if (item.channelCount !== undefined && typeof item.channelCount !== 'number') return false
-      if (item.key !== undefined && typeof item.key !== 'string') return false
-      if (item.bpm !== undefined && typeof item.bpm !== 'number') return false
-      if (item.beats !== undefined) {
-        if (!Array.isArray(item.beats)) return false
-        for (const b of item.beats) {
-          if (typeof b !== 'number') return false
-        }
-      }
-      if (item.beatAnchorSec !== undefined && typeof item.beatAnchorSec !== 'number') return false
-      if (item.playbackFilePath !== undefined && typeof item.playbackFilePath !== 'string') return false
-      if (item.variableTempo !== undefined && typeof item.variableTempo !== 'boolean') return false
-      if (item.sourceItemId !== undefined && typeof item.sourceItemId !== 'string') return false
-      if (item.sourceClipId !== undefined && typeof item.sourceClipId !== 'string') return false
-      if (item.sourceInMs !== undefined && typeof item.sourceInMs !== 'number') return false
-      if (item.sourceDurationMs !== undefined && typeof item.sourceDurationMs !== 'number') return false
-      if (item.collapsed !== undefined && typeof item.collapsed !== 'boolean') return false
-      if (item.unresolved !== undefined && typeof item.unresolved !== 'boolean') return false
-      if (item.kind === 'saved-clip') {
-        if (typeof item.sourceInMs !== 'number' || typeof item.sourceDurationMs !== 'number') return false
-      }
-    }
-  }
-  if (!Array.isArray(value.tracks)) return false
-  for (const t of value.tracks) {
-    if (!isPlainObject(t)) return false
-    if (typeof t.id !== 'string' || typeof t.gain !== 'number') return false
-    if (t.name !== undefined && typeof t.name !== 'string') return false
-    if (!Array.isArray(t.clips)) return false
-    for (const c of t.clips) {
-      if (!isPlainObject(c)) return false
-      if (
-        typeof c.id !== 'string' ||
-        typeof c.libraryItemId !== 'string' ||
-        typeof c.offsetMs !== 'number' ||
-        typeof c.durationMs !== 'number'
-      ) {
-        return false
-      }
-      if (c.inMs !== undefined && typeof c.inMs !== 'number') return false
-      if (c.effectiveDurationMs !== undefined && typeof c.effectiveDurationMs !== 'number') return false
-      if (c.effectiveTempoRatio !== undefined && typeof c.effectiveTempoRatio !== 'number') return false
-      if (c.effectiveWarpActive !== undefined && typeof c.effectiveWarpActive !== 'boolean') return false
-      if (c.colorIndex !== undefined && typeof c.colorIndex !== 'number') return false
-      if (c.name !== undefined && typeof c.name !== 'string') return false
-      if (c.unresolved !== undefined && typeof c.unresolved !== 'boolean') return false
-    }
-  }
-  return true
+  return ProjectStatePayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ProjectSavedPayload`. */
 export function isProjectSavedPayload(value: unknown): value is ProjectSavedPayload {
-  return (
-    isPlainObject(value) &&
-    typeof value.filePath === 'string' &&
-    typeof value.ok === 'boolean' &&
-    (value.error === undefined || typeof value.error === 'string')
-  )
+  return ProjectSavedPayloadSchema.safeParse(value).success
 }
 
+/** Guard for `ProjectViewStateSavedPayload`. */
 export function isProjectViewStateSavedPayload(value: unknown): value is ProjectViewStateSavedPayload {
-  return (
-    isPlainObject(value) &&
-    typeof value.filePath === 'string' &&
-    typeof value.ok === 'boolean' &&
-    (value.error === undefined || typeof value.error === 'string')
-  )
+  return ProjectViewStateSavedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ProjectAutosavedPayload`. Shares its shape with the
  *  explicit-save ack; kept as a separate function so callers can
  *  document intent at the call site. */
 export function isProjectAutosavedPayload(value: unknown): value is ProjectAutosavedPayload {
-  return (
-    isPlainObject(value) &&
-    typeof value.filePath === 'string' &&
-    typeof value.ok === 'boolean' &&
-    (value.error === undefined || typeof value.error === 'string')
-  )
+  return ProjectAutosavedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ProjectLoadFailedPayload`. */
 export function isProjectLoadFailedPayload(value: unknown): value is ProjectLoadFailedPayload {
-  return (
-    isPlainObject(value) && typeof value.filePath === 'string' && typeof value.error === 'string'
-  )
+  return ProjectLoadFailedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ProjectRenamedPayload`. */
 export function isProjectRenamedPayload(value: unknown): value is ProjectRenamedPayload {
-  return isPlainObject(value) && typeof value.name === 'string' && typeof value.ok === 'boolean'
+  return ProjectRenamedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ProjectDirtyPayload`. */
 export function isProjectDirtyPayload(value: unknown): value is ProjectDirtyPayload {
-  return isPlainObject(value) && typeof value.dirty === 'boolean'
+  return ProjectDirtyPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `WaveformReadyPayload`. */
 export function isWaveformReadyPayload(value: unknown): value is WaveformReadyPayload {
-  return (
-    isPlainObject(value) &&
-    typeof value.clipId === 'string' &&
-    typeof value.cachePath === 'string' &&
-    typeof value.peakCount === 'number' &&
-    typeof value.peaksPerSecond === 'number' &&
-    typeof value.sampleRate === 'number'
-  )
+  return WaveformReadyPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ClipEditorPeaksReadyPayload`. */
 export function isClipEditorPeaksReadyPayload(value: unknown): value is ClipEditorPeaksReadyPayload {
-  return (
-    isPlainObject(value) &&
-    typeof value.libraryItemId === 'string' &&
-    typeof value.cachePath === 'string' &&
-    typeof value.peakCount === 'number' &&
-    typeof value.peaksPerSecond === 'number' &&
-    typeof value.sampleRate === 'number'
-  )
+  return ClipEditorPeaksReadyPayloadSchema.safeParse(value).success
 }
 
+/** Guard for `SampleSavedPayload`. */
 export function isSampleSavedPayload(value: unknown): value is SampleSavedPayload {
-  if (!isPlainObject(value)) return false
-  if (typeof value.itemId !== 'string' || typeof value.ok !== 'boolean') return false
-  if (value.clipId !== undefined && typeof value.clipId !== 'string') return false
-  if (value.libraryItemId !== undefined && typeof value.libraryItemId !== 'string') return false
-  if (value.ok === false) return value.error === undefined || typeof value.error === 'string'
-  return (
-    typeof value.filePath === 'string' &&
-    typeof value.fileName === 'string' &&
-    typeof value.name === 'string' &&
-    typeof value.durationMs === 'number' &&
-    typeof value.sampleRate === 'number' &&
-    typeof value.channelCount === 'number' &&
-    typeof value.cachePath === 'string' &&
-    typeof value.peakCount === 'number' &&
-    typeof value.peaksPerSecond === 'number' &&
-    (value.error === undefined || typeof value.error === 'string')
-  )
+  return SampleSavedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `TrackRemovedPayload`. */
 export function isTrackRemovedPayload(value: unknown): value is TrackRemovedPayload {
-  return isPlainObject(value) && typeof value.trackId === 'string' && typeof value.ok === 'boolean'
+  return TrackRemovedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ClipRemovedPayload`. */
 export function isClipRemovedPayload(value: unknown): value is ClipRemovedPayload {
-  return isPlainObject(value) && typeof value.clipId === 'string' && typeof value.ok === 'boolean'
+  return ClipRemovedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `TrackGainAppliedPayload`. */
 export function isTrackGainAppliedPayload(value: unknown): value is TrackGainAppliedPayload {
-  return (
-    isPlainObject(value) &&
-    typeof value.trackId === 'string' &&
-    typeof value.gain === 'number' &&
-    typeof value.ok === 'boolean'
-  )
+  return TrackGainAppliedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `LibraryItemAnalysisPayload`. */
 export function isLibraryItemAnalysisPayload(value: unknown): value is LibraryItemAnalysisPayload {
-  if (!isPlainObject(value)) return false
-  if (typeof value.itemId !== 'string' || typeof value.bpm !== 'number') return false
-  if (typeof value.beatAnchorSec !== 'number') return false
-  if (!Array.isArray(value.beats)) return false
-  for (const b of value.beats) {
-    if (typeof b !== 'number') return false
-  }
-  if (typeof value.variableTempo !== 'boolean') return false
-  if (value.playbackFilePath !== undefined && typeof value.playbackFilePath !== 'string') return false
-  return true
+  return LibraryItemAnalysisPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ProjectBpmAppliedPayload`. */
 export function isProjectBpmAppliedPayload(value: unknown): value is ProjectBpmAppliedPayload {
-  return isPlainObject(value) && typeof value.bpm === 'number'
+  return ProjectBpmAppliedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ClipWarpAppliedPayload`. */
 export function isClipWarpAppliedPayload(value: unknown): value is ClipWarpAppliedPayload {
-  if (!isPlainObject(value)) return false
-  if (typeof value.clipId !== 'string') return false
-  if (value.warpEnabled !== undefined && typeof value.warpEnabled !== 'boolean') return false
-  if (
-    value.warpMode !== undefined &&
-    value.warpMode !== 'rhythmic' &&
-    value.warpMode !== 'tonal' &&
-    value.warpMode !== 'complex'
-  ) {
-    return false
-  }
-  if (
-    value.tempoRatio !== undefined &&
-    value.tempoRatio !== null &&
-    typeof value.tempoRatio !== 'number'
-  ) {
-    return false
-  }
-  if (value.semitones !== undefined && typeof value.semitones !== 'number') return false
-  if (value.cents !== undefined && typeof value.cents !== 'number') return false
-  if (value.pendingAutoWarp !== undefined && typeof value.pendingAutoWarp !== 'boolean') return false
-  if (value.effectiveDurationMs !== undefined && typeof value.effectiveDurationMs !== 'number') return false
-  if (value.effectiveTempoRatio !== undefined && typeof value.effectiveTempoRatio !== 'number') return false
-  if (value.effectiveWarpActive !== undefined && typeof value.effectiveWarpActive !== 'boolean') return false
-  return true
+  return ClipWarpAppliedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `PreviewStatePayload`. */
 export function isPreviewStatePayload(value: unknown): value is PreviewStatePayload {
-  if (!isPlainObject(value)) return false
-  if (typeof value.isPlaying !== 'boolean') return false
-  if (typeof value.isLoaded !== 'boolean') return false
-  if (typeof value.durationMs !== 'number') return false
-  if (typeof value.generation !== 'number') return false
-  if (value.libraryItemId !== undefined && typeof value.libraryItemId !== 'string') return false
-  return true
+  return PreviewStatePayloadSchema.safeParse(value).success
 }
 
 /** Guard for `PreviewPositionPayload`. */
 export function isPreviewPositionPayload(value: unknown): value is PreviewPositionPayload {
-  return (
-    isPlainObject(value) &&
-    typeof value.positionMs === 'number' &&
-    typeof value.isPlaying === 'boolean' &&
-    typeof value.generation === 'number'
-  )
+  return PreviewPositionPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `PreviewEndedPayload`. */
 export function isPreviewEndedPayload(value: unknown): value is PreviewEndedPayload {
-  return isPlainObject(value) && typeof value.generation === 'number'
+  return PreviewEndedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `AudioDevicesListPayload`. */
 export function isAudioDevicesListPayload(value: unknown): value is AudioDevicesListPayload {
-  if (!isPlainObject(value)) return false
-  if (!Array.isArray(value.types)) return false
-  for (const t of value.types) {
-    if (!isPlainObject(t)) return false
-    if (typeof t.name !== 'string') return false
-    if (!Array.isArray(t.devices)) return false
-    for (const d of t.devices) {
-      if (typeof d !== 'string') return false
-    }
-  }
-  if (value.currentTypeName !== null && typeof value.currentTypeName !== 'string') return false
-  if (value.currentDeviceName !== null && typeof value.currentDeviceName !== 'string') return false
-  if (value.currentSampleRate !== undefined && typeof value.currentSampleRate !== 'number') return false
-  if (value.currentBufferSize !== undefined && typeof value.currentBufferSize !== 'number') return false
-  if (value.outputLatencyMs !== undefined && typeof value.outputLatencyMs !== 'number') return false
-  if (value.heuristicExtraLatencyMs !== undefined && typeof value.heuristicExtraLatencyMs !== 'number') return false
-  if (value.fellBackToDefault !== undefined && typeof value.fellBackToDefault !== 'boolean') return false
-  if (value.scanInProgress !== undefined && typeof value.scanInProgress !== 'boolean') return false
-  return true
+  return AudioDevicesListPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `AudioDeviceChangedPayload`. */
 export function isAudioDeviceChangedPayload(value: unknown): value is AudioDeviceChangedPayload {
-  if (!isPlainObject(value)) return false
-  if (value.typeName !== null && typeof value.typeName !== 'string') return false
-  if (value.deviceName !== null && typeof value.deviceName !== 'string') return false
-  if (typeof value.ok !== 'boolean') return false
-  if (value.error !== undefined && typeof value.error !== 'string') return false
-  return true
+  return AudioDeviceChangedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `EditUndoStatePayload`. */
 export function isEditUndoStatePayload(value: unknown): value is EditUndoStatePayload {
-  if (!isPlainObject(value)) return false
-  if (typeof value.canUndo !== 'boolean') return false
-  if (typeof value.canRedo !== 'boolean') return false
-  if (value.undoLabel !== undefined && typeof value.undoLabel !== 'string') return false
-  if (value.redoLabel !== undefined && typeof value.redoLabel !== 'string') return false
-  return true
+  return EditUndoStatePayloadSchema.safeParse(value).success
 }
