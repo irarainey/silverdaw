@@ -2,7 +2,6 @@
 #include "Log.h"
 
 #include <cmath>
-#include <iostream>
 
 namespace silverdaw
 {
@@ -350,7 +349,7 @@ bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath
     if (!filePath.existsAsFile())
     {
         const auto msg = "file does not exist: " + filePath.getFullPathName();
-        std::cerr << "[addClip] " << msg.toStdString() << '\n';
+        silverdaw::log::warn("addClip", msg);
         if (outError != nullptr)
         {
             *outError = msg;
@@ -381,7 +380,7 @@ bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath
         const auto msg = "createReaderFor returned null (ext=" + filePath.getFileExtension() +
                          ", size=" + juce::String(filePath.getSize()) + " bytes, registered=[" +
                          formatNames.joinIntoString(", ") + "])";
-        std::cerr << "[addClip] " << msg.toStdString() << '\n';
+        silverdaw::log::warn("addClip", msg);
         if (outError != nullptr)
         {
             *outError = msg;

@@ -1,7 +1,6 @@
 #include "DecodedCache.h"
 #include "Log.h"
 
-#include <iostream>
 #include <memory>
 
 namespace silverdaw
@@ -14,8 +13,9 @@ DecodedCache::DecodedCache()
     const auto created = cacheDir.createDirectory();
     if (!created.wasOk())
     {
-        std::cerr << "[decodedcache] failed to create cache dir " << cacheDir.getFullPathName().toStdString() << ": "
-                  << created.getErrorMessage().toStdString() << '\n';
+        silverdaw::log::error("decodedcache",
+                              "failed to create cache dir " + cacheDir.getFullPathName() +
+                                  ": " + created.getErrorMessage());
     }
 }
 

@@ -33,8 +33,8 @@ struct PeaksResult
 
 /**
  * Compute mono-mixed min/max peaks for `file` at `peaksPerSecond`
- * resolution. Returns an empty result on any decode failure (logged to
- * `std::cerr`).
+ * resolution. Returns an empty result on any decode failure (logged via
+ * `silverdaw::log::warn`).
  *
  * Designed to be called from a worker thread (e.g. `juce::ThreadPool`) so
  * a long disk-bound scan never freezes the UI. A fresh `AudioFormatReader`

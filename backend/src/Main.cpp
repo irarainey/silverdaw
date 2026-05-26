@@ -295,15 +295,20 @@ int parsePort(std::string_view value, std::string_view source)
     }
     catch (const std::exception& e)
     {
-        std::cerr << "[main] invalid port from " << source << " (" << value << "): " << e.what() << "; using default "
-                  << kDefaultBridgePort << '\n';
+        silverdaw::log::warn("main",
+                             juce::String("invalid port from ") + juce::String(std::string(source)) + " (" +
+                                 juce::String(std::string(value)) + "): " + juce::String(e.what()) +
+                                 "; using default " + juce::String(kDefaultBridgePort));
         return kDefaultBridgePort;
     }
 
     if (port < kMinBridgePort || port > kMaxBridgePort)
     {
-        std::cerr << "[main] port " << port << " from " << source << " outside [" << kMinBridgePort << ", "
-                  << kMaxBridgePort << "]; using default " << kDefaultBridgePort << '\n';
+        silverdaw::log::warn("main",
+                             juce::String("port ") + juce::String(port) + " from " +
+                                 juce::String(std::string(source)) + " outside [" +
+                                 juce::String(kMinBridgePort) + ", " + juce::String(kMaxBridgePort) +
+                                 "]; using default " + juce::String(kDefaultBridgePort));
         return kDefaultBridgePort;
     }
 
@@ -484,7 +489,7 @@ std::optional<double> tryGetNumber(const juce::var& payload, const char* key)
     {
         return static_cast<double>(v);
     }
-    std::cerr << "[bridge] field '" << key << "' missing or non-numeric; envelope ignored\n";
+    silverdaw::log::warn("bridge", juce::String("field '") + key + "' missing or non-numeric; envelope ignored");
     return std::nullopt;
 }
 
@@ -1157,7 +1162,7 @@ void handleWaveformRequest(const juce::var& payload, silverdaw::AudioEngine& eng
     const auto trackId = projectState.getClipTrackId(clipId);
     if (trackId.isEmpty())
     {
-        std::cerr << "[bridge] WAVEFORM_REQUEST for unknown clipId " << clipId.toStdString() << '\n';
+        silverdaw::log::warn("bridge", "WAVEFORM_REQUEST for unknown clipId " + clipId);
         return;
     }
     const auto filePath = projectState.getClipFilePath(clipId);
@@ -1685,14 +1690,6 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             else
             {
                 ++failed;
-                // Always surface to stderr (independent of debug logging)
-                // because a missing source file is the single most common
-                // reason audio fails to play after a project load, and
-                // the user has no other diagnostic channel when debug is
-                // off. Renderer-facing toasts are added by the
-                // unresolved-files todo (save-load-unresolved-files).
-                std::cerr << "[project] addClip FAILED for clipId=" << clipId.toStdString()
-                          << " path=" << filePath.toStdString() << " err=" << err.toStdString() << '\n';
                 silverdaw::log::warn("project", "addClip failed clipId=" + clipId + " path=" + filePath +
                                                      " err=" + err);
             }
@@ -1700,8 +1697,9 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
     }
     if (failed > 0)
     {
-        std::cerr << "[project] rebuilt " << rebuilt << " clip(s); " << failed
-                  << " failed (audio for those clips will be silent)\n";
+        silverdaw::log::warn("project",
+                             "rebuilt " + juce::String(rebuilt) + " clip(s); " + juce::String(failed) +
+                                 " failed (audio for those clips will be silent)");
     }
 }
 
@@ -3156,7 +3154,6 @@ int runBackend(int argc, char* argv[])
         err.isNotEmpty())
     {
         silverdaw::log::error("engine", "audio device init failed: " + err);
-        std::cerr << "[engine] audio device init failed: " << err.toStdString() << '\n';
     }
 
     silverdaw::ProjectState projectState;
@@ -3176,9 +3173,9 @@ int runBackend(int argc, char* argv[])
 
     if (bridgeToken.isEmpty())
     {
-        silverdaw::log::warn("bridge", "no AUTH token set; accepting all loopback clients (debug only)");
-        std::cerr << "[bridge] WARNING: no AUTH token set (SILVERDAW_BRIDGE_TOKEN unset and "
-                     "--token not given); accepting all loopback clients. DO NOT USE IN PRODUCTION.\n";
+        silverdaw::log::warn("bridge",
+                             "WARNING: no AUTH token set (SILVERDAW_BRIDGE_TOKEN unset and --token not given); "
+                             "accepting all loopback clients. DO NOT USE IN PRODUCTION.");
     }
 
     // Worker pool for off-message-thread work — currently only peaks
@@ -3216,7 +3213,6 @@ int runBackend(int argc, char* argv[])
     if (!bridge.start(bridgePort))
     {
         silverdaw::log::error("bridge", "failed to start; exiting");
-        std::cerr << "[bridge] failed to start; exiting\n";
         return 1;
     }
 

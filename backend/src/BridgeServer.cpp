@@ -2,7 +2,6 @@
 #include "BridgeAuth.h"
 #include "Log.h"
 
-#include <iostream>
 #include <ixwebsocket/IXConnectionState.h>
 #include <ixwebsocket/IXNetSystem.h>
 #include <ixwebsocket/IXWebSocket.h>
@@ -94,7 +93,6 @@ bool BridgeServer::start(int port)
     if (!res.first)
     {
         silverdaw::log::error("bridge", juce::String("listen failed: ") + juce::String(res.second));
-        std::cerr << "[bridge] listen failed: " << res.second << '\n';
         server.reset();
         ix::uninitNetSystem();
         return false;
@@ -103,7 +101,6 @@ bool BridgeServer::start(int port)
     server->start();
     running.store(true);
     silverdaw::log::info("bridge", "listening on ws://localhost:" + juce::String(port));
-    std::cout << "[bridge] listening on ws://localhost:" << port << '\n';
     return true;
 }
 

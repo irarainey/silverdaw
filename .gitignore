@@ -1,5 +1,6 @@
 # Project-local reference material
 .ref/
+CODEBASE_REVIEW.md
 
 # Node / pnpm
 node_modules/

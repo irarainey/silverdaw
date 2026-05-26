@@ -6,6 +6,7 @@
 // the on-disk copy stays in sync.
 
 import { defineStore } from 'pinia'
+import { log } from '@/lib/log'
 
 export type TimelineScrollEdge = 'start' | 'end'
 export type TimelineScrollRequest =
@@ -140,7 +141,7 @@ export const useUiStore = defineStore('ui', {
             ? saved.matchProjectTempoOnDrop
             : DEFAULTS.matchProjectTempoOnDrop
       } catch (err) {
-        console.warn('[uiStore] hydrate failed, using defaults:', err)
+        log.warn('ui', `hydrate failed, using defaults: ${String(err)}`)
       } finally {
         this.hydrated = true
       }

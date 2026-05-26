@@ -2,7 +2,6 @@
 #include "Log.h"
 
 #include <cstring>
-#include <iostream>
 
 namespace silverdaw
 {
@@ -49,8 +48,9 @@ PeaksCache::PeaksCache()
     const auto created = cacheDir.createDirectory();
     if (!created.wasOk())
     {
-        std::cerr << "[peakscache] failed to create cache dir " << cacheDir.getFullPathName().toStdString() << ": "
-                  << created.getErrorMessage().toStdString() << '\n';
+        silverdaw::log::error("peakscache",
+                              "failed to create cache dir " + cacheDir.getFullPathName() +
+                                  ": " + created.getErrorMessage());
     }
 }
 
@@ -59,8 +59,9 @@ PeaksCache::PeaksCache(const juce::File& cacheDirectory) : cacheDir(cacheDirecto
     const auto created = cacheDir.createDirectory();
     if (!created.wasOk())
     {
-        std::cerr << "[peakscache] failed to create cache dir " << cacheDir.getFullPathName().toStdString() << ": "
-                  << created.getErrorMessage().toStdString() << '\n';
+        silverdaw::log::error("peakscache",
+                              "failed to create cache dir " + cacheDir.getFullPathName() +
+                                  ": " + created.getErrorMessage());
     }
 }
 
@@ -163,7 +164,7 @@ void PeaksCache::store(const juce::File& sourceFile, const waveform::PeaksResult
         juce::FileOutputStream out(tmp);
         if (!out.openedOk())
         {
-            std::cerr << "[peakscache] failed to open temp " << tmp.getFullPathName().toStdString() << '\n';
+            silverdaw::log::error("peakscache", "failed to open temp " + tmp.getFullPathName());
             return;
         }
         out.write(hdr, sizeof(hdr));
@@ -171,7 +172,7 @@ void PeaksCache::store(const juce::File& sourceFile, const waveform::PeaksResult
         out.flush();
         if (out.getStatus().failed())
         {
-            std::cerr << "[peakscache] write failed: " << out.getStatus().getErrorMessage().toStdString() << '\n';
+            silverdaw::log::error("peakscache", "write failed: " + out.getStatus().getErrorMessage());
             return;
         }
     } // close before rename

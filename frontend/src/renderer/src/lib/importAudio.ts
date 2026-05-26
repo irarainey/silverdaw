@@ -79,10 +79,8 @@ async function resolvePlaybackPath(
       log.info('import', `transcode done -> ${wavPath}`)
       return wavPath
     }
-    console.warn('[importAudio] transcode returned null for', sourcePath)
     log.warn('import', `transcode returned null for ${sourcePath}`)
   } catch (err) {
-    console.error('[importAudio] transcode failed for', sourcePath, err)
     log.error('import', `transcode failed for ${sourcePath}: ${String(err)}`)
   }
   return sourcePath
@@ -107,7 +105,6 @@ export async function importAudioIntoTrack(
 
   log.info('import', `importAudioIntoTrack trackId=${trackId} startMs=${startMs ?? 'playhead'}`)
   const opened = await window.silverdaw.openAudioFile().catch((err) => {
-    console.error('[importAudio] dialog/read failed:', err)
     log.error('import', `dialog failed: ${String(err)}`)
     return null
   })
@@ -219,7 +216,7 @@ export async function importAudioIntoLibrary(opened: {
     library.markImportAnalyzing(importEntryId, itemId)
     return itemId
   } catch (err) {
-    console.error('[importAudio] library decode failed:', err)
+    log.error('import', `library decode failed: ${String(err)}`)
     library.finishImport(importEntryId, 'failed')
     return null
   } finally {
@@ -284,7 +281,6 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
       key: enrichedMetadata?.key ?? ''
     })
   } catch (err) {
-    console.error('[importAudio] reanalyse failed:', err)
     log.error('import', `reanalyse failed for ${item.filePath}: ${String(err)}`)
     library.finishImport(importEntryId, 'failed')
     notifications.pushError(`Reanalysis failed for "${item.fileName}".`)

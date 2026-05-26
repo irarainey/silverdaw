@@ -172,7 +172,6 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
 async function onImportClick(): Promise<void> {
     log.info('library', 'import-button click')
     const opened = await window.silverdaw.openAudioFiles().catch((err) => {
-        console.error('[LibraryPanel] openAudioFiles failed:', err)
         log.error('library', `openAudioFiles failed: ${String(err)}`)
         return [] as Awaited<ReturnType<typeof window.silverdaw.openAudioFiles>>
     })
@@ -228,7 +227,7 @@ async function onPanelDrop(e: DragEvent): Promise<void> {
         // Electron dropped `file.path` in v32.
         const path = window.silverdaw.getPathForFile(file)
         if (!path) {
-            console.warn('[LibraryPanel] dropped file has no path:', file.name)
+            log.warn('library', `dropped file has no path: ${file.name}`)
             library.noteImportFinished()
             continue
         }

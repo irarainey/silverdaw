@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <iostream>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <limits>
 
@@ -44,7 +43,7 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
     }
     if (reader == nullptr || reader->sampleRate <= 0.0 || reader->lengthInSamples <= 0)
     {
-        std::cerr << "[waveform] could not open reader for " << file.getFullPathName().toStdString() << '\n';
+        silverdaw::log::warn("waveform", "could not open reader for " + file.getFullPathName());
         return result;
     }
 
@@ -75,7 +74,7 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
         const int toRead = static_cast<int>(juce::jmin(static_cast<juce::int64>(kChunkSamples), totalSamples - readPos));
         if (!reader->read(&buffer, 0, toRead, readPos, true, true))
         {
-            std::cerr << "[waveform] read failure at sample " << readPos << '\n';
+            silverdaw::log::warn("waveform", "read failure at sample " + juce::String(readPos));
             break;
         }
 

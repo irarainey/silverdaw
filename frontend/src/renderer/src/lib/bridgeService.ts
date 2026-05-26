@@ -140,7 +140,7 @@ function resolveBridgeConnection(): Promise<BridgeConnection> {
   const portPromise: Promise<number> =
     api && typeof api.getBridgePort === 'function'
       ? api.getBridgePort().catch((err) => {
-          console.warn('[bridge] getBridgePort failed; falling back to default', err)
+          log.warn('bridge', `getBridgePort failed; falling back to default: ${String(err)}`)
           return DEFAULT_BRIDGE_PORT
         })
       : Promise.resolve(DEFAULT_BRIDGE_PORT)
@@ -149,7 +149,7 @@ function resolveBridgeConnection(): Promise<BridgeConnection> {
       ? api.getBridgeToken().catch((err) => {
           // An empty token disables AUTH on the backend — only ever true in
           // stand-alone debug runs without `SILVERDAW_BRIDGE_TOKEN` set.
-          console.warn('[bridge] getBridgeToken failed; sending empty token', err)
+          log.warn('bridge', `getBridgeToken failed; sending empty token: ${String(err)}`)
           return ''
         })
       : Promise.resolve('')
@@ -193,13 +193,11 @@ function openSocket(conn: BridgeConnection): void {
     try {
       ws.send(JSON.stringify({ type: 'AUTH', payload: { token } }))
     } catch (err) {
-      console.warn('[bridge] failed to send AUTH envelope', err)
       log.warn('bridge', `failed to send AUTH: ${String(err)}`)
     }
     useTransportStore().setConnected(true)
     log.info('bridge', `connected ${url}`)
     startSocketHeartbeat()
-    console.log('[bridge] connected', url)
   })
 
   ws.addEventListener('close', () => {
@@ -210,8 +208,7 @@ function openSocket(conn: BridgeConnection): void {
     if (!stopped) scheduleReconnect()
   })
 
-  ws.addEventListener('error', (e) => {
-    console.warn('[bridge] socket error', e)
+  ws.addEventListener('error', () => {
     log.error('bridge', 'socket error')
   })
 
@@ -219,14 +216,13 @@ function openSocket(conn: BridgeConnection): void {
     // Text-only protocol: see file header. Any binary frame here is a
     // protocol violation and is logged + dropped.
     if (typeof e.data !== 'string') {
-      console.warn('[bridge] unexpected non-text frame; dropping', e.data)
+      log.warn('bridge', 'unexpected non-text frame; dropping')
       return
     }
     let raw: unknown
     try {
       raw = JSON.parse(e.data)
     } catch (err) {
-      console.warn('[bridge] failed to parse message', err, e.data)
       log.warn('bridge', `failed to parse message: ${String(err)}`)
       return
     }
@@ -253,7 +249,6 @@ export function disconnect(): void {
 export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K>): boolean {
   const [type, payload] = args as [K, unknown?]
   if (!socket || socket.readyState !== WebSocket.OPEN) {
-    console.warn('[bridge] not connected; dropping', type)
     log.warn('bridge', `not connected; dropping ${type}`)
     return false
   }
@@ -369,7 +364,7 @@ function dispatch(msg: BridgeInboundMessage): void {
       // a negative ack means the backend rejected (rare — addTrack is
       // idempotent on the backend). Diagnostic only.
       if (!msg.payload.ok) {
-        console.warn('[bridge] TRACK_ADDED ok=false for', msg.payload.trackId)
+        log.warn('bridge', `TRACK_ADDED ok=false for ${msg.payload.trackId}`)
       }
       break
     }
@@ -379,7 +374,7 @@ function dispatch(msg: BridgeInboundMessage): void {
       // ack is purely diagnostic: a negative ack means our view drifted
       // out of sync with the backend (unknown trackId on the engine side).
       if (!msg.payload.ok) {
-        console.warn('[bridge] TRACK_REMOVED ok=false for', msg.payload.trackId)
+        log.warn('bridge', `TRACK_REMOVED ok=false for ${msg.payload.trackId}`)
       }
       break
     }
@@ -389,7 +384,7 @@ function dispatch(msg: BridgeInboundMessage): void {
       // we sent CLIP_REMOVE; this ack just confirms the backend dropped
       // it too. ok=false means the id was unknown — a diagnostic.
       if (!msg.payload.ok) {
-        console.warn('[bridge] CLIP_REMOVED ok=false for', msg.payload.clipId)
+        log.warn('bridge', `CLIP_REMOVED ok=false for ${msg.payload.clipId}`)
       }
       break
     }
@@ -399,11 +394,9 @@ function dispatch(msg: BridgeInboundMessage): void {
       // on commit; the ack just confirms the engine accepted it. A
       // negative ack means the trackId was unknown on the backend.
       if (!msg.payload.ok) {
-        console.warn(
-          '[bridge] TRACK_GAIN_APPLIED ok=false for',
-          msg.payload.trackId,
-          'gain=',
-          msg.payload.gain
+        log.warn(
+          'bridge',
+          `TRACK_GAIN_APPLIED ok=false for ${msg.payload.trackId} gain=${msg.payload.gain}`
         )
       }
       break
@@ -746,12 +739,12 @@ function assertNever(value: never): never {
  */
 function validateInbound(raw: unknown): BridgeInboundMessage | null {
   if (typeof raw !== 'object' || raw === null) {
-    console.warn('[bridge] dropped non-object envelope', raw)
+    log.warn('bridge', 'dropped non-object envelope')
     return null
   }
   const env = raw as RawBridgeEnvelope
   if (!isBridgeInboundType(env.type)) {
-    console.warn('[bridge] dropped unknown envelope type', env.type)
+    log.warn('bridge', `dropped unknown envelope type ${String(env.type)}`)
     return null
   }
   return narrowPayload(env.type, env.payload)
@@ -819,7 +812,7 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
 }
 
 function payloadMismatch(type: BridgeInboundType, payload: unknown): null {
-  console.warn('[bridge] dropped envelope with malformed payload', type, payload)
+  log.warn('bridge', `dropped envelope with malformed payload type=${type} payload=${JSON.stringify(payload)}`)
   return null
 }
 

@@ -36,6 +36,7 @@
 // render.
 
 import { defineStore } from 'pinia'
+import { log } from '@/lib/log'
 
 interface AppState {
   loggingEnabled: boolean
@@ -89,7 +90,7 @@ export const useAppStore = defineStore('app', {
         this.autosaveIntervalSeconds = autosave.intervalSeconds
         this.recentProjects = recents
       } catch (err) {
-        console.warn('[appStore] hydrate failed, using defaults:', err)
+        log.warn('app', `hydrate failed, using defaults: ${String(err)}`)
         this.loggingEnabled = false
         this.devToolsEnabled = false
         this.toastsEnabled = true
@@ -124,7 +125,7 @@ export const useAppStore = defineStore('app', {
       try {
         this.recentProjects = await window.silverdaw.getRecentProjects()
       } catch (err) {
-        console.warn('[appStore] refreshRecentProjects failed:', err)
+        log.warn('app', `refreshRecentProjects failed: ${String(err)}`)
       }
     },
 

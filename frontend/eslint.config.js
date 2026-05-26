@@ -84,5 +84,16 @@ export default [
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': 'off'
     }
+  },
+  // Renderer source: forbid direct console.* calls so all observability
+  // flows through `lib/log.ts` (which forwards to the per-session file
+  // logger via IPC). `lib/log.ts` itself is the only allowed exception
+  // — it falls back to console.warn when the IPC flush itself fails.
+  {
+    files: ['src/renderer/**/*.{ts,vue}'],
+    ignores: ['src/renderer/src/lib/log.ts'],
+    rules: {
+      'no-console': 'error'
+    }
   }
 ]
