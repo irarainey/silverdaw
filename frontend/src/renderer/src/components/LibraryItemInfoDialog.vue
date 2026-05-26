@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
 import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
+import { shiftedKey } from '@/lib/pitchKey'
+import { effectiveTempoRatio } from '@/lib/warp'
 
 const props = defineProps<{
   open: boolean
@@ -59,7 +61,28 @@ const usages = computed(() => {
   return rows
 })
 
-const displayKey = computed(() => props.item?.key ?? props.item?.metadata?.key)
+const pitchShifted = computed(() => {
+  const item = props.item
+  return item?.kind === 'saved-clip' && ((item.semitones ?? 0) !== 0 || (item.cents ?? 0) !== 0)
+})
+const displayKey = computed(() => {
+  const item = props.item
+  if (!item) return undefined
+  if (pitchShifted.value) {
+    return shiftedKey(sourceItem.value?.key ?? sourceItem.value?.metadata?.key, item.semitones, item.cents)
+  }
+  return item.key ?? item.metadata?.key
+})
+const warpedBpm = computed(() => {
+  const item = props.item
+  if (!item || item.kind !== 'saved-clip' || item.warpEnabled !== true) return undefined
+  const sourceBpm = item.bpm ?? sourceItem.value?.bpm
+  if (typeof sourceBpm !== 'number' || sourceBpm <= 0) return undefined
+  const ratio = effectiveTempoRatio({ tempoRatio: item.tempoRatio, sourceBpm, projectBpm: sourceBpm })
+  return sourceBpm * ratio
+})
+const bpmLabel = computed(() => props.item?.kind === 'saved-clip' && warpedBpm.value ? 'Warped BPM' : 'Detected BPM')
+const keyLabel = computed(() => pitchShifted.value ? 'Shifted key' : 'Detected key')
 const displayDecodedCachePath = computed(() => {
   const item = props.item
   if (!item) return 'Not available yet'
@@ -136,6 +159,13 @@ function formatDuration(ms: number): string {
   return h > 0
     ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
     : `${m}:${String(s).padStart(2, '0')}`
+}
+
+function formatPreciseDuration(ms: number): string {
+  const safe = Math.max(0, ms)
+  if (safe < 1000) return `${Math.round(safe)} ms`
+  if (safe < 60_000) return `${(safe / 1000).toFixed(safe < 10_000 ? 3 : 2)} s`
+  return formatDuration(safe)
 }
 
 function formatTime(ms: number): string {
@@ -237,7 +267,7 @@ function channelLabel(count: number): string {
               <dt class="text-zinc-500">
                 Duration
               </dt>
-              <dd>{{ formatDuration(item.durationMs) }}</dd>
+              <dd>{{ item.kind === 'saved-clip' ? formatPreciseDuration(item.durationMs) : formatDuration(item.durationMs) }}</dd>
               <dt class="text-zinc-500">
                 Sample rate
               </dt>
@@ -247,13 +277,13 @@ function channelLabel(count: number): string {
               </dt>
               <dd>{{ channelLabel(item.channelCount) }}</dd>
               <dt class="text-zinc-500">
-                Detected BPM
+                {{ bpmLabel }}
               </dt>
               <dd>
-                <span v-if="item.bpm">
-                  {{ item.bpm.toFixed(2) }}
+                <span v-if="warpedBpm ?? item.bpm">
+                  {{ (warpedBpm ?? item.bpm)?.toFixed(2) }}
                   <span
-                    v-if="item.variableTempo"
+                    v-if="!warpedBpm && item.variableTempo"
                     class="text-amber-300"
                   >(variable)</span>
                 </span>
@@ -263,24 +293,34 @@ function channelLabel(count: number): string {
                 v-if="displayKey"
                 class="text-zinc-500"
               >
-                Detected key
+                {{ keyLabel }}
               </dt>
               <dd v-if="displayKey">
                 <span
                   :class="keyBadgeClass(displayKey)"
-                  title="Detected key"
+                  :title="keyLabel"
                 >
                   {{ displayKey }}
                 </span>
               </dd>
-              <dt class="text-zinc-500">
+              <dt
+                v-if="item.kind !== 'saved-clip'"
+                class="text-zinc-500"
+              >
                 Beat markers
               </dt>
-              <dd>{{ item.beats?.length ?? 0 }}</dd>
-              <dt class="text-zinc-500">
+              <dd v-if="item.kind !== 'saved-clip'">
+                {{ item.beats?.length ?? 0 }}
+              </dd>
+              <dt
+                v-if="item.kind !== 'saved-clip'"
+                class="text-zinc-500"
+              >
                 Beat anchor
               </dt>
-              <dd>{{ item.beatAnchorSec !== undefined ? `${item.beatAnchorSec.toFixed(3)} s` : 'None' }}</dd>
+              <dd v-if="item.kind !== 'saved-clip'">
+                {{ item.beatAnchorSec !== undefined ? `${item.beatAnchorSec.toFixed(3)} s` : 'None' }}
+              </dd>
             </dl>
           </section>
 
