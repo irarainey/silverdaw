@@ -1099,13 +1099,19 @@ void AudioEngine::setPreviewPositionMs(double ms)
 {
     if (preview.transportSource == nullptr) return;
     const double clamped = juce::jlimit(0.0, juce::jmax(0.0, preview.durationMs), ms);
-    preview.transportSource->setPosition(clamped / 1000.0);
+    const double ratio = preview.warp != nullptr && preview.warp->isActive()
+                             ? preview.warp->getTempoRatio()
+                             : 1.0;
+    preview.transportSource->setPosition((clamped / juce::jmax(1.0e-9, ratio)) / 1000.0);
 }
 
 double AudioEngine::getPreviewPositionMs() const
 {
     if (preview.transportSource == nullptr) return 0.0;
-    return preview.transportSource->getCurrentPosition() * 1000.0;
+    const double ratio = preview.warp != nullptr && preview.warp->isActive()
+                             ? preview.warp->getTempoRatio()
+                             : 1.0;
+    return preview.transportSource->getCurrentPosition() * 1000.0 * ratio;
 }
 
 double AudioEngine::getPreviewDurationMs() const
