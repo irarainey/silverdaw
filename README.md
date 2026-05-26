@@ -205,11 +205,22 @@ filesystem carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight 
 it was designed for.
 
 The full envelope catalogue lives in
-[`frontend/src/shared/bridge-protocol.ts`](frontend/src/shared/bridge-protocol.ts) with TS
-discriminated unions and runtime guards. The renderer dispatches inbound messages in
+[`frontend/src/shared/bridge-protocol.ts`](frontend/src/shared/bridge-protocol.ts).
+Inbound (backend → renderer) payloads are defined as `zod` schemas; the
+TypeScript types are derived via `z.infer<typeof XPayloadSchema>` so the schema
+is the single source of truth — there is no separate hand-written interface to
+drift away from the runtime guard. Each `isXxxPayload` guard is a one-line
+wrapper around `schema.safeParse(value).success`. Outbound (renderer → backend)
+payloads stay as plain TypeScript interfaces because every `send<K>()` call site
+is type-checked at compile time. The renderer dispatches inbound messages in
 [`frontend/src/renderer/src/lib/bridgeService.ts`](frontend/src/renderer/src/lib/bridgeService.ts);
 the backend dispatches in [`backend/src/Main.cpp`](backend/src/Main.cpp)
-(`dispatchBridgeMessage`).
+(`dispatchBridgeMessage`). Inbound string / number payload fields on the
+backend are extracted through the strict
+[`backend/src/PayloadHelpers.h`](backend/src/PayloadHelpers.h) helpers
+(`tryGetString` / `tryGetRequiredString` / `tryGetNumber`) which reject
+malformed values up front instead of silently coercing them via
+`juce::var::toString()`.
 
 ## Project state model
 
@@ -840,6 +851,21 @@ and auto-follow during playback are O(1) layer translations — no clip iteratio
 allocation. A full repaint (`redraw()`) only fires on content change: track add/remove, clip
 move, peaks arrival, zoom, BPM, project length, header-column resize.
 
+**Peaks LOD pyramid.** Each library item carries a small ladder of pre-downsampled
+peak arrays (`peaksLod`) alongside its base peaks. `drawClip` picks the LOD whose
+`peaksPerSecond` is closest to the current draw scale so the waveform stays crisp
+when zoomed in and the inner per-pixel min/max scan stays cheap when zoomed out.
+Older projects that lack a stored pyramid auto-bake one on the next load. The
+clip's beat-marker loop **stride-steps** by a precomputed `ceil(minMarkerSpacingPx /
+pxPerBeat)` so a 5-minute clip at 120 BPM doesn't iterate every beat when only a
+handful of markers fit on screen.
+
+**Hot-path library lookups** go through the `libraryStore.byId` Pinia getter (an
+`O(items)`-built `Record<string, LibraryItem>` cached and refreshed only when the
+library changes). `drawClip` resolves the parent library item and source BPM once
+and threads them into `drawClipHeader`, so the per-clip per-redraw cost is two
+O(1) lookups rather than four O(n) array scans.
+
 The playhead Graphics is built once (vertical line + two triangular heads at local x = 0)
 and re-positioned via `.x = viewportX` on every `requestAnimationFrame` tick. The visual
 position mirrors `transport.positionMs` directly (no client-side interpolation), so the audio
@@ -854,6 +880,10 @@ Auto-follow during playback uses a smooth catch-up:
   `max(3 × playback_rate, 5 × gap)` px / second. Large gaps close in ~½ second; once settled
   at steady-state the catch-up rate is 3× playback so the playhead visibly drifts within the
   scrolling waveform (matches Ableton-style follow).
+
+On the backend, `BridgeServer::broadcast` suppresses per-envelope log writes for both
+`PLAYHEAD_UPDATE` and `PREVIEW_POSITION` (the only 60 Hz envelopes), so a playing transport
+does not generate 60 log lines / second.
 
 ## Prerequisites
 
