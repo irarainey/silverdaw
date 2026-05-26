@@ -905,6 +905,16 @@ function createWindow(): void {
     event.preventDefault()
   })
 
+  // Defence-in-depth: deny every `window.open` / `target="_blank"`
+  // request from the renderer. The renderer is a single-page app with
+  // no legitimate use for `window.open`; any call is either a bug or
+  // a compromised third-party resource. Without this handler Chromium
+  // would spawn a fresh `BrowserWindow` with default `webPreferences`
+  // — crucially, one that does NOT inherit the meta-CSP from
+  // `index.html`. We block the action up-front so the new window is
+  // never created.
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+
   // In a dev session, auto-open DevTools when the user has explicitly
   // enabled DevTools in Preferences. Packaged builds never auto-open —
   // there's the Debug menu's "Toggle Developer Tools" for that — and an
