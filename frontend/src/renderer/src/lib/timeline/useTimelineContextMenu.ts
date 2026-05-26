@@ -1,0 +1,239 @@
+// Clip context menu for the timeline. Owns:
+//
+// - the menu's open/position/target-clip refs,
+// - the dynamic `items` builder (depends on project + library + transport
+//   state to compute disabled flags, swatch selection, conditional rows),
+// - the right-click hit-test against the timeline's clip hit regions,
+// - the command dispatcher that turns the menu's emitted command
+//   strings into store mutations / dialog opens / IPC calls.
+//
+// Decoupled from the host component so the items builder is
+// unit-testable and so other surfaces could in principle reuse the
+// same dispatcher. The DOM rect lookup in `onContextMenu` is the
+// only piece that needs a real `<div>` ref at runtime; tests can
+// exercise the items builder + dispatcher directly.
+
+import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import {
+  effectiveClipDurationMs,
+  TRACK_PALETTE,
+  useProjectStore
+} from '@/stores/projectStore'
+import { useLibraryStore } from '@/stores/libraryStore'
+import { useTransportStore } from '@/stores/transportStore'
+import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
+import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
+import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
+import { log } from '@/lib/log'
+
+export type ChooseAudioFile = (args: {
+  title?: string
+  defaultPath?: string
+}) => Promise<string | null>
+
+export interface UseTimelineContextMenuInputs {
+  /** The timeline host element. The hit-test uses it to convert
+   *  pointer coords from page space to world (scroll-adjusted) space. */
+  host: Ref<HTMLDivElement | null>
+  scrollX: Ref<number>
+  scrollY: Ref<number>
+  /** Returns the latest hit-region array. We use a getter (rather
+   *  than an array reference) so the array is read fresh on each
+   *  right-click and the composable never holds onto a stale slice. */
+  getClipHitRegions: () => readonly ClipHitRegion[]
+  /** Dialog open actions; injected so the menu doesn't depend on the
+   *  full `useClipDialogs` return type. */
+  dialogs: ClipDialogActions
+  /** Audio-file picker for the Relink command. Injected so tests can
+   *  stub it out. Defaults to `window.silverdaw.chooseAudioFile`. */
+  chooseAudioFile?: ChooseAudioFile
+  /** Logger for picker / IPC failures. Defaults to `console.warn`. */
+  onError?: (message: string, err: unknown) => void
+}
+
+export interface TimelineContextMenu {
+  contextMenuOpen: Ref<boolean>
+  contextMenuX: Ref<number>
+  contextMenuY: Ref<number>
+  contextMenuClipId: Ref<string | null>
+  contextMenuItems: ComputedRef<ClipContextMenuItem[]>
+  onContextMenu(e: MouseEvent): void
+  onContextMenuCommand(command: string): void
+  onContextMenuClose(): void
+}
+
+const DEFAULT_CHOOSE_AUDIO_FILE: ChooseAudioFile = (args) => {
+  const api = (globalThis as { silverdaw?: { chooseAudioFile: ChooseAudioFile } }).silverdaw
+  if (!api) return Promise.resolve(null)
+  return api.chooseAudioFile(args)
+}
+
+export function useTimelineContextMenu(
+  inputs: UseTimelineContextMenuInputs
+): TimelineContextMenu {
+  const project = useProjectStore()
+  const library = useLibraryStore()
+  const transport = useTransportStore()
+
+  const chooseAudioFile = inputs.chooseAudioFile ?? DEFAULT_CHOOSE_AUDIO_FILE
+  const onError =
+    inputs.onError ??
+    ((message: string, err: unknown): void => {
+      log.warn('timeline', `${message}: ${err instanceof Error ? err.message : String(err)}`)
+    })
+
+  const contextMenuOpen = ref(false)
+  const contextMenuX = ref(0)
+  const contextMenuY = ref(0)
+  const contextMenuClipId = ref<string | null>(null)
+
+  const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
+    const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
+    const items: ClipContextMenuItem[] = []
+    const clipParent = clip ? library.items.find((i) => i.id === clip.libraryItemId) : null
+    if (clip?.unresolved) {
+      items.push({ command: 'clip.relink', label: 'Relink' })
+    }
+    const hasLibraryItem = !!clipParent
+    items.push({
+      command: 'clip.openEditor',
+      label: 'Open in editor',
+      disabled: !clip || clip.unresolved || !hasLibraryItem
+    })
+    items.push({
+      command: 'clip.info',
+      label: 'Show information',
+      disabled: !clip || clip.unresolved || !hasLibraryItem
+    })
+    items.push({ command: 'clip.delete', label: 'Delete' })
+    items.push({ command: 'clip.duplicate', label: 'Duplicate', separatorAbove: true })
+    const isLinkedClip = clipParent?.kind === 'saved-clip'
+    const playheadOverClip =
+      !!clip &&
+      project.selectedTrackId === clip.trackId &&
+      transport.positionMs > clip.startMs &&
+      transport.positionMs < clip.startMs + effectiveClipDurationMs(clip)
+    items.push({
+      command: 'clip.split',
+      label: 'Split at playhead',
+      disabled: isLinkedClip || !playheadOverClip
+    })
+    if (clip) {
+      const track = project.tracks.find((t) => t.id === clip.trackId)
+      const selected =
+        typeof clip.colorIndex === 'number'
+          ? clip.colorIndex
+          : track
+            ? track.colorIndex
+            : undefined
+      items.push({
+        command: 'clip.color',
+        label: 'Colour',
+        separatorAbove: true,
+        swatches: TRACK_PALETTE.map((p) => ({ cssHex: p.cssHex, label: p.id })),
+        selectedSwatch: selected
+      })
+    }
+    items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true, disabled: isLinkedClip })
+    items.push({ command: 'clip.pitch', label: 'Pitch', disabled: isLinkedClip })
+    items.push({
+      command: 'clip.saveToLibrary',
+      label: 'Save clip to library',
+      separatorAbove: true,
+      disabled: isLinkedClip
+    })
+    if (clip && isLinkedClip) {
+      items.push({ command: 'clip.unlink', label: 'Unlink from library' })
+    }
+    items.push({ command: 'clip.saveSample', label: 'Save as sample' })
+    return items
+  })
+
+  function onContextMenu(e: MouseEvent): void {
+    const host = inputs.host.value
+    if (!host) return
+    const rect = host.getBoundingClientRect()
+    const worldX = e.clientX - rect.left + inputs.scrollX.value
+    const worldY = e.clientY - rect.top + inputs.scrollY.value
+    const regions = inputs.getClipHitRegions()
+    // Reverse iterate so the visually top-most clip wins on overlap.
+    for (let i = regions.length - 1; i >= 0; i--) {
+      const r = regions[i]
+      if (!r) continue
+      if (worldX >= r.x && worldX <= r.x + r.w && worldY >= r.y && worldY <= r.y + r.h) {
+        e.preventDefault()
+        contextMenuClipId.value = r.clipId
+        contextMenuX.value = e.clientX
+        contextMenuY.value = e.clientY
+        contextMenuOpen.value = true
+        return
+      }
+    }
+    // Not on a clip — let the browser default contextmenu happen (which
+    // is a no-op in Electron) so we don't accidentally swallow the event
+    // for the rest of the layout.
+  }
+
+  function onContextMenuCommand(command: string): void {
+    const clipId = contextMenuClipId.value
+    if (!clipId) return
+    const clip = project.clips[clipId]
+    // Defensive: a clip might have been deleted between menu-open
+    // and command-dispatch. Bail rather than crashing.
+    if (!clip && !command.startsWith('clip.color:')) {
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clip.openEditor') {
+      inputs.dialogs.openEditor(clipId)
+    } else if (command === 'clip.info') {
+      inputs.dialogs.openInfo(clipId)
+    } else if (command === 'clip.delete') {
+      project.removeClip(clipId)
+    } else if (command === 'clip.duplicate') {
+      project.duplicateClip(clipId)
+    } else if (command === 'clip.split') {
+      project.splitClipAt(clipId, transport.positionMs)
+    } else if (command === 'clip.saveToLibrary') {
+      project.saveClipToLibrary(clipId)
+    } else if (command === 'clip.saveSample') {
+      void project.saveClipAsSample(clipId)
+    } else if (command === 'clip.unlink') {
+      project.unlinkClipFromLibrary(clipId)
+    } else if (command === 'clip.warp') {
+      inputs.dialogs.openWarp(clipId, 'tempo')
+    } else if (command === 'clip.pitch') {
+      inputs.dialogs.openWarp(clipId, 'pitch')
+    } else if (command.startsWith('clip.color:')) {
+      const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
+      if (Number.isFinite(idx)) project.setClipColor(clipId, idx)
+    } else if (command === 'clip.relink') {
+      if (clip) {
+        const slash = Math.max(clip.filePath.lastIndexOf('\\'), clip.filePath.lastIndexOf('/'))
+        const defaultPath = slash > 0 ? clip.filePath.slice(0, slash) : undefined
+        chooseAudioFile({ title: `Locate ${clip.fileName}`, defaultPath })
+          .then((picked) => {
+            if (picked) project.relinkLibraryItem(clip.libraryItemId, picked)
+          })
+          .catch((err) => onError('Failed to choose audio file for relink', err))
+      }
+    }
+    contextMenuClipId.value = null
+  }
+
+  function onContextMenuClose(): void {
+    contextMenuOpen.value = false
+    contextMenuClipId.value = null
+  }
+
+  return {
+    contextMenuOpen,
+    contextMenuX,
+    contextMenuY,
+    contextMenuClipId,
+    contextMenuItems,
+    onContextMenu,
+    onContextMenuCommand,
+    onContextMenuClose
+  }
+}

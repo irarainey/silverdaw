@@ -1,0 +1,318 @@
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
+import { useTimelineContextMenu } from './useTimelineContextMenu'
+import { useClipDialogs } from './useClipDialogs'
+import { useProjectStore, type Clip } from '@/stores/projectStore'
+import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { useTransportStore } from '@/stores/transportStore'
+
+vi.mock('@/lib/bridgeService', () => ({ send: vi.fn() }))
+vi.mock('@/lib/log', () => ({
+  log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }
+}))
+vi.mock('@/lib/audio', () => ({ PEAKS_PER_SECOND: 200, decodeAudioToPeaks: vi.fn() }))
+
+function makeAudioFileItem(id = 'src'): LibraryItem {
+  return {
+    id,
+    kind: 'audio-file',
+    fileName: `${id}.wav`,
+    filePath: `C:\\${id}.wav`,
+    playbackFilePath: `C:\\${id}.wav`,
+    durationMs: 5_000,
+    sampleRate: 48_000,
+    channelCount: 2,
+    peaks: new Float32Array()
+  } as LibraryItem
+}
+
+function makeSavedClipItem(id = 'saved'): LibraryItem {
+  return {
+    id,
+    kind: 'saved-clip',
+    fileName: 'src.wav',
+    filePath: 'C:\\src.wav',
+    playbackFilePath: 'C:\\src.wav',
+    durationMs: 2_000,
+    sampleRate: 48_000,
+    channelCount: 2,
+    peaks: new Float32Array(),
+    derivedFrom: { sourceItemId: 'src', sourceClipId: '', inMs: 0, durationMs: 2_000 }
+  } as LibraryItem
+}
+
+function makeClip(overrides: Partial<Clip> = {}): Clip {
+  return {
+    id: 'clip-1',
+    trackId: 'track-1',
+    libraryItemId: 'src',
+    filePath: 'C:\\src.wav',
+    fileName: 'src.wav',
+    startMs: 0,
+    inMs: 0,
+    durationMs: 1_000,
+    sampleRate: 48_000,
+    channelCount: 2,
+    peaks: new Float32Array(),
+    unresolved: false,
+    ...overrides
+  } as Clip
+}
+
+function setupMenu(opts: {
+  clip: Clip
+  item?: LibraryItem
+  selectedTrackId?: string | null
+  positionMs?: number
+  chooseAudioFile?: ReturnType<typeof vi.fn>
+}): ReturnType<typeof useTimelineContextMenu> {
+  const project = useProjectStore()
+  const library = useLibraryStore()
+  const transport = useTransportStore()
+  project.clips = { [opts.clip.id]: opts.clip }
+  project.tracks = [
+    {
+      id: opts.clip.trackId,
+      name: 'T1',
+      colorIndex: 5,
+      muted: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      armed: false
+    } as never
+  ]
+  project.selectedTrackId = opts.selectedTrackId ?? null
+  library.items = opts.item ? [opts.item] : []
+  transport.positionMs = opts.positionMs ?? 0
+
+  const dialogs = useClipDialogs()
+  const menu = useTimelineContextMenu({
+    host: ref(null),
+    scrollX: ref(0),
+    scrollY: ref(0),
+    getClipHitRegions: () => [],
+    dialogs,
+    chooseAudioFile: opts.chooseAudioFile
+  })
+  menu.contextMenuClipId.value = opts.clip.id
+  return menu
+}
+
+function commandsOf(menu: ReturnType<typeof useTimelineContextMenu>): string[] {
+  return menu.contextMenuItems.value.map((i) => i.command)
+}
+
+function findItem(
+  menu: ReturnType<typeof useTimelineContextMenu>,
+  command: string
+): { command: string; disabled?: boolean; selectedSwatch?: number } | undefined {
+  return menu.contextMenuItems.value.find((i) => i.command === command)
+}
+
+describe('useTimelineContextMenu — items builder', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('unresolved clip shows Relink and disables Open in editor / Show information', () => {
+    const menu = setupMenu({
+      clip: makeClip({ unresolved: true }),
+      item: makeAudioFileItem()
+    })
+    const cmds = commandsOf(menu)
+    expect(cmds[0]).toBe('clip.relink')
+    expect(findItem(menu, 'clip.openEditor')?.disabled).toBe(true)
+    expect(findItem(menu, 'clip.info')?.disabled).toBe(true)
+  })
+
+  it('clip with missing library item disables Open in editor / Show information', () => {
+    const menu = setupMenu({ clip: makeClip({ libraryItemId: 'gone' }) })
+    expect(findItem(menu, 'clip.openEditor')?.disabled).toBe(true)
+    expect(findItem(menu, 'clip.info')?.disabled).toBe(true)
+  })
+
+  it('linked saved-clip disables split / warp / pitch / save-to-library and shows Unlink', () => {
+    const menu = setupMenu({
+      clip: makeClip({ libraryItemId: 'saved' }),
+      item: makeSavedClipItem('saved')
+    })
+    expect(findItem(menu, 'clip.split')?.disabled).toBe(true)
+    expect(findItem(menu, 'clip.warp')?.disabled).toBe(true)
+    expect(findItem(menu, 'clip.pitch')?.disabled).toBe(true)
+    expect(findItem(menu, 'clip.saveToLibrary')?.disabled).toBe(true)
+    expect(commandsOf(menu)).toContain('clip.unlink')
+  })
+
+  it('audio-file clip omits Unlink', () => {
+    const menu = setupMenu({
+      clip: makeClip(),
+      item: makeAudioFileItem()
+    })
+    expect(commandsOf(menu)).not.toContain('clip.unlink')
+  })
+
+  it('Split is enabled only when the playhead sits strictly inside the clip on the selected track', () => {
+    const clip = makeClip({ startMs: 100, durationMs: 200 })
+
+    const noTrack = setupMenu({ clip, item: makeAudioFileItem(), selectedTrackId: null, positionMs: 200 })
+    expect(findItem(noTrack, 'clip.split')?.disabled).toBe(true)
+
+    setActivePinia(createPinia())
+    const wrongTrack = setupMenu({ clip, item: makeAudioFileItem(), selectedTrackId: 'other', positionMs: 200 })
+    expect(findItem(wrongTrack, 'clip.split')?.disabled).toBe(true)
+
+    setActivePinia(createPinia())
+    const outside = setupMenu({ clip, item: makeAudioFileItem(), selectedTrackId: clip.trackId, positionMs: 50 })
+    expect(findItem(outside, 'clip.split')?.disabled).toBe(true)
+
+    setActivePinia(createPinia())
+    const inside = setupMenu({ clip, item: makeAudioFileItem(), selectedTrackId: clip.trackId, positionMs: 200 })
+    expect(findItem(inside, 'clip.split')?.disabled).toBe(false)
+  })
+
+  it('Colour selected swatch prefers the clip override, falls back to the track default', () => {
+    const trackDefault = setupMenu({
+      clip: makeClip(),
+      item: makeAudioFileItem()
+    })
+    expect(findItem(trackDefault, 'clip.color')?.selectedSwatch).toBe(5)
+
+    setActivePinia(createPinia())
+    const overridden = setupMenu({
+      clip: makeClip({ colorIndex: 9 }),
+      item: makeAudioFileItem()
+    })
+    expect(findItem(overridden, 'clip.color')?.selectedSwatch).toBe(9)
+  })
+})
+
+describe('useTimelineContextMenu — command dispatch', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('openEditor / openInfo route to the dialog actions', () => {
+    const clip = makeClip()
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    project.clips = { [clip.id]: clip }
+    library.items = [makeAudioFileItem()]
+
+    const dialogs = useClipDialogs()
+    const openEditor = vi.spyOn(dialogs, 'openEditor')
+    const openInfo = vi.spyOn(dialogs, 'openInfo')
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      dialogs
+    })
+    menu.contextMenuClipId.value = clip.id
+
+    menu.onContextMenuCommand('clip.openEditor')
+    expect(openEditor).toHaveBeenCalledWith(clip.id)
+
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.info')
+    expect(openInfo).toHaveBeenCalledWith(clip.id)
+  })
+
+  it('warp / pitch route to openWarp with the correct panel', () => {
+    const clip = makeClip()
+    const project = useProjectStore()
+    project.clips = { [clip.id]: clip }
+
+    const dialogs = useClipDialogs()
+    const openWarp = vi.spyOn(dialogs, 'openWarp')
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      dialogs
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.warp')
+    expect(openWarp).toHaveBeenLastCalledWith(clip.id, 'tempo')
+
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.pitch')
+    expect(openWarp).toHaveBeenLastCalledWith(clip.id, 'pitch')
+  })
+
+  it('relink invokes the injected chooseAudioFile picker', async () => {
+    const clip = makeClip({ filePath: 'C:\\folder\\src.wav', fileName: 'src.wav' })
+    const project = useProjectStore()
+    project.clips = { [clip.id]: clip }
+    const relinkSpy = vi.spyOn(project, 'relinkLibraryItem').mockImplementation(() => {})
+    const chooseAudioFile = vi.fn().mockResolvedValue('C:\\new\\src.wav')
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      dialogs: useClipDialogs(),
+      chooseAudioFile
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.relink')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(chooseAudioFile).toHaveBeenCalledWith({
+      title: 'Locate src.wav',
+      defaultPath: 'C:\\folder'
+    })
+    expect(relinkSpy).toHaveBeenCalledWith(clip.libraryItemId, 'C:\\new\\src.wav')
+  })
+
+  it('command dispatch on a missing clip is a no-op', () => {
+    const project = useProjectStore()
+    project.clips = {}
+    const removeSpy = vi.spyOn(project, 'removeClip').mockImplementation(() => {})
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = 'ghost'
+    menu.onContextMenuCommand('clip.delete')
+    expect(removeSpy).not.toHaveBeenCalled()
+  })
+
+  it('clip.color:<idx> sets the clip colour', () => {
+    const clip = makeClip()
+    const project = useProjectStore()
+    project.clips = { [clip.id]: clip }
+    const colorSpy = vi.spyOn(project, 'setClipColor').mockImplementation(() => {})
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.color:7')
+    expect(colorSpy).toHaveBeenCalledWith(clip.id, 7)
+  })
+
+  it('onContextMenuClose clears state', () => {
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuOpen.value = true
+    menu.contextMenuClipId.value = 'x'
+    menu.onContextMenuClose()
+    expect(menu.contextMenuOpen.value).toBe(false)
+    expect(menu.contextMenuClipId.value).toBe(null)
+  })
+})

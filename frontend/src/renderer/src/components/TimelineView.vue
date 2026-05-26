@@ -17,13 +17,13 @@
 // pointer handling lives in `useScrollbarDrag`.
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { effectiveClipDurationMs, isClipTempoWarpActive, useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
+import { effectiveClipDurationMs, isClipTempoWarpActive, useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { isWarpPending } from '@/lib/warp'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
-import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
+import ClipContextMenu from '@/components/ClipContextMenu.vue'
 import ClipWarpDialog from '@/components/ClipWarpDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
@@ -43,6 +43,8 @@ import { useDropZone } from '@/lib/timeline/useDropZone'
 import { useTimelineDrawing } from '@/lib/timeline/useTimelineDrawing'
 import { useScrollbarDrag } from '@/lib/timeline/useScrollbarDrag'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { useClipDialogs } from '@/lib/timeline/useClipDialogs'
+import { useTimelineContextMenu } from '@/lib/timeline/useTimelineContextMenu'
 
 const project = useProjectStore()
 const library = useLibraryStore()
@@ -167,171 +169,45 @@ onBeforeUnmount(() => {
   stopPlayheadRaf()
 })
 
-// ─── Clip context menu ────────────────────────────────────────────────────
-// Right-click on a clip block opens a floating menu. Hit-testing uses the
-// same world-space `clipHitRegions` array `useDragHandlers` reads — we
-// convert the pointer to world coords by adding the current scroll.
-const contextMenuOpen = ref(false)
-const contextMenuX = ref(0)
-const contextMenuY = ref(0)
-const contextMenuClipId = ref<string | null>(null)
-// Warp / pitch settings dialog. Surfaced from the right-click context menu;
-// driven entirely by `project.setClipWarp` so closing without an
-// explicit "save" doesn't lose anything (every slider change has
-// already committed).
-const warpDialogOpen = ref(false)
-const warpDialogClipId = ref<string | null>(null)
-const warpDialogPanel = ref<'tempo' | 'pitch'>('tempo')
-const editorClipId = ref<string | null>(null)
-const infoClipId = ref<string | null>(null)
-const editorItem = computed(() => {
-  const clip = editorClipId.value ? project.clips[editorClipId.value] : null
-  return clip ? library.items.find((item) => item.id === clip.libraryItemId) ?? null : null
+// ─── Clip context menu + dialogs ──────────────────────────────────────────
+// State + handlers live in two composables under `@/lib/timeline/`:
+//   - useClipDialogs        — open state + resolved LibraryItem for the
+//                             Clip Editor, Library Info, and Warp/Pitch
+//                             dialogs.
+//   - useTimelineContextMenu — right-click hit-test, dynamic item list,
+//                             and command dispatcher (delete, duplicate,
+//                             split, save-to-library, save-as-sample,
+//                             unlink, warp, pitch, openEditor, info,
+//                             relink, color). Calls into the dialog
+//                             composable for open/close. Hit-testing
+//                             uses the same world-space `clipHitRegions`
+//                             array `useDragHandlers` reads.
+const dialogs = useClipDialogs()
+const {
+  editorClipId,
+  infoClipId,
+  warpDialogOpen,
+  warpDialogClipId,
+  warpDialogPanel,
+  editorItem,
+  infoItem
+} = dialogs
+const contextMenu = useTimelineContextMenu({
+  host,
+  scrollX,
+  scrollY,
+  getClipHitRegions: () => clipHitRegions,
+  dialogs
 })
-const infoItem = computed(() => {
-  const clip = infoClipId.value ? project.clips[infoClipId.value] : null
-  return clip ? library.items.find((item) => item.id === clip.libraryItemId) ?? null : null
-})
-const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
-  const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
-  const items: ClipContextMenuItem[] = []
-  const clipParent = clip ? library.items.find((i) => i.id === clip.libraryItemId) : null
-  if (clip?.unresolved) {
-    items.push({ command: 'clip.relink', label: 'Relink' })
-  }
-  const hasLibraryItem = !!clipParent
-  items.push({ command: 'clip.openEditor', label: 'Open in editor', disabled: !clip || clip.unresolved || !hasLibraryItem })
-  items.push({ command: 'clip.info', label: 'Show information', disabled: !clip || clip.unresolved || !hasLibraryItem })
-  items.push({ command: 'clip.delete', label: 'Delete' })
-  items.push({ command: 'clip.duplicate', label: 'Duplicate', separatorAbove: true })
-  const isLinkedClip = clipParent?.kind === 'saved-clip'
-  const playheadOverClip =
-    !!clip &&
-    project.selectedTrackId === clip.trackId &&
-    transport.positionMs > clip.startMs &&
-    transport.positionMs < clip.startMs + effectiveClipDurationMs(clip)
-  items.push({
-    command: 'clip.split',
-    label: 'Split at playhead',
-    disabled: isLinkedClip || !playheadOverClip
-  })
-  // Colour picker — inline 4×8 swatch grid bound to the 16-entry
-  // TRACK_PALETTE. Picking a swatch sends `CLIP_COLOR` via
-  // setClipColor; the selected outline reflects either the clip's
-  // override or the host track's inherited colour as a hint.
-  if (clip) {
-    const track = project.tracks.find((t) => t.id === clip.trackId)
-    const selected =
-      typeof clip.colorIndex === 'number'
-        ? clip.colorIndex
-        : track
-          ? track.colorIndex
-          : undefined
-    items.push({
-      command: 'clip.color',
-      label: 'Colour',
-      separatorAbove: true,
-      swatches: TRACK_PALETTE.map((p) => ({ cssHex: p.cssHex, label: p.id })),
-      selectedSwatch: selected
-    })
-  }
-  items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true, disabled: isLinkedClip })
-  items.push({ command: 'clip.pitch', label: 'Pitch', disabled: isLinkedClip })
-  items.push({
-    command: 'clip.saveToLibrary',
-    label: 'Save clip to library',
-    separatorAbove: true,
-    disabled: isLinkedClip
-  })
-  // "Unlink from library" only shown when the clip is linked to a
-  // saved-clip library entry. Unlinking preserves the current trim
-  // window and rebinds the clip to the saved-clip's underlying
-  // audio-file source — the audio plays identically; only the link
-  // is gone (so future edits to the saved-clip stop propagating).
-  if (clip) {
-    if (isLinkedClip) {
-      items.push({ command: 'clip.unlink', label: 'Unlink from library' })
-    }
-  }
-  items.push({
-    command: 'clip.saveSample',
-    label: 'Save as sample'
-  })
-  return items
-})
-
-function onContextMenu(e: MouseEvent): void {
-  if (!host.value) return
-  const rect = host.value.getBoundingClientRect()
-  const worldX = (e.clientX - rect.left) + scrollX.value
-  const worldY = (e.clientY - rect.top) + scrollY.value
-  // Reverse iterate so the visually top-most clip wins on overlap.
-  for (let i = clipHitRegions.length - 1; i >= 0; i--) {
-    const r = clipHitRegions[i]
-    if (!r) continue
-    if (worldX >= r.x && worldX <= r.x + r.w && worldY >= r.y && worldY <= r.y + r.h) {
-      e.preventDefault()
-      contextMenuClipId.value = r.clipId
-      contextMenuX.value = e.clientX
-      contextMenuY.value = e.clientY
-      contextMenuOpen.value = true
-      return
-    }
-  }
-  // Not on a clip — let the browser default contextmenu happen (which
-  // is a no-op in Electron) so we don't accidentally swallow the event
-  // for the rest of the layout.
-}
-
-function onContextMenuCommand(command: string): void {
-  const clipId = contextMenuClipId.value
-  if (!clipId) return
-  if (command === 'clip.openEditor') {
-    editorClipId.value = clipId
-  } else if (command === 'clip.info') {
-    infoClipId.value = clipId
-  } else if (command === 'clip.delete') {
-    project.removeClip(clipId)
-  } else if (command === 'clip.duplicate') {
-    project.duplicateClip(clipId)
-  } else if (command === 'clip.split') {
-    project.splitClipAt(clipId, transport.positionMs)
-  } else if (command === 'clip.saveToLibrary') {
-    project.saveClipToLibrary(clipId)
-  } else if (command === 'clip.saveSample') {
-    void project.saveClipAsSample(clipId)
-  } else if (command === 'clip.unlink') {
-    project.unlinkClipFromLibrary(clipId)
-  } else if (command === 'clip.warp') {
-    warpDialogClipId.value = clipId
-    warpDialogPanel.value = 'tempo'
-    warpDialogOpen.value = true
-  } else if (command === 'clip.pitch') {
-    warpDialogClipId.value = clipId
-    warpDialogPanel.value = 'pitch'
-    warpDialogOpen.value = true
-  } else if (command.startsWith('clip.color:')) {
-    const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
-    if (Number.isFinite(idx)) project.setClipColor(clipId, idx)
-  } else if (command === 'clip.relink') {
-    const clip = project.clips[clipId]
-    if (clip) {
-      const slash = Math.max(clip.filePath.lastIndexOf('\\'), clip.filePath.lastIndexOf('/'))
-      const defaultPath = slash > 0 ? clip.filePath.slice(0, slash) : undefined
-      void window.silverdaw
-        .chooseAudioFile({ title: `Locate ${clip.fileName}`, defaultPath })
-        .then((picked) => {
-          if (picked) project.relinkLibraryItem(clip.libraryItemId, picked)
-        })
-    }
-  }
-  contextMenuClipId.value = null
-}
-
-function onContextMenuClose(): void {
-  contextMenuOpen.value = false
-  contextMenuClipId.value = null
-}
+const {
+  contextMenuOpen,
+  contextMenuX,
+  contextMenuY,
+  contextMenuItems,
+  onContextMenu,
+  onContextMenuCommand,
+  onContextMenuClose
+} = contextMenu
 
 function markerAtPointer(e: MouseEvent): string | null {
   if (!host.value) return null
@@ -405,7 +281,7 @@ function onDoubleClick(e: MouseEvent): void {
         const hasLibraryItem = clip ? library.items.some((candidate) => candidate.id === clip.libraryItemId) : false
         if (clip && !clip.unresolved && hasLibraryItem) {
           e.preventDefault()
-          editorClipId.value = r.clipId
+          dialogs.openEditor(r.clipId)
         }
         return
       }
@@ -1078,19 +954,19 @@ function onHeaderResizePointerUp(e: PointerEvent): void {
       :open="warpDialogOpen"
       :clip-id="warpDialogClipId"
       :panel="warpDialogPanel"
-      @close="warpDialogOpen = false"
+      @close="dialogs.closeWarp()"
     />
     <LibraryItemInfoDialog
       :open="infoClipId !== null && infoItem !== null"
       :item="infoItem"
       :clip-id="infoClipId"
-      @close="infoClipId = null"
+      @close="dialogs.closeInfo()"
     />
     <ClipEditorDialog
       :open="editorClipId !== null && editorItem !== null"
       :item="editorItem"
       :clip-id="editorClipId"
-      @close="editorClipId = null"
+      @close="dialogs.closeEditor()"
     />
   </div>
 </template>
