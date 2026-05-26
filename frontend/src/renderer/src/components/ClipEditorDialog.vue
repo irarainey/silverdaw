@@ -1,17 +1,23 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { effectiveClipDurationMs, useProjectStore, type Clip } from '@/stores/projectStore'
-import { libraryItemDisplayName, libraryItemSourceBpm, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { libraryItemSourceBpm, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { formatTime } from '@/lib/musicTime'
 import { effectiveDurationMs, effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import { send as sendBridge } from '@/lib/bridgeService'
-import { keyBadgeClass } from '@/lib/keyBadge'
-import { keyPresetsFor, shiftedKey } from '@/lib/pitchKey'
 import { pickPeaksLod } from '@/lib/peaksLod'
+import { useClipEditorTarget } from '@/lib/clipEditor/useClipEditorTarget'
+import {
+  clampNumber,
+  currentHasTempoWarp,
+  pitchNeedsProcessor,
+  useClipEditorWarpDraft
+} from '@/lib/clipEditor/useClipEditorWarpDraft'
+import ClipEditorWarpPitchPanel from '@/components/ClipEditorWarpPitchPanel.vue'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
@@ -31,51 +37,41 @@ const transport = useTransportStore()
 const dialogEl = ref<HTMLDivElement | null>(null)
 const waveformEl = ref<HTMLCanvasElement | null>(null)
 
-type EditorMode = 'source-library' | 'saved-library' | 'timeline-linked' | 'timeline-unlinked'
+// Target-mode resolution (which kind of editing the dialog is doing
+// for the current `(item, clipId)` open arguments) lives in a
+// composable so the kind-check is exhaustive and single-sourced.
+const itemRef = toRef(props, 'item')
+const clipIdRef = toRef(props, 'clipId')
+const {
+  timelineClip,
+  editorItem,
+  editsExistingClip,
+  editsSavedClipLibrary,
+  editsSingleTimelineClip,
+  titleText,
+  sourceItem,
+  sourceDurationMs,
+  sourceBpm,
+  sourceKey
+} = useClipEditorTarget(itemRef, clipIdRef)
 
-const timelineClip = computed<Clip | null>(() =>
-  props.clipId ? project.clips[props.clipId] ?? null : null
-)
-const editorItem = computed<LibraryItem | null>(() => {
-  const clip = timelineClip.value
-  if (clip) return library.items.find((i) => i.id === clip.libraryItemId) ?? null
-  return props.item ?? null
-})
-const editorMode = computed<EditorMode | null>(() => {
-  const clip = timelineClip.value
-  const entry = editorItem.value
-  if (!entry) return null
-  if (clip) return entry.kind === 'saved-clip' ? 'timeline-linked' : 'timeline-unlinked'
-  return entry.kind === 'saved-clip' ? 'saved-library' : 'source-library'
-})
-const editsExistingClip = computed(() => editorMode.value !== 'source-library')
-const editsSavedClipLibrary = computed(() => editorMode.value === 'saved-library' || editorMode.value === 'timeline-linked')
-const editsSingleTimelineClip = computed(() => editorMode.value === 'timeline-unlinked')
-const titleText = computed(() => {
-  const clip = timelineClip.value
-  const entry = editorItem.value
-  if (clip?.name?.trim()) return clip.name.trim()
-  return entry ? libraryItemDisplayName(entry) : ''
-})
+// Draft warp + pitch state for the inline inspector. The dialog
+// reseeds it on every target switch via `initialiseWarpDraft()`.
+const warpDraft = useClipEditorWarpDraft(sourceBpm)
+const {
+  draftTempoEnabled,
+  draftMode,
+  draftTempoPinned,
+  draftPinnedBpm,
+  draftSemitones,
+  draftCents,
+  draftTempoWarpActive,
+  draftProcessorEnabled,
+  tempoRatioFromPinnedBpm,
+  previewTempoRatio,
+  initialise: initialiseWarpDraft
+} = warpDraft
 
-// The source file we always show. For audio-file items and unlinked
-// timeline clips this is the item itself; for saved clips it's the
-// parent audio-file. Selection markers are positioned within this source.
-const sourceItem = computed<LibraryItem | null>(() => {
-  const entry = editorItem.value
-  if (!entry) return null
-  if (entry.kind === 'saved-clip' && entry.derivedFrom?.sourceItemId) {
-    return library.items.find((i) => i.id === entry.derivedFrom?.sourceItemId) ?? entry
-  }
-  return entry
-})
-
-const sourceDurationMs = computed(() => sourceItem.value?.durationMs ?? 0)
-const sourceBpm = computed(() => {
-  const entry = editorItem.value
-  if (!entry) return undefined
-  return libraryItemSourceBpm(entry, library.items)
-})
 const warpActive = computed(() => {
   const entry = editorItem.value
   if (!entry) return false
@@ -87,123 +83,6 @@ const warpActive = computed(() => {
     projectBpm: transport.bpm
   })
 })
-
-const draftTempoEnabled = ref(false)
-const draftMode = ref<ClipWarpMode>('rhythmic')
-const draftTempoPinned = ref(false)
-const draftPinnedBpm = ref(120)
-const draftSemitones = ref(0)
-const draftCents = ref(0)
-
-const sourceKey = computed(() => {
-  const source = sourceItem.value
-  return source?.key ?? source?.metadata?.key
-})
-const keyPresets = computed(() => keyPresetsFor(sourceKey.value))
-const currentPitchKey = computed(() => shiftedKey(sourceKey.value, draftSemitones.value, draftCents.value))
-const tempoFollowsProject = computed(() => !draftTempoPinned.value)
-
-function clampNumber(v: number, lo: number, hi: number): number {
-  if (!Number.isFinite(v)) return 0
-  return Math.max(lo, Math.min(hi, v))
-}
-
-function pitchNeedsProcessor(semitonesValue: number | undefined, centsValue: number | undefined): boolean {
-  return (semitonesValue ?? 0) !== 0 || (centsValue ?? 0) !== 0
-}
-
-function tempoRatioFromPinnedBpm(): number | undefined {
-  const src = sourceBpm.value
-  if (typeof src !== 'number' || src <= 0) return undefined
-  const bpm = clampNumber(draftPinnedBpm.value, 20, 300)
-  return Math.max(0.25, Math.min(4, bpm / src))
-}
-
-const draftEffectiveRatio = computed(() => {
-  if (!draftTempoEnabled.value) return 1
-  return effectiveTempoRatio({
-    tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : undefined,
-    sourceBpm: sourceBpm.value,
-    projectBpm: transport.bpm
-  })
-})
-
-const draftEffectiveBpm = computed(() => {
-  const src = sourceBpm.value
-  if (typeof src !== 'number' || src <= 0) return null
-  return Math.round(src * draftEffectiveRatio.value * 100) / 100
-})
-
-const draftTempoWarpActive = computed(() =>
-  isWarpActive({
-    warpEnabled: draftTempoEnabled.value,
-    tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : undefined,
-    sourceBpm: sourceBpm.value,
-    projectBpm: transport.bpm
-  })
-)
-
-const draftProcessorEnabled = computed(() =>
-  draftTempoEnabled.value || pitchNeedsProcessor(draftSemitones.value, draftCents.value)
-)
-
-function previewTempoRatio(): number | undefined {
-  if (draftTempoEnabled.value) return draftEffectiveRatio.value
-  return pitchNeedsProcessor(draftSemitones.value, draftCents.value) ? 1 : undefined
-}
-
-function currentHasTempoWarp(current: {
-  warpEnabled?: boolean
-  tempoRatio?: number
-  semitones?: number
-  cents?: number
-}): boolean {
-  const pitchOnlyProcessor = pitchNeedsProcessor(current.semitones, current.cents) && current.tempoRatio === 1
-  return current.warpEnabled === true && !pitchOnlyProcessor
-}
-
-function initialiseWarpDraft(): void {
-  const current = timelineClip.value ?? editorItem.value
-  if (!current || !editsExistingClip.value) {
-    draftTempoEnabled.value = false
-    draftMode.value = 'rhythmic'
-    draftTempoPinned.value = false
-    draftPinnedBpm.value = Math.round(transport.bpm * 100) / 100
-    draftSemitones.value = 0
-    draftCents.value = 0
-    return
-  }
-  draftTempoEnabled.value = currentHasTempoWarp(current)
-  draftMode.value = current.warpMode ?? 'rhythmic'
-  draftTempoPinned.value = typeof current.tempoRatio === 'number' && current.tempoRatio > 0 && current.tempoRatio !== 1
-  const src = sourceBpm.value
-  if (draftTempoPinned.value && typeof src === 'number' && src > 0 && typeof current.tempoRatio === 'number') {
-    draftPinnedBpm.value = Math.round(src * current.tempoRatio * 100) / 100
-  } else {
-    draftPinnedBpm.value = Math.round(transport.bpm * 100) / 100
-  }
-  draftSemitones.value = current.semitones ?? 0
-  draftCents.value = current.cents ?? 0
-}
-
-function followProjectBpm(): void {
-  draftTempoPinned.value = false
-}
-
-function pinTempo(): void {
-  const src = sourceBpm.value
-  const proj = transport.bpm
-  if (typeof src !== 'number' || src <= 0 || typeof proj !== 'number' || proj <= 0) return
-  draftTempoPinned.value = true
-  if (!Number.isFinite(draftPinnedBpm.value) || draftPinnedBpm.value <= 0) {
-    draftPinnedBpm.value = Math.round(proj * 100) / 100
-  }
-}
-
-function applyKeyPreset(semitones: number): void {
-  draftSemitones.value = semitones
-  draftCents.value = 0
-}
 
 // The Clip Editor opens with the visible *view bounds* limited to the
 // clip's window so the user isn't presented with the full source for a
@@ -477,7 +356,7 @@ const canApplyCrop = computed(() => {
 })
 
 const canSaveAsNew = computed(() => {
-  return editorMode.value === 'source-library' && !!sourceItem.value && selectionDurationMs.value > 0
+  return !editsExistingClip.value && !!sourceItem.value && selectionDurationMs.value > 0
 })
 
 const playheadAbsMs = computed(() => viewInMs.value + preview.positionMs)
@@ -509,7 +388,7 @@ watch(
       viewExpanded.value = false
       resetZoom()
       initSelectionForItem()
-      initialiseWarpDraft()
+      initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
       loopEnabled.value = false
       lastHiResRequestKey = ''
       cropUndoStack.value = []
@@ -542,7 +421,7 @@ watch(
     resetZoom()
     lastPreviewLoadKey = ''
     initSelectionForItem()
-    initialiseWarpDraft()
+    initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
     lastHiResRequestKey = ''
     cropUndoStack.value = []
     cropRedoStack.value = []
@@ -1810,201 +1689,14 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             </div>
           </div>
 
-          <aside
+          <ClipEditorWarpPitchPanel
             v-if="editsExistingClip"
-            class="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto rounded border border-zinc-800 bg-zinc-950/40 p-4 text-xs"
-          >
-            <div>
-              <h3 class="text-sm font-semibold text-zinc-100">
-                Clip settings
-              </h3>
-              <p class="mt-1 text-[11px] leading-4 text-zinc-500">
-                Changes are preview-only until Save.
-                <template v-if="editsSavedClipLibrary">
-                  Saving updates every linked timeline clip.
-                </template>
-                <template v-else>
-                  Saving updates only this timeline clip.
-                </template>
-              </p>
-            </div>
-
-            <section class="rounded border border-zinc-800 bg-zinc-900/70 p-3">
-              <label class="flex items-center gap-2 text-zinc-200">
-                <input
-                  v-model="draftTempoEnabled"
-                  type="checkbox"
-                  class="h-3.5 w-3.5 cursor-pointer"
-                >
-                <span class="font-medium">Enable Warp</span>
-              </label>
-
-              <div class="mt-3 grid grid-cols-2 gap-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-zinc-400">
-                <div>
-                  <div class="text-[10px] uppercase tracking-wider text-zinc-500">
-                    Source BPM
-                  </div>
-                  <div class="font-mono text-zinc-200">
-                    {{ sourceBpm ? sourceBpm.toFixed(2) : '—' }}
-                  </div>
-                </div>
-                <div>
-                  <div class="text-[10px] uppercase tracking-wider text-zinc-500">
-                    Effective BPM
-                  </div>
-                  <div class="font-mono text-zinc-200">
-                    {{ draftEffectiveBpm !== null ? draftEffectiveBpm.toFixed(2) : '—' }}
-                    <span class="ml-1 text-[10px] text-zinc-500">
-                      ({{ draftEffectiveRatio.toFixed(2) }}×)
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <fieldset
-                class="mt-3 flex flex-col gap-1"
-                :disabled="!draftTempoEnabled"
-                :class="!draftTempoEnabled ? 'opacity-50' : ''"
-              >
-                <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
-                  Mode
-                </legend>
-                <div class="flex gap-1">
-                  <button
-                    v-for="m in (['rhythmic', 'tonal', 'complex'] as ClipWarpMode[])"
-                    :key="m"
-                    type="button"
-                    class="flex-1 rounded border px-2 py-1 text-xs capitalize transition-colors"
-                    :class="draftMode === m
-                      ? 'border-sky-500 bg-sky-600/30 text-zinc-100'
-                      : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-                    "
-                    @click="draftMode = m"
-                  >
-                    {{ m }}
-                  </button>
-                </div>
-              </fieldset>
-
-              <fieldset
-                class="mt-3 flex flex-col gap-1"
-                :disabled="!draftTempoEnabled || !sourceBpm"
-                :class="!draftTempoEnabled || !sourceBpm ? 'opacity-50' : ''"
-              >
-                <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
-                  Tempo
-                </legend>
-                <label class="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    :checked="tempoFollowsProject"
-                    @change="followProjectBpm()"
-                  >
-                  <span class="text-zinc-200">Follow project BPM</span>
-                  <span class="ml-auto text-[10px] text-zinc-500">
-                    ({{ transport.bpm.toFixed(2) }})
-                  </span>
-                </label>
-                <label class="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    :checked="!tempoFollowsProject"
-                    @change="pinTempo()"
-                  >
-                  <span class="text-zinc-200">Pin to</span>
-                  <input
-                    v-model.number="draftPinnedBpm"
-                    type="number"
-                    min="20"
-                    max="300"
-                    step="0.01"
-                    :disabled="tempoFollowsProject"
-                    class="w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
-                  >
-                  <span class="text-[10px] text-zinc-500">BPM</span>
-                </label>
-              </fieldset>
-            </section>
-
-            <section class="rounded border border-zinc-800 bg-zinc-900/70 p-3">
-              <div class="font-medium text-zinc-200">
-                Pitch shift
-              </div>
-              <fieldset class="mt-3 flex flex-col gap-2">
-                <label class="flex items-center gap-2">
-                  <span class="w-16 text-zinc-400">Semitones</span>
-                  <input
-                    v-model.number="draftSemitones"
-                    type="range"
-                    min="-12"
-                    max="12"
-                    step="1"
-                    class="pitch-range-input h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
-                  >
-                  <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
-                    {{ draftSemitones > 0 ? '+' : '' }}{{ draftSemitones }}
-                  </span>
-                </label>
-                <label class="flex items-center gap-2">
-                  <span class="w-16 text-zinc-400">Cents</span>
-                  <input
-                    v-model.number="draftCents"
-                    type="range"
-                    min="-100"
-                    max="100"
-                    step="1"
-                    class="pitch-range-input h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
-                  >
-                  <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
-                    {{ draftCents > 0 ? '+' : '' }}{{ draftCents }}
-                  </span>
-                </label>
-              </fieldset>
-
-              <div
-                v-if="currentPitchKey"
-                class="mt-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-[11px] text-zinc-400"
-              >
-                Current pitch:
-                <span :class="keyBadgeClass(currentPitchKey)">{{ currentPitchKey }}</span>
-              </div>
-
-              <div class="mt-3 rounded border border-zinc-800 bg-zinc-950/50 p-3">
-                <div class="mb-2 flex items-center justify-between gap-2">
-                  <div class="text-[10px] uppercase tracking-wider text-zinc-500">
-                    Key presets
-                  </div>
-                  <div
-                    v-if="sourceKey"
-                    class="text-[10px] text-zinc-500"
-                  >
-                    Source: <span :class="keyBadgeClass(sourceKey)">{{ sourceKey }}</span>
-                  </div>
-                </div>
-                <div
-                  v-if="keyPresets.length > 0"
-                  class="grid grid-cols-4 gap-1"
-                >
-                  <button
-                    v-for="preset in keyPresets"
-                    :key="preset.note"
-                    type="button"
-                    class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
-                    :title="`${sourceKey} → ${preset.label} (${preset.semitones > 0 ? '+' : ''}${preset.semitones} semitones)`"
-                    @click="applyKeyPreset(preset.semitones)"
-                  >
-                    {{ preset.label.replace(' major', '').replace(' minor', 'm') }}
-                  </button>
-                </div>
-                <p
-                  v-else
-                  class="text-[11px] text-zinc-500"
-                >
-                  No source key has been detected yet. Reanalyse the source file to generate key presets.
-                </p>
-              </div>
-            </section>
-          </aside>
+            :draft="warpDraft"
+            :source-bpm="sourceBpm"
+            :source-key="sourceKey"
+            :project-bpm="transport.bpm"
+            :edits-saved-clip-library="editsSavedClipLibrary"
+          />
         </div>
 
         <footer class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
