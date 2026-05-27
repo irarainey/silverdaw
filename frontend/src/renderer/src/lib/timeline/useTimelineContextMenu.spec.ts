@@ -131,14 +131,18 @@ describe('useTimelineContextMenu — items builder', () => {
     expect(findItem(menu, 'clip.info')?.disabled).toBe(true)
   })
 
-  it('linked saved-clip disables split / warp / pitch / save-to-library and shows Unlink', () => {
+  it('linked saved-clip allows warp / pitch (propagates to library), disables split / save-to-library, and shows Unlink', () => {
     const menu = setupMenu({
       clip: makeClip({ libraryItemId: 'saved' }),
       item: makeSavedClipItem('saved')
     })
     expect(findItem(menu, 'clip.split')?.disabled).toBe(true)
-    expect(findItem(menu, 'clip.warp')?.disabled).toBe(true)
-    expect(findItem(menu, 'clip.pitch')?.disabled).toBe(true)
+    // Warp and Pitch are enabled on linked clips: the dialog routes the
+    // save through `library.updateSavedClipWarp(libItem.id, patch)`,
+    // which updates the saved-clip library entry and propagates to
+    // every linked timeline instance.
+    expect(findItem(menu, 'clip.warp')?.disabled).toBeFalsy()
+    expect(findItem(menu, 'clip.pitch')?.disabled).toBeFalsy()
     expect(findItem(menu, 'clip.saveToLibrary')?.disabled).toBe(true)
     expect(commandsOf(menu)).toContain('clip.unlink')
   })

@@ -134,8 +134,8 @@ export function useTimelineContextMenu(
         selectedSwatch: selected
       })
     }
-    items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true, disabled: isLinkedClip })
-    items.push({ command: 'clip.pitch', label: 'Pitch', disabled: isLinkedClip })
+    items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true })
+    items.push({ command: 'clip.pitch', label: 'Pitch' })
     items.push({
       command: 'clip.saveToLibrary',
       label: 'Save clip to library',

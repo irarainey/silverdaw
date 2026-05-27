@@ -50,6 +50,14 @@ const libItem = computed(() =>
 const sourceBpm = computed(() => libItem.value?.bpm)
 const projectBpm = computed(() => transport.bpm)
 const dialogTitle = computed(() => props.panel === 'pitch' ? 'Pitch' : 'Warp')
+// True when the dialog's target is a saved-clip library item — either
+// opened directly via `itemId`, or opened via a `clipId` whose parent
+// library entry is a saved-clip (the "linked" timeline-clip case).
+// Routing through `library.updateSavedClipWarp` in both cases keeps the
+// semantic identical to editing the library item from the Clip Editor:
+// the library entry's defaults move AND every linked timeline instance
+// stays in lockstep.
+const isLinkedTarget = computed(() => libItem.value?.kind === 'saved-clip')
 const clipTitle = computed(() => {
   const custom = clip.value?.name?.trim()
   if (custom) return custom
@@ -157,8 +165,15 @@ function save(): void {
       warpMode: draftMode.value,
       tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : null
     }
-    if (props.itemId) library.updateSavedClipWarp(props.itemId, patch)
-    else if (props.clipId) project.setClipWarp(props.clipId, patch)
+    if (isLinkedTarget.value && libItem.value) {
+      // Library item (either opened directly OR opened via a linked
+      // timeline clip): propagates to the saved-clip entry and every
+      // linked timeline instance in lockstep.
+      library.updateSavedClipWarp(libItem.value.id, patch)
+    } else if (props.clipId) {
+      // Unlinked timeline clip: edit only this clip.
+      project.setClipWarp(props.clipId, patch)
+    }
   } else {
     const nextSemitones = clampNumber(draftSemitones.value, -12, 12)
     const nextCents = clampNumber(draftCents.value, -100, 100)
@@ -167,8 +182,11 @@ function save(): void {
       cents: nextCents,
       warpEnabled: pitchNeedsProcessor(nextSemitones, nextCents) ? true : undefined
     }
-    if (props.itemId) library.updateSavedClipWarp(props.itemId, patch)
-    else if (props.clipId) project.setClipWarp(props.clipId, patch)
+    if (isLinkedTarget.value && libItem.value) {
+      library.updateSavedClipWarp(libItem.value.id, patch)
+    } else if (props.clipId) {
+      project.setClipWarp(props.clipId, patch)
+    }
   }
   emit('close')
 }
@@ -445,7 +463,13 @@ function onKeydown(ev: KeyboardEvent): void {
         </div>
 
         <!-- Footer -->
-        <div class="flex justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+          <p
+            v-if="isLinkedTarget"
+            class="mr-auto max-w-[60%] text-[11px] leading-4 text-zinc-500"
+          >
+            Saving updates the library entry and every linked timeline clip.
+          </p>
           <button
             type="button"
             class="rounded bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
