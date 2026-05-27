@@ -263,7 +263,7 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/40"
+      class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="export-mixdown-title"
@@ -271,19 +271,19 @@ onBeforeUnmount(() => {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex w-[min(560px,92vw)] max-h-[90vh] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="dialog-card w-[min(560px,92vw)]"
         @keydown="onKeydown"
       >
-        <div class="border-b border-zinc-800 bg-zinc-950/60 px-6 py-4">
+        <div class="dialog-header">
           <h1
             id="export-mixdown-title"
-            class="text-base font-semibold tracking-tight text-zinc-100"
+            class="dialog-title"
           >
-            Export Mixdown
+            Export mixdown
           </h1>
         </div>
 
-        <div class="flex-1 overflow-y-auto px-6 py-5 text-sm">
+        <div class="dialog-body">
           <!-- Output location -->
           <section class="mb-5">
             <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
@@ -491,10 +491,10 @@ onBeforeUnmount(() => {
           </section>
         </div>
 
-        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 bg-zinc-950/60 px-6 py-3">
+        <div class="dialog-footer">
           <button
             type="button"
-            class="rounded border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs hover:bg-zinc-700"
+            class="dialog-btn-cancel"
             @click="onClose"
           >
             Cancel
@@ -502,7 +502,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :disabled="!formIsValid"
-            class="rounded border border-cyan-700 bg-cyan-700 px-3 py-1.5 text-xs text-white hover:bg-cyan-600 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-500"
+            class="dialog-btn-primary"
             @click="onSave"
           >
             Export

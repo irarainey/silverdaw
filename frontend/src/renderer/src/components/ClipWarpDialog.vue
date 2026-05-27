@@ -243,23 +243,22 @@ function onKeydown(ev: KeyboardEvent): void {
   >
     <div
       v-if="open && (clip || libItem)"
-      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/40"
+      class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="clip-warp-title"
-      @click.self="cancel"
     >
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex w-[min(440px,92vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="dialog-card w-[min(440px,92vw)]"
         @keydown="onKeydown"
       >
         <!-- Header -->
-        <div class="border-b border-zinc-800 px-5 py-3">
+        <div class="dialog-header">
           <h1
             id="clip-warp-title"
-            class="truncate text-sm font-semibold tracking-tight text-zinc-100"
+            class="dialog-title truncate"
           >
             {{ dialogTitle }}
             <span class="ml-2 truncate text-xs font-normal text-zinc-500">
@@ -463,7 +462,7 @@ function onKeydown(ev: KeyboardEvent): void {
         </div>
 
         <!-- Footer -->
-        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+        <div class="dialog-footer">
           <p
             v-if="isLinkedTarget"
             class="mr-auto max-w-[60%] text-[11px] leading-4 text-zinc-500"
@@ -472,14 +471,14 @@ function onKeydown(ev: KeyboardEvent): void {
           </p>
           <button
             type="button"
-            class="rounded bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
+            class="dialog-btn-cancel"
             @click="cancel"
           >
             Cancel
           </button>
           <button
             type="button"
-            class="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500"
+            class="dialog-btn-primary"
             @click="save"
           >
             Save

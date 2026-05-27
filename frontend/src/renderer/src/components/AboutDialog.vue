@@ -74,7 +74,7 @@ function openExternal(url: string): void {
   >
     <div
       v-if="open"
-      class="fixed inset-0 z-1100 flex items-center justify-center bg-black/40"
+      class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="about-title"
@@ -82,7 +82,7 @@ function openExternal(url: string): void {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex w-[min(420px,92vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="dialog-card w-[min(420px,92vw)]"
       >
         <!-- Header: logo + title + version -->
         <div class="flex flex-col items-center gap-1 border-b border-zinc-800 px-6 pt-5 pb-4">
@@ -95,7 +95,7 @@ function openExternal(url: string): void {
           >
           <h1
             id="about-title"
-            class="text-base font-semibold tracking-tight text-zinc-100"
+            class="dialog-title"
           >
             Silverdaw
           </h1>
@@ -143,10 +143,10 @@ function openExternal(url: string): void {
         </div>
 
         <!-- Footer -->
-        <div class="flex justify-end border-t border-zinc-800 bg-zinc-900/60 px-5 py-2">
+        <div class="dialog-footer">
           <button
             type="button"
-            class="rounded bg-zinc-700 px-4 py-1 text-xs font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            class="dialog-btn-primary"
             @click="emit('close')"
           >
             Close

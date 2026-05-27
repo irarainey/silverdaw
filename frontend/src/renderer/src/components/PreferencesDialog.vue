@@ -358,7 +358,7 @@ function onSave(): void {
   >
     <div
       v-if="open"
-      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/40"
+      class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="prefs-title"
@@ -366,13 +366,13 @@ function onSave(): void {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex w-[min(720px,94vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="dialog-card w-[min(720px,94vw)]"
       >
         <!-- Header -->
-        <div class="border-b border-zinc-800 px-6 py-4">
+        <div class="dialog-header">
           <h1
             id="prefs-title"
-            class="text-base font-semibold tracking-tight text-zinc-100"
+            class="dialog-title"
           >
             Preferences
           </h1>
@@ -823,17 +823,17 @@ function onSave(): void {
         </div>
 
         <!-- Footer -->
-        <div class="flex justify-end gap-2 border-t border-zinc-800 bg-zinc-900/60 px-5 py-2">
+        <div class="dialog-footer">
           <button
             type="button"
-            class="rounded bg-zinc-800 px-4 py-1 text-xs font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            class="dialog-btn-cancel"
             @click="onCancel"
           >
             Cancel
           </button>
           <button
             type="button"
-            class="rounded bg-sky-600 px-4 py-1 text-xs font-medium text-zinc-100 enabled:hover:bg-sky-500 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            class="dialog-btn-primary"
             :disabled="!hasChanges"
             @click="onSave"
           >

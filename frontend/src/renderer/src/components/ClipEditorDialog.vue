@@ -1354,7 +1354,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
   >
     <div
       v-if="open && editorItem && sourceItem"
-      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50"
+      class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="clip-editor-title"
@@ -1362,10 +1362,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex h-[min(980px,96vh)] w-[min(1440px,98vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="dialog-card h-[min(980px,96vh)] w-[min(1440px,98vw)]"
         @keydown="onKeydown"
       >
-        <header class="grid grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-zinc-800 px-5 py-3">
+        <header class="grid grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-zinc-800 px-6 py-3">
           <div class="min-w-0 justify-self-start">
             <div class="flex min-w-0 items-center gap-2">
               <h2
@@ -1572,10 +1572,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
           />
         </div>
 
-        <footer class="flex items-center justify-end gap-2 border-t border-zinc-800 px-5 py-3">
+        <footer class="dialog-footer">
           <button
             type="button"
-            class="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+            class="dialog-btn-cancel"
             @click="emit('close')"
           >
             {{ editsExistingClip ? 'Cancel' : 'Close' }}
@@ -1583,7 +1583,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
           <button
             v-if="editsExistingClip"
             type="button"
-            class="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+            class="dialog-btn-primary"
             :disabled="!canSaveChanges"
             :title="editsSavedClipLibrary
               ? 'Save changes to the library and every linked timeline clip'
@@ -1595,7 +1595,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
           <button
             v-else
             type="button"
-            class="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+            class="dialog-btn-primary"
             :disabled="!canSaveAsNew"
             @click="onSaveAsNew"
           >

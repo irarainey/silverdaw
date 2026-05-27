@@ -1,1 +1,64 @@
 @import 'tailwindcss';
+
+/* ── Dialog primitives ─────────────────────────────────────────────────
+ *
+ * Every modal dialog in the renderer (Project Properties, Preferences,
+ * Export Mixdown, Sample Rate Mismatch, Audio Device Unavailable, etc.)
+ * uses these classes so the chrome stays consistent: same backdrop
+ * darkness + blur, same card border (neutral zinc — no "warning amber"
+ * or "running cyan" on the dialog frame; severity is conveyed via the
+ * dialog's body content, not its outer border), same header padding,
+ * same footer button styling.
+ *
+ * Adjust here once and every dialog updates.
+ */
+@layer components {
+  /* Full-viewport backdrop: dims the timeline and applies a light blur
+   * so the user can see they can't interact, without losing visual
+   * context of what's behind. Blur strength is intentionally light —
+   * heavier blurs make the timeline feel "lost" and disorienting. */
+  .dialog-backdrop {
+    @apply fixed inset-0 z-[1100] flex items-center justify-center bg-black/60 backdrop-blur-[1px];
+  }
+  /* Card frame. Background matches the library panel (`bg-zinc-900`,
+   * one step lighter than the main app shell) so the dialog reads as
+   * a panel-like surface above the timeline. Header, body and footer
+   * are all the same colour — divider lines alone separate them. */
+  .dialog-card {
+    @apply flex max-h-[90vh] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none;
+  }
+  /* Top strip carrying the title. Background matches the card body
+   * so the header doesn't read as a separate band — the divider
+   * line alone separates it from the body. */
+  .dialog-header {
+    @apply border-b border-zinc-800 px-6 py-4;
+  }
+  .dialog-title {
+    @apply text-base font-semibold tracking-tight text-zinc-100;
+  }
+  /* Standard scrollable body section. Dialogs that need bespoke layout
+   * (e.g. Preferences with its tab sidebar) compose their own classes. */
+  .dialog-body {
+    @apply flex-1 overflow-y-auto px-6 py-5 text-sm;
+  }
+  /* Bottom strip with Cancel + primary buttons right-aligned. Same
+   * background as the card body — divider line carries the separation. */
+  .dialog-footer {
+    @apply flex items-center justify-end gap-2 border-t border-zinc-800 px-6 py-3;
+  }
+  /* Primary action (Save / Export / Confirm). Disabled state is
+   * carried through so a transactional dialog can gate Save on
+   * validation. */
+  .dialog-btn-primary {
+    @apply rounded border border-cyan-700 bg-cyan-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-cyan-600 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-500;
+  }
+  /* Secondary action (Cancel / Close). Neutral zinc — never accent. */
+  .dialog-btn-cancel {
+    @apply rounded border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs hover:bg-zinc-700;
+  }
+  /* Destructive action (Delete / Discard). Reserved for irreversible
+   * choices so the colour signals intent. */
+  .dialog-btn-destructive {
+    @apply rounded border border-red-700 bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600;
+  }
+}

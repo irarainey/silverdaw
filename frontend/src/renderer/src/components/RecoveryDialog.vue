@@ -141,18 +141,16 @@ onBeforeUnmount(() => {
   >
     <div
       v-if="open"
-      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50"
+      class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="recovery-title"
     >
-      <div
-        class="flex max-h-[80vh] w-[min(720px,94vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl"
-      >
-        <header class="border-b border-zinc-800 px-6 pt-5 pb-4">
+      <div class="dialog-card w-[min(720px,94vw)]">
+        <header class="dialog-header">
           <h1
             id="recovery-title"
-            class="text-base font-semibold tracking-tight text-zinc-100"
+            class="dialog-title"
           >
             Recover unsaved work
           </h1>
@@ -204,10 +202,10 @@ onBeforeUnmount(() => {
           </li>
         </ul>
 
-        <footer class="flex justify-end border-t border-zinc-800 bg-zinc-900/60 px-5 py-3">
+        <footer class="dialog-footer">
           <button
             type="button"
-            class="rounded bg-zinc-800 px-4 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700 focus:ring-2 focus:ring-zinc-500 focus:outline-none"
+            class="dialog-btn-cancel"
             :disabled="busyId !== null"
             @click="skip"
           >

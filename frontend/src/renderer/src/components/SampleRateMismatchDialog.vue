@@ -111,7 +111,7 @@ watch(
   >
     <div
       v-if="open"
-      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/40"
+      class="dialog-backdrop"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="sample-rate-mismatch-title"
@@ -119,19 +119,19 @@ watch(
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex w-[min(520px,92vw)] flex-col overflow-hidden rounded-lg border border-amber-700 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="dialog-card w-[min(520px,92vw)]"
         @keydown="onKeydown"
       >
-        <div class="border-b border-amber-700 bg-amber-700/10 px-6 py-4">
+        <div class="dialog-header">
           <h1
             id="sample-rate-mismatch-title"
-            class="text-base font-semibold tracking-tight text-amber-200"
+            class="dialog-title"
           >
-            Sample-rate mismatch
+            Sample rate mismatch
           </h1>
         </div>
 
-        <div class="flex flex-col gap-3 px-6 py-5 text-sm text-zinc-300">
+        <div class="dialog-body flex flex-col gap-3 text-zinc-300">
           <p>
             This project runs at <span class="font-medium text-zinc-100">{{ formatHz(projectSampleRate) }}</span>.
           </p>
@@ -166,17 +166,17 @@ watch(
           </p>
         </div>
 
-        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 bg-zinc-900/60 px-5 py-2">
+        <div class="dialog-footer">
           <button
             type="button"
-            class="rounded bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            class="dialog-btn-cancel"
             @click="onCancel"
           >
-            Cancel import
+            Cancel
           </button>
           <button
             type="button"
-            class="rounded bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            class="dialog-btn-cancel"
             @click="onConvert"
           >
             Convert to {{ formatHz(projectSampleRate) }}
@@ -184,7 +184,7 @@ watch(
           <button
             v-if="switchProjectTargetHz !== null"
             type="button"
-            class="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-zinc-100 hover:bg-sky-500 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            class="dialog-btn-primary"
             @click="onSwitch"
           >
             Switch project to {{ formatHz(switchProjectTargetHz) }}

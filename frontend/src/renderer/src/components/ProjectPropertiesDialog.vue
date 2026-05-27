@@ -375,7 +375,7 @@ function onKeydown(ev: KeyboardEvent): void {
   >
     <div
       v-if="open"
-      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/40"
+      class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="project-properties-title"
@@ -383,21 +383,21 @@ function onKeydown(ev: KeyboardEvent): void {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex w-[min(480px,92vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="dialog-card w-[min(480px,92vw)]"
         @keydown="onKeydown"
       >
         <!-- Header -->
-        <div class="border-b border-zinc-800 px-6 py-4">
+        <div class="dialog-header">
           <h1
             id="project-properties-title"
-            class="text-base font-semibold tracking-tight text-zinc-100"
+            class="dialog-title"
           >
-            Project Properties
+            Project properties
           </h1>
         </div>
 
         <!-- Body -->
-        <div class="flex flex-col gap-4 px-6 py-5">
+        <div class="dialog-body flex flex-col gap-4">
           <!-- Name -->
           <label class="flex flex-col gap-1.5">
             <span class="text-xs font-medium text-zinc-300">Project name</span>
@@ -525,17 +525,17 @@ function onKeydown(ev: KeyboardEvent): void {
         </div>
 
         <!-- Footer -->
-        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 bg-zinc-900/60 px-5 py-2">
+        <div class="dialog-footer">
           <button
             type="button"
-            class="rounded bg-zinc-800 px-4 py-1 text-xs font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            class="dialog-btn-cancel"
             @click="onCancel"
           >
             Cancel
           </button>
           <button
             type="button"
-            class="rounded bg-sky-600 px-4 py-1 text-xs font-medium text-zinc-100 enabled:hover:bg-sky-500 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            class="dialog-btn-primary"
             :disabled="!canSave"
             @click="onSave"
           >

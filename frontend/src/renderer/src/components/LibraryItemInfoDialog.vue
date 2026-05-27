@@ -253,7 +253,7 @@ function channelLabel(count: number): string {
   >
     <div
       v-if="open && item"
-      class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/40"
+      class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="clip-info-title"
@@ -261,13 +261,13 @@ function channelLabel(count: number): string {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="flex max-h-[86vh] w-[min(680px,94vw)] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="dialog-card w-[min(680px,94vw)]"
       >
-        <header class="flex items-start justify-between gap-4 border-b border-zinc-800 px-5 py-4">
+        <header class="flex items-start justify-between gap-4 border-b border-zinc-800 px-6 py-4">
           <div class="min-w-0">
             <h2
               id="clip-info-title"
-              class="truncate text-base font-semibold text-zinc-100"
+              class="dialog-title truncate"
             >
               {{ displayTitle }}
             </h2>
@@ -576,10 +576,10 @@ function channelLabel(count: number): string {
           </section>
         </div>
 
-        <footer class="flex shrink-0 justify-end border-t border-zinc-800 bg-zinc-900/60 px-5 py-2">
+        <footer class="dialog-footer">
           <button
             type="button"
-            class="rounded bg-zinc-800 px-4 py-1 text-xs font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            class="dialog-btn-primary"
             @click="emit('close')"
           >
             Close

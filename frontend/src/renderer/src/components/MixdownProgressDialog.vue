@@ -45,25 +45,25 @@ function onCancel(): void {
   <Teleport to="body">
     <div
       v-if="visible"
-      class="fixed inset-0 z-[1200] flex items-center justify-center bg-black/60"
+      class="dialog-backdrop z-[1200]"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="mixdown-progress-title"
     >
       <div
         tabindex="-1"
-        class="flex w-[min(440px,88vw)] flex-col overflow-hidden rounded-lg border border-cyan-700 bg-zinc-900 text-zinc-200 shadow-2xl outline-none"
+        class="dialog-card w-[min(440px,88vw)]"
       >
-        <div class="border-b border-cyan-700 bg-cyan-700/10 px-6 py-3">
+        <div class="dialog-header">
           <h1
             id="mixdown-progress-title"
-            class="text-sm font-semibold tracking-tight text-cyan-200"
+            class="dialog-title"
           >
             Exporting mixdown
           </h1>
         </div>
 
-        <div class="flex flex-col gap-3 px-6 py-4 text-sm">
+        <div class="dialog-body flex flex-col gap-3">
           <div class="flex items-baseline justify-between gap-3">
             <span class="text-zinc-300">{{ stageLabel }}</span>
             <span class="font-mono text-xs tabular-nums text-zinc-400">{{ percent }}%</span>
@@ -88,10 +88,10 @@ function onCancel(): void {
           </div>
         </div>
 
-        <div class="flex items-center justify-end gap-2 border-t border-zinc-800 bg-zinc-950/60 px-6 py-3">
+        <div class="dialog-footer">
           <button
             type="button"
-            class="rounded border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs hover:bg-zinc-700"
+            class="dialog-btn-cancel"
             @click="onCancel"
           >
             Cancel
