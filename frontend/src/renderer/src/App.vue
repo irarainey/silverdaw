@@ -9,6 +9,7 @@ import NotificationToasts from '@/components/NotificationToasts.vue'
 import ImportProgressDialog from '@/components/ImportProgressDialog.vue'
 import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
+import ProjectPropertiesDialog from '@/components/ProjectPropertiesDialog.vue'
 import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import RelinkDialog from '@/components/RelinkDialog.vue'
 import RecoveryDialog, { type RecoverableEntry } from '@/components/RecoveryDialog.vue'
@@ -34,6 +35,7 @@ const appStore = useAppStore()
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
+const projectPropertiesOpen = ref(false)
 const relinkDialogOpen = ref(false)
 // Crash-recovery state. Populated on bridge-ready by
 // `autosave:listRecoverable`; if non-empty, the RecoveryDialog mounts
@@ -172,6 +174,7 @@ function isShortcutModalOpen(): boolean {
   return (
     aboutOpen.value ||
     preferencesOpen.value ||
+    projectPropertiesOpen.value ||
     relinkDialogOpen.value ||
     unsavedPromptOpen.value ||
     recoveryDialogOpen.value ||
@@ -586,6 +589,10 @@ function handleMenuAction(action: string): void {
     project.addTrack()
     return
   }
+  if (action === 'file.projectProperties') {
+    projectPropertiesOpen.value = true
+    return
+  }
   if (action === 'file.newProject') {
     guardAgainstUnsavedChanges(() => {
       project.requestNewProject()
@@ -869,6 +876,11 @@ function onUnsavedPromptCancel(): void {
     <PreferencesDialog
       :open="preferencesOpen"
       @close="preferencesOpen = false"
+    />
+
+    <ProjectPropertiesDialog
+      :open="projectPropertiesOpen"
+      @close="projectPropertiesOpen = false"
     />
 
     <UnsavedChangesDialog

@@ -1019,6 +1019,13 @@ function handleMenuAction(action: string): void {
     case 'file.renameProject':
       wc.send('menu:action', action)
       break
+    case 'file.projectProperties':
+      // Opens the in-renderer Project Properties dialog (name, tempo,
+      // duration). Forwarded straight through — the dialog lives in
+      // the renderer so it can read the live transport/project stores
+      // and commit changes via the existing bridge envelopes.
+      wc.send('menu:action', action)
+      break
     case 'file.addTrack':
       // Forwarded to the renderer (see below); the renderer drives the
       // open-file flow so it can decode + render in one place.
