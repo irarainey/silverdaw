@@ -1513,6 +1513,15 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     obj->setProperty("playheadMs", projectState.getPlayheadMs());
     obj->setProperty("bpm", projectState.getBpm());
     obj->setProperty("projectLengthMs", projectState.getProjectLengthMs());
+    // Per-project preferred audio output. Emit as null when no
+    // preference is set so the renderer can distinguish "absent" from
+    // "explicitly cleared".
+    {
+        const auto outType = projectState.getAudioOutputTypeName();
+        const auto outDevice = projectState.getAudioOutputDeviceName();
+        obj->setProperty("audioOutputTypeName", outType.isEmpty() ? juce::var() : juce::var(outType));
+        obj->setProperty("audioOutputDeviceName", outDevice.isEmpty() ? juce::var() : juce::var(outDevice));
+    }
     return juce::var(obj);
 }
 
@@ -2155,6 +2164,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
            type == "PROJECT_RENAME" || type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" ||
+           type == "PROJECT_SET_AUDIO_OUTPUT" ||
            type == "PROJECT_MARKER_ADD" || type == "PROJECT_MARKER_MOVE" ||
            type == "PROJECT_MARKER_REMOVE";
 }
@@ -2183,6 +2193,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "PROJECT_RENAME") return "Rename project";
     if (type == "PROJECT_SET_BPM") return "Change tempo";
     if (type == "PROJECT_SET_LENGTH") return "Change project length";
+    if (type == "PROJECT_SET_AUDIO_OUTPUT") return "Change audio output";
     if (type == "PROJECT_MARKER_ADD") return "Add marker";
     if (type == "PROJECT_MARKER_MOVE") return "Move marker";
     if (type == "PROJECT_MARKER_REMOVE") return "Remove marker";
@@ -3030,6 +3041,23 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                 projectState.setProjectLengthMs(lenMs);
             }
         }
+    }
+    else if (type == "PROJECT_SET_AUDIO_OUTPUT")
+    {
+        // Per-project preferred audio output. Both fields are nullable —
+        // the renderer passes `null` to clear the preference. We accept
+        // either an explicit empty string or a non-string (e.g. JSON
+        // null) as "clear", and validate strings strictly otherwise so
+        // a malformed envelope can't smuggle a debug-stringified value
+        // into the persisted project file.
+        const auto extract = [](const juce::var& payloadIn, const char* key) -> juce::String {
+            const juce::var v = payloadIn.getProperty(key, juce::var());
+            if (v.isString()) return v.toString();
+            return {};
+        };
+        const auto typeName = extract(payload, "typeName");
+        const auto deviceName = extract(payload, "deviceName");
+        projectState.setAudioOutput(typeName, deviceName);
     }
     else if (type == "PROJECT_MARKER_ADD")
     {

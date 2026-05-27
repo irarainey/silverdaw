@@ -366,6 +366,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_VIEW: ProjectSetViewPayload
   PROJECT_SET_BPM: ProjectSetBpmPayload
   PROJECT_SET_LENGTH: ProjectSetLengthPayload
+  PROJECT_SET_AUDIO_OUTPUT: ProjectSetAudioOutputPayload
   PROJECT_MARKER_ADD: ProjectMarkerAddPayload
   PROJECT_MARKER_MOVE: ProjectMarkerMovePayload
   PROJECT_MARKER_REMOVE: ProjectMarkerRemovePayload
@@ -471,6 +472,20 @@ export interface ProjectSetBpmPayload {
 /** Project-length edit (ms). Marks the project dirty on the backend. */
 export interface ProjectSetLengthPayload {
   lengthMs: number
+}
+
+/**
+ * Per-project preferred audio output device. `null` / `null` clears the
+ * project's preference so the user's global `preferences.json` device
+ * becomes the effective choice on next load. Saved on the project file
+ * itself; the live `juce::AudioDeviceManager` is updated separately via
+ * `AUDIO_DEVICE_SELECT` so the renderer can choose whether to push the
+ * live switch (Project Properties dialog: yes; PROJECT_STATE
+ * reconciliation on load: yes, but without touching `preferences.json`).
+ */
+export interface ProjectSetAudioOutputPayload {
+  typeName: string | null
+  deviceName: string | null
 }
 
 /** Add a timeline marker at an absolute project position in milliseconds. */
@@ -857,6 +872,15 @@ export const ProjectStatePayloadSchema = z.object({
   bpm: z.number().optional(),
   /** User-set project length (ms) persisted with the project. */
   projectLengthMs: z.number().optional(),
+  /**
+   * Per-project preferred audio output device. Both fields are
+   * optional and nullable. `null` / absent means "no project-level
+   * preference"; the renderer's load-time reconcile then leaves the
+   * live device on whatever the user-scope `preferences.json` selected
+   * at backend startup.
+   */
+  audioOutputTypeName: z.string().nullable().optional(),
+  audioOutputDeviceName: z.string().nullable().optional(),
   /** User-created timeline markers. */
   markers: z.array(ProjectStateMarkerSchema).optional(),
   /**

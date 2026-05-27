@@ -25,6 +25,8 @@ const juce::Identifier ProjectState::kViewScrollX{"viewScrollX"};
 const juce::Identifier ProjectState::kPlayheadMs{"playheadMs"};
 const juce::Identifier ProjectState::kBpm{"bpm"};
 const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
+const juce::Identifier ProjectState::kAudioOutputTypeName{"audioOutputTypeName"};
+const juce::Identifier ProjectState::kAudioOutputDeviceName{"audioOutputDeviceName"};
 const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
 const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
 const juce::Identifier ProjectState::kMarkers{"MARKERS"};
@@ -783,6 +785,38 @@ void ProjectState::setProjectLengthMs(double lengthMs)
     // Length is a meaningful edit (the user explicitly chose this
     // length via the transport bar) — recorded for undo.
     root.setProperty(kProjectLengthMs, lengthMs, &undoManager);
+}
+
+juce::String ProjectState::getAudioOutputTypeName() const
+{
+    return root.getProperty(kAudioOutputTypeName, "").toString();
+}
+
+juce::String ProjectState::getAudioOutputDeviceName() const
+{
+    return root.getProperty(kAudioOutputDeviceName, "").toString();
+}
+
+void ProjectState::setAudioOutput(const juce::String& typeName, const juce::String& deviceName)
+{
+    // Empty strings are persisted as absent properties so projects
+    // without a preference don't carry the keys forward at all.
+    if (typeName.isEmpty())
+    {
+        root.removeProperty(kAudioOutputTypeName, &undoManager);
+    }
+    else
+    {
+        root.setProperty(kAudioOutputTypeName, typeName, &undoManager);
+    }
+    if (deviceName.isEmpty())
+    {
+        root.removeProperty(kAudioOutputDeviceName, &undoManager);
+    }
+    else
+    {
+        root.setProperty(kAudioOutputDeviceName, deviceName, &undoManager);
+    }
 }
 
 bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName,

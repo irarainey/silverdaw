@@ -317,6 +317,19 @@ class ProjectState : public juce::ValueTree::Listener
     /** Update the persisted project length. Marks dirty. */
     void setProjectLengthMs(double lengthMs);
 
+    /** Per-project preferred audio output device. Both fields default to
+     *  empty (no project-level override). Empty values are persisted as
+     *  absent properties so projects that never set a preference don't
+     *  carry the keys forward. */
+    juce::String getAudioOutputTypeName() const;
+    juce::String getAudioOutputDeviceName() const;
+
+    /** Update the per-project preferred audio output device. Pass empty
+     *  strings to clear the preference (the user's global
+     *  `preferences.json` then applies on next load). Marks dirty and
+     *  records an undo step. */
+    void setAudioOutput(const juce::String& typeName, const juce::String& deviceName);
+
     // ─── Library catalogue ─────────────────────────────────────────────
     //
     // Items the user has imported into the library — independently of
@@ -527,6 +540,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kPlayheadMs;
     static const juce::Identifier kBpm;
     static const juce::Identifier kProjectLengthMs;
+    static const juce::Identifier kAudioOutputTypeName;
+    static const juce::Identifier kAudioOutputDeviceName;
     static const juce::Identifier kLibrary;
     static const juce::Identifier kLibraryItem;
     static const juce::Identifier kMarkers;

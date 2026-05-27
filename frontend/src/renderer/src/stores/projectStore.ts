@@ -370,6 +370,19 @@ interface ProjectState {
    *  corresponding `can…` flag is false. */
   undoLabel: string | null
   redoLabel: string | null
+
+  /**
+   * Per-project preferred audio output device. Both fields default to
+   * `null` (no project-level override). When non-null, the renderer's
+   * load-time reconcile in `bridgeService` switches the live device to
+   * this pair if it's currently available; if not, it shows a warning
+   * dialog and leaves the live device on whatever the user-scope
+   * `preferences.json` selected at backend startup. The project's
+   * saved preference is preserved either way so the project stays
+   * portable.
+   */
+  audioOutputTypeName: string | null
+  audioOutputDeviceName: string | null
 }
 
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
@@ -529,7 +542,9 @@ export const useProjectStore = defineStore('project', {
     canUndo: false,
     canRedo: false,
     undoLabel: null,
-    redoLabel: null
+    redoLabel: null,
+    audioOutputTypeName: null,
+    audioOutputDeviceName: null
   }),
 
   getters: {
@@ -1754,6 +1769,33 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
+    /**
+     * Update the per-project preferred audio output device. Pass `null` /
+     * `null` to clear the preference (which then lets the user's global
+     * `preferences.json` device apply on next load). Both fields are
+     * stored atomically — either both are set or both are null. The
+     * live `juce::AudioDeviceManager` is NOT touched here; callers
+     * that want to switch the active device must additionally invoke
+     * `audioDevices.selectDevice(...)`.
+     */
+    setProjectAudioOutput(typeName: string | null, deviceName: string | null): void {
+      const normType =
+        typeof typeName === 'string' && typeName.length > 0 ? typeName : null
+      const normDevice =
+        typeof deviceName === 'string' && deviceName.length > 0 ? deviceName : null
+      const nextType = normType !== null && normDevice !== null ? normType : null
+      const nextDevice = normType !== null && normDevice !== null ? normDevice : null
+      if (this.audioOutputTypeName === nextType && this.audioOutputDeviceName === nextDevice) {
+        return
+      }
+      this.audioOutputTypeName = nextType
+      this.audioOutputDeviceName = nextDevice
+      sendBridge('PROJECT_SET_AUDIO_OUTPUT', {
+        typeName: nextType,
+        deviceName: nextDevice
+      })
+    },
+
     /** Remove a track and all its clips, locally and on the backend. */
     removeTrack(trackId: string): void {
       const idx = this.tracks.findIndex((t) => t.id === trackId)
@@ -2081,6 +2123,23 @@ export const useProjectStore = defineStore('project', {
         pendingProjectLengthMs = snapshot.projectLengthMs
       } else {
         pendingProjectLengthMs = null
+      }
+      // Per-project preferred audio output device. Normalised to
+      // strict null/null when either field is missing or empty — the
+      // load-time reconcile in `bridgeService.ts` watches these
+      // fields and decides whether to switch the live device.
+      const nextAudioType = typeof snapshot.audioOutputTypeName === 'string' && snapshot.audioOutputTypeName.length > 0
+        ? snapshot.audioOutputTypeName
+        : null
+      const nextAudioDevice = typeof snapshot.audioOutputDeviceName === 'string' && snapshot.audioOutputDeviceName.length > 0
+        ? snapshot.audioOutputDeviceName
+        : null
+      if (nextAudioType !== null && nextAudioDevice !== null) {
+        this.audioOutputTypeName = nextAudioType
+        this.audioOutputDeviceName = nextAudioDevice
+      } else {
+        this.audioOutputTypeName = null
+        this.audioOutputDeviceName = null
       }
       const library = useLibraryStore()
       // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the

@@ -12,6 +12,13 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
+import {
+  BACKEND_PREFERENCE,
+  describeBackend,
+  preferredBackendFor,
+  useUniqueAudioDevices,
+  type UniqueDevice
+} from '@/lib/audio/audioOutputPicker'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -19,72 +26,7 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const appStore = useAppStore()
 const ui = useUiStore()
 const audioDevices = useAudioDeviceStore()
-
-/**
- * Plain-English description for every audio backend JUCE may report
- * on Windows. Used by the advanced-backend picker; the primary
- * "pick a device" surface keeps the backend invisible.
- */
-const AUDIO_BACKEND_DESCRIPTIONS: Record<string, string> = {
-  'Windows Audio':
-    'Recommended. Modern Windows audio path; reliable latency and shares the device with other apps.',
-  'Windows Audio (Exclusive Mode)':
-    'Lower latency, but takes the device exclusively — other apps fall silent while Silverdaw runs.',
-  DirectSound:
-    'Legacy backend. Use only if a device misbehaves with Windows Audio.',
-  ASIO:
-    'Lowest latency, but requires a vendor-supplied ASIO driver. Pick this for pro-audio interfaces.',
-  CoreAudio: 'macOS standard audio backend.',
-  ALSA: 'Linux standard audio backend.',
-  JACK: 'Pro-audio routing on Linux / macOS.'
-}
-
-/** Preference order when auto-picking a backend for a freshly-clicked
- *  device. We default to the most-reliable user-friendly backend
- *  rather than the lowest-latency one — advanced users who want ASIO
- *  expand the "Audio driver" disclosure below the device list. */
-const BACKEND_PREFERENCE: string[] = [
-  'Windows Audio',
-  'CoreAudio',
-  'ALSA',
-  'DirectSound',
-  'Windows Audio (Exclusive Mode)',
-  'JACK',
-  'ASIO'
-]
-
-function describeBackend(typeName: string): string {
-  return AUDIO_BACKEND_DESCRIPTIONS[typeName] ?? 'Audio backend.'
-}
-
-/** A single physical device aggregated across every backend that
- *  exposes it. Two backends are considered the "same device" when
- *  their device names match case-insensitively — which holds for
- *  Windows Audio vs DirectSound (both describe the underlying
- *  MMDevice) and gives ASIO devices their own row since vendor
- *  ASIO drivers usually report distinct names. */
-interface UniqueDevice {
-  /** Canonical (display) name — the first capitalisation we saw. */
-  name: string
-  /** Backend type names that offer this device. */
-  backends: string[]
-}
-
-const uniqueDevices = computed<UniqueDevice[]>(() => {
-  const map = new Map<string, UniqueDevice>()
-  for (const type of audioDevices.types) {
-    for (const dev of type.devices) {
-      const key = dev.toLowerCase()
-      const existing = map.get(key)
-      if (existing) {
-        if (!existing.backends.includes(type.name)) existing.backends.push(type.name)
-      } else {
-        map.set(key, { name: dev, backends: [type.name] })
-      }
-    }
-  }
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
-})
+const uniqueDevices = useUniqueAudioDevices()
 
 /** Pending audio-output selection — edited freely by the radio
  *  buttons; persisted (and applied to the engine) only when the
@@ -100,16 +42,6 @@ const audioHasSelection = computed(
 
 function isAudioOutputSelectedDevice(deviceName: string): boolean {
   return audioOutputDeviceName.value?.toLowerCase() === deviceName.toLowerCase()
-}
-
-/** Pick the most-preferred backend that offers `device`. Used when
- *  the user clicks a device row — they don't have to think about
- *  drivers at all. */
-function preferredBackendFor(device: UniqueDevice): string {
-  for (const b of BACKEND_PREFERENCE) {
-    if (device.backends.includes(b)) return b
-  }
-  return device.backends[0] ?? ''
 }
 
 /** Selecting a device row picks its preferred backend automatically.

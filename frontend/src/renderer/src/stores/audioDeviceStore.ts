@@ -63,6 +63,14 @@ interface AudioDeviceState {
    *  waiting for the backend's `AUDIO_DEVICE_CHANGED` ack. The UI
    *  shows this entry as "switching…" until the ack lands. */
   pendingSelection: PendingSelection | null
+  /** Set when the most recent `selectDevice` call was issued with
+   *  `persistUserPreference: false` (project-load reconciliation or
+   *  the Project Properties dialog Save). The
+   *  `AUDIO_DEVICE_CHANGED` ack handler reads + clears this flag and
+   *  skips the `setAudioOutput` IPC so the user-scope
+   *  `preferences.json` isn't accidentally overwritten by a
+   *  project-scoped switch. */
+  pendingPersistUserPreference: boolean
   /** Most-recent switch error surfaced by the backend (or null on
    *  success). Used by the Preferences dialog + TransportBar to
    *  show a small warning chip. */
@@ -92,6 +100,7 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
     outputLatencyMs: null,
     isBluetoothHeuristic: false,
     pendingSelection: null,
+    pendingPersistUserPreference: true,
     lastError: null,
     startupFellBack: false,
     hydrated: false,
@@ -155,14 +164,21 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
         // fields — main also persists the choice via `setAudioOutput`
         // below. Renderer-side we just clear the pending state.
         this.pendingSelection = null
-        // Persist the now-confirmed selection. Empty/null in the
-        // ack means "we switched back to system default" — both
-        // fields are cleared in prefs so the next launch boots on
-        // default too.
-        window.silverdaw.setAudioOutput({
-          typeName: payload.typeName,
-          deviceName: payload.deviceName
-        })
+        // Persist the now-confirmed selection to the user-scope
+        // `preferences.json` UNLESS the originating `selectDevice`
+        // call explicitly opted out (project-load reconcile and
+        // Project Properties dialog Save both do — they want the
+        // live device to switch without overwriting the user's
+        // global fallback). Empty/null in the ack means "we switched
+        // back to system default" — both fields are cleared in prefs
+        // so the next launch boots on default too.
+        if (this.pendingPersistUserPreference) {
+          window.silverdaw.setAudioOutput({
+            typeName: payload.typeName,
+            deviceName: payload.deviceName
+          })
+        }
+        this.pendingPersistUserPreference = true
         log.info(
           'audio',
           `device switched typeName=${payload.typeName ?? 'default'} deviceName=${payload.deviceName ?? 'default'}`
@@ -171,22 +187,36 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
         const message = payload.error || 'Audio device switch failed'
         this.lastError = message
         this.pendingSelection = null
+        this.pendingPersistUserPreference = true
         useNotificationsStore().pushError(message)
         log.warn('audio', `device switch failed: ${message}`)
       }
     },
 
     /** User action: switch the active output device. `typeName` and
-     *  `deviceName` both null = "revert to system default". */
-    selectDevice(typeName: string | null, deviceName: string | null): void {
+     *  `deviceName` both null = "revert to system default".
+     *
+     *  `opts.persistUserPreference` (default `true`) controls whether
+     *  a successful switch also writes through to the user-scope
+     *  `preferences.json` via the `setAudioOutput` IPC. Project-load
+     *  reconciliation and the Project Properties dialog pass `false`
+     *  so a per-project device choice doesn't silently overwrite the
+     *  user's global default. */
+    selectDevice(
+      typeName: string | null,
+      deviceName: string | null,
+      opts?: { persistUserPreference?: boolean }
+    ): void {
       // Optimistic UI: stash the pending selection so dropdowns and
       // the transport-bar label can show "switching to X…" while the
       // bridge round-trips.
       this.pendingSelection = { typeName, deviceName }
+      this.pendingPersistUserPreference = opts?.persistUserPreference ?? true
       this.lastError = null
       const sent = sendBridge('AUDIO_DEVICE_SELECT', { typeName, deviceName })
       if (!sent) {
         this.pendingSelection = null
+        this.pendingPersistUserPreference = true
         this.lastError = 'Backend is not connected'
         useNotificationsStore().pushError('Could not switch audio device: backend not connected.')
       }

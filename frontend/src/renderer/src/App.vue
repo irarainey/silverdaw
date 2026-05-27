@@ -10,6 +10,7 @@ import ImportProgressDialog from '@/components/ImportProgressDialog.vue'
 import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
 import ProjectPropertiesDialog from '@/components/ProjectPropertiesDialog.vue'
+import AudioDeviceUnavailableDialog from '@/components/AudioDeviceUnavailableDialog.vue'
 import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import RelinkDialog from '@/components/RelinkDialog.vue'
 import RecoveryDialog, { type RecoverableEntry } from '@/components/RecoveryDialog.vue'
@@ -19,6 +20,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { startAutosaveManager, stopAutosaveManager, clearAutosaveBucket } from '@/lib/autosave'
 import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
@@ -31,12 +33,27 @@ const transport = useTransportStore()
 const ui = useUiStore()
 const library = useLibraryStore()
 const notifications = useNotificationsStore()
+const audioDevices = useAudioDeviceStore()
 const appStore = useAppStore()
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
 const relinkDialogOpen = ref(false)
+// "Saved audio device not available" warning state. Populated by the
+// project-load reconciliation watcher below when the project's stored
+// audio-output preference doesn't match any device the OS currently
+// exposes. The live `juce::AudioDeviceManager` keeps whatever device
+// it opened at backend startup; the dialog is purely informational
+// and the project's stored preference is left intact.
+const audioUnavailableOpen = ref(false)
+const audioUnavailableSavedTypeName = ref<string | null>(null)
+const audioUnavailableSavedDeviceName = ref<string | null>(null)
+// Dedupe key for the warning dialog so a single project + missing
+// device combination only fires once per renderer session — without
+// this, PROJECT_STATE echoes or audio-device-list refreshes could
+// reopen the dialog after the user has dismissed it.
+const audioReconciledKeys = new Set<string>()
 // Crash-recovery state. Populated on bridge-ready by
 // `autosave:listRecoverable`; if non-empty, the RecoveryDialog mounts
 // and blocks the rest of the startup flow (auto-open + start screen)
@@ -175,6 +192,7 @@ function isShortcutModalOpen(): boolean {
     aboutOpen.value ||
     preferencesOpen.value ||
     projectPropertiesOpen.value ||
+    audioUnavailableOpen.value ||
     relinkDialogOpen.value ||
     unsavedPromptOpen.value ||
     recoveryDialogOpen.value ||
@@ -342,6 +360,68 @@ function onGlobalShortcutKey(e: KeyboardEvent): void {
   sendBridge('TRANSPORT_SEEK', { positionMs: target })
   log.debug('transport', `arrow-seek to ${target}ms (msPerSub=${msPerSub.toFixed(2)})`)
 }
+
+// ─── Per-project audio output reconciliation ──────────────────────────
+// When a project loads, its saved audio-output preference (if any)
+// drives a live device switch. The reconcile runs once per unique
+// (projectId, savedType, savedDevice) tuple per renderer session so
+// that PROJECT_STATE echoes (mutation acks, undo soft-replaces) don't
+// re-fire the switch. The device list arrives independently of
+// PROJECT_STATE — we watch both signals and gate on
+// `audioDevices.hydrated`.
+function reconcileProjectAudioOutput(): void {
+  if (!audioDevices.hydrated) return
+  const projectId = project.projectId
+  if (!projectId) return
+  const savedType = project.audioOutputTypeName
+  const savedDevice = project.audioOutputDeviceName
+  if (!savedType || !savedDevice) return
+
+  const key = `${projectId}::${savedType}::${savedDevice}`
+  if (audioReconciledKeys.has(key)) return
+  audioReconciledKeys.add(key)
+
+  // Already on the saved device — nothing to do.
+  if (
+    audioDevices.currentTypeName === savedType &&
+    audioDevices.currentDeviceName === savedDevice
+  ) {
+    log.info('audio', `project audio output already active (${savedType} / ${savedDevice})`)
+    return
+  }
+
+  const available = audioDevices.flatDevices.some(
+    (d) => d.typeName === savedType && d.deviceName === savedDevice
+  )
+  if (available) {
+    log.info('audio', `switching to project audio output (${savedType} / ${savedDevice})`)
+    audioDevices.selectDevice(savedType, savedDevice, { persistUserPreference: false })
+  } else {
+    log.warn(
+      'audio',
+      `project audio output unavailable (${savedType} / ${savedDevice}); leaving live device on default`
+    )
+    audioUnavailableSavedTypeName.value = savedType
+    audioUnavailableSavedDeviceName.value = savedDevice
+    audioUnavailableOpen.value = true
+  }
+}
+
+// Two triggers: project load (PROJECT_STATE applies, projectId changes
+// and the audioOutput fields may change) AND audio-device hydration
+// (the device list arrives after PROJECT_STATE on the connect path).
+watch(
+  () => [
+    project.projectId,
+    project.audioOutputTypeName,
+    project.audioOutputDeviceName,
+    audioDevices.hydrated
+  ] as const,
+  () => {
+    reconcileProjectAudioOutput()
+  },
+  { immediate: true }
+)
 
 // ─── Initial bridge-connection timeout ────────────────────────────────
 // Without this the StartupScreen can sit on screen forever if the
@@ -881,6 +961,13 @@ function onUnsavedPromptCancel(): void {
     <ProjectPropertiesDialog
       :open="projectPropertiesOpen"
       @close="projectPropertiesOpen = false"
+    />
+
+    <AudioDeviceUnavailableDialog
+      :open="audioUnavailableOpen"
+      :saved-type-name="audioUnavailableSavedTypeName"
+      :saved-device-name="audioUnavailableSavedDeviceName"
+      @close="audioUnavailableOpen = false"
     />
 
     <UnsavedChangesDialog
