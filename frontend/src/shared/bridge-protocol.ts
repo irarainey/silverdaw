@@ -187,6 +187,15 @@ export interface LibraryReanalysePayload {
   key?: string
 }
 
+/** Set the user-override classification on a library item.
+ *  `'sample'` / `'music'` are persistent overrides; `'auto'` clears
+ *  the override so the renderer falls back to the backend's
+ *  `lowConfidence` flag. */
+export interface LibraryItemSetSampleModePayload {
+  itemId: string
+  mode: 'sample' | 'music' | 'auto'
+}
+
 export interface TrackAddPayload {
   trackId: string
   /** Initial display name for new tracks. Optional for older clients. */
@@ -344,6 +353,7 @@ export interface BridgeOutboundMap {
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
   LIBRARY_REANALYSE: LibraryReanalysePayload
+  LIBRARY_ITEM_SET_SAMPLE_MODE: LibraryItemSetSampleModePayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
   TRACK_RENAME: TrackRenamePayload
@@ -367,6 +377,8 @@ export interface BridgeOutboundMap {
   PROJECT_SET_BPM: ProjectSetBpmPayload
   PROJECT_SET_LENGTH: ProjectSetLengthPayload
   PROJECT_SET_AUDIO_OUTPUT: ProjectSetAudioOutputPayload
+  PROJECT_SET_TARGET_SAMPLE_RATE: ProjectSetTargetSampleRatePayload
+  AUDIO_FILE_PROBE: AudioFileProbePayload
   PROJECT_MARKER_ADD: ProjectMarkerAddPayload
   PROJECT_MARKER_MOVE: ProjectMarkerMovePayload
   PROJECT_MARKER_REMOVE: ProjectMarkerRemovePayload
@@ -486,6 +498,30 @@ export interface ProjectSetLengthPayload {
 export interface ProjectSetAudioOutputPayload {
   typeName: string | null
   deviceName: string | null
+}
+
+/**
+ * Per-project target sample rate (Hz). Drives the project's playback
+ * caches: every clip's audio is converted to this rate so the audio
+ * engine doesn't have to resample on the audio thread for every clip
+ * individually. Only 44 100 and 48 000 Hz are accepted today; higher
+ * rates are silently capped at 48 000 on the import path.
+ */
+export interface ProjectSetTargetSampleRatePayload {
+  sampleRate: number
+}
+
+/**
+ * Synchronous-ish file-rate probe used by the import flow to detect
+ * sample-rate mismatches before adding a file to the library. The
+ * backend opens the file via its `AudioFormatManager`, reads the
+ * sample rate / channel count / duration from the file's header, and
+ * acks via `AUDIO_FILE_PROBED`. `requestId` is renderer-allocated so
+ * concurrent probes don't collide.
+ */
+export interface AudioFileProbePayload {
+  requestId: string
+  filePath: string
 }
 
 /** Add a timeline marker at an absolute project position in milliseconds. */
@@ -795,6 +831,14 @@ export const ProjectStateLibraryItemSchema = z
      *  ~2 % over the analysis window — the project-BPM seeder skips
      *  these and the library tile shows a "variable" badge. */
     variableTempo: z.boolean().optional(),
+    /** Backend's auto-classification hint persisted into the library
+     *  ValueTree. Mirrors the field on `LIBRARY_ITEM_ANALYSIS`. */
+    lowConfidence: z.boolean().optional(),
+    /** User's explicit classification override for the library item.
+     *  `'sample'` forces non-musical treatment (hide BPM/key/beats,
+     *  skip auto-warp on drop), `'music'` forces musical treatment.
+     *  Absent means "auto" — fall back to `lowConfidence`. */
+    sampleMode: z.enum(['sample', 'music']).optional(),
     /** Parent source library item for saved clips. */
     sourceItemId: z.string().optional(),
     /** Timeline clip that originally produced this saved clip, when known. */
@@ -881,6 +925,14 @@ export const ProjectStatePayloadSchema = z.object({
    */
   audioOutputTypeName: z.string().nullable().optional(),
   audioOutputDeviceName: z.string().nullable().optional(),
+  /**
+   * Per-project target sample rate (Hz). Drives the playback-cache
+   * rebuild so every clip's audio is at this rate on disk. Today
+   * only 44 100 and 48 000 are accepted; absent means "fall back to
+   * the user-scope `audio.defaultProjectSampleRate` preference, then
+   * 44 100".
+   */
+  targetSampleRate: z.number().optional(),
   /** User-created timeline markers. */
   markers: z.array(ProjectStateMarkerSchema).optional(),
   /**
@@ -1008,6 +1060,11 @@ export const LibraryItemAnalysisPayloadSchema = z.object({
   beatAnchorSec: z.number(),
   beats: z.array(z.number()),
   variableTempo: z.boolean(),
+  /** Backend's auto-classification hint: `true` when the BPM/beat fit
+   *  is too loose to plausibly reflect a real groove. Drives the
+   *  default sample-vs-music decision in the renderer; the user can
+   *  always override via `sampleMode`. */
+  lowConfidence: z.boolean().optional(),
   /** Path to the decoded-WAV cache the backend has written for this
    *  source file. Future clip adds should use this path so the
    *  audio engine reads cheap PCM instead of decoding MP3 / WMA on
@@ -1151,6 +1208,34 @@ export const EditUndoStatePayloadSchema = z.object({
 })
 export type EditUndoStatePayload = z.infer<typeof EditUndoStatePayloadSchema>
 
+/**
+ * Backend response to a renderer-issued `AUDIO_FILE_PROBE`. Carries
+ * the file's true sample rate / channel count / duration (read from
+ * the format header by JUCE's `AudioFormatManager`). `ok: false`
+ * means the file couldn't be opened (missing, unsupported format,
+ * corrupted); `error` carries a short reason. `requestId` echoes
+ * the renderer's allocated id so concurrent probes don't collide.
+ */
+const AudioFileProbedSuccessSchema = z.object({
+  requestId: z.string(),
+  ok: z.literal(true),
+  filePath: z.string(),
+  sampleRate: z.number(),
+  channelCount: z.number(),
+  durationMs: z.number()
+})
+const AudioFileProbedFailureSchema = z.object({
+  requestId: z.string(),
+  ok: z.literal(false),
+  filePath: z.string(),
+  error: z.string()
+})
+export const AudioFileProbedPayloadSchema = z.discriminatedUnion('ok', [
+  AudioFileProbedSuccessSchema,
+  AudioFileProbedFailureSchema
+])
+export type AudioFileProbedPayload = z.infer<typeof AudioFileProbedPayloadSchema>
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PROJECT_STATE: ProjectStatePayload
@@ -1179,6 +1264,7 @@ export interface BridgeInboundMap {
   AUDIO_DEVICES_LIST: AudioDevicesListPayload
   AUDIO_DEVICE_CHANGED: AudioDeviceChangedPayload
   EDIT_UNDO_STATE: EditUndoStatePayload
+  AUDIO_FILE_PROBED: AudioFileProbedPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -1229,7 +1315,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PREVIEW_ENDED',
   'AUDIO_DEVICES_LIST',
   'AUDIO_DEVICE_CHANGED',
-  'EDIT_UNDO_STATE'
+  'EDIT_UNDO_STATE',
+  'AUDIO_FILE_PROBED'
 ])
 
 /** Narrow an unknown string to the inbound type union. */
@@ -1371,4 +1458,9 @@ export function isAudioDeviceChangedPayload(value: unknown): value is AudioDevic
 /** Guard for `EditUndoStatePayload`. */
 export function isEditUndoStatePayload(value: unknown): value is EditUndoStatePayload {
   return EditUndoStatePayloadSchema.safeParse(value).success
+}
+
+/** Guard for `AudioFileProbedPayload`. */
+export function isAudioFileProbedPayload(value: unknown): value is AudioFileProbedPayload {
+  return AudioFileProbedPayloadSchema.safeParse(value).success
 }

@@ -27,6 +27,7 @@ const juce::Identifier ProjectState::kBpm{"bpm"};
 const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
 const juce::Identifier ProjectState::kAudioOutputTypeName{"audioOutputTypeName"};
 const juce::Identifier ProjectState::kAudioOutputDeviceName{"audioOutputDeviceName"};
+const juce::Identifier ProjectState::kTargetSampleRate{"targetSampleRate"};
 const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
 const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
 const juce::Identifier ProjectState::kMarkers{"MARKERS"};
@@ -36,6 +37,8 @@ const juce::Identifier ProjectState::kBeats{"beats"};
 const juce::Identifier ProjectState::kBeatAnchorSec{"beatAnchorSec"};
 const juce::Identifier ProjectState::kPlaybackFilePath{"playbackFilePath"};
 const juce::Identifier ProjectState::kVariableTempo{"variableTempo"};
+const juce::Identifier ProjectState::kLowConfidence{"lowConfidence"};
+const juce::Identifier ProjectState::kSampleMode{"sampleMode"};
 const juce::Identifier ProjectState::kKey{"key"};
 const juce::Identifier ProjectState::kKind{"kind"};
 const juce::Identifier ProjectState::kSourceItemId{"sourceItemId"};
@@ -819,6 +822,26 @@ void ProjectState::setAudioOutput(const juce::String& typeName, const juce::Stri
     }
 }
 
+int ProjectState::getTargetSampleRate() const
+{
+    return static_cast<int>(root.getProperty(kTargetSampleRate, 0));
+}
+
+void ProjectState::setTargetSampleRate(int sampleRate)
+{
+    // Empty value is persisted as an absent property so projects that
+    // never set the field don't carry the key forward at all. Same
+    // shape as the audio-output preference.
+    if (sampleRate <= 0)
+    {
+        root.removeProperty(kTargetSampleRate, &undoManager);
+    }
+    else
+    {
+        root.setProperty(kTargetSampleRate, sampleRate, &undoManager);
+    }
+}
+
 bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName,
                                    double durationMs, int sampleRate, int channelCount,
                                    const juce::String& playbackPath, const juce::String& key,
@@ -1228,6 +1251,52 @@ bool ProjectState::setLibraryItemVariableTempo(const juce::String& itemId, bool 
     return false;
 }
 
+bool ProjectState::setLibraryItemLowConfidence(const juce::String& itemId, bool lowConfidence)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            if (lowConfidence)
+            {
+                item.setProperty(kLowConfidence, true, nullptr);
+            }
+            else
+            {
+                item.removeProperty(kLowConfidence, nullptr);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ProjectState::setLibraryItemSampleMode(const juce::String& itemId, const juce::String& mode)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            if (mode == "sample" || mode == "music")
+            {
+                item.setProperty(kSampleMode, mode, nullptr);
+            }
+            else
+            {
+                item.removeProperty(kSampleMode, nullptr);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 bool ProjectState::hasLibraryItemForPath(const juce::String& filePath) const
 {
     const auto library = root.getChildWithName(kLibrary);
@@ -1310,6 +1379,18 @@ juce::var ProjectState::libraryAsJson() const
         if (item.hasProperty(kVariableTempo) && bool(item.getProperty(kVariableTempo)))
         {
             obj->setProperty("variableTempo", true);
+        }
+        if (item.hasProperty(kLowConfidence) && bool(item.getProperty(kLowConfidence)))
+        {
+            obj->setProperty("lowConfidence", true);
+        }
+        if (item.hasProperty(kSampleMode))
+        {
+            const auto mode = item.getProperty(kSampleMode).toString();
+            if (mode == "sample" || mode == "music")
+            {
+                obj->setProperty("sampleMode", mode);
+            }
         }
         if (item.hasProperty(kSourceItemId))
         {

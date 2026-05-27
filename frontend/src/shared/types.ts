@@ -83,6 +83,12 @@ export interface UiPreferences {
    *  conventional GarageBand-style "drop-and-play in time" behaviour
    *  works out of the box. */
   matchProjectTempoOnDrop: boolean
+
+  /** Application default for new projects' `targetSampleRate` (Hz).
+   *  Only 44 100 and 48 000 are supported today; other values snap
+   *  back to 44 100 on load. Existing projects with their own stored
+   *  rate are unaffected. */
+  defaultProjectSampleRate: number
 }
 
 /** Developer diagnostics preferences. These are sampled at startup because

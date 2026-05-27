@@ -14,7 +14,7 @@
 
 import { onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Application } from 'pixi.js'
-import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { libraryItemDisplayName, libraryItemIsSample, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -215,10 +215,15 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     // seeder), the ghost shows the native footprint.
     const ui = useUiStore()
     const projectHasOtherClips = Object.keys(project.clips).length > 0
+    // Samples skip auto-warp on drop (see `applyDropTimeWarp`); the
+    // preview must mirror that so the ghost width matches what the
+    // user gets after dropping.
+    const dropIsSample = libraryItemIsSample(item, library.byId)
     const willWarp =
       (item.warpEnabled === true) ||
       (ui.matchProjectTempoOnDrop &&
         projectHasOtherClips &&
+        !dropIsSample &&
         item.kind !== 'saved-clip' && item.variableTempo !== true &&
         typeof item.bpm === 'number' && item.bpm > 0 && transport.bpm > 0)
     const previewRatio = willWarp

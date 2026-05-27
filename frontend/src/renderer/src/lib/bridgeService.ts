@@ -38,6 +38,7 @@ import {
   isClipWarpAppliedPayload,
   isClipRemovedPayload,
   isEditUndoStatePayload,
+  isAudioFileProbedPayload,
   isLibraryItemAnalysisPayload,
   isPlayheadUpdatePayload,
   isPreviewEndedPayload,
@@ -61,6 +62,7 @@ import {
   type BridgeInboundType,
   type BridgeOutboundArgs,
   type BridgeOutboundType,
+  type AudioFileProbedPayload,
   type SampleSavedPayload,
   type WaveformReadyPayload
 } from '@shared/bridge-protocol'
@@ -264,6 +266,82 @@ export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K
   }
   socket.send(JSON.stringify(env))
   return true
+}
+
+// ─── File-rate probe ────────────────────────────────────────────────────────
+// `probeAudioFile()` issues an `AUDIO_FILE_PROBE` envelope and resolves
+// when the backend responds with `AUDIO_FILE_PROBED`. Used by the
+// import flow to read a source file's true sample rate (the renderer's
+// Web Audio decode resamples to the AudioContext rate, which on
+// Windows can lie about the source rate). `requestId` is a renderer-
+// allocated string so concurrent probes from a batched import don't
+// collide.
+
+export type AudioFileProbeResult =
+  | { ok: true; filePath: string; sampleRate: number; channelCount: number; durationMs: number }
+  | { ok: false; filePath: string; error: string }
+
+const pendingProbes = new Map<string, (result: AudioFileProbeResult) => void>()
+
+let nextProbeId = 1
+
+function resolveAudioFileProbe(payload: AudioFileProbedPayload): void {
+  const resolver = pendingProbes.get(payload.requestId)
+  if (payload.ok) {
+    log.info(
+      'probe',
+      `result id=${payload.requestId} sampleRate=${payload.sampleRate}Hz ch=${payload.channelCount} duration=${payload.durationMs.toFixed(1)}ms path=${payload.filePath}`
+    )
+  } else {
+    log.warn('probe', `failed id=${payload.requestId} path=${payload.filePath} error=${payload.error}`)
+  }
+  if (!resolver) return
+  pendingProbes.delete(payload.requestId)
+  if (payload.ok) {
+    resolver({
+      ok: true,
+      filePath: payload.filePath,
+      sampleRate: payload.sampleRate,
+      channelCount: payload.channelCount,
+      durationMs: payload.durationMs
+    })
+  } else {
+    resolver({ ok: false, filePath: payload.filePath, error: payload.error })
+  }
+}
+
+/**
+ * Probe `filePath` and resolve with the file's true sample rate /
+ * channel count / duration. Resolves to `{ ok: false, error }` when
+ * the backend can't decode the file's header (missing, unsupported,
+ * corrupt). Times out after 5 s if the backend never acks — the
+ * resolved promise carries an error in that case rather than hanging
+ * the import flow indefinitely.
+ */
+export function probeAudioFile(
+  filePath: string,
+  opts: { timeoutMs?: number } = {}
+): Promise<AudioFileProbeResult> {
+  const requestId = `probe-${nextProbeId++}-${Date.now().toString(36)}`
+  return new Promise((resolve) => {
+    const timeoutMs = opts.timeoutMs ?? 5000
+    const timer = setTimeout(() => {
+      if (pendingProbes.has(requestId)) {
+        pendingProbes.delete(requestId)
+        resolve({ ok: false, filePath, error: `probe timed out after ${timeoutMs}ms` })
+      }
+    }, timeoutMs)
+    pendingProbes.set(requestId, (payload) => {
+      clearTimeout(timer)
+      resolve(payload)
+    })
+    const sent = send('AUDIO_FILE_PROBE', { requestId, filePath })
+    if (!sent) {
+      clearTimeout(timer)
+      pendingProbes.delete(requestId)
+      resolve({ ok: false, filePath, error: 'backend not connected' })
+    }
+  })
 }
 
 function scheduleReconnect(): void {
@@ -508,11 +586,12 @@ function dispatch(msg: BridgeInboundMessage): void {
         msg.payload.beatAnchorSec,
         msg.payload.beats,
         msg.payload.variableTempo,
-        msg.payload.playbackFilePath
+        msg.payload.playbackFilePath,
+        msg.payload.lowConfidence
       )
       log.info(
         'bridge',
-        `LIBRARY_ITEM_ANALYSIS itemId=${msg.payload.itemId} bpm=${msg.payload.bpm.toFixed(2)} anchor=${msg.payload.beatAnchorSec.toFixed(3)}s beats=${msg.payload.beats.length}${msg.payload.variableTempo ? ' variable' : ''}${msg.payload.playbackFilePath ? ' (cached)' : ''}`
+        `LIBRARY_ITEM_ANALYSIS itemId=${msg.payload.itemId} bpm=${msg.payload.bpm.toFixed(2)} anchor=${msg.payload.beatAnchorSec.toFixed(3)}s beats=${msg.payload.beats.length}${msg.payload.variableTempo ? ' variable' : ''}${msg.payload.lowConfidence ? ' low-confidence' : ''}${msg.payload.playbackFilePath ? ' (cached)' : ''}`
       )
       break
     }
@@ -584,6 +663,15 @@ function dispatch(msg: BridgeInboundMessage): void {
 
     case 'EDIT_UNDO_STATE': {
       useProjectStore().applyEditUndoState(msg.payload)
+      break
+    }
+
+    case 'AUDIO_FILE_PROBED': {
+      // Resolve the pending `probeAudioFile()` promise keyed by
+      // `requestId`. Late acks for promises that have already been
+      // resolved (or whose initiator was cancelled) are dropped on
+      // the floor — there is no harm in a missing entry.
+      resolveAudioFileProbe(msg.payload)
       break
     }
 
@@ -806,6 +894,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isAudioDeviceChangedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'EDIT_UNDO_STATE':
       return isEditUndoStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'AUDIO_FILE_PROBED':
+      return isAudioFileProbedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

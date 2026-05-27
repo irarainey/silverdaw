@@ -14,9 +14,9 @@
 // height is left over.
 
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
-import { useLibraryStore, libraryItemDisplayName, type LibraryItem } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName, libraryItemIsSample, type LibraryItem } from '@/stores/libraryStore'
 import { useUiStore } from '@/stores/uiStore'
-import { importAudioIntoLibrary, reanalyseLibraryItem } from '@/lib/importAudio'
+import { importAudioIntoLibrary, preflightSampleRates, reanalyseLibraryItem } from '@/lib/importAudio'
 import { log } from '@/lib/log'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { effectiveTempoRatio } from '@/lib/warp'
@@ -124,6 +124,8 @@ const SAVED_CLIP_PILL_CLASS =
     'shrink-0 whitespace-nowrap rounded border px-1 py-0.5 text-[9px] leading-none shadow-sm'
 const SAVED_CLIP_BPM_PILL_CLASS =
     `${SAVED_CLIP_PILL_CLASS} border-zinc-700 bg-zinc-800 text-zinc-300`
+const SAMPLE_PILL_CLASS =
+    `${SAVED_CLIP_PILL_CLASS} border-indigo-800 bg-indigo-900/60 text-indigo-200`
 const contextMenuItem = computed(() =>
     contextMenu.value ? library.byId[contextMenu.value?.itemId] ?? null : null
 )
@@ -156,6 +158,31 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
                 'to this clip, so future edits to the saved clip do not affect previously-baked samples.'
         })
     }
+    // Sample / music classification submenu. Audio-file items only —
+    // saved clips inherit from their source unless the source is
+    // missing (then they edit their own override here).
+    if (item.kind === 'audio-file') {
+        const auto = item.sampleMode === undefined
+        items.push({
+            command: 'library.classifyAuto',
+            label: auto
+                ? `Auto-classify (currently ${item.lowConfidence ? 'sample' : 'music'})`
+                : 'Auto-classify',
+            separatorAbove: true,
+            disabled: auto
+        })
+        items.push({
+            command: 'library.classifyMusic',
+            label: 'Treat as music',
+            disabled: item.sampleMode === 'music'
+        })
+        items.push({
+            command: 'library.classifySample',
+            label: 'Treat as sample',
+            title: 'Hide BPM / key / beat markers, and skip auto-warp on drop. Warp and pitch dialogs still work manually.',
+            disabled: item.sampleMode === 'sample'
+        })
+    }
     // Saved clips can always be removed — doing so just unlinks any
     // timeline clips that reference them (they keep their audio and
     // become independent). Audio-file sources stay gated because
@@ -181,6 +208,15 @@ async function onImportClick(): Promise<void> {
     })
     if (opened.length === 0) {
         log.info('library', 'import-button dialog cancelled')
+        return
+    }
+    // Sample-rate preflight: probe every file and prompt if any differ
+    // from the project's effective target rate. Cancel aborts the
+    // whole batch; "Switch project rate" updates `targetSampleRate`
+    // before the loop runs.
+    const decision = await preflightSampleRates(opened.map((f) => f.filePath))
+    if (decision === 'cancel') {
+        log.info('library', 'import cancelled at sample-rate prompt')
         return
     }
     // Register the batch with the library store so the status-bar progress
@@ -221,20 +257,30 @@ async function onPanelDrop(e: DragEvent): Promise<void> {
 
     const files = Array.from(e.dataTransfer?.files ?? [])
     if (files.length === 0) return
-    // Count every dropped file towards the progress total, even ones that
-    // turn out to lack a path or fail to read — we call
-    // `noteImportFinished()` for those too so the bar still completes.
-    library.beginImportBatch(files.length)
+    // Resolve file paths first so the preflight probe has something to
+    // hand the backend. Drops that lack a path (rare; usually only
+    // in-browser drags) are filtered out before the preflight so they
+    // don't skew the rate buckets.
+    const pairs: { file: File; path: string }[] = []
     for (const file of files) {
-        // The preload exposes Electron's `webUtils.getPathForFile`, the only
-        // way to recover an absolute path from a drag-dropped File since
-        // Electron dropped `file.path` in v32.
         const path = window.silverdaw.getPathForFile(file)
         if (!path) {
             log.warn('library', `dropped file has no path: ${file.name}`)
-            library.noteImportFinished()
             continue
         }
+        pairs.push({ file, path })
+    }
+    if (pairs.length === 0) return
+    const decision = await preflightSampleRates(pairs.map((p) => p.path))
+    if (decision === 'cancel') {
+        log.info('library', 'import (drag/drop) cancelled at sample-rate prompt')
+        return
+    }
+    // Count every dropped file towards the progress total, even ones that
+    // turn out to fail to read — we call `noteImportFinished()` for
+    // those too so the bar still completes.
+    library.beginImportBatch(pairs.length)
+    for (const { path } of pairs) {
         const opened = await window.silverdaw.readAudioFile(path)
         if (!opened) {
             library.noteImportFinished()
@@ -329,6 +375,21 @@ function onContextMenuCommand(command: string): void {
         void library.saveLibraryItemAsSample(item.id)
         return
     }
+    if (command === 'library.classifyAuto') {
+        closeItemContextMenu()
+        library.setItemSampleMode(item.id, 'auto')
+        return
+    }
+    if (command === 'library.classifyMusic') {
+        closeItemContextMenu()
+        library.setItemSampleMode(item.id, 'music')
+        return
+    }
+    if (command === 'library.classifySample') {
+        closeItemContextMenu()
+        library.setItemSampleMode(item.id, 'sample')
+        return
+    }
     if (command === 'library.delete') {
         const removed = library.removeItem(item.id)
         if (removed && infoItemId.value === item.id) closeItemInfo()
@@ -386,6 +447,16 @@ function savedClipEffectiveBpm(item: LibraryItem): number | undefined {
         projectBpm: sourceBpm
     })
     return sourceBpm * ratio
+}
+
+/**
+ * Helper: should this library item be treated as a non-musical sample?
+ * Used to suppress BPM / key / variable-tempo badges on its tile in
+ * favour of a single "sample" pill. Mirrors `applyDropTimeWarp` so
+ * the tile UI matches what the drop will do.
+ */
+function tileIsSample(item: LibraryItem): boolean {
+    return libraryItemIsSample(item, library.byId)
 }
 
 // ─── Resize handle (top edge of the panel) ────────────────────────────────
@@ -546,30 +617,39 @@ function onResizePointerUp(): void {
                 <span class="font-mono tabular-nums">{{ formatDuration(source.durationMs) }}</span>
                 <span class="ml-auto flex items-center gap-1">
                   <span
-                    v-if="source.key"
-                    :class="keyBadgeClass(source.key)"
-                    title="Detected key"
+                    v-if="tileIsSample(source)"
+                    :class="SAMPLE_PILL_CLASS"
+                    title="Treated as a non-musical sample — beat / key analysis is hidden and auto-warp on drop is skipped. Toggle from the right-click menu."
                   >
-                    {{ source.key }}
+                    Sample
                   </span>
-                  <span
-                    v-if="source.bpm"
-                    :class="
-                      source.variableTempo
-                        ? `${SAVED_CLIP_PILL_CLASS} border-amber-800 bg-amber-900/60 text-amber-200`
-                        : SAVED_CLIP_BPM_PILL_CLASS
-                    "
-                    :title="
-                      source.variableTempo
-                        ? 'Tempo varies across the file - the BPM shown is a rough average'
-                        : 'Detected tempo'
-                    "
-                  >
+                  <template v-else>
                     <span
-                      v-if="source.variableTempo"
-                      class="mr-0.5"
-                    >~</span>{{ source.bpm.toFixed(2) }} BPM
-                  </span>
+                      v-if="source.key"
+                      :class="keyBadgeClass(source.key)"
+                      title="Detected key"
+                    >
+                      {{ source.key }}
+                    </span>
+                    <span
+                      v-if="source.bpm"
+                      :class="
+                        source.variableTempo
+                          ? `${SAVED_CLIP_PILL_CLASS} border-amber-800 bg-amber-900/60 text-amber-200`
+                          : SAVED_CLIP_BPM_PILL_CLASS
+                      "
+                      :title="
+                        source.variableTempo
+                          ? 'Tempo varies across the file - the BPM shown is a rough average'
+                          : 'Detected tempo'
+                      "
+                    >
+                      <span
+                        v-if="source.variableTempo"
+                        class="mr-0.5"
+                      >~</span>{{ source.bpm.toFixed(2) }} BPM
+                    </span>
+                  </template>
                 </span>
               </div>
             </div>

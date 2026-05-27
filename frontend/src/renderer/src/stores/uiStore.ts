@@ -25,6 +25,11 @@ interface UiState {
   showLibraryTileImages: boolean
   /** Auto-warp dropped clips to match project BPM. */
   matchProjectTempoOnDrop: boolean
+  /** Application default for new-project sample rate (Hz). Mirrors
+   *  `preferences.json.ui.defaultProjectSampleRate`. Surfaced in
+   *  Preferences ▸ Audio so the user can change the default applied
+   *  to freshly-created projects without touching existing ones. */
+  defaultProjectSampleRate: number
   /** Live horizontal-zoom value (px per second). NOT persisted to
    *  preferences.json — this just mirrors `geometry.pxPerSecond` from
    *  the timeline so other components (e.g. StatusBar) can show the
@@ -53,8 +58,17 @@ const DEFAULTS = {
   libraryPanelHeight: 180,
   followPlayback: true,
   showLibraryTileImages: true,
-  matchProjectTempoOnDrop: true
+  matchProjectTempoOnDrop: true,
+  defaultProjectSampleRate: 44100
 } as const
+
+const SUPPORTED_PROJECT_SAMPLE_RATES = new Set([44100, 48000])
+
+function sanitiseProjectSampleRate(n: unknown): number {
+  return typeof n === 'number' && SUPPORTED_PROJECT_SAMPLE_RATES.has(n)
+    ? n
+    : DEFAULTS.defaultProjectSampleRate
+}
 
 // Clamps mirror the resize-handle clamps in the components, but applied
 // defensively here too so a corrupt prefs file can't render an unreachable
@@ -83,18 +97,21 @@ let pendingPush: {
   matchProjectTempoOnDrop?: boolean
 } = {}
 
-/**
- * Debounced push of UI preference changes back to main. Resize handles
- * fire continuously while dragged, so we coalesce ~150 ms of changes into
- * a single IPC + disk write.
- */
-function schedulePush(partial: {
+interface UiPushPayload {
   trackHeaderWidth?: number
   libraryPanelHeight?: number
   followPlayback?: boolean
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
-}): void {
+  defaultProjectSampleRate?: number
+}
+
+/**
+ * Debounced push of UI preference changes back to main. Resize handles
+ * fire continuously while dragged, so we coalesce ~150 ms of changes into
+ * a single IPC + disk write.
+ */
+function schedulePush(partial: UiPushPayload): void {
   pendingPush = { ...pendingPush, ...partial }
   if (pushTimer) return
   pushTimer = setTimeout(() => {
@@ -112,6 +129,7 @@ export const useUiStore = defineStore('ui', {
     followPlayback: DEFAULTS.followPlayback,
     showLibraryTileImages: DEFAULTS.showLibraryTileImages,
     matchProjectTempoOnDrop: DEFAULTS.matchProjectTempoOnDrop,
+    defaultProjectSampleRate: DEFAULTS.defaultProjectSampleRate,
     zoomPxPerSecond: 100,
     timelineScrollRequest: null,
     timelineZoomRequest: null,
@@ -140,6 +158,7 @@ export const useUiStore = defineStore('ui', {
           typeof saved.matchProjectTempoOnDrop === 'boolean'
             ? saved.matchProjectTempoOnDrop
             : DEFAULTS.matchProjectTempoOnDrop
+        this.defaultProjectSampleRate = sanitiseProjectSampleRate(saved.defaultProjectSampleRate)
       } catch (err) {
         log.warn('ui', `hydrate failed, using defaults: ${String(err)}`)
       } finally {
@@ -183,6 +202,17 @@ export const useUiStore = defineStore('ui', {
       if (this.matchProjectTempoOnDrop === value) return
       this.matchProjectTempoOnDrop = value
       if (this.hydrated) schedulePush({ matchProjectTempoOnDrop: value })
+    },
+
+    /** Update the application default for new-project sample rate.
+     *  Snaps to the supported whitelist; out-of-set values are
+     *  rejected so a manual prefs-file edit can't park us on an
+     *  unsupported rate. Existing projects keep their stored rate. */
+    setDefaultProjectSampleRate(value: number): void {
+      if (!SUPPORTED_PROJECT_SAMPLE_RATES.has(value)) return
+      if (this.defaultProjectSampleRate === value) return
+      this.defaultProjectSampleRate = value
+      if (this.hydrated) schedulePush({ defaultProjectSampleRate: value })
     },
 
     /** Update the live zoom mirror. Renderer-only — not persisted to

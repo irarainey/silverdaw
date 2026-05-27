@@ -11,6 +11,11 @@ import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
 import ProjectPropertiesDialog from '@/components/ProjectPropertiesDialog.vue'
 import AudioDeviceUnavailableDialog from '@/components/AudioDeviceUnavailableDialog.vue'
+import SampleRateMismatchDialog from '@/components/SampleRateMismatchDialog.vue'
+import {
+  useSampleRateMismatchPromptState,
+  resolveSampleRateMismatchPrompt
+} from '@/lib/sampleRatePrompt'
 import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import RelinkDialog from '@/components/RelinkDialog.vue'
 import RecoveryDialog, { type RecoverableEntry } from '@/components/RecoveryDialog.vue'
@@ -54,6 +59,7 @@ const audioUnavailableSavedDeviceName = ref<string | null>(null)
 // this, PROJECT_STATE echoes or audio-device-list refreshes could
 // reopen the dialog after the user has dismissed it.
 const audioReconciledKeys = new Set<string>()
+const sampleRatePromptState = useSampleRateMismatchPromptState()
 // Crash-recovery state. Populated on bridge-ready by
 // `autosave:listRecoverable`; if non-empty, the RecoveryDialog mounts
 // and blocks the rest of the startup flow (auto-open + start screen)
@@ -193,6 +199,7 @@ function isShortcutModalOpen(): boolean {
     preferencesOpen.value ||
     projectPropertiesOpen.value ||
     audioUnavailableOpen.value ||
+    sampleRatePromptState.value.open ||
     relinkDialogOpen.value ||
     unsavedPromptOpen.value ||
     recoveryDialogOpen.value ||
@@ -968,6 +975,13 @@ function onUnsavedPromptCancel(): void {
       :saved-type-name="audioUnavailableSavedTypeName"
       :saved-device-name="audioUnavailableSavedDeviceName"
       @close="audioUnavailableOpen = false"
+    />
+
+    <SampleRateMismatchDialog
+      :open="sampleRatePromptState.open"
+      :buckets="sampleRatePromptState.buckets"
+      :project-sample-rate="sampleRatePromptState.projectSampleRate"
+      @choose="resolveSampleRateMismatchPrompt"
     />
 
     <UnsavedChangesDialog

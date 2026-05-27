@@ -271,6 +271,15 @@ interface UiPrefs {
    *  the source's BPM is known and the source isn't variable-tempo).
    *  Off lets the user opt in per-clip via the Warp settings dialog. */
   matchProjectTempoOnDrop: boolean
+  /**
+   * Application default for the per-project `targetSampleRate` (Hz).
+   * Only 44 100 and 48 000 are accepted today; the migration step in
+   * `loadPreferences` snaps anything else back to the closer of the
+   * two. Newly-created projects adopt this as their initial target
+   * rate; existing projects with their own stored value are
+   * unaffected.
+   */
+  defaultProjectSampleRate: number
 }
 
 type DebugPrefs = DebugPreferences
@@ -400,7 +409,8 @@ function buildDefaultPrefs(): Preferences {
       libraryPanelHeight: 180,
       followPlayback: true,
       showLibraryTileImages: true,
-      matchProjectTempoOnDrop: true
+      matchProjectTempoOnDrop: true,
+      defaultProjectSampleRate: 44100
     },
     debug: {
       loggingEnabled: false,
@@ -422,7 +432,8 @@ let prefs: Preferences = {
     libraryPanelHeight: 180,
     followPlayback: true,
     showLibraryTileImages: true,
-    matchProjectTempoOnDrop: true
+    matchProjectTempoOnDrop: true,
+    defaultProjectSampleRate: 44100
   },
   debug: { loggingEnabled: false, devToolsEnabled: false, logDirectory: '' },
   toasts: { enabled: true },
@@ -543,6 +554,12 @@ async function loadPreferences(): Promise<void> {
             : null
       },
       recentProjects: sanitiseRecentList(parsed.recentProjects)
+    }
+    // Normalise the project sample-rate preference to the supported
+    // whitelist; a bad value in `preferences.json` (manual edit,
+    // older alpha build, etc.) snaps to the safer 44 100 default.
+    if (prefs.ui.defaultProjectSampleRate !== 44100 && prefs.ui.defaultProjectSampleRate !== 48000) {
+      prefs.ui.defaultProjectSampleRate = 44100
     }
   } catch (err) {
     // ENOENT on first run is expected; anything else is logged but we still

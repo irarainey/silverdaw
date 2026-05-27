@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
-import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { libraryItemDisplayName, libraryItemIsSample, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { shiftedKey } from '@/lib/pitchKey'
@@ -32,6 +32,31 @@ const displayTitle = computed(() => {
   return libraryItemDisplayName(item)
 })
 const infoSettings = computed(() => clip.value ?? props.item)
+
+/**
+ * Whether this library item is currently treated as a non-musical sample.
+ * Used to (a) gate BPM/key/beats rows in the analysis section, and
+ * (b) preselect the right radio in the classification control.
+ */
+const isSample = computed(() => {
+  const item = props.item
+  if (!item) return false
+  return libraryItemIsSample(item, library.byId)
+})
+
+/** Current classification mode for the radio control: 'auto' when no
+ *  override is set, otherwise the explicit choice. */
+const classificationMode = computed<'auto' | 'sample' | 'music'>(() => {
+  const item = props.item
+  if (!item) return 'auto'
+  return item.sampleMode ?? 'auto'
+})
+
+function setClassification(mode: 'auto' | 'sample' | 'music'): void {
+  const item = props.item
+  if (!item || item.kind !== 'audio-file') return
+  library.setItemSampleMode(item.id, mode)
+}
 const instanceRows = computed(() => {
   const c = clip.value
   if (!c) return []
@@ -325,52 +350,111 @@ function channelLabel(count: number): string {
                 Channels
               </dt>
               <dd>{{ channelLabel(item.channelCount) }}</dd>
-              <dt class="text-zinc-500">
-                {{ bpmLabel }}
-              </dt>
-              <dd>
-                <span v-if="warpedBpm ?? item.bpm">
-                  {{ (warpedBpm ?? item.bpm)?.toFixed(2) }}
-                  <span
-                    v-if="!warpedBpm && item.variableTempo"
-                    class="text-amber-300"
-                  >(variable)</span>
-                </span>
-                <span v-else>Not analysed</span>
-              </dd>
-              <dt
-                v-if="displayKey"
-                class="text-zinc-500"
-              >
-                {{ keyLabel }}
-              </dt>
-              <dd v-if="displayKey">
-                <span
-                  :class="keyBadgeClass(displayKey)"
-                  :title="keyLabel"
+              <template v-if="!isSample">
+                <dt class="text-zinc-500">
+                  {{ bpmLabel }}
+                </dt>
+                <dd>
+                  <span v-if="warpedBpm ?? item.bpm">
+                    {{ (warpedBpm ?? item.bpm)?.toFixed(2) }}
+                    <span
+                      v-if="!warpedBpm && item.variableTempo"
+                      class="text-amber-300"
+                    >(variable)</span>
+                  </span>
+                  <span v-else>Not analysed</span>
+                </dd>
+                <dt
+                  v-if="displayKey"
+                  class="text-zinc-500"
                 >
-                  {{ displayKey }}
-                </span>
-              </dd>
-              <dt
-                v-if="item.kind !== 'saved-clip'"
-                class="text-zinc-500"
-              >
-                Beat markers
-              </dt>
-              <dd v-if="item.kind !== 'saved-clip'">
-                {{ item.beats?.length ?? 0 }}
-              </dd>
-              <dt
-                v-if="item.kind !== 'saved-clip'"
-                class="text-zinc-500"
-              >
-                Beat anchor
-              </dt>
-              <dd v-if="item.kind !== 'saved-clip'">
-                {{ item.beatAnchorSec !== undefined ? `${item.beatAnchorSec.toFixed(3)} s` : 'None' }}
-              </dd>
+                  {{ keyLabel }}
+                </dt>
+                <dd v-if="displayKey">
+                  <span
+                    :class="keyBadgeClass(displayKey)"
+                    :title="keyLabel"
+                  >
+                    {{ displayKey }}
+                  </span>
+                </dd>
+                <dt
+                  v-if="item.kind !== 'saved-clip'"
+                  class="text-zinc-500"
+                >
+                  Beat markers
+                </dt>
+                <dd v-if="item.kind !== 'saved-clip'">
+                  {{ item.beats?.length ?? 0 }}
+                </dd>
+                <dt
+                  v-if="item.kind !== 'saved-clip'"
+                  class="text-zinc-500"
+                >
+                  Beat anchor
+                </dt>
+                <dd v-if="item.kind !== 'saved-clip'">
+                  {{ item.beatAnchorSec !== undefined ? `${item.beatAnchorSec.toFixed(3)} s` : 'None' }}
+                </dd>
+              </template>
+              <template v-else>
+                <dt class="text-zinc-500">
+                  Classification
+                </dt>
+                <dd class="text-indigo-300">
+                  Sample — tempo / key / beat analysis hidden
+                </dd>
+              </template>
             </dl>
+            <!-- Sample / music classification (audio-file items only).
+                 Saved clips inherit from their source; toggling the
+                 source flows through to all derived saved clips. -->
+            <div
+              v-if="item.kind === 'audio-file'"
+              class="mt-4 rounded border border-zinc-800 bg-zinc-950/60 p-3"
+            >
+              <div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">
+                Treat as
+              </div>
+              <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                <label class="flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="library-item-classification"
+                    :value="'auto'"
+                    :checked="classificationMode === 'auto'"
+                    class="accent-cyan-500"
+                    @change="setClassification('auto')"
+                  >
+                  <span>Auto<span class="ml-1 text-zinc-500">({{ item.lowConfidence ? 'sample' : 'music' }})</span></span>
+                </label>
+                <label class="flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="library-item-classification"
+                    :value="'music'"
+                    :checked="classificationMode === 'music'"
+                    class="accent-cyan-500"
+                    @change="setClassification('music')"
+                  >
+                  <span>Music</span>
+                </label>
+                <label class="flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="library-item-classification"
+                    :value="'sample'"
+                    :checked="classificationMode === 'sample'"
+                    class="accent-cyan-500"
+                    @change="setClassification('sample')"
+                  >
+                  <span>Sample</span>
+                </label>
+              </div>
+              <p class="mt-2 text-[10px] leading-snug text-zinc-500">
+                Samples hide tempo / key / beat markers and skip auto-warp on drop. Warp and Pitch dialogs still work manually so you can speed up, slow down, or pitch-shift the clip.
+              </p>
+            </div>
           </section>
 
           <section

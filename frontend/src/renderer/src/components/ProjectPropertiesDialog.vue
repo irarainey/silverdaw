@@ -45,6 +45,7 @@ const BPM_MAX = 300
 const draftName = ref('')
 const draftBpm = ref(120)
 const draftDurationText = ref('')
+const draftSampleRate = ref<number>(44100)
 // Audio output draft. `null` for both fields = "no project override"
 // (the global preferences.json device applies on next load). When the
 // project's currently saved device is not in the live device list we
@@ -223,9 +224,14 @@ const hasAudioChange = computed(() =>
   draftAudioTypeName.value !== project.audioOutputTypeName ||
   draftAudioDeviceName.value !== project.audioOutputDeviceName
 )
+const hasSampleRateChange = computed(() => {
+  const current = project.targetSampleRate ?? ui.defaultProjectSampleRate
+  return draftSampleRate.value !== current
+})
 
 const hasAnyChange = computed(() =>
-  hasNameChange.value || hasBpmChange.value || hasDurationChange.value || hasAudioChange.value
+  hasNameChange.value || hasBpmChange.value || hasDurationChange.value ||
+  hasAudioChange.value || hasSampleRateChange.value
 )
 const hasError = computed(() =>
   !!(nameError.value || bpmError.value || durationError.value) || audioPairInvalid.value
@@ -238,6 +244,12 @@ function initialiseDraft(): void {
   draftDurationText.value = formatTime(project.durationMs)
   draftAudioTypeName.value = project.audioOutputTypeName
   draftAudioDeviceName.value = project.audioOutputDeviceName
+  // Seed the sample-rate draft from the project's stored value or,
+  // when the project has none yet, fall back to the user-scope
+  // application default. The combined rule means a freshly-created
+  // project opens with the right initial pick without us having to
+  // immediately persist the default.
+  draftSampleRate.value = project.targetSampleRate ?? ui.defaultProjectSampleRate
 }
 
 function onSave(): void {
@@ -292,6 +304,16 @@ function onSave(): void {
       // preference is the source of truth here.
       audioDevices.selectDevice(nextType, nextDevice, { persistUserPreference: false })
     }
+  }
+  if (hasSampleRateChange.value) {
+    // Phase 1 of the per-project sample-rate feature only persists the
+    // chosen rate on the project; the on-disk playback-cache rebuild
+    // that actually downsamples existing clips lands in a follow-up.
+    // Audio still plays correctly because every per-track
+    // `AudioTransportSource` resamples to the device rate at the
+    // engine. The Info dialog and import prompts honour the new value
+    // immediately.
+    project.setTargetSampleRate(draftSampleRate.value)
   }
   notifications.pushInfo('Project properties saved.')
   emit('close')
@@ -357,7 +379,6 @@ function onKeydown(ev: KeyboardEvent): void {
       role="dialog"
       aria-modal="true"
       aria-labelledby="project-properties-title"
-      @click.self="onCancel"
     >
       <div
         ref="dialogEl"
@@ -438,6 +459,25 @@ function onKeydown(ev: KeyboardEvent): void {
               v-else
               class="text-[11px] text-zinc-500"
             >Minimum {{ minDurationLabel }} (the end of the last clip).</span>
+          </label>
+
+          <!-- Project sample rate. Drives the playback-cache rebuild
+               so every clip's audio is at this rate on disk (rebuild
+               itself lands in a follow-up; today the rate is recorded
+               and JUCE's per-track ResamplingAudioSource handles the
+               engine-side conversion). -->
+          <label class="flex flex-col gap-1.5">
+            <span class="text-xs font-medium text-zinc-300">Sample rate</span>
+            <select
+              v-model.number="draftSampleRate"
+              class="w-32 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 focus:border-sky-500 focus:outline-none"
+            >
+              <option :value="44100">44 100 Hz</option>
+              <option :value="48000">48 000 Hz</option>
+            </select>
+            <span class="text-[11px] text-zinc-500">
+              Set the application default for new projects in <span class="text-zinc-300">Preferences ▸ Audio</span>.
+            </span>
           </label>
 
           <!-- Audio output: device + driver, in the same order as the

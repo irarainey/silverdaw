@@ -84,6 +84,24 @@ export interface LibraryItem {
    * rough average.
    */
   variableTempo?: boolean
+  /**
+   * Backend's auto-detected confidence hint. True when the BPM/beat
+   * fit looked unlikely to reflect a real groove — used to default
+   * non-musical samples (rain, sound effects, vocal one-shots) to
+   * the `sample` classification. Recomputed on every analysis.
+   */
+  lowConfidence?: boolean
+  /**
+   * User's explicit classification override. Persisted on the item.
+   * `'sample'` forces non-musical treatment (hide BPM/key/beats in
+   * the library tile and clip beat markers; skip auto-warp on drop).
+   * `'music'` forces musical treatment. `undefined` means "auto" —
+   * the effective classification falls back to `lowConfidence`.
+   * Warp and pitch shift dialogs remain available regardless so
+   * samples can still be sped up / slowed down / pitch-shifted
+   * manually.
+   */
+  sampleMode?: 'sample' | 'music'
   /** Detected musical key, stored as user-facing metadata (e.g. `C minor`). */
   key?: string
   /**
@@ -561,6 +579,7 @@ export const useLibraryStore = defineStore('library', {
           if (source.beats !== undefined) item.beats = source.beats.slice()
           if (source.beatAnchorSec !== undefined) item.beatAnchorSec = source.beatAnchorSec
           if (source.variableTempo !== undefined) item.variableTempo = source.variableTempo
+          if (source.lowConfidence !== undefined) item.lowConfidence = source.lowConfidence
         }
       }
       // Auto-expand the parent source group so the new saved clip is
@@ -632,6 +651,30 @@ export const useLibraryStore = defineStore('library', {
     },
 
     /**
+     * Override the user-facing sample/music classification for a
+     * library item. Pass `'sample'` / `'music'` to force the mode,
+     * or `null` / `'auto'` to clear the override so the renderer
+     * falls back to the backend's `lowConfidence` flag. Bumps
+     * `peaksRevision` so any clip that referenced the item
+     * repaints (drop hides BPM/beats badges, beat-marker grid).
+     */
+    setItemSampleMode(itemId: string, mode: 'sample' | 'music' | 'auto' | null): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      const normalised: 'sample' | 'music' | 'auto' =
+        mode === 'sample' || mode === 'music' ? mode : 'auto'
+      const nextStored: 'sample' | 'music' | undefined =
+        normalised === 'auto' ? undefined : normalised
+      if (item.sampleMode === nextStored) return
+      item.sampleMode = nextStored
+      useProjectStore().peaksRevision++
+      sendBridge('LIBRARY_ITEM_SET_SAMPLE_MODE', {
+        itemId,
+        mode: normalised
+      })
+    },
+
+    /**
      * Variant of `addSavedClipFromTimelineClip` that takes an explicit
      * source library item id and selection window — used by the Clip
      * Editor's "Save as new clip" action. Returns the new saved-clip
@@ -694,6 +737,7 @@ export const useLibraryStore = defineStore('library', {
           if (source.beats !== undefined) item.beats = source.beats.slice()
           if (source.beatAnchorSec !== undefined) item.beatAnchorSec = source.beatAnchorSec
           if (source.variableTempo !== undefined) item.variableTempo = source.variableTempo
+          if (source.lowConfidence !== undefined) item.lowConfidence = source.lowConfidence
         }
         if (source.collapsed) this.setItemCollapsed(source.id, false)
       }
@@ -1116,6 +1160,7 @@ export const useLibraryStore = defineStore('library', {
       item.beatAnchorSec = undefined
       item.beats = undefined
       item.variableTempo = undefined
+      item.lowConfidence = undefined
       useProjectStore().peaksRevision++
     },
 
@@ -1367,7 +1412,8 @@ export const useLibraryStore = defineStore('library', {
       beatAnchorSec: number,
       beats: number[],
       variableTempo: boolean,
-      playbackFilePath?: string
+      playbackFilePath?: string,
+      lowConfidence?: boolean
     ): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
@@ -1380,6 +1426,10 @@ export const useLibraryStore = defineStore('library', {
       item.beatAnchorSec = beats.length > 0 ? beatAnchorSec : undefined
       item.beats = beats.length > 0 ? beats.slice() : undefined
       item.variableTempo = variableTempo || undefined
+      // Auto-classification hint from the backend. Recomputed on every
+      // analysis pass (so re-analyse refreshes it), but the user's
+      // explicit `sampleMode` override always wins when set.
+      item.lowConfidence = lowConfidence === true ? true : undefined
       // Keep the backend's decoded-WAV cache path separate from
       // `playbackFilePath`. The renderer still sends the source path
       // for normal clip adds so the backend can do its library lookup,
@@ -1538,6 +1588,40 @@ export function libraryItemSourceBpm(
   if (!sourceId) return undefined
   const source = byId[sourceId]
   return typeof source?.bpm === 'number' && source.bpm > 0 ? source.bpm : undefined
+}
+
+/**
+ * Effective sample-vs-music classification for a library item.
+ * Resolution order (saved-clip-aware):
+ *   1. item's own `sampleMode` override, if set
+ *   2. item's own `lowConfidence` auto-flag, if set
+ *   3. for saved clips, fall back to the SOURCE item's classification
+ *      (so cutting a one-shot out of a musical track inherits music
+ *      unless explicitly overridden on the saved clip)
+ *   4. default to `false` (music)
+ *
+ * Used to gate beat-marker rendering, library tile BPM/key badges,
+ * auto-warp on drop, and the project-BPM seed. Does NOT gate the
+ * Warp / Pitch dialogs — those remain available so the user can
+ * speed up / slow down / pitch shift any clip including samples.
+ */
+export function libraryItemIsSample(
+  item: { sampleMode?: 'sample' | 'music'; lowConfidence?: boolean; derivedFrom?: SavedClipSource },
+  byId: Readonly<Record<string, LibraryItem>>
+): boolean {
+  if (item.sampleMode === 'sample') return true
+  if (item.sampleMode === 'music') return false
+  if (item.lowConfidence === true) return true
+  const sourceId = item.derivedFrom?.sourceItemId
+  if (sourceId) {
+    const source = byId[sourceId]
+    if (source) {
+      if (source.sampleMode === 'sample') return true
+      if (source.sampleMode === 'music') return false
+      if (source.lowConfidence === true) return true
+    }
+  }
+  return false
 }
 
 function buildSavedClipName(

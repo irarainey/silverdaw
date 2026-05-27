@@ -626,6 +626,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             projectState.setLibraryItemBeats(itemId, analysis.beatTimesSec);
             projectState.setLibraryItemBeatAnchor(itemId, analysis.beatAnchorSec);
             projectState.setLibraryItemVariableTempo(itemId, analysis.variableTempo);
+            projectState.setLibraryItemLowConfidence(itemId, analysis.lowConfidence);
             if (cachedPath.isNotEmpty())
             {
                 projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
@@ -643,6 +644,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             for (double t : analysis.beatTimesSec) beatArr.add(juce::var(t));
             p->setProperty("beats", juce::var(beatArr));
             p->setProperty("variableTempo", analysis.variableTempo);
+            p->setProperty("lowConfidence", analysis.lowConfidence);
             if (cachedPath.isNotEmpty())
             {
                 p->setProperty("playbackFilePath", cachedPath);
@@ -653,14 +655,16 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             // library item's BPM was known carries a `pendingAutoWarp`
             // flag. Now that we have a stable source BPM (skip the
             // variable-tempo case — median BPM aligns globally but
-            // drifts locally), flip warp on for those clips so the
-            // user gets the intent they signalled at drop time without
-            // any further action.
+            // drifts locally; and skip the low-confidence case — the
+            // BPM almost certainly doesn't reflect a real groove), flip
+            // warp on for those clips so the user gets the intent
+            // they signalled at drop time without any further action.
             DBG("[warp/late-flip] LIBRARY_ITEM_ANALYSIS itemId=" + itemId
                 + " bpm=" + juce::String(analysis.bpm)
                 + " variableTempo=" + (analysis.variableTempo ? "true" : "false")
+                + " lowConfidence=" + (analysis.lowConfidence ? "true" : "false")
                 + " projectBpm=" + juce::String(projectState.getBpm()));
-            if (!analysis.variableTempo && analysis.bpm > 0.0)
+            if (!analysis.variableTempo && !analysis.lowConfidence && analysis.bpm > 0.0)
             {
                 const double projectBpm = projectState.getBpm();
                 int scanned = 0;
@@ -742,6 +746,8 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, silverdaw::ProjectState&
     }
     double itemBpm = 0.0;
     bool itemFound = false;
+    bool itemLowConfidence = false;
+    juce::String itemSampleMode;
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
@@ -755,6 +761,8 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, silverdaw::ProjectState&
                 return;
             }
             itemBpm = static_cast<double>(item.getProperty(juce::Identifier{"bpm"}, 0.0));
+            itemLowConfidence = static_cast<bool>(item.getProperty(juce::Identifier{"lowConfidence"}, false));
+            itemSampleMode = item.getProperty(juce::Identifier{"sampleMode"}, juce::var("")).toString();
             break;
         }
     }
@@ -767,6 +775,22 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, silverdaw::ProjectState&
     {
         silverdaw::log::info("bpmjob",
                              "seed skipped for itemId=" + itemId + " (itemBpm=0)");
+        return;
+    }
+    // Effective sample classification: user override wins; otherwise
+    // fall back to the auto-detected low-confidence flag from BPM
+    // analysis. Non-musical samples (rain ambience, vocal one-shots,
+    // sound effects) should never drag the project tempo into bogus
+    // territory — skip the seed entirely.
+    const bool effectivelySample =
+        itemSampleMode == "sample" || (itemSampleMode != "music" && itemLowConfidence);
+    if (effectivelySample)
+    {
+        silverdaw::log::info(
+            "bpmjob",
+            "seed skipped for itemId=" + itemId
+                + " (treated as sample — sampleMode='" + itemSampleMode
+                + "' lowConfidence=" + (itemLowConfidence ? "true" : "false") + ")");
         return;
     }
 
@@ -1522,6 +1546,13 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         obj->setProperty("audioOutputTypeName", outType.isEmpty() ? juce::var() : juce::var(outType));
         obj->setProperty("audioOutputDeviceName", outDevice.isEmpty() ? juce::var() : juce::var(outDevice));
     }
+    // Per-project target sample rate (Hz). Emit only when set so the
+    // renderer can distinguish "absent → use user-scope default"
+    // from "explicit project value".
+    {
+        const auto rate = projectState.getTargetSampleRate();
+        if (rate > 0) obj->setProperty("targetSampleRate", rate);
+    }
     return juce::var(obj);
 }
 
@@ -2163,8 +2194,10 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "TRACK_GAIN" || type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
+           type == "LIBRARY_ITEM_SET_SAMPLE_MODE" ||
            type == "PROJECT_RENAME" || type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" ||
            type == "PROJECT_SET_AUDIO_OUTPUT" ||
+           type == "PROJECT_SET_TARGET_SAMPLE_RATE" ||
            type == "PROJECT_MARKER_ADD" || type == "PROJECT_MARKER_MOVE" ||
            type == "PROJECT_MARKER_REMOVE";
 }
@@ -2190,10 +2223,12 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "LIBRARY_REMOVE") return "Remove library item";
     if (type == "LIBRARY_REANALYSE") return "Reanalyse library item";
     if (type == "LIBRARY_ITEM_RELINK") return "Relink library item";
+    if (type == "LIBRARY_ITEM_SET_SAMPLE_MODE") return "Change library item classification";
     if (type == "PROJECT_RENAME") return "Rename project";
     if (type == "PROJECT_SET_BPM") return "Change tempo";
     if (type == "PROJECT_SET_LENGTH") return "Change project length";
     if (type == "PROJECT_SET_AUDIO_OUTPUT") return "Change audio output";
+    if (type == "PROJECT_SET_TARGET_SAMPLE_RATE") return "Change project sample rate";
     if (type == "PROJECT_MARKER_ADD") return "Add marker";
     if (type == "PROJECT_MARKER_MOVE") return "Move marker";
     if (type == "PROJECT_MARKER_REMOVE") return "Remove marker";
@@ -2720,6 +2755,27 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const juce::String analysisPath = playbackPath.isNotEmpty() ? playbackPath : filePath;
         forceLibraryItemAnalysis(itemId, analysisPath, engine, projectState, bridge, peakPool, decodedCache);
     }
+    else if (type == "LIBRARY_ITEM_SET_SAMPLE_MODE")
+    {
+        const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
+        const juce::String mode = payload.getProperty("mode", juce::var("")).toString();
+        silverdaw::log::info("bridge", "recv LIBRARY_ITEM_SET_SAMPLE_MODE itemId=" + itemId + " mode='" + mode + "'");
+        if (itemId.isEmpty())
+        {
+            silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_SAMPLE_MODE missing itemId");
+        }
+        else if (!mode.isEmpty() && mode != "sample" && mode != "music" && mode != "auto")
+        {
+            silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_SAMPLE_MODE bad mode='" + mode + "'");
+        }
+        else
+        {
+            // "auto" and empty both clear the override (auto-detect
+            // falls back to the analysis-side `lowConfidence` flag).
+            const juce::String stored = (mode == "sample" || mode == "music") ? mode : juce::String{};
+            projectState.setLibraryItemSampleMode(itemId, stored);
+        }
+    }
     else if (type == "TRANSPORT_PLAY")
     {
         silverdaw::log::info("bridge", "recv TRANSPORT_PLAY");
@@ -3059,6 +3115,30 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const auto deviceName = extract(payload, "deviceName");
         projectState.setAudioOutput(typeName, deviceName);
     }
+    else if (type == "PROJECT_SET_TARGET_SAMPLE_RATE")
+    {
+        // Project-wide target sample rate. Strict whitelist of accepted
+        // rates so a malformed envelope can't park a project at an
+        // unsupported rate that the import / cache code paths don't
+        // handle. Pass 0 to clear (renderer-scope default applies on
+        // next load).
+        const auto rateOpt = tryGetNumber(payload, "sampleRate");
+        if (rateOpt.has_value())
+        {
+            const int requested = static_cast<int>(*rateOpt);
+            if (requested == 0 || requested == 44100 || requested == 48000)
+            {
+                projectState.setTargetSampleRate(requested);
+            }
+            else
+            {
+                silverdaw::log::warn(
+                    "bridge",
+                    "PROJECT_SET_TARGET_SAMPLE_RATE rejected (unsupported rate "
+                        + juce::String(requested) + ")");
+            }
+        }
+    }
     else if (type == "PROJECT_MARKER_ADD")
     {
         const auto markerId = tryGetRequiredString(payload, "markerId").value_or(juce::String{});
@@ -3105,6 +3185,66 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                            payload.getProperty("typeName", "").toString() + " name=" +
                                            payload.getProperty("deviceName", "").toString());
         handleAudioDeviceSelect(payload, engine, bridge);
+    }
+    else if (type == "AUDIO_FILE_PROBE")
+    {
+        // Synchronous-ish file-rate probe used by the renderer's import
+        // flow to decide whether to prompt about a sample-rate
+        // mismatch. Opens the file via the existing AudioFormatManager,
+        // reads the header (sample rate / channel count / total length),
+        // acks via `AUDIO_FILE_PROBED`. `requestId` round-trips so
+        // concurrent probes from a batched import don't collide.
+        const auto requestId = tryGetRequiredString(payload, "requestId").value_or(juce::String{});
+        const auto filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
+        if (requestId.isEmpty() || filePath.isEmpty())
+        {
+            silverdaw::log::warn("bridge", "AUDIO_FILE_PROBE missing requestId/filePath");
+        }
+        else
+        {
+            silverdaw::log::debug("bridge", "recv AUDIO_FILE_PROBE id=" + requestId + " path=" + filePath);
+            // Heavy work (reader construction; on Windows the JUCE
+            // codec call can take a few ms for compressed formats) is
+            // dispatched onto the existing peak-pool so the message
+            // thread keeps draining 60 Hz transport ticks.
+            peakPool.addJob([requestId, filePath, &engine, &bridge]() {
+                const juce::File file(filePath);
+                std::unique_ptr<juce::AudioFormatReader> reader(
+                    engine.getFormatManager().createReaderFor(file));
+                juce::MessageManager::callAsync([requestId, filePath, &bridge,
+                                                 reader = std::shared_ptr<juce::AudioFormatReader>(std::move(reader))]() {
+                    auto* obj = new juce::DynamicObject();
+                    obj->setProperty("requestId", requestId);
+                    obj->setProperty("filePath", filePath);
+                    if (reader && reader->sampleRate > 0.0 && reader->lengthInSamples > 0)
+                    {
+                        obj->setProperty("ok", true);
+                        obj->setProperty("sampleRate", static_cast<int>(reader->sampleRate));
+                        obj->setProperty("channelCount", static_cast<int>(reader->numChannels));
+                        obj->setProperty(
+                            "durationMs",
+                            (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0);
+                        silverdaw::log::info(
+                            "bridge",
+                            "probe ok id=" + requestId + " path=" + filePath
+                                + " sampleRate=" + juce::String(static_cast<int>(reader->sampleRate))
+                                + "Hz ch=" + juce::String(static_cast<int>(reader->numChannels))
+                                + " lengthSamples=" + juce::String(reader->lengthInSamples));
+                    }
+                    else
+                    {
+                        obj->setProperty("ok", false);
+                        obj->setProperty("error",
+                                         juce::String("could not decode header for ") + filePath);
+                        silverdaw::log::warn(
+                            "bridge",
+                            "probe fail id=" + requestId + " path=" + filePath
+                                + " (reader=" + juce::String(reader ? "ok" : "null") + ")");
+                    }
+                    bridge.broadcast("AUDIO_FILE_PROBED", juce::var(obj));
+                });
+            });
+        }
     }
     else if (type == "EDIT_UNDO")
     {

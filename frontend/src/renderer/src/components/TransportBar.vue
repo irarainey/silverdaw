@@ -184,6 +184,23 @@ const positionDisplay = computed(() => formatTime(transport.positionMs))
  */
 const barPosition = computed(() => barPositionDisplay(transport.positionMs, transport.bpm))
 
+/**
+ * Effective project sample rate label for the transport bar.
+ * Reflects the same fallback chain used by `preflightSampleRates`:
+ * project-level value if set, otherwise the user-scope default.
+ * Bracketed "(default)" suffix surfaces that the project hasn't
+ * opted in yet, so a 48 kHz default vs. an explicit 48 kHz choice
+ * are visually distinguishable.
+ */
+const effectiveSampleRateLabel = computed(() => {
+  const projectRate = project.targetSampleRate
+  if (projectRate === 44100 || projectRate === 48000) {
+    return `${(projectRate / 1000).toFixed(1)} kHz`
+  }
+  const fallback = ui.defaultProjectSampleRate
+  return `${(fallback / 1000).toFixed(1)} kHz`
+})
+
 // Editable project-length field. Mirrors `project.durationMs` whenever the
 // user is not actively editing it; on commit (blur / Enter) we parse the
 // `mm:ss` / `h:mm:ss` text back to ms and push it through the store.
@@ -756,6 +773,14 @@ function onToggleFollow(): void {
               </button>
             </div>
           </div>
+        </div>
+        <div class="h-7 w-px bg-zinc-800" />
+        <div
+          class="flex flex-col items-start leading-none"
+          :title="`Project sample rate: ${effectiveSampleRateLabel}. Edit in File ▸ Project Properties…`"
+        >
+          <span class="text-[9px] uppercase tracking-wide text-zinc-500">RATE</span>
+          <span class="font-mono text-base tabular-nums text-zinc-100">{{ effectiveSampleRateLabel }}</span>
         </div>
       </div>
     </div>

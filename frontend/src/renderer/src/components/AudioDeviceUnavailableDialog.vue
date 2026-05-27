@@ -67,7 +67,6 @@ onBeforeUnmount(() => {
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="audio-unavailable-title"
-      @click.self="onAcknowledge"
     >
       <div
         ref="dialogEl"

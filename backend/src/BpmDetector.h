@@ -29,6 +29,14 @@ struct BpmAnalysis
      *  the project-BPM seed logic suppresses itself for these files
      *  so a wobbly groove doesn't pick a misleading project tempo. */
     bool variableTempo = false;
+    /** True when the BPM/beat result looks unlikely to reflect a
+     *  real musical groove — used to auto-classify items as
+     *  "non-musical samples" (rain ambience, vocal one-shots, sound
+     *  effects). Currently driven by the LSQ-fit RMS residual being
+     *  large relative to a beat period, the fraction of detected
+     *  beats kept after outlier rejection, and the variable-tempo
+     *  flag. The renderer can override via `sampleMode`. */
+    bool lowConfidence = false;
 };
 
 /**

@@ -330,6 +330,17 @@ class ProjectState : public juce::ValueTree::Listener
      *  records an undo step. */
     void setAudioOutput(const juce::String& typeName, const juce::String& deviceName);
 
+    /** Per-project target sample rate (Hz). Drives the playback-cache
+     *  rebuild so every clip's audio is at this rate on disk.
+     *  Defaults to 0 (= "not set"; renderer falls back to the user-
+     *  scope `audio.defaultProjectSampleRate` preference, then 44 100). */
+    int getTargetSampleRate() const;
+
+    /** Update the per-project target sample rate. Pass 0 to clear the
+     *  preference (renderer-scope default will apply on next load).
+     *  Records an undo step; marks the project dirty. */
+    void setTargetSampleRate(int sampleRate);
+
     // ─── Library catalogue ─────────────────────────────────────────────
     //
     // Items the user has imported into the library — independently of
@@ -421,6 +432,19 @@ class ProjectState : public juce::ValueTree::Listener
      *  drives the UI badge and suppresses the first-clip project
      *  BPM seed. Marks dirty. Returns true if the item existed. */
     bool setLibraryItemVariableTempo(const juce::String& itemId, bool variable);
+
+    /** Flag (or clear) the library item as having a low-confidence
+     *  BPM analysis result — used by the renderer to auto-classify
+     *  it as a non-musical "sample". Marks dirty. Returns true if
+     *  the item existed. */
+    bool setLibraryItemLowConfidence(const juce::String& itemId, bool lowConfidence);
+
+    /** Persist the user's classification override for a library
+     *  item: "sample" forces non-musical treatment, "music" forces
+     *  musical treatment, empty/absent restores auto-classification
+     *  from `lowConfidence`. Marks dirty. Returns true if the item
+     *  existed. */
+    bool setLibraryItemSampleMode(const juce::String& itemId, const juce::String& mode);
 
     /** True if a library item is registered for `filePath`. Used by the
      *  detection scheduler to avoid duplicate work. */
@@ -542,6 +566,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kProjectLengthMs;
     static const juce::Identifier kAudioOutputTypeName;
     static const juce::Identifier kAudioOutputDeviceName;
+    static const juce::Identifier kTargetSampleRate;
     static const juce::Identifier kLibrary;
     static const juce::Identifier kLibraryItem;
     static const juce::Identifier kMarkers;
@@ -551,6 +576,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kBeatAnchorSec;
     static const juce::Identifier kPlaybackFilePath;
     static const juce::Identifier kVariableTempo;
+    static const juce::Identifier kLowConfidence;
+    static const juce::Identifier kSampleMode;
     static const juce::Identifier kKey;
     static const juce::Identifier kKind;
     static const juce::Identifier kSourceItemId;

@@ -24,7 +24,7 @@ import {
   TRACK_PALETTE,
   PEAKS_PER_SECOND
 } from '@/stores/projectStore'
-import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm, type LibraryItem } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm, libraryItemIsSample, type LibraryItem } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
@@ -700,12 +700,18 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // wander relative to the implied uniform tempo.
     const beats = libItem?.beats
     const markerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
+    // Non-musical "sample" library items (auto-detected from a poor
+    // BPM-fit confidence, or explicitly set by the user) suppress the
+    // synthetic beat-marker grid even when BTrack returned numbers —
+    // those numbers don't correspond to anything the user wants to
+    // see overlaid on the waveform.
+    const treatAsSample = libItem ? libraryItemIsSample(libItem, library.byId) : false
     // Prefer the regression-derived anchor over the first raw
     // detected beat — it's the implied phase of the ideal beat
     // grid and is robust to BTrack's per-beat jitter. Older saved
     // projects without the anchor fall back to `beats[0]`.
     const anchorSec = libItem?.beatAnchorSec ?? beats?.[0]
-    if (beats && beats.length > 0 && markerSourceBpm && markerSourceBpm > 0 && anchorSec !== undefined && w > 0) {
+    if (!treatAsSample && beats && beats.length > 0 && markerSourceBpm && markerSourceBpm > 0 && anchorSec !== undefined && w > 0) {
       const pxPerMs = pxPerSecond.value / 1000
       const inMs = clip.inMs
       const outMs = inMs + clip.durationMs

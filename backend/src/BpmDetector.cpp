@@ -598,10 +598,33 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     result.beatAnchorSec = anchorSec;
     result.beatTimesSec = std::move(beatTimes);
     result.variableTempo = variable;
+    // Low-confidence heuristic: a fit RMS residual greater than ~8 %
+    // of one beat period indicates the detected beats don't sit on
+    // a uniform grid (typical of non-rhythmic material like ambient
+    // noise or speech). We also defer to `variableTempo` as a
+    // softer hint. Combined, this auto-classifies the most obvious
+    // false positives without taking away analysis data on real
+    // music with slight tempo drift. Tunable from a corpus run.
+    const double periodSec = (derivedBpm > 0.0) ? (60.0 / derivedBpm) : 0.5;
+    const double relResidual =
+        (baselineResidual > 0.0 && std::isfinite(baselineResidual)) ? (baselineResidual / periodSec) : 0.0;
+    const double keptFraction =
+        (baselineKept > 0 && !result.beatTimesSec.empty())
+            ? static_cast<double>(baselineKept) / static_cast<double>(result.beatTimesSec.size())
+            : 0.0;
+    const bool poorFit = relResidual > 0.08 || (baselineKept > 0 && keptFraction < 0.6);
+    // Variable-tempo alone isn't enough to call something "sample" —
+    // live performances and rubato music drift too. Require an
+    // additional poor-fit indicator before flagging low confidence
+    // automatically.
+    result.lowConfidence = poorFit && (variable || keptFraction < 0.5);
     silverdaw::log::info("bpm", "estimated " + audioFile.getFileName() + " -> " +
                                     juce::String(derivedBpm, 4) + " BPM" + (variable ? " (variable)" : "") +
+                                    (result.lowConfidence ? " (low-confidence)" : "") +
                                     " anchor=" + juce::String(anchorSec, 4) +
-                                    "s beats=" + juce::String(static_cast<int>(result.beatTimesSec.size())));
+                                    "s beats=" + juce::String(static_cast<int>(result.beatTimesSec.size())) +
+                                    " relResidual=" + juce::String(relResidual, 3) +
+                                    " keptFrac=" + juce::String(keptFraction, 3));
     return result;
 }
 

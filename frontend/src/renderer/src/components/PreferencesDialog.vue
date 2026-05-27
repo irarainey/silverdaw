@@ -105,6 +105,7 @@ const toastsEnabled = ref(true)
 const followPlayback = ref(true)
 const showLibraryTileImages = ref(true)
 const matchProjectTempoOnDrop = ref(true)
+const defaultProjectSampleRate = ref<number>(44100)
 const defaultProjectDir = ref('')
 const defaultClipDir = ref('')
 const autosaveEnabled = ref(true)
@@ -120,6 +121,7 @@ const initialToasts = ref(true)
 const initialFollow = ref(true)
 const initialShowLibraryTileImages = ref(true)
 const initialMatchProjectTempoOnDrop = ref(true)
+const initialDefaultProjectSampleRate = ref<number>(44100)
 const initialProjectDir = ref('')
 const initialClipDir = ref('')
 const initialAutosaveEnabled = ref(true)
@@ -134,6 +136,7 @@ const hasChanges = computed(
     followPlayback.value !== initialFollow.value ||
     showLibraryTileImages.value !== initialShowLibraryTileImages.value ||
     matchProjectTempoOnDrop.value !== initialMatchProjectTempoOnDrop.value ||
+    defaultProjectSampleRate.value !== initialDefaultProjectSampleRate.value ||
     defaultProjectDir.value !== initialProjectDir.value ||
     defaultClipDir.value !== initialClipDir.value ||
     autosaveEnabled.value !== initialAutosaveEnabled.value ||
@@ -184,6 +187,7 @@ async function loadCurrent(): Promise<void> {
   followPlayback.value = ui.followPlayback
   showLibraryTileImages.value = ui.showLibraryTileImages
   matchProjectTempoOnDrop.value = ui.matchProjectTempoOnDrop
+  defaultProjectSampleRate.value = ui.defaultProjectSampleRate
   initialLoggingEnabled.value = loggingEnabled.value
   initialDevToolsEnabled.value = devToolsEnabled.value
   initialLogDirectory.value = logDirectory.value
@@ -191,6 +195,7 @@ async function loadCurrent(): Promise<void> {
   initialFollow.value = followPlayback.value
   initialShowLibraryTileImages.value = showLibraryTileImages.value
   initialMatchProjectTempoOnDrop.value = matchProjectTempoOnDrop.value
+  initialDefaultProjectSampleRate.value = defaultProjectSampleRate.value
   initialProjectDir.value = defaultProjectDir.value
   initialClipDir.value = defaultClipDir.value
   initialAutosaveEnabled.value = autosaveEnabled.value
@@ -308,6 +313,9 @@ function onSave(): void {
   }
   if (matchProjectTempoOnDrop.value !== initialMatchProjectTempoOnDrop.value) {
     ui.setMatchProjectTempoOnDrop(matchProjectTempoOnDrop.value)
+  }
+  if (defaultProjectSampleRate.value !== initialDefaultProjectSampleRate.value) {
+    ui.setDefaultProjectSampleRate(defaultProjectSampleRate.value)
   }
   // Autosave config is also mirrored in appStore so the autosave
   // manager's reactive watcher picks up the change without waiting
@@ -570,6 +578,38 @@ function onSave(): void {
               v-else-if="activeTab === 'audio'"
               class="space-y-4"
             >
+              <div>
+                <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+                  Default project sample rate
+                </h2>
+                <p class="mb-3 text-zinc-500">
+                  Applied to projects you create from now on. Existing projects keep their own stored rate. Change a project's rate from
+                  <strong class="text-zinc-300">File ▸ Project Properties…</strong>.
+                </p>
+                <div class="space-y-2">
+                  <label
+                    v-for="rate in [44100, 48000]"
+                    :key="rate"
+                    class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+                  >
+                    <input
+                      v-model="defaultProjectSampleRate"
+                      type="radio"
+                      name="default-project-sample-rate"
+                      :value="rate"
+                      class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                    >
+                    <span class="flex-1">
+                      <span class="block font-medium text-zinc-200">{{ rate.toLocaleString() }} Hz</span>
+                      <span class="mt-0.5 block text-zinc-500">
+                        <template v-if="rate === 44100">CD-quality default. Lower disk + CPU cost; matches most pop / streaming sources.</template>
+                        <template v-else>Video / production default. Use this when working with film, video or 48 kHz multitrack stems.</template>
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
               <div>
                 <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
                   Output device

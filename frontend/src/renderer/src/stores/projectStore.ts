@@ -9,7 +9,7 @@ import { decodeAudioToPeaks, PEAKS_PER_SECOND } from '@/lib/audio'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useNotificationsStore } from '@/stores/notificationsStore'
-import { useLibraryStore } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemIsSample } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { ClipWarpMode, ProjectStatePayload } from '@shared/bridge-protocol'
@@ -383,6 +383,14 @@ interface ProjectState {
    */
   audioOutputTypeName: string | null
   audioOutputDeviceName: string | null
+
+  /**
+   * Per-project target sample rate (Hz). Drives the playback-cache
+   * rebuild so every clip's audio is at this rate on disk. `null`
+   * means "no project value yet — adopt the user-scope default on
+   * next interaction". Today only 44 100 and 48 000 are accepted.
+   */
+  targetSampleRate: number | null
 }
 
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
@@ -544,7 +552,8 @@ export const useProjectStore = defineStore('project', {
     undoLabel: null,
     redoLabel: null,
     audioOutputTypeName: null,
-    audioOutputDeviceName: null
+    audioOutputDeviceName: null,
+    targetSampleRate: null
   }),
 
   getters: {
@@ -1631,20 +1640,25 @@ export const useProjectStore = defineStore('project', {
     applyDropTimeWarp(
       clipId: string,
       src: {
+        id?: string
         kind?: LibraryItem['kind']
         bpm?: number
         variableTempo?: boolean
+        lowConfidence?: boolean
+        sampleMode?: 'sample' | 'music'
         warpEnabled?: boolean
         warpMode?: ClipWarpMode
         tempoRatio?: number
         semitones?: number
         cents?: number
+        derivedFrom?: LibraryItem['derivedFrom']
       }
     ): void {
       log.info(
         'warp',
         `applyDropTimeWarp clip=${clipId} kind=${src.kind ?? 'audio'} ` +
           `srcBpm=${src.bpm ?? 'undef'} variableTempo=${src.variableTempo ?? false} ` +
+          `lowConfidence=${src.lowConfidence ?? false} sampleMode=${src.sampleMode ?? 'auto'} ` +
           `inheritedWarpEnabled=${src.warpEnabled ?? 'undef'} ` +
           `inheritedTempoRatio=${src.tempoRatio ?? 'undef'}`
       )
@@ -1668,6 +1682,25 @@ export const useProjectStore = defineStore('project', {
           semitones: src.semitones,
           cents: src.cents
         })
+        return
+      }
+      // Non-musical samples (rain, sound effects, vocal one-shots)
+      // shouldn't be auto-warped to project tempo — the source BPM
+      // is meaningless. Manual Warp / Pitch dialogs still work on
+      // the clip if the user wants to speed it up or slow it down.
+      const sampleClassified = libraryItemIsSample(
+        {
+          sampleMode: src.sampleMode,
+          lowConfidence: src.lowConfidence,
+          derivedFrom: src.derivedFrom
+        },
+        useLibraryStore().byId
+      )
+      if (sampleClassified) {
+        log.info(
+          'warp',
+          `applyDropTimeWarp clip=${clipId} → skip (library item classified as sample)`
+        )
         return
       }
       // Project-tempo auto-match is gated by the user preference. When
@@ -1794,6 +1827,24 @@ export const useProjectStore = defineStore('project', {
         typeName: nextType,
         deviceName: nextDevice
       })
+    },
+
+    /**
+     * Update the per-project target sample rate. Accepts 44 100 or
+     * 48 000 only. Passing 0 / null clears the project value so the
+     * user-scope default applies on next load. Records an undo step
+     * via the backend's coalescing handler.
+     */
+    setTargetSampleRate(sampleRate: number | null): void {
+      const next = sampleRate === 44100 || sampleRate === 48000 ? sampleRate : null
+      if (next === this.targetSampleRate) return
+      const prev = this.targetSampleRate
+      this.targetSampleRate = next
+      log.info(
+        'project',
+        `setTargetSampleRate ${prev ?? 'null'} -> ${next ?? 'null'} Hz`
+      )
+      sendBridge('PROJECT_SET_TARGET_SAMPLE_RATE', { sampleRate: next ?? 0 })
     },
 
     /** Remove a track and all its clips, locally and on the backend. */
@@ -2141,6 +2192,17 @@ export const useProjectStore = defineStore('project', {
         this.audioOutputTypeName = null
         this.audioOutputDeviceName = null
       }
+      // Per-project target sample rate. Accept only the supported
+      // whitelist; anything else (including absent) is treated as
+      // "no project value yet" and the renderer will fall back to
+      // the user-scope `defaultProjectSampleRate` preference at the
+      // first interaction that needs a concrete rate (import flow,
+      // project-properties dialog, etc.).
+      const incomingRate = snapshot.targetSampleRate
+      this.targetSampleRate =
+        typeof incomingRate === 'number' && (incomingRate === 44100 || incomingRate === 48000)
+          ? incomingRate
+          : null
       const library = useLibraryStore()
       // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the
       // renderer's optimistic mirror must be wiped before re-applying so
@@ -2241,8 +2303,15 @@ export const useProjectStore = defineStore('project', {
               anchor,
               persistedBeats,
               item.variableTempo === true,
-              item.playbackFilePath
+              item.playbackFilePath,
+              item.lowConfidence === true
             )
+          }
+          // Hydrate the user's sample/music override (independent
+          // from analysis — survives even if BPM wasn't detected).
+          if (item.sampleMode === 'sample' || item.sampleMode === 'music') {
+            const target = library.items.find((i) => i.id === libId)
+            if (target) target.sampleMode = item.sampleMode
           }
           // Fetch tags + technical duration asynchronously so older
           // project files that predate persisted library duration still
@@ -2263,7 +2332,8 @@ export const useProjectStore = defineStore('project', {
             source.beatAnchorSec ?? source.beats?.[0] ?? 0,
             source.beats ?? [],
             source.variableTempo === true,
-            source.decodedCacheFilePath
+            source.decodedCacheFilePath,
+            source.lowConfidence === true
           )
         }
       }

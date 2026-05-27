@@ -9,12 +9,14 @@
 // "import multiple files" / drag-and-drop entry points.
 
 import { decodeAudioToPeaks, detectMusicalKey } from '@/lib/audio'
-import { send as sendBridge } from '@/lib/bridgeService'
+import { send as sendBridge, probeAudioFile } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { useUiStore } from '@/stores/uiStore'
+import { promptSampleRateMismatch, type RateBucket } from '@/lib/sampleRatePrompt'
 
 /**
  * File extensions the JUCE backend's `AudioFormatManager` can decode
@@ -84,6 +86,77 @@ async function resolvePlaybackPath(
     log.error('import', `transcode failed for ${sourcePath}: ${String(err)}`)
   }
   return sourcePath
+}
+
+/**
+ * Pre-flight a batched import: probe every file's true sample rate
+ * (via the backend's `AUDIO_FILE_PROBE` envelope), detect any that
+ * differ from the project's effective target rate, and prompt the
+ * user with the per-rate bucket summary. Returns `'proceed'` when the
+ * user resolved the prompt (either accepted convert-on-import OR
+ * switched the project to a higher rate), `'cancel'` when they
+ * cancelled the batch.
+ *
+ * Files whose probe failed are passed through silently — the
+ * downstream import path falls back to Web Audio's reported rate and
+ * surfaces any decode error itself.
+ *
+ * Idempotent for the no-mismatch case: returns `'proceed'` without
+ * touching the prompt UI when every file matches the project rate.
+ */
+export async function preflightSampleRates(filePaths: readonly string[]): Promise<'proceed' | 'cancel'> {
+  if (filePaths.length === 0) return 'proceed'
+  const project = useProjectStore()
+  const ui = useUiStore()
+  const effectiveProjectRate = project.targetSampleRate ?? ui.defaultProjectSampleRate
+  log.info(
+    'import',
+    `preflightSampleRates files=${filePaths.length} effectiveProjectRate=${effectiveProjectRate}Hz (project=${project.targetSampleRate ?? 'null'} default=${ui.defaultProjectSampleRate})`
+  )
+
+  // Parallel probe; failures fall back to "rate unknown" and don't
+  // contribute to the mismatch summary.
+  const probes = await Promise.all(filePaths.map((p) => probeAudioFile(p)))
+  const byRate = new Map<number, number>()
+  for (const p of probes) {
+    if (!p.ok) continue
+    if (p.sampleRate === effectiveProjectRate) continue
+    byRate.set(p.sampleRate, (byRate.get(p.sampleRate) ?? 0) + 1)
+  }
+  if (byRate.size === 0) {
+    log.info('import', 'preflightSampleRates: all probed files match project rate, no prompt')
+    return 'proceed'
+  }
+  const summary = Array.from(byRate.entries())
+    .map(([rate, count]) => `${count}@${rate}Hz`)
+    .join(', ')
+  log.info('import', `preflightSampleRates: mismatch buckets=${summary}, prompting`)
+
+  const buckets: RateBucket[] = Array.from(byRate.entries()).map(
+    ([sampleRate, fileCount]) => ({ sampleRate, fileCount })
+  )
+  try {
+    const choice = await promptSampleRateMismatch(buckets, effectiveProjectRate)
+    if (choice === 'cancel') return 'cancel'
+    if (choice === 'switch-project') {
+      // Pick the highest rate the user has files at, capped at 48 kHz
+      // (the project's hard cap). When the source rates are all below
+      // the cap and one of them matches a supported project rate
+      // (44 100 / 48 000), pin to that rate; otherwise pin to 48 000
+      // and the convert step in the import flow will handle the cap.
+      const MAX_SUPPORTED = 48000
+      const rates = Array.from(byRate.keys())
+      let target = Math.max(...rates)
+      if (target > MAX_SUPPORTED) target = MAX_SUPPORTED
+      if (target === 44100 || target === 48000) {
+        project.setTargetSampleRate(target)
+      }
+    }
+    return 'proceed'
+  } catch (err) {
+    log.warn('import', `sample-rate prompt failed: ${String(err)}`)
+    return 'proceed'
+  }
 }
 
 /**
@@ -198,6 +271,13 @@ export async function importAudioIntoLibrary(opened: {
       decodeAudioToPeaks(opened.data),
       window.silverdaw.readAudioMetadata(opened.filePath).catch(() => null)
     ])
+    // Web Audio's `decodeAudioData` silently resamples to the
+    // AudioContext rate (typically 48 kHz on Windows), so the rate on
+    // `decoded` may not match the source file. Ask the backend for
+    // the file's true rate via the format-header probe; fall back to
+    // the Web-Audio-reported rate if the probe fails.
+    const probe = await probeAudioFile(opened.filePath, { timeoutMs: 5000 })
+    const trueSampleRate = probe.ok ? probe.sampleRate : decoded.sampleRate
     const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
     const enrichedMetadata = withDetectedKey(metadata, detectedKey)
     const playbackFilePath = await resolvePlaybackPath(opened.filePath, decoded)
@@ -205,7 +285,7 @@ export async function importAudioIntoLibrary(opened: {
       filePath: opened.filePath,
       fileName: opened.fileName,
       durationMs: decoded.durationMs,
-      sampleRate: decoded.sampleRate,
+      sampleRate: trueSampleRate,
       channelCount: decoded.channelCount,
       peaks: decoded.peaks,
       peaksPerSecond: decoded.peaksPerSecond,
@@ -259,12 +339,17 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
       decodeAudioToPeaks(opened.data),
       window.silverdaw.readAudioMetadata(item.filePath).catch(() => null)
     ])
+    // Same true-rate probe rationale as `importAudioIntoLibrary`: Web
+    // Audio's `decodeAudioData` resamples to the AudioContext rate
+    // and lies about the source rate on Windows.
+    const probe = await probeAudioFile(item.filePath, { timeoutMs: 5000 })
+    const trueSampleRate = probe.ok ? probe.sampleRate : decoded.sampleRate
     const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
     const enrichedMetadata = withRedetectedKey(metadata, detectedKey)
     const playbackFilePath = await resolvePlaybackPath(item.filePath, decoded)
 
-    library.setItemAudioDetails(item.id, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
-    library.setItemPeaks(item.id, decoded.peaks, decoded.sampleRate, decoded.peaksPerSecond)
+    library.setItemAudioDetails(item.id, decoded.durationMs, trueSampleRate, decoded.channelCount)
+    library.setItemPeaks(item.id, decoded.peaks, trueSampleRate, decoded.peaksPerSecond)
     library.setItemKey(item.id, enrichedMetadata?.key)
     library.setItemMetadata(item.id, enrichedMetadata)
     library.clearItemAnalysis(item.id)
@@ -275,7 +360,7 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
       filePath: item.filePath,
       fileName: item.fileName,
       durationMs: decoded.durationMs,
-      sampleRate: decoded.sampleRate,
+      sampleRate: trueSampleRate,
       channelCount: decoded.channelCount,
       playbackFilePath,
       key: enrichedMetadata?.key ?? ''
