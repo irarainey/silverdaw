@@ -138,6 +138,23 @@ Silverdaw currently supports the core arrangement workflow:
   reappears. Bluetooth output is auto-detected and the visible playhead
   compensates for radio-and-headset latency so it stays in sync with what you
   hear (~250 ms for A2DP, ~400 ms for HFP).
+- **Project Properties** dialog (File ▸ Project Properties…) edits project
+  name, BPM, duration, per-project audio output device + driver, and
+  per-project sample rate (44.1 / 48 kHz) as a transactional Save / Cancel
+  dialog with field-level validation.
+- **Per-project sample rate.** Projects can pin themselves to 44.1 or 48 kHz.
+  Imports preflight every file's true header rate and prompt with three exit
+  paths (Cancel / Convert to project rate / Switch project rate) when the
+  source doesn't match. The transport bar's **RATE** column shows the
+  effective project rate at all times. See [Project sample rate](#project-sample-rate).
+- **Sample-vs-music classification.** Files whose BPM analysis comes back at
+  low confidence (rain ambience, vocal one-shots, sound effects) are
+  auto-classified as non-musical samples: BPM / key / beat markers and
+  badges are hidden, auto-warp on drop is skipped, and the project-BPM
+  seed refuses to fire from them. Library tile context menu and the Info
+  dialog offer a per-source-item **Auto / Music / Sample** override (saved
+  clips inherit from their source). Warp and Pitch dialogs continue to
+  work on samples for explicit speed / pitch changes.
 - Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
   file association. The backend is statically linked against the MSVC runtime, so
   a clean Windows install does not need a separate Visual C++ Redistributable.
@@ -227,7 +244,8 @@ malformed values up front instead of silently coercing them via
 `ProjectState` (C++) wraps a `juce::ValueTree`:
 
 ```text
-PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
+PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
+        audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?]
   TRACK[id, name, gain, heightPx?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
@@ -235,7 +253,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs]
   LIBRARY
      ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
           sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?,
-          playbackFilePath?, variableTempo?, collapsed?,
+          playbackFilePath?, variableTempo?, lowConfidence?, sampleMode?, collapsed?,
           sourceItemId?, sourceClipId?, sourceInMs?, sourceDurationMs?,
           warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?]
   MARKERS
@@ -270,12 +288,22 @@ their parent audio-file item and carry `sourceItemId` / `sourceClipId` / `source
 user-facing name shown on library tiles. `collapsed` is a per-source UI flag that hides
 the saved-clip sub-list under a parent source. `ITEM.key`, `ITEM.bpm`, `ITEM.beats`,
 `ITEM.beatAnchorSec` and `ITEM.variableTempo` hold the BTrack analysis output (see
-[Audio analysis](#audio-analysis) below). `ITEM.playbackFilePath` is the on-disk path
-of the decoded-WAV cache the audio engine reads from. The durable library fields are
-stored once and round-tripped through save/load so a reopened project doesn't have to
-re-analyse every imported file. Timeline markers are stored as `MARKER` children with
-absolute project positions in milliseconds, round-trip through `PROJECT_STATE`, and
-mark the project dirty when added, moved or removed.
+[Audio analysis](#audio-analysis) below). `ITEM.lowConfidence` is the backend's
+auto-classification hint from that same analysis; `ITEM.sampleMode` is the user's
+explicit `'sample'` / `'music'` override (absent = auto). `ITEM.playbackFilePath` is
+the on-disk path of the decoded-WAV cache the audio engine reads from. The durable
+library fields are stored once and round-tripped through save/load so a reopened
+project doesn't have to re-analyse every imported file.
+
+`PROJECT.audioOutputTypeName` / `PROJECT.audioOutputDeviceName` carry the project's
+preferred audio output (driver name + device name); both absent means "use the
+user-scope default". `PROJECT.targetSampleRate` is the project sample rate when
+explicitly set (`44100` or `48000`); absent means the renderer falls back to the
+user-scope `ui.defaultProjectSampleRate` preference. Both are user-editable from
+the Project Properties dialog (see [Project properties](#project-properties)).
+Timeline markers are stored as `MARKER` children with absolute project positions in
+milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
+added, moved or removed.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
 Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 60..400) is
@@ -384,6 +412,12 @@ The relevant code is in
 [`importAudio.ts`](frontend/src/renderer/src/lib/importAudio.ts) and the `audio:writeTempWav`
 handler in [`main/index.ts`](frontend/src/main/index.ts).
 
+Imports also preflight every file's **true** header sample rate via the
+`AUDIO_FILE_PROBE` envelope before adding it to the library — see
+[Project sample rate](#project-sample-rate). The probe avoids trusting the
+renderer's Web Audio decoder, which silently resamples to the AudioContext
+rate and so cannot report the source file's actual rate.
+
 ## Peaks cache
 
 Waveform peaks (mono-mixed `min, max` float32 pairs) are computed once per source
@@ -451,7 +485,7 @@ already has a BPM for). The library tile context menu can also send
 `LIBRARY_REANALYSE`, which clears the current tempo/beat fields, recreates the
 decoded-WAV cache, and reruns detection from the current source file. Worker thread
 → decode the file via JUCE → downmix to mono → resample to 44.1 kHz with
-libsamplerate → feed BTrack frame-by-frame at hop=512 recording every
+libsamplerate → feed BTrack frame-by-frame at hop=256 (~5.8 ms steps) recording every
 `beatDueInCurrentFrame()` event. Analysis is capped at the first 60 seconds of audio;
 estimates outside `[40, 240]` BPM are dropped as implausible.
 
@@ -463,15 +497,56 @@ checking the spread of per-beat tempo samples (after a short settling period) �
 it's > 5 % of the mean, the library tile shows the amber `~ BPM` warning badge.
 
 When detection finishes the worker `MessageManager::callAsync`s back to the JUCE
-message thread to write `bpm`, `beats`, `beatAnchorSec`, `variableTempo`, and the
-decoded playback cache path onto the matching `LIBRARY > ITEM` node and broadcast
-`LIBRARY_ITEM_ANALYSIS { itemId, bpm, beatAnchorSec, beats, variableTempo,
+message thread to write `bpm`, `beats`, `beatAnchorSec`, `variableTempo`, `lowConfidence`,
+and the decoded playback cache path onto the matching `LIBRARY > ITEM` node and broadcast
+`LIBRARY_ITEM_ANALYSIS { itemId, bpm, beatAnchorSec, beats, variableTempo, lowConfidence,
 playbackFilePath }`. If the project has no other clips on tracks yet AND no other
 library item has been analysed, the project BPM is seeded too and a
 `PROJECT_BPM_APPLIED { bpm }` envelope is broadcast — the renderer mirrors both
 into `libraryStore` and `transportStore`. The seed runs even for variable-tempo
-sources (an approximate tempo is more useful than the default 100); the user can
-fine-tune from the Transport bar afterwards.
+sources (an approximate tempo is more useful than the default 100) but is
+suppressed for low-confidence / classified-as-sample items so a rain ambience
+can't drag the project tempo to 116 BPM. The user can fine-tune from the
+Transport bar afterwards.
+
+### Confidence and sample classification
+
+`BpmAnalysis` also reports a `lowConfidence` flag derived from the LSQ-fit
+residual and the fraction of detected beats kept after outlier rejection.
+Specifically the analysis is flagged when *both* of these hold:
+
+- **poor fit**: `relResidual > 0.08` OR `keptFraction < 0.6`, AND
+- **non-musical signature**: `variableTempo` is true OR `keptFraction < 0.5`.
+
+`variableTempo` alone is intentionally not sufficient — live performances and
+rubato music can drift more than 5 % per beat without being non-musical. The
+combined gate avoids false-positive classifications on real music while still
+catching rain ambience, vocal one-shots and sound effects that BTrack would
+otherwise report bogus tempo / beat positions for.
+
+The renderer treats a library item as a non-musical "sample" via a single
+helper, `libraryItemIsSample(item, byId)`, with the resolution order:
+
+1. user override `item.sampleMode` (`'sample'` / `'music'`),
+2. own `item.lowConfidence` (auto),
+3. for saved clips, fall back to the source item's classification (so a
+   one-shot cut from a musical track inherits music unless overridden), then
+4. default to `false` (music).
+
+When an item is classified as a sample the library tile shows a small indigo
+**Sample** pill in place of the BPM / key / variable-tempo badges, clip beat
+markers are not drawn, `applyDropTimeWarp` skips the auto-warp branch (the
+drop-zone preview width matches), and the backend's `maybeSeedProjectBpmFor` /
+late-pending-auto-warp loop both refuse to fire from it. **Warp and Pitch
+dialogs continue to work** so the user can still speed up, slow down, or
+pitch-shift the clip manually.
+
+Override the auto-classification from the library tile's right-click menu
+(**Auto-classify** / **Treat as music** / **Treat as sample** — audio-file
+items only; saved clips inherit) or from the **Treat as** radio in the
+Library Item Info dialog. The new `LIBRARY_ITEM_SET_SAMPLE_MODE { itemId, mode }`
+envelope round-trips the choice (undoable) and `mode = 'auto'` clears the
+override so `lowConfidence` takes back over.
 
 ### Beat markers and source-beat snap
 
@@ -553,8 +628,11 @@ information dialog instead — file details, technical audio details, detected
 BPM/beat/key metadata, tag metadata, cover art and which tracks currently use the
 library item — pick **Show information** from the tile's right-click context menu.
 The right-click context menu also includes **Reanalyse file** (audio-file items
-only), which refreshes the decoded cache, BPM/beat analysis and musical key, and
-**Remove**. Saved-clip tiles also include **Save as sample**. Removal is gated
+only), which refreshes the decoded cache, BPM/beat analysis and musical key;
+**Auto-classify** / **Treat as music** / **Treat as sample** for the sample-vs-music
+classification override (audio-file items only — see
+[Confidence and sample classification](#confidence-and-sample-classification));
+**Save as sample** (saved-clip items only); and **Remove**. Removal is gated
 for audio-file source items while they're in use by a timeline clip; saved-clip
 items can always be removed (every linked timeline clip is silently unlinked
 first and continues playing from the underlying source).
@@ -666,7 +744,9 @@ sidebar:
   imagery.
 - **Project** — default Save / Open / Import directories and background autosave
   configuration.
-- **Audio** — output device selection (see below).
+- **Audio** — output device + driver selection (see below), and the
+  **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
+  `PROJECT.targetSampleRate` on new projects.
 - **Developer** — diagnostic logging, log folder and DevTools access.
 
 Persisted fields:
@@ -690,7 +770,11 @@ Persisted fields:
 - **Autosave** — enable / disable plus tick interval (clamped 5..600 s, default 30 s).
 - **Audio output device** — persisted `{ typeName, deviceName }` pair, both `null` for
   "System default". The backend receives the pair as `SILVERDAW_OUTPUT_DEVICE_TYPE` /
-  `SILVERDAW_OUTPUT_DEVICE_NAME` env vars at spawn time.
+  `SILVERDAW_OUTPUT_DEVICE_NAME` env vars at spawn time. May be overridden per
+  project (see [Project properties](#project-properties)).
+- **Default project sample rate** — `ui.defaultProjectSampleRate`, `44100` or
+  `48000`. Seeds new projects' effective sample rate when the project hasn't
+  set `targetSampleRate` itself. See [Project sample rate](#project-sample-rate).
 - **Recent Projects** MRU (max 10, head = most recent, case-insensitive dedupe on Windows).
 - **Write diagnostic logs** — enables the cross-layer file logger. When on,
   the next launch writes a per-session timestamped folder containing
@@ -752,6 +836,78 @@ Latency compensation:
   absorbed by the renderer's existing position smoothing.
 - The transport-bar audio chip surfaces the effective latency (`~250 ms · BT`) when it's
   non-trivial. The Preferences Audio tab shows the same line with a Bluetooth caveat.
+
+## Project properties
+
+**File ▸ Project Properties…** opens a transactional dialog that edits the
+fields stored directly on the `PROJECT` ValueTree node:
+
+- **Project name** (required).
+- **Tempo** (20–300 BPM) — same value as the transport-bar BPM field.
+- **Duration** (`mm:ss` / `h:mm:ss`) — clamped above the longest clip's end.
+- **Audio output device** + **driver** — per-project override of the global
+  preference. Two dropdowns: device list (deduplicated across drivers) and
+  driver list (Windows Audio / DirectSound / ASIO / etc.), both with a
+  "System default" entry that clears the override. If the saved device isn't
+  present at project-load, an `AudioDeviceUnavailableDialog` informs the user
+  and the engine stays on the system default; the project preference is left
+  intact so re-plugging or re-saving restores it. Same ordering and labels as
+  the Preferences ▸ Audio dropdowns (single composable in
+  `lib/audio/audioOutputPicker.ts`).
+- **Sample rate** — 44.1 kHz / 48 kHz dropdown. Changing the value pushes
+  `PROJECT_SET_TARGET_SAMPLE_RATE` and the transport-bar **RATE** column
+  updates immediately. See [Project sample rate](#project-sample-rate) for the
+  import-time and mismatch behaviour.
+
+The dialog uses per-field validation: the Save button refuses to commit when
+BPM or duration parses outside its allowed range. Cancel (and Esc) discard
+the working copy without touching the project.
+
+## Project sample rate
+
+Projects carry an explicit `targetSampleRate` (44 100 or 48 000 Hz) on the
+`PROJECT` node. When unset, the renderer falls back to the user-scope
+`ui.defaultProjectSampleRate` preference (44.1 kHz by default). The
+transport bar's **RATE** column always shows the effective rate so the user
+can see at a glance which path the project is on.
+
+**Import preflight.** `LibraryPanel.onImportClick` and `onPanelDrop` both
+call `preflightSampleRates(filePaths)` before adding any files. The renderer
+issues an `AUDIO_FILE_PROBE { requestId, filePath }` envelope per file; the
+backend opens the file via `AudioFormatManager::createReaderFor` and replies
+with `AUDIO_FILE_PROBED { requestId, filePath, ok, sampleRate, channelCount,
+durationMs }` (or `ok: false` + `error` on failure). The probe runs on the
+peak worker pool with a 5 s renderer-side timeout; on timeout the file is
+silently skipped from mismatch detection. Probes always read the **file
+header's actual** rate — the renderer's Web Audio decoder otherwise
+resamples to the AudioContext rate (typically the device rate, often 48 kHz
+on Windows) and would lie about the source rate.
+
+If every file matches the effective project rate the import proceeds
+silently. Otherwise the **Sample-rate mismatch dialog** appears with a
+bucket-by-rate summary and three exit paths:
+
+- **Cancel** — abort the whole batch.
+- **Convert to project rate** — keep the project at its current rate;
+  imports are converted at load time. (Files above 48 kHz can only take
+  this path if the project is already at 48 kHz.)
+- **Switch project rate** — only offered when the source rates are 44.1 or
+  48 kHz, or when at least one source is above 48 kHz (in which case the
+  project bumps to the 48 kHz cap). Dispatches `PROJECT_SET_TARGET_SAMPLE_RATE`
+  before the import loop runs so the new rate sticks.
+
+48 kHz is the hard cap. The `PROJECT_SET_TARGET_SAMPLE_RATE` handler
+whitelists `0` (clear), `44100` and `48000`; the dropdowns enforce the same
+on the renderer side.
+
+> **Phase 1 / Phase 2.** What's described here is Phase 1 — the foundations:
+> probe envelope, target-rate field, prompt dialog, RATE indicator,
+> classification gates. Phase 2 adds an on-disk rate-keyed playback cache
+> (libsamplerate-converted WAVs under `%APPDATA%/Silverdaw/playback/`),
+> project-rate change-and-rebuild (regenerate caches and resume transport
+> with `transcodeGeneration` for stale-ack safety), sample-bake at the
+> project rate, and a throttled probe-on-load batch for older projects that
+> stored a wrong renderer-side rate. Phase 2 is not yet shipped.
 
 ## Keyboard & mouse reference
 
