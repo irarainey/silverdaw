@@ -10,6 +10,9 @@ import ImportProgressDialog from '@/components/ImportProgressDialog.vue'
 import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
 import ProjectPropertiesDialog from '@/components/ProjectPropertiesDialog.vue'
+import ExportMixdownDialog from '@/components/ExportMixdownDialog.vue'
+import MixdownProgressDialog from '@/components/MixdownProgressDialog.vue'
+import { useMixdownState } from '@/lib/mixdownState'
 import AudioDeviceUnavailableDialog from '@/components/AudioDeviceUnavailableDialog.vue'
 import SampleRateMismatchDialog from '@/components/SampleRateMismatchDialog.vue'
 import {
@@ -44,6 +47,7 @@ const appStore = useAppStore()
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
+const exportMixdownOpen = ref(false)
 const relinkDialogOpen = ref(false)
 // "Saved audio device not available" warning state. Populated by the
 // project-load reconciliation watcher below when the project's stored
@@ -60,6 +64,7 @@ const audioUnavailableSavedDeviceName = ref<string | null>(null)
 // reopen the dialog after the user has dismissed it.
 const audioReconciledKeys = new Set<string>()
 const sampleRatePromptState = useSampleRateMismatchPromptState()
+const mixdownState = useMixdownState()
 // Crash-recovery state. Populated on bridge-ready by
 // `autosave:listRecoverable`; if non-empty, the RecoveryDialog mounts
 // and blocks the rest of the startup flow (auto-open + start screen)
@@ -198,6 +203,8 @@ function isShortcutModalOpen(): boolean {
     aboutOpen.value ||
     preferencesOpen.value ||
     projectPropertiesOpen.value ||
+    exportMixdownOpen.value ||
+    mixdownState.value !== null ||
     audioUnavailableOpen.value ||
     sampleRatePromptState.value.open ||
     relinkDialogOpen.value ||
@@ -680,6 +687,10 @@ function handleMenuAction(action: string): void {
     projectPropertiesOpen.value = true
     return
   }
+  if (action === 'file.exportMixdown') {
+    exportMixdownOpen.value = true
+    return
+  }
   if (action === 'file.newProject') {
     guardAgainstUnsavedChanges(() => {
       project.requestNewProject()
@@ -969,6 +980,13 @@ function onUnsavedPromptCancel(): void {
       :open="projectPropertiesOpen"
       @close="projectPropertiesOpen = false"
     />
+
+    <ExportMixdownDialog
+      :open="exportMixdownOpen"
+      @close="exportMixdownOpen = false"
+    />
+
+    <MixdownProgressDialog />
 
     <AudioDeviceUnavailableDialog
       :open="audioUnavailableOpen"

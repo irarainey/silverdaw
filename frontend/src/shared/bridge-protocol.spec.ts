@@ -35,6 +35,8 @@ const INBOUND_TYPES = {
   TRACK_REMOVED: true,
   CLIP_REMOVED: true,
   TRACK_GAIN_APPLIED: true,
+  TRACK_MUTE_APPLIED: true,
+  TRACK_SOLO_APPLIED: true,
   PROJECT_SAVED: true,
   PROJECT_VIEW_STATE_SAVED: true,
   PROJECT_AUTOSAVED: true,
@@ -53,7 +55,10 @@ const INBOUND_TYPES = {
   AUDIO_DEVICES_LIST: true,
   AUDIO_DEVICE_CHANGED: true,
   EDIT_UNDO_STATE: true,
-  AUDIO_FILE_PROBED: true
+  AUDIO_FILE_PROBED: true,
+  MIXDOWN_PROGRESS: true,
+  MIXDOWN_DONE: true,
+  MIXDOWN_FAILED: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {

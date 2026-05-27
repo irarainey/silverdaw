@@ -213,8 +213,27 @@ export interface TrackRenamePayload {
 
 export interface TrackGainPayload {
   trackId: string
-  /** Linear gain (0 = silent, 1 = unity). */
+  /** User volume (slider position) — linear 0..1.5, NOT post-mute /
+   *  post-solo effective gain. The backend derives the audible gain
+   *  from this plus the track's persisted muted / soloed flags. */
   gain: number
+}
+
+/** Toggle a track's mute flag. Persists with the project; the backend
+ *  derives the effective audible gain (`gain × audible(...)`) and pushes
+ *  it to the AudioEngine. Mute state is mirrored back on PROJECT_STATE
+ *  and via `TRACK_MUTE_APPLIED`. */
+export interface TrackMutePayload {
+  trackId: string
+  muted: boolean
+}
+
+/** Toggle a track's solo flag. Solo affects audibility of every other
+ *  track, so the backend re-pushes effective gain for the whole
+ *  project. */
+export interface TrackSoloPayload {
+  trackId: string
+  soloed: boolean
 }
 
 /**
@@ -358,6 +377,8 @@ export interface BridgeOutboundMap {
   TRACK_REMOVE: TrackRemovePayload
   TRACK_RENAME: TrackRenamePayload
   TRACK_GAIN: TrackGainPayload
+  TRACK_MUTE: TrackMutePayload
+  TRACK_SOLO: TrackSoloPayload
   TRACK_SET_HEIGHT: TrackSetHeightPayload
   TRACK_REORDER: TrackReorderPayload
   TRANSPORT_PLAY: undefined
@@ -379,6 +400,8 @@ export interface BridgeOutboundMap {
   PROJECT_SET_AUDIO_OUTPUT: ProjectSetAudioOutputPayload
   PROJECT_SET_TARGET_SAMPLE_RATE: ProjectSetTargetSampleRatePayload
   AUDIO_FILE_PROBE: AudioFileProbePayload
+  MIXDOWN_START: MixdownStartPayload
+  MIXDOWN_CANCEL: undefined
   PROJECT_MARKER_ADD: ProjectMarkerAddPayload
   PROJECT_MARKER_MOVE: ProjectMarkerMovePayload
   PROJECT_MARKER_REMOVE: ProjectMarkerRemovePayload
@@ -523,6 +546,50 @@ export interface AudioFileProbePayload {
   requestId: string
   filePath: string
 }
+
+/**
+ * Start an offline mixdown render. The backend renders every track's
+ * clips (honouring trim window, warp, pitch and track gain) into a
+ * single stereo file at the requested sample rate and format. The
+ * live transport is forced to pause-and-park before the render begins
+ * and `TRANSPORT_PLAY` is rejected for the duration so audio playback
+ * can't audibly interleave with the offline render.
+ *
+ * `lengthMode = 'trim-to-last-clip'` truncates the output at the end
+ * of the latest-ending clip (using each clip's effective timeline
+ * duration). `lengthMode = 'fixed-duration'` honours `lengthMs`
+ * exactly — clips that extend past that point are truncated mid-clip,
+ * clips that end before are padded with silence.
+ *
+ * The format-specific tail (`mp3Metadata`, `bitrateKbps`) is ignored
+ * when `format` is `'wav'`. WAV output is always 16-bit PCM today.
+ */
+export interface MixdownStartPayload {
+  outputPath: string
+  sampleRate: 44100 | 48000
+  format: 'wav' | 'mp3'
+  /** MP3 only: target bitrate in kbps. Ignored for WAV. */
+  bitrateKbps?: 128 | 192 | 320
+  lengthMode: 'trim-to-last-clip' | 'fixed-duration'
+  /** Required when `lengthMode === 'fixed-duration'`. Ignored otherwise. */
+  lengthMs?: number
+  /** MP3 ID3v2 metadata. All fields are optional; absent / empty
+   *  fields aren't written. Ignored when format is `'wav'`. */
+  mp3Metadata?: {
+    title?: string
+    artist?: string
+    album?: string
+    year?: string
+    genre?: string
+    comment?: string
+  }
+}
+
+/** Request cancellation of an in-progress mixdown render. The backend
+ *  finalises (deletes the partial temp file) and emits
+ *  `MIXDOWN_FAILED { code: 'cancelled' }`. No-op if no render is
+ *  active. */
+export type MixdownCancelPayload = undefined
 
 /** Add a timeline marker at an absolute project position in milliseconds. */
 export interface ProjectMarkerAddPayload {
@@ -698,6 +765,22 @@ export const TrackGainAppliedPayloadSchema = z.object({
 })
 export type TrackGainAppliedPayload = z.infer<typeof TrackGainAppliedPayloadSchema>
 
+/** Ack for `TRACK_MUTE` — echoes the muted flag the backend persisted. */
+export const TrackMuteAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  muted: z.boolean(),
+  ok: z.boolean()
+})
+export type TrackMuteAppliedPayload = z.infer<typeof TrackMuteAppliedPayloadSchema>
+
+/** Ack for `TRACK_SOLO` — echoes the soloed flag the backend persisted. */
+export const TrackSoloAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  soloed: z.boolean(),
+  ok: z.boolean()
+})
+export type TrackSoloAppliedPayload = z.infer<typeof TrackSoloAppliedPayloadSchema>
+
 export const ProjectViewStateSavedPayloadSchema = z.object({
   filePath: z.string(),
   ok: z.boolean(),
@@ -778,6 +861,11 @@ export const ProjectStateTrackSchema = z.object({
   /** Persisted user-facing track name. Optional for projects saved before this field existed. */
   name: z.string().optional(),
   gain: z.number(),
+  /** Persisted muted / soloed flags. Both default to false and are
+   *  only present in the JSON when true. Round-trip through save /
+   *  load so the user's mute / solo state is restored on reopen. */
+  muted: z.boolean().optional(),
+  soloed: z.boolean().optional(),
   /** Persisted row height in CSS pixels. Optional for projects saved
    *  before per-track height existed (and for tracks that have never
    *  been resized — the renderer falls back to its default). */
@@ -1236,6 +1324,32 @@ export const AudioFileProbedPayloadSchema = z.discriminatedUnion('ok', [
 ])
 export type AudioFileProbedPayload = z.infer<typeof AudioFileProbedPayloadSchema>
 
+/** Progress tick for an in-progress mixdown render. Emitted by the
+ *  backend roughly every 50 ms while rendering or encoding. `percent`
+ *  is `0..100` and is monotonically non-decreasing across a single
+ *  render. `stage` lets the UI surface the current weighted phase. */
+export const MixdownProgressPayloadSchema = z.object({
+  percent: z.number(),
+  stage: z.enum(['prepare', 'render', 'finalize', 'encode'])
+})
+export type MixdownProgressPayload = z.infer<typeof MixdownProgressPayloadSchema>
+
+/** Success ack — mixdown finished and the file is at `filePath`. */
+export const MixdownDonePayloadSchema = z.object({
+  filePath: z.string(),
+  durationMs: z.number()
+})
+export type MixdownDonePayload = z.infer<typeof MixdownDonePayloadSchema>
+
+/** Failure ack — `code` lets the UI distinguish intentional cancel
+ *  ('cancelled') from real errors so the progress dialog can dismiss
+ *  quietly vs. surfacing the error toast. */
+export const MixdownFailedPayloadSchema = z.object({
+  code: z.enum(['cancelled', 'io', 'decode', 'encode', 'invalid']),
+  error: z.string()
+})
+export type MixdownFailedPayload = z.infer<typeof MixdownFailedPayloadSchema>
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PROJECT_STATE: ProjectStatePayload
@@ -1246,6 +1360,8 @@ export interface BridgeInboundMap {
   TRACK_REMOVED: TrackRemovedPayload
   CLIP_REMOVED: ClipRemovedPayload
   TRACK_GAIN_APPLIED: TrackGainAppliedPayload
+  TRACK_MUTE_APPLIED: TrackMuteAppliedPayload
+  TRACK_SOLO_APPLIED: TrackSoloAppliedPayload
   PROJECT_SAVED: ProjectSavedPayload
   PROJECT_VIEW_STATE_SAVED: ProjectViewStateSavedPayload
   PROJECT_AUTOSAVED: ProjectAutosavedPayload
@@ -1265,6 +1381,9 @@ export interface BridgeInboundMap {
   AUDIO_DEVICE_CHANGED: AudioDeviceChangedPayload
   EDIT_UNDO_STATE: EditUndoStatePayload
   AUDIO_FILE_PROBED: AudioFileProbedPayload
+  MIXDOWN_PROGRESS: MixdownProgressPayload
+  MIXDOWN_DONE: MixdownDonePayload
+  MIXDOWN_FAILED: MixdownFailedPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -1298,6 +1417,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_REMOVED',
   'CLIP_REMOVED',
   'TRACK_GAIN_APPLIED',
+  'TRACK_MUTE_APPLIED',
+  'TRACK_SOLO_APPLIED',
   'PROJECT_SAVED',
   'PROJECT_VIEW_STATE_SAVED',
   'PROJECT_AUTOSAVED',
@@ -1316,7 +1437,10 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'AUDIO_DEVICES_LIST',
   'AUDIO_DEVICE_CHANGED',
   'EDIT_UNDO_STATE',
-  'AUDIO_FILE_PROBED'
+  'AUDIO_FILE_PROBED',
+  'MIXDOWN_PROGRESS',
+  'MIXDOWN_DONE',
+  'MIXDOWN_FAILED'
 ])
 
 /** Narrow an unknown string to the inbound type union. */
@@ -1415,6 +1539,16 @@ export function isTrackGainAppliedPayload(value: unknown): value is TrackGainApp
   return TrackGainAppliedPayloadSchema.safeParse(value).success
 }
 
+/** Guard for `TrackMuteAppliedPayload`. */
+export function isTrackMuteAppliedPayload(value: unknown): value is TrackMuteAppliedPayload {
+  return TrackMuteAppliedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `TrackSoloAppliedPayload`. */
+export function isTrackSoloAppliedPayload(value: unknown): value is TrackSoloAppliedPayload {
+  return TrackSoloAppliedPayloadSchema.safeParse(value).success
+}
+
 /** Guard for `LibraryItemAnalysisPayload`. */
 export function isLibraryItemAnalysisPayload(value: unknown): value is LibraryItemAnalysisPayload {
   return LibraryItemAnalysisPayloadSchema.safeParse(value).success
@@ -1463,4 +1597,19 @@ export function isEditUndoStatePayload(value: unknown): value is EditUndoStatePa
 /** Guard for `AudioFileProbedPayload`. */
 export function isAudioFileProbedPayload(value: unknown): value is AudioFileProbedPayload {
   return AudioFileProbedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `MixdownProgressPayload`. */
+export function isMixdownProgressPayload(value: unknown): value is MixdownProgressPayload {
+  return MixdownProgressPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `MixdownDonePayload`. */
+export function isMixdownDonePayload(value: unknown): value is MixdownDonePayload {
+  return MixdownDonePayloadSchema.safeParse(value).success
+}
+
+/** Guard for `MixdownFailedPayload`. */
+export function isMixdownFailedPayload(value: unknown): value is MixdownFailedPayload {
+  return MixdownFailedPayloadSchema.safeParse(value).success
 }

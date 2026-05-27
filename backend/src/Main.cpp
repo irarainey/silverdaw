@@ -3,6 +3,7 @@
 #include "BridgeServer.h"
 #include "DecodedCache.h"
 #include "Log.h"
+#include "MixdownEngine.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
@@ -51,6 +52,12 @@ constexpr int kPreviewReadyDelayMs = 200;
 constexpr int kPeakWorkerCount = 4;
 
 std::atomic<bool> g_shouldQuit{false};
+// Mixdown job state. `g_mixdownBusy` is set true while a render is in
+// flight and gates `TRANSPORT_PLAY` so transport can't audibly start
+// mid-render. `g_mixdownCancel` is the cancel flag the engine polls
+// every block.
+std::atomic<bool> g_mixdownBusy{false};
+std::atomic<bool> g_mixdownCancel{false};
 
 void broadcastEditUndoState(silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge);
 
@@ -1098,8 +1105,13 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     }
 
     juce::String errorMsg;
+    // Pass the effective gain (post-mute/solo) to `addClip` directly
+    // so a brand-new clip starts at the audible level the rest of
+    // the timeline is playing at — no brief blip at the user volume
+    // before the explicit `setClipGain` below clamps it down.
+    const auto effectiveGain = projectState.getEffectiveTrackGain(trackId);
     bool ok = engine.addClip(clipId, juce::File(engineFilePath), initialOffsetMs, inMs, payloadDurationMs,
-                             projectState.getTrackGain(trackId), &errorMsg);
+                             effectiveGain, &errorMsg);
     if (ok)
     {
         // For un-trimmed clips fall back to the engine-discovered source
@@ -1117,7 +1129,7 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         }
         else
         {
-            engine.setClipGain(clipId, projectState.getTrackGain(trackId));
+            engine.setClipGain(clipId, effectiveGain);
         }
     }
 
@@ -1339,7 +1351,7 @@ void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, si
     {
         if (projectState.setClipTrack(clipId, newTrackId))
         {
-            engine.setClipGain(clipId, projectState.getTrackGain(newTrackId));
+            engine.setClipGain(clipId, projectState.getEffectiveTrackGain(newTrackId));
         }
     }
 }
@@ -1450,6 +1462,38 @@ void handleClipRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
     bridge.broadcast("CLIP_REMOVED", juce::var(p));
 }
 
+/** Push the effective audible gain (= user volume × mute × solo
+ *  logic) to AudioEngine for every clip on `trackId`. Centralised so
+ *  the TRACK_GAIN / TRACK_MUTE / TRACK_SOLO handlers can share the
+ *  same fan-out. */
+void pushEffectiveTrackGainToEngine(const juce::String& trackId,
+                                    silverdaw::AudioEngine& engine,
+                                    silverdaw::ProjectState& projectState)
+{
+    const float effective = projectState.getEffectiveTrackGain(trackId);
+    const auto clipIds = projectState.getTrackClipIds(trackId);
+    for (const auto& clipId : clipIds)
+    {
+        engine.setClipGain(clipId, effective);
+    }
+}
+
+/** Re-push every track's effective gain. Called after a TRACK_SOLO
+ *  toggle because solo state changes audibility of every other
+ *  track too. */
+void pushAllEffectiveGainsToEngine(silverdaw::AudioEngine& engine,
+                                   silverdaw::ProjectState& projectState)
+{
+    const auto& tree = projectState.getTree();
+    for (int i = 0; i < tree.getNumChildren(); ++i)
+    {
+        const auto track = tree.getChild(i);
+        if (!track.hasType(juce::Identifier{"TRACK"})) continue;
+        pushEffectiveTrackGainToEngine(track.getProperty(juce::Identifier{"id"}).toString(),
+                                       engine, projectState);
+    }
+}
+
 void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                      silverdaw::BridgeServer& bridge)
 {
@@ -1464,20 +1508,49 @@ void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, s
         return;
     }
     const auto gainF = static_cast<float>(*gain);
+    // TRACK_GAIN now carries the USER VOLUME (slider position), NOT
+    // the post-mute/solo effective gain. The backend derives the
+    // effective audible gain from the stored volume + muted + soloed
+    // flags and pushes that to the AudioEngine.
     const bool stored = projectState.setTrackGain(trackId, gainF);
-    // Fan the gain out to every clip on this logical track so multi-clip
-    // tracks all hear the same volume. With one-clip-per-track today the
-    // loop body runs at most once; the structure is ready for Phase 5.
-    const auto clipIds = projectState.getTrackClipIds(trackId);
-    for (const auto& clipId : clipIds)
-    {
-        engine.setClipGain(clipId, gainF);
-    }
+    pushEffectiveTrackGainToEngine(trackId, engine, projectState);
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
     p->setProperty("gain", gainF);
     p->setProperty("ok", stored);
     bridge.broadcast("TRACK_GAIN_APPLIED", juce::var(p));
+}
+
+void handleTrackMute(const juce::var& payload, silverdaw::AudioEngine& engine,
+                     silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+    const bool muted = static_cast<bool>(payload.getProperty("muted", false));
+    const bool stored = projectState.setTrackMuted(trackId, muted);
+    pushEffectiveTrackGainToEngine(trackId, engine, projectState);
+    auto* p = new juce::DynamicObject();
+    p->setProperty("trackId", trackId);
+    p->setProperty("muted", muted);
+    p->setProperty("ok", stored);
+    bridge.broadcast("TRACK_MUTE_APPLIED", juce::var(p));
+}
+
+void handleTrackSolo(const juce::var& payload, silverdaw::AudioEngine& engine,
+                     silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+    const bool soloed = static_cast<bool>(payload.getProperty("soloed", false));
+    const bool stored = projectState.setTrackSoloed(trackId, soloed);
+    // Solo affects audibility of every other track — fan out across
+    // the whole project.
+    pushAllEffectiveGainsToEngine(engine, projectState);
+    auto* p = new juce::DynamicObject();
+    p->setProperty("trackId", trackId);
+    p->setProperty("soloed", soloed);
+    p->setProperty("ok", stored);
+    bridge.broadcast("TRACK_SOLO_APPLIED", juce::var(p));
 }
 
 // ─── Project-level state (save / load / new / rename) ────────────────────
@@ -1599,7 +1672,8 @@ void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& e
             const double offsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
             const double inMs = static_cast<double>(clip.getProperty("inMs", 0.0));
             const double durationMs = static_cast<double>(clip.getProperty("durationMs", 0.0));
-            const auto trackGain = static_cast<float>(static_cast<double>(track.getProperty("gain", 1.0)));
+            const auto trackId = track.getProperty("id").toString();
+            const auto effectiveGain = projectState.getEffectiveTrackGain(trackId);
 
             engine.removeClip(clipId);
             const juce::String engineFilePath =
@@ -1609,9 +1683,9 @@ void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& e
                 ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
             }
             juce::String err;
-            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, trackGain, &err))
+            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, effectiveGain, &err))
             {
-                engine.setClipGain(clipId, trackGain);
+                engine.setClipGain(clipId, effectiveGain);
                 ++rebuilt;
             }
             else
@@ -1677,8 +1751,16 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                 ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
             }
             juce::String err;
-            const auto trackGain = static_cast<float>(static_cast<double>(track.getProperty("gain", 1.0)));
-            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, trackGain, &err))
+            // Project rebuild after load must use the EFFECTIVE
+            // track gain (post-mute/solo) so a project saved with a
+            // soloed track replays correctly: the soloed track plays
+            // at its user volume and every other track is silenced.
+            // Reading `track.gain` raw here was the bug — it gave
+            // every track its user volume regardless of mute/solo
+            // state, so a reopened soloed project played everyone.
+            const auto trackId = track.getProperty("id").toString();
+            const auto effectiveGain = projectState.getEffectiveTrackGain(trackId);
+            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, effectiveGain, &err))
             {
                 ++rebuilt;
                 // If the saved project carried warp settings on this
@@ -2191,7 +2273,8 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "CLIP_SET_WARP" ||
            type == "CLIP_RELINK" ||
            type == "TRACK_ADD" || type == "TRACK_REMOVE" || type == "TRACK_RENAME" ||
-           type == "TRACK_GAIN" || type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
+           type == "TRACK_GAIN" || type == "TRACK_MUTE" || type == "TRACK_SOLO" ||
+           type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
            type == "LIBRARY_ITEM_SET_SAMPLE_MODE" ||
@@ -2217,6 +2300,8 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_REMOVE") return "Remove track";
     if (type == "TRACK_RENAME") return "Rename track";
     if (type == "TRACK_GAIN") return "Change track gain";
+    if (type == "TRACK_MUTE") return "Mute track";
+    if (type == "TRACK_SOLO") return "Solo track";
     if (type == "TRACK_SET_HEIGHT") return "Resize track";
     if (type == "TRACK_REORDER") return "Reorder track";
     if (type == "LIBRARY_ADD") return "Update library item";
@@ -2778,6 +2863,12 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "TRANSPORT_PLAY")
     {
+        if (g_mixdownBusy.load())
+        {
+            silverdaw::log::warn("bridge",
+                                 "recv TRANSPORT_PLAY rejected — mixdown render is in progress");
+            return;
+        }
         silverdaw::log::info("bridge", "recv TRANSPORT_PLAY");
         engine.play();
     }
@@ -2954,6 +3045,18 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::debug("bridge", "recv TRACK_GAIN trackId=" + payload.getProperty("trackId", "").toString() +
                                             " gain=" + payload.getProperty("gain", "").toString());
         handleTrackGain(payload, engine, projectState, bridge);
+    }
+    else if (type == "TRACK_MUTE")
+    {
+        silverdaw::log::info("bridge", "recv TRACK_MUTE trackId=" + payload.getProperty("trackId", "").toString() +
+                                            " muted=" + payload.getProperty("muted", "").toString());
+        handleTrackMute(payload, engine, projectState, bridge);
+    }
+    else if (type == "TRACK_SOLO")
+    {
+        silverdaw::log::info("bridge", "recv TRACK_SOLO trackId=" + payload.getProperty("trackId", "").toString() +
+                                            " soloed=" + payload.getProperty("soloed", "").toString());
+        handleTrackSolo(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_SET_HEIGHT")
     {
@@ -3245,6 +3348,103 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                 });
             });
         }
+    }
+    else if (type == "MIXDOWN_START")
+    {
+        // Render a project mixdown offline. Heavy work runs on the
+        // peakPool; results stream back via MIXDOWN_PROGRESS /
+        // MIXDOWN_DONE / MIXDOWN_FAILED. Idempotent under double-
+        // click — if a render is already in flight, reject the new
+        // request with an `invalid` failure rather than starting a
+        // second one.
+        if (g_mixdownBusy.load())
+        {
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty("code", juce::String("invalid"));
+            obj->setProperty("error", juce::String("A mixdown is already in progress."));
+            bridge.broadcast("MIXDOWN_FAILED", juce::var(obj));
+            return;
+        }
+        // Stop transport (and don't fight an existing play state) so
+        // the live audio device isn't producing sound during the
+        // offline render. The TRANSPORT_PLAY gate above keeps it stopped.
+        engine.pause();
+
+        const auto outputPath = tryGetRequiredString(payload, "outputPath").value_or(juce::String{});
+        const int outputSampleRate = static_cast<int>(payload.getProperty("sampleRate", 44100));
+        const auto formatStr = tryGetRequiredString(payload, "format").value_or(juce::String("wav"));
+        const auto lengthMode = tryGetRequiredString(payload, "lengthMode").value_or(juce::String("trim-to-last-clip"));
+        const double lengthMsHint = static_cast<double>(payload.getProperty("lengthMs", 0.0));
+        const int bitrateKbps = static_cast<int>(payload.getProperty("bitrateKbps", 192));
+
+        silverdaw::log::info(
+            "mixdown",
+            "MIXDOWN_START path=" + outputPath + " sr=" + juce::String(outputSampleRate) +
+                " format=" + formatStr + " lengthMode=" + lengthMode +
+                " lengthMsHint=" + juce::String(lengthMsHint, 1));
+
+        if (outputPath.isEmpty())
+        {
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty("code", juce::String("invalid"));
+            obj->setProperty("error", juce::String("MIXDOWN_START requires outputPath."));
+            bridge.broadcast("MIXDOWN_FAILED", juce::var(obj));
+            return;
+        }
+
+        // Snapshot the project on the message thread before the
+        // worker dispatches — see rubber-duck finding A.
+        auto snapshot = silverdaw::snapshotProjectForMixdown(projectState);
+        if (snapshot.tracks.empty())
+        {
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty("code", juce::String("invalid"));
+            obj->setProperty("error", juce::String("Project has no clips to mix down."));
+            bridge.broadcast("MIXDOWN_FAILED", juce::var(obj));
+            return;
+        }
+
+        silverdaw::MixdownOptions options;
+        options.outputFile = juce::File(outputPath);
+        options.outputSampleRate = outputSampleRate;
+        options.format = (formatStr == "mp3") ? silverdaw::MixdownOptions::Format::Mp3
+                                              : silverdaw::MixdownOptions::Format::Wav;
+        options.bitrateKbps = bitrateKbps;
+        if (lengthMode == "trim-to-last-clip")
+        {
+            options.lengthMs = silverdaw::computeLastClipEndMs(snapshot);
+        }
+        else
+        {
+            options.lengthMs = lengthMsHint > 0.0
+                                   ? lengthMsHint
+                                   : projectState.getProjectLengthMs();
+        }
+        // MP3 metadata.
+        const auto md = payload.getProperty("mp3Metadata", juce::var());
+        if (md.isObject())
+        {
+            options.mp3Metadata.title   = md.getProperty("title",   "").toString();
+            options.mp3Metadata.artist  = md.getProperty("artist",  "").toString();
+            options.mp3Metadata.album   = md.getProperty("album",   "").toString();
+            options.mp3Metadata.year    = md.getProperty("year",    "").toString();
+            options.mp3Metadata.genre   = md.getProperty("genre",   "").toString();
+            options.mp3Metadata.comment = md.getProperty("comment", "").toString();
+        }
+
+        silverdaw::renderMixdownAsync(std::move(snapshot), std::move(options),
+                                      peakPool, bridge,
+                                      g_mixdownCancel, g_mixdownBusy);
+    }
+    else if (type == "MIXDOWN_CANCEL")
+    {
+        if (!g_mixdownBusy.load())
+        {
+            silverdaw::log::info("bridge", "MIXDOWN_CANCEL ignored — no render in progress");
+            return;
+        }
+        silverdaw::log::info("bridge", "recv MIXDOWN_CANCEL");
+        g_mixdownCancel.store(true);
     }
     else if (type == "EDIT_UNDO")
     {

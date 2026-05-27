@@ -41,6 +41,13 @@ export interface BuildMenusOptions {
    * lists the same MRU in full as a parallel entry point.
    */
   recentProjects?: string[]
+  /**
+   * True when the project has at least one clip on at least one
+   * track. Gates **File ▸ Export Mixdown** — there's nothing to
+   * render on an empty project. Defaults to false so first-launch
+   * menus render the item disabled.
+   */
+  hasAnyClip?: boolean
 }
 
 /** Max number of recent-project entries surfaced in the File menu. The
@@ -95,7 +102,11 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Project Properties\u2026', action: 'file.projectProperties' },
         SEP,
         { label: 'Add Track', action: 'file.addTrack', accelerator: 'Ctrl+T' },
-        { label: 'Export Mixdown', action: 'file.exportMixdown', disabled: true },
+        {
+          label: 'Export Mixdown\u2026',
+          action: 'file.exportMixdown',
+          disabled: opts.hasAnyClip !== true
+        },
         SEP,
         { label: 'Exit', action: 'file.exit' }
       ]

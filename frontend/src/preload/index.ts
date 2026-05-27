@@ -186,6 +186,37 @@ const api = {
   chooseProjectSaveAs: (defaultName: string): Promise<string | null> =>
     ipcRenderer.invoke('project:chooseSaveAs', defaultName),
   /**
+   * Show the OS save-as dialog for a mixdown export. `defaultPath` is
+   * the full proposed path (used to seed both the filename and the
+   * starting directory). `format` drives the file-type filter.
+   * Resolves to the chosen path or `null` on cancel.
+   */
+  chooseMixdownSaveAs: (
+    defaultPath: string,
+    format: 'wav' | 'mp3'
+  ): Promise<string | null> => ipcRenderer.invoke('mixdown:chooseSaveAs', defaultPath, format),
+  /**
+   * Resolve a fully-qualified default mixdown output path. Main joins
+   * the project's directory (or the user-default project folder if
+   * the project hasn't been saved) with a `mixdown/` subdirectory
+   * plus the project name plus the extension. Returns the absolute
+   * path the dialog should pre-populate with.
+   */
+  resolveMixdownDefaultPath: (
+    projectFilePath: string | null,
+    projectName: string,
+    format: 'wav' | 'mp3'
+  ): Promise<string> =>
+    ipcRenderer.invoke('mixdown:resolveDefaultPath', projectFilePath, projectName, format),
+  /**
+   * Belt-and-braces overwrite check before dispatching MIXDOWN_START.
+   * Resolves to `'overwrite'` if the user confirms (or the file
+   * doesn't exist), `'cancel'` if the user declines so the dialog
+   * can let them edit the filename.
+   */
+  confirmMixdownOverwrite: (filePath: string): Promise<'overwrite' | 'cancel' | 'not-found'> =>
+    ipcRenderer.invoke('mixdown:confirmOverwrite', filePath),
+  /**
    * Tell main that a `.silverdaw` file is about to be loaded. Main reads
    * the project XML and pre-registers every referenced audio path in
    * its `audio:readFile` / `audio:readMetadata` allow-list so the

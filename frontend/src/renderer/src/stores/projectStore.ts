@@ -1872,55 +1872,68 @@ export const useProjectStore = defineStore('project', {
       log.info('project', `removeTrack id=${trackId}`)
     },
 
-    /** Toggle the mute state for one track and push the new gain to the backend. */
+    /** Toggle the mute state for a track. The backend persists the
+     *  flag (round-trip through save/load) and derives the effective
+     *  audible gain itself, so the renderer doesn't need to compute
+     *  it locally. */
     toggleMute(trackId: string): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
       t.muted = !t.muted
       log.info('project', `toggleMute id=${trackId} muted=${t.muted}`)
-      this.pushTrackGain(t)
+      sendBridge('TRACK_MUTE', { trackId, muted: t.muted })
     },
 
-    /**
-     * Toggle the solo state. Because solo affects audibility of every other
-     * track, we re-push gains for the whole project on every toggle.
-     */
+    /** Toggle the solo state for a track. The backend re-pushes
+     *  effective gain to every track because solo affects audibility
+     *  of the whole project. */
     toggleSolo(trackId: string): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
       t.soloed = !t.soloed
       log.info('project', `toggleSolo id=${trackId} soloed=${t.soloed}`)
-      this.pushAllGains()
+      sendBridge('TRACK_SOLO', { trackId, soloed: t.soloed })
     },
 
-    /** Re-push every track's effective gain to the backend (e.g. on reconnect). */
-    pushAllGains(): void {
-      for (const t of this.tracks) this.pushTrackGain(t)
-    },
-
-    /** Internal: compute effective gain for a track and send it. */
+    /** Re-push a track's user volume to the backend. Kept as a
+     *  thin wrapper for callers in clip-add / move / paste paths
+     *  that want to make sure the backend's per-clip gain reflects
+     *  the track's volume immediately. Effective audibility (mute /
+     *  solo) is computed backend-side, so this only needs to push
+     *  the volume itself. */
     pushTrackGain(track: Track): void {
-      const anySolo = this.anySoloed
-      const audible = !track.muted && (!anySolo || track.soloed)
-      const gain = audible ? track.volume : 0.0
-      sendBridge('TRACK_GAIN', { trackId: track.id, gain })
+      sendBridge('TRACK_GAIN', { trackId: track.id, gain: track.volume })
+    },
+
+    /** Re-push every track's volume to the backend. Kept for the
+     *  reconnect path so the backend's AudioEngine has a fresh copy
+     *  of every track's volume on a bridge handshake. Mute / solo
+     *  state round-trips on PROJECT_STATE so they don't need
+     *  explicit re-push here. */
+    pushAllGains(): void {
+      for (const t of this.tracks) {
+        sendBridge('TRACK_GAIN', { trackId: t.id, gain: t.volume })
+      }
     },
 
     /**
-     * Set a track's volume (linear gain, 0.0–1.5; 1.0 is unity, the
-     * slider's mid-point) and push the new effective gain to the
-     * backend. Mute / solo still override volume to silence.
+     * Set a track's user volume (linear gain, 0.0–1.5; 1.0 is unity,
+     * the slider's mid-point) and push it to the backend. The backend
+     * stores this as the user volume and folds in the persisted
+     * muted / soloed flags itself when computing the effective gain
+     * the AudioEngine and MixdownEngine see.
      *
-     * Use this for *commits* (e.g. the slider's `@change` event). For the
-     * live drag (every `@input`) use `setTrackVolumeLocal` so we don't
-     * flood the bridge with one envelope per pixel of slider movement.
+     * Use this for *commits* (e.g. the slider's `@change` event). For
+     * the live drag (every `@input`) use `setTrackVolumeLocal` so we
+     * don't flood the bridge with one envelope per pixel of slider
+     * movement.
      */
     setTrackVolume(trackId: string, volume: number): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
       t.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, volume))
       log.debug('project', `setTrackVolume id=${trackId} volume=${t.volume}`)
-      this.pushTrackGain(t)
+      sendBridge('TRACK_GAIN', { trackId, gain: t.volume })
     },
 
     /**
@@ -2355,8 +2368,8 @@ export const useProjectStore = defineStore('project', {
             id: t.id,
             name: persistedName && persistedName.length > 0 ? persistedName : `Track ${index + 1}`,
             clipIds: [],
-            muted: false,
-            soloed: false,
+            muted: t.muted === true,
+            soloed: t.soloed === true,
             volume: Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain)),
             colorIndex: index % TRACK_PALETTE.length,
             lengthMs: DEFAULT_TRACK_LENGTH_MS,
@@ -2371,6 +2384,13 @@ export const useProjectStore = defineStore('project', {
           if (typeof t.heightPx === 'number' && t.heightPx > 0) {
             track.heightPx = t.heightPx
           }
+          // Always update mute / solo from the snapshot so a TRACK_MUTE
+          // or TRACK_SOLO ack (which triggers a PROJECT_STATE refresh)
+          // is reflected in the UI.
+          track.muted = t.muted === true
+          track.soloed = t.soloed === true
+          // Volume too — backend is authoritative.
+          track.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain))
         }
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)

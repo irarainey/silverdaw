@@ -1049,7 +1049,7 @@ function handleMenuAction(action: string): void {
       wc.send('menu:action', action)
       break
     case 'file.exportMixdown':
-      console.log('[menu] export mixdown (todo)')
+      wc.send('menu:action', action)
       break
     case 'file.exit':
       // Run through the renderer's unsaved-changes guard. The renderer
@@ -1756,6 +1756,104 @@ app.whenReady().then(async () => {
       })
       if (result.canceled || !result.filePath) return null
       return result.filePath
+    }
+  )
+
+  /**
+   * Resolve the default output path for an Export Mixdown dialog.
+   * Rule: `<projectDir>/mixdown/<projectName>.<ext>` when the project
+   * has been saved; fall back to `<defaultProjectDir>/mixdown/<projectName>.<ext>`
+   * otherwise (so a freshly-created Untitled project still has a
+   * sensible default). The `mixdown/` subfolder is NOT created here —
+   * it's created by the backend right before the writer opens, so a
+   * cancel from the save dialog doesn't litter the filesystem.
+   */
+  ipcMain.handle(
+    'mixdown:resolveDefaultPath',
+    async (
+      _evt,
+      projectFilePath: unknown,
+      projectName: unknown,
+      format: unknown
+    ): Promise<string> => {
+      const safeName =
+        (typeof projectName === 'string' && projectName.trim().length > 0
+          ? projectName.trim()
+          : 'Untitled')
+          // Strip filesystem-unsafe characters so the suggestion is
+          // a valid Windows filename out of the box. The user can
+          // still type anything in the dialog.
+          .replace(/[\\/:*?"<>|]/g, '_')
+      const ext = format === 'mp3' ? 'mp3' : 'wav'
+      const baseDir =
+        typeof projectFilePath === 'string' && projectFilePath.length > 0
+          ? dirname(projectFilePath)
+          : prefs.paths.defaultProjectDir || tmpdir()
+      return join(baseDir, 'mixdown', `${safeName}.${ext}`)
+    }
+  )
+
+  ipcMain.handle(
+    'mixdown:chooseSaveAs',
+    async (_evt, defaultPath: unknown, format: unknown): Promise<string | null> => {
+      if (!mainWindow) return null
+      const suggestedDefaultPath =
+        typeof defaultPath === 'string' && defaultPath.length > 0
+          ? defaultPath
+          : join(prefs.paths.defaultProjectDir || tmpdir(), 'mixdown', 'Mixdown.wav')
+      const ext = format === 'mp3' ? 'mp3' : 'wav'
+      const filters =
+        ext === 'mp3'
+          ? [{ name: 'MP3 audio', extensions: ['mp3'] }]
+          : [{ name: 'WAV audio', extensions: ['wav'] }]
+      // Ensure the parent dir exists so the dialog lands in the right
+      // place; ignore errors so a missing-volume case just falls back
+      // to the user's last cwd.
+      try {
+        await mkdir(dirname(suggestedDefaultPath), { recursive: true })
+      } catch {
+        // best-effort
+      }
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Export Mixdown',
+        defaultPath: suggestedDefaultPath,
+        filters
+      })
+      if (result.canceled || !result.filePath) return null
+      return result.filePath
+    }
+  )
+
+  /**
+   * Confirm overwrite of an existing mixdown target. Resolves to
+   * `'overwrite'` when the user confirms, `'cancel'` when the user
+   * declines (so the dialog can stay open and let them edit the
+   * filename), or `'not-found'` when the file doesn't actually
+   * exist (no prompt needed — the renderer can proceed straight to
+   * `MIXDOWN_START`).
+   *
+   * The native Save As dialog already shows the OS overwrite prompt
+   * when the user picks a path through Browse…, but users who type
+   * directly into the path field bypass that. This handler is the
+   * belt-and-braces check the renderer always calls before
+   * dispatching the bridge envelope.
+   */
+  ipcMain.handle(
+    'mixdown:confirmOverwrite',
+    async (_evt, filePath: unknown): Promise<'overwrite' | 'cancel' | 'not-found'> => {
+      if (typeof filePath !== 'string' || filePath.length === 0) return 'not-found'
+      if (!existsSync(filePath)) return 'not-found'
+      if (!mainWindow) return 'cancel'
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        buttons: ['Overwrite', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'Replace existing file?',
+        message: `“${basename(filePath)}” already exists.`,
+        detail: 'Choose Overwrite to replace it, or Cancel to edit the filename.'
+      })
+      return result.response === 0 ? 'overwrite' : 'cancel'
     }
   )
 

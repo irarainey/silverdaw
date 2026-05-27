@@ -15,11 +15,22 @@ defineProps<{
 const project = useProjectStore()
 const appStore = useAppStore()
 
+// True when any track has at least one clip. Drives the
+// File ▸ Export Mixdown enabled state — there's nothing to render on
+// an empty project.
+const hasAnyClip = computed(() =>
+  project.tracks.some((track) => track.clipIds.length > 0)
+)
+
 // Menu list is rebuilt whenever `devToolsEnabled` flips. In practice the flag
 // is a startup snapshot so this is computed once, but `computed` keeps
 // the dependency wiring honest without any extra cost.
 const visibleMenus = computed(() =>
-  buildMenus({ devToolsEnabled: appStore.devToolsEnabled, recentProjects: appStore.recentProjects })
+  buildMenus({
+    devToolsEnabled: appStore.devToolsEnabled,
+    recentProjects: appStore.recentProjects,
+    hasAnyClip: hasAnyClip.value
+  })
 )
 
 /** Per-action dynamic disabled overrides. Menu definitions are static

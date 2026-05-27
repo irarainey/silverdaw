@@ -116,14 +116,45 @@ class ProjectState : public juce::ValueTree::Listener
      *  the undo manager as a single coalesced step. */
     bool moveTrack(const juce::String& trackId, int newIndex);
 
-    /** Per-track linear gain (0 = silent, 1 = unity). 1.0 if unknown. */
+    /** Per-track linear gain (0 = silent, 1 = unity). 1.0 if unknown.
+     *  Now stores the USER VOLUME (slider position) rather than the
+     *  post-mute/solo effective gain. The audible gain is computed
+     *  on the fly via `getEffectiveTrackGain` so mute / solo can be
+     *  toggled without losing the underlying volume choice. Old
+     *  project files (which stored the post-mute effective value
+     *  here) load with `muted=false`, so a muted-at-save-time track
+     *  comes back as `volume=0, muted=false` — same audible result
+     *  as today; the toggleable mute state is what's new. */
     float getTrackGain(const juce::String& trackId) const;
+
+    /** Mute / solo state for a track. Both persist with the project
+     *  and survive save / load. The renderer mirrors them and the
+     *  effective gain (what the AudioEngine / MixdownEngine apply)
+     *  is derived from `gain × audible(muted, soloed, anySoloed)`
+     *  via `getEffectiveTrackGain`. */
+    bool getTrackMuted(const juce::String& trackId) const;
+    bool getTrackSoloed(const juce::String& trackId) const;
+    bool anyTrackSoloed() const;
+
+    /** Effective audible gain for the AudioEngine / MixdownEngine.
+     *  Returns `0` for a muted track, or for any track that isn't
+     *  the soloed one when at least one track is soloed; otherwise
+     *  returns the per-track `gain` (= user volume). */
+    float getEffectiveTrackGain(const juce::String& trackId) const;
 
     /** Set a track's user-facing name. Blank names are rejected. */
     bool setTrackName(const juce::String& trackId, const juce::String& name);
 
-    /** Set per-track gain. Returns true if the track existed. */
+    /** Set per-track user volume (NOT effective gain). Returns true if
+     *  the track existed. Mute and solo are toggled via the dedicated
+     *  setters below — calling `setTrackGain` doesn't clear them. */
     bool setTrackGain(const juce::String& trackId, float gain);
+
+    /** Set per-track mute / solo flags. Both mark the project dirty
+     *  and round-trip through save / load. Returns true if the track
+     *  existed. */
+    bool setTrackMuted(const juce::String& trackId, bool muted);
+    bool setTrackSoloed(const juce::String& trackId, bool soloed);
 
     /** Per-track row height in CSS pixels (renderer-side display
      *  metric). 0 if unknown — the renderer falls back to its default
@@ -551,6 +582,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kId;
     static const juce::Identifier kName;
     static const juce::Identifier kGain;
+    static const juce::Identifier kMuted;
+    static const juce::Identifier kSoloed;
     static const juce::Identifier kHeightPx;
     static const juce::Identifier kFilePath;
     static const juce::Identifier kOffsetMs;

@@ -26,6 +26,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useAppStore } from '@/stores/appStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { applyMixdownProgress, clearMixdownState, snapshotMixdownState } from '@/lib/mixdownState'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { log } from '@/lib/log'
@@ -39,6 +40,9 @@ import {
   isClipRemovedPayload,
   isEditUndoStatePayload,
   isAudioFileProbedPayload,
+  isMixdownDonePayload,
+  isMixdownFailedPayload,
+  isMixdownProgressPayload,
   isLibraryItemAnalysisPayload,
   isPlayheadUpdatePayload,
   isPreviewEndedPayload,
@@ -56,6 +60,8 @@ import {
   isReadyPayload,
   isTrackAddedPayload,
   isTrackGainAppliedPayload,
+  isTrackMuteAppliedPayload,
+  isTrackSoloAppliedPayload,
   isTrackRemovedPayload,
   isWaveformReadyPayload,
   type BridgeInboundMessage,
@@ -480,6 +486,22 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'TRACK_MUTE_APPLIED': {
+      if (!msg.payload.ok) {
+        log.warn('bridge',
+          `TRACK_MUTE_APPLIED ok=false for ${msg.payload.trackId} muted=${msg.payload.muted}`)
+      }
+      break
+    }
+
+    case 'TRACK_SOLO_APPLIED': {
+      if (!msg.payload.ok) {
+        log.warn('bridge',
+          `TRACK_SOLO_APPLIED ok=false for ${msg.payload.trackId} soloed=${msg.payload.soloed}`)
+      }
+      break
+    }
+
     case 'PROJECT_SAVED': {
       const notifications = useNotificationsStore()
       const project = useProjectStore()
@@ -675,6 +697,33 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'MIXDOWN_PROGRESS': {
+      applyMixdownProgress(msg.payload)
+      break
+    }
+
+    case 'MIXDOWN_DONE': {
+      const tracked = snapshotMixdownState()
+      clearMixdownState()
+      const fileName = msg.payload.filePath.replace(/^.*[\\/]/, '')
+      useNotificationsStore().pushInfo(`Exported ${fileName}`)
+      log.info('mixdown', `done filePath=${msg.payload.filePath} durationMs=${msg.payload.durationMs} (tracked format=${tracked?.format ?? 'unknown'})`)
+      break
+    }
+
+    case 'MIXDOWN_FAILED': {
+      const tracked = snapshotMixdownState()
+      clearMixdownState()
+      if (msg.payload.code === 'cancelled') {
+        useNotificationsStore().pushInfo('Mixdown cancelled')
+        log.info('mixdown', `cancelled (tracked path=${tracked?.outputPath ?? 'unknown'})`)
+      } else {
+        useNotificationsStore().pushError(`Mixdown failed: ${msg.payload.error}`)
+        log.error('mixdown', `failed code=${msg.payload.code} error=${msg.payload.error}`)
+      }
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -858,6 +907,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isClipRemovedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_GAIN_APPLIED':
       return isTrackGainAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_MUTE_APPLIED':
+      return isTrackMuteAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_SOLO_APPLIED':
+      return isTrackSoloAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_SAVED':
       return isProjectSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_VIEW_STATE_SAVED':
@@ -896,6 +949,12 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isEditUndoStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'AUDIO_FILE_PROBED':
       return isAudioFileProbedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'MIXDOWN_PROGRESS':
+      return isMixdownProgressPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'MIXDOWN_DONE':
+      return isMixdownDonePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'MIXDOWN_FAILED':
+      return isMixdownFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

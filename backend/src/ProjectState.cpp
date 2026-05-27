@@ -12,6 +12,8 @@ const juce::Identifier ProjectState::kClip{"CLIP"};
 const juce::Identifier ProjectState::kId{"id"};
 const juce::Identifier ProjectState::kName{"name"};
 const juce::Identifier ProjectState::kGain{"gain"};
+const juce::Identifier ProjectState::kMuted{"muted"};
+const juce::Identifier ProjectState::kSoloed{"soloed"};
 const juce::Identifier ProjectState::kHeightPx{"heightPx"};
 const juce::Identifier ProjectState::kFilePath{"filePath"};
 const juce::Identifier ProjectState::kOffsetMs{"offsetMs"};
@@ -287,6 +289,42 @@ float ProjectState::getTrackGain(const juce::String& trackId) const
     return static_cast<float>(static_cast<double>(track.getProperty(kGain, 1.0)));
 }
 
+bool ProjectState::getTrackMuted(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+    return static_cast<bool>(track.getProperty(kMuted, false));
+}
+
+bool ProjectState::getTrackSoloed(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+    return static_cast<bool>(track.getProperty(kSoloed, false));
+}
+
+bool ProjectState::anyTrackSoloed() const
+{
+    for (int i = 0; i < root.getNumChildren(); ++i)
+    {
+        const auto track = root.getChild(i);
+        if (!track.hasType(kTrack)) continue;
+        if (static_cast<bool>(track.getProperty(kSoloed, false))) return true;
+    }
+    return false;
+}
+
+float ProjectState::getEffectiveTrackGain(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return 0.0F;
+    const bool muted = static_cast<bool>(track.getProperty(kMuted, false));
+    if (muted) return 0.0F;
+    const bool soloed = static_cast<bool>(track.getProperty(kSoloed, false));
+    if (anyTrackSoloed() && !soloed) return 0.0F;
+    return static_cast<float>(static_cast<double>(track.getProperty(kGain, 1.0)));
+}
+
 bool ProjectState::setTrackName(const juce::String& trackId, const juce::String& name)
 {
     auto track = findTrack(trackId);
@@ -311,6 +349,39 @@ bool ProjectState::setTrackGain(const juce::String& trackId, float gain)
         return false;
     }
     track.setProperty(kGain, gain, &undoManager);
+    return true;
+}
+
+bool ProjectState::setTrackMuted(const juce::String& trackId, bool muted)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+    if (muted)
+    {
+        track.setProperty(kMuted, true, &undoManager);
+    }
+    else
+    {
+        // Drop the property entirely when false so saved files don't
+        // accumulate `muted: false` noise. Same convention as the rest
+        // of the codebase (e.g. variableTempo, lowConfidence).
+        track.removeProperty(kMuted, &undoManager);
+    }
+    return true;
+}
+
+bool ProjectState::setTrackSoloed(const juce::String& trackId, bool soloed)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+    if (soloed)
+    {
+        track.setProperty(kSoloed, true, &undoManager);
+    }
+    else
+    {
+        track.removeProperty(kSoloed, &undoManager);
+    }
     return true;
 }
 
@@ -1600,6 +1671,19 @@ juce::var ProjectState::tracksAsJson() const
         trackObj->setProperty("id", track.getProperty(kId).toString());
         trackObj->setProperty("name", track.getProperty(kName).toString());
         trackObj->setProperty("gain", static_cast<double>(track.getProperty(kGain, 1.0)));
+        // Mute / solo round-trip through the project file. The
+        // renderer reads them on PROJECT_STATE to seed its UI and
+        // the live audio engine derives effective gain from them.
+        // Both default to false and are only emitted when true to
+        // keep saved files tidy.
+        if (static_cast<bool>(track.getProperty(kMuted, false)))
+        {
+            trackObj->setProperty("muted", true);
+        }
+        if (static_cast<bool>(track.getProperty(kSoloed, false)))
+        {
+            trackObj->setProperty("soloed", true);
+        }
         // Only emit heightPx when explicitly set; the renderer falls
         // back to its own default for tracks that have never been
         // resized so older projects survive without backfilling.
