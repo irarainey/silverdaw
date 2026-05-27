@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
 import { libraryItemDisplayName, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveTempoRatio } from '@/lib/warp'
@@ -16,6 +17,7 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 
 const project = useProjectStore()
 const library = useLibraryStore()
+const transport = useTransportStore()
 const dialogEl = ref<HTMLDivElement | null>(null)
 const clip = computed(() => props.clipId ? project.clips[props.clipId] ?? null : null)
 const sourceItem = computed(() => {
@@ -104,7 +106,17 @@ const warpedBpm = computed(() => {
   if (!item || !current || current.warpEnabled !== true) return undefined
   const sourceBpm = item.bpm ?? sourceItem.value?.bpm
   if (typeof sourceBpm !== 'number' || sourceBpm <= 0) return undefined
-  const ratio = effectiveTempoRatio({ tempoRatio: current.tempoRatio, sourceBpm, projectBpm: sourceBpm })
+  // The "warped BPM" for an auto-warped clip follows the project tempo
+  // (effective ratio = projectBpm / sourceBpm); for a pinned-ratio
+  // clip it is sourceBpm × tempoRatio. Passing `sourceBpm` as the
+  // projectBpm — which the previous code did — degenerated the ratio
+  // to 1 and made the display always equal the source BPM. Use the
+  // real project BPM instead.
+  const ratio = effectiveTempoRatio({
+    tempoRatio: current.tempoRatio,
+    sourceBpm,
+    projectBpm: transport.bpm
+  })
   return sourceBpm * ratio
 })
 const bpmLabel = computed(() => warpedBpm.value ? 'Warped BPM' : 'Detected BPM')
