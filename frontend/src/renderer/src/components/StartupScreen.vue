@@ -63,6 +63,15 @@ const recents = computed(() => app.recentProjects.slice(0, MAX_STARTUP_RECENTS))
 // never showed up. The whole screen swaps to a focused error mode.
 const bridgeFailed = computed(() => transport.bridgeFailureMessage !== null)
 
+function onClose(): void {
+  // Quit the entire app — same path as the title-bar × button.
+  // Goes through main's `window:close` IPC, which fans out an
+  // `app.requestClose` menu action; App.vue routes it through the
+  // unsaved-changes guard (a no-op on the startup screen, since by
+  // definition no project is loaded) and then exits cleanly.
+  window.silverdaw.closeWindow()
+}
+
 // "All systems resolved" — every gate is green and the loading
 // screen could exit. We deliberately wait for the async device
 // scan AND a stable-display window (below) before treating this as
@@ -210,6 +219,35 @@ onBeforeUnmount(() => {
       aria-labelledby="startup-title"
       :aria-busy="!ready && !bridgeFailed"
     >
+      <!-- System-close button. Quits the app entirely (same path as
+           the title bar's × — goes through the unsaved-changes guard
+           in App.vue, but the startup screen by definition only
+           shows when the project is empty, so the guard is a no-op).
+           Matches the title-bar close in size, icon and hover
+           treatment so the user gets the same affordance they'd
+           expect on the main window. Top-right of the viewport. -->
+      <button
+        type="button"
+        data-borderless-button="true"
+        class="absolute right-0 top-0 flex h-9 w-11 items-center justify-center text-zinc-400 hover:bg-red-600 hover:text-white focus:outline-none"
+        aria-label="Close Silverdaw"
+        title="Close"
+        @click="onClose"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          class="h-3.5 w-3.5"
+          aria-hidden="true"
+        >
+          <path
+            d="M4.25 4.25l7.5 7.5M11.75 4.25l-7.5 7.5"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+          />
+        </svg>
+      </button>
+
       <!-- ─── Bridge-failure mode ───────────────────────────────── -->
       <!-- Dominates the whole screen. Project actions are hidden
            because they cannot recover the app. -->

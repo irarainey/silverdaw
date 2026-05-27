@@ -97,7 +97,6 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         SEP,
         { label: 'Save', action: 'file.save', accelerator: 'Ctrl+S' },
         { label: 'Save As', action: 'file.saveAs', accelerator: 'Ctrl+Shift+S' },
-        { label: 'Rename Project', action: 'file.renameProject', accelerator: 'F2' },
         SEP,
         { label: 'Project Properties\u2026', action: 'file.projectProperties' },
         SEP,

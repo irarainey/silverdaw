@@ -80,9 +80,6 @@ let pendingOpenAfterRecovery: string | null = null
 // changes. Set when the prompt opens; cleared when it closes.
 const unsavedPromptOpen = ref(false)
 let pendingAfterDiscard: (() => void) | null = null
-// Template ref to the title bar so menu actions can reach into it
-// (specifically `file.renameProject` → AppTitleBar.startRename()).
-const titleBarRef = ref<InstanceType<typeof AppTitleBar> | null>(null)
 
 let unsubscribeMenu: (() => void) | null = null
 let unsubscribeOpenFromPath: (() => void) | null = null
@@ -765,13 +762,6 @@ function handleMenuAction(action: string): void {
       })
     return
   }
-  if (action === 'file.renameProject') {
-    // The rename input lives in AppTitleBar; switch it into edit mode
-    // via the exposed `startRename` method. Works for both the menu
-    // click and the F2 accelerator (which routes through main).
-    void titleBarRef.value?.startRename()
-    return
-  }
   if (action === 'edit.undo') {
     project.requestUndo()
     return
@@ -944,10 +934,7 @@ function onUnsavedPromptCancel(): void {
 
 <template>
   <div class="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-    <AppTitleBar
-      ref="titleBarRef"
-      :window-controls-disabled="isShortcutModalOpen()"
-    />
+    <AppTitleBar :window-controls-disabled="isShortcutModalOpen()" />
 
     <TransportBar />
 

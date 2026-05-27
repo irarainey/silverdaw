@@ -108,14 +108,6 @@ function invoke(item: MenuItemDef): void {
   if (isItemDisabled(item) || !item.action) return
   openIndex.value = null
   openSubmenuKey.value = null
-  // Intercept the project-rename menu item directly — the rename input
-  // lives in this component so it's simpler to switch into edit mode
-  // here than to round-trip through main + the renderer-side
-  // `menu:action` IPC.
-  if (item.action === 'file.renameProject') {
-    void startRename()
-    return
-  }
   // Recent Projects entries don't need to involve main — the renderer
   // already owns the MRU mirror (appStore.recentProjects) and the
   // open-project flow (App.vue handleMenuAction). Forward them as
@@ -181,11 +173,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocumentClick)
   document.removeEventListener('keydown', onKey)
 })
-
-// Expose the rename trigger so external callers (e.g. App.vue's File
-// menu handler) can drive it. defineExpose makes this addressable via
-// `ref` on the parent.
-defineExpose({ startRename })
 </script>
 
 <template>
