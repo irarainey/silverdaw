@@ -54,6 +54,22 @@ satisfy the attribution requirements of those licences.
   [`backend/third_party/btrack/PATCHES.md`](backend/third_party/btrack/PATCHES.md)
   for the local MSVC-compatibility changes.
 
+### LAME MP3 encoder — © The LAME Project
+
+- **Licence**: GNU Lesser General Public License v2.1 or later (LGPL-2.1+).
+- **Project**: <https://lame.sourceforge.io/>
+- **Source**: <https://sourceforge.net/projects/lame/files/lame/>
+- **Notice**: When MP3 export is enabled, Silverdaw bundles an unmodified
+  Windows `lame.exe` build (typically sourced from the
+  [RareWares LAME bundle](https://www.rarewares.org/mp3-lame-bundle.php))
+  next to `SilverdawBackend.exe` in `resources/backend/`. Silverdaw invokes
+  the encoder as a separate child process (via JUCE's
+  `LAMEEncoderAudioFormat`); there is no static or dynamic linking against
+  the LAME library, so the LGPL boundary is the process boundary.
+  Per the LGPL, the unmodified upstream source is available from the
+  project links above. If MP3 export was not enabled in a particular
+  build, `lame.exe` is not included.
+
 ## Frontend (Electron + Vue)
 
 ### Electron, Chromium, Node.js

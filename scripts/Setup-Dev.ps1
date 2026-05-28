@@ -263,6 +263,19 @@ if (-not $SkipBackend) {
     }
     Write-Ok "Backend configured in backend/build."
 
+    # Bundled MP3 encoder. The repo *should* contain backend/third_party/lame/lame.exe
+    # (committed), but a fresh clone after a `lame.exe` refresh — or any clone
+    # where the binary was excluded for size — may be missing it. Fetch on
+    # demand so MP3 export works after a single Setup-Dev run.
+    $lameExe = Join-Path $repoRoot 'backend/third_party/lame/lame.exe'
+    if (-not (Test-Path -LiteralPath $lameExe)) {
+        Write-Section '3a. Fetch bundled LAME encoder (lame.exe)'
+        & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts/Fetch-Lame.ps1')
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  Fetch-Lame.ps1 failed (exit $LASTEXITCODE). MP3 export will be unavailable." -ForegroundColor Yellow
+        }
+    }
+
     if ($BuildBackend) {
         Write-Section '3b. Backend build (Debug)'
         & pwsh -NoProfile -ExecutionPolicy Bypass -File $devShell `

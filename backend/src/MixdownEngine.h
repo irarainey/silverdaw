@@ -76,11 +76,21 @@ struct MixdownSnapshot
 };
 
 /**
- * Optional MP3 ID3v2 tag fields. All optional — empty strings are
- * dropped. Bridge protocol mirrors this shape. Not yet wired up to a
- * real encoder; the WAV path ignores this entirely.
+ * Optional metadata tag fields shared across formats. All entries are
+ * optional — empty strings are dropped before being written.
+ *
+ * Per-format target:
+ *   - WAV  → RIFF INFO chunk (INAM/IART/IPRD/ICRD/IGNR/ICMT).
+ *   - MP3  → ID3v2 frames written by LAME (id3title/id3artist/...).
+ *   - FLAC → VORBIS_COMMENT block (TITLE/ARTIST/ALBUM/DATE/GENRE/COMMENT).
+ *
+ * JUCE 8's FLAC writer does not expose Vorbis comments, so the FLAC
+ * path post-processes the encoded file to insert the block (see
+ * `writeFlacVorbisComment()` in MixdownEngine.cpp).
+ *
+ * Bridge protocol mirrors this shape under the `metadata` key.
  */
-struct Mp3Metadata
+struct ExportMetadata
 {
     juce::String title;
     juce::String artist;
@@ -88,6 +98,12 @@ struct Mp3Metadata
     juce::String year;
     juce::String genre;
     juce::String comment;
+
+    bool isEmpty() const noexcept
+    {
+        return title.isEmpty() && artist.isEmpty() && album.isEmpty()
+            && year.isEmpty()  && genre.isEmpty()  && comment.isEmpty();
+    }
 };
 
 /**
@@ -146,8 +162,10 @@ struct MixdownOptions
      *  `lengthMode` ('trim-to-last-clip' or 'fixed-duration') by the
      *  dispatch handler before the engine sees it. */
     double lengthMs{0.0};
-    /** Only consulted when `format == Mp3`. */
-    Mp3Metadata mp3Metadata;
+    /** Optional file-level tags. Written per-format (RIFF INFO for WAV,
+     *  ID3 for MP3, VORBIS_COMMENT for FLAC). Empty struct → nothing
+     *  written. */
+    ExportMetadata metadata;
 };
 
 /**

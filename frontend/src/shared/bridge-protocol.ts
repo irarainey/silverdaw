@@ -561,9 +561,10 @@ export interface AudioFileProbePayload {
  * exactly — clips that extend past that point are truncated mid-clip,
  * clips that end before are padded with silence.
  *
- * The format-specific tail (`mp3Metadata`, `bitrateKbps`) is ignored
+ * The format-specific tail (`bitrateKbps`) is ignored
  * when `format` is `'wav'` or `'flac'`. `bitDepth` is ignored when
- * `format` is `'mp3'`.
+ * `format` is `'mp3'`. `metadata` applies to all three formats
+ * (mapped to ID3 for MP3, RIFF INFO for WAV, VORBIS_COMMENT for FLAC).
  */
 export interface MixdownStartPayload {
   outputPath: string
@@ -612,10 +613,13 @@ export interface MixdownStartPayload {
   lengthMode: 'trim-to-last-clip' | 'fixed-duration'
   /** Required when `lengthMode === 'fixed-duration'`. Ignored otherwise. */
   lengthMs?: number
-  /** MP3 ID3v2 metadata. All fields are optional; absent / empty
-   *  fields aren't written. Ignored when format is `'wav'` or
-   *  `'flac'`. */
-  mp3Metadata?: {
+  /** File-level tags written into the output container.
+   *  All fields are optional; absent / empty fields aren't written.
+   *  Mapped per-format by the backend:
+   *    - MP3  → ID3v2 frames (TIT2 / TPE1 / TALB / TYER / TCON / COMM).
+   *    - WAV  → RIFF INFO chunk (INAM / IART / IPRD / ICRD / IGNR / ICMT).
+   *    - FLAC → VORBIS_COMMENT block (TITLE / ARTIST / ALBUM / DATE / GENRE / COMMENT). */
+  metadata?: {
     title?: string
     artist?: string
     album?: string

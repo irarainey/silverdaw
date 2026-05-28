@@ -102,7 +102,7 @@ function buildLoudnessPayload(): {
 }
 const draftLengthMode = ref<'trim-to-last-clip' | 'fixed-duration'>('fixed-duration')
 const draftDurationText = ref('')
-// MP3 metadata — all optional.
+// File-level tags — all optional, written to every format.
 const draftTitle = ref('')
 const draftArtist = ref('')
 const draftAlbum = ref('')
@@ -342,11 +342,11 @@ async function doSave(): Promise<void> {
     }
     if (draftFormat.value === 'mp3') {
       payload.bitrateKbps = draftBitrate.value
-      if (md) payload.mp3Metadata = md
     } else {
       payload.bitDepth = draftBitDepth.value
       payload.dither = draftDither.value
     }
+    if (md) payload.metadata = md
     const loudness = buildLoudnessPayload()
     if (loudness) payload.loudness = loudness
     sendBridge('MIXDOWN_START', payload)
@@ -395,7 +395,7 @@ onBeforeUnmount(() => {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="dialog-card w-[min(560px,92vw)]"
+        class="dialog-card w-[min(760px,92vw)]"
         @keydown="onKeydown"
       >
         <div class="dialog-header">
@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
           </h1>
         </div>
 
-        <div class="dialog-body">
+        <div class="dialog-body silverdaw-scroll">
           <!-- Output location -->
           <section class="mb-5">
             <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
@@ -448,9 +448,8 @@ onBeforeUnmount(() => {
                 </option>
                 <option
                   value="mp3"
-                  disabled
                 >
-                  MP3 (coming soon)
+                  MP3 (lossy, 16-bit)
                 </option>
               </select>
             </div>
@@ -501,6 +500,23 @@ onBeforeUnmount(() => {
                 >
                 <span class="text-[10px] text-zinc-400">Dither</span>
               </label>
+            </div>
+            <div v-else>
+              <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
+                Bitrate
+              </label>
+              <select
+                v-model.number="draftBitrate"
+                class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+              >
+                <option
+                  v-for="kbps in [128, 192, 320] as const"
+                  :key="kbps"
+                  :value="kbps"
+                >
+                  {{ kbps }} kbps
+                </option>
+              </select>
             </div>
           </section>
 
@@ -572,27 +588,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <!-- MP3 bitrate (hidden when WAV/FLAC) -->
-          <section
-            v-if="draftFormat === 'mp3'"
-            class="mb-5"
-          >
-            <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
-              MP3 bitrate
-            </label>
-            <select
-              v-model.number="draftBitrate"
-              class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
-            >
-              <option
-                v-for="kbps in [128, 192, 320] as const"
-                :key="kbps"
-                :value="kbps"
-              >
-                {{ kbps }} kbps
-              </option>
-            </select>
-          </section>
+          <!-- MP3 bitrate now lives in the Format/Sample rate/Bitrate row above. -->
 
           <!-- Length policy -->
           <section class="mb-5">
@@ -655,15 +651,14 @@ onBeforeUnmount(() => {
             </p>
           </section>
 
-          <!-- MP3 metadata (hidden when WAV) -->
-          <section
-            v-if="draftFormat === 'mp3'"
-            class="mb-2 rounded border border-zinc-800 bg-zinc-950/60 p-3"
-          >
-            <div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">
-              MP3 metadata (optional)
-            </div>
-            <div class="grid grid-cols-2 gap-2 text-xs">
+          <!-- File-level tags (all formats; always visible) -->
+          <section class="mb-2 rounded border border-zinc-800 bg-zinc-950/60">
+            <header
+              class="flex items-center justify-between px-3 py-2 text-[11px] uppercase tracking-wide text-zinc-500"
+            >
+              <span>Tags (optional)</span>
+            </header>
+            <div class="grid grid-cols-2 gap-2 px-3 pb-3 text-xs">
               <label class="flex flex-col gap-0.5">
                 <span class="text-zinc-500">Title</span>
                 <input

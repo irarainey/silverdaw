@@ -43,6 +43,14 @@ extraResources:
     to: backend
     filter:
       - SilverdawBackend.exe
+      # lame.exe is copied next to SilverdawBackend.exe by the CMake POST_BUILD
+      # step (see `SILVERDAW_LAME_EXE` in backend/CMakeLists.txt) when the
+      # binary is dropped into `backend/third_party/lame/`. When present it
+      # ships next to the backend so `findLameExecutable()` resolves it via
+      # `process.resourcesPath/backend/lame.exe`. When absent, MP3 export
+      # returns a friendly "encoder not bundled" error at runtime and the
+      # other formats (WAV/FLAC) keep working.
+      - lame.exe
   # Ship the AGPL text + third-party notices inside the install so users have
   # them locally (satisfies AGPL §4 / MIT / BSD attribution obligations).
   - from: ../LICENSE

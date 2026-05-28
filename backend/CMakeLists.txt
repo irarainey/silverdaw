@@ -230,6 +230,7 @@ target_compile_definitions(silverdaw_backend_core PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_USE_WINDOWS_MEDIA_FORMAT=1
+    JUCE_USE_LAME_AUDIO_FORMAT=1
     JUCE_STANDALONE_APPLICATION=1)
 
 target_include_directories(silverdaw_backend_core PUBLIC
@@ -275,6 +276,28 @@ target_sources(SilverdawBackend PRIVATE
 
 target_link_libraries(SilverdawBackend PRIVATE
     silverdaw_backend_core)
+
+# ─── LAME MP3 encoder (optional, bundled) ────────────────────────────────
+# JUCE's LAMEEncoderAudioFormat spawns a `lame.exe` child process to
+# encode MP3. Drop a Windows lame.exe build into
+# `backend/third_party/lame/lame.exe` and it will be copied next to
+# the backend executable at build time. See third_party/lame/README.md
+# for download links. If the file is absent the build still succeeds —
+# MP3 export will simply fail at runtime with a friendly message.
+set(SILVERDAW_LAME_EXE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lame/lame.exe"
+    CACHE FILEPATH "Path to bundled lame.exe (Windows MP3 encoder)")
+if(EXISTS "${SILVERDAW_LAME_EXE}")
+    message(STATUS "MP3 export: lame.exe found at ${SILVERDAW_LAME_EXE}")
+    add_custom_command(TARGET SilverdawBackend POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SILVERDAW_LAME_EXE}" "$<TARGET_FILE_DIR:SilverdawBackend>/lame.exe"
+        COMMENT "Copying lame.exe next to backend executable")
+else()
+    message(STATUS
+        "MP3 export: lame.exe NOT found at ${SILVERDAW_LAME_EXE} — "
+        "MP3 export will be unavailable at runtime. "
+        "See backend/third_party/lame/README.md.")
+endif()
 
 if(SILVERDAW_BUILD_TESTS)
     enable_testing()

@@ -84,6 +84,277 @@ double clipTimelineEndMs(const MixdownSnapshot::ClipSnapshot& clip) noexcept
     return clip.offsetMs + eff;
 }
 
+// ── MP3 / LAME helpers ──────────────────────────────────────────────
+// JUCE's LAMEEncoderAudioFormat shells out to a `lame.exe` child
+// process. We bundle it next to SilverdawBackend.exe via CMake; this
+// helper finds it relative to the current executable.
+juce::File findLameExecutable()
+{
+    const auto exeDir = juce::File::getSpecialLocation(
+                            juce::File::currentExecutableFile)
+                            .getParentDirectory();
+#if JUCE_WINDOWS
+    return exeDir.getChildFile("lame.exe");
+#else
+    return exeDir.getChildFile("lame");
+#endif
+}
+
+// Map a CBR bitrate (kbps) to JUCE's LAMEEncoderAudioFormat quality
+// option index. The wrapper's option list is 10 VBR levels (0..9)
+// followed by CBR rates { 32, 40, 48, 56, 64, 80, 96, 112, 128, 160,
+// 192, 224, 256, 320 } — so CBR indices start at 10.
+int lameQualityIndexForCbr(int kbps)
+{
+    switch (kbps)
+    {
+        case 32:  return 10;
+        case 40:  return 11;
+        case 48:  return 12;
+        case 56:  return 13;
+        case 64:  return 14;
+        case 80:  return 15;
+        case 96:  return 16;
+        case 112: return 17;
+        case 128: return 18;
+        case 160: return 19;
+        case 192: return 20;
+        case 224: return 21;
+        case 256: return 22;
+        case 320: return 23;
+        default:  return 20; // 192 kbps fallback
+    }
+}
+
+std::unordered_map<juce::String, juce::String>
+buildMp3MetadataMap(const ExportMetadata& md)
+{
+    // LAME (via JUCE's LAMEEncoderAudioFormat) recognises these id3*
+    // keys and writes them as ID3v2 frames. Year maps to id3date.
+    std::unordered_map<juce::String, juce::String> m;
+    if (md.title.isNotEmpty())   m["id3title"]   = md.title;
+    if (md.artist.isNotEmpty())  m["id3artist"]  = md.artist;
+    if (md.album.isNotEmpty())   m["id3album"]   = md.album;
+    if (md.year.isNotEmpty())    m["id3date"]    = md.year;
+    if (md.genre.isNotEmpty())   m["id3genre"]   = md.genre;
+    if (md.comment.isNotEmpty()) m["id3comment"] = md.comment;
+    return m;
+}
+
+std::unordered_map<juce::String, juce::String>
+buildWavMetadataMap(const ExportMetadata& md)
+{
+    // JUCE's WavAudioFormat writes a RIFF INFO chunk for these keys.
+    // INAM/IART/IPRD/ICRD/IGNR/ICMT are the canonical RIFF INFO IDs;
+    // Explorer's Details pane and foobar2000/MediaMonkey read them.
+    std::unordered_map<juce::String, juce::String> m;
+    if (md.title.isNotEmpty())   m[juce::WavAudioFormat::riffInfoTitle]        = md.title;
+    if (md.artist.isNotEmpty())  m[juce::WavAudioFormat::riffInfoArtist]       = md.artist;
+    if (md.album.isNotEmpty())   m[juce::WavAudioFormat::riffInfoProductName]  = md.album;
+    if (md.year.isNotEmpty())    m[juce::WavAudioFormat::riffInfoDateCreated]  = md.year;
+    if (md.genre.isNotEmpty())   m[juce::WavAudioFormat::riffInfoGenre]        = md.genre;
+    // riffInfoComment2 ("ICMT") is the standard RIFF INFO comment ID; the
+    // bare riffInfoComment ("CMNT") is a JUCE-specific extension that few
+    // players read. Use the standard one.
+    if (md.comment.isNotEmpty()) m[juce::WavAudioFormat::riffInfoComment2]     = md.comment;
+    return m;
+}
+
+/**
+ * Insert a VORBIS_COMMENT metadata block into an already-written FLAC
+ * file. JUCE 8's `FlacAudioFormat` does not expose any metadata-writing
+ * hook, so we do it ourselves by rewriting the file's metadata block
+ * region (the audio frames are left bit-identical).
+ *
+ * FLAC layout: "fLaC" magic (4 bytes) + one or more metadata blocks +
+ * audio frames. Each metadata block has a 4-byte header: top bit of
+ * byte 0 = "is last block", lower 7 bits = block type (4 = VORBIS_
+ * COMMENT), bytes 1..3 = block length big-endian.
+ *
+ * Strategy: walk metadata blocks until we find the last one, clear its
+ * "is last block" flag, append our VORBIS_COMMENT block (with the flag
+ * set) before the audio frames, write the result atomically.
+ */
+bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md)
+{
+    if (md.isEmpty())
+        return true;
+
+    juce::MemoryBlock buf;
+    if (! flacFile.loadFileAsData(buf))
+    {
+        silverdaw::log::warn("mixdown", "FLAC metadata: failed to read file for rewrite");
+        return false;
+    }
+
+    auto* data = static_cast<const juce::uint8*>(buf.getData());
+    const size_t size = buf.getSize();
+    if (size < 8 || data[0] != 'f' || data[1] != 'L' || data[2] != 'a' || data[3] != 'C')
+    {
+        silverdaw::log::warn("mixdown", "FLAC metadata: file missing fLaC magic; skipping tags");
+        return false;
+    }
+
+    // Walk metadata blocks. Track:
+    //   - lastBlockHeaderPos: header offset of the previous "last" block
+    //     (so we can clear its top bit).
+    //   - existingVcStart / existingVcEnd: byte range of any pre-existing
+    //     VORBIS_COMMENT block. FLAC permits at most one (RFC 9639), so
+    //     if one is present we DROP it and emit our own as the new last
+    //     block. (JUCE's FlacAudioFormat never writes one, so the common
+    //     case is no existing block — but be robust if this helper runs
+    //     against a file that already has tags.)
+    size_t pos = 4;
+    size_t lastBlockHeaderPos = pos;
+    bool sawLast = false;
+    size_t existingVcStart = 0;
+    size_t existingVcEnd = 0;
+    bool hasExistingVc = false;
+    while (pos <= size && size - pos >= 4)
+    {
+        const size_t headerPos = pos;
+        const bool isLast = (data[pos] & 0x80) != 0;
+        const juce::uint32 blockType = (juce::uint32) (data[pos] & 0x7F);
+        const juce::uint32 blockLen = (juce::uint32(data[pos + 1]) << 16)
+                                    | (juce::uint32(data[pos + 2]) << 8)
+                                    |  juce::uint32(data[pos + 3]);
+        const size_t nextPos = pos + 4 + blockLen;
+        if (nextPos > size)
+        {
+            silverdaw::log::warn("mixdown", "FLAC metadata: block walk overran file; skipping tags");
+            return false;
+        }
+        if (blockType == 4)
+        {
+            hasExistingVc = true;
+            existingVcStart = headerPos;
+            existingVcEnd = nextPos;
+        }
+        else
+        {
+            lastBlockHeaderPos = headerPos;
+        }
+        pos = nextPos;
+        if (isLast) { sawLast = true; break; }
+    }
+    if (! sawLast)
+    {
+        silverdaw::log::warn("mixdown", "FLAC metadata: no last-block flag found; skipping tags");
+        return false;
+    }
+    // `pos` now points at the first byte of audio frames.
+
+    // Build the VORBIS_COMMENT payload: vendor_length (LE u32) +
+    // vendor_string + num_comments (LE u32) + N × (length LE u32 +
+    // "FIELD=value" bytes). Strings are UTF-8.
+    auto buildPayload = [&]()
+    {
+        juce::MemoryOutputStream mos;
+        const juce::String vendor = "Silverdaw / JUCE FLAC";
+        const auto vendorUtf8 = vendor.toRawUTF8();
+        const auto vendorLen = (juce::uint32) std::strlen(vendorUtf8);
+        // VORBIS_COMMENT integer fields are LITTLE-ENDIAN per the Vorbis
+        // I spec (unlike FLAC headers which are big-endian).
+        // juce::MemoryOutputStream::writeInt is little-endian.
+        mos.writeInt((int) vendorLen);                                   // u32 LE
+        mos.write(vendorUtf8, vendorLen);
+
+        struct Field { const char* key; const juce::String* value; };
+        const Field fields[] = {
+            { "TITLE",   &md.title   },
+            { "ARTIST",  &md.artist  },
+            { "ALBUM",   &md.album   },
+            { "DATE",    &md.year    },
+            { "GENRE",   &md.genre   },
+            { "COMMENT", &md.comment },
+        };
+        juce::Array<juce::String> entries;
+        for (const auto& f : fields)
+            if (f.value->isNotEmpty())
+                entries.add(juce::String(f.key) + "=" + *f.value);
+
+        mos.writeInt((int) entries.size());                              // u32 LE
+        for (const auto& e : entries)
+        {
+            const auto utf8 = e.toRawUTF8();
+            const auto len = (juce::uint32) std::strlen(utf8);
+            mos.writeInt((int) len);                                     // u32 LE
+            mos.write(utf8, len);
+        }
+
+        juce::MemoryBlock out;
+        mos.flush();
+        out.append(mos.getData(), mos.getDataSize());
+        return out;
+    };
+
+    const auto payload = buildPayload();
+    if (payload.getSize() > 0x00FFFFFF)
+    {
+        silverdaw::log::warn("mixdown", "FLAC metadata: payload too large for one block; skipping tags");
+        return false;
+    }
+
+    // Compose the rewritten file. We append progressively; the
+    // MemoryBlock grows as needed. (Do NOT call ensureSize here — that
+    // sets the logical size and `append` would write *after* it,
+    // leaving the file with leading garbage.)
+    juce::MemoryBlock out;
+
+    // (a) copy through the metadata region, skipping any pre-existing
+    //     VORBIS_COMMENT block (we replace it with our own).
+    if (hasExistingVc)
+    {
+        out.append(data, existingVcStart);
+        out.append(data + existingVcEnd, pos - existingVcEnd);
+    }
+    else
+    {
+        out.append(data, pos);
+    }
+
+    // (b) clear the "is last block" flag on the original last
+    //     non-Vorbis metadata block. After step (a), that header byte
+    //     sits at the same offset in `out` as in `data`, UNLESS the
+    //     skipped VORBIS_COMMENT block sat before it, in which case
+    //     the offset shifts down by the VC block's length.
+    size_t lastFlagPosInOut = lastBlockHeaderPos;
+    if (hasExistingVc && existingVcStart < lastBlockHeaderPos)
+        lastFlagPosInOut -= (existingVcEnd - existingVcStart);
+    static_cast<juce::uint8*>(out.getData())[lastFlagPosInOut] &= 0x7F;
+
+    // (c) our VORBIS_COMMENT block header: 0x84 = last-block | type 4.
+    const juce::uint32 plen = (juce::uint32) payload.getSize();
+    const juce::uint8 vcHeader[4] = {
+        (juce::uint8) 0x84,
+        (juce::uint8) ((plen >> 16) & 0xFF),
+        (juce::uint8) ((plen >> 8)  & 0xFF),
+        (juce::uint8) ( plen        & 0xFF),
+    };
+    out.append(vcHeader, 4);
+    out.append(payload.getData(), payload.getSize());
+
+    // (d) the original audio frames (everything after the metadata region).
+    out.append(data + pos, size - pos);
+
+    // Atomic-ish: write to a sibling temp then rename over the target.
+    auto tmp = flacFile.getSiblingFile(flacFile.getFileNameWithoutExtension() + ".tagtmp.flac");
+    if (! tmp.replaceWithData(out.getData(), out.getSize()))
+    {
+        silverdaw::log::warn("mixdown", "FLAC metadata: failed to write temp; tags not applied");
+        return false;
+    }
+    if (! tmp.moveFileTo(flacFile))
+    {
+        tmp.deleteFile();
+        silverdaw::log::warn("mixdown", "FLAC metadata: failed to rename temp over output");
+        return false;
+    }
+    silverdaw::log::info("mixdown", "FLAC metadata: wrote VORBIS_COMMENT block ("
+                                       + juce::String((int) payload.getSize()) + " bytes)");
+    return true;
+}
+
 void broadcastProgress(BridgeServer& bridge, double percent, const char* stage)
 {
     auto* obj = new juce::DynamicObject();
@@ -675,13 +946,6 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             broadcastFailed(bridge, code, message);
         };
 
-        if (options.format == MixdownOptions::Format::Mp3)
-        {
-            failWith(MixdownFailureCode::Invalid,
-                     "MP3 export is not yet available — please select WAV.");
-            return;
-        }
-
         if (snapshot.tracks.empty())
         {
             failWith(MixdownFailureCode::Invalid, "No clips to render.");
@@ -697,6 +961,26 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             failWith(MixdownFailureCode::Invalid,
                      "Unsupported output sample rate " + juce::String(options.outputSampleRate));
             return;
+        }
+
+        // ── MP3 setup ───────────────────────────────────────────────
+        // LAME is a 16-bit-only pipeline; force bit depth + dither up
+        // front so the rest of the pump loop's PCM quantisation path
+        // does the right thing regardless of what the frontend sent.
+        const bool mp3 = options.format == MixdownOptions::Format::Mp3;
+        juce::File lameApp;
+        if (mp3)
+        {
+            lameApp = findLameExecutable();
+            if (! lameApp.existsAsFile())
+            {
+                failWith(MixdownFailureCode::Invalid,
+                         "MP3 encoder (lame.exe) is not bundled with this build. "
+                         "See backend/third_party/lame/README.md.");
+                return;
+            }
+            options.bitDepth = 16;
+            options.dither = true;
         }
         // Loudness modes are only meaningful at standard sample
         // rates (BS.1770-4 calibration). The general output-rate
@@ -800,12 +1084,28 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         else if (options.format == MixdownOptions::Format::Wav)
         {
             juce::WavAudioFormat wav;
-            writer = wav.createWriterFor(outStream, writerOptions);
+            auto wavOpts = writerOptions
+                               .withMetadataValues(buildWavMetadataMap(options.metadata));
+            writer = wav.createWriterFor(outStream, wavOpts);
         }
         else if (options.format == MixdownOptions::Format::Flac)
         {
+            // JUCE 8's FLAC writer ignores withMetadataValues; we
+            // post-process the file to add a VORBIS_COMMENT block once
+            // the encoder has finished (see writeFlacVorbisComment()).
             juce::FlacAudioFormat flac;
             writer = flac.createWriterFor(outStream, writerOptions);
+        }
+        else if (options.format == MixdownOptions::Format::Mp3)
+        {
+            juce::LAMEEncoderAudioFormat lame(lameApp);
+            auto lameOpts = writerOptions
+                                .withBitsPerSample(16)
+                                .withSampleFormat(
+                                    juce::AudioFormatWriterOptions::SampleFormat::integral)
+                                .withQualityOptionIndex(lameQualityIndexForCbr(options.bitrateKbps))
+                                .withMetadataValues(buildMp3MetadataMap(options.metadata));
+            writer = lame.createWriterFor(outStream, lameOpts);
         }
 
         if (writer == nullptr)
@@ -818,7 +1118,9 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                                      ? juce::String("WAV-f32 (pass1)")
                                      : (options.format == MixdownOptions::Format::Flac
                                             ? juce::String("FLAC")
-                                            : juce::String("WAV"));
+                                            : (options.format == MixdownOptions::Format::Mp3
+                                                   ? juce::String("MP3")
+                                                   : juce::String("WAV")));
             failWith(MixdownFailureCode::Io,
                      "Failed to create " + fmtName + " writer (bitDepth=" +
                          juce::String(pass1BitDepth) + ", sr=" + juce::String(options.outputSampleRate) + ").");
@@ -841,7 +1143,9 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             juce::String("writer opened format=") +
                 (normalizing
                      ? "wav-f32 (pass1)"
-                     : (options.format == MixdownOptions::Format::Flac ? "flac" : "wav")) +
+                     : (options.format == MixdownOptions::Format::Flac
+                            ? "flac"
+                            : (options.format == MixdownOptions::Format::Mp3 ? "mp3" : "wav"))) +
                 " bitDepth=" + juce::String(pass1BitDepth) +
                 " float=" + (writer->isFloatingPoint() ? "true" : "false") +
                 " loudnessMode=" + (analyzing ? (normalizing ? "normalize" : "analyze") : "off"));
@@ -1303,12 +1607,27 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             if (options.format == MixdownOptions::Format::Wav)
             {
                 juce::WavAudioFormat wav;
-                p2Writer = wav.createWriterFor(p2Stream, p2Opts);
+                auto wavOpts = p2Opts.withMetadataValues(buildWavMetadataMap(options.metadata));
+                p2Writer = wav.createWriterFor(p2Stream, wavOpts);
             }
             else if (options.format == MixdownOptions::Format::Flac)
             {
+                // FLAC tags injected post-encode via writeFlacVorbisComment().
                 juce::FlacAudioFormat flac;
                 p2Writer = flac.createWriterFor(p2Stream, p2Opts);
+            }
+            else if (options.format == MixdownOptions::Format::Mp3)
+            {
+                juce::LAMEEncoderAudioFormat lame(lameApp);
+                auto lameOpts = p2Opts
+                                    .withBitsPerSample(16)
+                                    .withSampleFormat(
+                                        juce::AudioFormatWriterOptions::SampleFormat::integral)
+                                    .withQualityOptionIndex(
+                                        lameQualityIndexForCbr(options.bitrateKbps))
+                                    .withMetadataValues(
+                                        buildMp3MetadataMap(options.metadata));
+                p2Writer = lame.createWriterFor(p2Stream, lameOpts);
             }
             if (p2Writer == nullptr)
             {
@@ -1440,6 +1759,13 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             return;
         }
         const auto replaceEndMs = juce::Time::getMillisecondCounter();
+
+        // FLAC metadata is not written by JUCE's FlacAudioFormat, so
+        // post-process the finalised file to insert a VORBIS_COMMENT
+        // block before the audio frames. Best-effort: a failure here
+        // does not invalidate the (perfectly valid) FLAC bitstream.
+        if (options.format == MixdownOptions::Format::Flac && ! options.metadata.isEmpty())
+            writeFlacVorbisComment(targetFile, options.metadata);
 
         // From the user's point of view the export is now complete:
         // the file at `targetFile` is the final WAV. Push 100% + DONE

@@ -3592,16 +3592,16 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                    ? lengthMsHint
                                    : projectState.getProjectLengthMs();
         }
-        // MP3 metadata.
-        const auto md = payload.getProperty("mp3Metadata", juce::var());
+        // File-level metadata (format-agnostic; mapped per-format in the engine).
+        const auto md = payload.getProperty("metadata", juce::var());
         if (md.isObject())
         {
-            options.mp3Metadata.title   = md.getProperty("title",   "").toString();
-            options.mp3Metadata.artist  = md.getProperty("artist",  "").toString();
-            options.mp3Metadata.album   = md.getProperty("album",   "").toString();
-            options.mp3Metadata.year    = md.getProperty("year",    "").toString();
-            options.mp3Metadata.genre   = md.getProperty("genre",   "").toString();
-            options.mp3Metadata.comment = md.getProperty("comment", "").toString();
+            options.metadata.title   = md.getProperty("title",   "").toString();
+            options.metadata.artist  = md.getProperty("artist",  "").toString();
+            options.metadata.album   = md.getProperty("album",   "").toString();
+            options.metadata.year    = md.getProperty("year",    "").toString();
+            options.metadata.genre   = md.getProperty("genre",   "").toString();
+            options.metadata.comment = md.getProperty("comment", "").toString();
         }
 
         silverdaw::renderMixdownAsync(std::move(snapshot), std::move(options),
