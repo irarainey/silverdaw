@@ -81,12 +81,17 @@ struct MixdownSnapshot
  *
  * Per-format target:
  *   - WAV  → RIFF INFO chunk (INAM/IART/IPRD/ICRD/IGNR/ICMT).
+ *   - AIFF → AIFF text chunks (NAME/AUTH/(c) /ANNO), inserted by a
+ *            post-process pass because JUCE 8's AiffAudioFormat writer
+ *            ignores metadata.
  *   - MP3  → ID3v2 frames written by LAME (id3title/id3artist/...).
  *   - FLAC → VORBIS_COMMENT block (TITLE/ARTIST/ALBUM/DATE/GENRE/COMMENT).
+ *   - Ogg Vorbis → Vorbis comments written natively by JUCE
+ *                  (id3title/id3artist/... mapped to TITLE/ARTIST/...).
  *
- * JUCE 8's FLAC writer does not expose Vorbis comments, so the FLAC
- * path post-processes the encoded file to insert the block (see
- * `writeFlacVorbisComment()` in MixdownEngine.cpp).
+ * JUCE 8's FLAC and AIFF writers do not expose tag-writing hooks, so
+ * both paths post-process the encoded file (see `writeFlacVorbisComment()`
+ * and `writeAiffTextChunks()` in MixdownEngine.cpp).
  *
  * Bridge protocol mirrors this shape under the `metadata` key.
  */
@@ -113,15 +118,17 @@ struct ExportMetadata
  */
 struct MixdownOptions
 {
-    enum class Format { Wav, Mp3, Flac };
+    enum class Format { Wav, Mp3, Flac, Aiff, OggVorbis };
 
     juce::File outputFile;
     int outputSampleRate{44100};
     Format format{Format::Wav};
     /** Output sample bit-depth.
-     *  - WAV: 16 / 24 (PCM) or 32 (IEEE float).
+     *  - WAV:  16 / 24 (PCM) or 32 (IEEE float).
      *  - FLAC: 16 / 24.
-     *  - MP3: ignored.
+     *  - AIFF: 16 / 24 (PCM only — AIFF has no float container in JUCE).
+     *  - MP3:  ignored.
+     *  - Ogg Vorbis: ignored (Vorbis is lossy float internally).
      *  Validated by the dispatch handler against the chosen format. */
     int bitDepth{16};
     /** TPDF dither applied immediately before integer quantisation.
@@ -156,15 +163,20 @@ struct MixdownOptions
      *  post-gain true peak does not exceed (ceilingDbtp - 0.2 dB).
      *  Validated to [-9, 0]. Only consulted for Normalize. */
     double ceilingDbtp{-1.0};
-    /** MP3 only; ignored for WAV/FLAC. */
+    /** MP3 only; ignored for WAV/FLAC/AIFF/Ogg. */
     int bitrateKbps{192};
+    /** Ogg Vorbis only; ignored for other formats. JUCE's
+     *  OggVorbisAudioFormat exposes 11 quality indices (0..10) mapping
+     *  to ~64 kbps … ~500 kbps VBR. We expose three preset indices in
+     *  the UI: 2 (~96 kbps), 6 (~192 kbps), 9 (~320 kbps). */
+    int vorbisQualityIndex{6};
     /** Total render duration in milliseconds. Resolved from
      *  `lengthMode` ('trim-to-last-clip' or 'fixed-duration') by the
      *  dispatch handler before the engine sees it. */
     double lengthMs{0.0};
     /** Optional file-level tags. Written per-format (RIFF INFO for WAV,
-     *  ID3 for MP3, VORBIS_COMMENT for FLAC). Empty struct → nothing
-     *  written. */
+     *  AIFF text chunks for AIFF, ID3 for MP3, VORBIS_COMMENT for FLAC,
+     *  Vorbis comments for Ogg). Empty struct → nothing written. */
     ExportMetadata metadata;
 };
 

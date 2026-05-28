@@ -1623,6 +1623,12 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         const auto rate = projectState.getTargetSampleRate();
         if (rate > 0) obj->setProperty("targetSampleRate", rate);
     }
+    // Persisted export-dialog settings (opaque JSON, renderer-owned schema).
+    // Absent until the user runs an export at least once on this project.
+    {
+        const auto exportSettings = projectState.getExportSettingsJson();
+        if (exportSettings.isNotEmpty()) obj->setProperty("exportSettingsJson", exportSettings);
+    }
     return juce::var(obj);
 }
 
@@ -3239,6 +3245,25 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             }
         }
     }
+    else if (type == "PROJECT_SET_EXPORT_SETTINGS")
+    {
+        // Opaque JSON blob describing the last-used export-dialog
+        // settings (format, bit depth, tail seconds, loudness preset,
+        // file-level tags, …). Renderer owns the schema — we just
+        // round-trip the string. Pass an empty string to clear.
+        const auto json = tryGetRequiredString(payload, "json").value_or(juce::String{});
+        if (json.length() > 64 * 1024)
+        {
+            silverdaw::log::warn(
+                "bridge",
+                "PROJECT_SET_EXPORT_SETTINGS rejected (json > 64 KB; got "
+                    + juce::String(json.length()) + ")");
+        }
+        else
+        {
+            projectState.setExportSettingsJson(json);
+        }
+    }
     else if (type == "PROJECT_MARKER_ADD")
     {
         const auto markerId = tryGetRequiredString(payload, "markerId").value_or(juce::String{});
@@ -3373,6 +3398,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const auto lengthMode = tryGetRequiredString(payload, "lengthMode").value_or(juce::String("trim-to-last-clip"));
         const double lengthMsHint = static_cast<double>(payload.getProperty("lengthMs", 0.0));
         const int bitrateKbps = static_cast<int>(payload.getProperty("bitrateKbps", 192));
+        const int vorbisQualityIndex = static_cast<int>(payload.getProperty("vorbisQualityIndex", 6));
         // Phase A export fields. All optional with safe defaults so
         // older renderer builds keep working. Validated below before
         // we hand them to the engine.
@@ -3476,6 +3502,10 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             options.format = silverdaw::MixdownOptions::Format::Mp3;
         else if (formatStr == "flac")
             options.format = silverdaw::MixdownOptions::Format::Flac;
+        else if (formatStr == "aiff")
+            options.format = silverdaw::MixdownOptions::Format::Aiff;
+        else if (formatStr == "ogg-vorbis" || formatStr == "ogg")
+            options.format = silverdaw::MixdownOptions::Format::OggVorbis;
         else
             options.format = silverdaw::MixdownOptions::Format::Wav;
 
@@ -3508,8 +3538,20 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                     return;
                 }
                 break;
+            case silverdaw::MixdownOptions::Format::Aiff:
+                if (bitDepthRaw != 16 && bitDepthRaw != 24)
+                {
+                    rejectInvalid("AIFF export supports 16 or 24-bit only (got " +
+                                  juce::String(bitDepthRaw) + ").");
+                    return;
+                }
+                break;
             case silverdaw::MixdownOptions::Format::Mp3:
                 // MP3 ignores bit-depth; nothing to validate here.
+                break;
+            case silverdaw::MixdownOptions::Format::OggVorbis:
+                // Ogg Vorbis is lossy; bit-depth ignored. Quality index
+                // is clamped by the engine to [0, 10].
                 break;
         }
         options.bitDepth = bitDepthRaw;
@@ -3525,6 +3567,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         options.tailSeconds = tailSecondsRaw;
         options.dither = ditherRaw;
         options.bitrateKbps = bitrateKbps;
+        options.vorbisQualityIndex = juce::jlimit(0, 10, vorbisQualityIndex);
 
         // Loudness block: optional. Accepts `{ mode, targetLufs?,
         // ceilingDbtp? }` where mode ∈ {off, analyze, normalize}.

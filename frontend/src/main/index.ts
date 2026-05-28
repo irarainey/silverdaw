@@ -1784,7 +1784,16 @@ app.whenReady().then(async () => {
           // a valid Windows filename out of the box. The user can
           // still type anything in the dialog.
           .replace(/[\\/:*?"<>|]/g, '_')
-      const ext = format === 'mp3' ? 'mp3' : format === 'flac' ? 'flac' : 'wav'
+      const ext =
+        format === 'mp3'
+          ? 'mp3'
+          : format === 'flac'
+            ? 'flac'
+            : format === 'aiff'
+              ? 'aiff'
+              : format === 'ogg-vorbis'
+                ? 'ogg'
+                : 'wav'
       const baseDir =
         typeof projectFilePath === 'string' && projectFilePath.length > 0
           ? dirname(projectFilePath)
@@ -1801,13 +1810,26 @@ app.whenReady().then(async () => {
         typeof defaultPath === 'string' && defaultPath.length > 0
           ? defaultPath
           : join(prefs.paths.defaultProjectDir || tmpdir(), 'mixdown', 'Mixdown.wav')
-      const ext = format === 'mp3' ? 'mp3' : format === 'flac' ? 'flac' : 'wav'
+      const ext =
+        format === 'mp3'
+          ? 'mp3'
+          : format === 'flac'
+            ? 'flac'
+            : format === 'aiff'
+              ? 'aiff'
+              : format === 'ogg-vorbis'
+                ? 'ogg'
+                : 'wav'
       const filters =
         ext === 'mp3'
           ? [{ name: 'MP3 audio', extensions: ['mp3'] }]
           : ext === 'flac'
             ? [{ name: 'FLAC audio', extensions: ['flac'] }]
-            : [{ name: 'WAV audio', extensions: ['wav'] }]
+            : ext === 'aiff'
+              ? [{ name: 'AIFF audio', extensions: ['aiff', 'aif'] }]
+              : ext === 'ogg'
+                ? [{ name: 'Ogg Vorbis audio', extensions: ['ogg'] }]
+                : [{ name: 'WAV audio', extensions: ['wav'] }]
       // Ensure the parent dir exists so the dialog lands in the right
       // place; ignore errors so a missing-volume case just falls back
       // to the user's last cwd.

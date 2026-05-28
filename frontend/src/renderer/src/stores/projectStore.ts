@@ -391,6 +391,14 @@ interface ProjectState {
    * next interaction". Today only 44 100 and 48 000 are accepted.
    */
   targetSampleRate: number | null
+  /**
+   * Opaque JSON blob persisting the last-used export-dialog settings
+   * (format, bit depth, tail seconds, loudness preset, file-level
+   * tags, …). `null` means "fresh project — dialog opens with base
+   * defaults". Schema is renderer-owned (`{ version: 1, … }`); the
+   * backend just round-trips the string verbatim.
+   */
+  exportSettingsJson: string | null
 }
 
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
@@ -553,7 +561,8 @@ export const useProjectStore = defineStore('project', {
     redoLabel: null,
     audioOutputTypeName: null,
     audioOutputDeviceName: null,
-    targetSampleRate: null
+    targetSampleRate: null,
+    exportSettingsJson: null
   }),
 
   getters: {
@@ -1847,6 +1856,21 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_TARGET_SAMPLE_RATE', { sampleRate: next ?? 0 })
     },
 
+    /**
+     * Persist the last-used export-dialog settings on the project root.
+     * `json` is an opaque renderer-owned string (schema:
+     * `{ version: 1, … }`); pass an empty string or `null` to clear.
+     * Optimistically updates the local mirror and dispatches
+     * `PROJECT_SET_EXPORT_SETTINGS` to the backend. Not undoable —
+     * export preferences are not part of the edit history.
+     */
+    setExportSettingsJson(json: string | null): void {
+      const next = typeof json === 'string' && json.length > 0 ? json : null
+      if (next === this.exportSettingsJson) return
+      this.exportSettingsJson = next
+      sendBridge('PROJECT_SET_EXPORT_SETTINGS', { json: next ?? '' })
+    },
+
     /** Remove a track and all its clips, locally and on the backend. */
     removeTrack(trackId: string): void {
       const idx = this.tracks.findIndex((t) => t.id === trackId)
@@ -2215,6 +2239,15 @@ export const useProjectStore = defineStore('project', {
       this.targetSampleRate =
         typeof incomingRate === 'number' && (incomingRate === 44100 || incomingRate === 48000)
           ? incomingRate
+          : null
+      // Export-dialog settings persist at the project level. Empty
+      // string and absent both reset to "use base defaults"; the
+      // dialog parses the JSON itself on open with a per-field
+      // whitelist so a malformed blob can't crash the renderer.
+      const incomingExportSettings = snapshot.exportSettingsJson
+      this.exportSettingsJson =
+        typeof incomingExportSettings === 'string' && incomingExportSettings.length > 0
+          ? incomingExportSettings
           : null
       const library = useLibraryStore()
       // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the

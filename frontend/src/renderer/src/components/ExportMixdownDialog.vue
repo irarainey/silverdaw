@@ -35,7 +35,7 @@ const dialogEl = ref<HTMLDivElement | null>(null)
 
 // ── Draft fields ───────────────────────────────────────────────────────
 const draftOutputPath = ref('')
-const draftFormat = ref<'wav' | 'mp3' | 'flac'>('wav')
+const draftFormat = ref<'wav' | 'mp3' | 'flac' | 'aiff' | 'ogg-vorbis'>('wav')
 const draftSampleRate = ref<44100 | 48000>(44100)
 const draftBitDepth = ref<16 | 24 | 32>(16)
 const draftDither = ref<boolean>(true)
@@ -43,6 +43,9 @@ const draftDither = ref<boolean>(true)
  *  to a number on submit. Empty / blank means "no tail". */
 const draftTailSecondsText = ref('0')
 const draftBitrate = ref<128 | 192 | 320>(192)
+/** Ogg Vorbis VBR quality preset. Three exposed indices map to JUCE's
+ *  0..10 scale (≈64..500 kbps): 2 ≈ 96 kbps, 6 ≈ 192 kbps, 9 ≈ 320 kbps. */
+const draftVorbisQuality = ref<2 | 6 | 9>(6)
 // ── Loudness / normalization ───────────────────────────────────────────
 /** Loudness preset. `off` is no analysis (default), four normalization
  *  presets cover the dominant delivery targets (Spotify / Apple / EBU
@@ -121,6 +124,7 @@ const submitting = ref(false)
  *    the row entirely in that case via `v-if`. */
 const availableBitDepths = computed<readonly (16 | 24 | 32)[]>(() => {
   if (draftFormat.value === 'flac') return [16, 24] as const
+  if (draftFormat.value === 'aiff') return [16, 24] as const
   if (draftFormat.value === 'wav') return [16, 24, 32] as const
   return [] as const
 })
@@ -130,7 +134,10 @@ const availableBitDepths = computed<readonly (16 | 24 | 32)[]>(() => {
  *  noise floor is already below audibility, and 32-float has no
  *  quantisation step. */
 const ditherApplies = computed<boolean>(
-  () => draftFormat.value !== 'mp3' && draftBitDepth.value === 16
+  () =>
+    draftFormat.value !== 'mp3' &&
+    draftFormat.value !== 'ogg-vorbis' &&
+    draftBitDepth.value === 16
 )
 
 const tailSeconds = computed<number>(() => {
@@ -188,8 +195,148 @@ const formIsValid = computed<boolean>(
 )
 
 const expectedFileExtension = computed(() =>
-  draftFormat.value === 'mp3' ? 'mp3' : draftFormat.value === 'flac' ? 'flac' : 'wav'
+  draftFormat.value === 'mp3'
+    ? 'mp3'
+    : draftFormat.value === 'flac'
+      ? 'flac'
+      : draftFormat.value === 'aiff'
+        ? 'aiff'
+        : draftFormat.value === 'ogg-vorbis'
+          ? 'ogg'
+          : 'wav'
 )
+
+// ── Persisted export settings (project level) ─────────────────────────
+//
+// The export dialog stores its last-used settings + metadata as an
+// opaque JSON blob on the project root (`exportSettingsJson`). The
+// schema is owned here in the renderer — backend round-trips the
+// string verbatim, including via `.silverdaw` save/load. On open we
+// parse and apply with a per-field whitelist + clamp so a malformed
+// or future-version blob can't crash the dialog. On submit we
+// serialize the current drafts and dispatch
+// `PROJECT_SET_EXPORT_SETTINGS` immediately before MIXDOWN_START.
+//
+// Notes:
+//  • `outputPath` is intentionally NOT persisted — always re-derived
+//    from the project file location so projects stay portable.
+//  • Parse failure leaves the existing backend blob untouched (a
+//    future build that understands a newer version can still read it).
+const EXPORT_SETTINGS_VERSION = 1 as const
+
+type ExportFormat = 'wav' | 'mp3' | 'flac' | 'aiff' | 'ogg-vorbis'
+
+interface PersistedExportSettings {
+  version: typeof EXPORT_SETTINGS_VERSION
+  outputPath: string
+  format: ExportFormat
+  sampleRate: 44100 | 48000
+  bitDepth: 16 | 24 | 32
+  dither: boolean
+  tailSecondsText: string
+  bitrate: 128 | 192 | 320
+  vorbisQuality: 2 | 6 | 9
+  loudnessPreset: LoudnessPreset
+  customTargetText: string
+  customCeilingText: string
+  lengthMode: 'trim-to-last-clip' | 'fixed-duration'
+  durationText: string
+  title: string
+  artist: string
+  album: string
+  year: string
+  genre: string
+  comment: string
+}
+
+function applyPersistedExportSettings(blob: string | null): boolean {
+  if (!blob) return false
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(blob)
+  } catch {
+    log.warn('mixdown', 'exportSettingsJson parse failed; using defaults')
+    return false
+  }
+  if (typeof parsed !== 'object' || parsed === null) return false
+  const obj = parsed as Record<string, unknown>
+  if (obj.version !== EXPORT_SETTINGS_VERSION) return false
+
+  const validFormats: ExportFormat[] = ['wav', 'mp3', 'flac', 'aiff', 'ogg-vorbis']
+  if (typeof obj.format === 'string' && (validFormats as string[]).includes(obj.format)) {
+    draftFormat.value = obj.format as ExportFormat
+  }
+  if (obj.sampleRate === 44100 || obj.sampleRate === 48000) {
+    draftSampleRate.value = obj.sampleRate
+  }
+  if (obj.bitDepth === 16 || obj.bitDepth === 24 || obj.bitDepth === 32) {
+    draftBitDepth.value = obj.bitDepth
+  }
+  if (typeof obj.dither === 'boolean') draftDither.value = obj.dither
+  if (typeof obj.tailSecondsText === 'string') draftTailSecondsText.value = obj.tailSecondsText
+  if (obj.bitrate === 128 || obj.bitrate === 192 || obj.bitrate === 320) {
+    draftBitrate.value = obj.bitrate
+  }
+  if (obj.vorbisQuality === 2 || obj.vorbisQuality === 6 || obj.vorbisQuality === 9) {
+    draftVorbisQuality.value = obj.vorbisQuality
+  }
+  const validPresets: LoudnessPreset[] = [
+    'off',
+    'streaming-14',
+    'apple-16',
+    'broadcast-23',
+    'analyze',
+    'custom'
+  ]
+  if (
+    typeof obj.loudnessPreset === 'string' &&
+    (validPresets as string[]).includes(obj.loudnessPreset)
+  ) {
+    draftLoudnessPreset.value = obj.loudnessPreset as LoudnessPreset
+  }
+  if (typeof obj.customTargetText === 'string') draftCustomTargetText.value = obj.customTargetText
+  if (typeof obj.customCeilingText === 'string')
+    draftCustomCeilingText.value = obj.customCeilingText
+  if (obj.lengthMode === 'trim-to-last-clip' || obj.lengthMode === 'fixed-duration') {
+    draftLengthMode.value = obj.lengthMode
+  }
+  if (typeof obj.durationText === 'string') draftDurationText.value = obj.durationText
+  if (typeof obj.title === 'string') draftTitle.value = obj.title
+  if (typeof obj.artist === 'string') draftArtist.value = obj.artist
+  if (typeof obj.album === 'string') draftAlbum.value = obj.album
+  if (typeof obj.year === 'string') draftYear.value = obj.year
+  if (typeof obj.genre === 'string') draftGenre.value = obj.genre
+  if (typeof obj.comment === 'string') draftComment.value = obj.comment
+  if (typeof obj.outputPath === 'string' && obj.outputPath.length > 0) {
+    draftOutputPath.value = obj.outputPath
+  }
+  return true
+}
+
+function snapshotExportSettings(): PersistedExportSettings {
+  return {
+    version: EXPORT_SETTINGS_VERSION,
+    outputPath: draftOutputPath.value,
+    format: draftFormat.value,
+    sampleRate: draftSampleRate.value,
+    bitDepth: draftBitDepth.value,
+    dither: draftDither.value,
+    tailSecondsText: draftTailSecondsText.value,
+    bitrate: draftBitrate.value,
+    vorbisQuality: draftVorbisQuality.value,
+    loudnessPreset: draftLoudnessPreset.value,
+    customTargetText: draftCustomTargetText.value,
+    customCeilingText: draftCustomCeilingText.value,
+    lengthMode: draftLengthMode.value,
+    durationText: draftDurationText.value,
+    title: draftTitle.value,
+    artist: draftArtist.value,
+    album: draftAlbum.value,
+    year: draftYear.value,
+    genre: draftGenre.value,
+    comment: draftComment.value
+  }
+}
 
 // ── Reseed on open ─────────────────────────────────────────────────────
 
@@ -198,14 +345,19 @@ watch(
   async (open) => {
     if (!open) return
     submitting.value = false
-    // Seed format from prior session preference (sticky within the
-    // session via uiStore in a future iteration; default WAV today).
+    // Step 1: base defaults. These apply when there is no persisted
+    // blob on the project (fresh project) and act as the fallback for
+    // any individual field a persisted blob omits.
     draftFormat.value = 'wav'
     draftSampleRate.value = effectiveProjectRate.value
     draftBitDepth.value = 16
     draftDither.value = true
     draftTailSecondsText.value = '0'
     draftBitrate.value = 192
+    draftVorbisQuality.value = 6
+    draftLoudnessPreset.value = 'off'
+    draftCustomTargetText.value = '-14'
+    draftCustomCeilingText.value = '-1'
     // Default length = project duration (rubber-duck finding).
     draftLengthMode.value = 'fixed-duration'
     draftDurationText.value = formatTime(project.durationMs)
@@ -215,16 +367,27 @@ watch(
     draftYear.value = ''
     draftGenre.value = ''
     draftComment.value = ''
-    // Default path comes from main IPC: <projectDir>/mixdown/<name>.<ext>
-    try {
-      draftOutputPath.value = await window.silverdaw.resolveMixdownDefaultPath(
-        project.currentFilePath ?? null,
-        project.projectName ?? 'Untitled',
-        draftFormat.value
-      )
-    } catch (err) {
-      log.warn('mixdown', `resolveMixdownDefaultPath failed: ${String(err)}`)
-      draftOutputPath.value = ''
+    draftOutputPath.value = ''
+    // Step 2: overlay any persisted per-project settings. Whitelist
+    // each field; a parse failure or unrecognised version leaves the
+    // base defaults in place AND leaves the bad blob untouched on the
+    // backend so a future build can still read it. This also
+    // restores `draftOutputPath` if a path was stored.
+    applyPersistedExportSettings(project.exportSettingsJson)
+    // Step 3: if no path was restored (fresh project, or persisted
+    // blob lacked `outputPath`), derive one from the project file
+    // location: <projectDir>/mixdown/<name>.<ext>.
+    if (!draftOutputPath.value) {
+      try {
+        draftOutputPath.value = await window.silverdaw.resolveMixdownDefaultPath(
+          project.currentFilePath ?? null,
+          project.projectName ?? 'Untitled',
+          draftFormat.value
+        )
+      } catch (err) {
+        log.warn('mixdown', `resolveMixdownDefaultPath failed: ${String(err)}`)
+        draftOutputPath.value = ''
+      }
     }
   },
   { immediate: true }
@@ -232,11 +395,11 @@ watch(
 
 // Keep extension in sync with the format radio so a user who picked a
 // path then switched format doesn't get a wav-with-.mp3-extension.
-watch(draftFormat, (fmt) => {
+watch(draftFormat, () => {
   const path = draftOutputPath.value
   if (!path) return
   const replaced = path.replace(/\.[^.\\/]+$/, '')
-  draftOutputPath.value = `${replaced}.${fmt}`
+  draftOutputPath.value = `${replaced}.${expectedFileExtension.value}`
 })
 
 // If the user picks a format that doesn't support the currently-
@@ -305,17 +468,17 @@ async function doSave(): Promise<void> {
       return
     }
 
-    const md =
-      draftFormat.value === 'mp3'
-        ? {
-            title: draftTitle.value.trim() || undefined,
-            artist: draftArtist.value.trim() || undefined,
-            album: draftAlbum.value.trim() || undefined,
-            year: draftYear.value.trim() || undefined,
-            genre: draftGenre.value.trim() || undefined,
-            comment: draftComment.value.trim() || undefined
-          }
-        : undefined
+    // File-level tags apply to every format (mapped per-format by the
+    // backend to ID3v2 / RIFF INFO / VORBIS_COMMENT / AIFF text chunks).
+    const md = {
+      title: draftTitle.value.trim() || undefined,
+      artist: draftArtist.value.trim() || undefined,
+      album: draftAlbum.value.trim() || undefined,
+      year: draftYear.value.trim() || undefined,
+      genre: draftGenre.value.trim() || undefined,
+      comment: draftComment.value.trim() || undefined
+    }
+    const hasAnyTag = Object.values(md).some((v) => v !== undefined)
 
     log.info(
       'mixdown',
@@ -342,13 +505,21 @@ async function doSave(): Promise<void> {
     }
     if (draftFormat.value === 'mp3') {
       payload.bitrateKbps = draftBitrate.value
+    } else if (draftFormat.value === 'ogg-vorbis') {
+      payload.vorbisQualityIndex = draftVorbisQuality.value
     } else {
       payload.bitDepth = draftBitDepth.value
       payload.dither = draftDither.value
     }
-    if (md) payload.metadata = md
+    if (hasAnyTag) payload.metadata = md
     const loudness = buildLoudnessPayload()
     if (loudness) payload.loudness = loudness
+    // Persist the current settings + metadata on the project so the
+    // next time this project is opened the dialog reopens to the same
+    // state. Dispatched immediately before MIXDOWN_START so a render
+    // that aborts on the backend still leaves the user's preferences
+    // saved. Not undoable.
+    project.setExportSettingsJson(JSON.stringify(snapshotExportSettings()))
     sendBridge('MIXDOWN_START', payload)
     emit('close')
   } finally {
@@ -446,10 +617,14 @@ onBeforeUnmount(() => {
                 <option value="flac">
                   FLAC (lossless)
                 </option>
-                <option
-                  value="mp3"
-                >
+                <option value="aiff">
+                  AIFF (lossless)
+                </option>
+                <option value="mp3">
                   MP3 (lossy, 16-bit)
+                </option>
+                <option value="ogg-vorbis">
+                  Ogg Vorbis (lossy)
                 </option>
               </select>
             </div>
@@ -472,7 +647,43 @@ onBeforeUnmount(() => {
                 Project rate: {{ (effectiveProjectRate / 1000).toFixed(1) }} kHz
               </p>
             </div>
-            <div v-if="draftFormat !== 'mp3'">
+            <div v-if="draftFormat === 'mp3'">
+              <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
+                Bitrate
+              </label>
+              <select
+                v-model.number="draftBitrate"
+                class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+              >
+                <option
+                  v-for="kbps in [128, 192, 320] as const"
+                  :key="kbps"
+                  :value="kbps"
+                >
+                  {{ kbps }} kbps
+                </option>
+              </select>
+            </div>
+            <div v-else-if="draftFormat === 'ogg-vorbis'">
+              <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
+                Quality
+              </label>
+              <select
+                v-model.number="draftVorbisQuality"
+                class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+              >
+                <option :value="2">
+                  Low (~96 kbps)
+                </option>
+                <option :value="6">
+                  Medium (~192 kbps)
+                </option>
+                <option :value="9">
+                  High (~320 kbps)
+                </option>
+              </select>
+            </div>
+            <div v-else>
               <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
                 Bit depth
               </label>
@@ -500,23 +711,6 @@ onBeforeUnmount(() => {
                 >
                 <span class="text-[10px] text-zinc-400">Dither</span>
               </label>
-            </div>
-            <div v-else>
-              <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
-                Bitrate
-              </label>
-              <select
-                v-model.number="draftBitrate"
-                class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
-              >
-                <option
-                  v-for="kbps in [128, 192, 320] as const"
-                  :key="kbps"
-                  :value="kbps"
-                >
-                  {{ kbps }} kbps
-                </option>
-              </select>
             </div>
           </section>
 

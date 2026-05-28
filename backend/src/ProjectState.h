@@ -372,6 +372,21 @@ class ProjectState : public juce::ValueTree::Listener
      *  Records an undo step; marks the project dirty. */
     void setTargetSampleRate(int sampleRate);
 
+    /** Opaque JSON blob of the last-used export-dialog settings (format,
+     *  bit depth, dither, tail seconds, MP3 bitrate, Ogg quality,
+     *  loudness preset / target, length mode, file-level tags, …).
+     *  The renderer owns the schema; the backend just round-trips the
+     *  string verbatim. Empty when the project has never run an export.
+     *  Roundtrips through `.silverdaw` so the same settings reappear on
+     *  next open. New projects start empty (= dialog uses base defaults). */
+    juce::String getExportSettingsJson() const;
+
+    /** Replace the persisted export-settings JSON. Pass an empty string
+     *  to clear. Does NOT push an undo step (export dialog choices are
+     *  not part of the editing undo stack) but DOES mark the project
+     *  dirty so the user is prompted to save. */
+    void setExportSettingsJson(const juce::String& json);
+
     // ─── Library catalogue ─────────────────────────────────────────────
     //
     // Items the user has imported into the library — independently of
@@ -600,6 +615,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kAudioOutputTypeName;
     static const juce::Identifier kAudioOutputDeviceName;
     static const juce::Identifier kTargetSampleRate;
+    static const juce::Identifier kExportSettingsJson;
     static const juce::Identifier kLibrary;
     static const juce::Identifier kLibraryItem;
     static const juce::Identifier kMarkers;

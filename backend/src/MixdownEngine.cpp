@@ -160,6 +160,142 @@ buildWavMetadataMap(const ExportMetadata& md)
     return m;
 }
 
+std::unordered_map<juce::String, juce::String>
+buildVorbisMetadataMap(const ExportMetadata& md)
+{
+    // JUCE's OggVorbisAudioFormat writer recognises these id3* keys and
+    // emits them as Vorbis comments (TITLE/ARTIST/ALBUM/COMMENT/DATE/GENRE).
+    std::unordered_map<juce::String, juce::String> m;
+    if (md.title.isNotEmpty())   m[juce::OggVorbisAudioFormat::id3title]   = md.title;
+    if (md.artist.isNotEmpty())  m[juce::OggVorbisAudioFormat::id3artist]  = md.artist;
+    if (md.album.isNotEmpty())   m[juce::OggVorbisAudioFormat::id3album]   = md.album;
+    if (md.year.isNotEmpty())    m[juce::OggVorbisAudioFormat::id3date]    = md.year;
+    if (md.genre.isNotEmpty())   m[juce::OggVorbisAudioFormat::id3genre]   = md.genre;
+    if (md.comment.isNotEmpty()) m[juce::OggVorbisAudioFormat::id3comment] = md.comment;
+    return m;
+}
+
+/**
+ * Insert AIFF text metadata chunks (NAME, AUTH, (c) , ANNO) into an
+ * already-written AIFF file. JUCE 8's `AiffAudioFormat` writer ignores
+ * the metadata map passed via `withMetadataValues`, so we patch the
+ * container after the fact.
+ *
+ * AIFF/FORM layout:
+ *   "FORM" + u32 BE form-size + "AIFF" + sub-chunks
+ *
+ * Each sub-chunk: 4-byte FOURCC + u32 BE data-size + data + optional
+ * 1-byte pad if data-size is odd. We insert our text chunks immediately
+ * after the "AIFF" FOURCC (before COMM) and bump the outer form-size.
+ *
+ * Text chunks carry the raw string bytes (no length prefix, no NUL).
+ */
+bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
+{
+    if (md.isEmpty())
+        return true;
+
+    juce::MemoryBlock buf;
+    if (! aiffFile.loadFileAsData(buf))
+    {
+        silverdaw::log::warn("mixdown", "AIFF metadata: failed to read file for rewrite");
+        return false;
+    }
+
+    auto* data = static_cast<const juce::uint8*>(buf.getData());
+    const size_t size = buf.getSize();
+    if (size < 12
+        || data[0] != 'F' || data[1] != 'O' || data[2] != 'R' || data[3] != 'M'
+        || data[8] != 'A' || data[9] != 'I' || data[10] != 'F' || data[11] != 'F')
+    {
+        silverdaw::log::warn("mixdown", "AIFF metadata: file missing FORM/AIFF header; skipping tags");
+        return false;
+    }
+
+    struct TextChunk { const char fourcc[4]; const juce::String* value; };
+    const TextChunk chunks[] = {
+        { {'N','A','M','E'}, &md.title   },
+        { {'A','U','T','H'}, &md.artist  },
+        { {'(','c',')',' '}, &md.comment }, // closest standard AIFF "copyright/comment" chunk
+        { {'A','N','N','O'}, &md.album   }, // ANNO is free-form annotation; used here for album
+    };
+    // Year + genre have no standard AIFF text chunk. We fold them into an
+    // extra ANNO line so they aren't silently dropped.
+    juce::String anno;
+    if (md.album.isNotEmpty()) anno = md.album;
+    if (md.year.isNotEmpty())
+        anno = anno.isNotEmpty() ? (anno + " | Year: " + md.year)  : ("Year: "  + md.year);
+    if (md.genre.isNotEmpty())
+        anno = anno.isNotEmpty() ? (anno + " | Genre: " + md.genre) : ("Genre: " + md.genre);
+
+    juce::MemoryBlock inserted;
+    auto appendChunk = [&inserted](const char* fourcc, const juce::String& s)
+    {
+        if (s.isEmpty()) return;
+        const auto utf8 = s.toRawUTF8();
+        const auto len = (juce::uint32) std::strlen(utf8);
+        const juce::uint8 hdr[8] = {
+            (juce::uint8) fourcc[0], (juce::uint8) fourcc[1],
+            (juce::uint8) fourcc[2], (juce::uint8) fourcc[3],
+            (juce::uint8) ((len >> 24) & 0xFF), (juce::uint8) ((len >> 16) & 0xFF),
+            (juce::uint8) ((len >> 8)  & 0xFF), (juce::uint8) ( len        & 0xFF),
+        };
+        inserted.append(hdr, 8);
+        inserted.append(utf8, len);
+        if ((len & 1u) != 0u)
+        {
+            const juce::uint8 pad = 0;
+            inserted.append(&pad, 1);
+        }
+    };
+
+    appendChunk("NAME", md.title);
+    appendChunk("AUTH", md.artist);
+    appendChunk("(c) ", md.comment);
+    appendChunk("ANNO", anno);
+
+    if (inserted.getSize() == 0)
+        return true;
+
+    if (inserted.getSize() > (size_t) std::numeric_limits<juce::uint32>::max() - size)
+    {
+        silverdaw::log::warn("mixdown", "AIFF metadata: insertion would overflow FORM size; skipping tags");
+        return false;
+    }
+
+    // Compose: bytes 0..11 (FORM + size + AIFF) + inserted chunks + remainder.
+    juce::MemoryBlock out;
+    out.append(data, 12);
+    out.append(inserted.getData(), inserted.getSize());
+    out.append(data + 12, size - 12);
+
+    // Patch the outer FORM size (big-endian u32 at offset 4). The size
+    // excludes the "FORM" FOURCC and the size field itself, so it is
+    // `total file size - 8`.
+    const juce::uint32 newFormSize = (juce::uint32) (out.getSize() - 8);
+    auto* outBytes = static_cast<juce::uint8*>(out.getData());
+    outBytes[4] = (juce::uint8) ((newFormSize >> 24) & 0xFF);
+    outBytes[5] = (juce::uint8) ((newFormSize >> 16) & 0xFF);
+    outBytes[6] = (juce::uint8) ((newFormSize >> 8)  & 0xFF);
+    outBytes[7] = (juce::uint8) ( newFormSize        & 0xFF);
+
+    auto tmp = aiffFile.getSiblingFile(aiffFile.getFileNameWithoutExtension() + ".tagtmp.aiff");
+    if (! tmp.replaceWithData(out.getData(), out.getSize()))
+    {
+        silverdaw::log::warn("mixdown", "AIFF metadata: failed to write temp; tags not applied");
+        return false;
+    }
+    if (! tmp.moveFileTo(aiffFile))
+    {
+        tmp.deleteFile();
+        silverdaw::log::warn("mixdown", "AIFF metadata: failed to rename temp over output");
+        return false;
+    }
+    silverdaw::log::info("mixdown", "AIFF metadata: wrote text chunks ("
+                                       + juce::String((int) inserted.getSize()) + " bytes)");
+    return true;
+}
+
 /**
  * Insert a VORBIS_COMMENT metadata block into an already-written FLAC
  * file. JUCE 8's `FlacAudioFormat` does not expose any metadata-writing
@@ -968,6 +1104,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // front so the rest of the pump loop's PCM quantisation path
         // does the right thing regardless of what the frontend sent.
         const bool mp3 = options.format == MixdownOptions::Format::Mp3;
+        const bool ogg = options.format == MixdownOptions::Format::OggVorbis;
         juce::File lameApp;
         if (mp3)
         {
@@ -979,6 +1116,14 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                          "See backend/third_party/lame/README.md.");
                 return;
             }
+            options.bitDepth = 16;
+            options.dither = true;
+        }
+        if (ogg)
+        {
+            // Vorbis is a 16-bit lossy codec; mirror MP3's path so the
+            // PCM quantisation/dither stage feeds the encoder the right
+            // sample format regardless of what the frontend sent.
             options.bitDepth = 16;
             options.dither = true;
         }
@@ -1096,6 +1241,29 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             juce::FlacAudioFormat flac;
             writer = flac.createWriterFor(outStream, writerOptions);
         }
+        else if (options.format == MixdownOptions::Format::Aiff)
+        {
+            // JUCE's AIFF writer also ignores metadata; we patch text
+            // chunks into the FORM container post-encode (see
+            // writeAiffTextChunks()).
+            juce::AiffAudioFormat aiff;
+            writer = aiff.createWriterFor(outStream, writerOptions);
+        }
+        else if (options.format == MixdownOptions::Format::OggVorbis)
+        {
+            // Vorbis is lossy and operates on 16-bit integer input; the
+            // codec quality is selected via withQualityOptionIndex
+            // (0..10, see OggVorbisAudioFormat::getQualityOptions()).
+            juce::OggVorbisAudioFormat ogg;
+            auto oggOpts = writerOptions
+                               .withBitsPerSample(16)
+                               .withSampleFormat(
+                                   juce::AudioFormatWriterOptions::SampleFormat::integral)
+                               .withQualityOptionIndex(
+                                   juce::jlimit(0, 10, options.vorbisQualityIndex))
+                               .withMetadataValues(buildVorbisMetadataMap(options.metadata));
+            writer = ogg.createWriterFor(outStream, oggOpts);
+        }
         else if (options.format == MixdownOptions::Format::Mp3)
         {
             juce::LAMEEncoderAudioFormat lame(lameApp);
@@ -1120,7 +1288,11 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                                             ? juce::String("FLAC")
                                             : (options.format == MixdownOptions::Format::Mp3
                                                    ? juce::String("MP3")
-                                                   : juce::String("WAV")));
+                                                   : (options.format == MixdownOptions::Format::Aiff
+                                                          ? juce::String("AIFF")
+                                                          : (options.format == MixdownOptions::Format::OggVorbis
+                                                                 ? juce::String("Ogg Vorbis")
+                                                                 : juce::String("WAV")))));
             failWith(MixdownFailureCode::Io,
                      "Failed to create " + fmtName + " writer (bitDepth=" +
                          juce::String(pass1BitDepth) + ", sr=" + juce::String(options.outputSampleRate) + ").");
@@ -1145,7 +1317,13 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                      ? "wav-f32 (pass1)"
                      : (options.format == MixdownOptions::Format::Flac
                             ? "flac"
-                            : (options.format == MixdownOptions::Format::Mp3 ? "mp3" : "wav"))) +
+                            : (options.format == MixdownOptions::Format::Mp3
+                                   ? "mp3"
+                                   : (options.format == MixdownOptions::Format::Aiff
+                                          ? "aiff"
+                                          : (options.format == MixdownOptions::Format::OggVorbis
+                                                 ? "ogg"
+                                                 : "wav"))))) +
                 " bitDepth=" + juce::String(pass1BitDepth) +
                 " float=" + (writer->isFloatingPoint() ? "true" : "false") +
                 " loudnessMode=" + (analyzing ? (normalizing ? "normalize" : "analyze") : "off"));
@@ -1616,6 +1794,25 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                 juce::FlacAudioFormat flac;
                 p2Writer = flac.createWriterFor(p2Stream, p2Opts);
             }
+            else if (options.format == MixdownOptions::Format::Aiff)
+            {
+                // AIFF tags injected post-encode via writeAiffTextChunks().
+                juce::AiffAudioFormat aiff;
+                p2Writer = aiff.createWriterFor(p2Stream, p2Opts);
+            }
+            else if (options.format == MixdownOptions::Format::OggVorbis)
+            {
+                juce::OggVorbisAudioFormat ogg;
+                auto oggOpts = p2Opts
+                                   .withBitsPerSample(16)
+                                   .withSampleFormat(
+                                       juce::AudioFormatWriterOptions::SampleFormat::integral)
+                                   .withQualityOptionIndex(
+                                       juce::jlimit(0, 10, options.vorbisQualityIndex))
+                                   .withMetadataValues(
+                                       buildVorbisMetadataMap(options.metadata));
+                p2Writer = ogg.createWriterFor(p2Stream, oggOpts);
+            }
             else if (options.format == MixdownOptions::Format::Mp3)
             {
                 juce::LAMEEncoderAudioFormat lame(lameApp);
@@ -1766,6 +1963,11 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // does not invalidate the (perfectly valid) FLAC bitstream.
         if (options.format == MixdownOptions::Format::Flac && ! options.metadata.isEmpty())
             writeFlacVorbisComment(targetFile, options.metadata);
+        // AIFF: same story — JUCE's AiffAudioFormat ignores the
+        // metadata map, so we patch text chunks into the FORM
+        // container ourselves.
+        if (options.format == MixdownOptions::Format::Aiff && ! options.metadata.isEmpty())
+            writeAiffTextChunks(targetFile, options.metadata);
 
         // From the user's point of view the export is now complete:
         // the file at `targetFile` is the final WAV. Push 100% + DONE

@@ -247,6 +247,19 @@ function onGlobalShortcutKey(e: KeyboardEvent): void {
     return
   }
 
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
+    e.preventDefault()
+    e.stopPropagation()
+    const hasAnyClip = project.tracks.some((track) => track.clipIds.length > 0)
+    if (!hasAnyClip) {
+      log.info('mixdown', 'shortcut export ignored — no clips to render')
+      return
+    }
+    exportMixdownOpen.value = true
+    log.info('mixdown', 'shortcut open export dialog')
+    return
+  }
+
   if ((e.ctrlKey || e.metaKey) && !e.altKey) {
     let zoomAction: 'in' | 'out' | 'reset' | null = null
     if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {

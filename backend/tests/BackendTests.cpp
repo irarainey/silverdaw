@@ -192,6 +192,41 @@ void testProjectStateTracksClipsAndDirty()
     require(dirtyTransitions >= 2 && !lastDirty, "dirty callback should report clean transition");
 }
 
+void testProjectStateExportSettingsRoundTrip()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+
+    require(state.getExportSettingsJson().isEmpty(),
+            "fresh project should have empty export settings");
+
+    const juce::String blob =
+        R"({"version":1,"format":"flac","bitDepth":24,"tailSeconds":"2.5"})";
+    state.setExportSettingsJson(blob);
+    requireEqual(state.getExportSettingsJson(), blob,
+                 "setExportSettingsJson should round-trip");
+    require(state.isDirty(),
+            "setExportSettingsJson should mark the project dirty");
+
+    // Should NOT have added an undo step (export prefs are not undoable).
+    require(!state.getUndoManager().canUndo(),
+            "setExportSettingsJson must not push an undo entry");
+
+    state.markClean();
+    state.setExportSettingsJson("");
+    require(state.getExportSettingsJson().isEmpty(),
+            "empty json should clear the property");
+    require(state.isDirty(), "clearing export settings should mark dirty");
+
+    // Round-trip through ValueTreeJson so the .silverdaw save/load path
+    // keeps the blob intact.
+    state.setExportSettingsJson(blob);
+    const auto encoded = silverdaw::ValueTreeJson::toVar(state.getTree());
+    const auto decoded = silverdaw::ValueTreeJson::fromVar(encoded);
+    requireEqual(decoded.getProperty(juce::Identifier{"exportSettingsJson"}, {}).toString(),
+                 blob, "exportSettingsJson should round-trip through ValueTreeJson");
+}
+
 void testProjectStateViewLibraryMarkersAndReplace()
 {
     silverdaw::ProjectState state;
@@ -754,6 +789,7 @@ int main()
     const std::vector<TestCase> tests{
         {"ProjectState tracks, clips, and dirty tracking", testProjectStateTracksClipsAndDirty},
         {"ProjectState view, library, markers, and replaceTree", testProjectStateViewLibraryMarkersAndReplace},
+        {"ProjectState export-settings JSON round-trip", testProjectStateExportSettingsRoundTrip},
         {"ValueTreeJson round-trip and validation", testValueTreeJsonRoundTripAndValidation},
         {"ProjectFile save/load and view-state update", testProjectFileSaveLoadAndViewState},
         {"PeaksCache round-trip and validation", testPeaksCacheRoundTripAndValidation},

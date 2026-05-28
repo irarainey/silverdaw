@@ -30,6 +30,7 @@ const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
 const juce::Identifier ProjectState::kAudioOutputTypeName{"audioOutputTypeName"};
 const juce::Identifier ProjectState::kAudioOutputDeviceName{"audioOutputDeviceName"};
 const juce::Identifier ProjectState::kTargetSampleRate{"targetSampleRate"};
+const juce::Identifier ProjectState::kExportSettingsJson{"exportSettingsJson"};
 const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
 const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
 const juce::Identifier ProjectState::kMarkers{"MARKERS"};
@@ -910,6 +911,27 @@ void ProjectState::setTargetSampleRate(int sampleRate)
     else
     {
         root.setProperty(kTargetSampleRate, sampleRate, &undoManager);
+    }
+}
+
+juce::String ProjectState::getExportSettingsJson() const
+{
+    return root.getProperty(kExportSettingsJson, "").toString();
+}
+
+void ProjectState::setExportSettingsJson(const juce::String& json)
+{
+    // No undo entry (export prefs are not part of the editing undo
+    // stack). Pass nullptr so the value-tree mutation doesn't get
+    // attached to any open transaction. The listener still fires so
+    // dirty tracking + clean-snapshot comparison work normally.
+    if (json.isEmpty())
+    {
+        root.removeProperty(kExportSettingsJson, nullptr);
+    }
+    else
+    {
+        root.setProperty(kExportSettingsJson, json, nullptr);
     }
 }
 

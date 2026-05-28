@@ -399,6 +399,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_LENGTH: ProjectSetLengthPayload
   PROJECT_SET_AUDIO_OUTPUT: ProjectSetAudioOutputPayload
   PROJECT_SET_TARGET_SAMPLE_RATE: ProjectSetTargetSampleRatePayload
+  PROJECT_SET_EXPORT_SETTINGS: ProjectSetExportSettingsPayload
   AUDIO_FILE_PROBE: AudioFileProbePayload
   MIXDOWN_START: MixdownStartPayload
   MIXDOWN_CANCEL: undefined
@@ -535,6 +536,16 @@ export interface ProjectSetTargetSampleRatePayload {
 }
 
 /**
+ * Persists the last-used export-dialog settings on the project root.
+ * `json` is an opaque renderer-owned string (schema: `{ version: 1, … }`);
+ * pass an empty string to clear. Backend stores it verbatim, rejects
+ * payloads larger than 64 KB, and round-trips it via `.silverdaw` save/load.
+ */
+export interface ProjectSetExportSettingsPayload {
+  json: string
+}
+
+/**
  * Synchronous-ish file-rate probe used by the import flow to detect
  * sample-rate mismatches before adding a file to the library. The
  * backend opens the file via its `AudioFormatManager`, reads the
@@ -569,11 +580,12 @@ export interface AudioFileProbePayload {
 export interface MixdownStartPayload {
   outputPath: string
   sampleRate: 44100 | 48000
-  format: 'wav' | 'mp3' | 'flac'
+  format: 'wav' | 'mp3' | 'flac' | 'aiff' | 'ogg-vorbis'
   /** Output bit-depth.
    *  - `'wav'`: 16 / 24 (PCM) or 32 (IEEE float).
    *  - `'flac'`: 16 / 24.
-   *  - `'mp3'`: ignored.
+   *  - `'aiff'`: 16 / 24.
+   *  - `'mp3'` / `'ogg-vorbis'`: ignored.
    *  Defaults to 16 if omitted. */
   bitDepth?: 16 | 24 | 32
   /** Apply TPDF dither immediately before integer quantisation.
@@ -608,17 +620,23 @@ export interface MixdownStartPayload {
     targetLufs?: number
     ceilingDbtp?: number
   }
-  /** MP3 only: target bitrate in kbps. Ignored for WAV / FLAC. */
+  /** MP3 only: target bitrate in kbps. Ignored for WAV / FLAC / AIFF / Ogg. */
   bitrateKbps?: 128 | 192 | 320
+  /** Ogg Vorbis only: JUCE quality index 0..10 (≈64..500 kbps VBR).
+   *  Ignored for other formats. UI exposes 2 / 6 / 9 (≈96/192/320 kbps).
+   *  Defaults to 6 if omitted. */
+  vorbisQualityIndex?: number
   lengthMode: 'trim-to-last-clip' | 'fixed-duration'
   /** Required when `lengthMode === 'fixed-duration'`. Ignored otherwise. */
   lengthMs?: number
   /** File-level tags written into the output container.
    *  All fields are optional; absent / empty fields aren't written.
    *  Mapped per-format by the backend:
-   *    - MP3  → ID3v2 frames (TIT2 / TPE1 / TALB / TYER / TCON / COMM).
-   *    - WAV  → RIFF INFO chunk (INAM / IART / IPRD / ICRD / IGNR / ICMT).
-   *    - FLAC → VORBIS_COMMENT block (TITLE / ARTIST / ALBUM / DATE / GENRE / COMMENT). */
+ *    - MP3  → ID3v2 frames (TIT2 / TPE1 / TALB / TYER / TCON / COMM).
+ *    - WAV  → RIFF INFO chunk (INAM / IART / IPRD / ICRD / IGNR / ICMT).
+ *    - FLAC → VORBIS_COMMENT block (TITLE / ARTIST / ALBUM / DATE / GENRE / COMMENT).
+ *    - AIFF → NAME / AUTH / (c) / ANNO text chunks (year + genre folded into ANNO).
+ *    - Ogg  → VORBIS_COMMENT (TITLE / ARTIST / ALBUM / DATE / GENRE / COMMENT). */
   metadata?: {
     title?: string
     artist?: string
@@ -1065,6 +1083,14 @@ export const ProjectStatePayloadSchema = z.object({
    * 44 100".
    */
   targetSampleRate: z.number().optional(),
+  /**
+   * Opaque JSON blob persisting the last-used export-dialog settings
+   * (format, bit depth, tail seconds, loudness preset, file-level
+   * tags, …). Renderer owns the schema (`{ version: 1, … }`); the
+   * backend just round-trips the string. Absent on fresh projects;
+   * empty string clears it.
+   */
+  exportSettingsJson: z.string().optional().nullable(),
   /** User-created timeline markers. */
   markers: z.array(ProjectStateMarkerSchema).optional(),
   /**

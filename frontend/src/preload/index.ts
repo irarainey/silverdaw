@@ -193,7 +193,7 @@ const api = {
    */
   chooseMixdownSaveAs: (
     defaultPath: string,
-    format: 'wav' | 'mp3' | 'flac'
+    format: 'wav' | 'mp3' | 'flac' | 'aiff' | 'ogg-vorbis'
   ): Promise<string | null> => ipcRenderer.invoke('mixdown:chooseSaveAs', defaultPath, format),
   /**
    * Resolve a fully-qualified default mixdown output path. Main joins
@@ -205,7 +205,7 @@ const api = {
   resolveMixdownDefaultPath: (
     projectFilePath: string | null,
     projectName: string,
-    format: 'wav' | 'mp3' | 'flac'
+    format: 'wav' | 'mp3' | 'flac' | 'aiff' | 'ogg-vorbis'
   ): Promise<string> =>
     ipcRenderer.invoke('mixdown:resolveDefaultPath', projectFilePath, projectName, format),
   /**

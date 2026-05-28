@@ -104,10 +104,11 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         {
           label: 'Export Mixdown\u2026',
           action: 'file.exportMixdown',
+          accelerator: 'Ctrl+M',
           disabled: opts.hasAnyClip !== true
         },
         SEP,
-        { label: 'Exit', action: 'file.exit' }
+        { label: 'Exit', action: 'file.exit', accelerator: 'Ctrl+E' }
       ]
     },
     {
