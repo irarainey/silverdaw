@@ -40,7 +40,10 @@ class OffsetSource : public juce::PositionableAudioSource
     /** Where in the master timeline this clip starts playing. */
     void setOffsetSamples(juce::int64 samples)
     {
-        offsetSamples.store(juce::jmax(static_cast<juce::int64>(0), samples));
+        const juce::int64 clamped = juce::jmax(static_cast<juce::int64>(0), samples);
+        beginWindowWrite();
+        offsetSamples.store(clamped, std::memory_order_relaxed);
+        endWindowWrite();
     }
     juce::int64 getOffsetSamples() const
     {
@@ -52,7 +55,10 @@ class OffsetSource : public juce::PositionableAudioSource
      *  audio of the source without re-decoding. */
     void setInSourceSamples(juce::int64 samples)
     {
-        inSourceSamples.store(juce::jmax(static_cast<juce::int64>(0), samples));
+        const juce::int64 clamped = juce::jmax(static_cast<juce::int64>(0), samples);
+        beginWindowWrite();
+        inSourceSamples.store(clamped, std::memory_order_relaxed);
+        endWindowWrite();
     }
     juce::int64 getInSourceSamples() const
     {
@@ -65,11 +71,31 @@ class OffsetSource : public juce::PositionableAudioSource
      *  "play to end of source" — used for legacy un-trimmed clips. */
     void setClipDurationSamples(juce::int64 samples)
     {
-        clipDurationSamples.store(juce::jmax(static_cast<juce::int64>(0), samples));
+        const juce::int64 clamped = juce::jmax(static_cast<juce::int64>(0), samples);
+        beginWindowWrite();
+        clipDurationSamples.store(clamped, std::memory_order_relaxed);
+        endWindowWrite();
     }
     juce::int64 getClipDurationSamples() const
     {
         return clipDurationSamples.load();
+    }
+
+    /** Bundled trim update — publishes all three window fields under
+     *  a single seqlock generation bump so the audio thread sees a
+     *  consistent tuple even mid-update. Use this from `setClipTrim`
+     *  rather than three independent setters when atomicity matters
+     *  (drag trim, split, duplicate). */
+    void setClipWindowAtomic(juce::int64 offset, juce::int64 in, juce::int64 duration)
+    {
+        const juce::int64 off = juce::jmax(static_cast<juce::int64>(0), offset);
+        const juce::int64 inS = juce::jmax(static_cast<juce::int64>(0), in);
+        const juce::int64 dur = juce::jmax(static_cast<juce::int64>(0), duration);
+        beginWindowWrite();
+        offsetSamples.store(off, std::memory_order_relaxed);
+        inSourceSamples.store(inS, std::memory_order_relaxed);
+        clipDurationSamples.store(dur, std::memory_order_relaxed);
+        endWindowWrite();
     }
 
     static juce::int64 timelineSamplesForSourceSamples(juce::int64 sourceSamples, WarpProcessor* w) noexcept
@@ -99,6 +125,16 @@ class OffsetSource : public juce::PositionableAudioSource
     {
         cachedBlockSize.store(blockSize, std::memory_order_relaxed);
         cachedSampleRate.store(sampleRate, std::memory_order_relaxed);
+        // Pre-allocate the warp output scratch so `pullThroughWarp`
+        // never touches the heap on the audio thread. Sized to a
+        // generous channel count upper bound (8 ch) × blockSize so
+        // a surround source can be produced into the scratch and
+        // downmixed/duplicated into the caller-supplied destination
+        // without per-block reallocation.
+        warpScratch.setSize(kMaxWarpChannels, juce::jmax(64, blockSize),
+                            /*keepExistingContent*/ false,
+                            /*clearExtraSpace*/ true,
+                            /*avoidReallocating*/ false);
         if (child != nullptr)
         {
             child->prepareToPlay(blockSize, sampleRate);
@@ -127,15 +163,16 @@ class OffsetSource : public juce::PositionableAudioSource
 
         const juce::int64 startPos = position.load(std::memory_order_relaxed);
         const juce::int64 endPos = startPos + info.numSamples;
-        const juce::int64 clipStart = offsetSamples.load();
+        const ClipWindow window = readClipWindow();
+        const juce::int64 clipStart = window.offsetSamples;
         auto* currentWarp = warp.load(std::memory_order_acquire);
-        const juce::int64 sourceDur = clipDurationSamples.load();
+        const juce::int64 sourceDur = window.clipDurationSamples;
         const juce::int64 dur = timelineSamplesForSourceSamples(sourceDur, currentWarp);
         // `clipEnd = INT64_MAX` when `dur == 0`, so an un-trimmed clip
         // plays to the end of the source (existing behaviour).
         const juce::int64 clipEnd =
             dur > 0 ? clipStart + dur : std::numeric_limits<juce::int64>::max();
-        const juce::int64 inSrc = inSourceSamples.load();
+        const juce::int64 inSrc = window.inSourceSamples;
 
         if (endPos <= clipStart || startPos >= clipEnd)
         {
@@ -241,8 +278,9 @@ class OffsetSource : public juce::PositionableAudioSource
             std::abs(newPosition - prevExpected) > kContinuityToleranceSamples;
 
         position.store(newPosition, std::memory_order_relaxed);
-        const juce::int64 off = offsetSamples.load();
-        const juce::int64 inSrc = inSourceSamples.load();
+        const ClipWindow window = readClipWindow();
+        const juce::int64 off = window.offsetSamples;
+        const juce::int64 inSrc = window.inSourceSamples;
         if (child != nullptr)
         {
             // Match the read-position offset the next getNextAudioBlock
@@ -337,40 +375,180 @@ class OffsetSource : public juce::PositionableAudioSource
     std::atomic<int> cachedBlockSize{0};
     std::atomic<double> cachedSampleRate{0.0};
 
+    /** Snapshot of the clip-window tuple. Audio thread reads via
+     *  `readClipWindow()` which uses a seqlock so the three fields
+     *  are observed as a consistent unit even when the message
+     *  thread is mid-update (e.g. drag-trim updating all three
+     *  simultaneously). Single-writer (message thread), single-reader
+     *  (audio thread); writes are rare so the seqlock retry loop
+     *  almost never spins. */
+    struct ClipWindow
+    {
+        juce::int64 offsetSamples;
+        juce::int64 inSourceSamples;
+        juce::int64 clipDurationSamples;
+    };
+
+    /** Seqlock sequence. Even = stable, odd = writer in progress.
+     *  Initialised to 0 so the very first read sees the default
+     *  zero-initialised atomics as a valid snapshot. */
+    mutable std::atomic<std::uint32_t> windowSeq{0};
+
+    void beginWindowWrite() noexcept
+    {
+        // Bump to odd: signals "writer active".
+        windowSeq.fetch_add(1, std::memory_order_acq_rel);
+    }
+    void endWindowWrite() noexcept
+    {
+        // Bump back to even: writer done.
+        windowSeq.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    ClipWindow readClipWindow() const noexcept
+    {
+        // Bounded-retry seqlock read. With a single rare writer
+        // (message thread issuing trim/offset updates at most a few
+        // times per second per clip) we essentially never spin — but
+        // capping the retries keeps the audio thread bounded if a
+        // pathological burst of updates happens. After
+        // `kMaxRetries` we accept the last snapshot, which may be
+        // torn by at most one block of audio (better than spinning).
+        constexpr int kMaxRetries = 4;
+        ClipWindow w{};
+        for (int attempt = 0; attempt < kMaxRetries; ++attempt)
+        {
+            const auto s1 = windowSeq.load(std::memory_order_acquire);
+            if ((s1 & 1u) != 0u) continue; // writer mid-update; spin briefly
+            w.offsetSamples = offsetSamples.load(std::memory_order_relaxed);
+            w.inSourceSamples = inSourceSamples.load(std::memory_order_relaxed);
+            w.clipDurationSamples = clipDurationSamples.load(std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_acquire);
+            const auto s2 = windowSeq.load(std::memory_order_relaxed);
+            if (s1 == s2) return w;
+        }
+        // Accept possibly-torn snapshot rather than spin further.
+        w.offsetSamples = offsetSamples.load(std::memory_order_relaxed);
+        w.inSourceSamples = inSourceSamples.load(std::memory_order_relaxed);
+        w.clipDurationSamples = clipDurationSamples.load(std::memory_order_relaxed);
+        return w;
+    }
+
+    /** Maximum warp channel count `pullThroughWarp` will materialise
+     *  per block. RubberBand handles up to many channels; surround
+     *  sources of >8 channels would be downmixed below. 8 covers
+     *  7.1 and all consumer formats. */
+    static constexpr int kMaxWarpChannels = 8;
+
+    /** Scratch buffer for the warp output. Allocated in
+     *  `prepareToPlay`, resized lazily in `pullThroughWarp` if a
+     *  larger block ever arrives. Sized `kMaxWarpChannels × blockSize`
+     *  so the stretcher can write directly into per-channel planes
+     *  without aliasing the destination buffer (which may have a
+     *  different channel count). */
+    juce::AudioBuffer<float> warpScratch;
+
     /** Pull `numSamples` of warped audio into `dest[startSample..]`,
      *  sourcing from `child` via the WarpProcessor's callback. Called
      *  from `getNextAudioBlock` only when the audible region falls
      *  inside the clip's timeline window AND the warp processor is
-     *  active. */
+     *  active.
+     *
+     *  Channel-count contract (critical):
+     *    - `w.getNumChannels()` = SOURCE-file channel count. The
+     *      stretcher and its internal scratch are sized for this.
+     *    - `dest.getNumChannels()` = OUTPUT bus channel count (the
+     *      mixer's stereo bus today, but not necessarily forever).
+     *    - These can differ. We always produce `w.getNumChannels()`
+     *      output planes from the stretcher into `warpScratch`, then
+     *      map them into `dest`:
+     *        * sourceCh == destCh   → straight copy.
+     *        * sourceCh == 1 < destCh → duplicate ch0 to every dest channel.
+     *        * sourceCh > destCh    → copy the first destCh channels.
+     *        * 1 < sourceCh < destCh → copy what we have, zero the rest.
+     *
+     *  This replaces an earlier implementation that aliased a
+     *  `dest`-sized pointer array (clamped to 2) over the warp's
+     *  internal scratch — that produced undefined behaviour for
+     *  mono-source-on-stereo-bus (out-of-bounds pointer read) and
+     *  null-deref for >2-channel surround sources (uninitialised
+     *  output[c] for c >= 2). */
     void pullThroughWarp(WarpProcessor& w, juce::AudioBuffer<float>& dest, int startSample, int numSamples)
     {
         if (child == nullptr || numSamples <= 0) return;
-        const int chans = juce::jmin(dest.getNumChannels(), 2);
-        // Build per-channel write pointers into the audible region.
-        // The output buffer is `dest`'s active region — channels live
-        // in separate float planes per JUCE convention.
-        float* outPtrs[8] = {nullptr};
-        const int outChannels = juce::jmin(chans, 8);
-        for (int c = 0; c < outChannels; ++c)
+
+        const int sourceCh = juce::jmax(1, w.getNumChannels());
+        const int destCh = juce::jmax(1, dest.getNumChannels());
+
+        // Ensure scratch is large enough. prepareToPlay sizes for
+        // `kMaxWarpChannels × blockSize`; this guard handles any
+        // pathological caller that pumps a larger block than declared.
+        if (warpScratch.getNumChannels() < sourceCh || warpScratch.getNumSamples() < numSamples)
         {
-            outPtrs[c] = dest.getWritePointer(c, startSample);
+            warpScratch.setSize(juce::jmax(warpScratch.getNumChannels(), sourceCh),
+                                juce::jmax(warpScratch.getNumSamples(), numSamples),
+                                /*keepExistingContent*/ false,
+                                /*clearExtraSpace*/ false,
+                                /*avoidReallocating*/ false);
         }
+        warpScratch.clear(0, numSamples);
+
+        // Build the warp output pointer array sized to the warp's
+        // own channel count — this is what `WarpProcessor::process`
+        // iterates over (`for c in [0, numChannels)`).
+        float* warpOut[kMaxWarpChannels] = {nullptr};
+        const int outPlanes = juce::jmin(sourceCh, kMaxWarpChannels);
+        for (int c = 0; c < outPlanes; ++c)
+        {
+            warpOut[c] = warpScratch.getWritePointer(c);
+        }
+
         // Source-read callback. The WarpProcessor demands chunks of
         // input at absolute source-sample positions; we seek the
-        // reader and pull into a scratch JUCE buffer aliased over the
-        // caller-supplied raw pointers. The reader's own
-        // `getNextAudioBlock` does the heavy lifting (file decode +
-        // resample to engine sample rate); we just sit between it and
-        // the stretcher.
+        // reader and pull into a JUCE buffer aliased over the
+        // stretcher's own per-channel scratch (`dst` from the warp).
+        // CRITICAL: we ask for exactly `sourceCh` channels here so
+        // the AudioFormatReaderSource fills the matching scratch
+        // planes the stretcher will then consume.
         auto readSource =
-            [this, outChannels](float* const* dst, juce::int64 srcPos, int n)
+            [this, sourceCh](float* const* dst, juce::int64 srcPos, int n)
         {
             child->setNextReadPosition(srcPos);
-            juce::AudioBuffer<float> bufView(const_cast<float**>(dst), outChannels, n);
+            juce::AudioBuffer<float> bufView(const_cast<float**>(dst), sourceCh, n);
             juce::AudioSourceChannelInfo info(&bufView, 0, n);
             child->getNextAudioBlock(info);
         };
-        w.process(outPtrs, numSamples, readSource);
+        w.process(warpOut, numSamples, readSource);
+
+        // Map warp output planes into the destination buffer.
+        if (sourceCh == 1 && destCh > 1)
+        {
+            // Mono source → duplicate ch0 to all destination channels.
+            const float* src = warpScratch.getReadPointer(0);
+            for (int c = 0; c < destCh; ++c)
+            {
+                juce::FloatVectorOperations::copy(
+                    dest.getWritePointer(c, startSample), src, numSamples);
+            }
+        }
+        else
+        {
+            const int common = juce::jmin(sourceCh, destCh);
+            for (int c = 0; c < common; ++c)
+            {
+                juce::FloatVectorOperations::copy(
+                    dest.getWritePointer(c, startSample),
+                    warpScratch.getReadPointer(c),
+                    numSamples);
+            }
+            // sourceCh < destCh and not the mono-duplicate case
+            // (sourceCh > 1) — zero the trailing destination channels.
+            for (int c = common; c < destCh; ++c)
+            {
+                juce::FloatVectorOperations::clear(
+                    dest.getWritePointer(c, startSample), numSamples);
+            }
+        }
     }
 };
 
@@ -434,6 +612,13 @@ class MasterClockSource : public juce::AudioSource
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
     {
+        // Denormal floats kill realtime CPU budgets — once we add
+        // reverbs/EQs/compressors downstream they will routinely
+        // produce numbers in the 1e-300 range as they ring down. The
+        // FTZ/DAZ flags this enables are scoped to this audio callback
+        // and restored on return so we don't leak the change into
+        // message-thread DSP.
+        const juce::ScopedNoDenormals scopedNoDenormals;
         const auto startTicks = juce::Time::getHighResolutionTicks();
         const auto count = callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
         if (!playing.load(std::memory_order_acquire))
@@ -874,6 +1059,20 @@ class AudioEngine
          *  `OffsetSource` holds a non-owning atomic pointer to the
          *  same instance for the audio thread to find on every block. */
         std::unique_ptr<WarpProcessor> warp;
+        /** Old WarpProcessor instances that have been logically
+         *  replaced (warp disabled or rebuilt with new params) but
+         *  may still be in use by the audio thread right now —
+         *  `OffsetSource::pullThroughWarp` may have loaded the raw
+         *  pointer just before the swap and be mid-call when the
+         *  message thread tries to free the old object.
+         *
+         *  We append the old `unique_ptr` here at swap time and
+         *  drain the vector on unload (`prepareToPlay`-style entry
+         *  points and clip-removal) when the audio thread is
+         *  guaranteed not to be inside the warp. Mirrors the
+         *  `Preview::retiredWarps` lifetime discipline; without it
+         *  warp toggles produced a use-after-free window. */
+        std::vector<std::unique_ptr<WarpProcessor>> retiredWarps;
         double sampleRate = 44100.0;
         int numChannels = 2;
         /**

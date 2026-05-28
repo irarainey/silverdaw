@@ -536,30 +536,44 @@ void AudioEngine::flushAllDirtyRebuildsSync()
 
 void AudioEngine::flushDirtyRebuilds()
 {
-    // Process at most ONE dirty track per call. Rebuilding resets the
-    // BufferingAudioSource so paused moves can't leave stale read-ahead
-    // audio that would leak on the next Play. Chunking gives the
-    // message thread a chance to drain transport clicks and drag
-    // updates between dirty tracks.
-    Track* dirty = nullptr;
+    // Time-budgeted batch rebuild. Each timer tick we drain dirty
+    // tracks until either the queue is empty or we have spent more
+    // than `kBudgetMs` of message-thread time on the loop, then
+    // re-arm the timer at `kFollowupMs` to finish the rest in the
+    // next tick. This gives many-track projects (>50 tracks) a
+    // responsive UI: a single rebuildTrackPrefetch costs ~0.2–1.5 ms
+    // depending on the BufferingAudioSource state, so we get ~3–10
+    // tracks per tick instead of the previous one-track-per-10ms
+    // (i.e. 50 tracks = 500 ms instead of 50–150 ms).
+    //
+    // Also called from `setPositionMs` while playing — see comment
+    // there. The budgeted form is correct whether the transport is
+    // playing or paused.
+    constexpr double kBudgetMs = 2.0;
+    constexpr int kFollowupMs = 1;
+
+    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+    bool anyRemaining = false;
     for (auto& [id, track] : tracks)
     {
-        if (track->prefetchDirty)
+        if (!track->prefetchDirty) continue;
+        if ((juce::Time::getMillisecondCounterHiRes() - t0) >= kBudgetMs)
         {
-            dirty = track.get();
+            anyRemaining = true;
             break;
         }
+        rebuildTrackPrefetch(*track);
     }
-    if (dirty == nullptr) return;
-
-    rebuildTrackPrefetch(*dirty);
-
-    for (auto& [id, track] : tracks)
+    if (anyRemaining)
     {
-        if (track->prefetchDirty)
+        // Check if there's anything left after the budget cutoff.
+        for (auto& [id, track] : tracks)
         {
-            rebuildTimer.startTimer(10);
-            return;
+            if (track->prefetchDirty)
+            {
+                rebuildTimer.startTimer(kFollowupMs);
+                return;
+            }
         }
     }
 }
@@ -576,6 +590,16 @@ void AudioEngine::play()
 void AudioEngine::pause()
 {
     master.setPlaying(false);
+    // The transport is paused — the audio thread is guaranteed not
+    // to be inside any track's processing chain. Drain any retired
+    // WarpProcessors that have been waiting for a quiescent window
+    // to be freed. Without this, hot warp-toggling during a session
+    // would let retired processors accumulate until the track is
+    // removed.
+    for (auto& [id, track] : tracks)
+    {
+        track->retiredWarps.clear();
+    }
     silverdaw::log::info("engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
 }
 
@@ -589,6 +613,8 @@ void AudioEngine::stop()
         {
             track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
         }
+        // Transport is stopped — safe to drain (see pause()).
+        track->retiredWarps.clear();
     }
     silverdaw::log::info("engine", "stop");
 }
@@ -611,40 +637,31 @@ void AudioEngine::setPositionMs(double ms)
     // background prefetch catches up — exactly the "doesn't play at
     // the correct position" bug.
     //
-    // Path:
-    //   - Paused:  mark `prefetchDirty` and arm the debounce timer.
-    //              ~150 ms after the last seek (whether by mouse drag
-    //              or single click) the buffering source is rebuilt in
-    //              the background, so the user's subsequent Play click
-    //              is just a master-gate flip — no synchronous rebuild
-    //              cost on the play path. This is the same pattern
-    //              `setClipOffsetMs` uses for paused-move + Play.
-    //   - Playing: rebuild immediately. There's a brief block-sized
-    //              silence while the new source primes, but that's
-    //              still better than audibly playing the wrong audio.
-    const bool playing = master.isPlaying();
+    // Path (both playing and paused — unified):
+    //   - Mark every track `prefetchDirty` and arm the budgeted timer.
+    //     The timer's `flushDirtyRebuilds` runs in time-bounded chunks
+    //     so even very many tracks rebuild in a couple of ticks
+    //     without ever blocking the message thread for more than
+    //     ~2 ms at a time. The transport keeps playing during the
+    //     rebuild window; some tracks may briefly emit stale audio
+    //     (worst case ~0.7 s) before their fresh prefetch lands, but
+    //     that's preferable to a long synchronous stall that would
+    //     hold up websocket-message processing, UI redraws and the
+    //     next seek the user issues.
+    //   - We still call `transportSource->setPosition` immediately on
+    //     every track (cheap, correctness-relevant) so the master
+    //     position and per-track transport positions stay coherent
+    //     for `getPosition`/`getTimeInfo` queries from the UI.
     for (auto& [id, track] : tracks)
     {
         if (track->transportSource == nullptr) continue;
-        // Update the position first so the rebuild (or the next play()
-        // flush) picks up the new master position via trackSeekSecondsFor.
         track->transportSource->setPosition(trackSeekSecondsFor(*track, masterSamples));
-        if (playing)
-        {
-            rebuildTrackPrefetch(*track);
-        }
-        else
-        {
-            track->prefetchDirty = true;
-        }
+        track->prefetchDirty = true;
     }
-    if (!playing)
-    {
-        // Arm the debounce timer once for the whole tracks map; it'll
-        // call `flushDirtyRebuilds` from the message thread once the
-        // user has stopped seeking for ~150 ms.
-        rebuildTimer.startTimer(kRebuildDebounceMs);
-    }
+    // While playing we want the rebuild as soon as possible (single
+    // tick); while paused the existing debounce gives drag-seeks a
+    // chance to coalesce.
+    rebuildTimer.startTimer(master.isPlaying() ? 1 : kRebuildDebounceMs);
     silverdaw::log::info("engine", "setPositionMs " + juce::String(clampedMs));
 }
 
@@ -735,12 +752,13 @@ bool AudioEngine::setClipTrim(const juce::String& clipId, double startMs, double
     const auto durSamples =
         static_cast<juce::int64>(juce::jmax(0.0, clipDurationMs) * sr / 1000.0);
 
-    // Atomic writes — the next audio block sees all three new values
-    // together because the OffsetSource reads them within a single
-    // `getNextAudioBlock` invocation.
-    track->offsetSource->setOffsetSamples(offsetSamples);
-    track->offsetSource->setInSourceSamples(inSampleOffset);
-    track->offsetSource->setClipDurationSamples(durSamples);
+    // Atomic writes — `setClipWindowAtomic` bumps a seqlock around
+    // the three field writes so the audio thread sees all three
+    // values as one snapshot (drag-trim updates them together and
+    // the old per-field setters could be observed half-applied,
+    // briefly producing audio with a new offset but the old
+    // duration / inSource).
+    track->offsetSource->setClipWindowAtomic(offsetSamples, inSampleOffset, durSamples);
 
     // Same rebuild discipline as `setClipOffsetMs`: during playback we
     // must drop the stale prefetch; while paused we debounce.
@@ -806,12 +824,34 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
     {
         // Disable / teardown. The audio thread sees nullptr via
         // `setWarpProcessor(nullptr)` on the next read, after which
-        // it's safe to destroy the WarpProcessor itself. JUCE's
-        // graph plumbing never holds raw pointers to internal nodes
-        // across audio callbacks, so the publish-then-destroy
-        // sequence is sufficient — no need for an extra spin or fence.
+        // the WarpProcessor is logically retired — but the audio
+        // thread may still be inside `pullThroughWarp` having just
+        // loaded the raw pointer before the swap. We move the old
+        // unique_ptr into `retiredWarps` (drained on track unload
+        // when the audio thread is quiescent) instead of destroying
+        // it immediately; otherwise we have a use-after-free window
+        // on the audio thread.
         track->offsetSource->setWarpProcessor(nullptr);
-        track->warp.reset();
+        if (track->warp != nullptr)
+        {
+            track->retiredWarps.push_back(std::move(track->warp));
+        }
+        // B3: disabling warp changes the timeline-to-source mapping
+        // (no more tempo stretch), so any prefetched audio in the
+        // BufferingAudioSource is now at the wrong position. Match
+        // the rebuild path's discipline: rebuild immediately while
+        // playing, debounce while paused. Without this, disabling
+        // warp during playback let the listener hear up to ~0.7 s
+        // of stale warp-output before the prefetch caught up.
+        if (master.isPlaying())
+        {
+            rebuildTrackPrefetch(*track);
+        }
+        else
+        {
+            track->prefetchDirty = true;
+            rebuildTimer.startTimer(kRebuildDebounceMs);
+        }
         silverdaw::log::info("engine", "clip warp disabled " + clipId);
         return true;
     }
@@ -829,7 +869,14 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
         auto wp = makeWarpProcessor(track->numChannels, track->sampleRate,
                                     static_cast<int>(dm.bufferSize), modeStr,
                                     tempoRatio, semitones, cents);
-        [[maybe_unused]] auto oldWarp = std::move(track->warp);
+        // Retire the previous processor (if any) into the deferred
+        // free-list rather than destroying it inline — the audio
+        // thread may still be holding the raw pointer it loaded
+        // from `OffsetSource::warp` just before the swap below.
+        if (track->warp != nullptr)
+        {
+            track->retiredWarps.push_back(std::move(track->warp));
+        }
         track->warp = std::move(wp);
         track->offsetSource->setWarpProcessor(track->warp.get());
         track->offsetSource->requestWarpReseek();

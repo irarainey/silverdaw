@@ -142,6 +142,18 @@ class WarpProcessor
         return pendingTempoRatio.load(std::memory_order_acquire);
     }
 
+    /** Number of audio channels this processor was constructed with.
+     *  Always equals the source-file channel count. Required by
+     *  `OffsetSource::pullThroughWarp` so the source-read callback
+     *  feeds Rubber Band the correct number of input channels and
+     *  the caller maps `numChannels` output planes correctly into
+     *  the destination buffer (mono→stereo duplicate, surround drop
+     *  to stereo, etc.). */
+    int getNumChannels() const noexcept
+    {
+        return numChannels;
+    }
+
   private:
     void applyPendingParams() noexcept;
     void doReset();

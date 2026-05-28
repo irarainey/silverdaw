@@ -143,6 +143,16 @@ struct OfflineClip
     /** Timeline frames at projectRate at which this clip is finished — once
      *  the master cursor passes this we stop pulling from this clip. */
     juce::int64 timelineEndFrames{0};
+    /** Trailing tail length (in projectRate frames) the clip's processor
+     *  chain needs to be pumped AFTER `timelineEndFrames` to fully drain
+     *  late-arriving output samples (reverb decay, EQ smear, etc.). 0
+     *  today — the warp processor's own start-delay is pre-discarded
+     *  inside `WarpProcessor::doReset`, so warp adds no trailing tail.
+     *  Scaffolding for the upcoming per-clip FX layer: when reverb is
+     *  added, its decay tail (e.g. 4 s at projectRate) will land here
+     *  and both `totalProjectFrames` and the retirement check below
+     *  will automatically respect it. */
+    juce::int64 tailFrames{0};
     /** Set true once the timeline cursor has cleared timelineEndFrames AND
      *  any internal tail has been drained. Retired clips are skipped in the
      *  pump loop and their chain is left in place until the engine tears
@@ -670,8 +680,20 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         }
 
         const double projectFramesPerMs = snapshot.projectSampleRate / 1000.0;
-        const int64_t totalProjectFrames =
+        int64_t totalProjectFrames =
             static_cast<int64_t>(std::round(options.lengthMs * projectFramesPerMs));
+        // Extend the render window by the worst-case clip tail so any
+        // per-clip processor that adds trailing decay (reverb today =
+        // 0; reverb later = e.g. 4 s) gets fully drained into the
+        // mix. Without this the export would truncate the tail at
+        // the timeline length even though we have data still in the
+        // processor's internal buffers waiting to come out.
+        int64_t maxTailFrames = 0;
+        for (const auto& cp : clips)
+        {
+            maxTailFrames = std::max(maxTailFrames, cp->tailFrames);
+        }
+        totalProjectFrames += maxTailFrames;
         int64_t projectFramesRendered = 0;
         int64_t outputFramesWritten = 0;
         double peakAmplitude = 0.0;
@@ -713,6 +735,12 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // hand off to FinalResampler → writer.
         while (projectFramesRendered < totalProjectFrames)
         {
+            // Suppress denormal-float CPU stalls inside this block.
+            // Once per-clip reverbs/EQs land downstream they will
+            // routinely produce subnormals as they ring down; on
+            // x86 those can be 20–100× slower than normal floats
+            // and would dominate the offline render time.
+            const juce::ScopedNoDenormals scopedNoDenormals;
             if (cancelFlag.load())
             {
                 tmpFile.deleteFile();
@@ -736,7 +764,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                 // and the resampler tail drain through the transport's
                 // internal buffers; once projectFramesRendered passes
                 // timelineEndFrames we can safely stop pulling.
-                if (projectFramesRendered >= cp->timelineEndFrames)
+                if (projectFramesRendered >= cp->timelineEndFrames + cp->tailFrames)
                 {
                     cp->retired = true;
                     continue;
