@@ -430,76 +430,68 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <!-- Format -->
-          <section class="mb-5">
-            <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
-              Format
-            </label>
-            <div class="flex gap-4">
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model="draftFormat"
-                  type="radio"
-                  value="wav"
-                  class="accent-cyan-500"
-                >
-                <span>WAV<span class="ml-1 text-[10px] text-zinc-500">(PCM / float)</span></span>
+          <!-- Format / Sample rate / Bit depth row -->
+          <section class="mb-5 grid grid-cols-3 gap-3">
+            <div>
+              <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
+                Format
               </label>
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model="draftFormat"
-                  type="radio"
-                  value="flac"
-                  class="accent-cyan-500"
-                >
-                <span>FLAC<span class="ml-1 text-[10px] text-zinc-500">(lossless)</span></span>
-              </label>
-              <label
-                class="flex cursor-not-allowed items-center gap-1.5 text-zinc-500"
-                title="MP3 export ships in a follow-up update once the LAME encoder is integrated."
+              <select
+                v-model="draftFormat"
+                class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
               >
-                <input
-                  type="radio"
+                <option value="wav">
+                  WAV (PCM / float)
+                </option>
+                <option value="flac">
+                  FLAC (lossless)
+                </option>
+                <option
                   value="mp3"
                   disabled
-                  class="accent-cyan-500"
                 >
-                <span>MP3 <span class="text-[10px]">(coming soon)</span></span>
-              </label>
+                  MP3 (coming soon)
+                </option>
+              </select>
             </div>
-          </section>
-
-          <!-- Bit depth (hidden for MP3) -->
-          <section
-            v-if="draftFormat !== 'mp3'"
-            class="mb-5"
-          >
-            <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
-              Bit depth
-            </label>
-            <div class="flex flex-wrap items-center gap-4">
-              <label
-                v-for="bd in availableBitDepths"
-                :key="bd"
-                class="flex cursor-pointer items-center gap-1.5"
-              >
-                <input
-                  v-model.number="draftBitDepth"
-                  type="radio"
-                  :value="bd"
-                  class="accent-cyan-500"
-                >
-                <span>
-                  {{ bd }}-bit
-                  <span
-                    v-if="bd === 32 && draftFormat === 'wav'"
-                    class="text-[10px] text-zinc-500"
-                  >float</span>
-                </span>
+            <div>
+              <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
+                Sample rate
               </label>
+              <select
+                v-model.number="draftSampleRate"
+                class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+              >
+                <option :value="44100">
+                  44.1 kHz
+                </option>
+                <option :value="48000">
+                  48 kHz
+                </option>
+              </select>
+              <p class="mt-1 text-[10px] text-zinc-500">
+                Project rate: {{ (effectiveProjectRate / 1000).toFixed(1) }} kHz
+              </p>
+            </div>
+            <div v-if="draftFormat !== 'mp3'">
+              <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
+                Bit depth
+              </label>
+              <select
+                v-model.number="draftBitDepth"
+                class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+              >
+                <option
+                  v-for="bd in availableBitDepths"
+                  :key="bd"
+                  :value="bd"
+                >
+                  {{ bd }}-bit{{ bd === 32 && draftFormat === 'wav' ? ' float' : '' }}
+                </option>
+              </select>
               <label
                 v-if="ditherApplies"
-                class="ml-2 flex cursor-pointer items-center gap-1.5"
+                class="mt-1 flex cursor-pointer items-center gap-1.5"
                 title="TPDF dither randomises the quantisation error to remove harmonic distortion at 16-bit. Recommended ON."
               >
                 <input
@@ -507,38 +499,8 @@ onBeforeUnmount(() => {
                   type="checkbox"
                   class="accent-cyan-500"
                 >
-                <span class="text-xs">Dither</span>
+                <span class="text-[10px] text-zinc-400">Dither</span>
               </label>
-            </div>
-          </section>
-
-          <!-- Sample rate -->
-          <section class="mb-5">
-            <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
-              Sample rate
-            </label>
-            <div class="flex gap-4">
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model.number="draftSampleRate"
-                  type="radio"
-                  :value="44100"
-                  class="accent-cyan-500"
-                >
-                <span>44.1 kHz</span>
-              </label>
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model.number="draftSampleRate"
-                  type="radio"
-                  :value="48000"
-                  class="accent-cyan-500"
-                >
-                <span>48 kHz</span>
-              </label>
-              <span class="text-[10px] text-zinc-500">
-                Project rate: {{ (effectiveProjectRate / 1000).toFixed(1) }} kHz
-              </span>
             </div>
           </section>
 
@@ -550,70 +512,34 @@ onBeforeUnmount(() => {
             <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
               Loudness
             </label>
+            <select
+              v-model="draftLoudnessPreset"
+              :disabled="!loudnessAvailable"
+              class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <option value="off">
+                None &ndash; export as-is
+              </option>
+              <option value="streaming-14">
+                Streaming &minus;14 LUFS (Spotify, YouTube, SoundCloud, Tidal, Amazon)
+              </option>
+              <option value="apple-16">
+                Apple Music &minus;16 LUFS
+              </option>
+              <option value="broadcast-23">
+                EBU R128 / AES Broadcast &minus;23 LUFS
+              </option>
+              <option value="analyze">
+                Analyze only (measure, no gain change)
+              </option>
+              <option value="custom">
+                Custom target&hellip;
+              </option>
+            </select>
             <div class="flex flex-col gap-1.5 text-xs">
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model="draftLoudnessPreset"
-                  type="radio"
-                  value="off"
-                  class="accent-cyan-500"
-                  :disabled="!loudnessAvailable"
-                >
-                <span>None &ndash; export as-is</span>
-              </label>
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model="draftLoudnessPreset"
-                  type="radio"
-                  value="streaming-14"
-                  class="accent-cyan-500"
-                  :disabled="!loudnessAvailable"
-                >
-                <span>Streaming &minus;14 LUFS (Spotify, YouTube, SoundCloud, Tidal, Amazon)</span>
-              </label>
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model="draftLoudnessPreset"
-                  type="radio"
-                  value="apple-16"
-                  class="accent-cyan-500"
-                  :disabled="!loudnessAvailable"
-                >
-                <span>Apple Music &minus;16 LUFS</span>
-              </label>
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model="draftLoudnessPreset"
-                  type="radio"
-                  value="broadcast-23"
-                  class="accent-cyan-500"
-                  :disabled="!loudnessAvailable"
-                >
-                <span>EBU R128 / AES Broadcast &minus;23 LUFS</span>
-              </label>
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model="draftLoudnessPreset"
-                  type="radio"
-                  value="analyze"
-                  class="accent-cyan-500"
-                  :disabled="!loudnessAvailable"
-                >
-                <span>Analyze only (measure, no gain change)</span>
-              </label>
-              <label class="flex cursor-pointer items-center gap-1.5">
-                <input
-                  v-model="draftLoudnessPreset"
-                  type="radio"
-                  value="custom"
-                  class="accent-cyan-500"
-                  :disabled="!loudnessAvailable"
-                >
-                <span>Custom target&hellip;</span>
-              </label>
               <div
                 v-if="customLoudnessActive"
-                class="ml-5 mt-1 flex flex-wrap items-center gap-3"
+                class="mt-2 flex flex-wrap items-center gap-3"
               >
                 <label class="flex items-center gap-1.5">
                   <span class="text-zinc-400">Target LUFS</span>
@@ -646,7 +572,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <!-- MP3 bitrate (hidden when WAV) -->
+          <!-- MP3 bitrate (hidden when WAV/FLAC) -->
           <section
             v-if="draftFormat === 'mp3'"
             class="mb-5"
@@ -654,21 +580,18 @@ onBeforeUnmount(() => {
             <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
               MP3 bitrate
             </label>
-            <div class="flex gap-4">
-              <label
+            <select
+              v-model.number="draftBitrate"
+              class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+            >
+              <option
                 v-for="kbps in [128, 192, 320] as const"
                 :key="kbps"
-                class="flex cursor-pointer items-center gap-1.5"
+                :value="kbps"
               >
-                <input
-                  v-model.number="draftBitrate"
-                  type="radio"
-                  :value="kbps"
-                  class="accent-cyan-500"
-                >
-                <span>{{ kbps }} kbps</span>
-              </label>
-            </div>
+                {{ kbps }} kbps
+              </option>
+            </select>
           </section>
 
           <!-- Length policy -->
