@@ -15,17 +15,33 @@
 @layer components {
   /* Full-viewport backdrop: dims the timeline and applies a light blur
    * so the user can see they can't interact, without losing visual
-   * context of what's behind. Blur strength is intentionally light —
-   * heavier blurs make the timeline feel "lost" and disorienting. */
+   * context of what's behind. The dim is intentionally light — the
+   * dialog's flat dark surface needs brighter content behind it to
+   * read as a distinct layer, so we lean on the blur and the dialog's
+   * own shadow/hairline for separation rather than a heavy overlay. */
   .dialog-backdrop {
-    @apply fixed inset-0 z-[1100] flex items-center justify-center bg-black/60 backdrop-blur-[1px];
+    @apply fixed inset-0 z-[1100] flex items-center justify-center bg-black/35 backdrop-blur-[2px];
   }
   /* Card frame. Background matches the library panel (`bg-zinc-900`,
    * one step lighter than the main app shell) so the dialog reads as
    * a panel-like surface above the timeline. Header, body and footer
-   * are all the same colour — divider lines alone separate them. */
+   * are all the same colour — divider lines alone separate them.
+   *
+   * No solid border (it reads as a frame and fights the panel
+   * styling). Instead, three stacked box-shadows lift the card off
+   * the backdrop:
+   *   1. A long, soft drop shadow grounding it against the blur.
+   *   2. A tight, slightly darker shadow giving it crisp contact.
+   *   3. A 1px hairline highlight on the top edge (white at 6% α)
+   *      acting like a macOS-style window rim — visible enough to
+   *      define the boundary, faint enough to not read as a border. */
   .dialog-card {
-    @apply flex max-h-[90vh] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 shadow-2xl outline-none;
+    @apply flex max-h-[90vh] flex-col overflow-hidden rounded-lg bg-zinc-900 text-zinc-200 outline-none;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.12),
+      0 1px 0 0 rgba(255, 255, 255, 0.06) inset,
+      0 30px 80px -10px rgba(0, 0, 0, 0.9),
+      0 10px 30px -8px rgba(0, 0, 0, 0.75);
   }
   /* Top strip carrying the title. Background matches the card body
    * so the header doesn't read as a separate band — the divider
