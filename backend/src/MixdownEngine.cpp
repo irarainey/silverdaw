@@ -911,20 +911,31 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             const auto now = juce::Time::getMillisecondCounter();
             if (now - lastProgressMs >= kProgressMinIntervalMs)
             {
+                // Render owns 0–90% of the bar. The remaining 10% is
+                // reserved for finalize — over-allocated relative to
+                // wall-clock so the (potentially slow on Windows /
+                // network drives) WAV flush + clip-chain teardown can
+                // each have their own visible band on the bar instead
+                // of all collapsing to a single "99%".
                 const double pct = (static_cast<double>(projectFramesRendered)
                                     / static_cast<double>(juce::jmax<int64_t>(1, totalProjectFrames)))
-                                   * 95.0;
+                                   * 90.0;
                 broadcastProgress(bridge, pct, "render");
                 lastProgressMs = now;
             }
         }
 
-        broadcastProgress(bridge, 96.0, "finalize");
+        // Force a final render-stage broadcast so the bar reaches the
+        // top of the render band even if the last in-loop update was
+        // throttled out — otherwise we'd visibly jump up at the start
+        // of finalize.
+        broadcastProgress(bridge, 90.0, "render");
 
         // Pad if the resampler under-delivered. With the streaming-correct
         // FinalResampler this should be rare and at most a handful of
         // samples — but we keep the safety net so the WAV duration matches
         // what the dialog said it would.
+        const auto finalizeStartMs = juce::Time::getMillisecondCounter();
         const int64_t totalOutputFrames =
             static_cast<int64_t>(std::round(options.lengthMs * options.outputSampleRate / 1000.0));
         if (outputFramesWritten < totalOutputFrames)
@@ -940,23 +951,27 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                 remaining -= chunk;
             }
         }
+        const auto padEndMs = juce::Time::getMillisecondCounter();
+        broadcastProgress(bridge, 92.0, "finalize");
 
-        // Tear down clip chains BEFORE writer flush so any background-thread
-        // readers (none here — readAhead=0) are guaranteed closed. Ordered
-        // explicitly via reverse-iteration because each clip's transport
-        // must stop before its source is destroyed.
-        for (auto it = clips.rbegin(); it != clips.rend(); ++it)
-        {
-            if (auto& cp = *it; cp != nullptr)
-            {
-                if (cp->transport) cp->transport->stop();
-                if (cp->transport) cp->transport->setSource(nullptr);
-                if (cp->offsetSource) cp->offsetSource->setWarpProcessor(nullptr);
-            }
-        }
-        clips.clear();
-
-        writer.reset(); // flushes and closes the underlying stream
+        // writer.reset() rewrites the WAV RIFF/data-size headers and
+        // closes the underlying FileOutputStream. After this returns
+        // the bytes are on disk; the only thing left before the user's
+        // file is "the user's file" is the atomic rename.
+        //
+        // NOTE: we deliberately do NOT tear down the per-clip JUCE
+        // chains before this. They are pure readers with
+        // `readAhead=0` (no background buffering threads), so leaving
+        // them alive cannot affect the writer's output. Destroying
+        // them is, however, surprisingly expensive — closing each
+        // AudioFormatReader's underlying FileInputStream on Windows
+        // is ~1 s per handle (likely the OS / antivirus flushing the
+        // read cache for the decoded-WAV files). With N clips that's
+        // an N-second wait the user sees as "progress sat at 99% for
+        // ages". We defer it past the DONE broadcast below.
+        broadcastProgress(bridge, 95.0, "encode");
+        writer.reset();
+        const auto writerEndMs = juce::Time::getMillisecondCounter();
 
         if (cancelFlag.load())
         {
@@ -972,7 +987,12 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                      "Could not finalise output file (rename failed). Path may be open in another app.");
             return;
         }
+        const auto replaceEndMs = juce::Time::getMillisecondCounter();
 
+        // From the user's point of view the export is now complete:
+        // the file at `targetFile` is the final WAV. Push 100% + DONE
+        // immediately so the dialog dismisses without waiting on the
+        // slow clip teardown that follows.
         broadcastProgress(bridge, 100.0, "finalize");
         silverdaw::log::info("mixdown",
                              "done filePath=" + targetFile.getFullPathName() +
@@ -982,6 +1002,45 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                                  " clippedSamples=" + juce::String(clippedSampleCount) +
                                  " outputFrames=" + juce::String(outputFramesWritten));
         broadcastDone(bridge, targetFile, options.lengthMs);
+
+        // The file is final and the user-facing dialog is dismissed.
+        // Release the busy gate NOW so TRANSPORT_PLAY and the next
+        // MIXDOWN_START aren't silently rejected while we tear down
+        // the (slow-to-close) per-clip reader chains below. The
+        // remaining work is internal bookkeeping with no shared state;
+        // BusyGuard's destructor will be a harmless no-op on the
+        // already-cleared flag.
+        busyFlag.store(false);
+
+        // Now (and only now) drain the per-clip chains. Anything below
+        // is invisible to the user — the dialog has already dismissed.
+        // Ordered reverse-iteration so each transport stops before its
+        // source is destroyed (matches the live engine's teardown
+        // ordering for safety even though no readers are background-
+        // buffered here).
+        const int totalClips = static_cast<int>(clips.size());
+        for (auto it = clips.rbegin(); it != clips.rend(); ++it)
+        {
+            if (auto& cp = *it; cp != nullptr)
+            {
+                if (cp->transport) cp->transport->stop();
+                if (cp->transport) cp->transport->setSource(nullptr);
+                if (cp->offsetSource) cp->offsetSource->setWarpProcessor(nullptr);
+                cp.reset();
+            }
+        }
+        clips.clear();
+        const auto teardownEndMs = juce::Time::getMillisecondCounter();
+
+        silverdaw::log::info(
+            "mixdown",
+            juce::String("finalize timings padMs=") +
+                juce::String(padEndMs       - finalizeStartMs) +
+                " writerFlushMs=" + juce::String(writerEndMs   - padEndMs) +
+                " atomicReplaceMs=" + juce::String(replaceEndMs - writerEndMs) +
+                " visibleFinalizeMs=" + juce::String(replaceEndMs - finalizeStartMs) +
+                " backgroundTeardownMs=" + juce::String(teardownEndMs - replaceEndMs) +
+                " (clips=" + juce::String(totalClips) + ")");
     });
 }
 
