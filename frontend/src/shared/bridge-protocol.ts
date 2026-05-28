@@ -562,19 +562,37 @@ export interface AudioFileProbePayload {
  * clips that end before are padded with silence.
  *
  * The format-specific tail (`mp3Metadata`, `bitrateKbps`) is ignored
- * when `format` is `'wav'`. WAV output is always 16-bit PCM today.
+ * when `format` is `'wav'` or `'flac'`. `bitDepth` is ignored when
+ * `format` is `'mp3'`.
  */
 export interface MixdownStartPayload {
   outputPath: string
   sampleRate: 44100 | 48000
-  format: 'wav' | 'mp3'
-  /** MP3 only: target bitrate in kbps. Ignored for WAV. */
+  format: 'wav' | 'mp3' | 'flac'
+  /** Output bit-depth.
+   *  - `'wav'`: 16 / 24 (PCM) or 32 (IEEE float).
+   *  - `'flac'`: 16 / 24.
+   *  - `'mp3'`: ignored.
+   *  Defaults to 16 if omitted. */
+  bitDepth?: 16 | 24 | 32
+  /** Apply TPDF dither immediately before integer quantisation.
+   *  Only meaningful when the target container is 16-bit integer
+   *  (WAV-16 / FLAC-16). Ignored for 24-bit (noise floor below
+   *  audibility) and 32-float (no quantisation step). Default
+   *  `true`. */
+  dither?: boolean
+  /** Extra silence-tail appended after the timeline, in seconds.
+   *  Range [0, 60]. Independent of, and additive on top of, any
+   *  per-clip processor tail (e.g. reverb decay). Defaults to 0. */
+  tailSeconds?: number
+  /** MP3 only: target bitrate in kbps. Ignored for WAV / FLAC. */
   bitrateKbps?: 128 | 192 | 320
   lengthMode: 'trim-to-last-clip' | 'fixed-duration'
   /** Required when `lengthMode === 'fixed-duration'`. Ignored otherwise. */
   lengthMs?: number
   /** MP3 ID3v2 metadata. All fields are optional; absent / empty
-   *  fields aren't written. Ignored when format is `'wav'`. */
+   *  fields aren't written. Ignored when format is `'wav'` or
+   *  `'flac'`. */
   mp3Metadata?: {
     title?: string
     artist?: string

@@ -25,7 +25,7 @@ export interface MixdownActiveState {
   outputPath: string
   /** Format the user requested. Used to build the success toast
    *  message ("Exported MIXDOWN.WAV"). */
-  format: 'wav' | 'mp3'
+  format: 'wav' | 'mp3' | 'flac'
 }
 
 const state: Ref<MixdownActiveState | null> = ref(null)
@@ -39,7 +39,7 @@ export function useMixdownState(): Readonly<Ref<MixdownActiveState | null>> {
  * after it dispatches `MIXDOWN_START`. The dialog stays open just
  * long enough to swap to the progress dialog.
  */
-export function beginMixdown(outputPath: string, format: 'wav' | 'mp3'): void {
+export function beginMixdown(outputPath: string, format: 'wav' | 'mp3' | 'flac'): void {
   state.value = { percent: 0, stage: 'prepare', outputPath, format }
 }
 

@@ -3373,12 +3373,21 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const auto lengthMode = tryGetRequiredString(payload, "lengthMode").value_or(juce::String("trim-to-last-clip"));
         const double lengthMsHint = static_cast<double>(payload.getProperty("lengthMs", 0.0));
         const int bitrateKbps = static_cast<int>(payload.getProperty("bitrateKbps", 192));
+        // Phase A export fields. All optional with safe defaults so
+        // older renderer builds keep working. Validated below before
+        // we hand them to the engine.
+        const int bitDepthRaw = static_cast<int>(payload.getProperty("bitDepth", 16));
+        const double tailSecondsRaw = static_cast<double>(payload.getProperty("tailSeconds", 0.0));
+        const bool ditherRaw = static_cast<bool>(payload.getProperty("dither", true));
 
         silverdaw::log::info(
             "mixdown",
             "MIXDOWN_START path=" + outputPath + " sr=" + juce::String(outputSampleRate) +
                 " format=" + formatStr + " lengthMode=" + lengthMode +
-                " lengthMsHint=" + juce::String(lengthMsHint, 1));
+                " lengthMsHint=" + juce::String(lengthMsHint, 1) +
+                " bitDepth=" + juce::String(bitDepthRaw) +
+                " tailSeconds=" + juce::String(tailSecondsRaw, 3) +
+                " dither=" + (ditherRaw ? "true" : "false"));
 
         if (outputPath.isEmpty())
         {
@@ -3461,8 +3470,60 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::MixdownOptions options;
         options.outputFile = juce::File(outputPath);
         options.outputSampleRate = outputSampleRate;
-        options.format = (formatStr == "mp3") ? silverdaw::MixdownOptions::Format::Mp3
-                                              : silverdaw::MixdownOptions::Format::Wav;
+        // Map and validate format. Anything unrecognised falls back to
+        // WAV so a frontend typo can't produce a binary mismatch.
+        if (formatStr == "mp3")
+            options.format = silverdaw::MixdownOptions::Format::Mp3;
+        else if (formatStr == "flac")
+            options.format = silverdaw::MixdownOptions::Format::Flac;
+        else
+            options.format = silverdaw::MixdownOptions::Format::Wav;
+
+        // Per-format bit-depth validation. The renderer's UI restricts
+        // choices but we still validate here — never trust the
+        // frontend. Reject unsupported combinations rather than
+        // silently quantising.
+        const auto rejectInvalid = [&](const juce::String& msg)
+        {
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty("code", juce::String("invalid"));
+            obj->setProperty("error", msg);
+            bridge.broadcast("MIXDOWN_FAILED", juce::var(obj));
+        };
+        switch (options.format)
+        {
+            case silverdaw::MixdownOptions::Format::Wav:
+                if (bitDepthRaw != 16 && bitDepthRaw != 24 && bitDepthRaw != 32)
+                {
+                    rejectInvalid("WAV export supports 16, 24 or 32-bit only (got " +
+                                  juce::String(bitDepthRaw) + ").");
+                    return;
+                }
+                break;
+            case silverdaw::MixdownOptions::Format::Flac:
+                if (bitDepthRaw != 16 && bitDepthRaw != 24)
+                {
+                    rejectInvalid("FLAC export supports 16 or 24-bit only (got " +
+                                  juce::String(bitDepthRaw) + ").");
+                    return;
+                }
+                break;
+            case silverdaw::MixdownOptions::Format::Mp3:
+                // MP3 ignores bit-depth; nothing to validate here.
+                break;
+        }
+        options.bitDepth = bitDepthRaw;
+        // Tail seconds: finite, non-negative, capped at 60s. The
+        // engine also clamps but rejecting at the boundary gives a
+        // clearer error than silent clamping.
+        if (! std::isfinite(tailSecondsRaw) || tailSecondsRaw < 0.0 || tailSecondsRaw > 60.0)
+        {
+            rejectInvalid("tailSeconds must be in [0, 60] (got " +
+                          juce::String(tailSecondsRaw, 3) + ").");
+            return;
+        }
+        options.tailSeconds = tailSecondsRaw;
+        options.dither = ditherRaw;
         options.bitrateKbps = bitrateKbps;
         if (lengthMode == "trim-to-last-clip")
         {

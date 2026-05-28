@@ -68,7 +68,6 @@ constexpr int kBlockFrames = 4096;
 // Min spacing between progress envelopes so the bridge isn't flooded.
 constexpr int kProgressMinIntervalMs = 50;
 constexpr int kOutputChannels = 2;
-constexpr int kWavBitsPerSample = 16;
 // Output capacity headroom for libsamplerate's final pass. Sized for the
 // largest expected upsample ratio (e.g. 44.1 → 48 kHz is ~1.09×).
 constexpr int kFinalResampleHeadroom = 16;
@@ -685,26 +684,78 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         juce::AudioFormatManager formatManager;
         formatManager.registerBasicFormats();
 
-        auto outStream = std::make_unique<juce::FileOutputStream>(tmpFile);
-        if (!outStream->openedOk())
+        // Modern writer factory. Switches on format + bit-depth and
+        // selects the right SampleFormat (integral for PCM/FLAC, IEEE
+        // float for 32-bit WAV float). Using the AudioFormatWriterOptions
+        // API rather than the deprecated metadata-var overload also kills
+        // the JUCE C4996 deprecation warning we used to get.
+        std::unique_ptr<juce::OutputStream> outStream = std::make_unique<juce::FileOutputStream>(tmpFile);
+        if (! static_cast<juce::FileOutputStream*>(outStream.get())->openedOk())
         {
             failWith(MixdownFailureCode::Io,
                      "Cannot open output file for writing: " + tmpFile.getFullPathName());
             return;
         }
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::AudioFormatWriter> writer(
-            wav.createWriterFor(outStream.release(),
-                                static_cast<double>(options.outputSampleRate),
-                                static_cast<unsigned int>(kOutputChannels),
-                                kWavBitsPerSample,
-                                {},
-                                0));
+
+        const int chosenBitDepth = options.bitDepth;
+        const bool wantFloatWav =
+            options.format == MixdownOptions::Format::Wav && chosenBitDepth == 32;
+
+        auto writerOptions = juce::AudioFormatWriterOptions{}
+                                 .withSampleRate(static_cast<double>(options.outputSampleRate))
+                                 .withNumChannels(kOutputChannels)
+                                 .withBitsPerSample(chosenBitDepth)
+                                 .withSampleFormat(wantFloatWav
+                                                       ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
+                                                       : juce::AudioFormatWriterOptions::SampleFormat::integral);
+
+        std::unique_ptr<juce::AudioFormatWriter> writer;
+        if (options.format == MixdownOptions::Format::Wav)
+        {
+            juce::WavAudioFormat wav;
+            writer = wav.createWriterFor(outStream, writerOptions);
+        }
+        else if (options.format == MixdownOptions::Format::Flac)
+        {
+            juce::FlacAudioFormat flac;
+            writer = flac.createWriterFor(outStream, writerOptions);
+        }
+
         if (writer == nullptr)
         {
-            failWith(MixdownFailureCode::Io, "Failed to create WAV writer.");
+            // Clean up the partial stream — createWriterFor only consumes
+            // the unique_ptr on success.
+            outStream.reset();
+            tmpFile.deleteFile();
+            const auto fmtName = options.format == MixdownOptions::Format::Flac
+                                     ? juce::String("FLAC")
+                                     : juce::String("WAV");
+            failWith(MixdownFailureCode::Io,
+                     "Failed to create " + fmtName + " writer (bitDepth=" +
+                         juce::String(chosenBitDepth) + ", sr=" + juce::String(options.outputSampleRate) + ").");
             return;
         }
+        // Belt-and-braces self-check: when float WAV was requested,
+        // verify the writer actually opened in float mode (catches a
+        // silent format-string regression should JUCE change the
+        // semantics of withSampleFormat).
+        if (wantFloatWav && ! writer->isFloatingPoint())
+        {
+            writer.reset();
+            tmpFile.deleteFile();
+            failWith(MixdownFailureCode::Io,
+                     "WAV writer opened in PCM mode when 32-float was requested.");
+            return;
+        }
+        silverdaw::log::info(
+            "mixdown",
+            juce::String("writer opened format=") +
+                (options.format == MixdownOptions::Format::Flac ? "flac" : "wav") +
+                " bitDepth=" + juce::String(chosenBitDepth) +
+                " float=" + (writer->isFloatingPoint() ? "true" : "false") +
+                " dither=" + (options.dither && chosenBitDepth == 16 && ! writer->isFloatingPoint()
+                                  ? "true"
+                                  : "false"));
 
         // Build the per-clip offline chains. We pre-build every clip because
         // even large projects have tens of clips, not thousands — keeping
@@ -759,7 +810,23 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         {
             maxTailFrames = std::max(maxTailFrames, cp->tailFrames);
         }
-        totalProjectFrames += maxTailFrames;
+        // Additive user-controlled silence tail, clamped sensibly by
+        // the dispatch handler (0..60 s). Lets reverb/delay clips
+        // ring out past the timeline end even when no processor-
+        // declared tail exists yet. We add it on top of the per-
+        // clip processor tail because the user is asking for that
+        // many extra seconds AFTER all processors have decayed.
+        const double clampedTailSeconds = juce::jlimit(0.0, 60.0, options.tailSeconds);
+        const int64_t userTailFrames = static_cast<int64_t>(
+            std::round(clampedTailSeconds * static_cast<double>(snapshot.projectSampleRate)));
+        totalProjectFrames += maxTailFrames + userTailFrames;
+        // Effective rendered length (ms) seen by the user. Used for
+        // expected-output-frame computation, progress denominator
+        // and `MIXDOWN_DONE.durationMs`. Keep this single source of
+        // truth so the file on disk, the dialog, and the log all
+        // agree.
+        const double effectiveRenderLengthMs =
+            (static_cast<double>(totalProjectFrames) / projectFramesPerMs);
         int64_t projectFramesRendered = 0;
         int64_t outputFramesWritten = 0;
         double peakAmplitude = 0.0;
@@ -775,6 +842,36 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         juce::AudioBuffer<float> clipScratch(kOutputChannels, kBlockFrames);
         std::vector<float> mixInterleaved(static_cast<size_t>(kBlockFrames) * 2);
 
+        // TPDF dither state. Active only when the target file is a
+        // 16-bit integer container (WAV-16 or FLAC-16). For 24-bit
+        // the noise floor is well below audibility and dither is
+        // skipped by default; for 32-float there's no quantisation
+        // step at all so dither would be pure added noise.
+        //
+        // Implementation: per-channel xorshift32 PRNG, two
+        // independent uniform draws per sample summed to form a
+        // triangular PDF of peak amplitude ±1 LSB at 16-bit
+        // (= ±1/32768 in normalised float). Seeded from juce::Random
+        // so successive renders aren't bit-identical. Cheap enough
+        // (~6 ns/sample) to leave on by default.
+        const bool ditherActive = options.dither
+                                  && options.bitDepth == 16
+                                  && ! writer->isFloatingPoint();
+        constexpr float kLsb16f = 1.0f / 32768.0f;
+        struct Xorshift32 { uint32_t state; };
+        const auto nextUniform = [](Xorshift32& s) -> float
+        {
+            uint32_t x = s.state;
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            s.state = x ? x : 1u;
+            return static_cast<float>(s.state) * (1.0f / 4294967296.0f);
+        };
+        juce::Random seedGen;
+        Xorshift32 rngL { static_cast<uint32_t>(seedGen.nextInt(juce::Range<int>(1, INT_MAX))) };
+        Xorshift32 rngR { static_cast<uint32_t>(seedGen.nextInt(juce::Range<int>(1, INT_MAX))) };
+
         // Writer-callback used by FinalResampler. Captures `writer`, the
         // total written counter, peakAmplitude, and writerError so we can
         // unwind cleanly on IO failure mid-stream.
@@ -784,10 +881,28 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             // Deinterleave for AudioFormatWriter::writeFromFloatArrays.
             std::vector<float> outL(static_cast<size_t>(frames));
             std::vector<float> outR(static_cast<size_t>(frames));
-            for (int i = 0; i < frames; ++i)
+            if (ditherActive)
             {
-                outL[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 0];
-                outR[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 1];
+                for (int i = 0; i < frames; ++i)
+                {
+                    // TPDF = (U1 + U2 - 1) * LSB, U1,U2 ∈ [0,1).
+                    // Sum of two uniforms gives a triangular PDF.
+                    // Independent draws per channel decorrelate the
+                    // dither noise between L and R, avoiding a
+                    // mid-summed mono image of the dither.
+                    const float dL = (nextUniform(rngL) + nextUniform(rngL) - 1.0f) * kLsb16f;
+                    const float dR = (nextUniform(rngR) + nextUniform(rngR) - 1.0f) * kLsb16f;
+                    outL[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 0] + dL;
+                    outR[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 1] + dR;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < frames; ++i)
+                {
+                    outL[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 0];
+                    outR[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 1];
+                }
             }
             const float* writePtrs[kOutputChannels] = {outL.data(), outR.data()};
             if (!writer->writeFromFloatArrays(writePtrs, kOutputChannels, frames))
@@ -937,7 +1052,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // what the dialog said it would.
         const auto finalizeStartMs = juce::Time::getMillisecondCounter();
         const int64_t totalOutputFrames =
-            static_cast<int64_t>(std::round(options.lengthMs * options.outputSampleRate / 1000.0));
+            static_cast<int64_t>(std::round(effectiveRenderLengthMs * options.outputSampleRate / 1000.0));
         if (outputFramesWritten < totalOutputFrames)
         {
             const int64_t pad = totalOutputFrames - outputFramesWritten;
@@ -994,14 +1109,24 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // immediately so the dialog dismisses without waiting on the
         // slow clip teardown that follows.
         broadcastProgress(bridge, 100.0, "finalize");
+        // Actual duration of the file on disk, computed from frames
+        // written * output sample period. Includes the user tail and
+        // any per-clip processor tail, so the dialog/IPC see the
+        // real exported length rather than the nominal timeline ms.
+        const double actualDurationMs =
+            static_cast<double>(outputFramesWritten) * 1000.0
+            / static_cast<double>(options.outputSampleRate);
         silverdaw::log::info("mixdown",
                              "done filePath=" + targetFile.getFullPathName() +
-                                 " durationMs=" + juce::String(options.lengthMs, 1) +
+                                 " durationMs=" + juce::String(actualDurationMs, 1) +
+                                 " timelineMs=" + juce::String(options.lengthMs, 1) +
+                                 " tailSeconds=" + juce::String(clampedTailSeconds, 3) +
                                  " sampleRate=" + juce::String(options.outputSampleRate) +
+                                 " bitDepth=" + juce::String(options.bitDepth) +
                                  " peakAmp=" + juce::String(preClampPeakAmplitude, 4) +
                                  " clippedSamples=" + juce::String(clippedSampleCount) +
                                  " outputFrames=" + juce::String(outputFramesWritten));
-        broadcastDone(bridge, targetFile, options.lengthMs);
+        broadcastDone(bridge, targetFile, actualDurationMs);
 
         // The file is final and the user-facing dialog is dismissed.
         // Release the busy gate NOW so TRANSPORT_PLAY and the next

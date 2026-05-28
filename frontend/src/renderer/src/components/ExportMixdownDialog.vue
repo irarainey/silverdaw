@@ -35,8 +35,13 @@ const dialogEl = ref<HTMLDivElement | null>(null)
 
 // ── Draft fields ───────────────────────────────────────────────────────
 const draftOutputPath = ref('')
-const draftFormat = ref<'wav' | 'mp3'>('wav')
+const draftFormat = ref<'wav' | 'mp3' | 'flac'>('wav')
 const draftSampleRate = ref<44100 | 48000>(44100)
+const draftBitDepth = ref<16 | 24 | 32>(16)
+const draftDither = ref<boolean>(true)
+/** Tail-seconds field as text so the user can edit naturally; parsed
+ *  to a number on submit. Empty / blank means "no tail". */
+const draftTailSecondsText = ref('0')
 const draftBitrate = ref<128 | 192 | 320>(192)
 const draftLengthMode = ref<'trim-to-last-clip' | 'fixed-duration'>('fixed-duration')
 const draftDurationText = ref('')
@@ -51,6 +56,38 @@ const draftComment = ref('')
 const submitting = ref(false)
 
 // ── Derived ────────────────────────────────────────────────────────────
+
+/** Bit-depth choices that are valid for the currently-selected format.
+ *  - WAV supports 16 / 24 (PCM) and 32 (IEEE float).
+ *  - FLAC supports 16 / 24.
+ *  - MP3 ignores bit-depth (lossy psychoacoustic encoding). We hide
+ *    the row entirely in that case via `v-if`. */
+const availableBitDepths = computed<readonly (16 | 24 | 32)[]>(() => {
+  if (draftFormat.value === 'flac') return [16, 24] as const
+  if (draftFormat.value === 'wav') return [16, 24, 32] as const
+  return [] as const
+})
+
+/** TPDF dither only meaningfully affects 16-bit integer outputs. We
+ *  surface the checkbox only when it does something; for 24-bit the
+ *  noise floor is already below audibility, and 32-float has no
+ *  quantisation step. */
+const ditherApplies = computed<boolean>(
+  () => draftFormat.value !== 'mp3' && draftBitDepth.value === 16
+)
+
+const tailSeconds = computed<number>(() => {
+  const raw = draftTailSecondsText.value.trim()
+  if (raw.length === 0) return 0
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return NaN
+  return n
+})
+
+const tailValid = computed<boolean>(() => {
+  const t = tailSeconds.value
+  return Number.isFinite(t) && t >= 0 && t <= 60
+})
 
 /** Effective project sample rate, mirroring the fallback used elsewhere:
  *  project-level value if set, otherwise the user-scope default. */
@@ -89,9 +126,13 @@ const pathValid = computed<boolean>(
   () => typeof draftOutputPath.value === 'string' && draftOutputPath.value.trim().length > 0
 )
 
-const formIsValid = computed<boolean>(() => pathValid.value && durationValid.value && !submitting.value)
+const formIsValid = computed<boolean>(
+  () => pathValid.value && durationValid.value && tailValid.value && !submitting.value
+)
 
-const expectedFileExtension = computed(() => (draftFormat.value === 'mp3' ? 'mp3' : 'wav'))
+const expectedFileExtension = computed(() =>
+  draftFormat.value === 'mp3' ? 'mp3' : draftFormat.value === 'flac' ? 'flac' : 'wav'
+)
 
 // ── Reseed on open ─────────────────────────────────────────────────────
 
@@ -104,6 +145,9 @@ watch(
     // session via uiStore in a future iteration; default WAV today).
     draftFormat.value = 'wav'
     draftSampleRate.value = effectiveProjectRate.value
+    draftBitDepth.value = 16
+    draftDither.value = true
+    draftTailSecondsText.value = '0'
     draftBitrate.value = 192
     // Default length = project duration (rubber-duck finding).
     draftLengthMode.value = 'fixed-duration'
@@ -136,6 +180,20 @@ watch(draftFormat, (fmt) => {
   if (!path) return
   const replaced = path.replace(/\.[^.\\/]+$/, '')
   draftOutputPath.value = `${replaced}.${fmt}`
+})
+
+// If the user picks a format that doesn't support the currently-
+// selected bit-depth (e.g. they had 32-bit float WAV selected then
+// switch to FLAC, which only supports 16/24), snap to the highest
+// supported value rather than silently sending an invalid combo
+// that the backend would reject.
+watch(draftFormat, () => {
+  const allowed = availableBitDepths.value
+  if (allowed.length === 0) return
+  if (!allowed.includes(draftBitDepth.value)) {
+    const last = allowed[allowed.length - 1]
+    if (last !== undefined) draftBitDepth.value = last
+  }
 })
 
 // ── Actions ────────────────────────────────────────────────────────────
@@ -217,15 +275,22 @@ async function doSave(): Promise<void> {
     }
     // Begin tracking the render so MixdownProgressDialog mounts.
     beginMixdown(outputPath, draftFormat.value)
-    sendBridge('MIXDOWN_START', {
+    const payload: import('@shared/bridge-protocol').MixdownStartPayload = {
       outputPath,
       sampleRate: draftSampleRate.value,
       format: draftFormat.value,
-      bitrateKbps: draftFormat.value === 'mp3' ? draftBitrate.value : undefined,
+      tailSeconds: tailSeconds.value,
       lengthMode: draftLengthMode.value,
-      lengthMs,
-      mp3Metadata: md
-    })
+      lengthMs
+    }
+    if (draftFormat.value === 'mp3') {
+      payload.bitrateKbps = draftBitrate.value
+      if (md) payload.mp3Metadata = md
+    } else {
+      payload.bitDepth = draftBitDepth.value
+      payload.dither = draftDither.value
+    }
+    sendBridge('MIXDOWN_START', payload)
     emit('close')
   } finally {
     submitting.value = false
@@ -319,7 +384,16 @@ onBeforeUnmount(() => {
                   value="wav"
                   class="accent-cyan-500"
                 >
-                <span>WAV<span class="ml-1 text-[10px] text-zinc-500">(16-bit PCM)</span></span>
+                <span>WAV<span class="ml-1 text-[10px] text-zinc-500">(PCM / float)</span></span>
+              </label>
+              <label class="flex cursor-pointer items-center gap-1.5">
+                <input
+                  v-model="draftFormat"
+                  type="radio"
+                  value="flac"
+                  class="accent-cyan-500"
+                >
+                <span>FLAC<span class="ml-1 text-[10px] text-zinc-500">(lossless)</span></span>
               </label>
               <label
                 class="flex cursor-not-allowed items-center gap-1.5 text-zinc-500"
@@ -332,6 +406,49 @@ onBeforeUnmount(() => {
                   class="accent-cyan-500"
                 >
                 <span>MP3 <span class="text-[10px]">(coming soon)</span></span>
+              </label>
+            </div>
+          </section>
+
+          <!-- Bit depth (hidden for MP3) -->
+          <section
+            v-if="draftFormat !== 'mp3'"
+            class="mb-5"
+          >
+            <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
+              Bit depth
+            </label>
+            <div class="flex flex-wrap items-center gap-4">
+              <label
+                v-for="bd in availableBitDepths"
+                :key="bd"
+                class="flex cursor-pointer items-center gap-1.5"
+              >
+                <input
+                  v-model.number="draftBitDepth"
+                  type="radio"
+                  :value="bd"
+                  class="accent-cyan-500"
+                >
+                <span>
+                  {{ bd }}-bit
+                  <span
+                    v-if="bd === 32 && draftFormat === 'wav'"
+                    class="text-[10px] text-zinc-500"
+                  >float</span>
+                </span>
+              </label>
+              <label
+                v-if="ditherApplies"
+                class="ml-2 flex cursor-pointer items-center gap-1.5"
+                title="TPDF dither randomises the quantisation error to remove harmonic distortion at 16-bit. Recommended ON."
+              >
+                <input
+                  v-model="draftDither"
+                  type="checkbox"
+                  class="accent-cyan-500"
+                >
+                <span class="text-xs">Dither</span>
               </label>
             </div>
           </section>
@@ -427,6 +544,29 @@ onBeforeUnmount(() => {
                 >({{ formatTime(lastClipEndMs) }})</span>
               </label>
             </div>
+          </section>
+
+          <!-- Tail seconds -->
+          <section class="mb-5">
+            <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
+              Tail
+            </label>
+            <div class="flex items-center gap-2">
+              <input
+                v-model="draftTailSecondsText"
+                type="text"
+                spellcheck="false"
+                inputmode="decimal"
+                class="w-20 rounded border px-2 py-0.5 font-mono text-xs text-zinc-100 outline-none focus:border-cyan-500"
+                :class="tailValid
+                  ? 'border-zinc-700 bg-zinc-950'
+                  : 'border-rose-600 bg-zinc-950'"
+              >
+              <span class="text-xs text-zinc-400">seconds of silence after the timeline</span>
+            </div>
+            <p class="mt-1 text-[10px] text-zinc-500">
+              Lets reverb / delay clips ring out past the timeline end. Range 0–60 s.
+            </p>
           </section>
 
           <!-- MP3 metadata (hidden when WAV) -->

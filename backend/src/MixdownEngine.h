@@ -97,12 +97,31 @@ struct Mp3Metadata
  */
 struct MixdownOptions
 {
-    enum class Format { Wav, Mp3 };
+    enum class Format { Wav, Mp3, Flac };
 
     juce::File outputFile;
     int outputSampleRate{44100};
     Format format{Format::Wav};
-    /** MP3 only; ignored for WAV. */
+    /** Output sample bit-depth.
+     *  - WAV: 16 / 24 (PCM) or 32 (IEEE float).
+     *  - FLAC: 16 / 24.
+     *  - MP3: ignored.
+     *  Validated by the dispatch handler against the chosen format. */
+    int bitDepth{16};
+    /** TPDF dither applied immediately before integer quantisation.
+     *  Only active when the target bit-depth is 16 (24-bit's noise
+     *  floor is ~144 dB so dither is rarely audible; 32-float has
+     *  no quantisation step). Default ON for 16-bit. */
+    bool dither{true};
+    /** Extra silence-tail in seconds appended AFTER the timeline
+     *  length. Independent of, and additive on top of, per-clip
+     *  processor tails (reverb/delay decay). Range [0, 60]; clamped
+     *  by the dispatch handler. The user-visible exported file
+     *  duration equals `lengthMs/1000 + tailSeconds + processor
+     *  tail` (the processor tail today is 0 — reverb/delay land
+     *  next). */
+    double tailSeconds{0.0};
+    /** MP3 only; ignored for WAV/FLAC. */
     int bitrateKbps{192};
     /** Total render duration in milliseconds. Resolved from
      *  `lengthMode` ('trim-to-last-clip' or 'fixed-duration') by the

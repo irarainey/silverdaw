@@ -59,8 +59,8 @@ declare global {
       projectFileExists(path: string): Promise<boolean>
       chooseProjectOpen(): Promise<string | null>
       chooseProjectSaveAs(defaultName: string): Promise<string | null>
-      chooseMixdownSaveAs(defaultPath: string, format: 'wav' | 'mp3'): Promise<string | null>
-      resolveMixdownDefaultPath(projectFilePath: string | null, projectName: string, format: 'wav' | 'mp3'): Promise<string>
+      chooseMixdownSaveAs(defaultPath: string, format: 'wav' | 'mp3' | 'flac'): Promise<string | null>
+      resolveMixdownDefaultPath(projectFilePath: string | null, projectName: string, format: 'wav' | 'mp3' | 'flac'): Promise<string>
       confirmMixdownOverwrite(filePath: string): Promise<'overwrite' | 'cancel' | 'not-found'>
       prepareProjectOpen(filePath: string): Promise<boolean>
       consumePendingOpenPath(): Promise<string | null>
