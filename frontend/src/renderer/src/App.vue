@@ -86,13 +86,16 @@ let unsubscribeOpenFromPath: (() => void) | null = null
 let unregisterShortcuts: (() => void) | null = null
 let cleanViewStateSave: Promise<void> | null = null
 
-// Mirror the library's "import in flight" flag onto the <body> as a class
-// so the global CSS rule (see <style> below) can swap the OS cursor to the
-// platform's "busy / progress" shape while files decode. Toggling a single
-// class on the root keeps it cheap and covers every element without each
-// component having to opt in.
-const stopImportingWatcher = watch(
-  () => library.isImporting,
+// Mirror "is the app doing a long-running background task" onto the
+// <body> as a single class so the global CSS rule (see <style> below)
+// can swap the OS cursor to the platform's "busy / progress" shape.
+// Combines library imports and mixdown renders — both are
+// long-running, both want the same visual feedback. Using one
+// watcher (rather than one per source) avoids the source-A-ends-
+// while-source-B-still-active race that would otherwise clear the
+// class prematurely.
+const stopBusyCursorWatcher = watch(
+  () => library.isImporting || mixdownState.value !== null,
   (busy) => {
     document.body.classList.toggle('is-importing', busy)
   },
@@ -627,7 +630,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalShortcutKey, { capture: true })
   disconnectBridge()
   stopAutosaveManager()
-  stopImportingWatcher()
+  stopBusyCursorWatcher()
   stopBridgeTimerWatcher()
   stopUnresolvedWatch()
   if (bridgeTimer) {
