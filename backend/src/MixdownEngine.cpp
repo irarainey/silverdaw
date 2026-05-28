@@ -190,6 +190,8 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
     }
     out->sourceRate = reader->sampleRate;
     out->sourceChannels = juce::jmax(1, static_cast<int>(reader->numChannels));
+    const auto readerLengthSamples = reader->lengthInSamples;
+    const auto sourceExt = sourceFile.getFileExtension().toLowerCase();
     if (out->sourceRate <= 0.0)
     {
         outError = "Source sample rate is zero for clip " + clip.id;
@@ -252,15 +254,28 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
     silverdaw::log::info(
         "mixdown",
         "offline clip built id=" + clip.id +
-            " sourceRate=" + juce::String(out->sourceRate, 1) +
-            " channels=" + juce::String(out->sourceChannels) +
+            " openedPath=" + clip.filePath +
+            " ext=" + sourceExt +
+            " readerSampleRate=" + juce::String(out->sourceRate, 1) +
+            " readerChannels=" + juce::String(out->sourceChannels) +
+            " readerLengthSamples=" + juce::String(readerLengthSamples) +
+            " libSampleRate=" + juce::String(clip.sourceSampleRate) +
+            " libChannels=" + juce::String(clip.sourceChannelCount) +
+            " sampleRateMismatch=" +
+                ((clip.sourceSampleRate > 0
+                  && std::abs(out->sourceRate - static_cast<double>(clip.sourceSampleRate)) > 0.5)
+                     ? juce::String("true")
+                     : juce::String("false")) +
             " offsetMs=" + juce::String(clip.offsetMs, 1) +
             " inMs=" + juce::String(clip.inMs, 1) +
             " durationMs=" + juce::String(clip.durationMs, 1) +
+            " trackGain=" + juce::String(trackGain, 4) +
             " warp=" + (clip.warpEnabled ? juce::String("on") : juce::String("off")) +
             (clip.warpEnabled ? (" tempoRatio=" + juce::String(clip.tempoRatio, 4) +
                                   " effDurationMs=" + juce::String(clip.effectiveDurationMs, 1) +
-                                  " mode=" + clip.warpMode)
+                                  " mode=" + clip.warpMode +
+                                  " semitones=" + juce::String(clip.semitones, 2) +
+                                  " cents=" + juce::String(clip.cents, 2))
                               : juce::String()));
     return out;
 }
@@ -447,7 +462,12 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         if (!trackTree.hasType(kTrack)) continue;
         MixdownSnapshot::TrackSnapshot track;
         track.id = trackTree.getProperty(kId).toString();
-        track.gain = project.getEffectiveTrackGain(track.id);
+        // Match live's clamp policy in AudioEngine::addClip / setClipGain
+        // (juce::jlimit(0.0F, 4.0F, ...)). Without this the export
+        // applies whatever raw gain ProjectState carries and diverges
+        // from playback for tracks whose user gain is outside [0, 4].
+        const float rawEffectiveGain = project.getEffectiveTrackGain(track.id);
+        track.gain = juce::jlimit(0.0F, 4.0F, rawEffectiveGain);
 
         const bool trackMuted = project.getTrackMuted(track.id);
         const bool trackSoloed = project.getTrackSoloed(track.id);
@@ -457,7 +477,8 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
                 juce::String(static_cast<double>(trackTree.getProperty(kGain, 1.0)), 4) +
                 " muted=" + (trackMuted ? juce::String("true") : juce::String("false")) +
                 " soloed=" + (trackSoloed ? juce::String("true") : juce::String("false")) +
-                " effectiveGain=" + juce::String(track.gain, 4) +
+                " effectiveGainRaw=" + juce::String(rawEffectiveGain, 4) +
+                " effectiveGainClamped=" + juce::String(track.gain, 4) +
                 (track.gain <= 0.0F ? " (silent — skipped)" : ""));
         if (track.gain <= 0.0F) continue;
 
@@ -468,8 +489,13 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             MixdownSnapshot::ClipSnapshot clip;
             clip.id = clipTree.getProperty(kId).toString();
             const auto libraryItemId = clipTree.getProperty(kLibraryItemId).toString();
+            clip.libraryItemId = libraryItemId;
             // Prefer the decoded-WAV cache when available so the worker
             // doesn't have to decode MP3 / WMA inside the render loop.
+            // NOTE: the dispatcher (Main.cpp) will overwrite this with
+            // `resolveEnginePlaybackPath(...)` so live and mixdown open
+            // the exact same bytes — keeps selective warp divergence
+            // off the table when the stored playback path is stale.
             clip.filePath = project.getLibraryItemPlaybackPath(libraryItemId);
             if (clip.filePath.isEmpty()) clip.filePath = project.getLibraryItemFilePath(libraryItemId);
             clip.offsetMs = static_cast<double>(clipTree.getProperty(kOffsetMs, 0.0));
@@ -697,6 +723,9 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         int64_t projectFramesRendered = 0;
         int64_t outputFramesWritten = 0;
         double peakAmplitude = 0.0;
+        double preClampPeakAmplitude = 0.0;
+        int64_t clippedSampleCount = 0;
+        int blockIndex = 0;
         int64_t lastProgressMs = juce::Time::getMillisecondCounter();
         juce::String writerError;
 
@@ -772,18 +801,44 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                 mixClipBlock(*cp, clipScratch, mixL, mixR, blockFrames);
             }
 
-            // Hard-clip and peak meter. Soft-saturation / proper master
-            // limiting is a future job; we match the previous behaviour.
+            // Peak-meter without clipping. The live engine has NO
+            // master limiter / hard clipper before the device, so
+            // applying one here would systematically attenuate
+            // exports of dense mixes vs what the user hears live.
+            // We still count samples that would have clipped so the
+            // diagnostic logs can flag inter-sample / over-0 dB
+            // material in the render.
+            double blockPeakL = 0.0;
+            double blockPeakR = 0.0;
             for (int i = 0; i < blockFrames; ++i)
             {
-                mixL[i] = juce::jlimit(-1.0F, 1.0F, mixL[i]);
-                mixR[i] = juce::jlimit(-1.0F, 1.0F, mixR[i]);
-                peakAmplitude = juce::jmax(peakAmplitude,
-                                           static_cast<double>(std::abs(mixL[i])),
-                                           static_cast<double>(std::abs(mixR[i])));
+                const double absL = std::abs(static_cast<double>(mixL[i]));
+                const double absR = std::abs(static_cast<double>(mixR[i]));
+                blockPeakL = juce::jmax(blockPeakL, absL);
+                blockPeakR = juce::jmax(blockPeakR, absR);
+                if (absL > 1.0 || absR > 1.0) ++clippedSampleCount;
                 mixInterleaved[static_cast<size_t>(i) * 2 + 0] = mixL[i];
                 mixInterleaved[static_cast<size_t>(i) * 2 + 1] = mixR[i];
             }
+            const double blockPeak = juce::jmax(blockPeakL, blockPeakR);
+            preClampPeakAmplitude = juce::jmax(preClampPeakAmplitude, blockPeak);
+            peakAmplitude = preClampPeakAmplitude; // same now that we don't clip
+            // Sparse per-block peak telemetry: every ~5 s of project
+            // time at projectSampleRate. Cheap and gives a good
+            // amplitude trace across the render.
+            const int peakLogStride = juce::jmax(1,
+                static_cast<int>(static_cast<double>(snapshot.projectSampleRate) * 5.0
+                                 / static_cast<double>(kBlockFrames)));
+            if ((blockIndex % peakLogStride) == 0)
+            {
+                silverdaw::log::debug(
+                    "mixdown",
+                    "block=" + juce::String(blockIndex) +
+                        " projectFrame=" + juce::String(projectFramesRendered) +
+                        " peakL=" + juce::String(blockPeakL, 4) +
+                        " peakR=" + juce::String(blockPeakR, 4));
+            }
+            ++blockIndex;
 
             if (!finalResampler.push(mixInterleaved.data(), blockFrames,
                                      isLastBlock, writeStereo))
@@ -874,7 +929,9 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                              "done filePath=" + targetFile.getFullPathName() +
                                  " durationMs=" + juce::String(options.lengthMs, 1) +
                                  " sampleRate=" + juce::String(options.outputSampleRate) +
-                                 " peakAmp=" + juce::String(peakAmplitude, 4));
+                                 " peakAmp=" + juce::String(preClampPeakAmplitude, 4) +
+                                 " clippedSamples=" + juce::String(clippedSampleCount) +
+                                 " outputFrames=" + juce::String(outputFramesWritten));
         broadcastDone(bridge, targetFile, options.lengthMs);
     });
 }

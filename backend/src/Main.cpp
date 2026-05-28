@@ -3392,6 +3392,36 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         // Snapshot the project on the message thread before the
         // worker dispatches — see rubber-duck finding A.
         auto snapshot = silverdaw::snapshotProjectForMixdown(projectState);
+        // Re-resolve each clip's source path through the SAME helper
+        // the live engine uses for CLIP_ADD. Without this, mixdown
+        // can open the original MP3/WMA for a clip whose stored
+        // playbackFilePath is empty/stale while live plays the
+        // decoded WAV cache — yielding selective warp failures and
+        // amplitude drift when the two readers' sample rates or
+        // padding/encoder-delay differ. See rubber-duck H2.
+        for (auto& trackSnap : snapshot.tracks)
+        {
+            for (auto& clipSnap : trackSnap.clips)
+            {
+                const auto rawSourcePath =
+                    projectState.getLibraryItemFilePath(clipSnap.libraryItemId);
+                const auto resolvedPath =
+                    resolveEnginePlaybackPath(rawSourcePath, projectState, decodedCache);
+                const auto previousPath = clipSnap.filePath;
+                if (resolvedPath.isNotEmpty()) clipSnap.filePath = resolvedPath;
+                silverdaw::log::info(
+                    "mixdown",
+                    "snapshot path resolve clip=" + clipSnap.id +
+                        " libraryItemId=" + clipSnap.libraryItemId +
+                        " rawSource=" + rawSourcePath +
+                        " storedPlayback=" + previousPath +
+                        " resolved=" + clipSnap.filePath +
+                        " changed=" +
+                            (previousPath != clipSnap.filePath
+                                 ? juce::String("true")
+                                 : juce::String("false")));
+            }
+        }
         if (snapshot.tracks.empty())
         {
             auto* obj = new juce::DynamicObject();

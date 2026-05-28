@@ -27,9 +27,18 @@ struct MixdownSnapshot
     struct ClipSnapshot
     {
         juce::String id;
-        /** Absolute on-disk path of the source audio. Resolved through
-         *  ProjectState's `playbackFilePath` first (decoded cache) so
-         *  the worker never decodes MP3 / WMA inside the render loop. */
+        /** Library item the clip references. Carried so Main.cpp can
+         *  re-resolve the engine playback path through the live
+         *  `resolveEnginePlaybackPath` helper (which also consults the
+         *  runtime decodedCache) — without that, mixdown can pick the
+         *  raw MP3/WMA for some clips while live plays the decoded WAV
+         *  cache, causing selective warp/volume divergence. */
+        juce::String libraryItemId;
+        /** Absolute on-disk path of the source audio. Set in two
+         *  passes: the snapshot fills it from
+         *  `getLibraryItemPlaybackPath` (decoded WAV if present); the
+         *  dispatcher overrides it with the same path the live engine
+         *  is using so both pipelines read identical bytes. */
         juce::String filePath;
         /** Where the clip starts on the project timeline (ms). */
         double offsetMs{0.0};
