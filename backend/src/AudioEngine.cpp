@@ -759,20 +759,6 @@ bool AudioEngine::setClipTrim(const juce::String& clipId, double startMs, double
 
 namespace
 {
-// Translate a renderer-side mode label into Rubber Band engine flags.
-// `'complex'` selects R3 / Finer (highest quality, highest CPU); the
-// other two share the R2 / Faster engine but differ in the auto-
-// curve / transient-handling preset Rubber Band picks internally.
-RubberBand::RubberBandStretcher::Options parseWarpMode(const juce::String& mode)
-{
-    using O = RubberBand::RubberBandStretcher;
-    if (mode == "complex") return O::OptionEngineFiner;
-    if (mode == "tonal")
-        return O::OptionEngineFaster | O::OptionTransientsSmooth | O::OptionWindowLong;
-    // Default — rhythmic. Suits drums and most general material.
-    return O::OptionEngineFaster | O::OptionTransientsCrisp;
-}
-
 // Build a freshly-prepared WarpProcessor with optional tempo and pitch
 // pre-applied. Shared between the per-clip and preview-voice rebuild
 // paths so they cannot drift in how they translate (mode, semitones,
@@ -784,6 +770,8 @@ std::unique_ptr<WarpProcessor> makeWarpProcessor(
     std::optional<double> semitones,
     std::optional<double> cents)
 {
+    // Use the canonical helper from WarpProcessor.h so live, mixdown
+    // and preview never drift in how they map mode strings to flags.
     const auto options = parseWarpMode(mode);
     auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels),
                                               sampleRate > 0 ? sampleRate : 44100.0,

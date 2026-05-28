@@ -128,10 +128,7 @@ juce::File uniqueWavFile(const juce::File& dir, const juce::String& baseName)
 
 RubberBand::RubberBandStretcher::Options sampleWarpModeOptions(const juce::String& mode)
 {
-    using O = RubberBand::RubberBandStretcher;
-    if (mode == "complex") return O::OptionEngineFiner;
-    if (mode == "tonal") return O::OptionEngineFaster | O::OptionTransientsSmooth | O::OptionWindowLong;
-    return O::OptionEngineFaster | O::OptionTransientsCrisp;
+    return silverdaw::parseWarpMode(mode);
 }
 
 struct SampleWarpOptions

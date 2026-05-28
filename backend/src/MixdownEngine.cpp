@@ -1,8 +1,10 @@
 #include "MixdownEngine.h"
 
+#include "AudioEngine.h"   // for silverdaw::OffsetSource
 #include "BridgeServer.h"
 #include "Log.h"
 #include "ProjectState.h"
+#include "WarpProcessor.h" // for parseWarpMode + WarpProcessor
 
 #include <algorithm>
 #include <cmath>
@@ -10,19 +12,38 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
-#include <rubberband/RubberBandStretcher.h>
 #include <samplerate.h>
 
 #if JUCE_WINDOWS
 #include <windows.h>
 #endif
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MixdownEngine — offline render.
+//
+// Topology mirrors the live engine exactly. Each clip drives the same per-clip
+// source graph the audio thread drives during playback:
+//
+//   AudioFormatReader
+//    → AudioFormatReaderSource           (at source sample rate)
+//    → OffsetSource(WarpProcessor)       (timeline window + warp at source rate)
+//    → AudioTransportSource              (no read-ahead, source→projectRate via
+//                                         JUCE's internal ResamplingAudioSource)
+//    → [future per-clip processor chain insert — at project rate]
+//    → mix bus                           (stereo at projectRate)
+//    → libsamplerate (project→outputRate, only when they differ)
+//    → WAV writer
+//
+// Sharing OffsetSource + WarpProcessor with the live engine means warped clips
+// in the exported file are produced by the exact same code path that produces
+// them at playback time: same priming, same start-delay discard, same mode
+// flags, same ratio interpretation. Any future clip-level processor (reverb,
+// EQ, compressor) gets inserted in one place and is used identically in both
+// live and offline.
+// ─────────────────────────────────────────────────────────────────────────────
+
 namespace silverdaw
 {
-
-// ───────────────────────────────────────────────────────────────────────────
-// Public helpers
-// ───────────────────────────────────────────────────────────────────────────
 
 const char* mixdownFailureCodeToString(MixdownFailureCode code) noexcept
 {
@@ -40,21 +61,17 @@ const char* mixdownFailureCodeToString(MixdownFailureCode code) noexcept
 namespace
 {
 
-// Match the live engine's render block. Anything from 256–8192 works
-// fine offline; 4096 keeps the per-clip warp/resampler overhead amortised
-// while still giving us tight cancellation granularity.
+// Bounded so WarpProcessor's internal 64-iteration safety cap is never the
+// limiting factor — matches the live engine's typical block sizes and gives
+// tight cancellation granularity.
 constexpr int kBlockFrames = 4096;
-// Max samples passed to RB in a single `process()` call. Mirrors
-// `WarpProcessor`'s 1024-sample chunk so we never exceed the
-// `setMaxProcessSize` budget regardless of how many frames libsamplerate
-// emits after source→project upsampling. Rubber Band asserts/corrupts
-// when called with more than its declared max.
-constexpr int kRbProcessChunk = 1024;
-// Min spacing between progress envelopes so the bridge doesn't drown
-// in JSON frames on small projects.
+// Min spacing between progress envelopes so the bridge isn't flooded.
 constexpr int kProgressMinIntervalMs = 50;
 constexpr int kOutputChannels = 2;
 constexpr int kWavBitsPerSample = 16;
+// Output capacity headroom for libsamplerate's final pass. Sized for the
+// largest expected upsample ratio (e.g. 44.1 → 48 kHz is ~1.09×).
+constexpr int kFinalResampleHeadroom = 16;
 
 double clipTimelineEndMs(const MixdownSnapshot::ClipSnapshot& clip) noexcept
 {
@@ -90,498 +107,12 @@ void broadcastFailed(BridgeServer& bridge, MixdownFailureCode code, const juce::
     bridge.broadcast("MIXDOWN_FAILED", juce::var(obj));
 }
 
-/**
- * Per-clip render state. Owns the file reader, the (optional) Rubber
- * Band stretcher, and the (optional) source→project libsamplerate
- * state. Pull-API: `pullProjectRateBlock(dst, n)` fills `n` frames of
- * project-rate stereo audio at `dst[ch][0..n-1]`, returning the number
- * of frames actually delivered (less than `n` once the clip ends).
- *
- * Channels are normalised to stereo at the libsamplerate stage — mono
- * sources are duplicated to L/R; >2-channel sources downmix to the
- * first two channels (we don't surround-mix).
- */
-class MixdownClipRenderer
-{
-public:
-    MixdownClipRenderer(const MixdownSnapshot::ClipSnapshot& clip,
-                        int projectSampleRate,
-                        juce::AudioFormatManager& formatManager)
-        : clipSnapshot(clip), projectRate(projectSampleRate)
-    {
-        const juce::File sourceFile(clip.filePath);
-        reader.reset(formatManager.createReaderFor(sourceFile));
-        if (reader == nullptr)
-        {
-            silverdaw::log::warn("mixdown",
-                                 "createReaderFor failed for clip " + clip.id + " path=" + clip.filePath);
-            return;
-        }
-        sourceRate = static_cast<int>(reader->sampleRate);
-        sourceChannels = static_cast<int>(reader->numChannels);
-        if (sourceRate <= 0 || sourceChannels <= 0)
-        {
-            reader.reset();
-            return;
-        }
-
-        // Seek the source reader to the clip's `inMs`. We read from
-        // there; the read cursor advances as the worker pulls samples.
-        const juce::int64 startSample =
-            static_cast<juce::int64>(clip.inMs * 0.001 * static_cast<double>(sourceRate));
-        readCursorSourceSamples = juce::jmax<juce::int64>(0, startSample);
-        endCursorSourceSamples = juce::jmin(
-            reader->lengthInSamples,
-            startSample + static_cast<juce::int64>(clip.durationMs * 0.001 * static_cast<double>(sourceRate)));
-
-        // libsamplerate state: source rate → project rate.
-        if (sourceRate != projectRate)
-        {
-            int srErr = 0;
-            srcState = src_new(SRC_SINC_MEDIUM_QUALITY, kOutputChannels, &srErr);
-            if (srcState == nullptr)
-            {
-                silverdaw::log::warn("mixdown",
-                                     "src_new failed err=" + juce::String(src_strerror(srErr))
-                                         + " for clip " + clip.id);
-            }
-        }
-
-        // Rubber Band realtime stretcher (only when warp is on).
-        // We mirror the live `WarpProcessor` exactly so the exported
-        // audio matches what the user heard during preview/playback:
-        //   - Realtime + PitchHighConsistency options.
-        //   - Mode mapping from AudioEngine.cpp (Faster + transient
-        //     flags for rhythmic/tonal, Finer for complex).
-        //   - Prime with `getPreferredStartPad()` zero frames, then
-        //     discard `getStartDelay()` output frames before returning
-        //     real audio.
-        // Driving the realtime engine offline is the documented
-        // approach when you can't pre-`study()` the input; offline
-        // mode with a pumped pull-API is NOT supported (verified by
-        // two independent rubber-duck audits) and was responsible for
-        // the "warped clips sound wrong" report this fix addresses.
-        if (clip.warpEnabled)
-        {
-            using RB = RubberBand::RubberBandStretcher;
-            int modeOptions = 0;
-            if (clip.warpMode == "complex")
-                modeOptions = RB::OptionEngineFiner;
-            else if (clip.warpMode == "tonal")
-                modeOptions = RB::OptionEngineFaster | RB::OptionTransientsSmooth | RB::OptionWindowLong;
-            else
-                modeOptions = RB::OptionEngineFaster | RB::OptionTransientsCrisp;
-            const int options = modeOptions
-                              | RB::OptionProcessRealTime
-                              | RB::OptionPitchHighConsistency;
-            stretcher = std::make_unique<RB>(static_cast<size_t>(projectRate),
-                                             static_cast<size_t>(kOutputChannels),
-                                             options,
-                                             1.0, // ratios set below via setters (matches live engine)
-                                             1.0);
-            const double timeRatio = juce::jmax(0.01, 1.0 / juce::jmax(0.0001, clip.tempoRatio));
-            const double pitchScale =
-                std::pow(2.0, (clip.semitones + (clip.cents / 100.0)) / 12.0);
-            stretcher->setTimeRatio(timeRatio);
-            stretcher->setPitchScale(pitchScale);
-
-            // Pre-feed `getPreferredStartPad()` zero frames and arm
-            // the `outputDelayToDiscard` budget. Identical to
-            // WarpProcessor::doReset(). Without this priming, the
-            // start of every warped clip would be unprimed garbage.
-            const int pad = static_cast<int>(stretcher->getPreferredStartPad());
-            outputDelayToDiscard = static_cast<int>(stretcher->getStartDelay());
-            if (pad > 0)
-            {
-                std::vector<float> zeros(static_cast<size_t>(pad), 0.0F);
-                const float* zeroPtrs[kOutputChannels] = {zeros.data(), zeros.data()};
-                int remaining = pad;
-                while (remaining > 0)
-                {
-                    const int chunk = juce::jmin(remaining, kRbProcessChunk);
-                    const float* chunkPtrs[kOutputChannels] = {zeroPtrs[0], zeroPtrs[1]};
-                    stretcher->process(chunkPtrs, static_cast<size_t>(chunk), false);
-                    remaining -= chunk;
-                }
-            }
-            silverdaw::log::info("mixdown",
-                                 "warp init clip=" + clip.id +
-                                     " mode=" + clip.warpMode +
-                                     " timeRatio=" + juce::String(timeRatio, 4) +
-                                     " pitchScale=" + juce::String(pitchScale, 4) +
-                                     " startPad=" + juce::String(pad) +
-                                     " startDelay=" + juce::String(outputDelayToDiscard));
-        }
-        ready = true;
-    }
-
-    ~MixdownClipRenderer()
-    {
-        if (srcState != nullptr) src_delete(srcState);
-    }
-
-    bool isReady() const noexcept { return ready; }
-
-    /**
-     * Fill `dst` with up to `framesWanted` frames of project-rate
-     * stereo audio. Returns the number of frames actually written.
-     * Returns 0 once the clip has been fully consumed (including the
-     * Rubber Band drain tail).
-     */
-    int pullProjectRateBlock(float* leftDst, float* rightDst, int framesWanted)
-    {
-        if (!ready || framesWanted <= 0) return 0;
-        int produced = 0;
-        while (produced < framesWanted)
-        {
-            // Drain the resampler's output buffer first if it has any.
-            if (!projectRateBuffer.empty())
-            {
-                const int avail = static_cast<int>(projectRateBuffer.size() / 2);
-                const int toCopy = juce::jmin(avail, framesWanted - produced);
-                for (int i = 0; i < toCopy; ++i)
-                {
-                    leftDst[produced + i] = projectRateBuffer[static_cast<size_t>(i) * 2 + 0];
-                    rightDst[produced + i] = projectRateBuffer[static_cast<size_t>(i) * 2 + 1];
-                }
-                projectRateBuffer.erase(projectRateBuffer.begin(),
-                                        projectRateBuffer.begin() + static_cast<long>(toCopy) * 2);
-                produced += toCopy;
-                if (produced >= framesWanted) return produced;
-            }
-
-            // Try to drain a Rubber Band tail before pulling more source.
-            if (stretcher != nullptr && sourceDrained)
-            {
-                const int rbAvailable = stretcher->available();
-                if (rbAvailable > 0)
-                {
-                    drainRubberBandIntoProjectRateBuffer(juce::jmin(rbAvailable, kBlockFrames));
-                    continue;
-                }
-                if (rbAvailable < 0)
-                {
-                    // -1 means RB is finished. No more output.
-                    return produced;
-                }
-            }
-
-            if (sourceDrained && stretcher == nullptr) return produced;
-
-            // Pull a chunk from the source reader, push through RB
-            // (or straight through), then resample to project rate.
-            const int sourceChunk = pullSourceAndForward();
-            if (sourceChunk == 0 && projectRateBuffer.empty())
-            {
-                // No source left and nothing in flight — done.
-                return produced;
-            }
-        }
-        return produced;
-    }
-
-private:
-    /**
-     * Read up to `kBlockFrames` source frames, downmix to stereo, run
-     * through Rubber Band (if warp on) and libsamplerate (if rates
-     * differ), and append the resulting project-rate frames to
-     * `projectRateBuffer`. Returns the number of *source* frames read
-     * this call (0 once the source window is exhausted).
-     */
-    int pullSourceAndForward()
-    {
-        if (reader == nullptr) return 0;
-
-        const juce::int64 remaining = endCursorSourceSamples - readCursorSourceSamples;
-        const int toRead = static_cast<int>(juce::jmin<juce::int64>(remaining, kBlockFrames));
-
-        std::array<float, kBlockFrames * 2> stereoBuf{};
-        int sourceFramesRead = 0;
-        if (toRead > 0)
-        {
-            // Decode straight into a stereo float buffer. Reader's
-            // `read()` writes interleaved per-channel — we down/up-mix
-            // ourselves so we get exactly L/R regardless of source ch.
-            juce::AudioBuffer<float> tmp(juce::jmax(2, sourceChannels), toRead);
-            tmp.clear();
-            float* writePtrs[16] = {};
-            for (int ch = 0; ch < tmp.getNumChannels(); ++ch)
-                writePtrs[ch] = tmp.getWritePointer(ch);
-
-            if (reader->read(writePtrs, tmp.getNumChannels(), readCursorSourceSamples, toRead))
-            {
-                const float* leftSrc = tmp.getReadPointer(0);
-                const float* rightSrc = (sourceChannels >= 2) ? tmp.getReadPointer(1) : leftSrc;
-                for (int i = 0; i < toRead; ++i)
-                {
-                    stereoBuf[static_cast<size_t>(i) * 2 + 0] = leftSrc[i];
-                    stereoBuf[static_cast<size_t>(i) * 2 + 1] = rightSrc[i];
-                }
-                sourceFramesRead = toRead;
-                readCursorSourceSamples += toRead;
-            }
-        }
-
-        if (sourceFramesRead <= 0)
-        {
-            // Source exhausted. The fix-up order matters: flush the
-            // libsamplerate tail FIRST, push any leftover frames
-            // through Rubber Band, THEN signal RB final=true. Doing
-            // them in the wrong order discards the SRC tail and
-            // ends RB early — the symptom was warped clips ending a
-            // few ms before their effective duration with the tail
-            // missing.
-            if (srcState != nullptr && !srcEndPushed)
-            {
-                std::array<float, 2> dummyIn{};
-                std::array<float, kBlockFrames * 2> dummyOut{};
-                SRC_DATA srcData{};
-                srcData.data_in = dummyIn.data();
-                srcData.data_out = dummyOut.data();
-                srcData.input_frames = 0;
-                srcData.output_frames = kBlockFrames;
-                srcData.end_of_input = 1;
-                srcData.src_ratio = static_cast<double>(projectRate) / juce::jmax(1, sourceRate);
-                const int err = src_process(srcState, &srcData);
-                srcEndPushed = true;
-                if (err == 0 && srcData.output_frames_gen > 0)
-                {
-                    const int tailFrames = static_cast<int>(srcData.output_frames_gen);
-                    if (stretcher != nullptr)
-                    {
-                        // Feed the SRC tail through RB so it gets the
-                        // same warp/pitch treatment as the rest of
-                        // the clip. Chunked to respect maxProcessSize.
-                        std::vector<float> tailL(static_cast<size_t>(tailFrames));
-                        std::vector<float> tailR(static_cast<size_t>(tailFrames));
-                        for (int i = 0; i < tailFrames; ++i)
-                        {
-                            tailL[static_cast<size_t>(i)] = dummyOut[static_cast<size_t>(i) * 2 + 0];
-                            tailR[static_cast<size_t>(i)] = dummyOut[static_cast<size_t>(i) * 2 + 1];
-                        }
-                        int cursor = 0;
-                        while (cursor < tailFrames)
-                        {
-                            const int chunk = juce::jmin(tailFrames - cursor, kRbProcessChunk);
-                            const float* p[kOutputChannels] = {
-                                tailL.data() + cursor, tailR.data() + cursor};
-                            stretcher->process(p, static_cast<size_t>(chunk), false);
-                            cursor += chunk;
-                            const int rbAvail = stretcher->available();
-                            if (rbAvail > 0)
-                            {
-                                drainRubberBandIntoProjectRateBuffer(juce::jmin(rbAvail, kBlockFrames));
-                            }
-                        }
-                    }
-                    else
-                    {
-                        projectRateBuffer.insert(projectRateBuffer.end(), dummyOut.begin(),
-                                                 dummyOut.begin() + tailFrames * 2);
-                    }
-                }
-            }
-            if (stretcher != nullptr && !sourceDrained)
-            {
-                // Final RB push with `final=true` so internal latency
-                // flushes. Passing an empty buffer with samples=0 is
-                // explicitly valid in RB R3.
-                std::array<const float*, kOutputChannels> emptyPtrs{stereoBuf.data(), stereoBuf.data()};
-                stretcher->process(emptyPtrs.data(), 0, true);
-                sourceDrained = true;
-            }
-            else
-            {
-                sourceDrained = true;
-            }
-            return 0;
-        }
-
-        // Forward path: stereoBuf has `sourceFramesRead` source-rate
-        // stereo frames. Push through Rubber Band if active, then to
-        // libsamplerate if active.
-        if (stretcher != nullptr)
-        {
-            // Rubber Band's `process` is at project rate. If the
-            // source rate differs from the project rate, we first
-            // resample source→project, then push to RB. Otherwise
-            // skip the resample and go straight to RB.
-            std::vector<float> rbInputInterleaved;
-            int rbInputFrames = sourceFramesRead;
-            if (sourceRate != projectRate && srcState != nullptr)
-            {
-                const double ratio = static_cast<double>(projectRate) / static_cast<double>(sourceRate);
-                const int worst = static_cast<int>(std::ceil(sourceFramesRead * ratio)) + 8;
-                std::vector<float> resampled(static_cast<size_t>(worst) * 2);
-                SRC_DATA srcData{};
-                srcData.data_in = stereoBuf.data();
-                srcData.input_frames = sourceFramesRead;
-                srcData.data_out = resampled.data();
-                srcData.output_frames = worst;
-                srcData.end_of_input = 0;
-                srcData.src_ratio = ratio;
-                const int err = src_process(srcState, &srcData);
-                if (err != 0)
-                {
-                    silverdaw::log::warn("mixdown",
-                                         juce::String("src_process(warp) err=") + src_strerror(err));
-                    return sourceFramesRead;
-                }
-                rbInputInterleaved.assign(resampled.begin(),
-                                          resampled.begin() + srcData.output_frames_gen * 2);
-                rbInputFrames = static_cast<int>(srcData.output_frames_gen);
-            }
-            else
-            {
-                rbInputInterleaved.assign(stereoBuf.begin(), stereoBuf.begin() + sourceFramesRead * 2);
-                rbInputFrames = sourceFramesRead;
-            }
-            // De-interleave for RB and feed in `kRbProcessChunk`-sized
-            // sub-blocks. Rubber Band's `setMaxProcessSize` budget
-            // (1024 to match WarpProcessor) is enforced per call —
-            // exceeding it asserts or corrupts internal buffers,
-            // which was a confirmed cause of "warp sounds wrong"
-            // when source rate > project rate (e.g. 22.05k→48k yields
-            // ~8916 frames from a 4096-frame source chunk).
-            std::vector<float> rbInL(static_cast<size_t>(rbInputFrames));
-            std::vector<float> rbInR(static_cast<size_t>(rbInputFrames));
-            for (int i = 0; i < rbInputFrames; ++i)
-            {
-                rbInL[static_cast<size_t>(i)] = rbInputInterleaved[static_cast<size_t>(i) * 2 + 0];
-                rbInR[static_cast<size_t>(i)] = rbInputInterleaved[static_cast<size_t>(i) * 2 + 1];
-            }
-            int cursor = 0;
-            while (cursor < rbInputFrames)
-            {
-                const int chunk = juce::jmin(rbInputFrames - cursor, kRbProcessChunk);
-                const float* rbInPtrs[kOutputChannels] = {
-                    rbInL.data() + cursor, rbInR.data() + cursor};
-                stretcher->process(rbInPtrs, static_cast<size_t>(chunk), false);
-                cursor += chunk;
-                // Drain any output ready after each sub-block so RB's
-                // internal output buffer doesn't grow unboundedly on
-                // tempoRatio < 1.0 (long output per input).
-                const int rbAvail = stretcher->available();
-                if (rbAvail > 0)
-                {
-                    drainRubberBandIntoProjectRateBuffer(juce::jmin(rbAvail, kBlockFrames));
-                }
-            }
-        }
-        else if (sourceRate != projectRate && srcState != nullptr)
-        {
-            // No warp, but resample source→project.
-            const double ratio = static_cast<double>(projectRate) / static_cast<double>(sourceRate);
-            const int worst = static_cast<int>(std::ceil(sourceFramesRead * ratio)) + 8;
-            std::vector<float> resampled(static_cast<size_t>(worst) * 2);
-            SRC_DATA srcData{};
-            srcData.data_in = stereoBuf.data();
-            srcData.input_frames = sourceFramesRead;
-            srcData.data_out = resampled.data();
-            srcData.output_frames = worst;
-            srcData.end_of_input = 0;
-            srcData.src_ratio = ratio;
-            const int err = src_process(srcState, &srcData);
-            if (err != 0)
-            {
-                silverdaw::log::warn("mixdown", juce::String("src_process err=") + src_strerror(err));
-                return sourceFramesRead;
-            }
-            projectRateBuffer.insert(projectRateBuffer.end(),
-                                     resampled.begin(),
-                                     resampled.begin() + srcData.output_frames_gen * 2);
-        }
-        else
-        {
-            // No warp, no resample — interleaved stereo straight in.
-            projectRateBuffer.insert(projectRateBuffer.end(),
-                                     stereoBuf.begin(),
-                                     stereoBuf.begin() + sourceFramesRead * 2);
-        }
-        return sourceFramesRead;
-    }
-
-    void drainRubberBandIntoProjectRateBuffer(int frames)
-    {
-        if (stretcher == nullptr || frames <= 0) return;
-        std::vector<float> outL(static_cast<size_t>(frames));
-        std::vector<float> outR(static_cast<size_t>(frames));
-        float* outPtrs[kOutputChannels] = {outL.data(), outR.data()};
-        const int got = static_cast<int>(stretcher->retrieve(outPtrs, static_cast<size_t>(frames)));
-        // Discard initial latency frames before publishing real audio.
-        // Mirrors WarpProcessor's discardScratch path. Without this,
-        // the first `getStartDelay()` output frames are unprimed
-        // RB internal state and shift every clip's audio later on
-        // the timeline by that amount — confirmed by both rubber-
-        // duck audits as a contributing cause of "warp/pitch sound
-        // wrong" reports.
-        int writeOffset = 0;
-        if (outputDelayToDiscard > 0 && got > 0)
-        {
-            const int drop = juce::jmin(got, outputDelayToDiscard);
-            outputDelayToDiscard -= drop;
-            writeOffset = drop;
-        }
-        for (int i = writeOffset; i < got; ++i)
-        {
-            projectRateBuffer.push_back(outL[static_cast<size_t>(i)]);
-            projectRateBuffer.push_back(outR[static_cast<size_t>(i)]);
-        }
-    }
-
-    MixdownSnapshot::ClipSnapshot clipSnapshot;
-    int projectRate{0};
-    int sourceRate{0};
-    int sourceChannels{0};
-    std::unique_ptr<juce::AudioFormatReader> reader;
-    std::unique_ptr<RubberBand::RubberBandStretcher> stretcher;
-    SRC_STATE* srcState{nullptr};
-    juce::int64 readCursorSourceSamples{0};
-    juce::int64 endCursorSourceSamples{0};
-    bool sourceDrained{false};
-    bool srcEndPushed{false};
-    bool ready{false};
-    /** Number of RB output frames still to discard (initial latency).
-     *  Mirrors WarpProcessor::outputDelayToDiscard. Until this hits
-     *  zero, every retrieved frame goes to /dev/null instead of into
-     *  the mix. */
-    int outputDelayToDiscard{0};
-    /** Output buffer at project rate, interleaved stereo. Pull-API
-     *  drains from the front. */
-    std::vector<float> projectRateBuffer;
-};
-
-/**
- * Walk every clip on every track and feed `framesWanted` frames into
- * `mixL`/`mixR` (project rate). `timelineCursorMs` is the start of the
- * block in project time. Returns the maximum absolute sample seen so
- * we can log peak level after the render.
- */
-struct ActiveClip
-{
-    std::unique_ptr<MixdownClipRenderer> renderer;
-    double clipStartMs{0.0};
-    double clipEndMs{0.0};
-    float trackGain{1.0F};
-    bool started{false}; // true once we've started pulling frames
-    /** Number of project-rate frames already pulled — used to figure
-     *  out where in the timeline window the next pull goes. */
-    int64_t framesPulled{0};
-};
-
-/**
- * Lightweight wrapper around `MoveFileExW` (Windows) / `std::rename`
- * (fallback) that overwrites the destination if it exists. Used to
- * commit the `<file>.tmp` → `<file>` finalize atomically.
- */
+// Atomic "<file>.tmp" → "<file>" finalize. Same code as before.
 bool atomicReplace(const juce::File& tmp, const juce::File& target)
 {
 #if JUCE_WINDOWS
     const auto tmpStr = tmp.getFullPathName().toWideCharPointer();
     const auto targetStr = target.getFullPathName().toWideCharPointer();
-    // MOVEFILE_REPLACE_EXISTING + MOVEFILE_WRITE_THROUGH = atomic
-    // replace semantics on the same volume. If target doesn't exist
-    // yet this still succeeds (the flag is "replace if present").
     return ::MoveFileExW(tmpStr, targetStr,
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
@@ -590,11 +121,288 @@ bool atomicReplace(const juce::File& tmp, const juce::File& target)
 #endif
 }
 
+/**
+ * Per-clip offline source chain. Owns the exact same JUCE graph nodes the
+ * live engine uses, just driven from this worker thread instead of the audio
+ * thread. `pull()` fills a stereo buffer at projectRate; the resampling +
+ * warp + timeline-windowing all happen inside the wrapped JUCE chain.
+ *
+ * The chain holds a non-owning pointer to WarpProcessor (mirroring live —
+ * OffsetSource doesn't own it), so the unique_ptr for the warp processor
+ * must outlive the offsetSource. Destruction order in the struct (members
+ * are destroyed in reverse declaration order) is chosen so the transport
+ * tears down first, then the offsetSource, then the warp processor, then
+ * the reader source — matching the live engine's teardown order.
+ */
+struct OfflineClip
+{
+    juce::String id;
+    float trackGain{1.0F};
+    double sourceRate{0.0};
+    int sourceChannels{1};
+    /** Timeline frames at projectRate at which this clip is finished — once
+     *  the master cursor passes this we stop pulling from this clip. */
+    juce::int64 timelineEndFrames{0};
+    /** Set true once the timeline cursor has cleared timelineEndFrames AND
+     *  any internal tail has been drained. Retired clips are skipped in the
+     *  pump loop and their chain is left in place until the engine tears
+     *  down — keeping it alive is cheap (handles, no audio work). */
+    bool retired{false};
+
+    // Declared in chain order; destroyed in reverse — see comment above.
+    std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
+    std::unique_ptr<WarpProcessor> warp;
+    std::unique_ptr<OffsetSource> offsetSource;
+    std::unique_ptr<juce::AudioTransportSource> transport;
+};
+
+/**
+ * Build one OfflineClip from the snapshot entry. Returns nullptr on failure
+ * (the caller decides how to surface that). `formatManager` must outlive the
+ * returned clip.
+ */
+std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapshot& clip,
+                                              float trackGain,
+                                              int projectSampleRate,
+                                              juce::AudioFormatManager& formatManager,
+                                              juce::String& outError)
+{
+    auto out = std::make_unique<OfflineClip>();
+    out->id = clip.id;
+    out->trackGain = trackGain;
+
+    const juce::File sourceFile(clip.filePath);
+    auto* reader = formatManager.createReaderFor(sourceFile);
+    if (reader == nullptr)
+    {
+        outError = "createReaderFor failed for clip " + clip.id + " path=" + clip.filePath;
+        return nullptr;
+    }
+    out->sourceRate = reader->sampleRate;
+    out->sourceChannels = juce::jmax(1, static_cast<int>(reader->numChannels));
+    if (out->sourceRate <= 0.0)
+    {
+        outError = "Source sample rate is zero for clip " + clip.id;
+        delete reader;
+        return nullptr;
+    }
+
+    // ReaderSource takes ownership of the reader (deleteWhenRemoved=true).
+    out->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
+
+    // OffsetSource positions are SOURCE-rate frames — identical convention
+    // to AudioEngine::addClip. AudioTransportSource's internal resampler
+    // maps render-rate (projectRate) cursors back to source-rate cursors,
+    // so the offset/in/duration we set here are observed correctly when
+    // the transport advances.
+    out->offsetSource = std::make_unique<OffsetSource>(out->readerSource.get());
+    out->offsetSource->setOffsetSamples(
+        static_cast<juce::int64>(clip.offsetMs * out->sourceRate / 1000.0));
+    out->offsetSource->setInSourceSamples(
+        static_cast<juce::int64>(clip.inMs * out->sourceRate / 1000.0));
+    out->offsetSource->setClipDurationSamples(
+        static_cast<juce::int64>(clip.durationMs * out->sourceRate / 1000.0));
+
+    if (clip.warpEnabled)
+    {
+        // Same constructor invocation pattern as AudioEngine::makeWarpProcessor.
+        // WarpProcessor is at SOURCE rate so its priming, start-delay and
+        // transient analysis windows are identical to live.
+        out->warp = std::make_unique<WarpProcessor>(out->sourceChannels,
+                                                    out->sourceRate,
+                                                    parseWarpMode(clip.warpMode));
+        out->warp->prepareToPlay(kBlockFrames);
+        if (clip.tempoRatio > 0.0) out->warp->setTempoRatio(clip.tempoRatio);
+        const double pitchScale =
+            std::pow(2.0, (clip.semitones + (clip.cents / 100.0)) / 12.0);
+        out->warp->setPitchScale(pitchScale);
+        out->offsetSource->setWarpProcessor(out->warp.get());
+        out->offsetSource->requestWarpReseek();
+    }
+
+    out->transport = std::make_unique<juce::AudioTransportSource>();
+    // readAhead=0, no background thread — offline rendering wants
+    // deterministic synchronous reads. The transport still gets the
+    // sourceSampleRateToCorrectFor argument so JUCE inserts its
+    // internal ResamplingAudioSource between OffsetSource (source rate)
+    // and us (project rate).
+    out->transport->setSource(out->offsetSource.get(),
+                              0, nullptr,
+                              out->sourceRate, out->sourceChannels);
+    out->transport->prepareToPlay(kBlockFrames, static_cast<double>(projectSampleRate));
+    out->transport->setPosition(0.0);
+    out->transport->start();
+
+    // Compute timeline end in projectRate frames so the pump loop can
+    // retire the clip when its window closes.
+    const double endMs = clipTimelineEndMs(clip);
+    out->timelineEndFrames =
+        static_cast<juce::int64>(std::ceil(endMs * static_cast<double>(projectSampleRate) / 1000.0));
+
+    silverdaw::log::info(
+        "mixdown",
+        "offline clip built id=" + clip.id +
+            " sourceRate=" + juce::String(out->sourceRate, 1) +
+            " channels=" + juce::String(out->sourceChannels) +
+            " offsetMs=" + juce::String(clip.offsetMs, 1) +
+            " inMs=" + juce::String(clip.inMs, 1) +
+            " durationMs=" + juce::String(clip.durationMs, 1) +
+            " warp=" + (clip.warpEnabled ? juce::String("on") : juce::String("off")) +
+            (clip.warpEnabled ? (" tempoRatio=" + juce::String(clip.tempoRatio, 4) +
+                                  " effDurationMs=" + juce::String(clip.effectiveDurationMs, 1) +
+                                  " mode=" + clip.warpMode)
+                              : juce::String()));
+    return out;
+}
+
+/**
+ * Pull one block of stereo audio at projectRate from `clip`, sum into mixL/mixR
+ * with `clip.trackGain` applied. Mono sources are duplicated L→R; sources with
+ * more than 2 channels use the first two. The transport's read-position
+ * advances by exactly `blockFrames` whether we sum its output or not, so the
+ * clip stays sample-aligned with the master timeline even when retired.
+ */
+void mixClipBlock(OfflineClip& clip,
+                  juce::AudioBuffer<float>& clipScratch,
+                  float* mixL, float* mixR, int blockFrames)
+{
+    if (clip.retired) return;
+    clipScratch.clear();
+    juce::AudioSourceChannelInfo info(&clipScratch, 0, blockFrames);
+    clip.transport->getNextAudioBlock(info);
+
+    // The transport fills as many channels as the source has (up to the
+    // buffer's channel count). For mono, channel 1 is left zero by us —
+    // duplicate ch0 → ch1 so the mix bus gets balanced stereo.
+    const float* l = clipScratch.getReadPointer(0);
+    const float* r = clip.sourceChannels >= 2 ? clipScratch.getReadPointer(1)
+                                              : clipScratch.getReadPointer(0);
+    const float g = clip.trackGain;
+    for (int i = 0; i < blockFrames; ++i)
+    {
+        mixL[i] += l[i] * g;
+        mixR[i] += r[i] * g;
+    }
+}
+
+/**
+ * Streaming libsamplerate sink used for the final projectRate→outputRate pass.
+ * Maintains the input cursor across calls and properly handles the case where
+ * `src_process` consumes fewer input frames than supplied (a real streaming
+ * bug in the old implementation — leftover frames were silently dropped,
+ * causing compounding drift in long renders).
+ *
+ * Use:
+ *   FinalResampler r(srcRate, dstRate);
+ *   for each block: r.push(mixInterleaved, frames, isLast, writeCallback);
+ *   r.flush(writeCallback); // after last push with isLast=true
+ *
+ * `writeCallback(const float* interleaved, int frames)` is invoked for every
+ * batch of output frames produced. Throws nothing; returns false if the
+ * resampler had a hard error (callers should treat as fatal).
+ */
+class FinalResampler
+{
+public:
+    FinalResampler(int srcRate, int dstRate) : srcRate_(srcRate), dstRate_(dstRate)
+    {
+        if (srcRate_ != dstRate_)
+        {
+            int err = 0;
+            state_ = src_new(SRC_SINC_MEDIUM_QUALITY, kOutputChannels, &err);
+            if (state_ == nullptr)
+            {
+                lastError_ = src_strerror(err);
+            }
+        }
+    }
+    ~FinalResampler() { if (state_) src_delete(state_); }
+
+    bool ok() const { return srcRate_ == dstRate_ || state_ != nullptr; }
+    const char* error() const { return lastError_; }
+    bool active() const { return state_ != nullptr; }
+
+    template <typename WriteFn>
+    bool push(const float* interleaved, int inputFrames, bool endOfInput, WriteFn&& write)
+    {
+        if (state_ == nullptr)
+        {
+            // Pass-through — no resampling needed.
+            return write(interleaved, inputFrames);
+        }
+        const double ratio = static_cast<double>(dstRate_) / static_cast<double>(srcRate_);
+        int consumed = 0;
+        // Loop until libsamplerate has consumed every input frame. Without
+        // this loop, output-buffer pressure can leave input_frames_used <
+        // input_frames and the leftover would be silently dropped — that
+        // was a confirmed source of timeline drift in the previous
+        // implementation.
+        while (consumed < inputFrames || endOfInput)
+        {
+            const int remainingInput = inputFrames - consumed;
+            const int outputCap =
+                static_cast<int>(std::ceil(juce::jmax(remainingInput, 1) * ratio))
+                + kFinalResampleHeadroom;
+            scratch_.resize(static_cast<size_t>(outputCap) * 2);
+
+            SRC_DATA d{};
+            d.data_in = (remainingInput > 0)
+                            ? interleaved + static_cast<std::ptrdiff_t>(consumed) * 2
+                            : nullptr;
+            d.input_frames = remainingInput;
+            d.data_out = scratch_.data();
+            d.output_frames = outputCap;
+            d.end_of_input = endOfInput ? 1 : 0;
+            d.src_ratio = ratio;
+
+            const int err = src_process(state_, &d);
+            if (err != 0)
+            {
+                lastError_ = src_strerror(err);
+                return false;
+            }
+            consumed += static_cast<int>(d.input_frames_used);
+
+            if (d.output_frames_gen > 0)
+            {
+                if (!write(scratch_.data(), static_cast<int>(d.output_frames_gen)))
+                {
+                    return false;
+                }
+            }
+
+            // Termination: if we've consumed everything and either we're
+            // not flushing, or we are flushing but libsamplerate produced
+            // no further output, we're done with this call.
+            if (consumed >= inputFrames
+                && (!endOfInput || d.output_frames_gen == 0))
+            {
+                break;
+            }
+            // Guard against pathological loops: if no progress at all, bail
+            // out rather than spin forever. Shouldn't happen with a
+            // well-sized output buffer but worth keeping honest.
+            if (d.input_frames_used == 0 && d.output_frames_gen == 0)
+            {
+                break;
+            }
+        }
+        return true;
+    }
+
+private:
+    int srcRate_{0};
+    int dstRate_{0};
+    SRC_STATE* state_{nullptr};
+    std::vector<float> scratch_;
+    const char* lastError_{nullptr};
+};
+
 } // anonymous namespace
 
-// ───────────────────────────────────────────────────────────────────────────
-// Snapshot
-// ───────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Snapshot (unchanged from previous implementation)
+// ─────────────────────────────────────────────────────────────────────────────
 
 MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
 {
@@ -604,10 +412,6 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
                                      ? explicitRate
                                      : 44100;
 
-    // Identifiers are private members of ProjectState — match its
-    // wire / JSON property names by string. These mirror the
-    // identifiers in ProjectState.cpp (kept lower-case to match the
-    // existing ValueTree node properties).
     static const juce::Identifier kTrack{"TRACK"};
     static const juce::Identifier kClip{"CLIP"};
     static const juce::Identifier kLibrary{"LIBRARY"};
@@ -634,17 +438,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         MixdownSnapshot::TrackSnapshot track;
         track.id = trackTree.getProperty(kId).toString();
         track.gain = project.getEffectiveTrackGain(track.id);
-        // Mute and solo round-trip through the project file now (as
-        // separate persisted `kMuted` / `kSoloed` properties on the
-        // track ValueTree), and the backend's
-        // `getEffectiveTrackGain` folds them into a single audible
-        // value. So a muted track has gain=0 here, and when a solo
-        // is active every non-soloed track has gain=0 too. Skipping
-        // zero-gain tracks at snapshot time avoids opening their
-        // source readers, running Rubber Band on them, and wasting
-        // time on audio that would just be multiplied by zero. The
-        // per-track log line below is an unambiguous record of which
-        // tracks contributed to the export and at what gain.
+
         const bool trackMuted = project.getTrackMuted(track.id);
         const bool trackSoloed = project.getTrackSoloed(track.id);
         silverdaw::log::info(
@@ -664,10 +458,8 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             MixdownSnapshot::ClipSnapshot clip;
             clip.id = clipTree.getProperty(kId).toString();
             const auto libraryItemId = clipTree.getProperty(kLibraryItemId).toString();
-            // Prefer the decoded-WAV cache when available so the
-            // worker doesn't have to decode MP3 / WMA inside the
-            // render loop. Falls back to the original source path
-            // if the cache hasn't been built yet.
+            // Prefer the decoded-WAV cache when available so the worker
+            // doesn't have to decode MP3 / WMA inside the render loop.
             clip.filePath = project.getLibraryItemPlaybackPath(libraryItemId);
             if (clip.filePath.isEmpty()) clip.filePath = project.getLibraryItemFilePath(libraryItemId);
             clip.offsetMs = static_cast<double>(clipTree.getProperty(kOffsetMs, 0.0));
@@ -675,36 +467,21 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             clip.durationMs = static_cast<double>(clipTree.getProperty(kDurationMs, 0.0));
             clip.warpEnabled = static_cast<bool>(clipTree.getProperty(kWarpEnabled, false));
             clip.warpMode = clipTree.getProperty(kWarpMode, "rhythmic").toString();
-            // tempoRatio and effectiveDurationMs come from the
-            // authoritative `getClipEffectiveTiming` helper rather
-            // than direct ValueTree property reads. The persisted
-            // `tempoRatio` field is ONLY set when the user has
-            // explicitly pinned a ratio via the Warp dialog; in the
-            // common "follow project BPM" case the property is
-            // absent and the live engine computes the ratio as
-            // `projectBpm / sourceBpm` on the fly. Reading the
-            // ValueTree directly with a default of 1.0 (the previous
-            // bug) gave warped clips a no-op stretch, so the
-            // exported audio played at native source speed while the
-            // timeline expected the warped speed — clips drifted
-            // progressively off beat. This was confirmed as the
-            // dominant cause of "warp not in time" via dual rubber-
-            // duck audits.
+            // tempoRatio and effectiveDurationMs come from the authoritative
+            // `getClipEffectiveTiming` helper. Reading kTempoRatio directly
+            // from the ValueTree with a default of 1.0 was a previous bug —
+            // it ignored the "follow project BPM" case where the property
+            // is absent and the live engine derives the ratio as
+            // projectBpm/sourceBpm on the fly.
             const auto timing = project.getClipEffectiveTiming(clip.id);
             clip.tempoRatio = timing.tempoRatio > 0.0 ? timing.tempoRatio : 1.0;
             clip.semitones = static_cast<double>(clipTree.getProperty(kSemitones, 0.0));
             clip.cents = static_cast<double>(clipTree.getProperty(kCents, 0.0));
-
-            // Effective timeline duration also comes from
-            // `getClipEffectiveTiming` — the previous "read
-            // kEffectiveDurationMs from the ValueTree" path was a
-            // no-op because that field is only emitted into the
-            // PROJECT_STATE JSON, never written back to the tree.
             clip.effectiveDurationMs = timing.durationMs > 0.0 ? timing.durationMs : clip.durationMs;
 
-            // Pull the source's native rate from the library item
-            // so the worker can stick the right libsamplerate ratio
-            // on the per-clip resampler.
+            // Pull the source's native rate from the library item — useful
+            // for diagnostics; the renderer reads the authoritative rate
+            // off the reader at build time.
             const auto library = root.getChildWithName(kLibrary);
             if (library.isValid())
             {
@@ -757,9 +534,9 @@ double computeLastClipEndMs(const MixdownSnapshot& snapshot)
     return maxEnd;
 }
 
-// ───────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Render
-// ───────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 void renderMixdownAsync(MixdownSnapshot snapshot,
                         MixdownOptions options,
@@ -771,8 +548,6 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
     busyFlag.store(true);
     cancelFlag.store(false);
 
-    // Capture by value into the worker lambda. `bridge` is a long-
-    // lived singleton; cancelFlag / busyFlag are atomic refs in Main.
     pool.addJob([snapshot = std::move(snapshot),
                  options = std::move(options),
                  &bridge,
@@ -794,11 +569,6 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
 
         if (options.format == MixdownOptions::Format::Mp3)
         {
-            // Placeholder until LAME integration lands as a focused
-            // follow-up. The dialog disables this radio so this branch
-            // should be unreachable from a properly-wired UI, but we
-            // surface a clear, code-tagged error if a stray envelope
-            // arrives.
             failWith(MixdownFailureCode::Invalid,
                      "MP3 export is not yet available — please select WAV.");
             return;
@@ -823,9 +593,8 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
 
         broadcastProgress(bridge, 0.0, "prepare");
 
-        // Open writer on a `<file>.tmp` sibling in the same dir so
-        // the atomic-finalize move is same-volume (Windows requires
-        // this for true atomic semantics).
+        // Open writer on `<file>.tmp` so the rename is atomic and
+        // same-volume on Windows.
         const auto targetFile = options.outputFile;
         const auto parentDir = targetFile.getParentDirectory();
         if (!parentDir.exists() && !parentDir.createDirectory())
@@ -861,16 +630,15 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             return;
         }
 
-        // Build the active-clip list. We pre-construct every renderer
-        // because the typical project has tens of clips, not
-        // thousands — keeping every reader open for the duration of
-        // the render is well within OS handle limits.
-        std::vector<std::pair<int, ActiveClip>> activeClips; // (track index, clip state)
-        activeClips.reserve(snapshot.tracks.size() * 8);
-        int totalClips = 0;
-        for (size_t ti = 0; ti < snapshot.tracks.size(); ++ti)
+        // Build the per-clip offline chains. We pre-build every clip because
+        // even large projects have tens of clips, not thousands — keeping
+        // their readers open for the duration of the render is well within
+        // OS handle limits and avoids stop-the-world reader construction
+        // mid-render.
+        std::vector<std::unique_ptr<OfflineClip>> clips;
+        clips.reserve(snapshot.tracks.size() * 8);
+        for (const auto& track : snapshot.tracks)
         {
-            const auto& track = snapshot.tracks[ti];
             for (const auto& clip : track.clips)
             {
                 if (cancelFlag.load())
@@ -878,58 +646,71 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                     failWith(MixdownFailureCode::Cancelled, "Cancelled.");
                     return;
                 }
-                ActiveClip ac;
-                ac.renderer = std::make_unique<MixdownClipRenderer>(
-                    clip, snapshot.projectSampleRate, formatManager);
-                if (!ac.renderer->isReady())
+                juce::String err;
+                auto built = buildOfflineClip(clip, track.gain,
+                                              snapshot.projectSampleRate,
+                                              formatManager, err);
+                if (built == nullptr)
                 {
                     failWith(MixdownFailureCode::Decode,
-                             "Could not open source for clip " + clip.id + " (" + clip.filePath + ")");
+                             "Could not open source for clip " + clip.id +
+                                 (err.isNotEmpty() ? juce::String(": ") + err : juce::String("")));
                     return;
                 }
-                ac.clipStartMs = clip.offsetMs;
-                ac.clipEndMs = clipTimelineEndMs(clip);
-                ac.trackGain = track.gain;
-                activeClips.emplace_back(static_cast<int>(ti), std::move(ac));
-                ++totalClips;
+                clips.push_back(std::move(built));
             }
         }
 
-        // Final mix→output resampler (only when output rate differs
-        // from project rate).
-        SRC_STATE* finalResampler = nullptr;
-        const bool needFinalResample = options.outputSampleRate != snapshot.projectSampleRate;
-        if (needFinalResample)
+        FinalResampler finalResampler(snapshot.projectSampleRate, options.outputSampleRate);
+        if (!finalResampler.ok())
         {
-            int srErr = 0;
-            finalResampler = src_new(SRC_SINC_MEDIUM_QUALITY, kOutputChannels, &srErr);
-            if (finalResampler == nullptr)
-            {
-                failWith(MixdownFailureCode::Invalid,
-                         juce::String("Cannot init output resampler: ") + src_strerror(srErr));
-                return;
-            }
+            failWith(MixdownFailureCode::Invalid,
+                     juce::String("Cannot init output resampler: ") + finalResampler.error());
+            return;
         }
-        struct ResamplerGuard
-        {
-            SRC_STATE* state;
-            ~ResamplerGuard() { if (state) src_delete(state); }
-        } resamplerGuard{finalResampler};
 
         const double projectFramesPerMs = snapshot.projectSampleRate / 1000.0;
-        const int64_t totalProjectFrames = static_cast<int64_t>(options.lengthMs * projectFramesPerMs);
-        const double outputFramesPerMs = options.outputSampleRate / 1000.0;
-        const int64_t totalOutputFrames = static_cast<int64_t>(options.lengthMs * outputFramesPerMs);
-        int64_t outputFramesWritten = 0;
+        const int64_t totalProjectFrames =
+            static_cast<int64_t>(std::round(options.lengthMs * projectFramesPerMs));
         int64_t projectFramesRendered = 0;
+        int64_t outputFramesWritten = 0;
         double peakAmplitude = 0.0;
         int64_t lastProgressMs = juce::Time::getMillisecondCounter();
+        juce::String writerError;
 
-        std::vector<float> mixL(static_cast<size_t>(kBlockFrames));
-        std::vector<float> mixR(static_cast<size_t>(kBlockFrames));
-        std::vector<float> clipL(static_cast<size_t>(kBlockFrames));
-        std::vector<float> clipR(static_cast<size_t>(kBlockFrames));
+        // Pre-allocated buffers. Reused every block to avoid per-block
+        // allocation; sized for kOutputChannels stereo at kBlockFrames.
+        juce::AudioBuffer<float> mixBus(kOutputChannels, kBlockFrames);
+        juce::AudioBuffer<float> clipScratch(kOutputChannels, kBlockFrames);
+        std::vector<float> mixInterleaved(static_cast<size_t>(kBlockFrames) * 2);
 
+        // Writer-callback used by FinalResampler. Captures `writer`, the
+        // total written counter, peakAmplitude, and writerError so we can
+        // unwind cleanly on IO failure mid-stream.
+        const auto writeStereo = [&](const float* interleaved, int frames) -> bool
+        {
+            if (frames <= 0) return true;
+            // Deinterleave for AudioFormatWriter::writeFromFloatArrays.
+            std::vector<float> outL(static_cast<size_t>(frames));
+            std::vector<float> outR(static_cast<size_t>(frames));
+            for (int i = 0; i < frames; ++i)
+            {
+                outL[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 0];
+                outR[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 1];
+            }
+            const float* writePtrs[kOutputChannels] = {outL.data(), outR.data()};
+            if (!writer->writeFromFloatArrays(writePtrs, kOutputChannels, frames))
+            {
+                writerError = "Writer failed mid-stream.";
+                return false;
+            }
+            outputFramesWritten += frames;
+            return true;
+        };
+
+        // Main pump loop. Each iteration: pull a block from every active
+        // clip's transport, sum into the mix bus, clip/peak-meter, then
+        // hand off to FinalResampler → writer.
         while (projectFramesRendered < totalProjectFrames)
         {
             if (cancelFlag.load())
@@ -940,122 +721,57 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             }
             const int blockFrames = static_cast<int>(
                 std::min<int64_t>(kBlockFrames, totalProjectFrames - projectFramesRendered));
-            std::fill(mixL.begin(), mixL.begin() + blockFrames, 0.0F);
-            std::fill(mixR.begin(), mixR.begin() + blockFrames, 0.0F);
+            const bool isLastBlock =
+                projectFramesRendered + blockFrames >= totalProjectFrames;
 
-            const double blockStartMs = projectFramesRendered / projectFramesPerMs;
-            const double blockEndMs = (projectFramesRendered + blockFrames) / projectFramesPerMs;
+            mixBus.clear(0, blockFrames);
+            float* mixL = mixBus.getWritePointer(0);
+            float* mixR = mixBus.getWritePointer(1);
 
-            for (auto& entry : activeClips)
+            for (auto& cp : clips)
             {
-                auto& ac = entry.second;
-                // Skip clips entirely outside the block.
-                if (ac.clipEndMs <= blockStartMs) continue;
-                if (ac.clipStartMs >= blockEndMs) continue;
-
-                std::fill(clipL.begin(), clipL.begin() + blockFrames, 0.0F);
-                std::fill(clipR.begin(), clipR.begin() + blockFrames, 0.0F);
-
-                // Where in the block does this clip start (in frames)?
-                int writeOffset = 0;
-                if (!ac.started)
+                if (cp->retired) continue;
+                // Retire clips whose timeline window has fully closed. We
+                // still need to pump them up to their end so the warp tail
+                // and the resampler tail drain through the transport's
+                // internal buffers; once projectFramesRendered passes
+                // timelineEndFrames we can safely stop pulling.
+                if (projectFramesRendered >= cp->timelineEndFrames)
                 {
-                    const double clipOffsetInBlockMs =
-                        juce::jmax(0.0, ac.clipStartMs - blockStartMs);
-                    writeOffset = juce::jmin(blockFrames,
-                                             static_cast<int>(std::round(clipOffsetInBlockMs * projectFramesPerMs)));
-                    ac.started = true;
+                    cp->retired = true;
+                    continue;
                 }
-                const int framesToPull = blockFrames - writeOffset;
-                if (framesToPull <= 0) continue;
-                std::vector<float> pullL(static_cast<size_t>(framesToPull));
-                std::vector<float> pullR(static_cast<size_t>(framesToPull));
-                ac.renderer->pullProjectRateBlock(pullL.data(), pullR.data(), framesToPull);
-                for (int i = 0; i < framesToPull; ++i)
-                {
-                    clipL[static_cast<size_t>(writeOffset + i)] = pullL[static_cast<size_t>(i)];
-                    clipR[static_cast<size_t>(writeOffset + i)] = pullR[static_cast<size_t>(i)];
-                }
-
-                // Mix into block with track gain.
-                const float g = ac.trackGain;
-                for (int i = 0; i < blockFrames; ++i)
-                {
-                    mixL[static_cast<size_t>(i)] += clipL[static_cast<size_t>(i)] * g;
-                    mixR[static_cast<size_t>(i)] += clipR[static_cast<size_t>(i)] * g;
-                }
+                mixClipBlock(*cp, clipScratch, mixL, mixR, blockFrames);
             }
 
-            // Hard-clip at full scale; soft-saturation / proper master
-            // limiting is Phase 2.
+            // Hard-clip and peak meter. Soft-saturation / proper master
+            // limiting is a future job; we match the previous behaviour.
             for (int i = 0; i < blockFrames; ++i)
             {
-                mixL[static_cast<size_t>(i)] = juce::jlimit(-1.0F, 1.0F, mixL[static_cast<size_t>(i)]);
-                mixR[static_cast<size_t>(i)] = juce::jlimit(-1.0F, 1.0F, mixR[static_cast<size_t>(i)]);
+                mixL[i] = juce::jlimit(-1.0F, 1.0F, mixL[i]);
+                mixR[i] = juce::jlimit(-1.0F, 1.0F, mixR[i]);
                 peakAmplitude = juce::jmax(peakAmplitude,
-                                           static_cast<double>(std::abs(mixL[static_cast<size_t>(i)])),
-                                           static_cast<double>(std::abs(mixR[static_cast<size_t>(i)])));
+                                           static_cast<double>(std::abs(mixL[i])),
+                                           static_cast<double>(std::abs(mixR[i])));
+                mixInterleaved[static_cast<size_t>(i) * 2 + 0] = mixL[i];
+                mixInterleaved[static_cast<size_t>(i) * 2 + 1] = mixR[i];
             }
 
-            // Write block. Resample to output rate first if needed.
-            if (!needFinalResample)
+            if (!finalResampler.push(mixInterleaved.data(), blockFrames,
+                                     isLastBlock, writeStereo))
             {
-                const float* writePtrs[kOutputChannels] = {mixL.data(), mixR.data()};
-                if (!writer->writeFromFloatArrays(writePtrs, kOutputChannels, blockFrames))
+                tmpFile.deleteFile();
+                if (writerError.isNotEmpty())
                 {
-                    tmpFile.deleteFile();
-                    failWith(MixdownFailureCode::Io, "Writer failed mid-stream.");
-                    return;
+                    failWith(MixdownFailureCode::Io, writerError);
                 }
-                outputFramesWritten += blockFrames;
-            }
-            else
-            {
-                // Interleave for libsamplerate.
-                std::vector<float> mixInterleaved(static_cast<size_t>(blockFrames) * 2);
-                for (int i = 0; i < blockFrames; ++i)
+                else
                 {
-                    mixInterleaved[static_cast<size_t>(i) * 2 + 0] = mixL[static_cast<size_t>(i)];
-                    mixInterleaved[static_cast<size_t>(i) * 2 + 1] = mixR[static_cast<size_t>(i)];
-                }
-                const double ratio = static_cast<double>(options.outputSampleRate)
-                                     / static_cast<double>(snapshot.projectSampleRate);
-                const int worst = static_cast<int>(std::ceil(blockFrames * ratio)) + 8;
-                std::vector<float> resampled(static_cast<size_t>(worst) * 2);
-                SRC_DATA srcData{};
-                srcData.data_in = mixInterleaved.data();
-                srcData.input_frames = blockFrames;
-                srcData.data_out = resampled.data();
-                srcData.output_frames = worst;
-                srcData.end_of_input = (projectFramesRendered + blockFrames >= totalProjectFrames) ? 1 : 0;
-                srcData.src_ratio = ratio;
-                const int err = src_process(finalResampler, &srcData);
-                if (err != 0)
-                {
-                    tmpFile.deleteFile();
                     failWith(MixdownFailureCode::Invalid,
-                             juce::String("Final resample failed: ") + src_strerror(err));
-                    return;
+                             juce::String("Final resample failed: ") +
+                                 (finalResampler.error() ? finalResampler.error() : "unknown"));
                 }
-                const int gen = static_cast<int>(srcData.output_frames_gen);
-                if (gen > 0)
-                {
-                    std::vector<float> outL(static_cast<size_t>(gen));
-                    std::vector<float> outR(static_cast<size_t>(gen));
-                    for (int i = 0; i < gen; ++i)
-                    {
-                        outL[static_cast<size_t>(i)] = resampled[static_cast<size_t>(i) * 2 + 0];
-                        outR[static_cast<size_t>(i)] = resampled[static_cast<size_t>(i) * 2 + 1];
-                    }
-                    const float* writePtrs[kOutputChannels] = {outL.data(), outR.data()};
-                    if (!writer->writeFromFloatArrays(writePtrs, kOutputChannels, gen))
-                    {
-                        tmpFile.deleteFile();
-                        failWith(MixdownFailureCode::Io, "Writer failed mid-stream.");
-                        return;
-                    }
-                    outputFramesWritten += gen;
-                }
+                return;
             }
 
             projectFramesRendered += blockFrames;
@@ -1065,7 +781,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             {
                 const double pct = (static_cast<double>(projectFramesRendered)
                                     / static_cast<double>(juce::jmax<int64_t>(1, totalProjectFrames)))
-                                   * 95.0; // reserve last 5% for finalize
+                                   * 95.0;
                 broadcastProgress(bridge, pct, "render");
                 lastProgressMs = now;
             }
@@ -1073,9 +789,12 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
 
         broadcastProgress(bridge, 96.0, "finalize");
 
-        // Pad output with silence if it came up short (rare — only
-        // happens with finalResampler when the source flush returns
-        // fewer frames than expected).
+        // Pad if the resampler under-delivered. With the streaming-correct
+        // FinalResampler this should be rare and at most a handful of
+        // samples — but we keep the safety net so the WAV duration matches
+        // what the dialog said it would.
+        const int64_t totalOutputFrames =
+            static_cast<int64_t>(std::round(options.lengthMs * options.outputSampleRate / 1000.0));
         if (outputFramesWritten < totalOutputFrames)
         {
             const int64_t pad = totalOutputFrames - outputFramesWritten;
@@ -1090,7 +809,22 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             }
         }
 
-        writer.reset(); // flushes & closes the underlying stream
+        // Tear down clip chains BEFORE writer flush so any background-thread
+        // readers (none here — readAhead=0) are guaranteed closed. Ordered
+        // explicitly via reverse-iteration because each clip's transport
+        // must stop before its source is destroyed.
+        for (auto it = clips.rbegin(); it != clips.rend(); ++it)
+        {
+            if (auto& cp = *it; cp != nullptr)
+            {
+                if (cp->transport) cp->transport->stop();
+                if (cp->transport) cp->transport->setSource(nullptr);
+                if (cp->offsetSource) cp->offsetSource->setWarpProcessor(nullptr);
+            }
+        }
+        clips.clear();
+
+        writer.reset(); // flushes and closes the underlying stream
 
         if (cancelFlag.load())
         {

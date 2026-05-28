@@ -17,6 +17,24 @@ namespace silverdaw
 {
 
 /**
+ * Translate a renderer-side warp mode label into Rubber Band engine
+ * flags. Shared between AudioEngine (live), MixdownEngine (offline)
+ * and Main.cpp's preview path so the three never drift.
+ *
+ *   "complex" → R3 / Finer (highest quality, highest CPU)
+ *   "tonal"   → R2 / Faster + TransientsSmooth + WindowLong (suits pads/vox)
+ *   anything else (default "rhythmic") → R2 / Faster + TransientsCrisp
+ */
+inline RubberBand::RubberBandStretcher::Options parseWarpMode(const juce::String& mode)
+{
+    using O = RubberBand::RubberBandStretcher;
+    if (mode == "complex") return O::OptionEngineFiner;
+    if (mode == "tonal")
+        return O::OptionEngineFaster | O::OptionTransientsSmooth | O::OptionWindowLong;
+    return O::OptionEngineFaster | O::OptionTransientsCrisp;
+}
+
+/**
  * Lock-free warp processor wrapping a single `RubberBandStretcher`.
  *
  * Lifetime + thread model:
