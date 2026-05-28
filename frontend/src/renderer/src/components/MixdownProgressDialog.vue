@@ -21,7 +21,10 @@ const STAGE_LABELS: Record<MixdownStage, string> = {
   prepare: 'Preparing render…',
   render: 'Mixing tracks…',
   finalize: 'Finalising file…',
-  encode: 'Encoding…'
+  encode: 'Encoding…',
+  analyze: 'Measuring loudness…',
+  'normalize-pass1': 'Pass 1: measuring loudness…',
+  'normalize-pass2': 'Pass 2: applying gain & dither…'
 }
 
 const visible = computed(() => state.value !== null)

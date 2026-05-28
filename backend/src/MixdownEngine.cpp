@@ -3,11 +3,13 @@
 #include "AudioEngine.h"   // for silverdaw::OffsetSource
 #include "BridgeServer.h"
 #include "Log.h"
+#include "LoudnessAnalyzer.h"
 #include "ProjectState.h"
 #include "WarpProcessor.h" // for parseWarpMode + WarpProcessor
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -90,11 +92,42 @@ void broadcastProgress(BridgeServer& bridge, double percent, const char* stage)
     bridge.broadcast("MIXDOWN_PROGRESS", juce::var(obj));
 }
 
-void broadcastDone(BridgeServer& bridge, const juce::File& outputFile, double durationMs)
+void broadcastDone(BridgeServer& bridge,
+                   const juce::File& outputFile,
+                   double durationMs,
+                   const LoudnessAnalyzer::Result* loudness,
+                   bool limitedByTruePeak,
+                   double appliedGainDb,
+                   int64_t pass2PostGainClipCount,
+                   double pass2PostGainPeakAmp)
 {
     auto* obj = new juce::DynamicObject();
     obj->setProperty("filePath", outputFile.getFullPathName());
     obj->setProperty("durationMs", durationMs);
+    if (loudness != nullptr)
+    {
+        auto* l = new juce::DynamicObject();
+        // BS.1770: integrated LUFS may be -Infinity for silent
+        // programmes. JSON cannot represent ±Infinity, so emit
+        // explicit nulls and let the UI render "—".
+        if (loudness->silent || ! std::isfinite(loudness->integratedLufs))
+            l->setProperty("integratedLufs", juce::var());
+        else
+            l->setProperty("integratedLufs", loudness->integratedLufs);
+        if (! std::isfinite(loudness->truePeakDbtp))
+            l->setProperty("truePeakDbtp", juce::var());
+        else
+            l->setProperty("truePeakDbtp", loudness->truePeakDbtp);
+        l->setProperty("silent", loudness->silent);
+        l->setProperty("unmeasurable", loudness->unmeasurable);
+        l->setProperty("gatedBlockCount", static_cast<int>(loudness->gatedBlockCount));
+        l->setProperty("appliedGainDb", appliedGainDb);
+        l->setProperty("limitedByTruePeak", limitedByTruePeak);
+        l->setProperty("pass2ClippedSamples", static_cast<int>(juce::jlimit<int64_t>(0,
+            std::numeric_limits<int>::max(), pass2PostGainClipCount)));
+        l->setProperty("pass2PostGainPeak", pass2PostGainPeakAmp);
+        obj->setProperty("loudness", juce::var(l));
+    }
     bridge.broadcast("MIXDOWN_DONE", juce::var(obj));
 }
 
@@ -665,6 +698,35 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                      "Unsupported output sample rate " + juce::String(options.outputSampleRate));
             return;
         }
+        // Loudness modes are only meaningful at standard sample
+        // rates (BS.1770-4 calibration). The general output-rate
+        // guard above already restricts us to 44.1/48 kHz; if that
+        // ever widens, this guard keeps the analyzer honest.
+        if (options.loudnessMode != MixdownOptions::LoudnessMode::Off
+            && options.outputSampleRate != 44100
+            && options.outputSampleRate != 48000)
+        {
+            failWith(MixdownFailureCode::Invalid,
+                     "Loudness analysis requires 44.1 or 48 kHz output.");
+            return;
+        }
+        const bool normalizing = options.loudnessMode == MixdownOptions::LoudnessMode::Normalize;
+        const bool analyzing = options.loudnessMode != MixdownOptions::LoudnessMode::Off;
+        std::unique_ptr<LoudnessAnalyzer> analyzer;
+        if (analyzing)
+        {
+            try
+            {
+                analyzer = std::make_unique<LoudnessAnalyzer>(
+                    static_cast<double>(options.outputSampleRate));
+            }
+            catch (const juce::String& e)
+            {
+                failWith(MixdownFailureCode::Invalid,
+                         "Could not start loudness analyzer: " + e);
+                return;
+            }
+        }
 
         broadcastProgress(bridge, 0.0, "prepare");
 
@@ -680,6 +742,13 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         }
         const auto tmpFile = parentDir.getChildFile(targetFile.getFileName() + ".tmp");
         tmpFile.deleteFile();
+        // Normalize mode renders a 32-float intermediate to a
+        // distinct `.f32.tmp` sidecar in pass 1 (no dither, full
+        // precision); pass 2 streams that intermediate through the
+        // gain stage and into the user's chosen final writer
+        // (writing to `.tmp`, then atomic rename to `targetFile`).
+        const auto f32TmpFile = parentDir.getChildFile(targetFile.getFileName() + ".f32.tmp");
+        f32TmpFile.deleteFile();
 
         juce::AudioFormatManager formatManager;
         formatManager.registerBasicFormats();
@@ -689,28 +758,46 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // float for 32-bit WAV float). Using the AudioFormatWriterOptions
         // API rather than the deprecated metadata-var overload also kills
         // the JUCE C4996 deprecation warning we used to get.
-        std::unique_ptr<juce::OutputStream> outStream = std::make_unique<juce::FileOutputStream>(tmpFile);
+        // For Normalize the pass-1 writer is a 32-float WAV at the
+        // output sample rate written to `.f32.tmp`. The user-chosen
+        // format / bit-depth is deferred to pass 2. For Off and
+        // AnalyzeOnly the pass-1 writer is the final user-chosen
+        // writer to `.tmp`.
+        const juce::File& pass1File = normalizing ? f32TmpFile : tmpFile;
+        std::unique_ptr<juce::OutputStream> outStream = std::make_unique<juce::FileOutputStream>(pass1File);
         if (! static_cast<juce::FileOutputStream*>(outStream.get())->openedOk())
         {
             failWith(MixdownFailureCode::Io,
-                     "Cannot open output file for writing: " + tmpFile.getFullPathName());
+                     "Cannot open output file for writing: " + pass1File.getFullPathName());
             return;
         }
 
         const int chosenBitDepth = options.bitDepth;
         const bool wantFloatWav =
             options.format == MixdownOptions::Format::Wav && chosenBitDepth == 32;
+        // Pass-1 writer settings depend on the mode.
+        const int pass1BitDepth = normalizing ? 32 : chosenBitDepth;
+        const bool pass1WantsFloat = normalizing ? true : wantFloatWav;
 
         auto writerOptions = juce::AudioFormatWriterOptions{}
                                  .withSampleRate(static_cast<double>(options.outputSampleRate))
                                  .withNumChannels(kOutputChannels)
-                                 .withBitsPerSample(chosenBitDepth)
-                                 .withSampleFormat(wantFloatWav
+                                 .withBitsPerSample(pass1BitDepth)
+                                 .withSampleFormat(pass1WantsFloat
                                                        ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
                                                        : juce::AudioFormatWriterOptions::SampleFormat::integral);
 
         std::unique_ptr<juce::AudioFormatWriter> writer;
-        if (options.format == MixdownOptions::Format::Wav)
+        if (normalizing)
+        {
+            // Pass-1 intermediate is always WAV regardless of the
+            // user-requested final format (FLAC writers can't be
+            // streamed in append-friendly chunks the way we'd want
+            // for the pass-2 read-back).
+            juce::WavAudioFormat wav;
+            writer = wav.createWriterFor(outStream, writerOptions);
+        }
+        else if (options.format == MixdownOptions::Format::Wav)
         {
             juce::WavAudioFormat wav;
             writer = wav.createWriterFor(outStream, writerOptions);
@@ -726,23 +813,25 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             // Clean up the partial stream — createWriterFor only consumes
             // the unique_ptr on success.
             outStream.reset();
-            tmpFile.deleteFile();
-            const auto fmtName = options.format == MixdownOptions::Format::Flac
-                                     ? juce::String("FLAC")
-                                     : juce::String("WAV");
+            pass1File.deleteFile();
+            const auto fmtName = normalizing
+                                     ? juce::String("WAV-f32 (pass1)")
+                                     : (options.format == MixdownOptions::Format::Flac
+                                            ? juce::String("FLAC")
+                                            : juce::String("WAV"));
             failWith(MixdownFailureCode::Io,
                      "Failed to create " + fmtName + " writer (bitDepth=" +
-                         juce::String(chosenBitDepth) + ", sr=" + juce::String(options.outputSampleRate) + ").");
+                         juce::String(pass1BitDepth) + ", sr=" + juce::String(options.outputSampleRate) + ").");
             return;
         }
         // Belt-and-braces self-check: when float WAV was requested,
         // verify the writer actually opened in float mode (catches a
         // silent format-string regression should JUCE change the
         // semantics of withSampleFormat).
-        if (wantFloatWav && ! writer->isFloatingPoint())
+        if (pass1WantsFloat && ! writer->isFloatingPoint())
         {
             writer.reset();
-            tmpFile.deleteFile();
+            pass1File.deleteFile();
             failWith(MixdownFailureCode::Io,
                      "WAV writer opened in PCM mode when 32-float was requested.");
             return;
@@ -750,12 +839,12 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         silverdaw::log::info(
             "mixdown",
             juce::String("writer opened format=") +
-                (options.format == MixdownOptions::Format::Flac ? "flac" : "wav") +
-                " bitDepth=" + juce::String(chosenBitDepth) +
+                (normalizing
+                     ? "wav-f32 (pass1)"
+                     : (options.format == MixdownOptions::Format::Flac ? "flac" : "wav")) +
+                " bitDepth=" + juce::String(pass1BitDepth) +
                 " float=" + (writer->isFloatingPoint() ? "true" : "false") +
-                " dither=" + (options.dither && chosenBitDepth == 16 && ! writer->isFloatingPoint()
-                                  ? "true"
-                                  : "false"));
+                " loudnessMode=" + (analyzing ? (normalizing ? "normalize" : "analyze") : "off"));
 
         // Build the per-clip offline chains. We pre-build every clip because
         // even large projects have tens of clips, not thousands — keeping
@@ -854,7 +943,13 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // (= ±1/32768 in normalised float). Seeded from juce::Random
         // so successive renders aren't bit-identical. Cheap enough
         // (~6 ns/sample) to leave on by default.
-        const bool ditherActive = options.dither
+        // In Normalize pass-1 we always write a 32-float intermediate
+        // (no quantisation) so dither would be pure added noise —
+        // gate it off. Pass 2 will dither into the final 16-bit
+        // container if appropriate. For Off/AnalyzeOnly we use the
+        // existing 16-bit-only TPDF policy.
+        const bool ditherActive = ! normalizing
+                                  && options.dither
                                   && options.bitDepth == 16
                                   && ! writer->isFloatingPoint();
         constexpr float kLsb16f = 1.0f / 32768.0f;
@@ -878,6 +973,26 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         const auto writeStereo = [&](const float* interleaved, int frames) -> bool
         {
             if (frames <= 0) return true;
+            // Feed the loudness analyzer with the pre-dither,
+            // post-final-resample stereo program. This is the
+            // exact audio that will land in the output file (modulo
+            // the small dither contribution which we deliberately
+            // exclude from the measurement).
+            if (analyzer)
+            {
+                // Deinterleave into temporary channel pointers for
+                // the analyzer's planar API. Stack-buffered to stay
+                // RT-clean even though we're on a worker.
+                std::vector<float> aL(static_cast<size_t>(frames));
+                std::vector<float> aR(static_cast<size_t>(frames));
+                for (int i = 0; i < frames; ++i)
+                {
+                    aL[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 0];
+                    aR[static_cast<size_t>(i)] = interleaved[static_cast<size_t>(i) * 2 + 1];
+                }
+                const float* ch[2] = { aL.data(), aR.data() };
+                analyzer->process(ch, 2, frames);
+            }
             // Deinterleave for AudioFormatWriter::writeFromFloatArrays.
             std::vector<float> outL(static_cast<size_t>(frames));
             std::vector<float> outR(static_cast<size_t>(frames));
@@ -927,7 +1042,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             const juce::ScopedNoDenormals scopedNoDenormals;
             if (cancelFlag.load())
             {
-                tmpFile.deleteFile();
+                pass1File.deleteFile();
                 failWith(MixdownFailureCode::Cancelled, "Cancelled.");
                 return;
             }
@@ -1007,7 +1122,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             if (!finalResampler.push(mixInterleaved.data(), blockFrames,
                                      isLastBlock, writeStereo))
             {
-                tmpFile.deleteFile();
+                pass1File.deleteFile();
                 if (writerError.isNotEmpty())
                 {
                     failWith(MixdownFailureCode::Io, writerError);
@@ -1026,16 +1141,17 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             const auto now = juce::Time::getMillisecondCounter();
             if (now - lastProgressMs >= kProgressMinIntervalMs)
             {
-                // Render owns 0–90% of the bar. The remaining 10% is
-                // reserved for finalize — over-allocated relative to
-                // wall-clock so the (potentially slow on Windows /
-                // network drives) WAV flush + clip-chain teardown can
-                // each have their own visible band on the bar instead
-                // of all collapsing to a single "99%".
+                // Progress budget:
+                //   - Off / AnalyzeOnly: render owns 0–90%.
+                //   - Normalize:        pass 1 owns 0–45%, pass 2 owns 45–90%.
+                // Finalize keeps its 10% headroom in either case.
+                const double renderShare = normalizing ? 45.0 : 90.0;
                 const double pct = (static_cast<double>(projectFramesRendered)
                                     / static_cast<double>(juce::jmax<int64_t>(1, totalProjectFrames)))
-                                   * 90.0;
-                broadcastProgress(bridge, pct, "render");
+                                   * renderShare;
+                broadcastProgress(bridge, pct,
+                                  normalizing ? "normalize-pass1"
+                                              : (analyzing ? "analyze" : "render"));
                 lastProgressMs = now;
             }
         }
@@ -1044,7 +1160,9 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // top of the render band even if the last in-loop update was
         // throttled out — otherwise we'd visibly jump up at the start
         // of finalize.
-        broadcastProgress(bridge, 90.0, "render");
+        broadcastProgress(bridge, normalizing ? 45.0 : 90.0,
+                          normalizing ? "normalize-pass1"
+                                      : (analyzing ? "analyze" : "render"));
 
         // Pad if the resampler under-delivered. With the streaming-correct
         // FinalResampler this should be rare and at most a handful of
@@ -1084,9 +1202,228 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // read cache for the decoded-WAV files). With N clips that's
         // an N-second wait the user sees as "progress sat at 99% for
         // ages". We defer it past the DONE broadcast below.
-        broadcastProgress(bridge, 95.0, "encode");
+        broadcastProgress(bridge, normalizing ? 45.0 : 95.0, "encode");
         writer.reset();
         const auto writerEndMs = juce::Time::getMillisecondCounter();
+
+        // ── Loudness analysis & optional Normalize pass 2 ──────────
+        // Run finalize() unconditionally if analyzing — pass 2 also
+        // needs the source measurement to derive the linear gain
+        // and the true-peak back-off. For Off mode `sourceLoudness`
+        // and `finalLoudness` both stay default-constructed and the
+        // DONE message simply omits the `loudness` block.
+        LoudnessAnalyzer::Result sourceLoudness{};
+        LoudnessAnalyzer::Result finalLoudness{};
+        double appliedGainDb = 0.0;
+        bool limitedByTruePeak = false;
+        int64_t pass2ClippedSamples = 0;
+        double pass2PostGainPeakAmp = 0.0;
+        if (analyzing && analyzer != nullptr)
+        {
+            broadcastProgress(bridge, normalizing ? 46.0 : 96.0, "analyze");
+            sourceLoudness = analyzer->finalize();
+            finalLoudness = sourceLoudness; // overwritten below if normalizing
+
+            // Compute desired linear gain in dB. Silent and
+            // unmeasurable both → no gain (DONE will still flag the
+            // distinction in the report).
+            double desiredGainDb = 0.0;
+            if (normalizing)
+            {
+                if (! sourceLoudness.silent && ! sourceLoudness.unmeasurable
+                    && std::isfinite(sourceLoudness.integratedLufs))
+                {
+                    desiredGainDb = options.targetLufs - sourceLoudness.integratedLufs;
+                }
+                // True-peak ceiling back-off, with a 0.2 dB safety
+                // margin to absorb FIR-vs-true-peak approximation
+                // error in the polyphase oversampler.
+                if (std::isfinite(sourceLoudness.truePeakDbtp))
+                {
+                    const double ceil = options.ceilingDbtp - 0.2;
+                    const double projected = sourceLoudness.truePeakDbtp + desiredGainDb;
+                    if (projected > ceil)
+                    {
+                        desiredGainDb = ceil - sourceLoudness.truePeakDbtp;
+                        limitedByTruePeak = true;
+                    }
+                }
+            }
+            appliedGainDb = desiredGainDb;
+            silverdaw::log::info(
+                "mixdown",
+                juce::String("loudness source LUFS=") +
+                    (std::isfinite(sourceLoudness.integratedLufs)
+                         ? juce::String(sourceLoudness.integratedLufs, 2)
+                         : juce::String("-inf")) +
+                    " TP=" + juce::String(sourceLoudness.truePeakDbtp, 2) +
+                    " silent=" + (sourceLoudness.silent ? "true" : "false") +
+                    " unmeasurable=" + (sourceLoudness.unmeasurable ? "true" : "false") +
+                    " blocks=" + juce::String((int) sourceLoudness.gatedBlockCount) +
+                    " appliedGainDb=" + juce::String(appliedGainDb, 3) +
+                    " limited=" + (limitedByTruePeak ? "true" : "false"));
+        }
+
+        // ── Normalize pass 2: stream f32 tmp → gain → dither → final writer
+        if (normalizing)
+        {
+            // Open a reader on the f32 intermediate. Bytes are
+            // already on disk after the pass-1 writer.reset().
+            juce::AudioFormatManager fmtMgr;
+            fmtMgr.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> p2Reader(
+                fmtMgr.createReaderFor(f32TmpFile));
+            if (p2Reader == nullptr)
+            {
+                f32TmpFile.deleteFile();
+                failWith(MixdownFailureCode::Io,
+                         "Pass 2: could not open intermediate file for read-back.");
+                return;
+            }
+
+            // Open the user-chosen final writer on `tmpFile`.
+            std::unique_ptr<juce::OutputStream> p2Stream =
+                std::make_unique<juce::FileOutputStream>(tmpFile);
+            if (! static_cast<juce::FileOutputStream*>(p2Stream.get())->openedOk())
+            {
+                p2Reader.reset();
+                f32TmpFile.deleteFile();
+                failWith(MixdownFailureCode::Io,
+                         "Pass 2: cannot open output for writing: " + tmpFile.getFullPathName());
+                return;
+            }
+            auto p2Opts = juce::AudioFormatWriterOptions{}
+                              .withSampleRate(static_cast<double>(options.outputSampleRate))
+                              .withNumChannels(kOutputChannels)
+                              .withBitsPerSample(chosenBitDepth)
+                              .withSampleFormat(wantFloatWav
+                                                    ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
+                                                    : juce::AudioFormatWriterOptions::SampleFormat::integral);
+            std::unique_ptr<juce::AudioFormatWriter> p2Writer;
+            if (options.format == MixdownOptions::Format::Wav)
+            {
+                juce::WavAudioFormat wav;
+                p2Writer = wav.createWriterFor(p2Stream, p2Opts);
+            }
+            else if (options.format == MixdownOptions::Format::Flac)
+            {
+                juce::FlacAudioFormat flac;
+                p2Writer = flac.createWriterFor(p2Stream, p2Opts);
+            }
+            if (p2Writer == nullptr)
+            {
+                p2Stream.reset();
+                tmpFile.deleteFile();
+                f32TmpFile.deleteFile();
+                failWith(MixdownFailureCode::Io,
+                         juce::String("Pass 2: failed to create final writer (bitDepth=")
+                             + juce::String(chosenBitDepth) + ").");
+                return;
+            }
+            const bool p2DitherActive = options.dither
+                                        && chosenBitDepth == 16
+                                        && ! p2Writer->isFloatingPoint();
+
+            // Linear gain factor for pass 2's per-sample multiply.
+            const float linGain = static_cast<float>(std::pow(10.0, appliedGainDb / 20.0));
+
+            // Stream the intermediate in kBlockFrames chunks.
+            juce::AudioBuffer<float> p2Buf(kOutputChannels, kBlockFrames);
+            const juce::int64 totalP2Frames = p2Reader->lengthInSamples;
+            juce::int64 p2Pos = 0;
+            int64_t p2OutputFramesWritten = 0;
+            int64_t p2LastProgressMs = juce::Time::getMillisecondCounter();
+            while (p2Pos < totalP2Frames)
+            {
+                if (cancelFlag.load())
+                {
+                    p2Writer.reset();
+                    tmpFile.deleteFile();
+                    f32TmpFile.deleteFile();
+                    failWith(MixdownFailureCode::Cancelled, "Cancelled.");
+                    return;
+                }
+                const int chunk = static_cast<int>(
+                    std::min<juce::int64>(kBlockFrames, totalP2Frames - p2Pos));
+                p2Buf.clear(0, chunk);
+                if (! p2Reader->read(&p2Buf, 0, chunk, p2Pos, true, true))
+                {
+                    p2Writer.reset();
+                    tmpFile.deleteFile();
+                    f32TmpFile.deleteFile();
+                    failWith(MixdownFailureCode::Io, "Pass 2: read failure.");
+                    return;
+                }
+
+                // Apply gain + track post-gain peak and clip count.
+                // Clip count vs the integer ceiling matters when the
+                // analytical TP_final exceeds 0 dBFS; we surface it
+                // as a separate metric in the loudness report.
+                float* pL = p2Buf.getWritePointer(0);
+                float* pR = p2Buf.getWritePointer(1);
+                for (int i = 0; i < chunk; ++i)
+                {
+                    pL[i] *= linGain;
+                    pR[i] *= linGain;
+                    const float aL = std::abs(pL[i]);
+                    const float aR = std::abs(pR[i]);
+                    const float maxA = juce::jmax(aL, aR);
+                    if (maxA > pass2PostGainPeakAmp)
+                        pass2PostGainPeakAmp = maxA;
+                    if (aL > 1.0F || aR > 1.0F) ++pass2ClippedSamples;
+                }
+
+                if (p2DitherActive)
+                {
+                    for (int i = 0; i < chunk; ++i)
+                    {
+                        const float dL = (nextUniform(rngL) + nextUniform(rngL) - 1.0f) * kLsb16f;
+                        const float dR = (nextUniform(rngR) + nextUniform(rngR) - 1.0f) * kLsb16f;
+                        pL[i] += dL;
+                        pR[i] += dR;
+                    }
+                }
+                const float* writePtrs[kOutputChannels] = { pL, pR };
+                if (! p2Writer->writeFromFloatArrays(writePtrs, kOutputChannels, chunk))
+                {
+                    p2Writer.reset();
+                    tmpFile.deleteFile();
+                    f32TmpFile.deleteFile();
+                    failWith(MixdownFailureCode::Io, "Pass 2: writer failed mid-stream.");
+                    return;
+                }
+                p2Pos += chunk;
+                p2OutputFramesWritten += chunk;
+
+                const auto now = juce::Time::getMillisecondCounter();
+                if (now - p2LastProgressMs >= kProgressMinIntervalMs)
+                {
+                    const double pct = 46.0 + (static_cast<double>(p2Pos)
+                                               / static_cast<double>(juce::jmax<juce::int64>(1, totalP2Frames)))
+                                               * 44.0;
+                    broadcastProgress(bridge, pct, "normalize-pass2");
+                    p2LastProgressMs = now;
+                }
+            }
+            broadcastProgress(bridge, 90.0, "normalize-pass2");
+            p2Writer.reset();
+            // The final on-disk file length is what pass 2 wrote.
+            outputFramesWritten = p2OutputFramesWritten;
+            // Recompute the analytical final loudness with the gain
+            // that was actually applied.
+            finalLoudness = analyzer->computeForLinearGainDb(appliedGainDb);
+
+            // Intermediate is consumed; drop it before the user's
+            // file is committed so a crash after this point doesn't
+            // leak the sidecar.
+            f32TmpFile.deleteFile();
+            broadcastProgress(bridge, 92.0, "finalize");
+        }
+        else
+        {
+            // Off / AnalyzeOnly: pass-1 already wrote `tmpFile` (the
+            // final user-format file). Nothing more to do.
+        }
 
         if (cancelFlag.load())
         {
@@ -1126,7 +1463,10 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                                  " peakAmp=" + juce::String(preClampPeakAmplitude, 4) +
                                  " clippedSamples=" + juce::String(clippedSampleCount) +
                                  " outputFrames=" + juce::String(outputFramesWritten));
-        broadcastDone(bridge, targetFile, actualDurationMs);
+        broadcastDone(bridge, targetFile, actualDurationMs,
+                      analyzing ? &finalLoudness : nullptr,
+                      limitedByTruePeak, appliedGainDb,
+                      pass2ClippedSamples, pass2PostGainPeakAmp);
 
         // The file is final and the user-facing dialog is dismissed.
         // Release the busy gate NOW so TRANSPORT_PLAY and the next

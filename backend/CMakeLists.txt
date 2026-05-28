@@ -217,6 +217,7 @@ add_library(silverdaw_backend_core STATIC
     src/BridgeServer.cpp
     src/DecodedCache.cpp
     src/Log.cpp
+    src/LoudnessAnalyzer.cpp
     src/MixdownEngine.cpp
     src/PeaksCache.cpp
     src/ProjectFile.cpp

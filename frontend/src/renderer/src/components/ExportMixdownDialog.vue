@@ -43,6 +43,63 @@ const draftDither = ref<boolean>(true)
  *  to a number on submit. Empty / blank means "no tail". */
 const draftTailSecondsText = ref('0')
 const draftBitrate = ref<128 | 192 | 320>(192)
+// ── Loudness / normalization ───────────────────────────────────────────
+/** Loudness preset. `off` is no analysis (default), four normalization
+ *  presets cover the dominant delivery targets (Spotify / Apple / EBU
+ *  R128). `analyze` measures only and writes byte-identical output to
+ *  `off`. `custom` reveals the target + ceiling inputs. */
+type LoudnessPreset = 'off' | 'streaming-14' | 'apple-16' | 'broadcast-23' | 'analyze' | 'custom'
+const draftLoudnessPreset = ref<LoudnessPreset>('off')
+const draftCustomTargetText = ref('-14')
+const draftCustomCeilingText = ref('-1')
+/** Loudness modes require a standard sample rate. Disable the controls
+ *  with a tooltip when the user has somehow ended up off-rate (today
+ *  not reachable because the SR radio only offers 44.1/48, but the
+ *  guard documents the requirement). */
+const loudnessAvailable = computed<boolean>(
+  () => draftSampleRate.value === 44100 || draftSampleRate.value === 48000
+)
+const customLoudnessActive = computed<boolean>(() => draftLoudnessPreset.value === 'custom')
+const customTargetLufs = computed<number>(() => Number(draftCustomTargetText.value.trim()))
+const customCeilingDbtp = computed<number>(() => Number(draftCustomCeilingText.value.trim()))
+const customTargetValid = computed<boolean>(() => {
+  const n = customTargetLufs.value
+  return Number.isFinite(n) && n >= -30 && n <= -6
+})
+const customCeilingValid = computed<boolean>(() => {
+  const n = customCeilingDbtp.value
+  return Number.isFinite(n) && n >= -9 && n <= 0
+})
+const loudnessValid = computed<boolean>(() => {
+  if (!customLoudnessActive.value) return true
+  return customTargetValid.value && customCeilingValid.value
+})
+/** Map preset → MIXDOWN_START loudness block. `off` → undefined so
+ *  the payload omits the field entirely (the backend defaults to off). */
+function buildLoudnessPayload(): {
+  mode: 'off' | 'analyze' | 'normalize'
+  targetLufs?: number
+  ceilingDbtp?: number
+} | undefined {
+  switch (draftLoudnessPreset.value) {
+    case 'off':
+      return undefined
+    case 'analyze':
+      return { mode: 'analyze' }
+    case 'streaming-14':
+      return { mode: 'normalize', targetLufs: -14, ceilingDbtp: -1 }
+    case 'apple-16':
+      return { mode: 'normalize', targetLufs: -16, ceilingDbtp: -1 }
+    case 'broadcast-23':
+      return { mode: 'normalize', targetLufs: -23, ceilingDbtp: -2 }
+    case 'custom':
+      return {
+        mode: 'normalize',
+        targetLufs: customTargetLufs.value,
+        ceilingDbtp: customCeilingDbtp.value
+      }
+  }
+}
 const draftLengthMode = ref<'trim-to-last-clip' | 'fixed-duration'>('fixed-duration')
 const draftDurationText = ref('')
 // MP3 metadata — all optional.
@@ -127,7 +184,7 @@ const pathValid = computed<boolean>(
 )
 
 const formIsValid = computed<boolean>(
-  () => pathValid.value && durationValid.value && tailValid.value && !submitting.value
+  () => pathValid.value && durationValid.value && tailValid.value && loudnessValid.value && !submitting.value
 )
 
 const expectedFileExtension = computed(() =>
@@ -290,6 +347,8 @@ async function doSave(): Promise<void> {
       payload.bitDepth = draftBitDepth.value
       payload.dither = draftDither.value
     }
+    const loudness = buildLoudnessPayload()
+    if (loudness) payload.loudness = loudness
     sendBridge('MIXDOWN_START', payload)
     emit('close')
   } finally {
@@ -480,6 +539,110 @@ onBeforeUnmount(() => {
               <span class="text-[10px] text-zinc-500">
                 Project rate: {{ (effectiveProjectRate / 1000).toFixed(1) }} kHz
               </span>
+            </div>
+          </section>
+
+          <!-- Loudness / normalization -->
+          <section
+            class="mb-5"
+            :title="loudnessAvailable ? '' : 'Loudness analysis requires 44.1 or 48 kHz output.'"
+          >
+            <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
+              Loudness
+            </label>
+            <div class="flex flex-col gap-1.5 text-xs">
+              <label class="flex cursor-pointer items-center gap-1.5">
+                <input
+                  v-model="draftLoudnessPreset"
+                  type="radio"
+                  value="off"
+                  class="accent-cyan-500"
+                  :disabled="!loudnessAvailable"
+                >
+                <span>None &ndash; export as-is</span>
+              </label>
+              <label class="flex cursor-pointer items-center gap-1.5">
+                <input
+                  v-model="draftLoudnessPreset"
+                  type="radio"
+                  value="streaming-14"
+                  class="accent-cyan-500"
+                  :disabled="!loudnessAvailable"
+                >
+                <span>Streaming &minus;14 LUFS (Spotify, YouTube, SoundCloud, Tidal, Amazon)</span>
+              </label>
+              <label class="flex cursor-pointer items-center gap-1.5">
+                <input
+                  v-model="draftLoudnessPreset"
+                  type="radio"
+                  value="apple-16"
+                  class="accent-cyan-500"
+                  :disabled="!loudnessAvailable"
+                >
+                <span>Apple Music &minus;16 LUFS</span>
+              </label>
+              <label class="flex cursor-pointer items-center gap-1.5">
+                <input
+                  v-model="draftLoudnessPreset"
+                  type="radio"
+                  value="broadcast-23"
+                  class="accent-cyan-500"
+                  :disabled="!loudnessAvailable"
+                >
+                <span>EBU R128 / AES Broadcast &minus;23 LUFS</span>
+              </label>
+              <label class="flex cursor-pointer items-center gap-1.5">
+                <input
+                  v-model="draftLoudnessPreset"
+                  type="radio"
+                  value="analyze"
+                  class="accent-cyan-500"
+                  :disabled="!loudnessAvailable"
+                >
+                <span>Analyze only (measure, no gain change)</span>
+              </label>
+              <label class="flex cursor-pointer items-center gap-1.5">
+                <input
+                  v-model="draftLoudnessPreset"
+                  type="radio"
+                  value="custom"
+                  class="accent-cyan-500"
+                  :disabled="!loudnessAvailable"
+                >
+                <span>Custom target&hellip;</span>
+              </label>
+              <div
+                v-if="customLoudnessActive"
+                class="ml-5 mt-1 flex flex-wrap items-center gap-3"
+              >
+                <label class="flex items-center gap-1.5">
+                  <span class="text-zinc-400">Target LUFS</span>
+                  <input
+                    v-model="draftCustomTargetText"
+                    type="number"
+                    step="0.1"
+                    min="-30"
+                    max="-6"
+                    class="w-20 rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5"
+                    :class="{ 'border-red-500': !customTargetValid }"
+                  >
+                </label>
+                <label class="flex items-center gap-1.5">
+                  <span class="text-zinc-400">Ceiling dBTP</span>
+                  <input
+                    v-model="draftCustomCeilingText"
+                    type="number"
+                    step="0.1"
+                    min="-9"
+                    max="0"
+                    class="w-20 rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5"
+                    :class="{ 'border-red-500': !customCeilingValid }"
+                  >
+                </label>
+                <span class="text-[10px] text-zinc-500">
+                  Range: target [-30, -6] LUFS, ceiling [-9, 0] dBTP.
+                </span>
+              </div>
             </div>
           </section>
 

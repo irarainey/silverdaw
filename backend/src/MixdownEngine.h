@@ -121,6 +121,25 @@ struct MixdownOptions
      *  tail` (the processor tail today is 0 — reverb/delay land
      *  next). */
     double tailSeconds{0.0};
+    /** ITU-R BS.1770-4 loudness measurement / normalization.
+     *  - Off:         no analysis, no gain, current behaviour.
+     *  - AnalyzeOnly: single-pass render measures integrated LUFS +
+     *                 true-peak and reports them; output is bit-
+     *                 identical to Off.
+     *  - Normalize:   two-pass render. Pass 1 measures and writes a
+     *                 32-float intermediate; pass 2 applies the
+     *                 computed linear gain, with a true-peak ceiling
+     *                 back-off, then dithers + writes the chosen
+     *                 final format. */
+    enum class LoudnessMode { Off, AnalyzeOnly, Normalize };
+    LoudnessMode loudnessMode{LoudnessMode::Off};
+    /** Target integrated loudness in LUFS. Only consulted when
+     *  loudnessMode == Normalize. Validated to [-30, -6]. */
+    double targetLufs{-14.0};
+    /** True-peak ceiling in dBTP. Final gain is clamped so the
+     *  post-gain true peak does not exceed (ceilingDbtp - 0.2 dB).
+     *  Validated to [-9, 0]. Only consulted for Normalize. */
+    double ceilingDbtp{-1.0};
     /** MP3 only; ignored for WAV/FLAC. */
     int bitrateKbps{192};
     /** Total render duration in milliseconds. Resolved from

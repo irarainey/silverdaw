@@ -3525,6 +3525,63 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         options.tailSeconds = tailSecondsRaw;
         options.dither = ditherRaw;
         options.bitrateKbps = bitrateKbps;
+
+        // Loudness block: optional. Accepts `{ mode, targetLufs?,
+        // ceilingDbtp? }` where mode ∈ {off, analyze, normalize}.
+        // Defaults: mode=off, targetLufs=-14, ceilingDbtp=-1.
+        // Normalize requires targetLufs and ceilingDbtp in the
+        // valid ranges; analyze ignores those values.
+        const auto loudnessVar = payload.getProperty("loudness", juce::var());
+        if (loudnessVar.isObject())
+        {
+            const auto modeStr = loudnessVar.getProperty("mode", juce::var("off")).toString();
+            silverdaw::MixdownOptions::LoudnessMode lm =
+                silverdaw::MixdownOptions::LoudnessMode::Off;
+            if      (modeStr == "off")       lm = silverdaw::MixdownOptions::LoudnessMode::Off;
+            else if (modeStr == "analyze")   lm = silverdaw::MixdownOptions::LoudnessMode::AnalyzeOnly;
+            else if (modeStr == "normalize") lm = silverdaw::MixdownOptions::LoudnessMode::Normalize;
+            else
+            {
+                rejectInvalid("loudness.mode must be one of off, analyze, normalize (got \"" + modeStr + "\").");
+                return;
+            }
+            options.loudnessMode = lm;
+
+            if (lm == silverdaw::MixdownOptions::LoudnessMode::Normalize)
+            {
+                if (! loudnessVar.hasProperty("targetLufs"))
+                {
+                    rejectInvalid("loudness.targetLufs is required when loudness.mode == normalize.");
+                    return;
+                }
+            }
+            const double tgt = static_cast<double>(
+                loudnessVar.getProperty("targetLufs", -14.0));
+            const double ceil = static_cast<double>(
+                loudnessVar.getProperty("ceilingDbtp", -1.0));
+            if (! std::isfinite(tgt) || tgt < -30.0 || tgt > -6.0)
+            {
+                rejectInvalid("loudness.targetLufs must be in [-30, -6] (got " +
+                              juce::String(tgt, 2) + ").");
+                return;
+            }
+            if (! std::isfinite(ceil) || ceil < -9.0 || ceil > 0.0)
+            {
+                rejectInvalid("loudness.ceilingDbtp must be in [-9, 0] (got " +
+                              juce::String(ceil, 2) + ").");
+                return;
+            }
+            options.targetLufs = tgt;
+            options.ceilingDbtp = ceil;
+            if (lm != silverdaw::MixdownOptions::LoudnessMode::Off
+                && options.outputSampleRate != 44100
+                && options.outputSampleRate != 48000)
+            {
+                rejectInvalid("Loudness analysis requires 44.1 or 48 kHz output (got " +
+                              juce::String(options.outputSampleRate) + ").");
+                return;
+            }
+        }
         if (lengthMode == "trim-to-last-clip")
         {
             options.lengthMs = silverdaw::computeLastClipEndMs(snapshot);

@@ -585,6 +585,28 @@ export interface MixdownStartPayload {
    *  Range [0, 60]. Independent of, and additive on top of, any
    *  per-clip processor tail (e.g. reverb decay). Defaults to 0. */
   tailSeconds?: number
+  /** ITU-R BS.1770-4 loudness measurement and / or two-pass
+   *  normalization. Only valid when `sampleRate` is 44100 or 48000.
+   *  Optional — when absent the export runs in `off` mode and the
+   *  output matches the existing un-analyzed pipeline byte-for-byte.
+   *
+   *  - `off`        no analysis, no gain, no metering.
+   *  - `analyze`    single-pass render measures integrated LUFS +
+   *                 true-peak; reports them on `MIXDOWN_DONE.loudness`.
+   *                 Output bytes are identical to `off`.
+   *  - `normalize`  two-pass render: pass 1 measures the program +
+   *                 writes a 32-float intermediate; pass 2 applies
+   *                 the linear gain needed to hit `targetLufs`,
+   *                 backed off if necessary so the post-gain true
+   *                 peak doesn't exceed `ceilingDbtp - 0.2 dB`.
+   *
+   *  `targetLufs` is required when `mode === 'normalize'`. Both
+   *  numeric fields are clamped to [-30, -6] and [-9, 0] respectively. */
+  loudness?: {
+    mode: 'off' | 'analyze' | 'normalize'
+    targetLufs?: number
+    ceilingDbtp?: number
+  }
   /** MP3 only: target bitrate in kbps. Ignored for WAV / FLAC. */
   bitrateKbps?: 128 | 192 | 320
   lengthMode: 'trim-to-last-clip' | 'fixed-duration'
@@ -1348,14 +1370,38 @@ export type AudioFileProbedPayload = z.infer<typeof AudioFileProbedPayloadSchema
  *  render. `stage` lets the UI surface the current weighted phase. */
 export const MixdownProgressPayloadSchema = z.object({
   percent: z.number(),
-  stage: z.enum(['prepare', 'render', 'finalize', 'encode'])
+  stage: z.enum([
+    'prepare',
+    'render',
+    'finalize',
+    'encode',
+    'analyze',
+    'normalize-pass1',
+    'normalize-pass2'
+  ])
 })
 export type MixdownProgressPayload = z.infer<typeof MixdownProgressPayloadSchema>
 
-/** Success ack — mixdown finished and the file is at `filePath`. */
+/** Success ack — mixdown finished and the file is at `filePath`.
+ *  When the export ran with a loudness mode other than `off` the
+ *  `loudness` block carries the post-render measurement (after gain
+ *  has been applied in normalize mode). `integratedLufs` and
+ *  `truePeakDbtp` are `null` for silent / unmeasurable programs
+ *  because JSON cannot encode -Infinity. */
 export const MixdownDonePayloadSchema = z.object({
   filePath: z.string(),
-  durationMs: z.number()
+  durationMs: z.number(),
+  loudness: z.optional(z.object({
+    integratedLufs: z.union([z.number(), z.null()]),
+    truePeakDbtp: z.union([z.number(), z.null()]),
+    silent: z.boolean(),
+    unmeasurable: z.boolean(),
+    gatedBlockCount: z.number(),
+    appliedGainDb: z.number(),
+    limitedByTruePeak: z.boolean(),
+    pass2ClippedSamples: z.number(),
+    pass2PostGainPeak: z.number()
+  }))
 })
 export type MixdownDonePayload = z.infer<typeof MixdownDonePayloadSchema>
 
