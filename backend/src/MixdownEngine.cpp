@@ -289,7 +289,8 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
  */
 void mixClipBlock(OfflineClip& clip,
                   juce::AudioBuffer<float>& clipScratch,
-                  float* mixL, float* mixR, int blockFrames)
+                  float* mixL, float* mixR, int blockFrames,
+                  bool logThisBlock = false)
 {
     if (clip.retired) return;
     clipScratch.clear();
@@ -303,10 +304,49 @@ void mixClipBlock(OfflineClip& clip,
     const float* r = clip.sourceChannels >= 2 ? clipScratch.getReadPointer(1)
                                               : clipScratch.getReadPointer(0);
     const float g = clip.trackGain;
+
+    // Optional per-clip diagnostic — caller throttles via logThisBlock.
+    // Captures pre-gain peak/RMS (what the transport+warp produced) and
+    // post-gain peak/RMS (what gets summed into the mix bus). Compare
+    // pre-gain across live vs mixdown to isolate transport/resampler
+    // differences; compare post-gain to verify trackGain is correct.
+    float preLPeak = 0.0F, preRPeak = 0.0F;
+    double preLSq = 0.0, preRSq = 0.0;
+    if (logThisBlock)
+    {
+        for (int i = 0; i < blockFrames; ++i)
+        {
+            const float al = std::fabs(l[i]);
+            const float ar = std::fabs(r[i]);
+            if (al > preLPeak) preLPeak = al;
+            if (ar > preRPeak) preRPeak = ar;
+            preLSq += static_cast<double>(l[i]) * l[i];
+            preRSq += static_cast<double>(r[i]) * r[i];
+        }
+    }
+
     for (int i = 0; i < blockFrames; ++i)
     {
         mixL[i] += l[i] * g;
         mixR[i] += r[i] * g;
+    }
+
+    if (logThisBlock)
+    {
+        const double invN = blockFrames > 0 ? 1.0 / blockFrames : 0.0;
+        const double preLRms  = std::sqrt(preLSq * invN);
+        const double preRRms  = std::sqrt(preRSq * invN);
+        silverdaw::log::debug(
+            "mixdown",
+            "clipBlock id=" + clip.id +
+                " srcCh=" + juce::String(clip.sourceChannels) +
+                " gain=" + juce::String(g, 4) +
+                " preGainPeakL=" + juce::String(preLPeak, 4) +
+                " preGainPeakR=" + juce::String(preRPeak, 4) +
+                " preGainRmsL=" + juce::String(preLRms, 6) +
+                " preGainRmsR=" + juce::String(preRRms, 6) +
+                " postGainPeakL=" + juce::String(preLPeak * g, 4) +
+                " postGainPeakR=" + juce::String(preRPeak * g, 4));
     }
 }
 
@@ -785,6 +825,14 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             float* mixL = mixBus.getWritePointer(0);
             float* mixR = mixBus.getWritePointer(1);
 
+            // Per-clip pre/post-gain logging stride: tie to the same
+            // ~5 s cadence used for the mix-bus peak telemetry below
+            // so the diagnostic lines line up in the log timeline.
+            const int clipLogStride = juce::jmax(1,
+                static_cast<int>(static_cast<double>(snapshot.projectSampleRate) * 5.0
+                                 / static_cast<double>(kBlockFrames)));
+            const bool logClipsThisBlock = (blockIndex % clipLogStride) == 0;
+
             for (auto& cp : clips)
             {
                 if (cp->retired) continue;
@@ -798,7 +846,8 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                     cp->retired = true;
                     continue;
                 }
-                mixClipBlock(*cp, clipScratch, mixL, mixR, blockFrames);
+                mixClipBlock(*cp, clipScratch, mixL, mixR, blockFrames,
+                             logClipsThisBlock);
             }
 
             // Peak-meter without clipping. The live engine has NO

@@ -3431,6 +3431,33 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             return;
         }
 
+        // Align mixdown's internal "project rate" with the live device
+        // rate. The per-clip JUCE chain in MixdownEngine is identical to
+        // live's (AudioFormatReaderSource → OffsetSource → AudioTransport
+        // Source). The transport's internal ResamplingAudioSource uses
+        // linear interpolation, so running mixdown at a different rate
+        // than live changes the source→render resample ratio and can
+        // perceptibly attenuate high frequencies vs live (rubber-duck
+        // pair #2: top remaining cause of "export quieter than live").
+        // We then do the projectRate→outputRate step through the
+        // FinalResampler (libsamplerate SINC), which is higher quality
+        // than the transport's linear interpolator.
+        {
+            const auto deviceSnap = engine.getAudioDevicesSnapshot();
+            const int previousRate = snapshot.projectSampleRate;
+            if (deviceSnap.currentSampleRate > 0.0)
+            {
+                snapshot.projectSampleRate =
+                    static_cast<int>(deviceSnap.currentSampleRate);
+            }
+            silverdaw::log::info(
+                "mixdown",
+                "projectSampleRate aligned previous=" + juce::String(previousRate) +
+                    " deviceRate=" + juce::String(deviceSnap.currentSampleRate, 1) +
+                    " effective=" + juce::String(snapshot.projectSampleRate) +
+                    " outputRate=" + juce::String(outputSampleRate));
+        }
+
         silverdaw::MixdownOptions options;
         options.outputFile = juce::File(outputPath);
         options.outputSampleRate = outputSampleRate;
