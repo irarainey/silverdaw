@@ -84,16 +84,6 @@ function step(side: 'in' | 'out', dir: 1 | -1): void {
 
 <template>
   <div class="flex w-full flex-col gap-3 text-xs">
-    <div>
-      <h3 class="text-sm font-semibold text-zinc-100">
-        Fades
-      </h3>
-      <p class="mt-1 text-[11px] leading-4 text-zinc-500">
-        Linear ramp at the head / tail of the clip. Previewed live in the
-        editor; saved with the rest of your changes.
-      </p>
-    </div>
-
     <fieldset class="grid grid-cols-2 gap-3 rounded border border-zinc-800 bg-zinc-900/70 p-3">
       <label class="flex flex-col gap-1.5">
         <span class="text-[10px] uppercase tracking-wider text-zinc-500">

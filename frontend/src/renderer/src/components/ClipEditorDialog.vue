@@ -23,8 +23,10 @@ import {
   useClipEditorWarpDraft
 } from '@/lib/clipEditor/useClipEditorWarpDraft'
 import { useClipEditorFadesDraft } from '@/lib/clipEditor/useClipEditorFadesDraft'
-import ClipEditorWarpPitchPanel from '@/components/ClipEditorWarpPitchPanel.vue'
+import ClipEditorWarpPanel from '@/components/ClipEditorWarpPanel.vue'
+import ClipEditorPitchPanel from '@/components/ClipEditorPitchPanel.vue'
 import ClipEditorFadesPanel from '@/components/ClipEditorFadesPanel.vue'
+import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
@@ -90,11 +92,6 @@ const {
   clampAgainstDuration: clampFadesAgainstDuration
 } = fadesDraft
 
-// Active tab in the bottom inspector area. Reset to the first tab on
-// every open so the dialog presents the same predictable surface each
-// time — matches the simple-ethos preference for low-state UI.
-type EditorTab = 'warp-pitch' | 'fades'
-const activeTab = ref<EditorTab>('warp-pitch')
 
 const warpActive = computed(() => {
   const entry = editorItem.value
@@ -349,7 +346,6 @@ watch(
       initSelectionForItem()
       initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
       initialiseFadesDraft(timelineClip.value)
-      activeTab.value = 'warp-pitch'
       loopEnabled.value = false
       lastHiResRequestKey = ''
       cropUndoStack.value = []
@@ -385,7 +381,6 @@ watch(
     initSelectionForItem()
     initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
     initialiseFadesDraft(timelineClip.value)
-    activeTab.value = 'warp-pitch'
     lastHiResRequestKey = ''
     cropUndoStack.value = []
     cropRedoStack.value = []
@@ -1768,52 +1763,47 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
 
           <div
             v-if="editsExistingClip"
-            class="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-zinc-800 bg-zinc-950/40"
+            class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded border border-zinc-800 bg-zinc-950/40"
           >
-            <nav
-              role="tablist"
-              aria-label="Clip editor sections"
-              class="flex shrink-0 items-center gap-1 border-b border-zinc-800 bg-zinc-900/60 px-3 py-2 text-[11px]"
+            <!-- Effects rack: a modular grid of plugin-style modules. Each
+                 effect spans an integer number of fixed-size base cells, so
+                 every module shares one aspect-ratio grid and the rack reads
+                 as a tidy rack however the resizable dialog is sized. Scrolls
+                 both axes; horizontal scroll reveals further effects. -->
+            <div
+              class="clip-effects-rack silverdaw-scroll grid min-h-0 min-w-0 flex-1 gap-3 overflow-auto p-3"
+              role="group"
+              aria-label="Clip effects"
             >
-              <button
-                type="button"
-                role="tab"
-                :aria-selected="activeTab === 'warp-pitch'"
-                class="rounded px-3 py-1 font-medium transition-colors"
-                :class="activeTab === 'warp-pitch'
-                  ? 'bg-sky-600 text-white'
-                  : 'text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100'"
-                @click="activeTab = 'warp-pitch'"
+              <ClipEffectModule
+                title="Warp"
+                :cols="1"
+                :rows="2"
               >
-                Warp &amp; Pitch
-              </button>
-              <button
+                <ClipEditorWarpPanel
+                  :draft="warpDraft"
+                  :source-bpm="sourceBpm"
+                  :project-bpm="transport.bpm"
+                />
+              </ClipEffectModule>
+              <ClipEffectModule
+                title="Pitch"
+                :cols="1"
+                :rows="2"
+              >
+                <ClipEditorPitchPanel
+                  :draft="warpDraft"
+                  :source-key="sourceKey"
+                />
+              </ClipEffectModule>
+              <ClipEffectModule
                 v-if="editsSingleTimelineClip"
-                type="button"
-                role="tab"
-                :aria-selected="activeTab === 'fades'"
-                class="rounded px-3 py-1 font-medium transition-colors"
-                :class="activeTab === 'fades'
-                  ? 'bg-sky-600 text-white'
-                  : 'text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100'"
-                @click="activeTab = 'fades'"
+                title="Fades"
+                :cols="1"
+                :rows="1"
               >
-                Fades
-              </button>
-            </nav>
-            <div class="min-h-0 flex-1 overflow-y-auto p-4">
-              <ClipEditorWarpPitchPanel
-                v-if="activeTab === 'warp-pitch'"
-                :draft="warpDraft"
-                :source-bpm="sourceBpm"
-                :source-key="sourceKey"
-                :project-bpm="transport.bpm"
-                :edits-saved-clip-library="editsSavedClipLibrary"
-              />
-              <ClipEditorFadesPanel
-                v-else-if="activeTab === 'fades'"
-                :draft="fadesDraft"
-              />
+                <ClipEditorFadesPanel :draft="fadesDraft" />
+              </ClipEffectModule>
             </div>
           </div>
         </div>
@@ -1854,6 +1844,21 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
 </template>
 
 <style scoped>
+/* Effects rack modular grid. Base cells are a FIXED size so every module
+   keeps a consistent aspect ratio regardless of how the resizable dialog
+   is sized; the rack scrolls (the parent supplies overflow) when modules
+   exceed the available space. Two cells tall by default; `column dense`
+   packs modules left-to-right and back-fills gaps. */
+.clip-effects-rack {
+  --cell-w: 17rem; /* 272px */
+  --cell-h: 11.5rem; /* 184px */
+  grid-template-rows: repeat(2, var(--cell-h));
+  grid-auto-columns: var(--cell-w);
+  grid-auto-flow: column dense;
+  justify-content: start;
+  align-content: start;
+}
+
 .pitch-range-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
