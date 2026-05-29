@@ -87,8 +87,35 @@ Silverdaw currently supports the core arrangement workflow:
   (clamped 60..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
   a track name and dragging up or down; an emerald drop indicator shows where
   the track will land. Both are persisted with the project and undoable.
-- Edit track gain with the slider or double-click the gain number to type a
-  bounded percentage value directly (0..150).
+- Edit track gain with the fader or double-click the dB readout to type a value
+  directly. Faders are tapered in dB (range `-∞..+6 dB`, GarageBand-style) with
+  0 dB landing near the top of travel and a snap-to-`-∞` dead zone at the
+  bottom. Typed input accepts forms like `-3`, `+1.5`, `0 dB`, `-inf` or `-∞`.
+- Master output volume in the transport bar: stereo peak meter (live + decayed
+  hold) plus a tapered dB fader (`-∞..0 dB`, no boost). Double-click the dB
+  readout to type a value. The master gain is persisted with the project,
+  marks the project dirty and is applied to both live playback and mixdown
+  export so the rendered file matches what the user hears.
+- **Mixdown export** (File ▸ Export Mixdown…) renders the whole project to a
+  single stereo file. Formats: WAV (16 / 24 / 32-float), FLAC (16 / 24), AIFF
+  (16 / 24), MP3 (128 / 192 / 320 kbps, bundled LAME) and Ogg Vorbis (quality
+  index 0..10, exposed as ~96 / 192 / 320 kbps). Optional TPDF dither for
+  16-bit targets, configurable silence tail, file-level tags (mapped per-format
+  to ID3 / RIFF INFO / VORBIS_COMMENT / AIFF text chunks) and ITU-R BS.1770-4
+  loudness analysis with optional two-pass normalisation to a target LUFS with
+  true-peak ceiling. Dialog choices (format, sample rate, bit depth, bitrate /
+  quality, dither, tail, loudness mode + target, tags, output path) are
+  persisted at the *project* level via `PROJECT_SET_EXPORT_SETTINGS` so a
+  reopened project remembers how it was last exported. The live transport is
+  force-paused and `TRANSPORT_PLAY` is rejected for the duration of a render.
+- **Clip lock** (Ctrl+L or right-click ▸ Lock / Unlock) freezes a single
+  timeline clip against accidental move / trim / split. Locked clips show a
+  padlock badge in their title strip, refuse drag-move and edge-trim gestures
+  silently, and surface a toast if the user tries Split-at-playhead on them.
+  Double-click still opens the Clip Editor (so warp / pitch / crop remain
+  editable through that surface). The flag is per-clip — locking one
+  linked-saved-clip sibling does not lock the others — and is round-tripped
+  through `PROJECT_STATE` and the `.silverdaw` file.
 - **End-of-project playback** stops automatically: when the playhead reaches the
   project ruler's end, the renderer sends `TRANSPORT_PAUSE` and parks the playhead
   there. The Play button (and the Spacebar shortcut) is disabled while the
@@ -160,10 +187,10 @@ Silverdaw currently supports the core arrangement workflow:
   a clean Windows install does not need a separate Visual C++ Redistributable.
 - Undo / redo (Ctrl+Z / Ctrl+Y) any project-mutating edit. Covers
   clip add / move / trim / recolour / rename / delete / relink / rebind, track
-  add / remove / rename / gain / **resize / reorder**, library
-  add / remove / relink / reanalyse, marker add / move / remove, BPM,
-  project length, and project rename. Drag streams (clip move / trim /
-  track gain / marker move) coalesce same-target events within 500 ms
+  add / remove / rename / gain / **resize / reorder**, clip **lock / unlock**,
+  library add / remove / relink / reanalyse, marker add / move / remove, BPM,
+  project length, master volume and project rename. Drag streams (clip move / trim /
+  track gain / marker move / master volume) coalesce same-target events within 500 ms
   into a single undo step; track resize and reorder commit a single
   step on `pointerup`; everything else gets its own step. View state
   (zoom, scroll, playhead) is intentionally outside the undo stack
@@ -182,7 +209,8 @@ play seamlessly.
 
 The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, ffmpeg-backed decoding for unsupported formats,
-mixer / effects / automation, mixdown export, stem separation, loop slicing,
+mixer / effects / automation, per-clip processor chain (reverb / EQ /
+compressor — applied both live and in mixdown), stem separation, loop slicing,
 grouping compound operations (split / duplicate) into a single undo step, and
 a CI matrix that enforces a coverage floor over the existing backend and
 frontend test suites.
@@ -245,9 +273,11 @@ malformed values up front instead of silently coercing them via
 
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
-        audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?]
+        audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
+        masterVolume?, exportSettingsJson?]
   TRACK[id, name, gain, heightPx?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
+         locked?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
          effectiveDurationMs?, effectiveTempoRatio?, effectiveWarpActive?]
   LIBRARY
@@ -301,6 +331,18 @@ user-scope default". `PROJECT.targetSampleRate` is the project sample rate when
 explicitly set (`44100` or `48000`); absent means the renderer falls back to the
 user-scope `ui.defaultProjectSampleRate` preference. Both are user-editable from
 the Project Properties dialog (see [Project properties](#project-properties)).
+`PROJECT.masterVolume` is the linear master-bus gain in `[0, 1]` (UI presents
+it in dB via the shared `lib/audio/db.ts` taper); absent means unity and the
+property is suppressed from save when at unity to keep older projects bit-clean.
+`PROJECT.exportSettingsJson` is a single opaque JSON blob (capped at 64 KB)
+holding the last-used mixdown export dialog choices for this project; it is
+written via `PROJECT_SET_EXPORT_SETTINGS`, parsed with field-level whitelist /
+clamp / schema-version guards on load, and does not generate undo entries
+(only a dirty-mark) so re-exporting doesn't clutter the undo history.
+`CLIP.locked` is an optional boolean (absent == unlocked) that freezes a clip
+against move / trim / split gestures on the timeline; the lock is per-clip,
+not propagated across linked-saved-clip siblings, and round-trips through
+`PROJECT_STATE`.
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
 added, moved or removed.
@@ -923,11 +965,12 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
-| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved-clip library item — right-click ▸ Unlink first, or use the Clip Editor to resize every linked sibling in lockstep. |
+| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved-clip library item (right-click ▸ Unlink first, or use the Clip Editor) and on **locked** clips (Ctrl+L or right-click ▸ Unlock to free). |
 | `Alt` + drag on clip edge | Trim with 1 ms resolution — the dragged edge stays at the unsnapped position. |
 | Drag the **bottom edge of a track header** (~5 px hit zone) | Resize that track row vertically (60–400 px). Each track's height is persisted with the project and undoable. |
 | Drag the **grip icon** (6-dot handle next to the track name) | Reorder the track. A green drop indicator shows the target slot. Drop on the indicator commits one undoable reorder step. |
-| Double-click a **track gain number** | Type a gain percentage directly. Values are constrained to 0..150, matching the slider range. |
+| Double-click a **track gain number** | Type a track gain in dB directly (range `-∞..+6 dB`). Accepts `-3`, `+1.5`, `0 dB`, `-inf`, `-∞`. Invalid input is rejected and the previous value is kept. |
+| Double-click the **master volume readout** in the transport bar | Type a master gain in dB directly (range `-∞..0 dB` — no boost above unity). Same parser as the track readout. |
 | Click on **empty area of a track row** | Select that track (highlighted row border), deselect any clip. |
 | Click on **inter-track gap** / below the last track | Deselect both clip and track. |
 | `←` / `→` | Step the playhead one grid line (sub-beat). |
@@ -948,8 +991,9 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Delete` | Delete the selected clip. |
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
-| `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
-| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Delete**, **Duplicate**, **Split at playhead**, an inline 16-swatch **Colour** picker, **Save clip to library**, **Save as sample**, **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved-clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
+| `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
+| `Ctrl + L` | Toggle the **lock** flag on the selected clip. Locked clips refuse drag-move, edge-trim and Split-at-playhead, and show a padlock badge in their title strip. Per-clip — linked-saved-clip siblings stay independently lockable. |
+| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), an inline 16-swatch **Colour** picker, **Save clip to library**, **Save as sample**, **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved-clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
 | Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, crop, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
