@@ -155,6 +155,21 @@ void ProjectState::valueTreeChildOrderChanged(juce::ValueTree& /*parent*/, int /
     recomputeDirty();
 }
 
+void ProjectState::setNonDirtyRootProperty(const juce::Identifier& id, const juce::var& value)
+{
+    // Write to the live tree under suppression (no dirty transition),
+    // then mirror into cleanSnapshot so the listener's equivalence
+    // check never sees a delta on this property after an undo. Without
+    // the mirror the tree silently drifts away from the snapshot and
+    // any subsequent net-zero edit fails the equivalence test, leaving
+    // the project stuck as "dirty" with nothing actually to save.
+    suppressDirtyTransitions = true;
+    root.setProperty(id, value, nullptr);
+    if (cleanSnapshot.isValid())
+        cleanSnapshot.setProperty(id, value, nullptr);
+    suppressDirtyTransitions = false;
+}
+
 juce::String ProjectState::getName() const
 {
     const auto stored = root.getProperty(kName, kDefaultName).toString().trim();
@@ -805,10 +820,10 @@ double ProjectState::getViewPxPerSecond() const
 
 void ProjectState::setViewPxPerSecond(double pxPerSecond)
 {
-    // Zoom is view state, same as scroll — never marks dirty.
-    suppressDirtyTransitions = true;
-    root.setProperty(kViewPxPerSecond, pxPerSecond, nullptr);
-    suppressDirtyTransitions = false;
+    // Zoom is view state, same as scroll — never marks dirty, and
+    // mirrored into cleanSnapshot so a later undo cleanly returns to
+    // the un-dirty baseline.
+    setNonDirtyRootProperty(kViewPxPerSecond, pxPerSecond);
 }
 
 double ProjectState::getViewScrollX() const
@@ -818,10 +833,10 @@ double ProjectState::getViewScrollX() const
 
 void ProjectState::setViewScrollX(double scrollX)
 {
-    // Scroll is a view setting — never marks dirty.
-    suppressDirtyTransitions = true;
-    root.setProperty(kViewScrollX, scrollX, nullptr);
-    suppressDirtyTransitions = false;
+    // Scroll is a view setting — never marks dirty, and mirrored into
+    // cleanSnapshot so a later undo cleanly returns to the un-dirty
+    // baseline.
+    setNonDirtyRootProperty(kViewScrollX, scrollX);
 }
 
 double ProjectState::getPlayheadMs() const
@@ -834,9 +849,9 @@ void ProjectState::setPlayheadMs(double playheadMs)
     // Playhead position is a transient transport / view value — never
     // marks dirty. Seeks/stops mirror into this property, and save
     // captures the current engine position immediately before writing.
-    suppressDirtyTransitions = true;
-    root.setProperty(kPlayheadMs, playheadMs, nullptr);
-    suppressDirtyTransitions = false;
+    // Mirrored into cleanSnapshot so transport movement post-markClean
+    // doesn't leave the project stuck dirty after a net-zero edit+undo.
+    setNonDirtyRootProperty(kPlayheadMs, playheadMs);
 }
 
 double ProjectState::getBpm() const

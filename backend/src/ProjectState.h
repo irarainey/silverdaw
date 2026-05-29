@@ -311,8 +311,10 @@ class ProjectState : public juce::ValueTree::Listener
     // Project-scoped view state that survives save/load but is NOT
     // considered a meaningful "edit" — changing the zoom level or
     // scroll position should not prompt an unsaved-changes dialog. The
-    // setter wraps the mutation in `suppressDirtyTransitions` so the
-    // listener ignores it; the read path is a plain property read.
+    // setter routes through `setNonDirtyRootProperty`, which writes to
+    // the live tree under suppression AND mirrors the value into
+    // `cleanSnapshot` so the listener's equivalence check never sees a
+    // delta on this property after a net-zero edit + undo.
 
     /** Horizontal zoom (pixels per second). Defaults to 60. */
     double getViewPxPerSecond() const;
@@ -587,6 +589,17 @@ class ProjectState : public juce::ValueTree::Listener
 
     void setDirty(bool d);
     void recomputeDirty();
+
+    /**
+     * Writes a property that is persisted on the project tree but is
+     * NOT considered a user-facing edit (view zoom, scroll, playhead).
+     * Mirrors the value into `cleanSnapshot` so the post-edit
+     * equivalence check used by `recomputeDirty()` continues to ignore
+     * the property — without that mirror, any drift between the live
+     * tree and the snapshot would survive an undo and leave the project
+     * stuck in the dirty state.
+     */
+    void setNonDirtyRootProperty(const juce::Identifier& id, const juce::var& value);
 
     juce::ValueTree root;
     juce::ValueTree cleanSnapshot;

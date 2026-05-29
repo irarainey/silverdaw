@@ -9,6 +9,7 @@
 #include "WarpProcessor.h"
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <exception>
@@ -273,6 +274,73 @@ void testProjectStateMasterVolumeRoundTrip()
     state.getUndoManager().undo();
     requireNear(static_cast<double>(state.getMasterVolume()), 0.75, 1e-6,
                 "undo should restore the prior master volume");
+}
+
+void testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo()
+{
+    // Regression: writing playhead / scroll / zoom AFTER markClean used
+    // to silently drift the live tree away from cleanSnapshot. The
+    // suppression flag kept that write itself from flipping dirty, but
+    // the next genuine edit + undo would compare root against the stale
+    // snapshot and incorrectly leave dirty=true even though every
+    // undoable change had been reverted.
+    struct Case
+    {
+        const char* label;
+        std::function<void(silverdaw::ProjectState&)> driftSetter;
+    };
+
+    const std::array<Case, 3> cases{{
+        {"playhead", [](silverdaw::ProjectState& s) { s.setPlayheadMs(5000.0); }},
+        {"viewScrollX", [](silverdaw::ProjectState& s) { s.setViewScrollX(640.0); }},
+        {"viewPxPerSecond", [](silverdaw::ProjectState& s) { s.setViewPxPerSecond(180.0); }},
+    }};
+
+    for (const auto& c : cases)
+    {
+        const std::string prefix = std::string("[") + c.label + "] ";
+        const std::string msgBaselineClean = prefix + "baseline should be clean";
+        const std::string msgSuppNoDirty = prefix + "suppressed setter must not mark dirty";
+        const std::string msgSuppNoCb = prefix + "suppressed setter must not fire dirty callback";
+        const std::string msgRealEditDirty = prefix + "real edit should mark dirty";
+        const std::string msgRealEditCb = prefix + "real edit should fire dirty=true exactly once";
+        const std::string msgUndoOk = prefix + "undo should succeed";
+        const std::string msgUndoClean = prefix
+            + "undo must restore clean even after suppressed drift";
+        const std::string msgUndoCb = prefix + "undo should fire dirty=false transition";
+
+        silverdaw::ProjectState state;
+        state.addTrack("t1");
+        state.markClean();
+        require(!state.isDirty(), msgBaselineClean.c_str());
+
+        int transitions = 0;
+        bool lastDirty = false;
+        state.setDirtyChangedCallback(
+            [&](bool d)
+            {
+                ++transitions;
+                lastDirty = d;
+            });
+
+        // Drift the suppressed property. Must not toggle dirty and
+        // must not fire the dirty-changed callback.
+        c.driftSetter(state);
+        require(!state.isDirty(), msgSuppNoDirty.c_str());
+        require(transitions == 0, msgSuppNoCb.c_str());
+
+        // Genuine undoable edit → dirty true.
+        state.getUndoManager().beginNewTransaction();
+        state.setBpm(140.0);
+        require(state.isDirty(), msgRealEditDirty.c_str());
+        require(transitions == 1 && lastDirty, msgRealEditCb.c_str());
+
+        // Undo the real edit → must return to clean despite the drift.
+        const bool undone = state.getUndoManager().undo();
+        require(undone, msgUndoOk.c_str());
+        require(!state.isDirty(), msgUndoClean.c_str());
+        require(transitions == 2 && !lastDirty, msgUndoCb.c_str());
+    }
 }
 
 void testProjectStateViewLibraryMarkersAndReplace()
@@ -844,6 +912,8 @@ int main()
         {"PeaksCache round-trip and validation", testPeaksCacheRoundTripAndValidation},
         {"Bridge auth token validation", testBridgeAuthTokenValidation},
         {"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty},
+        {"ProjectState suppressed property drift clears on undo",
+         testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo},
         {"WarpProcessor basic real-time stretch", testWarpProcessorBasicStretch},
         {"Warp timeline duration mapping", testWarpTimelineDurationMapping},
         {"Bridge payload helpers reject malformed values",
