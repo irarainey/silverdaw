@@ -915,6 +915,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
     snapshot.projectSampleRate = (explicitRate == 44100 || explicitRate == 48000)
                                      ? explicitRate
                                      : 44100;
+    snapshot.masterGain = juce::jlimit(0.0F, 1.0F, project.getMasterVolume());
 
     static const juce::Identifier kTrack{"TRACK"};
     static const juce::Identifier kClip{"CLIP"};
@@ -1560,6 +1561,16 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                 }
                 mixClipBlock(*cp, clipScratch, mixL, mixR, blockFrames,
                              logClipsThisBlock);
+            }
+
+            // Master volume: applied to the summed mix bus BEFORE peak
+            // metering, loudness analysis, dither and the final
+            // resample so the rendered file matches what the user
+            // hears live (where `AudioEngine::setMasterGain` applies
+            // the same scalar through `AudioSourcePlayer::setGain`).
+            if (! juce::approximatelyEqual(snapshot.masterGain, 1.0F))
+            {
+                mixBus.applyGain(0, blockFrames, snapshot.masterGain);
             }
 
             // Peak-meter without clipping. The live engine has NO

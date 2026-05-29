@@ -619,6 +619,15 @@ void AudioEngine::stop()
     silverdaw::log::info("engine", "stop");
 }
 
+void AudioEngine::setMasterGain(float gain)
+{
+    // Clamp to the user-facing [0, 1] range. `AudioSourcePlayer::setGain`
+    // applies the new value with internal block-rate ramping, so calls
+    // during active playback don't produce zipper noise.
+    const float clamped = juce::jlimit(0.0F, 1.0F, gain);
+    sourcePlayer.setGain(clamped);
+}
+
 void AudioEngine::setPositionMs(double ms)
 {
     const double sr = master.getSampleRate();

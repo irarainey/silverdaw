@@ -227,6 +227,54 @@ void testProjectStateExportSettingsRoundTrip()
                  blob, "exportSettingsJson should round-trip through ValueTreeJson");
 }
 
+void testProjectStateMasterVolumeRoundTrip()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+
+    requireNear(static_cast<double>(state.getMasterVolume()), 1.0, 1e-6,
+                "fresh project should default to unity master volume");
+
+    state.setMasterVolume(0.5F);
+    requireNear(static_cast<double>(state.getMasterVolume()), 0.5, 1e-6,
+                "setMasterVolume should round-trip");
+    require(state.isDirty(), "setMasterVolume should mark the project dirty");
+    require(state.getUndoManager().canUndo(),
+            "setMasterVolume must push an undo entry (like TRACK_GAIN)");
+
+    // Clamping
+    state.setMasterVolume(2.5F);
+    requireNear(static_cast<double>(state.getMasterVolume()), 1.0, 1e-6,
+                "values above 1.0 should clamp to unity");
+    state.setMasterVolume(-0.3F);
+    requireNear(static_cast<double>(state.getMasterVolume()), 0.0, 1e-6,
+                "negative values should clamp to zero");
+
+    // Setting back to exactly 1.0 should remove the property so legacy
+    // projects round-trip without an extra field.
+    state.setMasterVolume(1.0F);
+    requireNear(static_cast<double>(state.getMasterVolume()), 1.0, 1e-6,
+                "unity should restore default");
+    require(!state.getTree().hasProperty(juce::Identifier{"masterVolume"}),
+            "exactly-unity master volume should be stored as absent");
+
+    // ValueTreeJson round-trip for non-unity value.
+    state.setMasterVolume(0.75F);
+    const auto encoded = silverdaw::ValueTreeJson::toVar(state.getTree());
+    const auto decoded = silverdaw::ValueTreeJson::fromVar(encoded);
+    requireNear(static_cast<double>(decoded.getProperty(juce::Identifier{"masterVolume"}, 1.0)),
+                0.75, 1e-6, "masterVolume should round-trip through ValueTreeJson");
+
+    // Undo should restore the previous value AND the live engine
+    // re-pull happens through rebuildEngineFromProject (covered at the
+    // Main.cpp level — not exercised here).
+    state.getUndoManager().beginNewTransaction();
+    state.setMasterVolume(0.25F);
+    state.getUndoManager().undo();
+    requireNear(static_cast<double>(state.getMasterVolume()), 0.75, 1e-6,
+                "undo should restore the prior master volume");
+}
+
 void testProjectStateViewLibraryMarkersAndReplace()
 {
     silverdaw::ProjectState state;
@@ -790,6 +838,7 @@ int main()
         {"ProjectState tracks, clips, and dirty tracking", testProjectStateTracksClipsAndDirty},
         {"ProjectState view, library, markers, and replaceTree", testProjectStateViewLibraryMarkersAndReplace},
         {"ProjectState export-settings JSON round-trip", testProjectStateExportSettingsRoundTrip},
+        {"ProjectState master volume round-trip", testProjectStateMasterVolumeRoundTrip},
         {"ValueTreeJson round-trip and validation", testValueTreeJsonRoundTripAndValidation},
         {"ProjectFile save/load and view-state update", testProjectFileSaveLoadAndViewState},
         {"PeaksCache round-trip and validation", testPeaksCacheRoundTripAndValidation},

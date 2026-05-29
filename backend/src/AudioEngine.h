@@ -767,6 +767,15 @@ class AudioEngine
     void stop();
 
     /**
+     * Set the master output gain applied to the final mix bus. Linear
+     * scalar, clamped to [0, 1]. Uses `juce::AudioSourcePlayer::setGain`
+     * which internally ramps to the target value over each block, so
+     * mid-playback changes are click-free. Safe to call from the
+     * message thread at any time (including during playback).
+     */
+    void setMasterGain(float gain);
+
+    /**
      * Seek every track's playhead to `ms`. Position is clamped to 0; if a
      * track's duration is shorter than `ms` JUCE's transport clamps it to
      * the end internally. Safe to call whether or not playback is active.

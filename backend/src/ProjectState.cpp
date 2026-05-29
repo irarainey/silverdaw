@@ -31,6 +31,7 @@ const juce::Identifier ProjectState::kAudioOutputTypeName{"audioOutputTypeName"}
 const juce::Identifier ProjectState::kAudioOutputDeviceName{"audioOutputDeviceName"};
 const juce::Identifier ProjectState::kTargetSampleRate{"targetSampleRate"};
 const juce::Identifier ProjectState::kExportSettingsJson{"exportSettingsJson"};
+const juce::Identifier ProjectState::kMasterVolume{"masterVolume"};
 const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
 const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
 const juce::Identifier ProjectState::kMarkers{"MARKERS"};
@@ -932,6 +933,27 @@ void ProjectState::setExportSettingsJson(const juce::String& json)
     else
     {
         root.setProperty(kExportSettingsJson, json, nullptr);
+    }
+}
+
+float ProjectState::getMasterVolume() const
+{
+    // Default unity when absent. Property is only stored when the
+    // user has moved the master slider, keeping legacy projects
+    // round-trip clean.
+    return static_cast<float>(static_cast<double>(root.getProperty(kMasterVolume, 1.0)));
+}
+
+void ProjectState::setMasterVolume(float volume)
+{
+    const float clamped = juce::jlimit(0.0F, 1.0F, volume);
+    if (juce::approximatelyEqual(clamped, 1.0F))
+    {
+        root.removeProperty(kMasterVolume, &undoManager);
+    }
+    else
+    {
+        root.setProperty(kMasterVolume, clamped, &undoManager);
     }
 }
 

@@ -421,36 +421,137 @@ function onToggleFollow(): void {
   ui.setFollowPlayback(!ui.followPlayback)
   log.info('transport', `follow playback=${ui.followPlayback}`)
 }
+
+function onMasterVolumeInput(event: Event): void {
+  // Range input fires on every pixel of movement during drag. We
+  // dispatch each one straight through to the backend (mirrors the
+  // `TRACK_GAIN` drag stream). The backend's `beginNewTransaction`
+  // coalescing window (500 ms, keyed off `PROJECT_SET_MASTER_VOLUME:_`)
+  // bundles a continuous drag into a single undo step.
+  const target = event.target as HTMLInputElement
+  const pct = Number(target.value)
+  if (!Number.isFinite(pct)) return
+  project.setMasterVolume(Math.min(1, Math.max(0, pct / 100)))
+}
 </script>
 
 <template>
   <header
     class="flex h-16 w-full select-none items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 text-zinc-300"
   >
-    <!-- Left: audio output device quick-switch. Replaces the
-         flex-spacer; the chip's natural width still keeps the
-         centre transport buttons centred relative to the right
-         timing-box width. -->
-    <div
-      ref="audioMenuRoot"
-      class="relative flex-1"
-    >
-      <button
-        type="button"
-        data-borderless-button="true"
-        class="flex max-w-xs items-center gap-1.5 rounded border border-zinc-700 bg-zinc-950/40 px-2 py-1 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900"
-        :class="{
-          'border-amber-700 text-amber-200': audioDevices.lastError,
-          'animate-pulse': audioDevices.pendingSelection !== null
-        }"
-        :title="
-          audioDevices.lastError
-            ? audioDevices.lastError
-            : audioLatencyCaption
-              ? `Audio output: ${audioDevices.currentDeviceName || 'System default'} (${audioLatencyCaption} of output latency — playhead is auto-compensated during playback)`
-              : 'Audio output device'
-        "
-        @click="toggleAudioMenu"
+    <!-- Left: audio output device quick-switch + master volume slider.
+         The wrapper takes flex-1 so the centre transport stays
+         centred relative to the right timing-box; the chip and
+         slider each take their natural width inside it. -->
+    <div class="flex flex-1 items-center gap-3">
+      <div
+        ref="audioMenuRoot"
+        class="relative"
+      >
+        <button
+          type="button"
+          data-borderless-button="true"
+          class="flex max-w-xs items-center gap-1.5 rounded border border-zinc-700 bg-zinc-950/40 px-2 py-1 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-900"
+          :class="{
+            'border-amber-700 text-amber-200': audioDevices.lastError,
+            'animate-pulse': audioDevices.pendingSelection !== null
+          }"
+          :title="
+            audioDevices.lastError
+              ? audioDevices.lastError
+              : audioLatencyCaption
+                ? `Audio output: ${audioDevices.currentDeviceName || 'System default'} (${audioLatencyCaption} of output latency — playhead is auto-compensated during playback)`
+                : 'Audio output device'
+          "
+          @click="toggleAudioMenu"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="h-3.5 w-3.5 shrink-0"
+            aria-hidden="true"
+          >
+            <path d="M11 5L6 9H2v6h4l5 4V5z" />
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+          </svg>
+          <span class="flex min-w-0 flex-col items-start leading-none">
+            <span class="truncate text-xs">{{ audioMenuLabel }}</span>
+            <span
+              v-if="audioLatencyCaption"
+              class="mt-0.5 text-[9px] tracking-wide text-zinc-500"
+            >{{ audioLatencyCaption }}</span>
+          </span>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+            class="h-3 w-3 shrink-0 text-zinc-500"
+            aria-hidden="true"
+          >
+            <path d="M4.427 6.427a.6.6 0 0 1 .849 0L8 9.151l2.724-2.724a.6.6 0 0 1 .849.849l-3.149 3.148a.6.6 0 0 1-.848 0L4.427 7.276a.6.6 0 0 1 0-.849Z" />
+          </svg>
+        </button>
+
+        <div
+          v-if="audioMenuOpen"
+          class="silverdaw-scroll absolute left-0 top-full z-40 mt-1 max-h-80 w-80 overflow-y-auto rounded border border-zinc-700 bg-zinc-900 py-1 shadow-2xl"
+        >
+          <button
+            type="button"
+            data-borderless-button="true"
+            class="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-zinc-800"
+            @click="pickDevice(null, null)"
+          >
+            <span class="text-zinc-200">System default</span>
+            <span
+              v-if="isCurrentDevice(null, null)"
+              class="text-sky-400"
+              aria-hidden="true"
+            >✓</span>
+          </button>
+          <div class="my-1 border-t border-zinc-800" />
+          <button
+            v-for="device in quickSwitchDevices"
+            :key="device.name"
+            type="button"
+            data-borderless-button="true"
+            class="flex w-full items-center justify-between gap-3 px-3 py-1 text-left text-xs hover:bg-zinc-800"
+            @click="pickUniqueDevice(device)"
+          >
+            <span class="truncate text-zinc-200">{{ device.name }}</span>
+            <span
+              v-if="isCurrentUniqueDevice(device)"
+              class="text-sky-400"
+              aria-hidden="true"
+            >✓</span>
+          </button>
+          <div class="my-1 border-t border-zinc-800" />
+          <button
+            type="button"
+            data-borderless-button="true"
+            class="w-full px-3 py-1 text-left text-[11px] text-zinc-400 hover:bg-zinc-800"
+            @click="audioDevices.requestRescan(); audioMenuOpen = false"
+          >
+            Rescan devices
+          </button>
+        </div>
+      </div>
+
+      <!-- Master volume: linear 0–100% slider next to the audio
+           device chip. Drives both live playback (via
+           `AudioSourcePlayer::setGain` — block-rate ramped, click-
+           free) and the mixdown export so the rendered file matches
+           what the user hears. Persisted at the project level;
+           new projects default to 100%. -->
+      <div
+        class="flex items-center gap-2"
+        :title="`Master volume: ${Math.round(project.masterVolume * 100)}%`"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -460,73 +561,25 @@ function onToggleFollow(): void {
           stroke-width="2"
           stroke-linecap="round"
           stroke-linejoin="round"
-          class="h-3.5 w-3.5 shrink-0"
+          class="h-3.5 w-3.5 shrink-0 text-zinc-400"
           aria-hidden="true"
         >
-          <path d="M11 5L6 9H2v6h4l5 4V5z" />
-          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+          <path d="M3 10v4h4l5 4V6l-5 4H3z" />
+          <path d="M16 8a5 5 0 0 1 0 8" />
         </svg>
-        <span class="flex min-w-0 flex-col items-start leading-none">
-          <span class="truncate text-xs">{{ audioMenuLabel }}</span>
-          <span
-            v-if="audioLatencyCaption"
-            class="mt-0.5 text-[9px] tracking-wide text-zinc-500"
-          >{{ audioLatencyCaption }}</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          aria-label="Master volume"
+          :value="Math.round(project.masterVolume * 100)"
+          class="silverdaw-master-volume h-1 w-28 cursor-pointer appearance-none rounded bg-zinc-700 accent-sky-400"
+          @input="onMasterVolumeInput($event)"
+        >
+        <span class="w-9 text-right font-mono text-[10px] text-zinc-400">
+          {{ Math.round(project.masterVolume * 100) }}%
         </span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 16 16"
-          fill="currentColor"
-          class="h-3 w-3 shrink-0 text-zinc-500"
-          aria-hidden="true"
-        >
-          <path d="M4.427 6.427a.6.6 0 0 1 .849 0L8 9.151l2.724-2.724a.6.6 0 0 1 .849.849l-3.149 3.148a.6.6 0 0 1-.848 0L4.427 7.276a.6.6 0 0 1 0-.849Z" />
-        </svg>
-      </button>
-
-      <div
-        v-if="audioMenuOpen"
-        class="silverdaw-scroll absolute left-0 top-full z-40 mt-1 max-h-80 w-80 overflow-y-auto rounded border border-zinc-700 bg-zinc-900 py-1 shadow-2xl"
-      >
-        <button
-          type="button"
-          data-borderless-button="true"
-          class="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-zinc-800"
-          @click="pickDevice(null, null)"
-        >
-          <span class="text-zinc-200">System default</span>
-          <span
-            v-if="isCurrentDevice(null, null)"
-            class="text-sky-400"
-            aria-hidden="true"
-          >✓</span>
-        </button>
-        <div class="my-1 border-t border-zinc-800" />
-        <button
-          v-for="device in quickSwitchDevices"
-          :key="device.name"
-          type="button"
-          data-borderless-button="true"
-          class="flex w-full items-center justify-between gap-3 px-3 py-1 text-left text-xs hover:bg-zinc-800"
-          @click="pickUniqueDevice(device)"
-        >
-          <span class="truncate text-zinc-200">{{ device.name }}</span>
-          <span
-            v-if="isCurrentUniqueDevice(device)"
-            class="text-sky-400"
-            aria-hidden="true"
-          >✓</span>
-        </button>
-        <div class="my-1 border-t border-zinc-800" />
-        <button
-          type="button"
-          data-borderless-button="true"
-          class="w-full px-3 py-1 text-left text-[11px] text-zinc-400 hover:bg-zinc-800"
-          @click="audioDevices.requestRescan(); audioMenuOpen = false"
-        >
-          Rescan devices
-        </button>
       </div>
     </div>
 

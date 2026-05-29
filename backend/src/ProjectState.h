@@ -387,6 +387,18 @@ class ProjectState : public juce::ValueTree::Listener
      *  dirty so the user is prompted to save. */
     void setExportSettingsJson(const juce::String& json);
 
+    /** Master output volume (0.0 = silent, 1.0 = unity). Applied to the
+     *  live audio engine's final mix bus and to the export render so
+     *  the mixed file matches what the user hears. Defaults to 1.0
+     *  when absent (new projects start at unity). */
+    float getMasterVolume() const;
+
+    /** Update the master output volume. Clamped to [0.0, 1.0]. Pushes
+     *  an undo step (mirrors `setTrackGain`) and marks the project
+     *  dirty. Persisted to `.silverdaw` only when ≠ unity so legacy
+     *  projects round-trip with no extra property. */
+    void setMasterVolume(float volume);
+
     // ─── Library catalogue ─────────────────────────────────────────────
     //
     // Items the user has imported into the library — independently of
@@ -616,6 +628,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kAudioOutputDeviceName;
     static const juce::Identifier kTargetSampleRate;
     static const juce::Identifier kExportSettingsJson;
+    static const juce::Identifier kMasterVolume;
     static const juce::Identifier kLibrary;
     static const juce::Identifier kLibraryItem;
     static const juce::Identifier kMarkers;

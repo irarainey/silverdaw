@@ -1629,6 +1629,14 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         const auto exportSettings = projectState.getExportSettingsJson();
         if (exportSettings.isNotEmpty()) obj->setProperty("exportSettingsJson", exportSettings);
     }
+    // Master output volume. Omitted when at unity (1.0) so legacy
+    // projects round-trip without an extra field; renderer falls
+    // back to 1.0 when absent.
+    {
+        const auto masterVolume = projectState.getMasterVolume();
+        if (! juce::approximatelyEqual(masterVolume, 1.0F))
+            obj->setProperty("masterVolume", masterVolume);
+    }
     return juce::var(obj);
 }
 
@@ -1812,6 +1820,11 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                              "rebuilt " + juce::String(rebuilt) + " clip(s); " + juce::String(failed) +
                                  " failed (audio for those clips will be silent)");
     }
+    // Restore project-level master volume to the live engine. PROJECT_NEW
+    // resets to 1.0; PROJECT_LOAD / recovery / undo / redo all reuse this
+    // path so the slider value persists across a load and undo never
+    // diverges audio from the visible UI value.
+    engine.setMasterGain(projectState.getMasterVolume());
 }
 
 void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
@@ -2284,6 +2297,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "PROJECT_RENAME" || type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" ||
            type == "PROJECT_SET_AUDIO_OUTPUT" ||
            type == "PROJECT_SET_TARGET_SAMPLE_RATE" ||
+           type == "PROJECT_SET_MASTER_VOLUME" ||
            type == "PROJECT_MARKER_ADD" || type == "PROJECT_MARKER_MOVE" ||
            type == "PROJECT_MARKER_REMOVE";
 }
@@ -2317,6 +2331,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "PROJECT_SET_LENGTH") return "Change project length";
     if (type == "PROJECT_SET_AUDIO_OUTPUT") return "Change audio output";
     if (type == "PROJECT_SET_TARGET_SAMPLE_RATE") return "Change project sample rate";
+    if (type == "PROJECT_SET_MASTER_VOLUME") return "Change master volume";
     if (type == "PROJECT_MARKER_ADD") return "Add marker";
     if (type == "PROJECT_MARKER_MOVE") return "Move marker";
     if (type == "PROJECT_MARKER_REMOVE") return "Remove marker";
@@ -2362,6 +2377,11 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     else if (type == "TRACK_GAIN")
     {
         idPart = payload.getProperty("trackId", "").toString();
+    }
+    else if (type == "PROJECT_SET_MASTER_VOLUME")
+    {
+        // Singleton project-level edit — slider drag coalesces.
+        idPart = "_";
     }
     else if (type == "PROJECT_MARKER_MOVE")
     {
@@ -3262,6 +3282,21 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         else
         {
             projectState.setExportSettingsJson(json);
+        }
+    }
+    else if (type == "PROJECT_SET_MASTER_VOLUME")
+    {
+        // Master output gain in [0, 1]. Persisted on the ValueTree
+        // (undoable, marks dirty) AND pushed live to the AudioEngine
+        // so playback changes audibly during a slider drag. Mixdown
+        // reads the same value from `snapshotProjectForMixdown`, so
+        // the exported file matches what the user hears.
+        const auto gainOpt = tryGetNumber(payload, "gain");
+        if (gainOpt.has_value())
+        {
+            const float clamped = juce::jlimit(0.0F, 1.0F, static_cast<float>(*gainOpt));
+            projectState.setMasterVolume(clamped);
+            engine.setMasterGain(clamped);
         }
     }
     else if (type == "PROJECT_MARKER_ADD")

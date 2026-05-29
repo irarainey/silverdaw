@@ -72,6 +72,11 @@ struct MixdownSnapshot
      *  effective project rate so the offline output sounds like the
      *  live transport sounds. */
     int projectSampleRate{44100};
+    /** Master output gain applied to the summed mix bus just before
+     *  loudness analysis / peak measurement / final resample / dither.
+     *  Mirrors the live engine's `setMasterGain` so the exported file
+     *  matches what the user heard. Linear, clamped [0, 1]. */
+    float masterGain{1.0F};
     std::vector<TrackSnapshot> tracks;
 };
 

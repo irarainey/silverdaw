@@ -400,6 +400,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_AUDIO_OUTPUT: ProjectSetAudioOutputPayload
   PROJECT_SET_TARGET_SAMPLE_RATE: ProjectSetTargetSampleRatePayload
   PROJECT_SET_EXPORT_SETTINGS: ProjectSetExportSettingsPayload
+  PROJECT_SET_MASTER_VOLUME: ProjectSetMasterVolumePayload
   AUDIO_FILE_PROBE: AudioFileProbePayload
   MIXDOWN_START: MixdownStartPayload
   MIXDOWN_CANCEL: undefined
@@ -543,6 +544,17 @@ export interface ProjectSetTargetSampleRatePayload {
  */
 export interface ProjectSetExportSettingsPayload {
   json: string
+}
+
+/**
+ * Master output volume (linear, clamped to [0, 1]). Backend applies it
+ * to the live mix bus via `juce::AudioSourcePlayer::setGain` (block-rate
+ * ramped; safe during playback) and to the export render so the file
+ * matches what the user hears. Round-tripped through the PROJECT_STATE
+ * snapshot; absent from the snapshot when at unity.
+ */
+export interface ProjectSetMasterVolumePayload {
+  gain: number
 }
 
 /**
@@ -1091,6 +1103,7 @@ export const ProjectStatePayloadSchema = z.object({
    * empty string clears it.
    */
   exportSettingsJson: z.string().optional().nullable(),
+  masterVolume: z.number().min(0).max(1).optional(),
   /** User-created timeline markers. */
   markers: z.array(ProjectStateMarkerSchema).optional(),
   /**

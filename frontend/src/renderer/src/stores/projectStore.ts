@@ -399,6 +399,13 @@ interface ProjectState {
    * backend just round-trips the string verbatim.
    */
   exportSettingsJson: string | null
+  /**
+   * Master output volume (0..1 linear). Applied to the live mix bus
+   * and to mixdown exports. Defaults to 1.0 (unity) for new projects.
+   * Persisted on the ValueTree, so reloading a project restores the
+   * slider position the user left it at.
+   */
+  masterVolume: number
 }
 
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
@@ -562,7 +569,8 @@ export const useProjectStore = defineStore('project', {
     audioOutputTypeName: null,
     audioOutputDeviceName: null,
     targetSampleRate: null,
-    exportSettingsJson: null
+    exportSettingsJson: null,
+    masterVolume: 1.0
   }),
 
   getters: {
@@ -1871,6 +1879,21 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_EXPORT_SETTINGS', { json: next ?? '' })
     },
 
+    /**
+     * Set the master output volume (0..1 linear). Optimistically updates
+     * the local mirror so the slider tracks the user's finger without
+     * waiting for backend echo, and dispatches `PROJECT_SET_MASTER_VOLUME`.
+     * The backend coalesces drag streams into a single undo step via
+     * `beginNewTransaction` (same pattern as `TRACK_GAIN`), so high-rate
+     * dispatch during a slider drag is fine.
+     */
+    setMasterVolume(gain: number): void {
+      const next = Number.isFinite(gain) ? Math.min(1, Math.max(0, gain)) : 1
+      if (next === this.masterVolume) return
+      this.masterVolume = next
+      sendBridge('PROJECT_SET_MASTER_VOLUME', { gain: next })
+    },
+
     /** Remove a track and all its clips, locally and on the backend. */
     removeTrack(trackId: string): void {
       const idx = this.tracks.findIndex((t) => t.id === trackId)
@@ -2249,6 +2272,13 @@ export const useProjectStore = defineStore('project', {
         typeof incomingExportSettings === 'string' && incomingExportSettings.length > 0
           ? incomingExportSettings
           : null
+      // Master output volume. Absent in the snapshot ⇒ unity (the
+      // backend omits it when at 1.0 to keep legacy projects clean).
+      const incomingMasterVolume = snapshot.masterVolume
+      this.masterVolume =
+        typeof incomingMasterVolume === 'number' && Number.isFinite(incomingMasterVolume)
+          ? Math.min(1, Math.max(0, incomingMasterVolume))
+          : 1.0
       const library = useLibraryStore()
       // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the
       // renderer's optimistic mirror must be wiped before re-applying so
