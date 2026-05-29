@@ -194,7 +194,16 @@ let lastArrowSeekMs: number | null = null
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
   const tag = target.tagName
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (tag === 'INPUT') {
+    // <input type="range"> sliders (master volume, future faders)
+    // should not swallow global shortcuts. Space does nothing on a
+    // range — arrows are the proper keyboard interaction — so the
+    // global Space=play handler should still fire when a slider
+    // happens to hold focus after a drag.
+    const type = (target as HTMLInputElement).type
+    return type !== 'range'
+  }
   return target.isContentEditable
 }
 

@@ -3,7 +3,7 @@
 // WebSocket bridge. Playhead position is mirrored from the backend's
 // `PLAYHEAD_UPDATE` messages into `transportStore`.
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, nextTick, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
@@ -433,6 +433,72 @@ function onMasterVolumeInput(event: Event): void {
   if (!Number.isFinite(pct)) return
   project.setMasterVolume(Math.min(1, Math.max(0, pct / 100)))
 }
+
+// ─── Master volume: double-click to type a value ─────────────────────────
+// Mirrors the per-track gain edit flow in TrackHeaderPanel: the percent
+// readout to the right of the slider doubles as a button that swaps in a
+// numeric input on dblclick. Enter commits, Escape / blur cancels.
+const editingMasterVolume = ref(false)
+const editingMasterVolumeValue = ref('')
+let masterVolumeInputEl: HTMLInputElement | null = null
+
+function setMasterVolumeInputEl(el: Element | ComponentPublicInstance | null): void {
+  masterVolumeInputEl = el as HTMLInputElement | null
+}
+
+async function startMasterVolumeEdit(): Promise<void> {
+  editingMasterVolume.value = true
+  editingMasterVolumeValue.value = String(Math.round(project.masterVolume * 100))
+  await nextTick()
+  if (masterVolumeInputEl) {
+    masterVolumeInputEl.focus()
+    masterVolumeInputEl.select()
+  }
+}
+
+function commitMasterVolumeEdit(): void {
+  if (!editingMasterVolume.value) return
+  const parsed = Number(editingMasterVolumeValue.value)
+  if (Number.isFinite(parsed)) {
+    const clamped = Math.min(100, Math.max(0, parsed))
+    project.setMasterVolume(clamped / 100)
+  }
+  editingMasterVolume.value = false
+}
+
+function cancelMasterVolumeEdit(): void {
+  editingMasterVolume.value = false
+}
+
+function onMasterVolumeNumberInput(e: Event): void {
+  const input = e.target as HTMLInputElement
+  if (input.value.trim() === '') {
+    editingMasterVolumeValue.value = ''
+    return
+  }
+  const parsed = Number(input.value)
+  if (!Number.isFinite(parsed)) return
+  const clamped = Math.min(100, Math.max(0, parsed))
+  if (clamped !== parsed) {
+    const next = String(clamped)
+    input.value = next
+    editingMasterVolumeValue.value = next
+  }
+}
+
+function onMasterVolumeKeydown(e: KeyboardEvent): void {
+  if (e.key === 'e' || e.key === 'E' || e.key === '+' || e.key === '-') {
+    e.preventDefault()
+    return
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    commitMasterVolumeEdit()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelMasterVolumeEdit()
+  }
+}
 </script>
 
 <template>
@@ -550,7 +616,7 @@ function onMasterVolumeInput(event: Event): void {
            what the user hears. Persisted at the project level;
            new projects default to 100%. -->
       <div
-        class="flex items-center gap-2"
+        class="flex items-center gap-1.5"
         :title="`Master volume: ${Math.round(project.masterVolume * 100)}%`"
       >
         <svg
@@ -574,11 +640,33 @@ function onMasterVolumeInput(event: Event): void {
           step="1"
           aria-label="Master volume"
           :value="Math.round(project.masterVolume * 100)"
-          class="silverdaw-master-volume h-1 w-28 cursor-pointer appearance-none rounded bg-zinc-700 accent-sky-400"
+          class="silverdaw-master-volume h-1 w-28 cursor-pointer appearance-none rounded bg-zinc-700 accent-sky-400 outline-none focus:outline-none focus-visible:outline-none"
           @input="onMasterVolumeInput($event)"
+          @pointerup="($event.currentTarget as HTMLInputElement).blur()"
+          @change="($event.currentTarget as HTMLInputElement).blur()"
         >
-        <span class="w-9 text-right font-mono text-[10px] text-zinc-400">
-          {{ Math.round(project.masterVolume * 100) }}%
+        <span class="ml-0.5 w-6 text-right font-mono text-[10px] text-zinc-400">
+          <input
+            v-if="editingMasterVolume"
+            :ref="setMasterVolumeInputEl"
+            v-model="editingMasterVolumeValue"
+            type="number"
+            min="0"
+            max="100"
+            step="1"
+            class="w-full rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            @input="onMasterVolumeNumberInput"
+            @blur="commitMasterVolumeEdit"
+            @keydown="onMasterVolumeKeydown"
+          >
+          <button
+            v-else
+            type="button"
+            data-borderless-button="true"
+            class="w-full cursor-text appearance-none border-0 bg-transparent p-0 text-right font-mono text-[10px] tabular-nums text-zinc-400 outline-none hover:text-zinc-200 focus-visible:text-cyan-300"
+            title="Double-click to type volume (0-100)"
+            @dblclick.stop="startMasterVolumeEdit"
+          >{{ Math.round(project.masterVolume * 100) }}</button>
         </span>
       </div>
     </div>
