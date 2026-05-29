@@ -337,21 +337,6 @@ const canSaveAsNew = computed(() => {
 
 const playheadAbsMs = computed(() => viewInMs.value + preview.positionMs)
 
-// Audible (post-warp) length of the clip the user is editing, in
-// timeline ms. Drives the Fade input's max attribute and the
-// pre-Save clamp so a user can't enter a fade that's longer than the
-// clip will ultimately be.
-const effectiveAudibleMs = computed(() => {
-  const sourceMs = selectionDurationMs.value > 0
-    ? selectionDurationMs.value
-    : cropViewDurationMs.value
-  if (!editsExistingClip.value) return sourceMs
-  const ratio = warpDraft.draftEffectiveRatio.value
-  if (!ratio || ratio <= 0) return sourceMs
-  // effectiveDurationMs = sourceMs / ratio (matches lib/warp.ts).
-  return sourceMs / ratio
-})
-
 const loopEnabled = ref(false)
 
 watch(
@@ -550,8 +535,22 @@ onMounted(() => {
   window.addEventListener('keydown', onWindowKeydownCapture, { capture: true })
 })
 
+// True when the keydown originated from a field the user is typing into
+// (text input, textarea, select, contenteditable). The dialog's transport
+// / zoom / undo shortcuts must NOT fire in that case, or they swallow
+// digits ("0" → resetZoom), spaces, and arrow keys mid-edit. Uses the
+// composed path so it stays correct regardless of focus drift.
+function isEditableTarget(e: Event): boolean {
+  const el = (e.composedPath?.()[0] as HTMLElement | null) ?? (e.target as HTMLElement | null)
+  if (!el) return false
+  if (el.isContentEditable) return true
+  return el.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') !== null
+}
+
 function onWindowKeydownCapture(e: KeyboardEvent): void {
   if (!props.open) return
+  if (e.isComposing) return
+  if (isEditableTarget(e)) return
   if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
     e.preventDefault()
     e.stopPropagation()
@@ -936,11 +935,15 @@ function drawWaveform(): void {
   // draws SOURCE ms. Convert: sourceMs = timelineMs * tempoRatio. For
   // the no-warp common case (ratio=1) this is a no-op.
   //
-  // Each fade is drawn independently — when fadeIn + fadeOut exceeds
-  // the audible window, the two ramps overlap visually, mirroring what
-  // the backend does (OffsetSource::applyFadeGain MULTIPLIES the two
-  // ramp gains per sample). A pre-Save clamp keeps the persisted
-  // fades sane.
+  // The fade is drawn as a GAIN ENVELOPE across the clip height: the top
+  // edge (waveTop) is unity gain, the bottom edge (h) is silence. A
+  // fade-in ramps the envelope line from the bottom-left up to the top;
+  // a fade-out ramps it from the top down to the bottom-right. The wedge
+  // ABOVE the line — the gain that's been removed — is dimmed so the eye
+  // reads "the clip is quieter here, ramping in/out". A small handle dot
+  // marks the unity-gain corner (the point the fade reaches/leaves full
+  // volume). Each fade is drawn independently; a pre-Save clamp keeps
+  // the persisted values inside the audible window.
   if (editsExistingClip.value && selectionDurationMs.value > 0) {
     const ratio = warpDraft.draftEffectiveRatio.value > 0 ? warpDraft.draftEffectiveRatio.value : 1
     const sourceFadeIn = Math.max(0, draftFadeInMs.value * ratio)
@@ -948,43 +951,63 @@ function drawWaveform(): void {
     const selStart = selectionInMs.value
     const selEnd = selectionEndMs.value
     const audibleSourceMs = selEnd - selStart
-    // Clamp each fade individually to the audible window so a single
-    // fade never exits the clip; overlap between the two is allowed
-    // and drawn (matches backend multiplicative gain).
     const inWidth = Math.min(sourceFadeIn, audibleSourceMs)
     const outWidth = Math.min(sourceFadeOut, audibleSourceMs)
 
-    ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)'
-    ctx.fillStyle = 'rgba(250, 204, 21, 0.18)'
-    ctx.lineWidth = 1.5
+    const maskFill = 'rgba(9, 9, 11, 0.62)'
+    const lineColor = 'rgba(56, 189, 248, 0.95)'
+    const dotR = 3.5 * dpr
+
+    const drawHandle = (x: number, y: number): void => {
+      ctx.fillStyle = lineColor
+      ctx.beginPath()
+      ctx.arc(x, y, dotR, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#0b0f14'
+      ctx.beginPath()
+      ctx.arc(x, y, dotR * 0.45, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    ctx.lineWidth = 2
 
     if (inWidth > 0) {
       const x0 = msToX(selStart)
       const x1 = msToX(selStart + inWidth)
-      ctx.beginPath()
-      ctx.moveTo(x0, h)
-      ctx.lineTo(x0, waveTop)
-      ctx.lineTo(x1, h)
-      ctx.closePath()
-      ctx.fill()
+      // Dim the removed-gain wedge (above the rising envelope line).
+      ctx.fillStyle = maskFill
       ctx.beginPath()
       ctx.moveTo(x0, waveTop)
-      ctx.lineTo(x1, h)
+      ctx.lineTo(x1, waveTop)
+      ctx.lineTo(x0, h)
+      ctx.closePath()
+      ctx.fill()
+      // Envelope line: silent (bottom-left) -> unity (top-right).
+      ctx.strokeStyle = lineColor
+      ctx.beginPath()
+      ctx.moveTo(x0, h)
+      ctx.lineTo(x1, waveTop)
       ctx.stroke()
+      drawHandle(x1, waveTop)
     }
     if (outWidth > 0) {
       const x0 = msToX(selEnd - outWidth)
       const x1 = msToX(selEnd)
+      // Dim the removed-gain wedge (above the falling envelope line).
+      ctx.fillStyle = maskFill
       ctx.beginPath()
-      ctx.moveTo(x0, h)
+      ctx.moveTo(x0, waveTop)
       ctx.lineTo(x1, waveTop)
       ctx.lineTo(x1, h)
       ctx.closePath()
       ctx.fill()
+      // Envelope line: unity (top-left) -> silent (bottom-right).
+      ctx.strokeStyle = lineColor
       ctx.beginPath()
-      ctx.moveTo(x0, h)
-      ctx.lineTo(x1, waveTop)
+      ctx.moveTo(x0, waveTop)
+      ctx.lineTo(x1, h)
       ctx.stroke()
+      drawHandle(x0, waveTop)
     }
   }
 }
@@ -1263,7 +1286,15 @@ function clearSelection(): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
+  if (e.isComposing) return
+  const editable = isEditableTarget(e)
   if (e.key === 'Escape') {
+    // While typing in a field, Esc cancels the field focus rather than
+    // closing the whole dialog (and never traps the user).
+    if (editable) {
+      ;(e.target as HTMLElement | null)?.blur()
+      return
+    }
     // Esc with an active selection clears the selection first; a
     // second Esc closes the dialog. Matches how text-editor and DAW
     // selections behave.
@@ -1275,6 +1306,10 @@ function onKeydown(e: KeyboardEvent): void {
     emit('close')
     return
   }
+  // No other transport / zoom / undo shortcut should fire while the
+  // user is typing into an input — otherwise digits ("0"), spaces and
+  // arrow keys get hijacked mid-edit.
+  if (editable) return
   if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D') && !e.shiftKey && !e.altKey) {
     e.preventDefault()
     clearSelection()
@@ -1778,7 +1813,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
               <ClipEditorFadesPanel
                 v-else-if="activeTab === 'fades'"
                 :draft="fadesDraft"
-                :effective-duration-ms="effectiveAudibleMs"
               />
             </div>
           </div>
