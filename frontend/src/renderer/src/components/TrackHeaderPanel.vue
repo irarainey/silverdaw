@@ -32,6 +32,7 @@ import {
   RULER_HEIGHT
 } from '@/lib/timeline/constants'
 import { buildTrackRowLayout, trackHeightOf } from '@/lib/timeline/trackLayout'
+import TrackMeter from '@/components/TrackMeter.vue'
 
 withDefaults(defineProps<{ scrollY?: number }>(), { scrollY: 0 })
 
@@ -491,9 +492,11 @@ const dropIndicatorTopPx = computed<number>(() => {
             </div>
           </div>
 
-          <!-- Middle: volume slider. Controls the track's overall
-                         level (linear gain 0\u20131); mute / solo still
-                         override to silence. -->
+          <!-- Middle: volume slider stacked with a thin stereo peak
+                         meter so the visual association between fader
+                         and the resulting level is immediate. Meter
+                         sources from `trackLevelsChannel` keyed by
+                         track id (Phase 5 step 1c — see TrackMeter.vue). -->
           <div class="flex items-center gap-2">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -509,17 +512,24 @@ const dropIndicatorTopPx = computed<number>(() => {
               <path d="M11 5L6 9H2v6h4l5 4V5z" />
               <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
             </svg>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.001"
-              :value="volumeToSliderPosition(track.volume)"
-              :title="'Volume ' + formatLinearAsDb(track.volume, { unit: true })"
-              class="track-volume h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
-              @input="(e) => project.setTrackVolumeLocal(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
-              @change="(e) => project.setTrackVolume(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
-            >
+            <div class="flex min-w-0 flex-1 flex-col gap-1">
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.001"
+                :value="volumeToSliderPosition(track.volume)"
+                :title="'Volume ' + formatLinearAsDb(track.volume, { unit: true })"
+                class="track-volume h-1 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
+                @input="(e) => project.setTrackVolumeLocal(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
+                @change="(e) => project.setTrackVolume(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
+              >
+              <TrackMeter
+                :track-id="track.id"
+                :width="120"
+                :height="6"
+              />
+            </div>
             <input
               v-if="editingGainTrackId === track.id"
               :ref="setGainInputEl"

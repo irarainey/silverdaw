@@ -28,6 +28,7 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { applyMixdownProgress, clearMixdownState, snapshotMixdownState } from '@/lib/mixdownState'
 import { clearMasterLevels, setMasterLevels } from '@/lib/audio/masterLevelChannel'
+import { clearTrackLevels, setTrackLevels } from '@/lib/audio/trackLevelsChannel'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { log } from '@/lib/log'
@@ -46,6 +47,7 @@ import {
   isMixdownProgressPayload,
   isLibraryItemAnalysisPayload,
   isMasterLevelPayload,
+  isTrackLevelsPayload,
   isPlayheadUpdatePayload,
   isPreviewEndedPayload,
   isPreviewPositionPayload,
@@ -215,6 +217,7 @@ function openSocket(conn: BridgeConnection): void {
     socket = null
     stopSocketHeartbeat()
     clearMasterLevels()
+    clearTrackLevels()
     log.warn('bridge', 'socket closed')
     if (!stopped) scheduleReconnect()
   })
@@ -370,7 +373,12 @@ function dispatch(msg: BridgeInboundMessage): void {
   // Skip PLAYHEAD_UPDATE — it fires 60 Hz and would drown the log. Same
   // for PREVIEW_POSITION while the editor dialog is open, and
   // MASTER_LEVEL which streams at the same cadence while audio is active.
-  if (msg.type !== 'PLAYHEAD_UPDATE' && msg.type !== 'PREVIEW_POSITION' && msg.type !== 'MASTER_LEVEL') {
+  if (
+    msg.type !== 'PLAYHEAD_UPDATE' &&
+    msg.type !== 'PREVIEW_POSITION' &&
+    msg.type !== 'MASTER_LEVEL' &&
+    msg.type !== 'TRACK_LEVELS'
+  ) {
     log.info('bridge', `recv ${msg.type}`)
   }
   switch (msg.type) {
@@ -737,6 +745,14 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'TRACK_LEVELS': {
+      // Same rationale as MASTER_LEVEL: peaks land in a non-reactive
+      // channel and per-track `TrackMeter` components poll on their
+      // shared RAF loop.
+      setTrackLevels(msg.payload.tracks)
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -970,6 +986,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isMixdownFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'MASTER_LEVEL':
       return isMasterLevelPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_LEVELS':
+      return isTrackLevelsPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

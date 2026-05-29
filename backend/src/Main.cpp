@@ -478,6 +478,40 @@ class PlayheadEmitter : public juce::Timer
             bridge.broadcast("MASTER_LEVEL", masterLevelPayload);
             lastMasterLevelHadSignal = hasSignal;
         }
+
+        // Per-track peak meters. Same gating rules as the master
+        // meter (only broadcast on activity; emit one trailing zero
+        // on the active→silent transition so the renderer's
+        // hold/decay finishes cleanly). The payload carries a flat
+        // array — small at typical project sizes (≤ few dozen
+        // tracks) and the renderer fans out by `id` to the
+        // matching track-meter component.
+        engine.drainAllTrackPeaks(trackPeakScratch);
+        bool anyTrackHasSignal = false;
+        for (const auto& snap : trackPeakScratch)
+        {
+            if (snap.peakL > kMeterEpsilon || snap.peakR > kMeterEpsilon)
+            {
+                anyTrackHasSignal = true;
+                break;
+            }
+        }
+        if (anyTrackHasSignal || lastTrackLevelsHadSignal)
+        {
+            juce::Array<juce::var> tracksVar;
+            tracksVar.ensureStorageAllocated(static_cast<int>(trackPeakScratch.size()));
+            for (const auto& snap : trackPeakScratch)
+            {
+                auto* trackObj = new juce::DynamicObject();
+                trackObj->setProperty("id", snap.trackId);
+                trackObj->setProperty("peakL", static_cast<double>(snap.peakL));
+                trackObj->setProperty("peakR", static_cast<double>(snap.peakR));
+                tracksVar.add(juce::var(trackObj));
+            }
+            trackLevelsObject->setProperty("tracks", tracksVar);
+            bridge.broadcast("TRACK_LEVELS", trackLevelsPayload);
+            lastTrackLevelsHadSignal = anyTrackHasSignal;
+        }
     }
 
   private:
@@ -494,6 +528,13 @@ class PlayheadEmitter : public juce::Timer
     juce::DynamicObject::Ptr masterLevelObject{new juce::DynamicObject()};
     juce::var masterLevelPayload{masterLevelObject.get()};
     bool lastMasterLevelHadSignal = false;
+    juce::DynamicObject::Ptr trackLevelsObject{new juce::DynamicObject()};
+    juce::var trackLevelsPayload{trackLevelsObject.get()};
+    bool lastTrackLevelsHadSignal = false;
+    // Reused across ticks so steady-state metering broadcasts allocate
+    // only the per-track DynamicObject envelope payloads (not this
+    // scratch vector itself).
+    std::vector<silverdaw::BusGraph::TrackPeakSnapshot> trackPeakScratch;
 };
 
 // Bridge payload validation helpers live in `PayloadHelpers.h` so the
@@ -1128,7 +1169,7 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     // the timeline is playing at — no brief blip at the user volume
     // before the explicit `setClipGain` below clamps it down.
     const auto effectiveGain = projectState.getEffectiveTrackGain(trackId);
-    bool ok = engine.addClip(clipId, juce::File(engineFilePath), initialOffsetMs, inMs, payloadDurationMs,
+    bool ok = engine.addClip(trackId, clipId, juce::File(engineFilePath), initialOffsetMs, inMs, payloadDurationMs,
                              effectiveGain, &errorMsg);
     if (ok)
     {
@@ -1715,7 +1756,7 @@ void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& e
                 ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
             }
             juce::String err;
-            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, effectiveGain, &err))
+            if (engine.addClip(trackId, clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, effectiveGain, &err))
             {
                 engine.setClipGain(clipId, effectiveGain);
                 ++rebuilt;
@@ -1792,7 +1833,7 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             // state, so a reopened soloed project played everyone.
             const auto trackId = track.getProperty("id").toString();
             const auto effectiveGain = projectState.getEffectiveTrackGain(trackId);
-            if (engine.addClip(clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, effectiveGain, &err))
+            if (engine.addClip(trackId, clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, effectiveGain, &err))
             {
                 ++rebuilt;
                 // If the saved project carried warp settings on this

@@ -2,9 +2,11 @@
 
 #include "AudioEngine.h"   // for silverdaw::OffsetSource
 #include "BridgeServer.h"
+#include "BusGraph.h"
 #include "Log.h"
 #include "LoudnessAnalyzer.h"
 #include "ProjectState.h"
+#include "TrackChain.h"
 #include "WarpProcessor.h" // for parseWarpMode + WarpProcessor
 
 #include <algorithm>
@@ -561,6 +563,88 @@ bool atomicReplace(const juce::File& tmp, const juce::File& target)
 }
 
 /**
+ * Audio-source adapter wrapping a single offline clip's
+ * `AudioTransportSource` for attachment to `BusGraph::TrackRuntime`.
+ * Replaces the inline `mixClipBlock` summing path used pre-1d so
+ * the offline render walks the same `BusGraph → TrackRuntime →
+ * TrackChain` pipeline the live engine uses.
+ *
+ * Two operations are baked in (post the inner transport pull):
+ *
+ * 1. **Mono-to-stereo duplication.** Mono sources have transports
+ *    configured with `numChannels=1`, so they only write channel 0.
+ *    The pre-1d `mixClipBlock` duplicated ch0 → ch1 explicitly; we
+ *    do the same here for parity. Stereo and multichannel sources
+ *    leave both channels untouched.
+ * 2. **Constant `trackGain` multiplication.** A simple `applyGain`
+ *    matching pre-1d's `mixL[i] += l[i] * g` loop bit-for-bit.
+ *    Deliberately bypasses `AudioTransportSource::setGain`, which
+ *    applies a per-block linear ramp from `lastGain` to `gain` —
+ *    that ramp would change pre/post-1d mixdown samples at the
+ *    first block. (Live still uses the smoothed transport gain;
+ *    the live/mixdown divergence on block 0 of a clip predates
+ *    this refactor.)
+ *
+ * Non-owning pointer to inner; the owning `unique_ptr` lives on
+ * `OfflineClip::transport` and is declared so it outlives this
+ * wrapper.
+ */
+class ClipSummingSource final : public juce::AudioSource
+{
+public:
+    ClipSummingSource(juce::AudioSource* innerSource,
+                      float gainScalar,
+                      int sourceChannelCount) noexcept
+        : inner(innerSource), gain(gainScalar), sourceChannels(sourceChannelCount)
+    {
+    }
+
+    void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
+    {
+        if (inner != nullptr) inner->prepareToPlay(samplesPerBlockExpected, sampleRate);
+    }
+
+    void releaseResources() override
+    {
+        if (inner != nullptr) inner->releaseResources();
+    }
+
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+    {
+        if (inner != nullptr) inner->getNextAudioBlock(info);
+        if (info.buffer == nullptr || info.numSamples <= 0) return;
+
+        if (sourceChannels < 2 && info.buffer->getNumChannels() >= 2)
+        {
+            info.buffer->copyFrom(1, info.startSample,
+                                  *info.buffer, 0, info.startSample,
+                                  info.numSamples);
+        }
+        if (! juce::approximatelyEqual(gain, 1.0F))
+        {
+            info.buffer->applyGain(info.startSample, info.numSamples, gain);
+        }
+        else if (gain != 1.0F)
+        {
+            // Defensive parity path. `approximatelyEqual` treats
+            // values within a small epsilon of 1.0 as equal and
+            // would skip the multiply — but the pre-1d
+            // `mixClipBlock` performed a literal `* g` for every
+            // non-exact-unity gain. A snapshot gain of e.g.
+            // 0.99999994f would diverge by a few LSBs across the
+            // entire clip if we relied on the approximate check
+            // alone, breaking the §7.9.6 sample-parity gate.
+            info.buffer->applyGain(info.startSample, info.numSamples, gain);
+        }
+    }
+
+private:
+    juce::AudioSource* inner;
+    float gain;
+    int sourceChannels;
+};
+
+/**
  * Per-clip offline source chain. Owns the exact same JUCE graph nodes the
  * live engine uses, just driven from this worker thread instead of the audio
  * thread. `pull()` fills a stereo buffer at projectRate; the resampling +
@@ -576,6 +660,12 @@ bool atomicReplace(const juce::File& tmp, const juce::File& target)
 struct OfflineClip
 {
     juce::String id;
+    /** UI track id this clip belongs to. Used by step 1d to group
+     *  clips into the canonical `BusGraph::TrackRuntime` for the
+     *  offline render — one runtime per UI track, summing every
+     *  clip on it through the same `TrackChain` the live engine
+     *  uses. */
+    juce::String trackId;
     float trackGain{1.0F};
     double sourceRate{0.0};
     int sourceChannels{1};
@@ -603,6 +693,11 @@ struct OfflineClip
     std::unique_ptr<WarpProcessor> warp;
     std::unique_ptr<OffsetSource> offsetSource;
     std::unique_ptr<juce::AudioTransportSource> transport;
+    /** Wraps `transport` for attachment to `BusGraph::TrackRuntime`
+     *  (Phase 5 step 1d). Declared LAST so it destructs FIRST — the
+     *  wrapper holds a raw pointer to `transport` and must die
+     *  before the transport it points at. */
+    std::unique_ptr<ClipSummingSource> summingSource;
 };
 
 /**
@@ -611,6 +706,7 @@ struct OfflineClip
  * returned clip.
  */
 std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapshot& clip,
+                                              const juce::String& trackId,
                                               float trackGain,
                                               int projectSampleRate,
                                               juce::AudioFormatManager& formatManager,
@@ -618,6 +714,7 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
 {
     auto out = std::make_unique<OfflineClip>();
     out->id = clip.id;
+    out->trackId = trackId;
     out->trackGain = trackGain;
 
     const juce::File sourceFile(clip.filePath);
@@ -684,6 +781,12 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
     out->transport->setPosition(0.0);
     out->transport->start();
 
+    // Per-clip summing adapter for `BusGraph::TrackRuntime`
+    // attachment (Phase 5 step 1d). Wraps the transport with mono→
+    // stereo duplication and constant `trackGain` multiplication
+    // (bit-equivalent to the pre-1d `mixClipBlock` summing path).
+    out->summingSource = std::make_unique<ClipSummingSource>(
+        out->transport.get(), trackGain, out->sourceChannels);
     // Compute timeline end in projectRate frames so the pump loop can
     // retire the clip when its window closes.
     const double endMs = clipTimelineEndMs(clip);
@@ -717,76 +820,6 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
                                   " cents=" + juce::String(clip.cents, 2))
                               : juce::String()));
     return out;
-}
-
-/**
- * Pull one block of stereo audio at projectRate from `clip`, sum into mixL/mixR
- * with `clip.trackGain` applied. Mono sources are duplicated L→R; sources with
- * more than 2 channels use the first two. The transport's read-position
- * advances by exactly `blockFrames` whether we sum its output or not, so the
- * clip stays sample-aligned with the master timeline even when retired.
- */
-void mixClipBlock(OfflineClip& clip,
-                  juce::AudioBuffer<float>& clipScratch,
-                  float* mixL, float* mixR, int blockFrames,
-                  bool logThisBlock = false)
-{
-    if (clip.retired) return;
-    clipScratch.clear();
-    juce::AudioSourceChannelInfo info(&clipScratch, 0, blockFrames);
-    clip.transport->getNextAudioBlock(info);
-
-    // The transport fills as many channels as the source has (up to the
-    // buffer's channel count). For mono, channel 1 is left zero by us —
-    // duplicate ch0 → ch1 so the mix bus gets balanced stereo.
-    const float* l = clipScratch.getReadPointer(0);
-    const float* r = clip.sourceChannels >= 2 ? clipScratch.getReadPointer(1)
-                                              : clipScratch.getReadPointer(0);
-    const float g = clip.trackGain;
-
-    // Optional per-clip diagnostic — caller throttles via logThisBlock.
-    // Captures pre-gain peak/RMS (what the transport+warp produced) and
-    // post-gain peak/RMS (what gets summed into the mix bus). Compare
-    // pre-gain across live vs mixdown to isolate transport/resampler
-    // differences; compare post-gain to verify trackGain is correct.
-    float preLPeak = 0.0F, preRPeak = 0.0F;
-    double preLSq = 0.0, preRSq = 0.0;
-    if (logThisBlock)
-    {
-        for (int i = 0; i < blockFrames; ++i)
-        {
-            const float al = std::fabs(l[i]);
-            const float ar = std::fabs(r[i]);
-            if (al > preLPeak) preLPeak = al;
-            if (ar > preRPeak) preRPeak = ar;
-            preLSq += static_cast<double>(l[i]) * l[i];
-            preRSq += static_cast<double>(r[i]) * r[i];
-        }
-    }
-
-    for (int i = 0; i < blockFrames; ++i)
-    {
-        mixL[i] += l[i] * g;
-        mixR[i] += r[i] * g;
-    }
-
-    if (logThisBlock)
-    {
-        const double invN = blockFrames > 0 ? 1.0 / blockFrames : 0.0;
-        const double preLRms  = std::sqrt(preLSq * invN);
-        const double preRRms  = std::sqrt(preRSq * invN);
-        silverdaw::log::debug(
-            "mixdown",
-            "clipBlock id=" + clip.id +
-                " srcCh=" + juce::String(clip.sourceChannels) +
-                " gain=" + juce::String(g, 4) +
-                " preGainPeakL=" + juce::String(preLPeak, 4) +
-                " preGainPeakR=" + juce::String(preRPeak, 4) +
-                " preGainRmsL=" + juce::String(preLRms, 6) +
-                " preGainRmsR=" + juce::String(preRRms, 6) +
-                " postGainPeakL=" + juce::String(preLPeak * g, 4) +
-                " postGainPeakR=" + juce::String(preRPeak * g, 4));
-    }
 }
 
 /**
@@ -1346,7 +1379,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                     return;
                 }
                 juce::String err;
-                auto built = buildOfflineClip(clip, track.gain,
+                auto built = buildOfflineClip(clip, track.id, track.gain,
                                               snapshot.projectSampleRate,
                                               formatManager, err);
                 if (built == nullptr)
@@ -1358,6 +1391,22 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                 }
                 clips.push_back(std::move(built));
             }
+        }
+
+        // Canonical project bus (Phase 5 step 1d). Mirrors the live
+        // engine's topology: one `BusGraph::TrackRuntime` per UI track,
+        // each summing its clips through the canonical `TrackChain`
+        // before they reach the master bus. Declared AFTER `clips` so
+        // destruction order is `busGraph` first → its TrackRuntimes
+        // release the `ClipSummingSource` pointers → THEN `clips` (and
+        // their owned transports) destruct. Without this ordering the
+        // TrackRuntimes' inner mixers would briefly hold dangling
+        // pointers during teardown.
+        silverdaw::BusGraph busGraph;
+        busGraph.prepareToPlay(kBlockFrames, static_cast<double>(snapshot.projectSampleRate));
+        for (auto& cp : clips)
+        {
+            busGraph.attachClip(cp->trackId, cp->id, cp->summingSource.get());
         }
 
         FinalResampler finalResampler(snapshot.projectSampleRate, options.outputSampleRate);
@@ -1382,6 +1431,21 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         {
             maxTailFrames = std::max(maxTailFrames, cp->tailFrames);
         }
+        // Project-shared FX tail budget (Phase 5 step 1d, §7.10
+        // tail-render policy). Today both shared FX are unimplemented
+        // (Room reverb + Echo delay land in step 7) so the budget is
+        // 0; the named local makes the future addition a one-line
+        // change here. Per §7.10 the shared-FX tails run in PARALLEL,
+        // so the safety cap is the MAX of the per-FX caps, not their
+        // sum:
+        //
+        //     sharedFxMaxTailFrames =
+        //         std::max(roomSafetyCapFrames, echoSafetyCapFrames);
+        //
+        // (The real cutoff in step 7 will be detector-driven —
+        // terminate when both FX have decayed below -90 dBFS — with
+        // this value as the absolute fail-safe ceiling.)
+        const int64_t sharedFxMaxTailFrames = 0;
         // Additive user-controlled silence tail, clamped sensibly by
         // the dispatch handler (0..60 s). Lets reverb/delay clips
         // ring out past the timeline end even when no processor-
@@ -1391,7 +1455,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         const double clampedTailSeconds = juce::jlimit(0.0, 60.0, options.tailSeconds);
         const int64_t userTailFrames = static_cast<int64_t>(
             std::round(clampedTailSeconds * static_cast<double>(snapshot.projectSampleRate)));
-        totalProjectFrames += maxTailFrames + userTailFrames;
+        totalProjectFrames += maxTailFrames + sharedFxMaxTailFrames + userTailFrames;
         // Effective rendered length (ms) seen by the user. Used for
         // expected-output-frame computation, progress denominator
         // and `MIXDOWN_DONE.durationMs`. Keep this single source of
@@ -1411,7 +1475,6 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // Pre-allocated buffers. Reused every block to avoid per-block
         // allocation; sized for kOutputChannels stereo at kBlockFrames.
         juce::AudioBuffer<float> mixBus(kOutputChannels, kBlockFrames);
-        juce::AudioBuffer<float> clipScratch(kOutputChannels, kBlockFrames);
         std::vector<float> mixInterleaved(static_cast<size_t>(kBlockFrames) * 2);
 
         // TPDF dither state. Active only when the target file is a
@@ -1538,30 +1601,32 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             float* mixL = mixBus.getWritePointer(0);
             float* mixR = mixBus.getWritePointer(1);
 
-            // Per-clip pre/post-gain logging stride: tie to the same
-            // ~5 s cadence used for the mix-bus peak telemetry below
-            // so the diagnostic lines line up in the log timeline.
-            const int clipLogStride = juce::jmax(1,
-                static_cast<int>(static_cast<double>(snapshot.projectSampleRate) * 5.0
-                                 / static_cast<double>(kBlockFrames)));
-            const bool logClipsThisBlock = (blockIndex % clipLogStride) == 0;
-
+            // Clip retirement (Phase 5 step 1d, mirrors the pre-1d
+            // skip-pull logic). Walk the flat clip list once per
+            // block; for any clip whose timeline window + processor
+            // tail has fully elapsed, detach it from the BusGraph so
+            // the audio path stops pulling its transport. The flat
+            // walk is cheap (project clip counts are O(10²) at the
+            // top end) and the per-detach `juce::CriticalSection`
+            // acquisition is uncontended (mixdown is single-threaded).
             for (auto& cp : clips)
             {
                 if (cp->retired) continue;
-                // Retire clips whose timeline window has fully closed. We
-                // still need to pump them up to their end so the warp tail
-                // and the resampler tail drain through the transport's
-                // internal buffers; once projectFramesRendered passes
-                // timelineEndFrames we can safely stop pulling.
                 if (projectFramesRendered >= cp->timelineEndFrames + cp->tailFrames)
                 {
+                    busGraph.detachClip(cp->id, cp->summingSource.get());
                     cp->retired = true;
-                    continue;
                 }
-                mixClipBlock(*cp, clipScratch, mixL, mixR, blockFrames,
-                             logClipsThisBlock);
             }
+
+            // Canonical pump: BusGraph sums every active TrackRuntime
+            // (each summing its clips through the TrackChain) directly
+            // into the mix bus. Identical pull discipline to the live
+            // engine — same `getNextAudioBlock(info)` entry point,
+            // same internal block partitioning, same per-track chain
+            // invocation order.
+            juce::AudioSourceChannelInfo busInfo(&mixBus, 0, blockFrames);
+            busGraph.getNextAudioBlock(busInfo);
 
             // Master volume: applied to the summed mix bus BEFORE peak
             // metering, loudness analysis, dither and the final
@@ -1648,6 +1713,17 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                 lastProgressMs = now;
             }
         }
+
+        // Tear down the BusGraph BEFORE we start padding / finalizing
+        // so any per-runtime release of DSP state happens while the
+        // clip transports it still references are still alive. This
+        // mirrors `AudioEngine::shutdown` discipline (`topMixer
+        // .removeAllInputs(); busGraph.clear(); tracks.clear();`).
+        // Stack unwind would also do this safely, but doing it
+        // explicitly avoids holding inputs across the pad/finalize
+        // path and makes the lifetime contract obvious to the next
+        // reader.
+        busGraph.clear();
 
         // Force a final render-stage broadcast so the bar reaches the
         // top of the render band even if the last in-loop update was

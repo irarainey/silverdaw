@@ -1,6 +1,8 @@
 #pragma once
 
+#include "BusGraph.h"
 #include "Log.h"
+#include "TrackChain.h"
 #include "WarpProcessor.h"
 
 #include <atomic>
@@ -843,7 +845,22 @@ class AudioEngine
      * audio at unity gain. Returns true on success.
      * On failure, `outError` (if non-null) is populated with a short diagnostic.
      */
-    bool addClip(const juce::String& clipId, const juce::File& filePath, double initialOffsetMs = 0.0,
+    /**
+     * Add a clip on a specific UI track. `clipId` is the per-clip
+     * identifier; `trackId` is the parent UI-track identifier (the
+     * grouping the user sees as one channel). Phase 5 step 1a
+     * introduces this `trackId` parameter so multiple clips on the
+     * same UI track share a single `TrackRuntime` per-track output
+     * buffer (the foundation for per-track FX in later Phase 5 steps).
+     * `initialOffsetMs` is applied atomically with the load so the
+     * clip never briefly plays at offset 0 before the intended offset
+     * is applied. `initialGain` is applied before the clip enters the
+     * mixer so muted / solo-silenced clips never leak a block of
+     * audio at unity gain. Returns true on success.
+     * On failure, `outError` (if non-null) is populated with a short diagnostic.
+     */
+    bool addClip(const juce::String& trackId, const juce::String& clipId,
+                 const juce::File& filePath, double initialOffsetMs = 0.0,
                  double inMs = 0.0, double clipDurationMs = 0.0, float initialGain = 1.0F,
                  juce::String* outError = nullptr);
 
@@ -884,6 +901,21 @@ class AudioEngine
      * message thread by the bridge broadcaster at ~60 Hz.
      */
     void consumeMasterPeaks(float& outL, float& outR);
+
+    /**
+     * Drain `trackId`'s post-chain peak meter and reset to 0 atomically.
+     * Same shape as `consumeMasterPeaks` but scoped to one UI track.
+     * Returns false (and writes 0/0) if no runtime exists for `trackId`
+     * — typical for empty tracks (no clips attached yet). Safe to call
+     * from the message thread alongside `addClip` / `removeClip`; the
+     * underlying `BusGraph` lock serialises lookup vs. registry edits.
+     */
+    bool consumeTrackPeaks(const juce::String& trackId, float& outL, float& outR);
+
+    /** Drain every active track's post-chain peaks at once. Caller
+     *  reuses a single vector across ticks for zero steady-state
+     *  allocation. See `BusGraph::drainAllTrackPeaks`. */
+    void drainAllTrackPeaks(std::vector<BusGraph::TrackPeakSnapshot>& out);
 
     /**
      * Seek every track's playhead to `ms`. Position is clamped to 0; if a
@@ -1266,7 +1298,13 @@ class AudioEngine
 
     juce::AudioDeviceManager deviceManager;
     juce::AudioSourcePlayer sourcePlayer;
-    juce::MixerAudioSource mixer;
+    /** Project root pull-source. Replaces the old
+     *  `juce::MixerAudioSource mixer` as of Phase 5 step 1c —
+     *  owns the per-track `TrackRuntime` registry, chunks oversize
+     *  device blocks through preallocated scratch, and gives shared
+     *  project FX (step 7) a single insertion point.
+     *  See `BusGraph.h` for invariants. */
+    BusGraph busGraph;
 
     /** Refresh `devicesSnapshot` from the current `deviceManager`
      *  state. Optionally calls `scanForDevices()` first when `rescan`
@@ -1314,8 +1352,8 @@ class AudioEngine
     // smoothed ramp) and tap per-channel peaks for the UI meter. The
     // device callback pulls `masterMeter`; `topMixer` is no longer the
     // direct AudioSourcePlayer source.
-    // Construction order: mixer → master → topMixer → masterMeter.
-    MasterClockSource master{mixer};
+    // Construction order: busGraph → master → topMixer → masterMeter.
+    MasterClockSource master{busGraph};
     juce::MixerAudioSource topMixer;
     MeteringSource masterMeter{topMixer};
     juce::AudioFormatManager formatManager;
@@ -1325,6 +1363,13 @@ class AudioEngine
     juce::TimeSliceThread readAheadThread{"silverdaw-readahead"};
 
     std::unordered_map<juce::String, std::unique_ptr<Track>> tracks; // keyed by clipId
+
+    // The per-track `TrackRuntime` registry that used to live here
+    // moved into `BusGraph` in Phase 5 step 1c — see `BusGraph.h`.
+    // `AudioEngine` keeps the clip-lifetime `tracks` map (owns the
+    // transport sources and reader pipelines) and delegates the
+    // graph-shape wiring (track creation, clip attach/detach, inner
+    // summing, per-track peak metering) to `busGraph`.
 
     // Preview voice — single playable file, windowed by an OffsetSource
     // configured with offsetSamples=0, inSourceSamples=inMs, and

@@ -59,7 +59,8 @@ const INBOUND_TYPES = {
   MIXDOWN_PROGRESS: true,
   MIXDOWN_DONE: true,
   MIXDOWN_FAILED: true,
-  MASTER_LEVEL: true
+  MASTER_LEVEL: true,
+  TRACK_LEVELS: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {

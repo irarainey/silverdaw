@@ -1488,6 +1488,26 @@ export const MasterLevelPayloadSchema = z.object({
 })
 export type MasterLevelPayload = z.infer<typeof MasterLevelPayloadSchema>
 
+/** Per-track peak meter. Same lifecycle and gating rules as
+ *  `MASTER_LEVEL`: backend taps the post-chain peak in each
+ *  `TrackRuntime`, drains them on the broadcaster tick (~60 Hz),
+ *  and emits this envelope only when at least one track has
+ *  non-trivial signal (with one trailing zero so the renderer's
+ *  hold/decay can finish). The renderer fans out the array by
+ *  `id` to the matching per-track meter component. Tracks with
+ *  no clips (and therefore no runtime) are simply absent from
+ *  the array — the renderer treats them as silent. */
+export const TrackLevelEntrySchema = z.object({
+  id: z.string().min(1),
+  peakL: z.number().nonnegative(),
+  peakR: z.number().nonnegative()
+})
+export type TrackLevelEntry = z.infer<typeof TrackLevelEntrySchema>
+export const TrackLevelsPayloadSchema = z.object({
+  tracks: z.array(TrackLevelEntrySchema)
+})
+export type TrackLevelsPayload = z.infer<typeof TrackLevelsPayloadSchema>
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PROJECT_STATE: ProjectStatePayload
@@ -1523,6 +1543,7 @@ export interface BridgeInboundMap {
   MIXDOWN_DONE: MixdownDonePayload
   MIXDOWN_FAILED: MixdownFailedPayload
   MASTER_LEVEL: MasterLevelPayload
+  TRACK_LEVELS: TrackLevelsPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -1580,7 +1601,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'MIXDOWN_PROGRESS',
   'MIXDOWN_DONE',
   'MIXDOWN_FAILED',
-  'MASTER_LEVEL'
+  'MASTER_LEVEL',
+  'TRACK_LEVELS'
 ])
 
 /** Narrow an unknown string to the inbound type union. */
@@ -1757,4 +1779,9 @@ export function isMixdownFailedPayload(value: unknown): value is MixdownFailedPa
 /** Guard for `MasterLevelPayload`. */
 export function isMasterLevelPayload(value: unknown): value is MasterLevelPayload {
   return MasterLevelPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `TrackLevelsPayload`. */
+export function isTrackLevelsPayload(value: unknown): value is TrackLevelsPayload {
+  return TrackLevelsPayloadSchema.safeParse(value).success
 }

@@ -93,7 +93,11 @@ void AudioEngine::shutdown()
     deviceManager.removeAudioCallback(&sourcePlayer);
     sourcePlayer.setSource(nullptr);
     topMixer.removeAllInputs();
-    mixer.removeAllInputs();
+    // Tear down the BusGraph's TrackRuntimes (and their inner mixers)
+    // BEFORE the clip transports they were pointing at — otherwise an
+    // inner mixer could be destroyed while still holding a dangling
+    // transport pointer in its input list.
+    busGraph.clear();
     tracks.clear();
     deviceManager.closeAudioDevice();
     readAheadThread.stopThread(1000);
@@ -342,12 +346,21 @@ double AudioEngine::trackSeekSecondsFor(const Track& track, juce::int64 masterSa
     return sr > 0.0 ? static_cast<double>(compensated) / sr : 0.0;
 }
 
-bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath, double initialOffsetMs,
-                          double inMs, double clipDurationMs, float initialGain, juce::String* outError)
+bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipId, const juce::File& filePath,
+                          double initialOffsetMs, double inMs, double clipDurationMs, float initialGain,
+                          juce::String* outError)
 {
-    silverdaw::log::info("engine", "addClip id=" + clipId + " offsetMs=" + juce::String(initialOffsetMs) +
+    silverdaw::log::info("engine", "addClip trackId=" + trackId + " id=" + clipId +
+                                        " offsetMs=" + juce::String(initialOffsetMs) +
                                         " inMs=" + juce::String(inMs) + " durMs=" + juce::String(clipDurationMs) +
                                         " path=" + filePath.getFileName());
+    if (trackId.isEmpty())
+    {
+        const auto msg = juce::String("addClip requires non-empty trackId");
+        silverdaw::log::warn("addClip", msg);
+        if (outError != nullptr) *outError = msg;
+        return false;
+    }
     if (!filePath.existsAsFile())
     {
         const auto msg = "file does not exist: " + filePath.getFullPathName();
@@ -453,14 +466,25 @@ bool AudioEngine::addClip(const juce::String& clipId, const juce::File& filePath
         master.setPlaying(false);
     }
 
-    // Replace any existing clip with the same id.
+    // Replace any existing clip with the same id. The replacement
+    // must come out of whatever `TrackRuntime` it currently lives on
+    // (which may differ from the new `trackId` if the renderer moved
+    // a clip between UI tracks while keeping the same `clipId`).
     if (auto it = tracks.find(clipId); it != tracks.end())
     {
-        mixer.removeInputSource(it->second->transportSource.get());
+        busGraph.detachClip(clipId, it->second->transportSource.get());
         tracks.erase(it);
     }
 
-    mixer.addInputSource(track->transportSource.get(), false);
+    // Lazily create the per-UI-track runtime on first clip for this
+    // track. The runtime's inner mixer is what the project mixer
+    // Route the new clip into its UI track's `TrackRuntime` via the
+    // BusGraph. The runtime is created lazily on first clip per
+    // `trackId`; the BusGraph also handles `prepareToPlay` if the
+    // engine is already running. Clip transports are never added
+    // directly to the project root — that would double-pull and
+    // bypass the per-track chain (Phase 5 step 1c).
+    busGraph.attachClip(trackId, clipId, track->transportSource.get());
     tracks.emplace(clipId, std::move(track));
 
     if (wasPlaying)
@@ -480,9 +504,12 @@ bool AudioEngine::removeClip(const juce::String& clipId)
         return false;
     }
 
-    // Remove from mixer first so the audio thread stops pulling samples,
-    // then release the file reader by clearing the transport's source.
-    mixer.removeInputSource(it->second->transportSource.get());
+    // Detach the clip from its TrackRuntime via the BusGraph first so
+    // the audio thread stops pulling samples, then release the file
+    // reader by clearing the transport's source. The BusGraph tears
+    // down the TrackRuntime if this was its last clip — an empty
+    // track doesn't keep a stale inner mixer in the project root.
+    busGraph.detachClip(clipId, it->second->transportSource.get());
     it->second->transportSource->setSource(nullptr);
     tracks.erase(it);
     silverdaw::log::info("engine", "removeClip id=" + clipId);
@@ -636,6 +663,16 @@ void AudioEngine::setMasterGain(float gain)
 void AudioEngine::consumeMasterPeaks(float& outL, float& outR)
 {
     masterMeter.consumePeaks(outL, outR);
+}
+
+bool AudioEngine::consumeTrackPeaks(const juce::String& trackId, float& outL, float& outR)
+{
+    return busGraph.consumeTrackPeaks(trackId, outL, outR);
+}
+
+void AudioEngine::drainAllTrackPeaks(std::vector<BusGraph::TrackPeakSnapshot>& out)
+{
+    busGraph.drainAllTrackPeaks(out);
 }
 
 void AudioEngine::setPositionMs(double ms)
