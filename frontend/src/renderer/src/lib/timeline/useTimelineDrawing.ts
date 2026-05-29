@@ -775,6 +775,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const FONT_SIZE = 11
     const APPROX_CHAR_W = 6
     const LINK_BADGE_FULL_W = 18
+    const LOCK_BADGE_FULL_W = 14
     const WARP_BADGE_FULL_W = 40
     const STATUS_BADGE_H = 14
     const STATUS_BADGE_R = 5
@@ -787,6 +788,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // Library-item + source-BPM lookups are passed in from `drawClip` so
     // both functions share a single resolution per clip per redraw.
     const isLinked = libItem?.kind === 'saved-clip'
+    const isLocked = clip.locked === true
     const warpIsPending = isWarpPending({
       warpEnabled: clip.warpEnabled,
       tempoRatio: clip.tempoRatio,
@@ -808,15 +810,21 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // rather than a character-count approximation because bold
     // proportional glyphs can be much wider than the average.
     const LINK_BADGE_W = isLinked ? LINK_BADGE_FULL_W : 0
+    const LOCK_BADGE_W = isLocked ? LOCK_BADGE_FULL_W : 0
     const WARP_BADGE_W = warpIsPending || warpIsActive ? WARP_BADGE_FULL_W : 0
     const pitchShifted = (clip.semitones ?? 0) !== 0 || (clip.cents ?? 0) !== 0
     const PITCH_BADGE_W = pitchShifted ? PITCH_BADGE_FULL_W : 0
-    const BADGE_COUNT = (isLinked ? 1 : 0) + (pitchShifted ? 1 : 0) + (warpIsPending || warpIsActive ? 1 : 0)
+    const BADGE_COUNT =
+      (isLinked ? 1 : 0) +
+      (isLocked ? 1 : 0) +
+      (pitchShifted ? 1 : 0) +
+      (warpIsPending || warpIsActive ? 1 : 0)
     const BADGES_W =
       BADGE_COUNT === 0
         ? 0
         : NAME_BADGE_GAP +
           LINK_BADGE_W +
+          LOCK_BADGE_W +
           PITCH_BADGE_W +
           WARP_BADGE_W +
           Math.max(0, BADGE_COUNT - 1) * BADGE_GAP
@@ -881,6 +889,44 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         .stroke({ color: 0xffffff, width: 1.5 })
       tracksL.addChild(badge)
       badgeRight -= LINK_BADGE_FULL_W + BADGE_GAP
+    }
+    if (isLocked) {
+      // Compact padlock glyph: rounded body + shackle arc. Drawn into
+      // the badge slot to match the visual weight of LINK/WARP/PITCH.
+      const cx = badgeRight - LOCK_BADGE_FULL_W / 2
+      const cy = clipInnerY + HEADER_H / 2
+      const bg = new G()
+      bg
+        .roundRect(
+          cx - LOCK_BADGE_FULL_W / 2,
+          cy - STATUS_BADGE_H / 2,
+          LOCK_BADGE_FULL_W,
+          STATUS_BADGE_H,
+          STATUS_BADGE_R
+        )
+        .fill({ color: 0x18181b, alpha: 0.95 })
+        .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
+      tracksL.addChild(bg)
+      const glyph = new G()
+      // Padlock body — small rounded rect, centred.
+      const bodyW = 6
+      const bodyH = 5
+      const bodyX = cx - bodyW / 2
+      const bodyY = cy - 1
+      glyph.roundRect(bodyX, bodyY, bodyW, bodyH, 1).fill({ color: 0xffffff })
+      tracksL.addChild(glyph)
+      // Shackle — open arc sitting on top of the body. Drawn on its own
+      // Graphics with an explicit moveTo so Pixi does not stroke an
+      // implicit line from the previous sub-path origin to the arc start.
+      const shackle = new G()
+      const shackleR = 2.2
+      const shackleCy = bodyY
+      shackle.moveTo(cx - shackleR, shackleCy)
+      shackle
+        .arc(cx, shackleCy, shackleR, Math.PI, 0)
+        .stroke({ color: 0xffffff, width: 1.2 })
+      tracksL.addChild(shackle)
+      badgeRight -= LOCK_BADGE_FULL_W + BADGE_GAP
     }
     if (pitchShifted) {
       const bg = new G()

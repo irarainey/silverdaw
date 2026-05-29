@@ -107,6 +107,17 @@ export function useTimelineContextMenu(
     })
     items.push({ command: 'clip.delete', label: 'Delete' })
     items.push({ command: 'clip.duplicate', label: 'Duplicate', separatorAbove: true })
+    if (clip) {
+      // Lock toggle: label flips based on the current flag so a single
+      // command + a single menu row covers both directions. Placed in
+      // its own separator group so it's visually distinct from the
+      // destructive Delete/Duplicate row above.
+      items.push({
+        command: clip.locked ? 'clip.unlock' : 'clip.lock',
+        label: clip.locked ? 'Unlock' : 'Lock',
+        separatorAbove: true
+      })
+    }
     const isLinkedClip = clipParent?.kind === 'saved-clip'
     const playheadOverClip =
       !!clip &&
@@ -115,7 +126,7 @@ export function useTimelineContextMenu(
       transport.positionMs < clip.startMs + effectiveClipDurationMs(clip)
     items.push({
       command: 'clip.split',
-      label: 'Split at playhead',
+      label: clip?.locked ? 'Split at playhead (clip is locked)' : 'Split at playhead',
       disabled: isLinkedClip || !playheadOverClip
     })
     if (clip) {
@@ -200,6 +211,10 @@ export function useTimelineContextMenu(
       project.removeClip(clipId)
     } else if (command === 'clip.duplicate') {
       project.duplicateClip(clipId)
+    } else if (command === 'clip.lock') {
+      project.setClipLocked(clipId, true)
+    } else if (command === 'clip.unlock') {
+      project.setClipLocked(clipId, false)
     } else if (command === 'clip.split') {
       project.splitClipAt(clipId, transport.positionMs)
     } else if (command === 'clip.saveToLibrary') {

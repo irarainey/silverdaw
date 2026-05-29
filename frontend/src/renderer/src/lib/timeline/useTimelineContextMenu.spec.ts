@@ -174,6 +174,34 @@ describe('useTimelineContextMenu — items builder', () => {
     expect(findItem(inside, 'clip.split')?.disabled).toBe(false)
   })
 
+  it('Lock toggle: unlocked clip shows Lock → dispatches setClipLocked(true); locked clip shows Unlock → dispatches setClipLocked(false)', () => {
+    const unlocked = setupMenu({ clip: makeClip(), item: makeAudioFileItem() })
+    const unlockedItem = findItem(unlocked, 'clip.lock')
+    expect(unlockedItem).toBeDefined()
+    expect(commandsOf(unlocked)).not.toContain('clip.unlock')
+
+    setActivePinia(createPinia())
+    const lockedMenu = setupMenu({
+      clip: makeClip({ locked: true }),
+      item: makeAudioFileItem()
+    })
+    expect(findItem(lockedMenu, 'clip.unlock')).toBeDefined()
+    expect(commandsOf(lockedMenu)).not.toContain('clip.lock')
+    // Split stays enabled for locked clips so clicking it dispatches the
+    // command and surfaces the "Locked clips cannot be split" notification
+    // from the store guard. The label includes a hint so the user knows why.
+    setActivePinia(createPinia())
+    const lockedInside = setupMenu({
+      clip: makeClip({ locked: true, startMs: 100, durationMs: 200 }),
+      item: makeAudioFileItem(),
+      selectedTrackId: 'track-1',
+      positionMs: 200
+    })
+    const splitItem = findItem(lockedInside, 'clip.split')
+    expect(splitItem?.disabled).toBe(false)
+    expect(splitItem?.label).toContain('locked')
+  })
+
   it('Colour selected swatch prefers the clip override, falls back to the track default', () => {
     const trackDefault = setupMenu({
       clip: makeClip(),
@@ -303,6 +331,29 @@ describe('useTimelineContextMenu — command dispatch', () => {
     menu.contextMenuClipId.value = clip.id
     menu.onContextMenuCommand('clip.color:7')
     expect(colorSpy).toHaveBeenCalledWith(clip.id, 7)
+  })
+
+  it('clip.lock / clip.unlock dispatch routes to project.setClipLocked', () => {
+    const clip = makeClip()
+    const project = useProjectStore()
+    project.clips = { [clip.id]: clip }
+    const lockSpy = vi.spyOn(project, 'setClipLocked').mockImplementation(() => {})
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      dialogs: useClipDialogs()
+    })
+
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.lock')
+    expect(lockSpy).toHaveBeenLastCalledWith(clip.id, true)
+
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.unlock')
+    expect(lockSpy).toHaveBeenLastCalledWith(clip.id, false)
   })
 
   it('onContextMenuClose clears state', () => {

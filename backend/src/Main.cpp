@@ -2306,6 +2306,7 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
 bool isUndoableEnvelopeType(const juce::String& type) noexcept
 {
     return type == "CLIP_ADD" || type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_COLOR" ||
+           type == "CLIP_SET_LOCKED" ||
            type == "CLIP_REMOVE" || type == "CLIP_RENAME" || type == "CLIP_REBIND" ||
            type == "CLIP_SET_WARP" ||
            type == "CLIP_RELINK" ||
@@ -2329,6 +2330,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "CLIP_MOVE") return "Move clip";
     if (type == "CLIP_TRIM") return "Trim clip";
     if (type == "CLIP_COLOR") return "Recolour clip";
+    if (type == "CLIP_SET_LOCKED") return "Toggle clip lock";
     if (type == "CLIP_REMOVE") return "Delete clip";
     if (type == "CLIP_RENAME") return "Rename clip";
     if (type == "CLIP_REBIND") return "Save clip to library";
@@ -2586,6 +2588,17 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::debug("bridge", "recv CLIP_COLOR clipId=" + payload.getProperty("clipId", "").toString() +
                                             " idx=" + payload.getProperty("colorIndex", "").toString());
         handleClipColor(payload, projectState);
+    }
+    else if (type == "CLIP_SET_LOCKED")
+    {
+        const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+        const bool locked = static_cast<bool>(payload.getProperty("locked", false));
+        silverdaw::log::info("bridge", "recv CLIP_SET_LOCKED clipId=" + clipId +
+                                          " locked=" + (locked ? "true" : "false"));
+        if (clipId.isNotEmpty())
+        {
+            projectState.setClipLocked(clipId, locked);
+        }
     }
     else if (type == "CLIP_REMOVE")
     {

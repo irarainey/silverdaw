@@ -256,6 +256,23 @@ function onGlobalShortcutKey(e: KeyboardEvent): void {
     return
   }
 
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+    // Toggle lock on the currently-selected clip. Per-clip — siblings
+    // of a saved-clip instance stay independent.
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.repeat) return
+    const id = project.selectedClipId
+    if (!id) {
+      log.info('project', 'shortcut Ctrl+L ignored — no clip selected')
+      return
+    }
+    const clip = project.clips[id]
+    if (!clip) return
+    project.setClipLocked(id, !clip.locked)
+    return
+  }
+
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
     e.preventDefault()
     e.stopPropagation()

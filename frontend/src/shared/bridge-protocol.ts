@@ -91,6 +91,16 @@ export interface ClipColorPayload {
   colorIndex: number
 }
 
+/** Toggle a clip's lock flag. When `locked: true` the timeline UI
+ *  prevents moving and trimming the clip; double-click to open in
+ *  the editor still works. Lock is per-clip — locking one instance
+ *  of a saved-clip does NOT propagate to siblings. Backend stores
+ *  the flag on the clip's ValueTree (absent==unlocked). */
+export interface ClipSetLockedPayload {
+  clipId: string
+  locked: boolean
+}
+
 /** Remove a clip from its track. The backend tears down the clip's
  *  audio source and drops it from the project ValueTree; the renderer
  *  optimistically removes it from the store on send. */
@@ -362,6 +372,7 @@ export interface BridgeOutboundMap {
   CLIP_MOVE: ClipMovePayload
   CLIP_TRIM: ClipTrimPayload
   CLIP_COLOR: ClipColorPayload
+  CLIP_SET_LOCKED: ClipSetLockedPayload
   CLIP_REMOVE: ClipRemovePayload
   LIBRARY_ITEM_RELINK: LibraryItemRelinkPayload
   CLIP_RENAME: ClipRenamePayload
@@ -905,6 +916,10 @@ export const ProjectStateClipSchema = z.object({
   /** Per-clip palette index override (0..15). Absent means the clip
    *  inherits the host track's colour. */
   colorIndex: z.number().optional(),
+  /** Per-clip lock flag. When true, the timeline UI suppresses move
+   *  and trim gestures. Absent/false = unlocked. Per-clip — not
+   *  propagated across linked saved-clip siblings. */
+  locked: z.boolean().optional(),
   /** User-facing display name override (set via inline rename on the
    *  timeline). Absent means use the library item title / filename. */
   name: z.string().optional(),

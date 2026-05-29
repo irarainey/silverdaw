@@ -145,6 +145,14 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   let pendingDragStartX = 0
   let pendingDragStartY = 0
   let pendingDragStartMs = 0
+  // Locked-clip pending drag: we still attach pending-* listeners on
+  // pointer-down so a no-move release seeks the playhead (consistent
+  // with clicking an unlocked clip), but `onPendingPointerMove` early-
+  // returns once the threshold is crossed (so no drag promotion) and
+  // sets `pendingDragSuppressSeek` so a long drag-then-release on a
+  // locked clip does NOT jump the playhead to the release point.
+  let pendingDragLocked = false
+  let pendingDragSuppressSeek = false
   let draggedMarkerId: string | null = null
 
   // ─── Pixel ↔ ms helpers ──────────────────────────────────────────────
@@ -317,6 +325,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     // the whole clip as a move target.
     const clip = project.clips[region.clipId]
     if (clip && isClipLinkedToSavedClip(clip)) return null
+    // Locked clips suppress the edge hit-region so the hover cursor
+    // stays `default` and pending-drag promotion can never enter trim
+    // mode. The store-level guard in `trimClip` is the correctness
+    // backstop; this is the UX layer.
+    if (clip?.locked) return null
     const rect = host.value.getBoundingClientRect()
     const worldX = (clientX - rect.left) + scrollX.value
     const leftDist = worldX - region.x
@@ -419,6 +432,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
           pendingDragStartX = e.clientX
           pendingDragStartY = e.clientY
           pendingDragStartMs = pointerMs
+          pendingDragLocked = clip.locked === true
+          pendingDragSuppressSeek = false
           window.addEventListener('pointermove', onPendingPointerMove)
           window.addEventListener('pointerup', onPendingPointerUp)
           window.addEventListener('pointercancel', onPendingPointerUp)
@@ -609,6 +624,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   function clearPendingDrag(): void {
     pendingDragClipId = null
     pendingDragEdge = null
+    pendingDragLocked = false
     window.removeEventListener('pointermove', onPendingPointerMove)
     window.removeEventListener('pointerup', onPendingPointerUp)
     window.removeEventListener('pointercancel', onPendingPointerUp)
@@ -619,6 +635,15 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const dx = e.clientX - pendingDragStartX
     const dy = e.clientY - pendingDragStartY
     if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return
+
+    if (pendingDragLocked) {
+      // Threshold crossed on a locked clip — refuse to promote to
+      // trim or move, AND mark the release as a non-seek so the user
+      // doesn't get an accidental playhead jump after attempting to
+      // drag a locked clip a long way.
+      pendingDragSuppressSeek = true
+      return
+    }
 
     const clip = project.clips[pendingDragClipId]
     const edge = pendingDragEdge
@@ -666,7 +691,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
    *  the ruler seek). */
   function onPendingPointerUp(e: PointerEvent): void {
     if (pendingDragClipId === null) return
+    const suppressSeek = pendingDragSuppressSeek
     clearPendingDrag()
+    if (suppressSeek) return
     const ms = pointerToMs(e.clientX, e.altKey)
     if (ms !== null) seekTo(ms)
   }

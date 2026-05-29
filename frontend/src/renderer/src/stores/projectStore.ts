@@ -96,6 +96,12 @@ export interface Clip {
   effectiveDurationMs?: number
   effectiveTempoRatio?: number
   effectiveWarpActive?: boolean
+  /** Per-clip lock flag. When true the timeline UI disables move and
+   *  edge-trim gestures (double-click to open in the editor still
+   *  works). Persisted with the project. Per-clip — locking one
+   *  instance of a saved-clip does NOT propagate to siblings.
+   *  Absent/false = unlocked. */
+  locked?: boolean
 }
 
 export interface Marker {
@@ -743,6 +749,12 @@ export const useProjectStore = defineStore('project', {
     moveClip(clipId: string, startMs: number, targetTrackId?: string): void {
       const clip = this.clips[clipId]
       if (!clip) return
+      // Locked clips are inert against move — defensive guard at the
+      // store layer so any caller (drag, keyboard nudge, future
+      // arrangement helpers) shares the invariant; the drag-handler
+      // gate is for UX (no ghost / no cursor flicker), this is for
+      // correctness.
+      if (clip.locked) return
       const destTrackId = targetTrackId ?? clip.trackId
       const destTrack = this.tracks.find((t) => t.id === destTrackId)
       if (!destTrack) return
@@ -820,6 +832,9 @@ export const useProjectStore = defineStore('project', {
     trimClip(clipId: string, startMs: number, inMs: number, durationMs: number): void {
       const clip = this.clips[clipId]
       if (!clip) return
+      // Mirror moveClip's lock guard: trim is just as destructive as
+      // move from the user's standpoint.
+      if (clip.locked) return
       const safeStart = Math.max(0, startMs)
       const safeIn = Math.max(0, inMs)
       const safeDur = Math.max(0, durationMs)
@@ -857,6 +872,14 @@ export const useProjectStore = defineStore('project', {
     splitClipAt(clipId: string, atMs: number): string | null {
       const clip = this.clips[clipId]
       if (!clip) return null
+      // Splitting a locked clip would either turn it into two unlocked
+      // halves (subverting the lock) or two locked halves (surprising
+      // since the user didn't lock the new clip). Refuse and notify.
+      if (clip.locked) {
+        useNotificationsStore().pushError('Locked clips cannot be split. Unlock the clip first.')
+        log.info('project', `splitClipAt rejected locked clip id=${clipId}`)
+        return null
+      }
       const library = useLibraryStore()
       const libItem = library.byId[clip.libraryItemId]
       if (libItem?.kind === 'saved-clip') {
@@ -1317,6 +1340,29 @@ export const useProjectStore = defineStore('project', {
       this.peaksRevision++
       sendBridge('CLIP_COLOR', { clipId, colorIndex: clamped })
       log.info('project', `setClipColor id=${clipId} -> ${clamped}`)
+    },
+
+    /**
+     * Toggle a clip's lock flag. When locked, the timeline's drag
+     * handlers and the move/trim/split store actions refuse to mutate
+     * the clip; double-click to open in the Clip Editor still works
+     * because that path goes through the dialog opener, not the
+     * project mutation actions. Lock is per-clip — locking one
+     * instance of a saved-clip does NOT propagate to siblings.
+     * Persisted via the backend's `CLIP_SET_LOCKED` envelope.
+     */
+    setClipLocked(clipId: string, locked: boolean): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const next = locked === true
+      const current = clip.locked === true
+      if (next === current) return
+      clip.locked = next ? true : undefined
+      // Force a header redraw so the padlock glyph appears / disappears
+      // without waiting for the next position/peak tick.
+      this.peaksRevision++
+      sendBridge('CLIP_SET_LOCKED', { clipId, locked: next })
+      log.info('project', `setClipLocked id=${clipId} -> ${next ? 'locked' : 'unlocked'}`)
     },
 
     /** Re-point an unresolved library item at a replacement source
@@ -2496,6 +2542,7 @@ export const useProjectStore = defineStore('project', {
               typeof c.effectiveWarpActive === 'boolean' ? c.effectiveWarpActive : undefined
             existing.pendingAutoWarp =
               c.pendingAutoWarp === true && existing.warpEnabled !== true ? true : undefined
+            existing.locked = c.locked === true ? true : undefined
             if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
             continue
           }
@@ -2531,7 +2578,8 @@ export const useProjectStore = defineStore('project', {
             effectiveWarpActive:
               typeof c.effectiveWarpActive === 'boolean' ? c.effectiveWarpActive : undefined,
             pendingAutoWarp:
-              c.pendingAutoWarp === true && c.warpEnabled !== true ? true : undefined
+              c.pendingAutoWarp === true && c.warpEnabled !== true ? true : undefined,
+            locked: c.locked === true ? true : undefined
           }
           this.clips[c.id] = placeholder
           track.clipIds.push(c.id)

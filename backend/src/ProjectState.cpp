@@ -22,6 +22,7 @@ const juce::Identifier ProjectState::kDurationMs{"durationMs"};
 const juce::Identifier ProjectState::kSampleRate{"sampleRate"};
 const juce::Identifier ProjectState::kChannelCount{"channelCount"};
 const juce::Identifier ProjectState::kColorIndex{"colorIndex"};
+const juce::Identifier ProjectState::kLocked{"locked"};
 const juce::Identifier ProjectState::kViewPxPerSecond{"viewPxPerSecond"};
 const juce::Identifier ProjectState::kViewScrollX{"viewScrollX"};
 const juce::Identifier ProjectState::kPlayheadMs{"playheadMs"};
@@ -623,6 +624,33 @@ bool ProjectState::setClipColorIndex(const juce::String& clipId, int colorIndex)
         clip.setProperty(kColorIndex, colorIndex, &undoManager);
     }
     return true;
+}
+
+bool ProjectState::setClipLocked(const juce::String& clipId, bool locked)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    if (locked)
+    {
+        clip.setProperty(kLocked, true, &undoManager);
+    }
+    else
+    {
+        // Remove the property so absent==unlocked on disk and on the
+        // wire. Matches the colorIndex / clipName conventions.
+        clip.removeProperty(kLocked, &undoManager);
+    }
+    return true;
+}
+
+bool ProjectState::isClipLocked(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+    return static_cast<bool>(clip.getProperty(kLocked, false));
 }
 
 bool ProjectState::setClipFilePath(const juce::String& clipId, const juce::String& filePath)
@@ -1751,6 +1779,13 @@ juce::var ProjectState::tracksAsJson() const
             if (clip.hasProperty(kColorIndex))
             {
                 clipObj->setProperty("colorIndex", static_cast<int>(clip.getProperty(kColorIndex, -1)));
+            }
+            // Lock flag: emitted only when truthy so legacy projects
+            // (and explicitly-unlocked clips that removed the property)
+            // round-trip without a stray `locked:false` on the wire.
+            if (static_cast<bool>(clip.getProperty(kLocked, false)))
+            {
+                clipObj->setProperty("locked", true);
             }
             if (clip.hasProperty(kClipName))
             {

@@ -206,6 +206,18 @@ class ProjectState : public juce::ValueTree::Listener
      *  remove the override and inherit the host track's colour. */
     bool setClipColorIndex(const juce::String& clipId, int colorIndex);
 
+    /** Per-clip lock flag. When locked, the timeline UI prevents moving
+     *  and trimming the clip (double-click to open in the editor still
+     *  works). Purely a UI policy — the audio engine is unaffected. The
+     *  flag is per-clip, not per-library-item, so locking one instance
+     *  of a saved-clip does not affect siblings. `false` removes the
+     *  property so absent==unlocked on the wire and on disk. Returns
+     *  true if the clip exists. */
+    bool setClipLocked(const juce::String& clipId, bool locked);
+
+    /** Read a clip's lock flag. Defaults to false. */
+    bool isClipLocked(const juce::String& clipId) const;
+
     /** Read the clip's `inMs` (where in the source file it starts reading). 0 if unknown. */
     double getClipInMs(const juce::String& clipId) const;
 
@@ -682,6 +694,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kSampleRate;
     static const juce::Identifier kChannelCount;
     static const juce::Identifier kColorIndex;
+    static const juce::Identifier kLocked;
     static const juce::Identifier kViewPxPerSecond;
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kPlayheadMs;
