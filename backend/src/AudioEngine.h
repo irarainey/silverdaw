@@ -21,6 +21,107 @@ namespace silverdaw
 {
 
 /**
+ * Audio-thread peak meter that wraps the top mixer. It applies the
+ * master gain in-place with a short LinearSmoothedValue ramp (10 ms,
+ * sub-block accurate) so changes from the message thread don't
+ * introduce zipper noise, then computes per-channel sample magnitudes
+ * after that gain so the meter reflects what the user is hearing —
+ * including the contribution of the preview voice (since `topMixer`
+ * already mixes project tracks + preview).
+ *
+ * Peaks are accumulated with a lock-free "max since last read"
+ * atomic-CAS loop so the broadcaster timer can drain them at its own
+ * cadence (~60 Hz) without losing inter-block peaks that occur
+ * between reads. Both lanes are reset to 0 on `consumePeaks()`.
+ *
+ * The wrapper owns the master gain application end-to-end —
+ * `AudioSourcePlayer::setGain` stays at its default 1.0 so we don't
+ * double-attenuate. Callers route master-volume changes through
+ * `setTargetGain(...)` instead.
+ */
+class MeteringSource : public juce::AudioSource
+{
+  public:
+    explicit MeteringSource(juce::AudioSource& s) : source(s) {}
+
+    void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
+    {
+        source.prepareToPlay(samplesPerBlockExpected, sampleRate);
+        // 10 ms ramp — fast enough to feel instant, slow enough to
+        // suppress zipper noise on rapid slider drags.
+        smoothedGain.reset(sampleRate, 0.01);
+        smoothedGain.setCurrentAndTargetValue(targetGain.load(std::memory_order_relaxed));
+    }
+
+    void releaseResources() override { source.releaseResources(); }
+
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+    {
+        source.getNextAudioBlock(info);
+        if (info.buffer == nullptr || info.numSamples <= 0)
+            return;
+
+        // Pull the latest target written from the message thread and
+        // advance the smoother across this block. Snapshot start +
+        // end so we can pass them to `applyGainRamp` (per-sample
+        // linear interpolation, the same primitive JUCE uses
+        // internally in `AudioSourcePlayer::audioDeviceIOCallback`).
+        smoothedGain.setTargetValue(targetGain.load(std::memory_order_relaxed));
+        const int n = info.numSamples;
+        const float startGain = smoothedGain.getNextValue();
+        if (n > 1)
+            smoothedGain.skip(n - 1);
+        const float endGain = smoothedGain.getCurrentValue();
+
+        const int numCh = info.buffer->getNumChannels();
+        const bool unity = std::abs(startGain - 1.0F) < 1.0e-6F &&
+                           std::abs(endGain - 1.0F) < 1.0e-6F;
+        if (! unity)
+        {
+            for (int ch = 0; ch < numCh; ++ch)
+                info.buffer->applyGainRamp(ch, info.startSample, n, startGain, endGain);
+        }
+
+        // Per-channel peak (post-gain) merged into the atomic store.
+        if (numCh > 0)
+            atomicMaxFloat(peakL_, info.buffer->getMagnitude(0, info.startSample, n));
+        if (numCh > 1)
+            atomicMaxFloat(peakR_, info.buffer->getMagnitude(1, info.startSample, n));
+        else if (numCh > 0)
+            atomicMaxFloat(peakR_, info.buffer->getMagnitude(0, info.startSample, n));
+    }
+
+    /** Message-thread setter. Clamped to [0,1] — boost is per-track. */
+    void setTargetGain(float g) noexcept
+    {
+        targetGain.store(juce::jlimit(0.0F, 1.0F, g), std::memory_order_relaxed);
+    }
+
+    /** Drain accumulated peaks and reset to 0 atomically. */
+    void consumePeaks(float& outL, float& outR) noexcept
+    {
+        outL = peakL_.exchange(0.0F, std::memory_order_relaxed);
+        outR = peakR_.exchange(0.0F, std::memory_order_relaxed);
+    }
+
+  private:
+    static void atomicMaxFloat(std::atomic<float>& a, float v) noexcept
+    {
+        float cur = a.load(std::memory_order_relaxed);
+        while (v > cur && ! a.compare_exchange_weak(cur, v, std::memory_order_relaxed))
+        {
+            // `cur` is refreshed by compare_exchange_weak on failure.
+        }
+    }
+
+    juce::AudioSource& source;
+    juce::LinearSmoothedValue<float> smoothedGain;
+    std::atomic<float> targetGain{1.0F};
+    std::atomic<float> peakL_{0.0F};
+    std::atomic<float> peakR_{0.0F};
+};
+
+/**
  * Positionable wrapper that prepends a configurable number of silent
  * samples to a child source. Used to give each clip a timeline offset so
  * the same global transport position drives all tracks in sync.
@@ -768,12 +869,21 @@ class AudioEngine
 
     /**
      * Set the master output gain applied to the final mix bus. Linear
-     * scalar, clamped to [0, 1]. Uses `juce::AudioSourcePlayer::setGain`
-     * which internally ramps to the target value over each block, so
+     * scalar, clamped to [0, 1]. Routed through `MeteringSource` which
+     * applies a 10 ms LinearSmoothedValue ramp on the audio thread, so
      * mid-playback changes are click-free. Safe to call from the
      * message thread at any time (including during playback).
      */
     void setMasterGain(float gain);
+
+    /**
+     * Drain the master peak meter's "max since last read" lanes and
+     * reset them to 0 atomically. Returns the post-gain magnitude of
+     * the most recent audio block(s) on the L and R channels (linear
+     * scalar; can exceed 1.0 when tracks sum hot). Called from the
+     * message thread by the bridge broadcaster at ~60 Hz.
+     */
+    void consumeMasterPeaks(float& outL, float& outR);
 
     /**
      * Seek every track's playhead to `ms`. Position is clamped to 0; if a
@@ -1200,9 +1310,14 @@ class AudioEngine
     // MasterClockSource wraps the mixer; the top mixer in turn mixes the
     // master (project tracks) with the preview voice so the Clip Editor
     // can play in parallel with — or in place of — the project transport.
-    // Construction order: mixer → master → topMixer (refs the others).
+    // `masterMeter` wraps `topMixer` to apply the master gain (with a
+    // smoothed ramp) and tap per-channel peaks for the UI meter. The
+    // device callback pulls `masterMeter`; `topMixer` is no longer the
+    // direct AudioSourcePlayer source.
+    // Construction order: mixer → master → topMixer → masterMeter.
     MasterClockSource master{mixer};
     juce::MixerAudioSource topMixer;
+    MeteringSource masterMeter{topMixer};
     juce::AudioFormatManager formatManager;
 
     // Background thread used by each track's read-ahead buffer so file I/O

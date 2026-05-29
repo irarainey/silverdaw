@@ -460,6 +460,24 @@ class PlayheadEmitter : public juce::Timer
             bridge.broadcast("PREVIEW_POSITION", previewPayload);
             lastPreviewPosMs = previewPos;
         }
+
+        // Master peak meter. Drain the audio thread's "max since last
+        // read" lanes and broadcast a MASTER_LEVEL envelope. We gate
+        // on activity (signal above ~ -100 dBFS, plus one trailing
+        // zero so the renderer's hold/decay can finish gracefully)
+        // to avoid spamming envelopes during long silent stretches.
+        float peakL = 0.0F;
+        float peakR = 0.0F;
+        engine.consumeMasterPeaks(peakL, peakR);
+        constexpr float kMeterEpsilon = 1.0e-5F;
+        const bool hasSignal = peakL > kMeterEpsilon || peakR > kMeterEpsilon;
+        if (hasSignal || lastMasterLevelHadSignal)
+        {
+            masterLevelObject->setProperty("peakL", static_cast<double>(peakL));
+            masterLevelObject->setProperty("peakR", static_cast<double>(peakR));
+            bridge.broadcast("MASTER_LEVEL", masterLevelPayload);
+            lastMasterLevelHadSignal = hasSignal;
+        }
     }
 
   private:
@@ -473,6 +491,9 @@ class PlayheadEmitter : public juce::Timer
     juce::DynamicObject::Ptr previewPayloadObject{new juce::DynamicObject()};
     juce::var previewPayload{previewPayloadObject.get()};
     double lastPreviewPosMs = -1.0;
+    juce::DynamicObject::Ptr masterLevelObject{new juce::DynamicObject()};
+    juce::var masterLevelPayload{masterLevelObject.get()};
+    bool lastMasterLevelHadSignal = false;
 };
 
 // Bridge payload validation helpers live in `PayloadHelpers.h` so the

@@ -19,6 +19,14 @@ import { useProjectStore, MAX_TRACK_VOLUME } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoTrack } from '@/lib/importAudio'
 import {
+  dbToLinear,
+  formatLinearAsDb,
+  linearToTaperPosition,
+  MAX_TRACK_DB,
+  parseDbInput,
+  taperPositionToLinear
+} from '@/lib/audio/db'
+import {
   MAX_TRACK_HEIGHT,
   MIN_TRACK_HEIGHT,
   RULER_HEIGHT
@@ -33,26 +41,19 @@ const ui = useUiStore()
 const headerWidth = computed(() => ui.trackHeaderWidth)
 
 /**
- * Map a linear gain `volume` (0 .. MAX_TRACK_VOLUME) onto the slider's
- * 0..1 visual domain. Two-segment linear so unity (1.0) lands at
- * exactly 0.5 — half travel for cuts (0..1.0 ↦ 0..0.5), half travel
- * for boosts (1.0..MAX ↦ 0.5..1.0). This is the same shape as a
- * conventional DAW fader where 0 dB sits at the middle and the lower
- * half of the bar covers fade-to-silence.
+ * Map a linear gain (0 .. MAX_TRACK_VOLUME) onto the slider's 0..1
+ * visual domain using a real-DAW tapered curve: 0 dB sits near the
+ * top of fader travel (≈91% for the +6 dB ceiling) so the bulk of
+ * the bar covers the audible attenuation range. See `lib/audio/db`
+ * for the maths.
  */
 function volumeToSliderPosition(volume: number): number {
-  if (volume <= 1) return Math.max(0, volume) * 0.5
-  const boostRange = MAX_TRACK_VOLUME - 1
-  if (boostRange <= 0) return 0.5
-  return 0.5 + Math.min(1, (volume - 1) / boostRange) * 0.5
+  return linearToTaperPosition(volume, MAX_TRACK_DB)
 }
 
 /** Inverse of `volumeToSliderPosition`. */
 function sliderPositionToVolume(position: number): number {
-  const clamped = Math.min(1, Math.max(0, position))
-  if (clamped <= 0.5) return clamped * 2
-  const boostRange = MAX_TRACK_VOLUME - 1
-  return 1 + (clamped - 0.5) * 2 * boostRange
+  return taperPositionToLinear(position, MAX_TRACK_DB)
 }
 
 function onImportClick(trackId: string): void {
@@ -116,13 +117,22 @@ function onRenameKeydown(e: KeyboardEvent, trackId: string): void {
   }
 }
 
-function volumePercent(volume: number): number {
-  return Math.round(Math.min(MAX_TRACK_VOLUME, Math.max(0, volume)) * 100)
+function volumeDbText(volume: number): string {
+  return formatLinearAsDb(volume)
 }
+
+/** Smallest linear-gain delta worth pushing through the bridge.
+ *  Prevents text-input round-trip noise (typing "-3", parsing back to
+ *  `0.708`, and emitting a `TRACK_GAIN` for a value that's
+ *  indistinguishable from the current one) from spamming the undo
+ *  history. ≈0.0001 ≈ 0.0009 dB at unity — finer than perceptible. */
+const VOLUME_EPSILON = 1e-4
 
 async function startGainEdit(trackId: string, volume: number): Promise<void> {
   editingGainTrackId.value = trackId
-  editingGainValue.value = String(volumePercent(volume))
+  // Pre-fill with the canonical signed dB text. The user can edit
+  // freely, e.g. `-3`, `+1.5`, `-inf`.
+  editingGainValue.value = formatLinearAsDb(volume)
   await nextTick()
   if (gainInputEl) {
     gainInputEl.focus()
@@ -132,30 +142,24 @@ async function startGainEdit(trackId: string, volume: number): Promise<void> {
 
 function commitGainEdit(trackId: string): void {
   if (editingGainTrackId.value !== trackId) return
-  const parsed = Number(editingGainValue.value)
-  if (Number.isFinite(parsed)) {
-    const maxPercent = MAX_TRACK_VOLUME * 100
-    const clamped = Math.min(maxPercent, Math.max(0, parsed))
-    project.setTrackVolume(trackId, clamped / 100)
+  const parsedDb = parseDbInput(editingGainValue.value)
+  if (parsedDb !== null) {
+    const linear = parsedDb === -Infinity ? 0 : dbToLinear(parsedDb)
+    const clamped = Math.min(MAX_TRACK_VOLUME, Math.max(0, linear))
+    const current = project.tracks.find((t) => t.id === trackId)?.volume ?? 0
+    if (Math.abs(clamped - current) > VOLUME_EPSILON) {
+      project.setTrackVolume(trackId, clamped)
+    }
   }
   editingGainTrackId.value = null
 }
 
 function onGainInput(e: Event): void {
+  // The text input is freeform; just mirror the raw value into the
+  // ref so the user sees what they typed. Validation / clamping
+  // happens on commit, not on every keystroke.
   const input = e.target as HTMLInputElement
-  if (input.value.trim() === '') {
-    editingGainValue.value = ''
-    return
-  }
-  const parsed = Number(input.value)
-  if (!Number.isFinite(parsed)) return
-  const maxPercent = MAX_TRACK_VOLUME * 100
-  const clamped = Math.min(maxPercent, Math.max(0, parsed))
-  if (clamped !== parsed) {
-    const next = String(clamped)
-    input.value = next
-    editingGainValue.value = next
-  }
+  editingGainValue.value = input.value
 }
 
 function cancelGainEdit(): void {
@@ -163,10 +167,6 @@ function cancelGainEdit(): void {
 }
 
 function onGainKeydown(e: KeyboardEvent, trackId: string): void {
-  if (e.key === 'e' || e.key === 'E' || e.key === '+' || e.key === '-') {
-    e.preventDefault()
-    return
-  }
   if (e.key === 'Enter') {
     e.preventDefault()
     commitGainEdit(trackId)
@@ -513,9 +513,9 @@ const dropIndicatorTopPx = computed<number>(() => {
               type="range"
               min="0"
               max="1"
-              step="0.01"
+              step="0.001"
               :value="volumeToSliderPosition(track.volume)"
-              :title="'Volume ' + Math.round(track.volume * 100) + '%'"
+              :title="'Volume ' + formatLinearAsDb(track.volume, { unit: true })"
               class="track-volume h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
               @input="(e) => project.setTrackVolumeLocal(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
               @change="(e) => project.setTrackVolume(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
@@ -524,11 +524,11 @@ const dropIndicatorTopPx = computed<number>(() => {
               v-if="editingGainTrackId === track.id"
               :ref="setGainInputEl"
               v-model="editingGainValue"
-              type="number"
-              min="0"
-              :max="MAX_TRACK_VOLUME * 100"
-              step="1"
-              class="w-7 shrink-0 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              type="text"
+              inputmode="text"
+              spellcheck="false"
+              autocomplete="off"
+              class="w-10 shrink-0 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500"
               @input="onGainInput"
               @blur="commitGainEdit(track.id)"
               @keydown="(e) => onGainKeydown(e, track.id)"
@@ -537,11 +537,11 @@ const dropIndicatorTopPx = computed<number>(() => {
               v-else
               type="button"
               data-borderless-button="true"
-              class="w-7 shrink-0 cursor-text appearance-none border-0 bg-transparent p-0 text-right font-mono text-[10px] tabular-nums text-zinc-500 outline-none hover:text-zinc-200 focus-visible:text-cyan-300"
-              :title="`Double-click to type volume (0-${MAX_TRACK_VOLUME * 100})`"
+              class="w-10 shrink-0 cursor-text appearance-none border-0 bg-transparent p-0 text-right font-mono text-[10px] tabular-nums text-zinc-500 outline-none hover:text-zinc-200 focus-visible:text-cyan-300"
+              :title="`Volume ${formatLinearAsDb(track.volume, { unit: true })} — double-click to type a dB value (e.g. -3, +1.5, -inf)`"
               @dblclick.stop="startGainEdit(track.id, track.volume)"
             >
-              {{ volumePercent(track.volume) }}
+              {{ volumeDbText(track.volume) }}
             </button>
           </div>
 

@@ -6,6 +6,7 @@
 
 import { defineStore } from 'pinia'
 import { decodeAudioToPeaks, PEAKS_PER_SECOND } from '@/lib/audio'
+import { MAX_TRACK_GAIN_LINEAR } from '@/lib/audio/db'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useNotificationsStore } from '@/stores/notificationsStore'
@@ -138,14 +139,17 @@ export interface Track {
 export const DEFAULT_TRACK_LENGTH_MS = 10 * 60 * 1000
 
 /**
- * Upper bound on a track's linear volume. Unity (1.0) sits at the
- * mid-point of the fader so the user gets equal travel for cuts and
- * boosts; the maximum is +50% (which the backend's clamp at 4.0× lets
- * through unchanged). Saved projects clamp incoming `gain` values to
- * this domain on snapshot apply, so an older `.silverdaw` with gain
- * 1.0 still resolves to "unity at the mid-point" — no migration needed.
+ * Upper bound on a track's linear volume — set to the linear equivalent
+ * of `MAX_TRACK_DB` (+6 dB ≈ 1.9953), matching the convention used by
+ * Logic Pro / Ableton Live / GarageBand. The slider taper in
+ * `TrackHeaderPanel.vue` puts 0 dB (unity) near the top of fader travel
+ * so the bulk of the bar covers the audible attenuation range. The
+ * backend's per-clip-transport clamp at 4.0× lets this through
+ * unchanged. Saved projects clamp incoming `gain` values to this
+ * domain on snapshot apply; older `.silverdaw` files with `gain <= 1.5`
+ * still load identically — only the *cap* has moved up.
  */
-export const MAX_TRACK_VOLUME = 1.5
+export const MAX_TRACK_VOLUME = MAX_TRACK_GAIN_LINEAR
 
 /**
  * Derive a stable `projectId` from an absolute project file path. Used
@@ -1964,11 +1968,11 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Set a track's user volume (linear gain, 0.0–1.5; 1.0 is unity,
-     * the slider's mid-point) and push it to the backend. The backend
-     * stores this as the user volume and folds in the persisted
-     * muted / soloed flags itself when computing the effective gain
-     * the AudioEngine and MixdownEngine see.
+     * Set a track's user volume (linear gain, 0.0 .. ~1.9953 / +6 dB;
+     * 1.0 is unity) and push it to the backend. The backend stores
+     * this as the user volume and folds in the persisted muted /
+     * soloed flags itself when computing the effective gain the
+     * AudioEngine and MixdownEngine see.
      *
      * Use this for *commits* (e.g. the slider's `@change` event). For
      * the live drag (every `@input`) use `setTrackVolumeLocal` so we

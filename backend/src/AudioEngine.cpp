@@ -40,11 +40,13 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
         return err;
     }
 
-    // Wire the source player + mixer chain before any device switch
-    // so the first audio block from the preferred device flows
+    // Wire the source player + meter + mixer chain before any device
+    // switch so the first audio block from the preferred device flows
     // through the engine's mixer rather than into a dangling source.
+    // `masterMeter` wraps `topMixer` to apply the master gain (with a
+    // 10 ms smoothing ramp) and tap per-channel peaks for the UI meter.
     topMixer.addInputSource(&master, false);
-    sourcePlayer.setSource(&topMixer);
+    sourcePlayer.setSource(&masterMeter);
     deviceManager.addAudioCallback(&sourcePlayer);
 
     // Try to honour the persisted device preference. Any failure
@@ -621,11 +623,19 @@ void AudioEngine::stop()
 
 void AudioEngine::setMasterGain(float gain)
 {
-    // Clamp to the user-facing [0, 1] range. `AudioSourcePlayer::setGain`
-    // applies the new value with internal block-rate ramping, so calls
-    // during active playback don't produce zipper noise.
+    // Clamp to the user-facing [0, 1] range. `MeteringSource` applies
+    // the new value with a 10 ms LinearSmoothedValue ramp on the audio
+    // thread, so calls during active playback don't produce zipper
+    // noise. We do NOT also call `sourcePlayer.setGain` — the player
+    // is left at unity so the meter sees the same level the user
+    // hears (post-gain peaks).
     const float clamped = juce::jlimit(0.0F, 1.0F, gain);
-    sourcePlayer.setGain(clamped);
+    masterMeter.setTargetGain(clamped);
+}
+
+void AudioEngine::consumeMasterPeaks(float& outL, float& outR)
+{
+    masterMeter.consumePeaks(outL, outR);
 }
 
 void AudioEngine::setPositionMs(double ms)

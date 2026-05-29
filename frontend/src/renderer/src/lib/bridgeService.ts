@@ -27,6 +27,7 @@ import { useAppStore } from '@/stores/appStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { applyMixdownProgress, clearMixdownState, snapshotMixdownState } from '@/lib/mixdownState'
+import { clearMasterLevels, setMasterLevels } from '@/lib/audio/masterLevelChannel'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { log } from '@/lib/log'
@@ -44,6 +45,7 @@ import {
   isMixdownFailedPayload,
   isMixdownProgressPayload,
   isLibraryItemAnalysisPayload,
+  isMasterLevelPayload,
   isPlayheadUpdatePayload,
   isPreviewEndedPayload,
   isPreviewPositionPayload,
@@ -212,6 +214,7 @@ function openSocket(conn: BridgeConnection): void {
     useTransportStore().setConnected(false)
     socket = null
     stopSocketHeartbeat()
+    clearMasterLevels()
     log.warn('bridge', 'socket closed')
     if (!stopped) scheduleReconnect()
   })
@@ -365,8 +368,9 @@ function dispatch(msg: BridgeInboundMessage): void {
   // Exhaustive on `BridgeInboundType`: adding a new arm to `BridgeInboundMap`
   // without a matching case here is a TypeScript error via `assertNever`.
   // Skip PLAYHEAD_UPDATE — it fires 60 Hz and would drown the log. Same
-  // for PREVIEW_POSITION while the editor dialog is open.
-  if (msg.type !== 'PLAYHEAD_UPDATE' && msg.type !== 'PREVIEW_POSITION') {
+  // for PREVIEW_POSITION while the editor dialog is open, and
+  // MASTER_LEVEL which streams at the same cadence while audio is active.
+  if (msg.type !== 'PLAYHEAD_UPDATE' && msg.type !== 'PREVIEW_POSITION' && msg.type !== 'MASTER_LEVEL') {
     log.info('bridge', `recv ${msg.type}`)
   }
   switch (msg.type) {
@@ -724,6 +728,15 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'MASTER_LEVEL': {
+      // Push the peaks into the non-reactive level channel — the
+      // `MasterMeter` component reads them on its RAF loop, so we
+      // intentionally avoid touching a Pinia store here (which would
+      // fan out a re-render to every subscriber 60x/s).
+      setMasterLevels(msg.payload.peakL, msg.payload.peakR)
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -955,6 +968,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isMixdownDonePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'MIXDOWN_FAILED':
       return isMixdownFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'MASTER_LEVEL':
+      return isMasterLevelPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

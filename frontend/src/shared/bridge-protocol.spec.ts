@@ -58,7 +58,8 @@ const INBOUND_TYPES = {
   AUDIO_FILE_PROBED: true,
   MIXDOWN_PROGRESS: true,
   MIXDOWN_DONE: true,
-  MIXDOWN_FAILED: true
+  MIXDOWN_FAILED: true,
+  MASTER_LEVEL: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {

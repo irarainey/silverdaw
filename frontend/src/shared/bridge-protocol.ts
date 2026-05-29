@@ -213,9 +213,10 @@ export interface TrackRenamePayload {
 
 export interface TrackGainPayload {
   trackId: string
-  /** User volume (slider position) — linear 0..1.5, NOT post-mute /
-   *  post-solo effective gain. The backend derives the audible gain
-   *  from this plus the track's persisted muted / soloed flags. */
+  /** User volume (slider position) — linear gain, 0..~1.9953 (+6 dB
+   *  ceiling), NOT post-mute / post-solo effective gain. The backend
+   *  derives the audible gain from this plus the track's persisted
+   *  muted / soloed flags. */
   gain: number
 }
 
@@ -1457,6 +1458,21 @@ export const MixdownFailedPayloadSchema = z.object({
 })
 export type MixdownFailedPayload = z.infer<typeof MixdownFailedPayloadSchema>
 
+/** Per-channel master output peaks, sampled by the backend audio thread
+ *  POST master-gain and drained by the broadcaster at ~60 Hz. Each lane
+ *  is the maximum sample magnitude observed since the last broadcast
+ *  (lock-free "max since last read" atomic on the audio side). Values
+ *  are linear scalars and can exceed 1.0 when tracks sum hot — the UI
+ *  is responsible for converting to dB and rendering any over-zero
+ *  "clip" indicator. The backend gates broadcasts on activity so a
+ *  long silent stretch stops emitting; one trailing zero is sent on
+ *  the transition to silence so the UI's hold/decay can finish. */
+export const MasterLevelPayloadSchema = z.object({
+  peakL: z.number().nonnegative(),
+  peakR: z.number().nonnegative()
+})
+export type MasterLevelPayload = z.infer<typeof MasterLevelPayloadSchema>
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PROJECT_STATE: ProjectStatePayload
@@ -1491,6 +1507,7 @@ export interface BridgeInboundMap {
   MIXDOWN_PROGRESS: MixdownProgressPayload
   MIXDOWN_DONE: MixdownDonePayload
   MIXDOWN_FAILED: MixdownFailedPayload
+  MASTER_LEVEL: MasterLevelPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -1547,7 +1564,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'AUDIO_FILE_PROBED',
   'MIXDOWN_PROGRESS',
   'MIXDOWN_DONE',
-  'MIXDOWN_FAILED'
+  'MIXDOWN_FAILED',
+  'MASTER_LEVEL'
 ])
 
 /** Narrow an unknown string to the inbound type union. */
@@ -1719,4 +1737,9 @@ export function isMixdownDonePayload(value: unknown): value is MixdownDonePayloa
 /** Guard for `MixdownFailedPayload`. */
 export function isMixdownFailedPayload(value: unknown): value is MixdownFailedPayload {
   return MixdownFailedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `MasterLevelPayload`. */
+export function isMasterLevelPayload(value: unknown): value is MasterLevelPayload {
+  return MasterLevelPayloadSchema.safeParse(value).success
 }

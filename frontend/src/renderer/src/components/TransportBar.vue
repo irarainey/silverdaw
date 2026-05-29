@@ -3,7 +3,7 @@
 // WebSocket bridge. Playhead position is mirrored from the backend's
 // `PLAYHEAD_UPDATE` messages into `transportStore`.
 
-import { computed, onBeforeUnmount, onMounted, nextTick, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
@@ -12,7 +12,14 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import {
+  formatLinearAsDb,
+  linearToTaperPosition,
+  MAX_MASTER_DB,
+  taperPositionToLinear
+} from '@/lib/audio/db'
 import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
+import MasterMeter from '@/components/MasterMeter.vue'
 
 const project = useProjectStore()
 const library = useLibraryStore()
@@ -428,76 +435,15 @@ function onMasterVolumeInput(event: Event): void {
   // `TRACK_GAIN` drag stream). The backend's `beginNewTransaction`
   // coalescing window (500 ms, keyed off `PROJECT_SET_MASTER_VOLUME:_`)
   // bundles a continuous drag into a single undo step.
+  //
+  // The slider position uses the same dB-tapered mapping as the per-
+  // track fader (see `lib/audio/db`) — 0 dB sits at the very top of
+  // travel since the master doesn't allow boost.
   const target = event.target as HTMLInputElement
-  const pct = Number(target.value)
-  if (!Number.isFinite(pct)) return
-  project.setMasterVolume(Math.min(1, Math.max(0, pct / 100)))
-}
-
-// ─── Master volume: double-click to type a value ─────────────────────────
-// Mirrors the per-track gain edit flow in TrackHeaderPanel: the percent
-// readout to the right of the slider doubles as a button that swaps in a
-// numeric input on dblclick. Enter commits, Escape / blur cancels.
-const editingMasterVolume = ref(false)
-const editingMasterVolumeValue = ref('')
-let masterVolumeInputEl: HTMLInputElement | null = null
-
-function setMasterVolumeInputEl(el: Element | ComponentPublicInstance | null): void {
-  masterVolumeInputEl = el as HTMLInputElement | null
-}
-
-async function startMasterVolumeEdit(): Promise<void> {
-  editingMasterVolume.value = true
-  editingMasterVolumeValue.value = String(Math.round(project.masterVolume * 100))
-  await nextTick()
-  if (masterVolumeInputEl) {
-    masterVolumeInputEl.focus()
-    masterVolumeInputEl.select()
-  }
-}
-
-function commitMasterVolumeEdit(): void {
-  if (!editingMasterVolume.value) return
-  const parsed = Number(editingMasterVolumeValue.value)
-  if (Number.isFinite(parsed)) {
-    const clamped = Math.min(100, Math.max(0, parsed))
-    project.setMasterVolume(clamped / 100)
-  }
-  editingMasterVolume.value = false
-}
-
-function cancelMasterVolumeEdit(): void {
-  editingMasterVolume.value = false
-}
-
-function onMasterVolumeNumberInput(e: Event): void {
-  const input = e.target as HTMLInputElement
-  if (input.value.trim() === '') {
-    editingMasterVolumeValue.value = ''
-    return
-  }
-  const parsed = Number(input.value)
-  if (!Number.isFinite(parsed)) return
-  const clamped = Math.min(100, Math.max(0, parsed))
-  if (clamped !== parsed) {
-    const next = String(clamped)
-    input.value = next
-    editingMasterVolumeValue.value = next
-  }
-}
-
-function onMasterVolumeKeydown(e: KeyboardEvent): void {
-  if (e.key === 'e' || e.key === 'E' || e.key === '+' || e.key === '-') {
-    e.preventDefault()
-    return
-  }
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    commitMasterVolumeEdit()
-  } else if (e.key === 'Escape') {
-    e.preventDefault()
-    cancelMasterVolumeEdit()
-  }
+  const pos = Number(target.value)
+  if (!Number.isFinite(pos)) return
+  const linear = taperPositionToLinear(pos, MAX_MASTER_DB)
+  project.setMasterVolume(Math.min(1, Math.max(0, linear)))
 }
 </script>
 
@@ -609,15 +555,16 @@ function onMasterVolumeKeydown(e: KeyboardEvent): void {
         </div>
       </div>
 
-      <!-- Master volume: linear 0–100% slider next to the audio
-           device chip. Drives both live playback (via
-           `AudioSourcePlayer::setGain` — block-rate ramped, click-
-           free) and the mixdown export so the rendered file matches
-           what the user hears. Persisted at the project level;
-           new projects default to 100%. -->
+      <!-- Master volume: dB-tapered slider (GarageBand-style, no
+           numeric readout — the master peak meter shows level
+           instead). Drives both live playback (via the
+           AudioEngine's MeteringSource — 10 ms smoothed ramp,
+           click-free) and the mixdown export so the rendered file
+           matches what the user hears. Persisted at the project
+           level; new projects default to -2.5 dB (≈75%). -->
       <div
         class="flex items-center gap-1.5"
-        :title="`Master volume: ${Math.round(project.masterVolume * 100)}%`"
+        :title="`Master volume: ${formatLinearAsDb(project.masterVolume, { unit: true })}`"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -636,38 +583,16 @@ function onMasterVolumeKeydown(e: KeyboardEvent): void {
         <input
           type="range"
           min="0"
-          max="100"
-          step="1"
+          max="1"
+          step="0.001"
           aria-label="Master volume"
-          :value="Math.round(project.masterVolume * 100)"
+          :value="linearToTaperPosition(project.masterVolume, MAX_MASTER_DB)"
           class="silverdaw-master-volume h-1 w-28 cursor-pointer appearance-none rounded bg-zinc-700 accent-sky-400 outline-none focus:outline-none focus-visible:outline-none"
           @input="onMasterVolumeInput($event)"
           @pointerup="($event.currentTarget as HTMLInputElement).blur()"
           @change="($event.currentTarget as HTMLInputElement).blur()"
         >
-        <span class="ml-0.5 w-6 text-right font-mono text-[10px] text-zinc-400">
-          <input
-            v-if="editingMasterVolume"
-            :ref="setMasterVolumeInputEl"
-            v-model="editingMasterVolumeValue"
-            type="number"
-            min="0"
-            max="100"
-            step="1"
-            class="w-full rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-            @input="onMasterVolumeNumberInput"
-            @blur="commitMasterVolumeEdit"
-            @keydown="onMasterVolumeKeydown"
-          >
-          <button
-            v-else
-            type="button"
-            data-borderless-button="true"
-            class="w-full cursor-text appearance-none border-0 bg-transparent p-0 text-right font-mono text-[10px] tabular-nums text-zinc-400 outline-none hover:text-zinc-200 focus-visible:text-cyan-300"
-            title="Double-click to type volume (0-100)"
-            @dblclick.stop="startMasterVolumeEdit"
-          >{{ Math.round(project.masterVolume * 100) }}</button>
-        </span>
+        <MasterMeter />
       </div>
     </div>
 

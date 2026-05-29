@@ -282,7 +282,7 @@ void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
     // up to 60×/sec while a transport is playing and would otherwise
     // dominate the log file. Everything else is rare enough that one
     // line per envelope is useful for diagnostics.
-    if (type != "PLAYHEAD_UPDATE" && type != "PREVIEW_POSITION")
+    if (type != "PLAYHEAD_UPDATE" && type != "PREVIEW_POSITION" && type != "MASTER_LEVEL")
     {
         silverdaw::log::info("bridge", "broadcast " + type + " bytes=" + juce::String(static_cast<int>(serialised.size())));
     }
