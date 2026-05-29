@@ -606,13 +606,39 @@ class ProjectState : public juce::ValueTree::Listener
     juce::UndoManager undoManager;
     bool dirty{false};
     /**
-     * Suppresses listener-driven dirty transitions during bulk
-     * mutations we know don't count as user edits — currently used by
-     * `replaceTree` (a project load is by definition clean) and the
-     * default constructor (the initial `name=Untitled` property write).
+     * Re-entrant suppression depth for listener-driven dirty
+     * transitions. Bumped via the scoped `SuppressDirtyScope` guard
+     * below — listeners early-out whenever depth > 0. Used by
+     * `replaceTree` (a project load is by definition clean) and by
+     * `setNonDirtyRootProperty` (view / playhead state mutations that
+     * are persisted but never count as user edits). A counter rather
+     * than a bool so a nested suppression scope cannot accidentally
+     * unsuppress a still-active outer scope.
      */
-    bool suppressDirtyTransitions{false};
+    int suppressDirtyDepth{0};
     DirtyChangedCallback onDirtyChanged;
+
+    /**
+     * RAII guard that bumps `suppressDirtyDepth` on construction and
+     * decrements it on destruction. Exception-safe (the listeners stay
+     * suppressed only for the lifetime of the scope) and nest-safe (a
+     * nested scope still increments then decrements, so the outer
+     * scope's suppression remains intact).
+     */
+    class SuppressDirtyScope
+    {
+    public:
+        explicit SuppressDirtyScope(ProjectState& owner) noexcept : state(owner)
+        {
+            ++state.suppressDirtyDepth;
+        }
+        ~SuppressDirtyScope() noexcept { --state.suppressDirtyDepth; }
+        SuppressDirtyScope(const SuppressDirtyScope&) = delete;
+        SuppressDirtyScope& operator=(const SuppressDirtyScope&) = delete;
+
+    private:
+        ProjectState& state;
+    };
 
     // ValueTree identifiers — defined once so typos surface at link time
     // rather than as silent zero-property reads on the audio side.

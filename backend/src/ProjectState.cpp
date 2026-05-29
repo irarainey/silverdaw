@@ -131,27 +131,27 @@ void ProjectState::recomputeDirty()
 void ProjectState::valueTreePropertyChanged(juce::ValueTree& /*tree*/,
                                             const juce::Identifier& /*property*/)
 {
-    if (suppressDirtyTransitions) return;
+    if (suppressDirtyDepth > 0) return;
     recomputeDirty();
 }
 
 void ProjectState::valueTreeChildAdded(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/)
 {
-    if (suppressDirtyTransitions) return;
+    if (suppressDirtyDepth > 0) return;
     recomputeDirty();
 }
 
 void ProjectState::valueTreeChildRemoved(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/,
                                          int /*index*/)
 {
-    if (suppressDirtyTransitions) return;
+    if (suppressDirtyDepth > 0) return;
     recomputeDirty();
 }
 
 void ProjectState::valueTreeChildOrderChanged(juce::ValueTree& /*parent*/, int /*oldIndex*/,
                                               int /*newIndex*/)
 {
-    if (suppressDirtyTransitions) return;
+    if (suppressDirtyDepth > 0) return;
     recomputeDirty();
 }
 
@@ -163,11 +163,10 @@ void ProjectState::setNonDirtyRootProperty(const juce::Identifier& id, const juc
     // the mirror the tree silently drifts away from the snapshot and
     // any subsequent net-zero edit fails the equivalence test, leaving
     // the project stuck as "dirty" with nothing actually to save.
-    suppressDirtyTransitions = true;
+    const SuppressDirtyScope suppress(*this);
     root.setProperty(id, value, nullptr);
     if (cleanSnapshot.isValid())
         cleanSnapshot.setProperty(id, value, nullptr);
-    suppressDirtyTransitions = false;
 }
 
 juce::String ProjectState::getName() const
@@ -1838,25 +1837,27 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
     // Suppress dirty transitions while we wipe + re-populate `root` —
     // those listener callbacks would otherwise produce a misleading
     // "dirty=true" emission for a freshly-loaded (and therefore clean)
-    // project. We restore the listener and explicitly markClean() at
-    // the end so the renderer sees a single, correct transition.
-    suppressDirtyTransitions = true;
-    root.removeAllChildren(nullptr);
-    root.removeAllProperties(nullptr);
-    root.copyPropertiesAndChildrenFrom(newTree, nullptr);
-    // Ensure the standard container children exist even if the loaded
-    // project file pre-dates them, so subsequent add+remove cycles
-    // round-trip cleanly against the clean-snapshot baseline.
-    if (!root.getChildWithName(kLibrary).isValid())
+    // project. RAII-scoped so a thrown exception still restores the
+    // listener; we explicitly markClean() at the end so the renderer
+    // sees a single, correct transition.
     {
-        root.appendChild(juce::ValueTree(kLibrary), nullptr);
+        const SuppressDirtyScope suppress(*this);
+        root.removeAllChildren(nullptr);
+        root.removeAllProperties(nullptr);
+        root.copyPropertiesAndChildrenFrom(newTree, nullptr);
+        // Ensure the standard container children exist even if the
+        // loaded project file pre-dates them, so subsequent add+remove
+        // cycles round-trip cleanly against the clean-snapshot baseline.
+        if (!root.getChildWithName(kLibrary).isValid())
+        {
+            root.appendChild(juce::ValueTree(kLibrary), nullptr);
+        }
+        if (!root.getChildWithName(kMarkers).isValid())
+        {
+            root.appendChild(juce::ValueTree(kMarkers), nullptr);
+        }
+        undoManager.clearUndoHistory();
     }
-    if (!root.getChildWithName(kMarkers).isValid())
-    {
-        root.appendChild(juce::ValueTree(kMarkers), nullptr);
-    }
-    undoManager.clearUndoHistory();
-    suppressDirtyTransitions = false;
     // A load is by definition clean (in-memory state matches disk).
     // Emit a single dirty=false transition if we were dirty going in.
     markClean();
