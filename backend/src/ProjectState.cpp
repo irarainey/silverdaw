@@ -169,6 +169,51 @@ void ProjectState::setNonDirtyRootProperty(const juce::Identifier& id, const juc
         cleanSnapshot.setProperty(id, value, nullptr);
 }
 
+bool ProjectState::mutateDerivedLibraryItem(
+    const juce::String& itemId,
+    const std::function<void(juce::ValueTree&)>& mutator)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+
+    juce::ValueTree liveItem;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            liveItem = item;
+            break;
+        }
+    }
+    if (!liveItem.isValid()) return false;
+
+    // Suppress dirty transitions for both the live write and the
+    // mirror write — the property change listener fires for any
+    // descendant of `root`, so mutating a library item without
+    // suppression would mark the project dirty.
+    const SuppressDirtyScope suppress(*this);
+    mutator(liveItem);
+
+    if (cleanSnapshot.isValid())
+    {
+        auto snapLibrary = cleanSnapshot.getChildWithName(kLibrary);
+        if (snapLibrary.isValid())
+        {
+            for (int i = 0; i < snapLibrary.getNumChildren(); ++i)
+            {
+                auto snapItem = snapLibrary.getChild(i);
+                if (snapItem.getProperty(kId).toString() == itemId)
+                {
+                    mutator(snapItem);
+                    break;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 juce::String ProjectState::getName() const
 {
     const auto stored = root.getProperty(kName, kDefaultName).toString().trim();
@@ -1130,90 +1175,50 @@ bool ProjectState::removeLibraryItem(const juce::String& itemId)
 
 bool ProjectState::setLibraryItemBpm(const juce::String& itemId, double bpm)
 {
-    auto library = root.getChildWithName(kLibrary);
-    if (!library.isValid()) return false;
-    for (int i = 0; i < library.getNumChildren(); ++i)
-    {
-        auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
-        {
-            if (bpm > 0.0)
-            {
-                item.setProperty(kBpm, bpm, nullptr);
-            }
-            else
-            {
-                item.removeProperty(kBpm, nullptr);
-            }
-            return true;
-        }
-    }
-    return false;
+    return mutateDerivedLibraryItem(itemId,
+                                    [bpm](juce::ValueTree& item)
+                                    {
+                                        if (bpm > 0.0)
+                                            item.setProperty(kBpm, bpm, nullptr);
+                                        else
+                                            item.removeProperty(kBpm, nullptr);
+                                    });
 }
 
 bool ProjectState::setLibraryItemBeats(const juce::String& itemId, const std::vector<double>& beatTimesSec)
 {
-    auto library = root.getChildWithName(kLibrary);
-    if (!library.isValid()) return false;
-    for (int i = 0; i < library.getNumChildren(); ++i)
-    {
-        auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
-        {
-            if (beatTimesSec.empty())
-            {
-                item.removeProperty(kBeats, nullptr);
-            }
-            else
-            {
-                juce::Array<juce::var> arr;
-                arr.ensureStorageAllocated(static_cast<int>(beatTimesSec.size()));
-                for (double t : beatTimesSec) arr.add(juce::var(t));
-                item.setProperty(kBeats, juce::var(arr), nullptr);
-            }
-            return true;
-        }
-    }
-    return false;
+    return mutateDerivedLibraryItem(itemId,
+                                    [&beatTimesSec](juce::ValueTree& item)
+                                    {
+                                        if (beatTimesSec.empty())
+                                        {
+                                            item.removeProperty(kBeats, nullptr);
+                                            return;
+                                        }
+                                        juce::Array<juce::var> arr;
+                                        arr.ensureStorageAllocated(static_cast<int>(beatTimesSec.size()));
+                                        for (double t : beatTimesSec) arr.add(juce::var(t));
+                                        item.setProperty(kBeats, juce::var(arr), nullptr);
+                                    });
 }
 
 bool ProjectState::setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec)
 {
-    auto library = root.getChildWithName(kLibrary);
-    if (!library.isValid()) return false;
-    for (int i = 0; i < library.getNumChildren(); ++i)
-    {
-        auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
-        {
-            item.setProperty(kBeatAnchorSec, anchorSec, nullptr);
-            return true;
-        }
-    }
-    return false;
+    return mutateDerivedLibraryItem(itemId,
+                                    [anchorSec](juce::ValueTree& item)
+                                    { item.setProperty(kBeatAnchorSec, anchorSec, nullptr); });
 }
 
 bool ProjectState::setLibraryItemPlaybackPath(const juce::String& itemId, const juce::String& playbackPath)
 {
-    auto library = root.getChildWithName(kLibrary);
-    if (!library.isValid()) return false;
-    for (int i = 0; i < library.getNumChildren(); ++i)
-    {
-        auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
-        {
-            if (playbackPath.isEmpty())
-            {
-                item.removeProperty(kPlaybackFilePath, nullptr);
-            }
-            else
-            {
-                item.setProperty(kPlaybackFilePath, playbackPath, nullptr);
-            }
-            return true;
-        }
-    }
-    return false;
+    return mutateDerivedLibraryItem(itemId,
+                                    [&playbackPath](juce::ValueTree& item)
+                                    {
+                                        if (playbackPath.isEmpty())
+                                            item.removeProperty(kPlaybackFilePath, nullptr);
+                                        else
+                                            item.setProperty(kPlaybackFilePath, playbackPath, nullptr);
+                                    });
 }
 
 bool ProjectState::setLibraryItemFilePath(const juce::String& itemId, const juce::String& filePath)
@@ -1324,21 +1329,14 @@ bool ProjectState::setLibraryItemWarp(const juce::String& itemId,
 
 bool ProjectState::clearLibraryItemAnalysis(const juce::String& itemId)
 {
-    auto library = root.getChildWithName(kLibrary);
-    if (!library.isValid()) return false;
-    for (int i = 0; i < library.getNumChildren(); ++i)
-    {
-        auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
-        {
-            item.removeProperty(kBpm, nullptr);
-            item.removeProperty(kBeats, nullptr);
-            item.removeProperty(kBeatAnchorSec, nullptr);
-            item.removeProperty(kVariableTempo, nullptr);
-            return true;
-        }
-    }
-    return false;
+    return mutateDerivedLibraryItem(itemId,
+                                    [](juce::ValueTree& item)
+                                    {
+                                        item.removeProperty(kBpm, nullptr);
+                                        item.removeProperty(kBeats, nullptr);
+                                        item.removeProperty(kBeatAnchorSec, nullptr);
+                                        item.removeProperty(kVariableTempo, nullptr);
+                                    });
 }
 
 juce::String ProjectState::getLibraryItemPlaybackPathForSource(const juce::String& sourceFilePath) const
@@ -1359,48 +1357,26 @@ juce::String ProjectState::getLibraryItemPlaybackPathForSource(const juce::Strin
 
 bool ProjectState::setLibraryItemVariableTempo(const juce::String& itemId, bool variable)
 {
-    auto library = root.getChildWithName(kLibrary);
-    if (!library.isValid()) return false;
-    for (int i = 0; i < library.getNumChildren(); ++i)
-    {
-        auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
-        {
-            if (variable)
-            {
-                item.setProperty(kVariableTempo, true, nullptr);
-            }
-            else
-            {
-                item.removeProperty(kVariableTempo, nullptr);
-            }
-            return true;
-        }
-    }
-    return false;
+    return mutateDerivedLibraryItem(itemId,
+                                    [variable](juce::ValueTree& item)
+                                    {
+                                        if (variable)
+                                            item.setProperty(kVariableTempo, true, nullptr);
+                                        else
+                                            item.removeProperty(kVariableTempo, nullptr);
+                                    });
 }
 
 bool ProjectState::setLibraryItemLowConfidence(const juce::String& itemId, bool lowConfidence)
 {
-    auto library = root.getChildWithName(kLibrary);
-    if (!library.isValid()) return false;
-    for (int i = 0; i < library.getNumChildren(); ++i)
-    {
-        auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
-        {
-            if (lowConfidence)
-            {
-                item.setProperty(kLowConfidence, true, nullptr);
-            }
-            else
-            {
-                item.removeProperty(kLowConfidence, nullptr);
-            }
-            return true;
-        }
-    }
-    return false;
+    return mutateDerivedLibraryItem(itemId,
+                                    [lowConfidence](juce::ValueTree& item)
+                                    {
+                                        if (lowConfidence)
+                                            item.setProperty(kLowConfidence, true, nullptr);
+                                        else
+                                            item.removeProperty(kLowConfidence, nullptr);
+                                    });
 }
 
 bool ProjectState::setLibraryItemSampleMode(const juce::String& itemId, const juce::String& mode)

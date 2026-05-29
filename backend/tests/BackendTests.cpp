@@ -343,6 +343,70 @@ void testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo()
     }
 }
 
+void testProjectStateDerivedLibraryMetadataDoesNotMarkDirty()
+{
+    // Regression: BPM detection, beat-grid analysis, and decoded-cache
+    // path resolution all run in the background after a project is
+    // loaded or a clip is added. They mutate library-item properties
+    // that are *derived* from the source audio file and can be
+    // regenerated at any time, so they must NOT mark the project
+    // dirty — otherwise opening a project and pressing Play (which
+    // triggers cache resolution) would prompt the user to save.
+    silverdaw::ProjectState state;
+    require(state.addLibraryItem("l1", "C:\\audio\\loop.wav", "loop.wav", 1000.0, 48000, 2),
+            "library add should succeed");
+    state.markClean();
+    require(!state.isDirty(), "baseline should be clean after markClean");
+
+    int transitions = 0;
+    state.setDirtyChangedCallback([&](bool) { ++transitions; });
+
+    // All of these are derived/cache writes — none should toggle dirty.
+    require(state.setLibraryItemBpm("l1", 124.5), "bpm setter should find item");
+    require(state.setLibraryItemBeats("l1", {0.1, 0.5, 0.9}),
+            "beats setter should find item");
+    require(state.setLibraryItemBeatAnchor("l1", 0.25),
+            "beat anchor setter should find item");
+    require(state.setLibraryItemVariableTempo("l1", true),
+            "variable tempo setter should find item");
+    require(state.setLibraryItemLowConfidence("l1", true),
+            "low confidence setter should find item");
+    require(state.setLibraryItemPlaybackPath("l1", "C:\\cache\\loop.wav"),
+            "playback path setter should find item");
+    require(!state.isDirty(),
+            "derived library-item metadata writes must not mark the project dirty");
+    require(transitions == 0,
+            "derived library-item metadata writes must not fire the dirty callback");
+
+    // Property values still round-trip.
+    requireNear(state.getLibraryItemBpmForPath("C:\\audio\\loop.wav"), 124.5, 0.0001,
+                "bpm should persist on the live tree");
+    requireEqual(state.getLibraryItemPlaybackPathForSource("C:\\audio\\loop.wav"),
+                 juce::String("C:\\cache\\loop.wav"),
+                 "playback path should persist on the live tree");
+
+    // And a genuine edit + undo still returns the project to clean —
+    // the snapshot mirror means the derived writes don't leave drift
+    // behind for the equivalence check.
+    state.getUndoManager().beginNewTransaction();
+    state.setBpm(140.0);
+    require(state.isDirty(), "real edit should mark dirty");
+    require(state.getUndoManager().undo(), "undo should succeed");
+    require(!state.isDirty(),
+            "undo must restore clean even after background analysis ran");
+
+    // clearLibraryItemAnalysis is also derived — exercising it after
+    // markClean must not toggle dirty either.
+    state.markClean();
+    transitions = 0;
+    require(state.clearLibraryItemAnalysis("l1"),
+            "clearLibraryItemAnalysis should find item");
+    require(!state.isDirty(),
+            "clearLibraryItemAnalysis must not mark the project dirty");
+    require(transitions == 0,
+            "clearLibraryItemAnalysis must not fire the dirty callback");
+}
+
 void testProjectStateViewLibraryMarkersAndReplace()
 {
     silverdaw::ProjectState state;
@@ -914,6 +978,8 @@ int main()
         {"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty},
         {"ProjectState suppressed property drift clears on undo",
          testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo},
+        {"ProjectState derived library metadata does not mark dirty",
+         testProjectStateDerivedLibraryMetadataDoesNotMarkDirty},
         {"WarpProcessor basic real-time stretch", testWarpProcessorBasicStretch},
         {"Warp timeline duration mapping", testWarpTimelineDurationMapping},
         {"Bridge payload helpers reject malformed values",

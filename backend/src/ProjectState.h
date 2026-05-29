@@ -425,24 +425,29 @@ class ProjectState : public juce::ValueTree::Listener
     bool removeLibraryItem(const juce::String& itemId);
 
     /** Set the detected BPM on a library item. Pass 0.0 to clear.
-     *  Marks the project dirty. Returns true if the item existed. */
+     *  Derived cache metadata — does NOT mark the project dirty (the
+     *  value is regenerated from the source file on demand). Returns
+     *  true if the item existed. */
     bool setLibraryItemBpm(const juce::String& itemId, double bpm);
 
     /** Set the detected beat positions (seconds from start of source)
-     *  on a library item. Empty array clears them. Marks dirty.
-     *  Returns true if the item existed. */
+     *  on a library item. Empty array clears them. Derived cache
+     *  metadata — does NOT mark the project dirty. Returns true if
+     *  the item existed. */
     bool setLibraryItemBeats(const juce::String& itemId, const std::vector<double>& beatTimesSec);
 
     /** Set the regression-derived "ideal beat 0" anchor (seconds, may
      *  be negative) on a library item. Used by the renderer to lay
-     *  out the synthesised beat-marker grid robustly. Marks dirty.
-     *  Returns true if the item existed. */
+     *  out the synthesised beat-marker grid robustly. Derived cache
+     *  metadata — does NOT mark the project dirty. Returns true if
+     *  the item existed. */
     bool setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec);
 
     /** Set the cached-decoded-WAV path on a library item. Used by
      *  the backend after `DecodedCache::ensureDecoded` has finished.
-     *  Pass an empty string to clear. Marks dirty. Returns true if
-     *  the item existed. */
+     *  Pass an empty string to clear. Derived cache metadata — does
+     *  NOT mark the project dirty (the cache file is regenerated from
+     *  the source). Returns true if the item existed. */
     bool setLibraryItemPlaybackPath(const juce::String& itemId, const juce::String& playbackPath);
 
     /** Update a library item's source file path. Used by the
@@ -478,7 +483,9 @@ class ProjectState : public juce::ValueTree::Listener
                             std::optional<double> cents);
 
     /** Clear persisted BPM/beat/variable-tempo fields before a forced
-     *  reanalysis. Marks dirty. Returns true if the item existed. */
+     *  reanalysis. Derived cache metadata — does NOT mark the project
+     *  dirty (clicking Re-analyse is a request to recompute, not an
+     *  edit to the project itself). Returns true if the item existed. */
     bool clearLibraryItemAnalysis(const juce::String& itemId);
 
     /** Read the cached-decoded-WAV path for the library item with
@@ -490,13 +497,14 @@ class ProjectState : public juce::ValueTree::Listener
 
     /** Flag (or clear) the library item as having a variable tempo —
      *  drives the UI badge and suppresses the first-clip project
-     *  BPM seed. Marks dirty. Returns true if the item existed. */
+     *  BPM seed. Derived cache metadata — does NOT mark the project
+     *  dirty. Returns true if the item existed. */
     bool setLibraryItemVariableTempo(const juce::String& itemId, bool variable);
 
     /** Flag (or clear) the library item as having a low-confidence
      *  BPM analysis result — used by the renderer to auto-classify
-     *  it as a non-musical "sample". Marks dirty. Returns true if
-     *  the item existed. */
+     *  it as a non-musical "sample". Derived cache metadata — does
+     *  NOT mark the project dirty. Returns true if the item existed. */
     bool setLibraryItemLowConfidence(const juce::String& itemId, bool lowConfidence);
 
     /** Persist the user's classification override for a library
@@ -600,6 +608,22 @@ class ProjectState : public juce::ValueTree::Listener
      * stuck in the dirty state.
      */
     void setNonDirtyRootProperty(const juce::Identifier& id, const juce::var& value);
+
+    /**
+     * Apply a mutation to a library item *without* marking the project
+     * dirty. Used for derived/cache metadata (BPM analysis, beat grid,
+     * decoded-WAV playback path) that is regenerated from the source
+     * audio file and should not force the user to "save" their project
+     * just because a background analysis finished. Finds the item by
+     * id in both `root` and `cleanSnapshot`, applies the mutator to
+     * each under suppression. Returns true if the item existed in the
+     * live tree. If the item exists only in `root` (added after the
+     * last `markClean`) the live mutation still happens but the
+     * snapshot mirror is skipped — that's harmless because the item
+     * itself is already a structural delta against the snapshot.
+     */
+    bool mutateDerivedLibraryItem(const juce::String& itemId,
+                                  const std::function<void(juce::ValueTree&)>& mutator);
 
     juce::ValueTree root;
     juce::ValueTree cleanSnapshot;
