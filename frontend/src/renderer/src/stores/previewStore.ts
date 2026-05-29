@@ -50,6 +50,10 @@ export const usePreviewStore = defineStore('preview', {
         tempoRatio?: number
         semitones?: number
         cents?: number
+      },
+      fades?: {
+        fadeInMs?: number
+        fadeOutMs?: number
       }
     ): void {
       this.itemId = itemId
@@ -58,6 +62,8 @@ export const usePreviewStore = defineStore('preview', {
       this.positionMs = 0
       this.isPlaying = false
       this.isLoaded = false
+      const fadeIn = Math.max(0, fades?.fadeInMs ?? 0)
+      const fadeOut = Math.max(0, fades?.fadeOutMs ?? 0)
       sendBridge('PREVIEW_LOAD', {
         libraryItemId: itemId,
         inMs,
@@ -70,7 +76,23 @@ export const usePreviewStore = defineStore('preview', {
               semitones: warp.semitones,
               cents: warp.cents
             }
-          : {})
+          : {}),
+        // Always include fade fields so the new backend OffsetSource is
+        // seeded atomically and the very first audible block already has
+        // the correct ramp — no "unfaded first block" race on reload.
+        ...(fadeIn > 0 ? { fadeInMs: fadeIn } : {}),
+        ...(fadeOut > 0 ? { fadeOutMs: fadeOut } : {})
+      })
+    },
+    /** Update the preview voice's fade envelope while loaded. Called
+     *  by the Clip Editor when the user edits the fade controls so
+     *  the audition tracks the draft live. No-op when no preview is
+     *  loaded. */
+    setFades(fadeInMs: number, fadeOutMs: number): void {
+      if (!this.isLoaded) return
+      sendBridge('PREVIEW_SET_FADES', {
+        fadeInMs: Math.max(0, fadeInMs),
+        fadeOutMs: Math.max(0, fadeOutMs)
       })
     },
     /** Update the preview voice's warp engine while loaded. Mirrors

@@ -8,7 +8,6 @@
 import { computed } from 'vue'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { keyPresetsFor, shiftedKey } from '@/lib/pitchKey'
-import { useProjectStore } from '@/stores/projectStore'
 import type { ClipEditorWarpDraft } from '@/lib/clipEditor/useClipEditorWarpDraft'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
@@ -21,38 +20,9 @@ const props = defineProps<{
    *  every linked timeline instance, unlinked edits affect only that
    *  clip. */
   editsSavedClipLibrary: boolean
-  /** Timeline clip the editor is targeting, if any. Drives the live
-   *  Fades section — when undefined (e.g. editing a library-only source
-   *  with no timeline clip yet) the section hides itself. */
-  clipId?: string
 }>()
 
 const WARP_MODES: ClipWarpMode[] = ['rhythmic', 'tonal', 'complex']
-
-const project = useProjectStore()
-
-// Live-edited fade lengths. We bind directly to projectStore via a
-// computed setter so each input change commits through `setClipFades`
-// (which pushes the envelope to the backend immediately — fades have
-// no draft / preview pipeline; the audible window updates in-place on
-// the next playback block).
-const fadeClip = computed(() => (props.clipId ? project.clips[props.clipId] : null))
-const fadeInMsModel = computed<number>({
-  get: () => Math.round(fadeClip.value?.fadeInMs ?? 0),
-  set: (v) => {
-    if (!props.clipId) return
-    const clamped = Math.max(0, Number.isFinite(v) ? v : 0)
-    project.setClipFades(props.clipId, { fadeInMs: clamped })
-  }
-})
-const fadeOutMsModel = computed<number>({
-  get: () => Math.round(fadeClip.value?.fadeOutMs ?? 0),
-  set: (v) => {
-    if (!props.clipId) return
-    const clamped = Math.max(0, Number.isFinite(v) ? v : 0)
-    project.setClipFades(props.clipId, { fadeOutMs: clamped })
-  }
-})
 
 // Alias the draft's refs into local consts so the template never
 // reaches through the `draft` prop directly. This keeps the
@@ -78,8 +48,8 @@ const currentPitchKey = computed(() =>
 </script>
 
 <template>
-  <aside
-    class="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto rounded border border-zinc-800 bg-zinc-950/40 p-4 text-xs"
+  <div
+    class="flex w-full flex-col gap-4 text-xs"
   >
     <div>
       <h3 class="text-sm font-semibold text-zinc-100">
@@ -271,46 +241,7 @@ const currentPitchKey = computed(() =>
         </p>
       </div>
     </section>
-
-    <section
-      v-if="clipId"
-      class="rounded border border-zinc-800 bg-zinc-900/70 p-3"
-    >
-      <div class="font-medium text-zinc-200">
-        Fades
-      </div>
-      <p class="mt-1 text-[11px] leading-4 text-zinc-500">
-        Linear ramp at the head / tail of the clip. Applied live — no
-        Save needed.
-      </p>
-      <fieldset class="mt-3 flex flex-col gap-2">
-        <label class="flex items-center gap-2">
-          <span class="w-16 text-zinc-400">Fade in</span>
-          <input
-            v-model.number="fadeInMsModel"
-            type="number"
-            min="0"
-            max="60000"
-            step="10"
-            class="w-24 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none"
-          >
-          <span class="text-[10px] text-zinc-500">ms</span>
-        </label>
-        <label class="flex items-center gap-2">
-          <span class="w-16 text-zinc-400">Fade out</span>
-          <input
-            v-model.number="fadeOutMsModel"
-            type="number"
-            min="0"
-            max="60000"
-            step="10"
-            class="w-24 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none"
-          >
-          <span class="text-[10px] text-zinc-500">ms</span>
-        </label>
-      </fieldset>
-    </section>
-  </aside>
+  </div>
 </template>
 
 <style scoped>

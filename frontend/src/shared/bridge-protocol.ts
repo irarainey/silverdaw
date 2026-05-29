@@ -554,6 +554,7 @@ export interface BridgeOutboundMap {
   PREVIEW_STOP: undefined
   PREVIEW_SEEK: PreviewSeekPayload
   PREVIEW_SET_WARP: PreviewSetWarpPayload
+  PREVIEW_SET_FADES: PreviewSetFadesPayload
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   EDIT_UNDO: undefined
@@ -832,6 +833,13 @@ export interface PreviewLoadPayload extends PreviewSetWarpPayload {
   libraryItemId: string
   inMs?: number
   durationMs?: number
+  /** Clip-local fade-in length (timeline/post-warp ms). Applied to the
+   *  new preview `OffsetSource` atomically before the source is wired
+   *  into the transport so the very first playback already includes
+   *  the ramp. Omit / 0 = no fade-in. */
+  fadeInMs?: number
+  /** Clip-local fade-out length (timeline/post-warp ms). See `fadeInMs`. */
+  fadeOutMs?: number
 }
 
 /** Seek within the currently loaded preview window. `positionMs` is
@@ -854,6 +862,19 @@ export interface PreviewSetWarpPayload {
   tempoRatio?: number | null
   semitones?: number
   cents?: number
+}
+
+/**
+ * Configure the fade envelope on the currently-loaded preview voice.
+ * Both fields are clip-local post-warp milliseconds (same units as
+ * `ClipSetFadesPayload`). Sent live by the Clip Editor while the
+ * user edits the fade controls — the backend stores the values onto
+ * the preview's `OffsetSource` atomically, so the next audio block
+ * already uses the new ramp. No ack: matches `PREVIEW_SET_WARP`.
+ */
+export interface PreviewSetFadesPayload {
+  fadeInMs: number
+  fadeOutMs: number
 }
 
 /**

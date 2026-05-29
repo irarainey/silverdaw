@@ -1115,7 +1115,9 @@ class AudioEngine
                      std::optional<juce::String> initialWarpMode = std::nullopt,
                      std::optional<double> initialTempoRatio = std::nullopt,
                      std::optional<double> initialSemitones = std::nullopt,
-                     std::optional<double> initialCents = std::nullopt);
+                     std::optional<double> initialCents = std::nullopt,
+                     std::optional<double> initialFadeInMs = std::nullopt,
+                     std::optional<double> initialFadeOutMs = std::nullopt);
 
     /** Detach the preview source from the top mixer and release its
      *  reader. Increments the preview generation so any in-flight async
@@ -1162,6 +1164,16 @@ class AudioEngine
                         std::optional<double> tempoRatio,
                         std::optional<double> semitones,
                         std::optional<double> cents);
+
+    /**
+     * Per-preview fade lengths (clip-local post-warp milliseconds).
+     * Pushes the new values onto the preview's `OffsetSource` so the
+     * fade ramp takes effect on the next audio block. Both arguments
+     * are clamped to `>= 0`. No-op when no preview is loaded. The next
+     * `loadPreview()` resets the fade state to whatever fade fields
+     * the load payload carried (or 0 / 0 when omitted).
+     */
+    bool setPreviewFades(double fadeInMs, double fadeOutMs);
 
     /** Monotonic counter incremented on every load/unload. Used by the
      *  bridge layer to discard stale state broadcasts after the user

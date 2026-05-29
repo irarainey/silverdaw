@@ -3300,6 +3300,8 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             std::optional<double> tempoRatio;
             std::optional<double> semitones;
             std::optional<double> cents;
+            std::optional<double> fadeInMs;
+            std::optional<double> fadeOutMs;
             if (payload.hasProperty("warpEnabled"))
             {
                 warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
@@ -3315,8 +3317,13 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                 if (payload.hasProperty("cents"))
                     cents = static_cast<double>(payload.getProperty("cents", 0.0));
             }
+            if (payload.hasProperty("fadeInMs"))
+                fadeInMs = static_cast<double>(payload.getProperty("fadeInMs", 0.0));
+            if (payload.hasProperty("fadeOutMs"))
+                fadeOutMs = static_cast<double>(payload.getProperty("fadeOutMs", 0.0));
             if (!engine.loadPreview(juce::File(playbackPath), inMs, durationMs, &err,
-                                    warpEnabled, warpMode, tempoRatio, semitones, cents))
+                                    warpEnabled, warpMode, tempoRatio, semitones, cents,
+                                    fadeInMs, fadeOutMs))
             {
                 silverdaw::log::warn("preview", "PREVIEW_LOAD failed: " + err.toStdString());
             }
@@ -3406,6 +3413,12 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         if (payload.hasProperty("cents"))
             cents = static_cast<double>(payload.getProperty("cents", 0.0));
         engine.setPreviewWarp(warpEnabled, warpMode, tempoRatio, semitones, cents);
+    }
+    else if (type == "PREVIEW_SET_FADES")
+    {
+        const double fIn  = static_cast<double>(payload.getProperty("fadeInMs", 0.0));
+        const double fOut = static_cast<double>(payload.getProperty("fadeOutMs", 0.0));
+        engine.setPreviewFades(fIn, fOut);
     }
     else if (type == "TRACK_ADD")
     {

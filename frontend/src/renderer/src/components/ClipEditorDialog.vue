@@ -22,7 +22,9 @@ import {
   pitchNeedsProcessor,
   useClipEditorWarpDraft
 } from '@/lib/clipEditor/useClipEditorWarpDraft'
+import { useClipEditorFadesDraft } from '@/lib/clipEditor/useClipEditorFadesDraft'
 import ClipEditorWarpPitchPanel from '@/components/ClipEditorWarpPitchPanel.vue'
+import ClipEditorFadesPanel from '@/components/ClipEditorFadesPanel.vue'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
@@ -76,6 +78,23 @@ const {
   previewTempoRatio,
   initialise: initialiseWarpDraft
 } = warpDraft
+
+// Draft fade state. Mirrors the warp draft pattern: dialog owns the
+// hook, panel binds to its refs, Save commits, Cancel discards.
+const fadesDraft = useClipEditorFadesDraft()
+const {
+  draftFadeInMs,
+  draftFadeOutMs,
+  hasChanged: hasFadesChanged,
+  initialise: initialiseFadesDraft,
+  clampAgainstDuration: clampFadesAgainstDuration
+} = fadesDraft
+
+// Active tab in the bottom inspector area. Reset to the first tab on
+// every open so the dialog presents the same predictable surface each
+// time — matches the simple-ethos preference for low-state UI.
+type EditorTab = 'warp-pitch' | 'fades'
+const activeTab = ref<EditorTab>('warp-pitch')
 
 const warpActive = computed(() => {
   const entry = editorItem.value
@@ -154,6 +173,26 @@ function scheduleDraftPreviewWarp(): void {
   if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
   if (previewWarpUpdateTimer !== null) return
   previewWarpUpdateTimer = window.setTimeout(sendDraftPreviewWarp, 33)
+}
+
+// Fade draft → preview voice. Mirrors the warp scheduler's 33ms
+// throttle so dragging the fade input doesn't flood the bridge but
+// still tracks the audition in close-to-real-time.
+let previewFadesUpdateTimer: number | null = null
+function clearPreviewFadesUpdateTimer(): void {
+  if (previewFadesUpdateTimer === null) return
+  window.clearTimeout(previewFadesUpdateTimer)
+  previewFadesUpdateTimer = null
+}
+function sendDraftPreviewFades(): void {
+  previewFadesUpdateTimer = null
+  if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
+  preview.setFades(draftFadeInMs.value, draftFadeOutMs.value)
+}
+function scheduleDraftPreviewFades(): void {
+  if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
+  if (previewFadesUpdateTimer !== null) return
+  previewFadesUpdateTimer = window.setTimeout(sendDraftPreviewFades, 33)
 }
 
 // While the preview is playing, keep the playhead visible on the canvas
@@ -271,7 +310,12 @@ const hasWarpPitchChanged = computed(() => {
 })
 
 const canSaveChanges = computed(() => {
-  return editsExistingClip.value && (hasSelectionChanged.value || hasWarpPitchChanged.value)
+  if (!editsExistingClip.value) return false
+  // Fades only persist on single-timeline-clip edits today (saved-clip
+  // library updates don't carry fade defaults). Don't let a fade-only
+  // edit enable Save in modes where it would be silently dropped.
+  const fadesDirty = editsSingleTimelineClip.value && hasFadesChanged.value
+  return hasSelectionChanged.value || hasWarpPitchChanged.value || fadesDirty
 })
 
 // Non-destructive crop: snap the cropped working view to the current
@@ -293,6 +337,21 @@ const canSaveAsNew = computed(() => {
 
 const playheadAbsMs = computed(() => viewInMs.value + preview.positionMs)
 
+// Audible (post-warp) length of the clip the user is editing, in
+// timeline ms. Drives the Fade input's max attribute and the
+// pre-Save clamp so a user can't enter a fade that's longer than the
+// clip will ultimately be.
+const effectiveAudibleMs = computed(() => {
+  const sourceMs = selectionDurationMs.value > 0
+    ? selectionDurationMs.value
+    : cropViewDurationMs.value
+  if (!editsExistingClip.value) return sourceMs
+  const ratio = warpDraft.draftEffectiveRatio.value
+  if (!ratio || ratio <= 0) return sourceMs
+  // effectiveDurationMs = sourceMs / ratio (matches lib/warp.ts).
+  return sourceMs / ratio
+})
+
 const loopEnabled = ref(false)
 
 watch(
@@ -304,6 +363,8 @@ watch(
       resetZoom()
       initSelectionForItem()
       initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
+      initialiseFadesDraft(timelineClip.value)
+      activeTab.value = 'warp-pitch'
       loopEnabled.value = false
       lastHiResRequestKey = ''
       cropUndoStack.value = []
@@ -318,6 +379,7 @@ watch(
       loadPreviewForView()
     } else {
       clearPreviewWarpUpdateTimer()
+      clearPreviewFadesUpdateTimer()
       preview.unload()
       lastPreviewLoadKey = ''
       library.setEditorHiResPeaks(null)
@@ -337,6 +399,8 @@ watch(
     lastPreviewLoadKey = ''
     initSelectionForItem()
     initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
+    initialiseFadesDraft(timelineClip.value)
+    activeTab.value = 'warp-pitch'
     lastHiResRequestKey = ''
     cropUndoStack.value = []
     cropRedoStack.value = []
@@ -350,6 +414,30 @@ watch(
   [draftTempoEnabled, draftMode, draftTempoPinned, draftPinnedBpm, draftSemitones, draftCents],
   () => {
     scheduleDraftPreviewWarp()
+  }
+)
+
+// Audition the fade draft live. Also triggers a redraw so the canvas
+// fade overlay tracks the input value frame-by-frame.
+watch(
+  [draftFadeInMs, draftFadeOutMs],
+  () => {
+    scheduleDraftPreviewFades()
+    drawWaveform()
+  }
+)
+
+// PREVIEW_LOAD is async. If the user changes fade values between
+// sending the load and the backend signalling isLoaded=true, those
+// `setFades` calls are no-ops (gated on isLoaded). Re-push the
+// current draft once the preview transitions to loaded so the voice
+// always matches the UI.
+watch(
+  () => preview.isLoaded,
+  (loaded, prev) => {
+    if (!loaded || loaded === prev) return
+    if (!props.open || !editsExistingClip.value) return
+    preview.setFades(draftFadeInMs.value, draftFadeOutMs.value)
   }
 )
 
@@ -500,6 +588,7 @@ watch(
 onBeforeUnmount(() => {
   ui.clipEditorOpen = false
   clearPreviewWarpUpdateTimer()
+  clearPreviewFadesUpdateTimer()
   preview.unload()
   window.removeEventListener('keydown', onWindowKeydownCapture, { capture: true })
   if (resizeObserver) {
@@ -560,6 +649,10 @@ function loadPreviewForView(): void {
     inMs: viewInMs.value,
     durationMs: viewDurationMs.value,
     warp
+    // Fades intentionally excluded — fade-only edits route through
+    // PREVIEW_SET_FADES (live setFades on the existing voice) and
+    // never need a full PREVIEW_LOAD rebuild. The seed values in the
+    // load payload below cover the cold-start case.
   })
   if (loadKey === lastPreviewLoadKey) return
   lastPreviewLoadKey = loadKey
@@ -567,7 +660,10 @@ function loadPreviewForView(): void {
     src.id,
     viewInMs.value,
     viewDurationMs.value,
-    warp
+    warp,
+    editsExistingClip.value
+      ? { fadeInMs: draftFadeInMs.value, fadeOutMs: draftFadeOutMs.value }
+      : undefined
   )
 }
 
@@ -833,6 +929,63 @@ function drawWaveform(): void {
     ctx.moveTo(px, 0)
     ctx.lineTo(px, h)
     ctx.stroke()
+  }
+
+  // --- Fade overlay ----------------------------------------------------
+  // Fades are persisted/applied in TIMELINE (post-warp) ms. The canvas
+  // draws SOURCE ms. Convert: sourceMs = timelineMs * tempoRatio. For
+  // the no-warp common case (ratio=1) this is a no-op.
+  //
+  // Each fade is drawn independently — when fadeIn + fadeOut exceeds
+  // the audible window, the two ramps overlap visually, mirroring what
+  // the backend does (OffsetSource::applyFadeGain MULTIPLIES the two
+  // ramp gains per sample). A pre-Save clamp keeps the persisted
+  // fades sane.
+  if (editsExistingClip.value && selectionDurationMs.value > 0) {
+    const ratio = warpDraft.draftEffectiveRatio.value > 0 ? warpDraft.draftEffectiveRatio.value : 1
+    const sourceFadeIn = Math.max(0, draftFadeInMs.value * ratio)
+    const sourceFadeOut = Math.max(0, draftFadeOutMs.value * ratio)
+    const selStart = selectionInMs.value
+    const selEnd = selectionEndMs.value
+    const audibleSourceMs = selEnd - selStart
+    // Clamp each fade individually to the audible window so a single
+    // fade never exits the clip; overlap between the two is allowed
+    // and drawn (matches backend multiplicative gain).
+    const inWidth = Math.min(sourceFadeIn, audibleSourceMs)
+    const outWidth = Math.min(sourceFadeOut, audibleSourceMs)
+
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)'
+    ctx.fillStyle = 'rgba(250, 204, 21, 0.18)'
+    ctx.lineWidth = 1.5
+
+    if (inWidth > 0) {
+      const x0 = msToX(selStart)
+      const x1 = msToX(selStart + inWidth)
+      ctx.beginPath()
+      ctx.moveTo(x0, h)
+      ctx.lineTo(x0, waveTop)
+      ctx.lineTo(x1, h)
+      ctx.closePath()
+      ctx.fill()
+      ctx.beginPath()
+      ctx.moveTo(x0, waveTop)
+      ctx.lineTo(x1, h)
+      ctx.stroke()
+    }
+    if (outWidth > 0) {
+      const x0 = msToX(selEnd - outWidth)
+      const x1 = msToX(selEnd)
+      ctx.beginPath()
+      ctx.moveTo(x0, h)
+      ctx.lineTo(x1, waveTop)
+      ctx.lineTo(x1, h)
+      ctx.closePath()
+      ctx.fill()
+      ctx.beginPath()
+      ctx.moveTo(x0, h)
+      ctx.lineTo(x1, waveTop)
+      ctx.stroke()
+    }
   }
 }
 
@@ -1303,6 +1456,22 @@ function onSaveChanges(): void {
     }
     project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
     project.setClipWarp(clip.id, warpPatch)
+    // Commit fades LAST so the trim + warp commits have settled the
+    // clip's audible window before we clamp / persist the fade lengths
+    // against the *new* effective duration. Per-feature backend
+    // currently stores 0 as undefined (see `projectStore.setClipFades`),
+    // so a no-fade clip stays a no-op here.
+    const effectiveMs = effectiveDurationMs(targetDur, {
+      warpEnabled: draftTempoEnabled.value,
+      tempoRatio: warpPatch.tempoRatio ?? undefined,
+      sourceBpm: sourceBpm.value,
+      projectBpm: transport.bpm
+    })
+    clampFadesAgainstDuration(effectiveMs)
+    project.setClipFades(clip.id, {
+      fadeInMs: draftFadeInMs.value,
+      fadeOutMs: draftFadeOutMs.value
+    })
     notifications.pushInfo(`Saved changes for "${titleText.value}".`)
     emit('close')
     return
@@ -1458,11 +1627,11 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
           <div class="justify-self-end" />
         </header>
 
-        <div class="flex min-h-0 flex-1 gap-4 px-5 py-4">
-          <div class="flex min-w-0 flex-1 flex-col gap-3">
+        <div class="flex min-h-0 flex-1 flex-col gap-4 px-5 py-4">
+          <div class="flex min-w-0 flex-col gap-3">
             <canvas
               ref="waveformEl"
-              class="h-[min(364px,36vh)] w-full cursor-crosshair rounded border border-zinc-800 bg-zinc-950"
+              class="h-[min(260px,26vh)] w-full cursor-crosshair rounded border border-zinc-800 bg-zinc-950"
               @mousedown="onCanvasMouseDown"
               @wheel="onCanvasWheel"
             />
@@ -1562,15 +1731,57 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             </div>
           </div>
 
-          <ClipEditorWarpPitchPanel
+          <div
             v-if="editsExistingClip"
-            :draft="warpDraft"
-            :source-bpm="sourceBpm"
-            :source-key="sourceKey"
-            :project-bpm="transport.bpm"
-            :edits-saved-clip-library="editsSavedClipLibrary"
-            :clip-id="timelineClip?.id"
-          />
+            class="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-zinc-800 bg-zinc-950/40"
+          >
+            <nav
+              role="tablist"
+              aria-label="Clip editor sections"
+              class="flex shrink-0 items-center gap-1 border-b border-zinc-800 bg-zinc-900/60 px-3 py-2 text-[11px]"
+            >
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="activeTab === 'warp-pitch'"
+                class="rounded px-3 py-1 font-medium transition-colors"
+                :class="activeTab === 'warp-pitch'
+                  ? 'bg-sky-600 text-white'
+                  : 'text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100'"
+                @click="activeTab = 'warp-pitch'"
+              >
+                Warp &amp; Pitch
+              </button>
+              <button
+                v-if="editsSingleTimelineClip"
+                type="button"
+                role="tab"
+                :aria-selected="activeTab === 'fades'"
+                class="rounded px-3 py-1 font-medium transition-colors"
+                :class="activeTab === 'fades'
+                  ? 'bg-sky-600 text-white'
+                  : 'text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100'"
+                @click="activeTab = 'fades'"
+              >
+                Fades
+              </button>
+            </nav>
+            <div class="min-h-0 flex-1 overflow-y-auto p-4">
+              <ClipEditorWarpPitchPanel
+                v-if="activeTab === 'warp-pitch'"
+                :draft="warpDraft"
+                :source-bpm="sourceBpm"
+                :source-key="sourceKey"
+                :project-bpm="transport.bpm"
+                :edits-saved-clip-library="editsSavedClipLibrary"
+              />
+              <ClipEditorFadesPanel
+                v-else-if="activeTab === 'fades'"
+                :draft="fadesDraft"
+                :effective-duration-ms="effectiveAudibleMs"
+              />
+            </div>
+          </div>
         </div>
 
         <footer class="dialog-footer">

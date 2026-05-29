@@ -1046,7 +1046,9 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
                               std::optional<juce::String> initialWarpMode,
                               std::optional<double> initialTempoRatio,
                               std::optional<double> initialSemitones,
-                              std::optional<double> initialCents)
+                              std::optional<double> initialCents,
+                              std::optional<double> initialFadeInMs,
+                              std::optional<double> initialFadeOutMs)
 {
     // Always start from a clean slate. unloadPreview() handles the case
     // where nothing is currently loaded.
@@ -1081,6 +1083,16 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     preview.offsetSource->setClipDurationSamples(
         static_cast<juce::int64>((preview.durationMs / 1000.0) * preview.sampleRate));
 
+    // Seed fades atomically before the source is wired into the
+    // transport / mixer so the very first audible block already has
+    // the correct ramp — no "unfaded first 50 ms" race on a fresh
+    // preview load.
+    {
+        const double fIn  = juce::jmax(0.0, initialFadeInMs.value_or(0.0));
+        const double fOut = juce::jmax(0.0, initialFadeOutMs.value_or(0.0));
+        preview.offsetSource->setFadesMs(fIn, fOut);
+    }
+
     if (initialWarpEnabled.value_or(false))
     {
         const auto modeStr = initialWarpMode.value_or(juce::String("rhythmic"));
@@ -1097,7 +1109,16 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     }
 
     preview.transportSource = std::make_unique<juce::AudioTransportSource>();
-    preview.transportSource->setSource(preview.offsetSource.get(), /*readAheadBufferSize=*/32768,
+    // Match the per-track readahead size (8192) rather than the JUCE
+    // default 32768. The bigger buffer was inherited from an earlier
+    // no-warp preview path; with Rubber Band stretching in the chain,
+    // a 32k-sample readahead on a single background reader thread can
+    // underrun visibly when the user is auditioning warped material
+    // (audible as a "stuttered/chopped" playback). Tracks have always
+    // used 8192 with warp and play cleanly, so align preview with the
+    // proven track-side discipline. ~85ms at 96kHz, still well above
+    // the audio block size.
+    preview.transportSource->setSource(preview.offsetSource.get(), /*readAheadBufferSize=*/8192,
                                        &readAheadThread, preview.sampleRate);
     preview.transportSource->setPosition(0.0);
 
@@ -1172,6 +1193,14 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
             w->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
         }
     }
+    return true;
+}
+
+bool AudioEngine::setPreviewFades(double fadeInMs, double fadeOutMs)
+{
+    if (preview.offsetSource == nullptr) return false;
+    preview.offsetSource->setFadesMs(juce::jmax(0.0, fadeInMs),
+                                     juce::jmax(0.0, fadeOutMs));
     return true;
 }
 
