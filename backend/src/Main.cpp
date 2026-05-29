@@ -1612,6 +1612,212 @@ void handleTrackSolo(const juce::var& payload, silverdaw::AudioEngine& engine,
     bridge.broadcast("TRACK_SOLO_APPLIED", juce::var(p));
 }
 
+// Phase 5 — per-track Reverb / Echo send levels. Inert DSP for now: the
+// handler persists into ProjectState and acks with the clamped values;
+// the shared reverb/delay buses are wired in by a later per-feature todo.
+//
+// Skips ack + dirty + undo entirely when the setter reports no change so
+// a 60 Hz drag that lands on the same value (or a stray echo of the
+// current state) doesn't pollute the undo history or fire wire traffic.
+void handleTrackSetSends(const juce::var& payload, silverdaw::ProjectState& projectState,
+                         silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+    const auto reverbVar = tryGetNumber(payload, "reverbSend");
+    const auto delayVar = tryGetNumber(payload, "delaySend");
+    if (!reverbVar.has_value() || !delayVar.has_value()) return;
+
+    const auto reverbSend = juce::jlimit(0.0f, 1.0f, static_cast<float>(*reverbVar));
+    const auto delaySend = juce::jlimit(0.0f, 1.0f, static_cast<float>(*delayVar));
+
+    const bool changed = projectState.setTrackSends(trackId, reverbSend, delaySend);
+    if (!changed) return;
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("trackId", trackId);
+    p->setProperty("reverbSend", reverbSend);
+    p->setProperty("delaySend", delaySend);
+    p->setProperty("ok", true);
+    bridge.broadcast("TRACK_SENDS_APPLIED", juce::var(p));
+}
+
+// Phase 5 — per-track Tone (3-band fixed EQ + lowCut). Inert DSP for
+// now: persist + ack. Defaults for any field that's absent in the
+// payload come from the existing stored value (or hard defaults if
+// nothing is stored yet) so the renderer can drive one knob without
+// echoing the rest.
+void handleTrackSetTone(const juce::var& payload, silverdaw::ProjectState& projectState,
+                        silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+
+    const float bassDb = payload.hasProperty("bassDb")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("bassDb", 0.0)))
+        : projectState.getTrackToneBassDb(trackId);
+    const float midDb = payload.hasProperty("midDb")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("midDb", 0.0)))
+        : projectState.getTrackToneMidDb(trackId);
+    const float trebleDb = payload.hasProperty("trebleDb")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("trebleDb", 0.0)))
+        : projectState.getTrackToneTrebleDb(trackId);
+    const bool lowCut = payload.hasProperty("lowCut")
+        ? static_cast<bool>(payload.getProperty("lowCut", false))
+        : projectState.getTrackToneLowCut(trackId);
+
+    const bool changed = projectState.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut);
+    if (!changed) return;
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("trackId", trackId);
+    p->setProperty("bassDb", bassDb);
+    p->setProperty("midDb", midDb);
+    p->setProperty("trebleDb", trebleDb);
+    p->setProperty("lowCut", lowCut);
+    p->setProperty("ok", true);
+    bridge.broadcast("TRACK_TONE_APPLIED", juce::var(p));
+}
+
+// Phase 5 — per-track Leveler. Just the user-facing "amount" knob
+// until the compressor DSP and Advanced controls land.
+void handleTrackSetLeveler(const juce::var& payload, silverdaw::ProjectState& projectState,
+                           silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+    const auto amountVar = tryGetNumber(payload, "amount");
+    if (!amountVar.has_value()) return;
+
+    const float amount = juce::jlimit(0.0f, 1.0f, static_cast<float>(*amountVar));
+    const bool changed = projectState.setTrackLevelerAmount(trackId, amount);
+    if (!changed) return;
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("trackId", trackId);
+    p->setProperty("amount", amount);
+    p->setProperty("ok", true);
+    bridge.broadcast("TRACK_LEVELER_APPLIED", juce::var(p));
+}
+
+// Phase 5 — per-clip fade-in / fade-out lengths. Both are clip-local
+// post-warp ms (>= 0). The runtime clamps `fadeIn + fadeOut <=
+// clipDuration`; storage just enforces non-negativity.
+void handleClipSetFades(const juce::var& payload, silverdaw::AudioEngine& engine,
+                        silverdaw::ProjectState& projectState,
+                        silverdaw::BridgeServer& bridge)
+{
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    if (clipId.isEmpty()) return;
+
+    const double fadeInMs = payload.hasProperty("fadeInMs")
+        ? static_cast<double>(payload.getProperty("fadeInMs", 0.0))
+        : projectState.getClipFadeInMs(clipId);
+    const double fadeOutMs = payload.hasProperty("fadeOutMs")
+        ? static_cast<double>(payload.getProperty("fadeOutMs", 0.0))
+        : projectState.getClipFadeOutMs(clipId);
+
+    const bool changed = projectState.setClipFades(clipId, fadeInMs, fadeOutMs);
+    if (!changed) return;
+
+    // Persisted setter clamps to >= 0, so re-read post-write to make
+    // sure the ack carries the actually-stored values.
+    const double inMs = projectState.getClipFadeInMs(clipId);
+    const double outMs = projectState.getClipFadeOutMs(clipId);
+    engine.setClipFades(clipId, inMs, outMs);
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("clipId", clipId);
+    p->setProperty("fadeInMs", inMs);
+    p->setProperty("fadeOutMs", outMs);
+    p->setProperty("ok", true);
+    bridge.broadcast("CLIP_FADES_APPLIED", juce::var(p));
+}
+
+// Phase 5 — per-clip volume envelope. `points` is a `juce::var` array
+// of `{ timeMs, gain }` objects. An empty array clears the envelope
+// entirely.
+void handleClipSetEnvelope(const juce::var& payload, silverdaw::ProjectState& projectState,
+                           silverdaw::BridgeServer& bridge)
+{
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    if (clipId.isEmpty()) return;
+
+    juce::Array<juce::var> points;
+    const auto& pointsVar = payload.getProperty("points", juce::var());
+    if (pointsVar.isArray())
+    {
+        points = *pointsVar.getArray();
+    }
+
+    const bool changed = projectState.setClipEnvelope(clipId, points);
+    if (!changed) return;
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("clipId", clipId);
+    p->setProperty("points", juce::var(projectState.getClipEnvelope(clipId)));
+    p->setProperty("ok", true);
+    bridge.broadcast("CLIP_ENVELOPE_APPLIED", juce::var(p));
+}
+
+// Phase 5 — project-shared Reverb bus.
+void handleProjectSetReverb(const juce::var& payload, silverdaw::ProjectState& projectState,
+                            silverdaw::BridgeServer& bridge)
+{
+    const float size = payload.hasProperty("size")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("size", 0.0)))
+        : projectState.getProjectReverbSize();
+    const float decay = payload.hasProperty("decay")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("decay", 0.0)))
+        : projectState.getProjectReverbDecay();
+    const float tone = payload.hasProperty("tone")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("tone", 0.0)))
+        : projectState.getProjectReverbTone();
+    const float mix = payload.hasProperty("mix")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("mix", 0.0)))
+        : projectState.getProjectReverbMix();
+
+    const bool changed = projectState.setProjectReverb(size, decay, tone, mix);
+    if (!changed) return;
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("size", juce::jlimit(0.0f, 1.0f, size));
+    p->setProperty("decay", juce::jlimit(0.0f, 1.0f, decay));
+    p->setProperty("tone", juce::jlimit(0.0f, 1.0f, tone));
+    p->setProperty("mix", juce::jlimit(0.0f, 1.0f, mix));
+    p->setProperty("ok", true);
+    bridge.broadcast("PROJECT_REVERB_APPLIED", juce::var(p));
+}
+
+// Phase 5 — project-shared Echo / Delay bus.
+void handleProjectSetDelay(const juce::var& payload, silverdaw::ProjectState& projectState,
+                           silverdaw::BridgeServer& bridge)
+{
+    const juce::String noteValue = payload.hasProperty("noteValue")
+        ? payload.getProperty("noteValue", "1/8").toString()
+        : projectState.getProjectDelayNoteValue();
+    const float feedback = payload.hasProperty("feedback")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("feedback", 0.0)))
+        : projectState.getProjectDelayFeedback();
+    const float tone = payload.hasProperty("tone")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("tone", 0.0)))
+        : projectState.getProjectDelayTone();
+    const float mix = payload.hasProperty("mix")
+        ? static_cast<float>(static_cast<double>(payload.getProperty("mix", 0.0)))
+        : projectState.getProjectDelayMix();
+
+    const bool changed = projectState.setProjectDelay(noteValue, feedback, tone, mix);
+    if (!changed) return;
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("noteValue", noteValue);
+    p->setProperty("feedback", juce::jlimit(0.0f, 1.0f, feedback));
+    p->setProperty("tone", juce::jlimit(0.0f, 1.0f, tone));
+    p->setProperty("mix", juce::jlimit(0.0f, 1.0f, mix));
+    p->setProperty("ok", true);
+    bridge.broadcast("PROJECT_DELAY_APPLIED", juce::var(p));
+}
+
 // ─── Project-level state (save / load / new / rename) ────────────────────
 
 /**
@@ -1866,6 +2072,23 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                             ? std::optional<double>{static_cast<double>(clip.getProperty("cents", 0.0))}
                             : std::nullopt;
                     engine.setClipWarp(clipId, true, warpMode, tempoRatio, semitones, cents);
+                }
+
+                // Phase 5 — restore persisted per-clip fades. Both
+                // values default to 0; only push if either is set so
+                // we don't hammer the audio thread with no-ops at
+                // project-load time.
+                const double restoredFadeInMs =
+                    clip.hasProperty("fadeInMs")
+                        ? static_cast<double>(clip.getProperty("fadeInMs", 0.0))
+                        : 0.0;
+                const double restoredFadeOutMs =
+                    clip.hasProperty("fadeOutMs")
+                        ? static_cast<double>(clip.getProperty("fadeOutMs", 0.0))
+                        : 0.0;
+                if (restoredFadeInMs > 0.0 || restoredFadeOutMs > 0.0)
+                {
+                    engine.setClipFades(clipId, restoredFadeInMs, restoredFadeOutMs);
                 }
             }
             else
@@ -2354,6 +2577,9 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "TRACK_ADD" || type == "TRACK_REMOVE" || type == "TRACK_RENAME" ||
            type == "TRACK_GAIN" || type == "TRACK_MUTE" || type == "TRACK_SOLO" ||
            type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
+           type == "TRACK_SET_SENDS" || type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
+           type == "CLIP_SET_FADES" || type == "CLIP_SET_ENVELOPE" ||
+           type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
            type == "LIBRARY_ITEM_SET_SAMPLE_MODE" ||
@@ -2385,6 +2611,13 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_SOLO") return "Solo track";
     if (type == "TRACK_SET_HEIGHT") return "Resize track";
     if (type == "TRACK_REORDER") return "Reorder track";
+    if (type == "TRACK_SET_SENDS") return "Change track sends";
+    if (type == "TRACK_SET_TONE") return "Change track tone";
+    if (type == "TRACK_SET_LEVELER") return "Change track leveler";
+    if (type == "CLIP_SET_FADES") return "Change clip fades";
+    if (type == "CLIP_SET_ENVELOPE") return "Edit clip volume envelope";
+    if (type == "PROJECT_SET_REVERB") return "Change reverb";
+    if (type == "PROJECT_SET_DELAY") return "Change echo";
     if (type == "LIBRARY_ADD") return "Update library item";
     if (type == "LIBRARY_REMOVE") return "Remove library item";
     if (type == "LIBRARY_REANALYSE") return "Reanalyse library item";
@@ -2404,10 +2637,24 @@ juce::String prettyTransactionName(const juce::String& type)
 
 // File-scope coalescing state. Dispatch always runs on the JUCE message
 // thread so no synchronisation is needed.
+//
+// Two coalescing modes are supported:
+//   1. **Time-window mode** (legacy): same `(type, idPart)` within
+//      `kUndoCoalesceWindowMs` reuses the open transaction. This is what
+//      the existing CLIP_MOVE / CLIP_TRIM / TRACK_GAIN / slider drag
+//      paths rely on and the new fader paths fall back to when the
+//      renderer doesn't mint a gestureId.
+//   2. **Explicit-gesture mode** (Phase 5): when the envelope carries a
+//      `gestureId` string, coalescing keys on `(type, idPart, gestureId)`
+//      regardless of elapsed time. The terminal event of a gesture sets
+//      `gestureEnd: true` — that event still folds into the open
+//      transaction; the coalesce state is cleared AFTER it lands so the
+//      next gesture opens a fresh undo step.
 struct UndoCoalesceState
 {
     juce::String lastKey;
     juce::int64 lastTimeMs = 0;
+    bool gestureActive = false;
 };
 
 static UndoCoalesceState& undoCoalesceState()
@@ -2421,6 +2668,7 @@ void resetUndoCoalesceState() noexcept
     auto& s = undoCoalesceState();
     s.lastKey = {};
     s.lastTimeMs = 0;
+    s.gestureActive = false;
 }
 
 // 60Hz drag streams (CLIP_MOVE / CLIP_TRIM / TRACK_GAIN) coalesce
@@ -2434,15 +2682,18 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     if (!isUndoableEnvelopeType(type)) return;
 
     juce::String idPart;
-    if (type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_SET_WARP")
+    if (type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_SET_WARP" ||
+        type == "CLIP_SET_FADES" || type == "CLIP_SET_ENVELOPE")
     {
         idPart = payload.getProperty("clipId", "").toString();
     }
-    else if (type == "TRACK_GAIN")
+    else if (type == "TRACK_GAIN" || type == "TRACK_SET_SENDS" ||
+             type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER")
     {
         idPart = payload.getProperty("trackId", "").toString();
     }
-    else if (type == "PROJECT_SET_MASTER_VOLUME")
+    else if (type == "PROJECT_SET_MASTER_VOLUME" ||
+             type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY")
     {
         // Singleton project-level edit — slider drag coalesces.
         idPart = "_";
@@ -2459,19 +2710,52 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
         idPart = "_";
     }
 
+    const auto gestureId = payload.getProperty("gestureId", "").toString();
+
     juce::String key = type;
     if (idPart.isNotEmpty()) key << ":" << idPart;
+    if (gestureId.isNotEmpty()) key << "#" << gestureId;
 
     const auto now = juce::Time::currentTimeMillis();
     auto& s = undoCoalesceState();
-    const bool coalesce = idPart.isNotEmpty() && key == s.lastKey &&
-                          (now - s.lastTimeMs) < kUndoCoalesceWindowMs;
-    if (!coalesce)
+
+    // Explicit-gesture coalesce ignores the time window entirely. The
+    // renderer's pointerdown/pointermove/pointerup loop drives the same
+    // `gestureId` for every sample so even a paused-mid-drag stream
+    // stays in the same undo step.
+    const bool gestureCoalesce =
+        gestureId.isNotEmpty() && s.gestureActive && key == s.lastKey;
+
+    const bool timeCoalesce =
+        gestureId.isEmpty() && idPart.isNotEmpty() && key == s.lastKey &&
+        (now - s.lastTimeMs) < kUndoCoalesceWindowMs;
+
+    if (!gestureCoalesce && !timeCoalesce)
     {
         projectState.getUndoManager().beginNewTransaction(prettyTransactionName(type));
     }
     s.lastKey = key;
     s.lastTimeMs = now;
+    s.gestureActive = gestureId.isNotEmpty();
+}
+
+// Companion to `beginUndoTransactionIfNeeded`. Called by the dispatcher
+// AFTER the handler runs so that the terminal `gestureEnd: true` event
+// folds into the open transaction (it was just applied above) and only
+// THEN clears the coalesce state. Without this, a same-gesture follow-up
+// sample arriving after `gestureEnd` would silently start a new undo
+// step.
+void endUndoTransactionIfNeeded(const juce::String& type, const juce::var& payload) noexcept
+{
+    if (!isUndoableEnvelopeType(type)) return;
+    const auto gestureId = payload.getProperty("gestureId", "").toString();
+    if (gestureId.isEmpty()) return;
+    const bool gestureEnd = static_cast<bool>(payload.getProperty("gestureEnd", false));
+    if (!gestureEnd) return;
+    auto& s = undoCoalesceState();
+    s.lastKey = {};
+    s.lastTimeMs = 0;
+    s.gestureActive = false;
 }
 
 juce::var buildEditUndoStateEnvelope(silverdaw::ProjectState& projectState)
@@ -3178,6 +3462,50 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             projectState.moveTrack(trackId, static_cast<int>(*idxVar));
         }
     }
+    else if (type == "TRACK_SET_SENDS")
+    {
+        silverdaw::log::debug("bridge",
+                              "recv TRACK_SET_SENDS trackId=" +
+                                  payload.getProperty("trackId", "").toString() +
+                                  " rev=" + payload.getProperty("reverbSend", "").toString() +
+                                  " dly=" + payload.getProperty("delaySend", "").toString());
+        handleTrackSetSends(payload, projectState, bridge);
+    }
+    else if (type == "TRACK_SET_TONE")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_TONE trackId=" +
+                                            payload.getProperty("trackId", "").toString());
+        handleTrackSetTone(payload, projectState, bridge);
+    }
+    else if (type == "TRACK_SET_LEVELER")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_LEVELER trackId=" +
+                                            payload.getProperty("trackId", "").toString() +
+                                            " amount=" + payload.getProperty("amount", "").toString());
+        handleTrackSetLeveler(payload, projectState, bridge);
+    }
+    else if (type == "CLIP_SET_FADES")
+    {
+        silverdaw::log::debug("bridge", "recv CLIP_SET_FADES clipId=" +
+                                            payload.getProperty("clipId", "").toString());
+        handleClipSetFades(payload, engine, projectState, bridge);
+    }
+    else if (type == "CLIP_SET_ENVELOPE")
+    {
+        silverdaw::log::debug("bridge", "recv CLIP_SET_ENVELOPE clipId=" +
+                                            payload.getProperty("clipId", "").toString());
+        handleClipSetEnvelope(payload, projectState, bridge);
+    }
+    else if (type == "PROJECT_SET_REVERB")
+    {
+        silverdaw::log::debug("bridge", "recv PROJECT_SET_REVERB");
+        handleProjectSetReverb(payload, projectState, bridge);
+    }
+    else if (type == "PROJECT_SET_DELAY")
+    {
+        silverdaw::log::debug("bridge", "recv PROJECT_SET_DELAY");
+        handleProjectSetDelay(payload, projectState, bridge);
+    }
     else if (type == "WAVEFORM_REQUEST")
     {
         silverdaw::log::debug("bridge", "recv WAVEFORM_REQUEST clipId=" + payload.getProperty("clipId", "").toString());
@@ -3785,6 +4113,12 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::warn("bridge", "unhandled message type: " + type);
     }
+
+    // Mirror to `beginUndoTransactionIfNeeded`. Called AFTER the handler
+    // has applied its mutation so the terminal `gestureEnd: true` event
+    // folds into the open transaction, then clears the coalesce state
+    // for the next gesture.
+    endUndoTransactionIfNeeded(type, payload);
 
     // Undo-state epilogue. Any mutating envelope (or an undo/redo itself)
     // can change `canUndo` / `canRedo`. PROJECT_LOAD / PROJECT_NEW and

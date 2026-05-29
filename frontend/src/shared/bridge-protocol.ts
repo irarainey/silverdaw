@@ -338,6 +338,127 @@ export interface ClipSaveAsSamplePayload {
   outputDir: string
 }
 
+// ─── Phase 5 effects envelopes (Bass / Mid / Treble / Leveler / Sends / shared FX) ──
+//
+// All Phase 5 mutation envelopes optionally carry `gestureId` + `gestureEnd`
+// so the backend can coalesce a drag stream (knob turn, slider drag) into
+// one undo step regardless of event rate. When `gestureId` is absent the
+// backend falls back to the existing 500 ms time window. `gestureEnd === true`
+// is included in the same coalesced transaction and clears the coalesce
+// state so the NEXT gesture opens fresh.
+//
+// The handlers persist into the ProjectState ValueTree and ack with a
+// dedicated `*_APPLIED` envelope (NOT a full `PROJECT_STATE`) so 60 Hz
+// fader streams stay cheap on the wire. Real DSP is wired by the per-
+// feature todos that follow this schema-foundation step.
+
+/** Optional drag-coalesce hints. Shared by every Phase 5 mutation envelope. */
+export interface GestureHints {
+  /** Stable per-drag identifier. The renderer mints one at pointerdown
+   *  and re-uses it for every coalesced sample until pointerup. When
+   *  present, the backend coalesces on `(messageType, targetId,
+   *  gestureId)` regardless of elapsed time. */
+  gestureId?: string
+  /** Marks the LAST event in a drag gesture. The mutation still applies
+   *  inside the same coalesced transaction; afterwards the backend
+   *  clears the coalesce state so the next gesture starts a fresh
+   *  undo step. */
+  gestureEnd?: boolean
+}
+
+/** Per-track Reverb / Echo send levels. Both default to 0 (no send). */
+export interface TrackSetSendsPayload extends GestureHints {
+  trackId: string
+  /** Send to the project Reverb bus, 0..1 linear. Default 0. */
+  reverbSend: number
+  /** Send to the project Echo bus, 0..1 linear. Default 0. */
+  delaySend: number
+}
+
+/**
+ * Per-track Tone — fixed 3-band shelving EQ + global low-cut. All gain
+ * fields are dB in `[-12, +12]`; `lowCut` is a boolean engaging a
+ * fixed high-pass filter when true. Every field is optional so the
+ * renderer can drive one knob without echoing the rest — the backend
+ * fills missing values from the current persisted state.
+ */
+export interface TrackSetTonePayload extends GestureHints {
+  trackId: string
+  bassDb?: number
+  midDb?: number
+  trebleDb?: number
+  lowCut?: boolean
+}
+
+/**
+ * Per-track Leveler — single user-facing "amount" knob in `[0, 1]`.
+ * Compressor DSP and Advanced controls land in a later todo; for now
+ * this is pure persistence + ack.
+ */
+export interface TrackSetLevelerPayload extends GestureHints {
+  trackId: string
+  amount: number
+}
+
+/**
+ * Per-clip fade-in / fade-out lengths in clip-local **post-warp**
+ * milliseconds. Both are optional so the renderer can drive a single
+ * handle drag without re-asserting the other. The runtime clamps
+ * `fadeIn + fadeOut <= clipDuration` so neither value can exceed the
+ * clip; storage only enforces non-negativity.
+ */
+export interface ClipSetFadesPayload extends GestureHints {
+  clipId: string
+  fadeInMs?: number
+  fadeOutMs?: number
+}
+
+/** One breakpoint on a clip volume envelope. */
+export interface ClipEnvelopePoint {
+  /** Clip-local post-warp ms in `[0, clipDuration]`. */
+  timeMs: number
+  /** Linear gain in `[0, 4]` (~`-∞ .. +12 dB`). `1.0` is unity. */
+  gain: number
+}
+
+/**
+ * Per-clip volume envelope — one atomic mutation per drag. The backend
+ * normalises (sorts ascending by `timeMs`, clamps, rejects duplicate
+ * times). An empty array clears the envelope entirely (property
+ * removed so legacy projects round-trip byte-equivalent).
+ */
+export interface ClipSetEnvelopePayload extends GestureHints {
+  clipId: string
+  points: ClipEnvelopePoint[]
+}
+
+/**
+ * Project-shared Reverb bus parameters. All scalars are `[0, 1]`
+ * linear; every field is optional so the renderer can drive one knob
+ * without echoing the others.
+ */
+export interface ProjectSetReverbPayload extends GestureHints {
+  size?: number
+  decay?: number
+  tone?: number
+  mix?: number
+}
+
+/** Legal tempo-locked beat divisions for the shared echo. */
+export type DelayNoteValue = '1/4' | '1/8' | '1/8T' | '1/16'
+
+/**
+ * Project-shared Echo / Delay bus parameters. `noteValue` MUST match
+ * one of the legal beat divisions exactly — whitespace / case
+ * variants are rejected by the backend (the message is dropped).
+ */
+export interface ProjectSetDelayPayload extends GestureHints {
+  noteValue?: DelayNoteValue
+  feedback?: number
+  tone?: number
+  mix?: number
+}
+
 export interface LibraryItemSaveAsSamplePayload {
   libraryItemId: string
   itemId: string
@@ -393,6 +514,13 @@ export interface BridgeOutboundMap {
   TRACK_SOLO: TrackSoloPayload
   TRACK_SET_HEIGHT: TrackSetHeightPayload
   TRACK_REORDER: TrackReorderPayload
+  TRACK_SET_SENDS: TrackSetSendsPayload
+  TRACK_SET_TONE: TrackSetTonePayload
+  TRACK_SET_LEVELER: TrackSetLevelerPayload
+  CLIP_SET_FADES: ClipSetFadesPayload
+  CLIP_SET_ENVELOPE: ClipSetEnvelopePayload
+  PROJECT_SET_REVERB: ProjectSetReverbPayload
+  PROJECT_SET_DELAY: ProjectSetDelayPayload
   TRANSPORT_PLAY: undefined
   TRANSPORT_PAUSE: undefined
   TRANSPORT_STOP: undefined
@@ -867,6 +995,91 @@ export const TrackSoloAppliedPayloadSchema = z.object({
 })
 export type TrackSoloAppliedPayload = z.infer<typeof TrackSoloAppliedPayloadSchema>
 
+/**
+ * Ack for `TRACK_SET_SENDS` — echoes the clamped send levels the backend
+ * persisted. `ok === false` means the track id was unknown.
+ *
+ * Mirrors the delta-ack pattern used by `TRACK_GAIN_APPLIED` so 60 Hz
+ * fader streams don't trigger full `PROJECT_STATE` serialisations. The
+ * renderer reconciles its mirror against this payload directly.
+ */
+export const TrackSendsAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  /** Project-Reverb send, 0..1 linear, after backend clamp. */
+  reverbSend: z.number(),
+  /** Project-Echo send, 0..1 linear, after backend clamp. */
+  delaySend: z.number(),
+  ok: z.boolean()
+})
+export type TrackSendsAppliedPayload = z.infer<typeof TrackSendsAppliedPayloadSchema>
+
+/** Ack for `TRACK_SET_TONE`. Echoes the full Tone state after the
+ *  backend has merged the partial update with the stored values, so
+ *  the renderer doesn't have to track which fields it sent. */
+export const TrackToneAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  bassDb: z.number(),
+  midDb: z.number(),
+  trebleDb: z.number(),
+  lowCut: z.boolean(),
+  ok: z.boolean()
+})
+export type TrackToneAppliedPayload = z.infer<typeof TrackToneAppliedPayloadSchema>
+
+/** Ack for `TRACK_SET_LEVELER` — echoes the clamped amount. */
+export const TrackLevelerAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  amount: z.number(),
+  ok: z.boolean()
+})
+export type TrackLevelerAppliedPayload = z.infer<typeof TrackLevelerAppliedPayloadSchema>
+
+/** Ack for `CLIP_SET_FADES` — echoes the fade lengths after non-negativity
+ *  clamping. The runtime's `fadeIn + fadeOut <= duration` clamp does NOT
+ *  alter the persisted values, so this ack matches what's stored. */
+export const ClipFadesAppliedPayloadSchema = z.object({
+  clipId: z.string(),
+  fadeInMs: z.number().nonnegative(),
+  fadeOutMs: z.number().nonnegative(),
+  ok: z.boolean()
+})
+export type ClipFadesAppliedPayload = z.infer<typeof ClipFadesAppliedPayloadSchema>
+
+const ClipEnvelopePointSchema = z.object({
+  timeMs: z.number().nonnegative(),
+  gain: z.number().min(0).max(4)
+})
+export type ClipEnvelopePointAck = z.infer<typeof ClipEnvelopePointSchema>
+
+/** Ack for `CLIP_SET_ENVELOPE` — echoes the persisted (sorted, clamped)
+ *  point array. An empty array indicates the envelope is cleared. */
+export const ClipEnvelopeAppliedPayloadSchema = z.object({
+  clipId: z.string(),
+  points: z.array(ClipEnvelopePointSchema),
+  ok: z.boolean()
+})
+export type ClipEnvelopeAppliedPayload = z.infer<typeof ClipEnvelopeAppliedPayloadSchema>
+
+/** Ack for `PROJECT_SET_REVERB` — echoes the full clamped reverb state. */
+export const ProjectReverbAppliedPayloadSchema = z.object({
+  size: z.number().min(0).max(1),
+  decay: z.number().min(0).max(1),
+  tone: z.number().min(0).max(1),
+  mix: z.number().min(0).max(1),
+  ok: z.boolean()
+})
+export type ProjectReverbAppliedPayload = z.infer<typeof ProjectReverbAppliedPayloadSchema>
+
+/** Ack for `PROJECT_SET_DELAY` — echoes the full clamped delay state. */
+export const ProjectDelayAppliedPayloadSchema = z.object({
+  noteValue: z.enum(['1/4', '1/8', '1/8T', '1/16']),
+  feedback: z.number().min(0).max(1),
+  tone: z.number().min(0).max(1),
+  mix: z.number().min(0).max(1),
+  ok: z.boolean()
+})
+export type ProjectDelayAppliedPayload = z.infer<typeof ProjectDelayAppliedPayloadSchema>
+
 export const ProjectViewStateSavedPayloadSchema = z.object({
   filePath: z.string(),
   ok: z.boolean(),
@@ -942,7 +1155,24 @@ export const ProjectStateClipSchema = z.object({
    *  BPM was detected. Cleared by the backend's `LIBRARY_ITEM_ANALYSIS`
    *  handler when it auto-flips warp on, or by any explicit
    *  `CLIP_SET_WARP` from the user. */
-  pendingAutoWarp: z.boolean().optional()
+  pendingAutoWarp: z.boolean().optional(),
+  // ─── Phase 5 per-clip volume tailoring. All flat on the CLIP node
+  //     to match ValueTree storage. `envelopePoints` is a `juce::var`
+  //     ARRAY property; an empty array (or absent property) means the
+  //     envelope is unused.
+  /** Fade-in length, clip-local post-warp ms. >= 0. */
+  fadeInMs: z.number().nonnegative().optional(),
+  /** Fade-out length, clip-local post-warp ms. >= 0. */
+  fadeOutMs: z.number().nonnegative().optional(),
+  /** Volume-envelope breakpoints. Stored sorted ascending by `timeMs`. */
+  envelopePoints: z
+    .array(
+      z.object({
+        timeMs: z.number().nonnegative(),
+        gain: z.number().min(0).max(4)
+      })
+    )
+    .optional()
 })
 export type ProjectStateClip = z.infer<typeof ProjectStateClipSchema>
 
@@ -960,6 +1190,22 @@ export const ProjectStateTrackSchema = z.object({
    *  before per-track height existed (and for tracks that have never
    *  been resized — the renderer falls back to its default). */
   heightPx: z.number().optional(),
+  // ─── Phase 5 per-track FX (all flat to match the backend ValueTree
+  //     property layout — ValueTreeJson serialises every property at the
+  //     top level of the TRACK node, no nested objects). Each is
+  //     suppressed-when-default so legacy projects round-trip unchanged.
+  /** Send to the project Reverb bus, 0..1 linear. */
+  sendReverb: z.number().optional(),
+  /** Send to the project Echo bus, 0..1 linear. */
+  sendDelay: z.number().optional(),
+  /** Per-track Tone — fixed 3-band EQ, dB in `[-12, +12]`. */
+  toneBassDb: z.number().optional(),
+  toneMidDb: z.number().optional(),
+  toneTrebleDb: z.number().optional(),
+  /** Per-track fixed high-pass low-cut filter engage flag. */
+  toneLowCut: z.boolean().optional(),
+  /** Per-track Leveler amount, 0..1 (Advanced controls land later). */
+  levelerAmount: z.number().optional(),
   clips: z.array(ProjectStateClipSchema)
 })
 export type ProjectStateTrack = z.infer<typeof ProjectStateTrackSchema>
@@ -1120,6 +1366,18 @@ export const ProjectStatePayloadSchema = z.object({
    */
   exportSettingsJson: z.string().optional().nullable(),
   masterVolume: z.number().min(0).max(1).optional(),
+  // ─── Phase 5 project-shared FX bus parameters. All flat on PROJECT.
+  //     Each scalar is 0..1 linear and suppressed when at default. The
+  //     `delayNoteValue` default is "1/8"; values are restricted to the
+  //     tempo-locked beat-division whitelist on both ends of the wire.
+  reverbSize: z.number().min(0).max(1).optional(),
+  reverbDecay: z.number().min(0).max(1).optional(),
+  reverbTone: z.number().min(0).max(1).optional(),
+  reverbMix: z.number().min(0).max(1).optional(),
+  delayNoteValue: z.enum(['1/4', '1/8', '1/8T', '1/16']).optional(),
+  delayFeedback: z.number().min(0).max(1).optional(),
+  delayTone: z.number().min(0).max(1).optional(),
+  delayMix: z.number().min(0).max(1).optional(),
   /** User-created timeline markers. */
   markers: z.array(ProjectStateMarkerSchema).optional(),
   /**
@@ -1520,6 +1778,13 @@ export interface BridgeInboundMap {
   TRACK_GAIN_APPLIED: TrackGainAppliedPayload
   TRACK_MUTE_APPLIED: TrackMuteAppliedPayload
   TRACK_SOLO_APPLIED: TrackSoloAppliedPayload
+  TRACK_SENDS_APPLIED: TrackSendsAppliedPayload
+  TRACK_TONE_APPLIED: TrackToneAppliedPayload
+  TRACK_LEVELER_APPLIED: TrackLevelerAppliedPayload
+  CLIP_FADES_APPLIED: ClipFadesAppliedPayload
+  CLIP_ENVELOPE_APPLIED: ClipEnvelopeAppliedPayload
+  PROJECT_REVERB_APPLIED: ProjectReverbAppliedPayload
+  PROJECT_DELAY_APPLIED: ProjectDelayAppliedPayload
   PROJECT_SAVED: ProjectSavedPayload
   PROJECT_VIEW_STATE_SAVED: ProjectViewStateSavedPayload
   PROJECT_AUTOSAVED: ProjectAutosavedPayload
@@ -1579,6 +1844,13 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_GAIN_APPLIED',
   'TRACK_MUTE_APPLIED',
   'TRACK_SOLO_APPLIED',
+  'TRACK_SENDS_APPLIED',
+  'TRACK_TONE_APPLIED',
+  'TRACK_LEVELER_APPLIED',
+  'CLIP_FADES_APPLIED',
+  'CLIP_ENVELOPE_APPLIED',
+  'PROJECT_REVERB_APPLIED',
+  'PROJECT_DELAY_APPLIED',
   'PROJECT_SAVED',
   'PROJECT_VIEW_STATE_SAVED',
   'PROJECT_AUTOSAVED',
@@ -1709,6 +1981,41 @@ export function isTrackMuteAppliedPayload(value: unknown): value is TrackMuteApp
 /** Guard for `TrackSoloAppliedPayload`. */
 export function isTrackSoloAppliedPayload(value: unknown): value is TrackSoloAppliedPayload {
   return TrackSoloAppliedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `TrackSendsAppliedPayload`. */
+export function isTrackSendsAppliedPayload(value: unknown): value is TrackSendsAppliedPayload {
+  return TrackSendsAppliedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `TrackToneAppliedPayload`. */
+export function isTrackToneAppliedPayload(value: unknown): value is TrackToneAppliedPayload {
+  return TrackToneAppliedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `TrackLevelerAppliedPayload`. */
+export function isTrackLevelerAppliedPayload(value: unknown): value is TrackLevelerAppliedPayload {
+  return TrackLevelerAppliedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `ClipFadesAppliedPayload`. */
+export function isClipFadesAppliedPayload(value: unknown): value is ClipFadesAppliedPayload {
+  return ClipFadesAppliedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `ClipEnvelopeAppliedPayload`. */
+export function isClipEnvelopeAppliedPayload(value: unknown): value is ClipEnvelopeAppliedPayload {
+  return ClipEnvelopeAppliedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `ProjectReverbAppliedPayload`. */
+export function isProjectReverbAppliedPayload(value: unknown): value is ProjectReverbAppliedPayload {
+  return ProjectReverbAppliedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `ProjectDelayAppliedPayload`. */
+export function isProjectDelayAppliedPayload(value: unknown): value is ProjectDelayAppliedPayload {
+  return ProjectDelayAppliedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `LibraryItemAnalysisPayload`. */

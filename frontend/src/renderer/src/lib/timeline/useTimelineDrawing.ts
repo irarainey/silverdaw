@@ -688,6 +688,48 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       tracksL.addChild(wave)
     }
 
+    // Fade overlays — diagonal triangles at the head / tail of the
+    // audible window. We darken the clip body where the fade attenuates
+    // signal (so the user reads "this audio is quieter here") and draw
+    // the slope line on top in the wave colour for a clear edge. The
+    // fade lengths are in TIMELINE-domain ms (post-warp output), which
+    // map 1:1 to the clip's pixel width — no warp ratio needed.
+    const fadeInMs = clip.fadeInMs ?? 0
+    const fadeOutMs = clip.fadeOutMs ?? 0
+    if ((fadeInMs > 0 || fadeOutMs > 0) && w > 1) {
+      const pxPerMsTimeline = pxPerSecond.value / 1000
+      const fadeInPx = Math.min(w, Math.max(0, fadeInMs * pxPerMsTimeline))
+      const fadeOutPx = Math.min(w - fadeInPx, Math.max(0, fadeOutMs * pxPerMsTimeline))
+      const fades = new G()
+      if (fadeInPx >= 1) {
+        // Triangle covering the silent → unity ramp on the left edge.
+        fades
+          .moveTo(absX, innerY)
+          .lineTo(absX + fadeInPx, innerY)
+          .lineTo(absX, innerY + innerH)
+          .closePath()
+          .fill({ color: 0x000000, alpha: 0.45 })
+        fades
+          .moveTo(absX, innerY + innerH)
+          .lineTo(absX + fadeInPx, innerY)
+          .stroke({ color: waveColour, width: 1.5, alpha: 0.9 })
+      }
+      if (fadeOutPx >= 1) {
+        const rightX = absX + w
+        fades
+          .moveTo(rightX - fadeOutPx, innerY)
+          .lineTo(rightX, innerY)
+          .lineTo(rightX, innerY + innerH)
+          .closePath()
+          .fill({ color: 0x000000, alpha: 0.45 })
+        fades
+          .moveTo(rightX - fadeOutPx, innerY)
+          .lineTo(rightX, innerY + innerH)
+          .stroke({ color: waveColour, width: 1.5, alpha: 0.9 })
+      }
+      tracksL.addChild(fades)
+    }
+
     // Beat markers — synthesised on a *source-global* beat grid so a
     // split clip's right half keeps in lockstep with its left half.
     //

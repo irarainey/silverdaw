@@ -60,6 +60,26 @@ const juce::Identifier ProjectState::kTempoRatio{"tempoRatio"};
 const juce::Identifier ProjectState::kSemitones{"semitones"};
 const juce::Identifier ProjectState::kCents{"cents"};
 const juce::Identifier ProjectState::kPendingAutoWarp{"pendingAutoWarp"};
+const juce::Identifier ProjectState::kSendReverb{"sendReverb"};
+const juce::Identifier ProjectState::kSendDelay{"sendDelay"};
+const juce::Identifier ProjectState::kToneBassDb{"toneBassDb"};
+const juce::Identifier ProjectState::kToneMidDb{"toneMidDb"};
+const juce::Identifier ProjectState::kToneTrebleDb{"toneTrebleDb"};
+const juce::Identifier ProjectState::kToneLowCut{"toneLowCut"};
+const juce::Identifier ProjectState::kLevelerAmount{"levelerAmount"};
+const juce::Identifier ProjectState::kFadeInMs{"fadeInMs"};
+const juce::Identifier ProjectState::kFadeOutMs{"fadeOutMs"};
+const juce::Identifier ProjectState::kEnvelopePoints{"envelopePoints"};
+const juce::Identifier ProjectState::kEnvelopeTimeMs{"timeMs"};
+const juce::Identifier ProjectState::kEnvelopeGain{"gain"};
+const juce::Identifier ProjectState::kReverbSize{"reverbSize"};
+const juce::Identifier ProjectState::kReverbDecay{"reverbDecay"};
+const juce::Identifier ProjectState::kReverbTone{"reverbTone"};
+const juce::Identifier ProjectState::kReverbMix{"reverbMix"};
+const juce::Identifier ProjectState::kDelayNoteValue{"delayNoteValue"};
+const juce::Identifier ProjectState::kDelayFeedback{"delayFeedback"};
+const juce::Identifier ProjectState::kDelayTone{"delayTone"};
+const juce::Identifier ProjectState::kDelayMix{"delayMix"};
 
 const juce::String ProjectState::kDefaultName{"Untitled"};
 
@@ -474,6 +494,434 @@ bool ProjectState::setTrackHeightPx(const juce::String& trackId, double heightPx
     const auto clamped = juce::jlimit(kMinTrackHeightPx, kMaxTrackHeightPx, heightPx);
     track.setProperty(kHeightPx, clamped, &undoManager);
     return true;
+}
+
+// Float-precision tolerance for the per-track send setters. A drag
+// gesture that lands within ~1e-4 of zero is treated as "off" so the
+// property is removed from the tree, keeping legacy snapshots
+// byte-equivalent and avoiding silent dirty-flagging from noisy UI
+// streams. Same epsilon is used to compare against the prior stored
+// value to decide whether anything actually changed.
+static constexpr float kSendEpsilon = 1.0e-4f;
+
+static bool nearlyZero(float value) noexcept
+{
+    return std::abs(value) < kSendEpsilon;
+}
+
+static bool nearlyEqual(float a, float b) noexcept
+{
+    return std::abs(a - b) < kSendEpsilon;
+}
+
+// Apply a `[0, 1]`-clamped float to `track` under `id`, mirroring the
+// "absent == default(0)" convention used by every other Phase 5 setter.
+// Returns `true` iff the persisted shape actually changed.
+static bool applyClampedSend(juce::ValueTree& track,
+                             const juce::Identifier& id,
+                             float value,
+                             juce::UndoManager* undo)
+{
+    const auto clamped = juce::jlimit(0.0f, 1.0f, value);
+    const bool hadProperty = track.hasProperty(id);
+    const auto previous = hadProperty
+        ? static_cast<float>(static_cast<double>(track.getProperty(id)))
+        : 0.0f;
+
+    if (nearlyZero(clamped))
+    {
+        if (!hadProperty)
+        {
+            return false;
+        }
+        track.removeProperty(id, undo);
+        return true;
+    }
+
+    if (hadProperty && nearlyEqual(previous, clamped))
+    {
+        return false;
+    }
+    track.setProperty(id, clamped, undo);
+    return true;
+}
+
+bool ProjectState::setTrackSends(const juce::String& trackId, float reverbSend, float delaySend)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid())
+    {
+        return false;
+    }
+    const bool reverbChanged = applyClampedSend(track, kSendReverb, reverbSend, &undoManager);
+    const bool delayChanged = applyClampedSend(track, kSendDelay, delaySend, &undoManager);
+    return reverbChanged || delayChanged;
+}
+
+float ProjectState::getTrackReverbSend(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid())
+    {
+        return 0.0f;
+    }
+    return static_cast<float>(static_cast<double>(track.getProperty(kSendReverb, 0.0)));
+}
+
+float ProjectState::getTrackDelaySend(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid())
+    {
+        return 0.0f;
+    }
+    return static_cast<float>(static_cast<double>(track.getProperty(kSendDelay, 0.0)));
+}
+
+// ─── Phase 5: per-track Tone / Leveler, per-clip Fades / Envelope,
+// ─── project-shared Reverb / Delay. All follow the same
+// ─── default-suppression contract as `setTrackSends`: setters return
+// ─── `true` only when the stored shape changes, so dispatchers can
+// ─── skip ack/undo/dirty on no-op writes.
+
+// Per-parameter epsilons. dB knobs are perceptibly stable around
+// ~0.01 dB; ms knobs at the sub-millisecond level are below the
+// renderer's pixel resolution.
+static constexpr float kToneDbEpsilon = 1.0e-3f;
+static constexpr float kLevelerEpsilon = 1.0e-4f;
+static constexpr double kFadeMsEpsilon = 1.0e-2;
+static constexpr float kReverbEpsilon = 1.0e-4f;
+static constexpr float kDelayEpsilon = 1.0e-4f;
+
+static bool applyClampedDb(juce::ValueTree& tree,
+                           const juce::Identifier& id,
+                           float value,
+                           juce::UndoManager* undo)
+{
+    const auto clamped = juce::jlimit(-12.0f, 12.0f, value);
+    const bool hadProperty = tree.hasProperty(id);
+    const auto previous = hadProperty
+        ? static_cast<float>(static_cast<double>(tree.getProperty(id)))
+        : 0.0f;
+    if (std::abs(clamped) < kToneDbEpsilon)
+    {
+        if (!hadProperty) return false;
+        tree.removeProperty(id, undo);
+        return true;
+    }
+    if (hadProperty && std::abs(previous - clamped) < kToneDbEpsilon) return false;
+    tree.setProperty(id, clamped, undo);
+    return true;
+}
+
+static bool applyUnitFloat(juce::ValueTree& tree,
+                           const juce::Identifier& id,
+                           float value,
+                           float epsilon,
+                           juce::UndoManager* undo)
+{
+    const auto clamped = juce::jlimit(0.0f, 1.0f, value);
+    const bool hadProperty = tree.hasProperty(id);
+    const auto previous = hadProperty
+        ? static_cast<float>(static_cast<double>(tree.getProperty(id)))
+        : 0.0f;
+    if (std::abs(clamped) < epsilon)
+    {
+        if (!hadProperty) return false;
+        tree.removeProperty(id, undo);
+        return true;
+    }
+    if (hadProperty && std::abs(previous - clamped) < epsilon) return false;
+    tree.setProperty(id, clamped, undo);
+    return true;
+}
+
+static bool applyBoolDefaultFalse(juce::ValueTree& tree,
+                                  const juce::Identifier& id,
+                                  bool value,
+                                  juce::UndoManager* undo)
+{
+    const bool hadProperty = tree.hasProperty(id);
+    if (!value)
+    {
+        if (!hadProperty) return false;
+        tree.removeProperty(id, undo);
+        return true;
+    }
+    if (hadProperty && static_cast<bool>(tree.getProperty(id))) return false;
+    tree.setProperty(id, true, undo);
+    return true;
+}
+
+bool ProjectState::setTrackTone(const juce::String& trackId, float bassDb, float midDb,
+                                float trebleDb, bool lowCut)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+    bool changed = false;
+    changed |= applyClampedDb(track, kToneBassDb, bassDb, &undoManager);
+    changed |= applyClampedDb(track, kToneMidDb, midDb, &undoManager);
+    changed |= applyClampedDb(track, kToneTrebleDb, trebleDb, &undoManager);
+    changed |= applyBoolDefaultFalse(track, kToneLowCut, lowCut, &undoManager);
+    return changed;
+}
+
+float ProjectState::getTrackToneBassDb(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return 0.0f;
+    return static_cast<float>(static_cast<double>(track.getProperty(kToneBassDb, 0.0)));
+}
+
+float ProjectState::getTrackToneMidDb(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return 0.0f;
+    return static_cast<float>(static_cast<double>(track.getProperty(kToneMidDb, 0.0)));
+}
+
+float ProjectState::getTrackToneTrebleDb(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return 0.0f;
+    return static_cast<float>(static_cast<double>(track.getProperty(kToneTrebleDb, 0.0)));
+}
+
+bool ProjectState::getTrackToneLowCut(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+    return static_cast<bool>(track.getProperty(kToneLowCut, false));
+}
+
+bool ProjectState::setTrackLevelerAmount(const juce::String& trackId, float amount)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+    return applyUnitFloat(track, kLevelerAmount, amount, kLevelerEpsilon, &undoManager);
+}
+
+float ProjectState::getTrackLevelerAmount(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return 0.0f;
+    return static_cast<float>(static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
+}
+
+// Apply a non-negative ms value to a clip under `id` with the
+// fade-default-suppression discipline. Negative inputs clamp to 0.
+// Runtime is responsible for `fadeIn + fadeOut <= clipDuration`;
+// this storage layer only enforces non-negativity.
+static bool applyClipMs(juce::ValueTree& clip,
+                        const juce::Identifier& id,
+                        double valueMs,
+                        juce::UndoManager* undo)
+{
+    const auto clamped = juce::jmax(0.0, valueMs);
+    const bool hadProperty = clip.hasProperty(id);
+    const auto previous = hadProperty
+        ? static_cast<double>(clip.getProperty(id))
+        : 0.0;
+    if (clamped < kFadeMsEpsilon)
+    {
+        if (!hadProperty) return false;
+        clip.removeProperty(id, undo);
+        return true;
+    }
+    if (hadProperty && std::abs(previous - clamped) < kFadeMsEpsilon) return false;
+    clip.setProperty(id, clamped, undo);
+    return true;
+}
+
+bool ProjectState::setClipFades(const juce::String& clipId, double fadeInMs, double fadeOutMs)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+    bool changed = false;
+    changed |= applyClipMs(clip, kFadeInMs, fadeInMs, &undoManager);
+    changed |= applyClipMs(clip, kFadeOutMs, fadeOutMs, &undoManager);
+    return changed;
+}
+
+double ProjectState::getClipFadeInMs(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return 0.0;
+    return static_cast<double>(clip.getProperty(kFadeInMs, 0.0));
+}
+
+double ProjectState::getClipFadeOutMs(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return 0.0;
+    return static_cast<double>(clip.getProperty(kFadeOutMs, 0.0));
+}
+
+// Returns the existing envelope array as a copy or an empty array if
+// the property is absent. Used both by `getClipEnvelope` for outside
+// callers and for change-detection inside the setter.
+static juce::Array<juce::var> readEnvelopeArray(const juce::ValueTree& clip,
+                                                const juce::Identifier& id)
+{
+    if (!clip.hasProperty(id)) return {};
+    const auto& v = clip.getProperty(id);
+    if (!v.isArray()) return {};
+    return *v.getArray();
+}
+
+static bool envelopeArraysSemanticallyEqual(const juce::Array<juce::var>& a,
+                                            const juce::Array<juce::var>& b,
+                                            const juce::Identifier& timeId,
+                                            const juce::Identifier& gainId)
+{
+    if (a.size() != b.size()) return false;
+    for (int i = 0; i < a.size(); ++i)
+    {
+        const double ta = static_cast<double>(a.getReference(i).getProperty(timeId, 0.0));
+        const double tb = static_cast<double>(b.getReference(i).getProperty(timeId, 0.0));
+        const double ga = static_cast<double>(a.getReference(i).getProperty(gainId, 1.0));
+        const double gb = static_cast<double>(b.getReference(i).getProperty(gainId, 1.0));
+        if (std::abs(ta - tb) > 1.0e-3 || std::abs(ga - gb) > 1.0e-4) return false;
+    }
+    return true;
+}
+
+bool ProjectState::setClipEnvelope(const juce::String& clipId,
+                                   const juce::Array<juce::var>& points)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+
+    // Normalise: clamp, sort ascending by timeMs, reject duplicate
+    // times. An empty input array clears the envelope entirely
+    // (property removed) — that's the "default" shape that round-trips
+    // legacy projects unchanged.
+    juce::Array<juce::var> normalised;
+    normalised.ensureStorageAllocated(points.size());
+    for (const auto& p : points)
+    {
+        if (!p.isObject()) return false;
+        const double t = static_cast<double>(p.getProperty(kEnvelopeTimeMs, 0.0));
+        const double g = static_cast<double>(p.getProperty(kEnvelopeGain, 1.0));
+        const double clampedTime = juce::jmax(0.0, t);
+        const double clampedGain = juce::jlimit(0.0, 4.0, g);
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty(kEnvelopeTimeMs, clampedTime);
+        obj->setProperty(kEnvelopeGain, clampedGain);
+        normalised.add(juce::var(obj));
+    }
+    std::sort(normalised.begin(), normalised.end(),
+              [](const juce::var& a, const juce::var& b) {
+                  return static_cast<double>(a.getProperty("timeMs", 0.0)) <
+                         static_cast<double>(b.getProperty("timeMs", 0.0));
+              });
+    for (int i = 1; i < normalised.size(); ++i)
+    {
+        const double prev = static_cast<double>(normalised.getReference(i - 1).getProperty(kEnvelopeTimeMs, 0.0));
+        const double curr = static_cast<double>(normalised.getReference(i).getProperty(kEnvelopeTimeMs, 0.0));
+        if (std::abs(curr - prev) < 1.0e-3) return false; // duplicate timeMs
+    }
+
+    const auto existing = readEnvelopeArray(clip, kEnvelopePoints);
+    if (normalised.isEmpty())
+    {
+        if (!clip.hasProperty(kEnvelopePoints)) return false;
+        clip.removeProperty(kEnvelopePoints, &undoManager);
+        return true;
+    }
+    if (envelopeArraysSemanticallyEqual(existing, normalised, kEnvelopeTimeMs, kEnvelopeGain))
+    {
+        return false;
+    }
+    clip.setProperty(kEnvelopePoints, juce::var(normalised), &undoManager);
+    return true;
+}
+
+juce::Array<juce::var> ProjectState::getClipEnvelope(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return {};
+    return readEnvelopeArray(clip, kEnvelopePoints);
+}
+
+bool ProjectState::setProjectReverb(float size, float decay, float tone, float mix)
+{
+    bool changed = false;
+    changed |= applyUnitFloat(root, kReverbSize, size, kReverbEpsilon, &undoManager);
+    changed |= applyUnitFloat(root, kReverbDecay, decay, kReverbEpsilon, &undoManager);
+    changed |= applyUnitFloat(root, kReverbTone, tone, kReverbEpsilon, &undoManager);
+    changed |= applyUnitFloat(root, kReverbMix, mix, kReverbEpsilon, &undoManager);
+    return changed;
+}
+
+float ProjectState::getProjectReverbSize() const
+{
+    return static_cast<float>(static_cast<double>(root.getProperty(kReverbSize, 0.0)));
+}
+float ProjectState::getProjectReverbDecay() const
+{
+    return static_cast<float>(static_cast<double>(root.getProperty(kReverbDecay, 0.0)));
+}
+float ProjectState::getProjectReverbTone() const
+{
+    return static_cast<float>(static_cast<double>(root.getProperty(kReverbTone, 0.0)));
+}
+float ProjectState::getProjectReverbMix() const
+{
+    return static_cast<float>(static_cast<double>(root.getProperty(kReverbMix, 0.0)));
+}
+
+// Whitelist of legal delay note values. Anything else (including
+// whitespace variants like " 1/8" or case mismatches) is rejected
+// without mutating the tree so the persisted shape can't get into
+// an unknown state via a hostile / mis-versioned client.
+static bool isLegalDelayNoteValue(const juce::String& v)
+{
+    return v == "1/4" || v == "1/8" || v == "1/8T" || v == "1/16";
+}
+
+bool ProjectState::setProjectDelay(const juce::String& noteValue, float feedback,
+                                   float tone, float mix)
+{
+    if (!isLegalDelayNoteValue(noteValue)) return false;
+
+    bool changed = false;
+
+    // Default note value is "1/8" — suppress that exact string so a
+    // never-touched delay project rounds-trips with no property set.
+    const bool hadNote = root.hasProperty(kDelayNoteValue);
+    const auto prevNote = hadNote ? root.getProperty(kDelayNoteValue).toString() : juce::String("1/8");
+    if (noteValue == "1/8")
+    {
+        if (hadNote) { root.removeProperty(kDelayNoteValue, &undoManager); changed = true; }
+    }
+    else if (!hadNote || prevNote != noteValue)
+    {
+        root.setProperty(kDelayNoteValue, noteValue, &undoManager);
+        changed = true;
+    }
+
+    changed |= applyUnitFloat(root, kDelayFeedback, feedback, kDelayEpsilon, &undoManager);
+    changed |= applyUnitFloat(root, kDelayTone, tone, kDelayEpsilon, &undoManager);
+    changed |= applyUnitFloat(root, kDelayMix, mix, kDelayEpsilon, &undoManager);
+    return changed;
+}
+
+juce::String ProjectState::getProjectDelayNoteValue() const
+{
+    return root.getProperty(kDelayNoteValue, "1/8").toString();
+}
+float ProjectState::getProjectDelayFeedback() const
+{
+    return static_cast<float>(static_cast<double>(root.getProperty(kDelayFeedback, 0.0)));
+}
+float ProjectState::getProjectDelayTone() const
+{
+    return static_cast<float>(static_cast<double>(root.getProperty(kDelayTone, 0.0)));
+}
+float ProjectState::getProjectDelayMix() const
+{
+    return static_cast<float>(static_cast<double>(root.getProperty(kDelayMix, 0.0)));
 }
 
 juce::StringArray ProjectState::getTrackClipIds(const juce::String& trackId) const

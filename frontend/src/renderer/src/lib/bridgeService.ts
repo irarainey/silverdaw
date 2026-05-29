@@ -66,6 +66,13 @@ import {
   isTrackGainAppliedPayload,
   isTrackMuteAppliedPayload,
   isTrackSoloAppliedPayload,
+  isTrackSendsAppliedPayload,
+  isTrackToneAppliedPayload,
+  isTrackLevelerAppliedPayload,
+  isClipFadesAppliedPayload,
+  isClipEnvelopeAppliedPayload,
+  isProjectReverbAppliedPayload,
+  isProjectDelayAppliedPayload,
   isTrackRemovedPayload,
   isWaveformReadyPayload,
   type BridgeInboundMessage,
@@ -753,6 +760,32 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    // ─── Phase 5 FX deltas. The bridge layer just acknowledges the
+    //     envelope shape; the actual store mutations land per-feature
+    //     when the renderer-side UI for each effect ships. Until then
+    //     PROJECT_STATE refreshes (on save / load / undo) carry the
+    //     persisted values, so dropping the deltas here is harmless.
+    case 'CLIP_FADES_APPLIED': {
+      // Mirror the backend-clamped fade lengths into the local clip so
+      // undo / redo / cross-renderer ACKs flow without waiting for a
+      // full PROJECT_STATE.
+      useProjectStore().setClipFades(
+        msg.payload.clipId,
+        { fadeInMs: msg.payload.fadeInMs, fadeOutMs: msg.payload.fadeOutMs },
+        { localOnly: true }
+      )
+      log.info('bridge', `CLIP_FADES_APPLIED clipId=${msg.payload.clipId} in=${msg.payload.fadeInMs}ms out=${msg.payload.fadeOutMs}ms`)
+      break
+    }
+
+    case 'TRACK_SENDS_APPLIED':
+    case 'TRACK_TONE_APPLIED':
+    case 'TRACK_LEVELER_APPLIED':
+    case 'CLIP_ENVELOPE_APPLIED':
+    case 'PROJECT_REVERB_APPLIED':
+    case 'PROJECT_DELAY_APPLIED':
+      break
+
     default:
       assertNever(msg)
   }
@@ -988,6 +1021,20 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isMasterLevelPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_LEVELS':
       return isTrackLevelsPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_SENDS_APPLIED':
+      return isTrackSendsAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_TONE_APPLIED':
+      return isTrackToneAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_LEVELER_APPLIED':
+      return isTrackLevelerAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'CLIP_FADES_APPLIED':
+      return isClipFadesAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'CLIP_ENVELOPE_APPLIED':
+      return isClipEnvelopeAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_REVERB_APPLIED':
+      return isProjectReverbAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_DELAY_APPLIED':
+      return isProjectDelayAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

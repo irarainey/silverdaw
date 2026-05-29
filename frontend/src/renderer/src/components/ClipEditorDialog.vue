@@ -1569,6 +1569,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             :source-key="sourceKey"
             :project-bpm="transport.bpm"
             :edits-saved-clip-library="editsSavedClipLibrary"
+            :clip-id="timelineClip?.id"
           />
         </div>
 

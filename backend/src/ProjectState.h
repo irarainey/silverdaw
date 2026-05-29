@@ -156,6 +156,85 @@ class ProjectState : public juce::ValueTree::Listener
     bool setTrackMuted(const juce::String& trackId, bool muted);
     bool setTrackSoloed(const juce::String& trackId, bool soloed);
 
+    /** Per-track send levels to the project Reverb / Echo buses. Both
+     *  scalars are clamped to `[0, 1]`. Values within `kSendEpsilon` of
+     *  zero are stored as "absent" (`removeProperty`) so legacy /
+     *  unconfigured projects keep their existing on-disk shape.
+     *
+     *  Returns `true` iff the track exists AND at least one stored
+     *  scalar changed. Handlers use the change flag to skip ack / undo
+     *  broadcasts on no-op writes (e.g. echo of the current value at
+     *  the end of a drag gesture). */
+    bool setTrackSends(const juce::String& trackId, float reverbSend, float delaySend);
+
+    /** Read the persisted send levels. Returns 0/0 if the track is
+     *  missing or the properties are absent. */
+    float getTrackReverbSend(const juce::String& trackId) const;
+    float getTrackDelaySend(const juce::String& trackId) const;
+
+    /** Per-track Tone (3-band fixed EQ + global low-cut). All gain
+     *  values are in dB; the setter clamps to `[-12, +12]`. `lowCut`
+     *  is a boolean engaging a fixed high-pass when true. Defaults
+     *  (`0 dB`, `lowCut=false`) are suppressed so legacy projects
+     *  round-trip byte-equivalent.
+     *
+     *  Returns `true` iff the track exists AND any stored scalar
+     *  actually changed. */
+    bool setTrackTone(const juce::String& trackId, float bassDb, float midDb, float trebleDb, bool lowCut);
+    float getTrackToneBassDb(const juce::String& trackId) const;
+    float getTrackToneMidDb(const juce::String& trackId) const;
+    float getTrackToneTrebleDb(const juce::String& trackId) const;
+    bool getTrackToneLowCut(const juce::String& trackId) const;
+
+    /** Per-track Leveler "amount" knob, range `[0, 1]`. Real
+     *  compressor wiring lands when DSP is added; for now this is
+     *  pure persistence. `amount == 0` is the suppressed default. */
+    bool setTrackLevelerAmount(const juce::String& trackId, float amount);
+    float getTrackLevelerAmount(const juce::String& trackId) const;
+
+    /** Per-clip fade-in / fade-out lengths in clip-local post-warp
+     *  milliseconds. Both are clamped to `>= 0`; the runtime clamps
+     *  `fadeIn + fadeOut <= clipDuration` so the persisted values
+     *  don't have to. Default `0/0` is suppressed. */
+    bool setClipFades(const juce::String& clipId, double fadeInMs, double fadeOutMs);
+    double getClipFadeInMs(const juce::String& clipId) const;
+    double getClipFadeOutMs(const juce::String& clipId) const;
+
+    /** Per-clip volume envelope. Stored as a single `juce::var` array
+     *  property on the clip — one atomic mutation per drag, no child
+     *  nodes (keeps default-suppression trivial). Each entry is a
+     *  `juce::DynamicObject` with `timeMs` (clip-local post-warp,
+     *  `[0, clipDuration]`) and `gain` (linear, `[0, 4]`, 1.0 ==
+     *  unity).
+     *
+     *  Points are sorted ascending by `timeMs` before persistence;
+     *  duplicate times are rejected (setter returns false). An empty
+     *  array clears the envelope and removes the property entirely. */
+    bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
+    juce::Array<juce::var> getClipEnvelope(const juce::String& clipId) const;
+
+    /** Project-shared Reverb bus parameters. All four scalars are
+     *  `[0, 1]`-clamped linear values; defaults are all zero and the
+     *  properties are suppressed when at default. Returns `true` iff
+     *  any stored value actually changed. */
+    bool setProjectReverb(float size, float decay, float tone, float mix);
+    float getProjectReverbSize() const;
+    float getProjectReverbDecay() const;
+    float getProjectReverbTone() const;
+    float getProjectReverbMix() const;
+
+    /** Project-shared Echo / Delay bus parameters. `noteValue` is one
+     *  of `"1/4" | "1/8" | "1/8T" | "1/16"` — any other string
+     *  (including whitespace variants) is rejected and the setter
+     *  returns false without mutating. `feedback`, `tone`, `mix` are
+     *  `[0, 1]` clamped. Defaults are `"1/8"` and zeros, all
+     *  suppressed. */
+    bool setProjectDelay(const juce::String& noteValue, float feedback, float tone, float mix);
+    juce::String getProjectDelayNoteValue() const;
+    float getProjectDelayFeedback() const;
+    float getProjectDelayTone() const;
+    float getProjectDelayMix() const;
+
     /** Per-track row height in CSS pixels (renderer-side display
      *  metric). 0 if unknown — the renderer falls back to its default
      *  in that case. Clamped to a sane min/max by the setter so a
@@ -736,6 +815,46 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kSemitones;
     static const juce::Identifier kCents;
     static const juce::Identifier kPendingAutoWarp;
+
+    // Phase 5 — per-track send levels to the project Reverb / Echo buses.
+    // Both default to 0 (no send) and are persisted only when non-zero.
+    static const juce::Identifier kSendReverb;
+    static const juce::Identifier kSendDelay;
+
+    // Phase 5 — per-track Tone (3-band fixed EQ + low-cut). dB values
+    // default to 0; the low-cut flag defaults to false. All four
+    // properties are suppressed at default to keep legacy projects
+    // byte-equivalent on round-trip.
+    static const juce::Identifier kToneBassDb;
+    static const juce::Identifier kToneMidDb;
+    static const juce::Identifier kToneTrebleDb;
+    static const juce::Identifier kToneLowCut;
+
+    // Phase 5 — per-track Leveler. Just the user-facing "amount" knob
+    // until the compressor DSP and Advanced controls land.
+    static const juce::Identifier kLevelerAmount;
+
+    // Phase 5 — per-clip fades + volume envelope. Fades are scalars
+    // (ms, clip-local post-warp); the envelope is a single ARRAY
+    // property of `{ timeMs, gain }` objects.
+    static const juce::Identifier kFadeInMs;
+    static const juce::Identifier kFadeOutMs;
+    static const juce::Identifier kEnvelopePoints;
+    static const juce::Identifier kEnvelopeTimeMs;
+    static const juce::Identifier kEnvelopeGain;
+
+    // Phase 5 — project-shared Reverb bus. Scalars are 0..1 linear.
+    static const juce::Identifier kReverbSize;
+    static const juce::Identifier kReverbDecay;
+    static const juce::Identifier kReverbTone;
+    static const juce::Identifier kReverbMix;
+
+    // Phase 5 — project-shared Echo / Delay bus. `noteValue` is a
+    // tempo-locked beat division string; the others are 0..1 linear.
+    static const juce::Identifier kDelayNoteValue;
+    static const juce::Identifier kDelayFeedback;
+    static const juce::Identifier kDelayTone;
+    static const juce::Identifier kDelayMix;
 };
 
 } // namespace silverdaw

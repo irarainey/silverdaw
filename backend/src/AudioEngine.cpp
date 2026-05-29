@@ -831,6 +831,22 @@ bool AudioEngine::setClipTrim(const juce::String& clipId, double startMs, double
     return true;
 }
 
+bool AudioEngine::setClipFades(const juce::String& clipId, double fadeInMs, double fadeOutMs)
+{
+    auto it = tracks.find(clipId);
+    if (it == tracks.end())
+    {
+        return false;
+    }
+    auto& track = it->second;
+    if (track->offsetSource == nullptr)
+    {
+        return false;
+    }
+    track->offsetSource->setFadesMs(juce::jmax(0.0, fadeInMs), juce::jmax(0.0, fadeOutMs));
+    return true;
+}
+
 namespace
 {
 // Build a freshly-prepared WarpProcessor with optional tempo and pitch

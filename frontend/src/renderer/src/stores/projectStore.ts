@@ -87,6 +87,11 @@ export interface Clip {
   tempoRatio?: number
   semitones?: number
   cents?: number
+  /** Linear ramp-in length applied to the audible window (post-warp, post-trim).
+   *  Clamped >= 0; undefined means "no fade" — equivalent to 0. */
+  fadeInMs?: number
+  /** Linear ramp-out length applied at the tail of the audible window. */
+  fadeOutMs?: number
   /** Bookkeeping flag: clip was dropped before its library item's BPM
    *  was detected. Cleared automatically by `LIBRARY_ITEM_ANALYSIS`
    *  (auto-flip warp on) or by any manual warp edit (user opt-out). */
@@ -1538,6 +1543,50 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * Set per-clip linear fade-in / fade-out lengths (ms). Either field
+     * may be omitted to leave it unchanged. `localOnly: true` skips the
+     * backend round-trip (used by the bridgeService inbound handler
+     * when echoing a server-side ack). Both lengths are clamped to >= 0
+     * locally; the backend re-clamps and additionally caps
+     * `fadeIn + fadeOut <= clipDuration` at the DSP layer.
+     */
+    setClipFades(
+      clipId: string,
+      patch: { fadeInMs?: number; fadeOutMs?: number },
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      let touched = false
+      if (patch.fadeInMs !== undefined) {
+        const v = Math.max(0, Number.isFinite(patch.fadeInMs) ? patch.fadeInMs : 0)
+        const next = v > 0 ? v : undefined
+        if (clip.fadeInMs !== next) {
+          clip.fadeInMs = next
+          touched = true
+        }
+      }
+      if (patch.fadeOutMs !== undefined) {
+        const v = Math.max(0, Number.isFinite(patch.fadeOutMs) ? patch.fadeOutMs : 0)
+        const next = v > 0 ? v : undefined
+        if (clip.fadeOutMs !== next) {
+          clip.fadeOutMs = next
+          touched = true
+        }
+      }
+      if (touched) this.peaksRevision++
+      if (!opts?.localOnly) {
+        sendBridge('CLIP_SET_FADES', {
+          clipId,
+          fadeInMs: patch.fadeInMs,
+          fadeOutMs: patch.fadeOutMs,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /**
      * True if placing a clip of `durationMs` length on `trackId` starting at
      * `startMs` would overlap any existing clip on that track. Used by the
      * library drag-drop flow to reject drops onto occupied space.
@@ -2534,6 +2583,10 @@ export const useProjectStore = defineStore('project', {
             existing.tempoRatio = typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined
             existing.semitones = typeof c.semitones === 'number' ? c.semitones : undefined
             existing.cents = typeof c.cents === 'number' ? c.cents : undefined
+            existing.fadeInMs =
+              typeof c.fadeInMs === 'number' && c.fadeInMs > 0 ? c.fadeInMs : undefined
+            existing.fadeOutMs =
+              typeof c.fadeOutMs === 'number' && c.fadeOutMs > 0 ? c.fadeOutMs : undefined
             existing.effectiveDurationMs =
               typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined
             existing.effectiveTempoRatio =
@@ -2571,6 +2624,10 @@ export const useProjectStore = defineStore('project', {
             tempoRatio: typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined,
             semitones: typeof c.semitones === 'number' ? c.semitones : undefined,
             cents: typeof c.cents === 'number' ? c.cents : undefined,
+            fadeInMs:
+              typeof c.fadeInMs === 'number' && c.fadeInMs > 0 ? c.fadeInMs : undefined,
+            fadeOutMs:
+              typeof c.fadeOutMs === 'number' && c.fadeOutMs > 0 ? c.fadeOutMs : undefined,
             effectiveDurationMs:
               typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined,
             effectiveTempoRatio:

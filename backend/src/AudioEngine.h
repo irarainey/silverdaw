@@ -201,6 +201,23 @@ class OffsetSource : public juce::PositionableAudioSource
         endWindowWrite();
     }
 
+    /** Per-clip fade-in / fade-out lengths in clip-local post-warp
+     *  milliseconds. Applied as a linear-ramp gain envelope inside
+     *  the audible window after the (warped or raw) audio has been
+     *  produced. Both default to 0 (no fade); the audio thread
+     *  multiplies the audible samples by the product of the two
+     *  ramps, so overlapping fades naturally taper without an
+     *  explicit clamp. RT-safe: stored as plain atomics, no lock,
+     *  recomputed to samples on each block from `cachedSampleRate`.
+     */
+    void setFadesMs(double fadeInMsValue, double fadeOutMsValue) noexcept
+    {
+        fadeInMs.store(juce::jmax(0.0, fadeInMsValue), std::memory_order_relaxed);
+        fadeOutMs.store(juce::jmax(0.0, fadeOutMsValue), std::memory_order_relaxed);
+    }
+    double getFadeInMs() const noexcept { return fadeInMs.load(std::memory_order_relaxed); }
+    double getFadeOutMs() const noexcept { return fadeOutMs.load(std::memory_order_relaxed); }
+
     static juce::int64 timelineSamplesForSourceSamples(juce::int64 sourceSamples, WarpProcessor* w) noexcept
     {
         if (sourceSamples <= 0) return sourceSamples;
@@ -338,6 +355,17 @@ class OffsetSource : public juce::PositionableAudioSource
                 lastBlockEnded = false;
                 lastAudibleEnd = audibleEnd;
             }
+
+            // Phase 5 — apply per-clip fade-in / fade-out as a linear
+            // gain ramp on the audible region. Cheap per-sample math;
+            // skipped entirely when both fades are zero so the common
+            // path pays nothing. Fades are stored in clip-local
+            // post-warp ms, so they map 1:1 onto timeline samples
+            // inside the audible window without consulting the warp
+            // ratio.
+            applyFadeGain(*audible.buffer,
+                          audible.startSample, audibleSamples,
+                          audibleStart, clipStart, dur);
         }
         else
         {
@@ -433,6 +461,66 @@ class OffsetSource : public juce::PositionableAudioSource
     }
 
   private:
+    /** Multiply samples in `[startSample, startSample+count)` of `buffer`
+     *  by the product of the fade-in and fade-out ramps. `audibleStart`
+     *  is the master-timeline position of `buffer[startSample]`,
+     *  `clipStart` is the timeline position of the first sample of the
+     *  clip, and `clipDurSamples` is the clip's audible length in
+     *  timeline samples (already warp-adjusted by the caller). All
+     *  samples outside the configured fade regions are left untouched.
+     *  Bails immediately when both fade lengths are zero so the
+     *  no-fade common case pays nothing per block.
+     */
+    void applyFadeGain(juce::AudioBuffer<float>& buffer,
+                       int startSample, int count,
+                       juce::int64 audibleStart, juce::int64 clipStart,
+                       juce::int64 clipDurSamples) noexcept
+    {
+        if (count <= 0 || clipDurSamples <= 0) return;
+        const double inMs = fadeInMs.load(std::memory_order_relaxed);
+        const double outMs = fadeOutMs.load(std::memory_order_relaxed);
+        if (inMs <= 0.0 && outMs <= 0.0) return;
+        const double sr = cachedSampleRate.load(std::memory_order_relaxed);
+        if (sr <= 0.0) return;
+
+        const juce::int64 fadeInSamples =
+            static_cast<juce::int64>(inMs * sr / 1000.0);
+        const juce::int64 fadeOutSamples =
+            static_cast<juce::int64>(outMs * sr / 1000.0);
+        if (fadeInSamples <= 0 && fadeOutSamples <= 0) return;
+
+        const int numCh = buffer.getNumChannels();
+        const juce::int64 clipEnd = clipStart + clipDurSamples;
+        for (int i = 0; i < count; ++i)
+        {
+            const juce::int64 pos = audibleStart + i;
+            const juce::int64 distFromStart = pos - clipStart;
+            const juce::int64 distFromEnd = (clipEnd - 1) - pos;
+
+            float gain = 1.0F;
+            if (fadeInSamples > 0 && distFromStart < fadeInSamples)
+            {
+                // +1 so the very first sample isn't an absolute zero —
+                // matches what a transparent click-suppressor produces.
+                gain *= static_cast<float>(
+                    static_cast<double>(distFromStart + 1) /
+                    static_cast<double>(fadeInSamples + 1));
+            }
+            if (fadeOutSamples > 0 && distFromEnd < fadeOutSamples)
+            {
+                gain *= static_cast<float>(
+                    static_cast<double>(distFromEnd + 1) /
+                    static_cast<double>(fadeOutSamples + 1));
+            }
+            if (gain >= 1.0F) continue;
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                auto* data = buffer.getWritePointer(ch);
+                data[startSample + i] *= gain;
+            }
+        }
+    }
+
     juce::PositionableAudioSource* child = nullptr;
     // Read-position invariant
     // ───────────────────────
@@ -455,6 +543,11 @@ class OffsetSource : public juce::PositionableAudioSource
     std::atomic<juce::int64> offsetSamples{0};
     std::atomic<juce::int64> inSourceSamples{0};
     std::atomic<juce::int64> clipDurationSamples{0};
+    /** Per-clip fade lengths, milliseconds (clip-local post-warp).
+     *  Linear-ramp gain envelope applied inside the audible window.
+     *  See `setFadesMs`. */
+    std::atomic<double> fadeInMs{0.0};
+    std::atomic<double> fadeOutMs{0.0};
     /** Non-owning warp pointer. nullptr means "no warp" — the normal
      *  fast path. Lifetime is managed by the owning `Track::warp`
      *  unique_ptr in AudioEngine. */
@@ -982,6 +1075,14 @@ class AudioEngine
                      std::optional<double> tempoRatio,
                      std::optional<double> semitones,
                      std::optional<double> cents);
+
+    /** Per-clip fade-in / fade-out lengths in clip-local post-warp
+     *  milliseconds. Pushes the new values onto the audio-thread-side
+     *  `OffsetSource` so the fade gain ramp takes effect on the next
+     *  block. Both arguments are clamped to `>= 0`. Returns true if
+     *  the clip existed. No prefetch rebuild needed — fades are a
+     *  pure gain multiplier, not a window change. */
+    bool setClipFades(const juce::String& clipId, double fadeInMs, double fadeOutMs);
 
     /** True if any track is currently playing. */
     bool isPlaying() const;

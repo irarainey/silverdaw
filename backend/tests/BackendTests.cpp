@@ -966,6 +966,132 @@ int main()
         require(threw, "LoudnessAnalyzer must reject non-standard sample rates");
     };
 
+    // Phase 5 — per-track send levels. Verifies default-suppression
+    // (absent property when value is the default zero), the
+    // `bool changed` return contract that lets the dispatcher skip
+    // ack/undo on no-ops, clamping to [0, 1], and that subsequent
+    // mutation-back-to-default actually *removes* the property so the
+    // legacy round-trip stays byte-equivalent.
+    auto testProjectStateTrackSendsRoundTrip = []() {
+        silverdaw::ProjectState state;
+        require(state.addTrack("t-sends"), "addTrack should accept new id");
+        const auto track = state.getTree().getChildWithProperty(
+            juce::Identifier{"id"}, juce::var("t-sends"));
+        require(track.isValid(), "track lookup should succeed");
+
+        const juce::Identifier kSendReverb{"sendReverb"};
+        const juce::Identifier kSendDelay{"sendDelay"};
+
+        require(!track.hasProperty(kSendReverb),
+                "default sendReverb should be absent on a fresh track");
+        require(!track.hasProperty(kSendDelay),
+                "default sendDelay should be absent on a fresh track");
+
+        const bool noOp = state.setTrackSends("t-sends", 0.0F, 0.0F);
+        require(!noOp, "setTrackSends 0/0 on a fresh track should be a no-op");
+        require(!track.hasProperty(kSendReverb),
+                "no-op send write must not create properties");
+
+        const bool changed = state.setTrackSends("t-sends", 0.4F, 0.7F);
+        require(changed, "non-default sends should report changed=true");
+        requireNear(state.getTrackReverbSend("t-sends"), 0.4, 0.0001,
+                    "reverbSend round-trip");
+        requireNear(state.getTrackDelaySend("t-sends"), 0.7, 0.0001,
+                    "delaySend round-trip");
+
+        const bool repeat = state.setTrackSends("t-sends", 0.4F, 0.7F);
+        require(!repeat, "repeated same-value send write should be a no-op");
+
+        const bool clamped = state.setTrackSends("t-sends", 5.0F, 0.7F);
+        require(clamped, "above-range reverb should clamp and report changed");
+        requireNear(state.getTrackReverbSend("t-sends"), 1.0, 0.0001,
+                    "reverbSend should clamp to 1.0");
+
+        const bool cleared = state.setTrackSends("t-sends", 0.0F, 0.0F);
+        require(cleared, "reset to default should report changed=true");
+        require(!track.hasProperty(kSendReverb),
+                "default-suppression: zero must remove sendReverb property");
+        require(!track.hasProperty(kSendDelay),
+                "default-suppression: zero must remove sendDelay property");
+
+        require(!state.setTrackSends("missing", 0.1F, 0.2F),
+                "setTrackSends should reject unknown trackId");
+    };
+
+    auto testProjectStateClipEnvelopeNormalisation = []() {
+        silverdaw::ProjectState state;
+        require(state.addTrack("t-env"), "addTrack should succeed");
+        require(state.addClip("t-env", "c-env", "lib-x", 0.0, 5000.0),
+                "addClip should succeed");
+
+        const auto clip = state.getTree().getChildWithProperty(
+                                       juce::Identifier{"id"}, juce::var("t-env"))
+                              .getChildWithProperty(juce::Identifier{"id"}, juce::var("c-env"));
+        require(clip.isValid(), "clip lookup should succeed");
+        const juce::Identifier kEnvelopePoints{"envelopePoints"};
+
+        require(!clip.hasProperty(kEnvelopePoints),
+                "fresh clip should not carry envelopePoints");
+        require(!state.setClipEnvelope("c-env", {}),
+                "empty envelope on a fresh clip is a no-op");
+
+        const auto makePoint = [](double timeMs, double gain) {
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty("timeMs", timeMs);
+            obj->setProperty("gain", gain);
+            return juce::var(obj);
+        };
+
+        juce::Array<juce::var> unsorted;
+        unsorted.add(makePoint(200.0, 0.5));
+        unsorted.add(makePoint(0.0, 1.0));
+        unsorted.add(makePoint(100.0, 0.75));
+        require(state.setClipEnvelope("c-env", unsorted),
+                "sort-and-store should report changed");
+
+        const auto stored = state.getClipEnvelope("c-env");
+        require(stored.size() == 3, "stored envelope should have 3 points");
+        const auto t0 = static_cast<double>(stored.getReference(0).getProperty("timeMs", juce::var{}));
+        const auto t1 = static_cast<double>(stored.getReference(1).getProperty("timeMs", juce::var{}));
+        const auto t2 = static_cast<double>(stored.getReference(2).getProperty("timeMs", juce::var{}));
+        requireNear(t0, 0.0, 0.0001, "points sorted ascending t0");
+        requireNear(t1, 100.0, 0.0001, "points sorted ascending t1");
+        requireNear(t2, 200.0, 0.0001, "points sorted ascending t2");
+
+        juce::Array<juce::var> dup;
+        dup.add(makePoint(50.0, 1.0));
+        dup.add(makePoint(50.0, 0.5));
+        require(!state.setClipEnvelope("c-env", dup),
+                "duplicate timeMs must be rejected (no mutation)");
+        require(state.getClipEnvelope("c-env").size() == 3,
+                "rejected duplicate must leave prior envelope intact");
+
+        juce::Array<juce::var> empty;
+        require(state.setClipEnvelope("c-env", empty),
+                "clearing a populated envelope should report changed");
+        require(!clip.hasProperty(kEnvelopePoints),
+                "empty envelope must remove the property entirely");
+    };
+
+    auto testProjectStateDelayNoteValueGuard = []() {
+        silverdaw::ProjectState state;
+
+        require(!state.setProjectDelay("1/8", 0.0F, 0.0F, 0.0F),
+                "default 1/8 + zeros must be a no-op");
+
+        require(state.setProjectDelay("1/4", 0.3F, 0.5F, 0.2F),
+                "valid noteValue + non-default scalars should persist");
+        requireEqual(state.getProjectDelayNoteValue(), juce::String{"1/4"},
+                     "noteValue round-trip");
+
+        require(!state.setProjectDelay(" 1/8 ", 0.3F, 0.5F, 0.2F),
+                "whitespace variants must be rejected without mutation");
+        require(!state.setProjectDelay("1/2", 0.3F, 0.5F, 0.2F),
+                "unknown noteValue must be rejected without mutation");
+        requireEqual(state.getProjectDelayNoteValue(), juce::String{"1/4"},
+                     "rejected writes must leave noteValue untouched");
+    };
+
     const std::vector<TestCase> tests{
         {"ProjectState tracks, clips, and dirty tracking", testProjectStateTracksClipsAndDirty},
         {"ProjectState view, library, markers, and replaceTree", testProjectStateViewLibraryMarkersAndReplace},
@@ -993,6 +1119,12 @@ int main()
          testLoudnessAnalyzerGainShift},
         {"LoudnessAnalyzer rejects non-standard sample rates",
          testLoudnessAnalyzerSampleRateGuard},
+        {"ProjectState per-track sends round-trip + default suppression",
+         testProjectStateTrackSendsRoundTrip},
+        {"ProjectState clip envelope sort / dedupe / clear",
+         testProjectStateClipEnvelopeNormalisation},
+        {"ProjectState project delay noteValue guard",
+         testProjectStateDelayNoteValueGuard},
     };
 
     int failed = 0;
