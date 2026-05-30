@@ -1005,6 +1005,14 @@ class AudioEngine
      */
     bool consumeTrackPeaks(const juce::String& trackId, float& outL, float& outR);
 
+    /** Publish per-track Tone EQ targets to the live bus graph. Pure
+     *  delegate to `BusGraph::setTrackTone`. `snap` collapses the
+     *  parameter smoother (use for load/reset fan-out; live UI gestures
+     *  pass false). Safe from the message thread. */
+    void setTrackTone(const juce::String& trackId,
+                      float bassDb, float midDb, float trebleDb, bool lowCut,
+                      bool snap);
+
     /** Drain every active track's post-chain peaks at once. Caller
      *  reuses a single vector across ticks for zero steady-state
      *  allocation. See `BusGraph::drainAllTrackPeaks`. */

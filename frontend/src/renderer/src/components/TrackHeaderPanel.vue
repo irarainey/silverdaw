@@ -282,6 +282,23 @@ function computeDropIndex(clientY: number, rowsHostRect: DOMRect): number {
   return layout.length
 }
 
+function onHeaderClick(track: { id: string }, ev: MouseEvent): void {
+  // GarageBand-style: clicking a track header selects it (the Track FX
+  // surface edits the selected track). Gate out clicks that land on the
+  // header's interactive controls (buttons, the name input, the volume
+  // slider, the grip / resize handles) so selection never steals a click
+  // meant for those.
+  const target = ev.target as HTMLElement | null
+  if (
+    target?.closest(
+      'button, input, a, [role="slider"], .track-grip, .track-resize-handle, .track-volume-slider'
+    )
+  ) {
+    return
+  }
+  project.selectTrack(track.id)
+}
+
 function onGripPointerDown(track: { id: string }, ev: PointerEvent): void {
   if (ev.button !== 0) return
   ev.preventDefault()
@@ -413,13 +430,15 @@ const dropIndicatorTopPx = computed<number>(() => {
           :class="{
             'opacity-50': track.muted || (project.anySoloed && !track.soloed),
             'ring-1 ring-inset ring-cyan-500/60': track.soloed,
-            'opacity-30': reorderingTrackId === track.id
+            'opacity-30': reorderingTrackId === track.id,
+            '!border-sky-400 bg-zinc-800/40': project.selectedTrackId === track.id
           }"
           :style="{
             top: ((rowLayout[i]?.top ?? 0) - RULER_HEIGHT) + 'px',
             height: (rowLayout[i]?.height ?? 0) + 'px',
             width: headerWidth + 'px'
           }"
+          @click="onHeaderClick(track, $event)"
         >
           <!-- Top row: grip + name. The grip is the dedicated drag
                          handle for reordering tracks — dragging it

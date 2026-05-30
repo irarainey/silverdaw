@@ -239,6 +239,16 @@ public:
         rt->innerMixer.addInputSource(clipTransport, false);
         ++rt->clipCount;
         clipToTrack[clipId] = rt;
+
+        // Re-apply any tone parameters captured for this track while it had
+        // no runtime (or before its first clip). Snapped so the response is
+        // steady-state immediately — matches the load / mixdown paths.
+        auto toneIt = pendingTone.find(trackId);
+        if (toneIt != pendingTone.end())
+        {
+            const auto& t = toneIt->second;
+            rt->chain.setTone(t.bassDb, t.midDb, t.trebleDb, t.lowCut, /*snap*/ true);
+        }
     }
 
     /** Detach a clip transport from its runtime. `clipTransport` MUST
@@ -276,6 +286,26 @@ public:
         }
         it->second->consumePeaks(outL, outR);
         return true;
+    }
+
+    /** Publish per-track Tone EQ targets. Stored in `pendingTone` so the
+     *  parameters survive the track having no runtime yet (clip-less track,
+     *  or a clip removed then re-added) and are re-applied on the next
+     *  `attachClip`. If a runtime already exists the targets are forwarded
+     *  to its chain immediately. Takes the same `lock` the audio thread
+     *  holds in `getNextAudioBlock`, so the chain's plain target members are
+     *  written race-free. `snap` collapses the smoother (load / mixdown /
+     *  runtime-creation paths); live UI gestures pass `snap=false`. */
+    void setTrackTone(const juce::String& trackId,
+                      float bassDb, float midDb, float trebleDb, bool lowCut,
+                      bool snap)
+    {
+        if (trackId.isEmpty()) return;
+        const juce::ScopedLock sl(lock);
+        pendingTone[trackId] = {bassDb, midDb, trebleDb, lowCut};
+        auto it = runtimes.find(trackId);
+        if (it != runtimes.end())
+            it->second->chain.setTone(bassDb, midDb, trebleDb, lowCut, snap);
     }
 
     /** Lightweight per-track peak snapshot used by the bridge
@@ -318,12 +348,25 @@ public:
             kv.second->releaseResources();
         runtimes.clear();
         clipToTrack.clear();
+        pendingTone.clear();
     }
 
 private:
     juce::CriticalSection lock;
     std::unordered_map<juce::String, std::unique_ptr<TrackRuntime>> runtimes;
     std::unordered_map<juce::String, TrackRuntime*> clipToTrack;
+
+    // Sticky per-track Tone targets, keyed by trackId. Updated on every
+    // setTrackTone and re-applied to a runtime on creation in attachClip,
+    // so EQ persists across the runtime's lazy create/destroy lifecycle.
+    struct ToneParams
+    {
+        float bassDb = 0.0F;
+        float midDb = 0.0F;
+        float trebleDb = 0.0F;
+        bool lowCut = false;
+    };
+    std::unordered_map<juce::String, ToneParams> pendingTone;
 
     juce::AudioBuffer<float> scratch;
     int preparedMax = 0;

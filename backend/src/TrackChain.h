@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ToneEq.h"
+
 #include <juce_audio_basics/juce_audio_basics.h>
 
 namespace silverdaw
@@ -11,15 +13,17 @@ namespace silverdaw
  * the same abstraction in both engines is what guarantees "what you
  * hear is what you export" — see §7.9.6 in `.ref/daw-design-plan.md`.
  *
- * **Phase 5 step 1b — empty chain.** This is a sample-equivalent
- * passthrough today. Subsequent Phase 5 steps insert real nodes in
- * the order documented in §7.9.2:
+ * **Phase 5 — Tone live.** The chain now applies the per-track Tone EQ
+ * (3-band fixed-frequency tilt + Low Cut, see `ToneEq.h`). Remaining
+ * nodes are inserted in the order documented in §7.9.2:
  *
  *   Tone (3-band EQ + Low Cut)  → Leveler (Compressor)
  *     → gain  → mute / solo gate
  *
- * The `process` call is the one signal-domain insertion point both
- * engines call per block — adding a node later means populating it
+ * Tone is the first populated node; Leveler / gain / gate still land in
+ * later steps. The `process` call is the one signal-domain insertion
+ * point both engines call per block — adding a node later means
+ * populating it
  * here, not threading new code through every call site.
  *
  * **Lifetime.** One `TrackChain` per `TrackRuntime` (live) and one
@@ -58,13 +62,27 @@ public:
      */
     void prepare(double sampleRate, int maxBlockSize, int numChannels) noexcept
     {
-        juce::ignoreUnused(sampleRate, maxBlockSize, numChannels);
+        juce::ignoreUnused(maxBlockSize);
+        tone.prepare(sampleRate, numChannels);
     }
 
     /** Wipe all DSP node state. Called on transport stop and on
      *  catastrophic seek (per §7.10 transport rules). Pause does NOT
      *  call reset — see §7.10. */
-    void reset() noexcept {}
+    void reset() noexcept { tone.reset(); }
+
+    /** Publish per-track Tone EQ targets. Called from the message thread
+     *  under the owning `BusGraph` lock (the audio thread holds the same
+     *  lock while in `process`). `snap` collapses the parameter smoother
+     *  so the new response is steady-state on the next block — used by the
+     *  project-load / mixdown-setup / runtime-creation paths so the
+     *  offline export matches live playback exactly (§7.9.6). Live UI
+     *  gestures pass `snap=false` to glide and avoid zipper noise. */
+    void setTone(float bassDb, float midDb, float trebleDb, bool lowCut,
+                 bool snap) noexcept
+    {
+        tone.setParams(bassDb, midDb, trebleDb, lowCut, snap);
+    }
 
     /** In-place per-block DSP on a stereo (or mono) block already
      *  summed from this track's clips. `startSample` and `numSamples`
@@ -72,23 +90,26 @@ public:
      *  `AudioSourceChannelInfo` convention so the live engine can
      *  forward straight through).
      *
-     *  Phase 5 step 1b: sample-equivalent no-op — every byte of the
-     *  active region is preserved. This is what makes the parity
-     *  harness (§7.9.6 conditions a–d) pass after the refactor lands. */
+     *  Applies the per-track Tone EQ in place. When all bands sit at
+     *  0 dB and Low Cut is off the EQ is sample-transparent (identity
+     *  coefficients), preserving the §7.9.6 parity guarantee for
+     *  untouched tracks. */
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
-        juce::ignoreUnused(buffer, startSample, numSamples);
+        tone.process(buffer, startSample, numSamples);
     }
 
     TrackChain(const TrackChain&) = delete;
     TrackChain& operator=(const TrackChain&) = delete;
     // Move is allowed so callers can hold `TrackChain` directly inside
     // moveable owners (e.g. `OfflineTrack` in `std::vector` in
-    // `MixdownEngine`). Future DSP nodes added here must keep their
-    // own members move-safe — biquad histories, smoothed-value state,
-    // and `juce::AudioBuffer` all are by default.
+    // `MixdownEngine`). `ToneEq` holds only plain value members (no
+    // atomics), so the defaulted move stays valid and move-safe.
     TrackChain(TrackChain&&) noexcept = default;
     TrackChain& operator=(TrackChain&&) noexcept = default;
+
+private:
+    ToneEq tone;
 };
 
 } // namespace silverdaw

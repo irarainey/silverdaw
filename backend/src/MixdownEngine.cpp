@@ -982,6 +982,13 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         const float rawEffectiveGain = project.getEffectiveTrackGain(track.id);
         track.gain = juce::jlimit(0.0F, 4.0F, rawEffectiveGain);
 
+        // Phase 5 — capture per-track Tone EQ so the offline render
+        // applies the same tilt the live engine does (§7.9.6 parity).
+        track.toneBassDb = project.getTrackToneBassDb(track.id);
+        track.toneMidDb = project.getTrackToneMidDb(track.id);
+        track.toneTrebleDb = project.getTrackToneTrebleDb(track.id);
+        track.toneLowCut = project.getTrackToneLowCut(track.id);
+
         const bool trackMuted = project.getTrackMuted(track.id);
         const bool trackSoloed = project.getTrackSoloed(track.id);
         silverdaw::log::info(
@@ -1409,6 +1416,16 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             busGraph.attachClip(cp->trackId, cp->id, cp->summingSource.get());
         }
 
+        // Phase 5 — push per-track Tone EQ onto the offline bus. Snapped
+        // so the very first rendered block is steady-state (the export
+        // must never ramp up from flat). Pushed for every track in the
+        // snapshot, including any whose tone is default (identity), which
+        // is a cheap no-op in the chain.
+        for (const auto& trackSnap : snapshot.tracks)
+        {
+            busGraph.setTrackTone(trackSnap.id, trackSnap.toneBassDb, trackSnap.toneMidDb,
+                                  trackSnap.toneTrebleDb, trackSnap.toneLowCut, /*snap*/ true);
+        }
         FinalResampler finalResampler(snapshot.projectSampleRate, options.outputSampleRate);
         if (!finalResampler.ok())
         {

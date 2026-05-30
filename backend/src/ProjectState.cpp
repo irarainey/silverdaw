@@ -2201,6 +2201,31 @@ juce::var ProjectState::tracksAsJson() const
         {
             trackObj->setProperty("heightPx", static_cast<double>(track.getProperty(kHeightPx, 0.0)));
         }
+        // Phase 5 — per-track Tone EQ. Persisted on the track node and
+        // round-tripped to the renderer so the Track FX sliders reflect
+        // the saved state after a reload (the audio engine restores tone
+        // separately in rebuildEngineFromProject). Each field is emitted
+        // only when non-default to keep the snapshot and saved file tidy,
+        // matching the renderer's default-suppression on the way back in.
+        if (track.hasProperty(kToneBassDb))
+        {
+            trackObj->setProperty("toneBassDb",
+                                  static_cast<double>(track.getProperty(kToneBassDb, 0.0)));
+        }
+        if (track.hasProperty(kToneMidDb))
+        {
+            trackObj->setProperty("toneMidDb",
+                                  static_cast<double>(track.getProperty(kToneMidDb, 0.0)));
+        }
+        if (track.hasProperty(kToneTrebleDb))
+        {
+            trackObj->setProperty("toneTrebleDb",
+                                  static_cast<double>(track.getProperty(kToneTrebleDb, 0.0)));
+        }
+        if (static_cast<bool>(track.getProperty(kToneLowCut, false)))
+        {
+            trackObj->setProperty("toneLowCut", true);
+        }
 
         juce::Array<juce::var> clipsArray;
         for (int c = 0; c < track.getNumChildren(); ++c)

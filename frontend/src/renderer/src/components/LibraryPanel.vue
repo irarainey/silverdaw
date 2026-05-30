@@ -23,6 +23,7 @@ import { effectiveTempoRatio } from '@/lib/warp'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
+import TrackFxPanel from '@/components/TrackFxPanel.vue'
 
 const props = defineProps<{
     /** Current panel height in CSS pixels (excluding the resize handle). */
@@ -35,6 +36,10 @@ const emit = defineEmits<{
 
 const library = useLibraryStore()
 const ui = useUiStore()
+
+// Which bottom-panel tab is showing. Renderer-only UI state (not persisted):
+// the panel always opens on the Library.
+const activeTab = ref<'library' | 'trackfx'>('library')
 
 // True while an OS drag is hovering over the panel — used to highlight the
 // drop zone. We track depth to handle nested dragenter/dragleave correctly.
@@ -509,15 +514,45 @@ function onResizePointerUp(): void {
       @pointerdown="onResizePointerDown"
     />
 
-    <!-- Header. -->
+    <!-- Header: [Library | Track FX] tab strip. The Import action belongs to
+         the Library tab only. -->
     <header
       class="flex h-8 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-3 text-xs uppercase tracking-wide text-zinc-400"
     >
-      <div class="flex items-center gap-2">
-        <span class="font-semibold text-zinc-200">Library</span>
-        <span class="text-zinc-500">{{ itemCount }} {{ itemCount === 1 ? 'item' : 'items' }}</span>
+      <div class="flex items-center gap-1">
+        <button
+          type="button"
+          class="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors"
+          :class="
+            activeTab === 'library'
+              ? 'bg-zinc-800 text-zinc-100'
+              : 'text-zinc-500 hover:text-zinc-300'
+          "
+          :aria-pressed="activeTab === 'library'"
+          @click="activeTab = 'library'"
+        >
+          Library
+        </button>
+        <button
+          type="button"
+          class="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors"
+          :class="
+            activeTab === 'trackfx'
+              ? 'bg-zinc-800 text-zinc-100'
+              : 'text-zinc-500 hover:text-zinc-300'
+          "
+          :aria-pressed="activeTab === 'trackfx'"
+          @click="activeTab = 'trackfx'"
+        >
+          Track FX
+        </button>
+        <span
+          v-if="activeTab === 'library'"
+          class="ml-1 text-zinc-500"
+        >{{ itemCount }} {{ itemCount === 1 ? 'item' : 'items' }}</span>
       </div>
       <button
+        v-if="activeTab === 'library'"
         type="button"
         class="rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 transition-colors hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100"
         title="Import audio files into the library"
@@ -528,7 +563,10 @@ function onResizePointerUp(): void {
     </header>
 
     <!-- Body. Tiles wrap to the available width; only vertical overflow scrolls. -->
-    <div class="library-panel-body silverdaw-scroll relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2">
+    <div
+      v-if="activeTab === 'library'"
+      class="library-panel-body silverdaw-scroll relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2"
+    >
       <div
         v-if="library.items.length === 0"
         class="flex h-full w-full items-center justify-center text-xs text-zinc-500"
@@ -809,6 +847,12 @@ function onResizePointerUp(): void {
         Drop audio files to add them to the library
       </div>
     </div>
+
+    <!-- Track FX body. Edits the selected track's effects. -->
+    <TrackFxPanel
+      v-else
+      class="min-h-0 flex-1"
+    />
     <LibraryItemInfoDialog
       :open="infoItem !== null"
       :item="infoItem"

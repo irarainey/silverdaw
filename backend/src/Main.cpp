@@ -1642,12 +1642,14 @@ void handleTrackSetSends(const juce::var& payload, silverdaw::ProjectState& proj
     bridge.broadcast("TRACK_SENDS_APPLIED", juce::var(p));
 }
 
-// Phase 5 — per-track Tone (3-band fixed EQ + lowCut). Inert DSP for
-// now: persist + ack. Defaults for any field that's absent in the
-// payload come from the existing stored value (or hard defaults if
-// nothing is stored yet) so the renderer can drive one knob without
+// Phase 5 — per-track Tone (3-band fixed EQ + lowCut). Persists, pushes
+// the live DSP targets to the AudioEngine, and acks the CANONICAL
+// clamped values re-read from ProjectState (the renderer reconciles to
+// these). Defaults for any field absent in the payload come from the
+// existing stored value so the renderer can drive one knob without
 // echoing the rest.
-void handleTrackSetTone(const juce::var& payload, silverdaw::ProjectState& projectState,
+void handleTrackSetTone(const juce::var& payload, silverdaw::AudioEngine& engine,
+                        silverdaw::ProjectState& projectState,
                         silverdaw::BridgeServer& bridge)
 {
     const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
@@ -1669,12 +1671,22 @@ void handleTrackSetTone(const juce::var& payload, silverdaw::ProjectState& proje
     const bool changed = projectState.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut);
     if (!changed) return;
 
+    // Re-read the canonical (clamped / default-suppressed) values so the
+    // engine and the renderer both reconcile to the persisted truth.
+    const float canonBass = projectState.getTrackToneBassDb(trackId);
+    const float canonMid = projectState.getTrackToneMidDb(trackId);
+    const float canonTreble = projectState.getTrackToneTrebleDb(trackId);
+    const bool canonLowCut = projectState.getTrackToneLowCut(trackId);
+
+    // Live UI gesture → glide (snap=false) to avoid zipper noise.
+    engine.setTrackTone(trackId, canonBass, canonMid, canonTreble, canonLowCut, /*snap*/ false);
+
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
-    p->setProperty("bassDb", bassDb);
-    p->setProperty("midDb", midDb);
-    p->setProperty("trebleDb", trebleDb);
-    p->setProperty("lowCut", lowCut);
+    p->setProperty("bassDb", canonBass);
+    p->setProperty("midDb", canonMid);
+    p->setProperty("trebleDb", canonTreble);
+    p->setProperty("lowCut", canonLowCut);
     p->setProperty("ok", true);
     bridge.broadcast("TRACK_TONE_APPLIED", juce::var(p));
 }
@@ -2000,6 +2012,20 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
         if (!track.hasType(juce::Identifier{"TRACK"}))
         {
             continue;
+        }
+        // Phase 5 — restore persisted per-track Tone EQ. Pushed once per
+        // track (independent of clips) and snapped so the response is
+        // steady-state immediately, matching offline export. Only push
+        // when non-default so a freshly-loaded flat project doesn't
+        // hammer the audio thread with identity updates.
+        {
+            const auto toneTrackId = track.getProperty("id").toString();
+            const float tBass = projectState.getTrackToneBassDb(toneTrackId);
+            const float tMid = projectState.getTrackToneMidDb(toneTrackId);
+            const float tTreble = projectState.getTrackToneTrebleDb(toneTrackId);
+            const bool tLowCut = projectState.getTrackToneLowCut(toneTrackId);
+            if (tBass != 0.0F || tMid != 0.0F || tTreble != 0.0F || tLowCut)
+                engine.setTrackTone(toneTrackId, tBass, tMid, tTreble, tLowCut, /*snap*/ true);
         }
         for (int c = 0; c < track.getNumChildren(); ++c)
         {
@@ -3488,7 +3514,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::debug("bridge", "recv TRACK_SET_TONE trackId=" +
                                             payload.getProperty("trackId", "").toString());
-        handleTrackSetTone(payload, projectState, bridge);
+        handleTrackSetTone(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_SET_LEVELER")
     {

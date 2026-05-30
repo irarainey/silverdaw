@@ -1092,6 +1092,63 @@ int main()
                      "rejected writes must leave noteValue untouched");
     };
 
+    auto testProjectStateTrackToneJsonRoundTrip = []() {
+        silverdaw::ProjectState state;
+        require(state.addTrack("t-tone"), "addTrack should succeed");
+
+        const auto findTrackJson = [](const juce::var& tracks,
+                                      const juce::String& id) -> juce::var {
+            if (auto* arr = tracks.getArray())
+            {
+                for (const auto& tv : *arr)
+                {
+                    if (tv.getProperty("id", {}).toString() == id) return tv;
+                }
+            }
+            return {};
+        };
+
+        // Fresh track: tone fields are at their defaults and must be
+        // absent from the snapshot so saved files / acks stay tidy.
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-tone");
+            require(json.isObject(), "fresh track should appear in tracksAsJson");
+            require(!json.hasProperty("toneBassDb"), "default bass must be omitted");
+            require(!json.hasProperty("toneMidDb"), "default mid must be omitted");
+            require(!json.hasProperty("toneTrebleDb"), "default treble must be omitted");
+            require(!json.hasProperty("toneLowCut"), "default lowCut must be omitted");
+        }
+
+        // Set a non-default tone and confirm every field round-trips
+        // through the snapshot the renderer reads on PROJECT_STATE.
+        require(state.setTrackTone("t-tone", 3.5F, -2.0F, 6.0F, true),
+                "non-default tone should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-tone");
+            require(json.isObject(), "track should appear in tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("toneBassDb", 0.0)), 3.5, 0.0001,
+                        "bass should round-trip through tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("toneMidDb", 0.0)), -2.0, 0.0001,
+                        "mid should round-trip through tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("toneTrebleDb", 0.0)), 6.0, 0.0001,
+                        "treble should round-trip through tracksAsJson");
+            require(static_cast<bool>(json.getProperty("toneLowCut", false)),
+                    "lowCut=true should round-trip through tracksAsJson");
+        }
+
+        // Reset to defaults: the snapshot must drop the fields again.
+        require(state.setTrackTone("t-tone", 0.0F, 0.0F, 0.0F, false),
+                "reset to default should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-tone");
+            require(json.isObject(), "track should still appear in tracksAsJson");
+            require(!json.hasProperty("toneBassDb"), "reset bass must be omitted");
+            require(!json.hasProperty("toneMidDb"), "reset mid must be omitted");
+            require(!json.hasProperty("toneTrebleDb"), "reset treble must be omitted");
+            require(!json.hasProperty("toneLowCut"), "reset lowCut must be omitted");
+        }
+    };
+
     const std::vector<TestCase> tests{
         {"ProjectState tracks, clips, and dirty tracking", testProjectStateTracksClipsAndDirty},
         {"ProjectState view, library, markers, and replaceTree", testProjectStateViewLibraryMarkersAndReplace},
@@ -1125,6 +1182,8 @@ int main()
          testProjectStateClipEnvelopeNormalisation},
         {"ProjectState project delay noteValue guard",
          testProjectStateDelayNoteValueGuard},
+        {"ProjectState per-track tone round-trips through tracksAsJson",
+         testProjectStateTrackToneJsonRoundTrip},
     };
 
     int failed = 0;

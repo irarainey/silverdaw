@@ -144,6 +144,17 @@ export interface Track {
    * row height from the timeline constants module.
    */
   heightPx?: number
+  /**
+   * Per-track Tone EQ — fixed 3-band shelving/peak tilt + a one-button
+   * low-cut. dB fields are in `[-12, +12]`; 0 = flat. All optional and
+   * suppressed-when-default so a flat track carries no tone state (and a
+   * legacy project hydrates cleanly). Mirrors the backend ValueTree flat
+   * properties `toneBassDb` / `toneMidDb` / `toneTrebleDb` / `toneLowCut`.
+   */
+  toneBassDb?: number
+  toneMidDb?: number
+  toneTrebleDb?: number
+  toneLowCut?: boolean
 }
 
 /** Default visible length of a new empty track — 10 minutes. */
@@ -1587,9 +1598,55 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * True if placing a clip of `durationMs` length on `trackId` starting at
-     * `startMs` would overlap any existing clip on that track. Used by the
-     * library drag-drop flow to reject drops onto occupied space.
+     * Update a track's Tone EQ. Mirrors `setClipFades`: applies the partial
+     * patch locally (default-suppressing 0 dB / off back to `undefined`)
+     * then forwards to the backend unless `opts.localOnly` (used by the
+     * `TRACK_TONE_APPLIED` ack to reconcile to canonical values without
+     * echoing the gesture back). `gestureId` / `gestureEnd` drive undo
+     * coalescing for slider drags.
+     */
+    setTrackTone(
+      trackId: string,
+      patch: { bassDb?: number; midDb?: number; trebleDb?: number; lowCut?: boolean },
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const clampDb = (v: number): number =>
+        Math.max(-12, Math.min(12, Number.isFinite(v) ? v : 0))
+      if (patch.bassDb !== undefined) {
+        const v = clampDb(patch.bassDb)
+        track.toneBassDb = v !== 0 ? v : undefined
+      }
+      if (patch.midDb !== undefined) {
+        const v = clampDb(patch.midDb)
+        track.toneMidDb = v !== 0 ? v : undefined
+      }
+      if (patch.trebleDb !== undefined) {
+        const v = clampDb(patch.trebleDb)
+        track.toneTrebleDb = v !== 0 ? v : undefined
+      }
+      if (patch.lowCut !== undefined) {
+        track.toneLowCut = patch.lowCut ? true : undefined
+      }
+      if (!opts?.localOnly) {
+        sendBridge('TRACK_SET_TONE', {
+          trackId,
+          bassDb: patch.bassDb,
+          midDb: patch.midDb,
+          trebleDb: patch.trebleDb,
+          lowCut: patch.lowCut,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /**
+     * Returns true if a prospective clip placed at `startMs` spanning
+     * `durationMs` ms would overlap any existing clip on the track. Used
+     * by the timeline placement / library drag-drop flow to reject drops
+     * onto occupied space.
      *
      * `durationMs` is the **timeline footprint** of the prospective new
      * clip — i.e. the effective (post-warp) length the caller expects
@@ -2535,7 +2592,12 @@ export const useProjectStore = defineStore('project', {
             volume: Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain)),
             colorIndex: index % TRACK_PALETTE.length,
             lengthMs: DEFAULT_TRACK_LENGTH_MS,
-            heightPx: typeof t.heightPx === 'number' && t.heightPx > 0 ? t.heightPx : undefined
+            heightPx: typeof t.heightPx === 'number' && t.heightPx > 0 ? t.heightPx : undefined,
+            toneBassDb: typeof t.toneBassDb === 'number' && t.toneBassDb !== 0 ? t.toneBassDb : undefined,
+            toneMidDb: typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined,
+            toneTrebleDb:
+              typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined,
+            toneLowCut: t.toneLowCut === true ? true : undefined
           }
           this.tracks.push(track)
         } else {
@@ -2553,6 +2615,14 @@ export const useProjectStore = defineStore('project', {
           track.soloed = t.soloed === true
           // Volume too — backend is authoritative.
           track.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain))
+          // Tone — backend is authoritative; default-suppress to undefined.
+          track.toneBassDb =
+            typeof t.toneBassDb === 'number' && t.toneBassDb !== 0 ? t.toneBassDb : undefined
+          track.toneMidDb =
+            typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined
+          track.toneTrebleDb =
+            typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined
+          track.toneLowCut = t.toneLowCut === true ? true : undefined
         }
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)

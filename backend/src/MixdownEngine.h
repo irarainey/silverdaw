@@ -64,6 +64,12 @@ struct MixdownSnapshot
     {
         juce::String id;
         float gain{1.0F};
+        // Phase 5 — per-track Tone EQ, captured on the message thread so
+        // the offline render applies the same tilt the live engine does.
+        float toneBassDb{0.0F};
+        float toneMidDb{0.0F};
+        float toneTrebleDb{0.0F};
+        bool toneLowCut{false};
         std::vector<ClipSnapshot> clips;
     };
 

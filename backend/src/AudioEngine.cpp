@@ -670,6 +670,13 @@ bool AudioEngine::consumeTrackPeaks(const juce::String& trackId, float& outL, fl
     return busGraph.consumeTrackPeaks(trackId, outL, outR);
 }
 
+void AudioEngine::setTrackTone(const juce::String& trackId,
+                               float bassDb, float midDb, float trebleDb, bool lowCut,
+                               bool snap)
+{
+    busGraph.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut, snap);
+}
+
 void AudioEngine::drainAllTrackPeaks(std::vector<BusGraph::TrackPeakSnapshot>& out)
 {
     busGraph.drainAllTrackPeaks(out);

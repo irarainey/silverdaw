@@ -778,8 +778,27 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'TRACK_TONE_APPLIED': {
+      // Reconcile to the backend-canonical (clamped / default-suppressed)
+      // Tone values without echoing the gesture back to the engine.
+      if (!msg.payload.ok) {
+        log.warn('bridge', `TRACK_TONE_APPLIED ok=false for ${msg.payload.trackId}`)
+        break
+      }
+      useProjectStore().setTrackTone(
+        msg.payload.trackId,
+        {
+          bassDb: msg.payload.bassDb,
+          midDb: msg.payload.midDb,
+          trebleDb: msg.payload.trebleDb,
+          lowCut: msg.payload.lowCut
+        },
+        { localOnly: true }
+      )
+      break
+    }
+
     case 'TRACK_SENDS_APPLIED':
-    case 'TRACK_TONE_APPLIED':
     case 'TRACK_LEVELER_APPLIED':
     case 'CLIP_ENVELOPE_APPLIED':
     case 'PROJECT_REVERB_APPLIED':
