@@ -147,9 +147,14 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       // live device, so whatever the user clicked has either landed
       // (we don't care which) or been superseded.
       this.pendingSelection = null
-      if (payload.fellBackToDefault) {
+      // The backend sends this flag once per startup fallback, but a few
+      // AUDIO_DEVICES_LIST messages can still arrive close together (cached
+      // snapshot then full scan). Surface the notice at most once, and as a
+      // neutral info — the app has gracefully fallen back to the system
+      // default, which isn't an error.
+      if (payload.fellBackToDefault && !this.startupFellBack) {
         this.startupFellBack = true
-        useNotificationsStore().pushError(
+        useNotificationsStore().pushInfo(
           'Saved audio output device was not available — using system default.'
         )
       }

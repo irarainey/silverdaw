@@ -446,6 +446,16 @@ function reconcileProjectAudioOutput(): void {
     return
   }
 
+  // A switch to the saved device is already in flight — e.g. the user
+  // just picked it on the transport bar, which both issues the live
+  // switch and pins it to the project (firing this watch). Don't
+  // re-issue the switch; doing so would also overwrite the in-flight
+  // user-preference persistence intent.
+  const pending = audioDevices.pendingSelection
+  if (pending && pending.typeName === savedType && pending.deviceName === savedDevice) {
+    return
+  }
+
   const available = audioDevices.flatDevices.some(
     (d) => d.typeName === savedType && d.deviceName === savedDevice
   )

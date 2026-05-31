@@ -1276,6 +1276,15 @@ class AudioEngine
         return devicesSnapshot;
     }
 
+    /** Clear the one-shot "saved device unavailable" flag. Called once the
+     *  fallback notice has been surfaced to the renderer so it isn't
+     *  re-broadcast by later device-list updates (the deferred startup scan,
+     *  USB hotplug, etc.). */
+    void clearFellBackToDefault() noexcept
+    {
+        devicesSnapshot.fellBackToDefault = false;
+    }
+
     /** Force a rescan of every device type and refresh the cached
      *  snapshot. Use sparingly — `scanForDevices()` is the slow step. */
     void refreshAudioDevices();

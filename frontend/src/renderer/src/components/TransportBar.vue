@@ -118,6 +118,11 @@ function toggleAudioMenu(): void {
 
 function pickDevice(typeName: string | null, deviceName: string | null): void {
   audioDevices.selectDevice(typeName, deviceName)
+  // Pin the choice to the open project so it travels with the file and
+  // marks the project dirty (but isn't auto-saved). Picking "System
+  // default" (both null) clears the pin, so a previously-saved device
+  // that's missing on this machine won't be re-requested next launch.
+  project.setProjectAudioOutput(typeName, deviceName)
   audioMenuOpen.value = false
 }
 

@@ -2374,6 +2374,27 @@ juce::var buildAudioDevicesListEnvelope(const silverdaw::AudioEngine::AudioDevic
     return juce::var(obj);
 }
 
+// AUDIO_DEVICES_LIST broadcasts come from two kinds of source:
+//   - Direct responses to AUDIO_DEVICES_REQUEST (and the deferred
+//     first-scan completion). Always sent: the renderer is waiting for
+//     an answer, including on reconnect.
+//   - Spontaneous `audioDeviceListChanged` notifications. Deduped against
+//     the last list we sent, so the change message that our own deferred
+//     startup scan triggers — JUCE dispatches it asynchronously, after
+//     the deferred response already shipped the identical list — doesn't
+//     reach the renderer a redundant second time.
+void broadcastAudioDevicesList(silverdaw::BridgeServer& bridge, const juce::var& envelope, bool dedupe)
+{
+    static juce::String lastSentJson;
+    const auto json = juce::JSON::toString(envelope, true);
+    if (dedupe && json == lastSentJson)
+    {
+        return;
+    }
+    lastSentJson = json;
+    bridge.broadcast("AUDIO_DEVICES_LIST", envelope);
+}
+
 void handleAudioDevicesRequest(const juce::var& payload, silverdaw::AudioEngine& engine,
                                silverdaw::BridgeServer& bridge)
 {
@@ -2395,14 +2416,20 @@ void handleAudioDevicesRequest(const juce::var& payload, silverdaw::AudioEngine&
     if (refresh)
     {
         engine.refreshAudioDevices();
-        bridge.broadcast("AUDIO_DEVICES_LIST", buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()));
+        broadcastAudioDevicesList(bridge, buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()),
+                                  /*dedupe*/ false);
         return;
     }
 
     const bool needsFirstScan = !engine.hasScannedAllDevices();
-    bridge.broadcast("AUDIO_DEVICES_LIST",
-                     buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot(),
-                                                   /*scanInProgress*/ needsFirstScan));
+    broadcastAudioDevicesList(bridge,
+                              buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot(),
+                                                            /*scanInProgress*/ needsFirstScan),
+                              /*dedupe*/ false);
+    // The fallback notice is one-shot: surface it on this first response,
+    // then clear it so the deferred scan below (and later hotplug
+    // broadcasts) don't re-warn about the same startup fallback.
+    engine.clearFellBackToDefault();
 
     if (needsFirstScan)
     {
@@ -2410,9 +2437,9 @@ void handleAudioDevicesRequest(const juce::var& payload, silverdaw::AudioEngine&
             [enginePtr = &engine, bridgePtr = &bridge]()
             {
                 enginePtr->refreshAudioDevices();
-                bridgePtr->broadcast(
-                    "AUDIO_DEVICES_LIST",
-                    buildAudioDevicesListEnvelope(enginePtr->getAudioDevicesSnapshot()));
+                broadcastAudioDevicesList(
+                    *bridgePtr, buildAudioDevicesListEnvelope(enginePtr->getAudioDevicesSnapshot()),
+                    /*dedupe*/ false);
             });
     }
 }
@@ -4274,8 +4301,9 @@ int runBackend(int argc, char* argv[])
     engine.setDeviceListChangedCallback(
         [&bridge, &engine]()
         {
-            bridge.broadcast("AUDIO_DEVICES_LIST",
-                             buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()));
+            broadcastAudioDevicesList(bridge,
+                                      buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()),
+                                      /*dedupe*/ true);
         });
 
     PlayheadEmitter emitter(engine, bridge);
