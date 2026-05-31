@@ -406,53 +406,61 @@ function channelLabel(count: number): string {
                 </dd>
               </template>
             </dl>
-            <!-- Sample / music classification (audio-file items only).
-                 Saved clips inherit from their source; toggling the
-                 source flows through to all derived saved clips. -->
-            <div
-              v-if="item.kind === 'audio-file'"
-              class="mt-4 rounded border border-zinc-800 bg-zinc-950/60 p-3"
-            >
-              <div class="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">
-                Treat as
+          </section>
+
+          <!-- Sample / music classification (audio-file items only).
+               Saved clips inherit from their source; toggling the
+               source flows through to all derived saved clips.
+               Full dialog width so the three options spread evenly. -->
+          <section
+            v-if="item.kind === 'audio-file'"
+            class="mt-5"
+          >
+            <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Treat as
+            </h3>
+            <div class="rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
+              <div class="flex gap-1">
+                <button
+                  type="button"
+                  class="flex flex-1 items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs transition-colors"
+                  :class="classificationMode === 'auto'
+                    ? 'border-sky-500 bg-sky-600/30 text-zinc-100'
+                    : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                  "
+                  :aria-pressed="classificationMode === 'auto'"
+                  @click="setClassification('auto')"
+                >
+                  Auto
+                  <span class="opacity-70">({{ item.lowConfidence ? 'sample' : 'music' }})</span>
+                </button>
+                <button
+                  type="button"
+                  class="flex-1 rounded border px-2 py-1.5 text-xs transition-colors"
+                  :class="classificationMode === 'music'
+                    ? 'border-sky-500 bg-sky-600/30 text-zinc-100'
+                    : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                  "
+                  :aria-pressed="classificationMode === 'music'"
+                  @click="setClassification('music')"
+                >
+                  Music
+                </button>
+                <button
+                  type="button"
+                  class="flex-1 rounded border px-2 py-1.5 text-xs transition-colors"
+                  :class="classificationMode === 'sample'
+                    ? 'border-sky-500 bg-sky-600/30 text-zinc-100'
+                    : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                  "
+                  :aria-pressed="classificationMode === 'sample'"
+                  @click="setClassification('sample')"
+                >
+                  Sample
+                </button>
               </div>
-              <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                <label class="flex cursor-pointer items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="library-item-classification"
-                    :value="'auto'"
-                    :checked="classificationMode === 'auto'"
-                    class="accent-cyan-500"
-                    @change="setClassification('auto')"
-                  >
-                  <span>Auto<span class="ml-1 text-zinc-500">({{ item.lowConfidence ? 'sample' : 'music' }})</span></span>
-                </label>
-                <label class="flex cursor-pointer items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="library-item-classification"
-                    :value="'music'"
-                    :checked="classificationMode === 'music'"
-                    class="accent-cyan-500"
-                    @change="setClassification('music')"
-                  >
-                  <span>Music</span>
-                </label>
-                <label class="flex cursor-pointer items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="library-item-classification"
-                    :value="'sample'"
-                    :checked="classificationMode === 'sample'"
-                    class="accent-cyan-500"
-                    @change="setClassification('sample')"
-                  >
-                  <span>Sample</span>
-                </label>
-              </div>
-              <p class="mt-2 text-[10px] leading-snug text-zinc-500">
-                Samples hide tempo / key / beat markers and skip auto-warp on drop. Warp and Pitch dialogs still work manually so you can speed up, slow down, or pitch-shift the clip.
+              <p class="mt-2 truncate text-[10px] text-zinc-500">
+                Samples hide tempo / key / beat markers and skip auto-warp on drop. Warp and Pitch dialogs still work manually.
               </p>
             </div>
           </section>
