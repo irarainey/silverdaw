@@ -69,14 +69,6 @@ application is heading — they are **planned directions, not yet available**, a
 are not part of the current feature set. See the
 [Development Plan](docs/development-plan.md) for detail and status.
 
-- **Recording.** A deliberately simple way to record live input — vocals, an
-  instrument, or any audio device — straight onto a clip, without turning into a
-  full recording studio.
-- **MIDI devices and scratch authoring.** Support for external MIDI controllers
-  and DJ decks, including a studio tool for crafting reusable "scratch" clips to
-  drop into a mix (not a live-performance mode).
-- **Sequence tracks.** Step-sequencing of samples and external or virtual
-  instruments — such as a drum machine — alongside ordinary audio tracks.
 - **Stem separation.** Split a track into parts, such as vocals and
   instrumental, to remix and recombine.
 - **Built-in effects and transitions.** A small, well-explained set of mixing
@@ -84,11 +76,15 @@ are not part of the current feature set. See the
   mix.
 - **More editing power.** Extra clip actions such as reverse, and manual
   correction of the detected beat grid.
-- **Smarter matching.** Harmonic and key-compatibility hints with one-click
-  tempo and key matching between clips.
-- **Richer library.** Tags, search, list views, and connections to online
-  sample and clip banks.
+- **MIDI devices and scratch authoring.** Support for external MIDI controllers
+  and DJ decks, including a studio tool for crafting reusable "scratch" clips to
+  drop into a mix (not a live-performance mode).
+- **Sequence tracks.** Step-sequencing of samples and external or virtual
+  instruments — such as a drum machine — alongside ordinary audio tracks.
 - **Plugin support.** Hosting third-party audio plugins on a track.
+- **Recording.** A deliberately simple way to record live input — vocals, an
+  instrument, or any audio device — straight onto a clip, without turning into a
+  full recording studio.
 - **Sharing and distribution.** Easier export to online platforms, a Windows
   Store build, and an online user guide.
 
