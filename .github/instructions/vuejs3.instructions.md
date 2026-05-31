@@ -15,6 +15,7 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 - Modern build tooling (Vite recommended)
 - Pinia for application state management
 - Official Vue style guide and best practices
+- **Package manager: pnpm only.** Always use `pnpm` for installing dependencies and running scripts (`pnpm install`, `pnpm run <script>`, `pnpm dlx`). Never use `npm` (or `yarn`) in this repo — the lockfile is `pnpm-lock.yaml` and mixing managers corrupts it.
 
 ## Development Standards
 

@@ -49,7 +49,7 @@ Where these conflict with each other, the in-repo instruction files win and the 
 5. **Types & contracts** — strengthen types end-to-end. Backend: avoid weak `juce::var.getProperty(...)` chains without validation; document the shape. Frontend: discriminated unions for bridge messages and player events; `Readonly<T>` for inputs; remove unsafe casts. Match preload `contextBridge` surface to renderer ambient types.
 6. **Testing** — assess unit / integration coverage gaps. Propose new tests: pure helpers (e.g. peak decoding, metadata normalisation), Pinia store actions, bridge message dispatch, AudioEngine state transitions, ipc handlers. Identify flakiness risks (timers, async ordering, file I/O without isolation).
 7. **Performance** — algorithmic hotspots, redundant work, N+1 IPC round-trips, unnecessary reactivity, PixiJS object churn, large bundle imports, audio-thread allocations, juce::String copies, JSON re-parses. Recommend streaming, batching, memoisation, `shallowRef`, `v-memo`, `defineAsyncComponent` where safe.
-8. **Security** — Electron hardening (`contextIsolation`, `nodeIntegration: false`, `sandbox`, CSP, `webSecurity`), IPC input validation, preload surface least-privilege, file-path traversal in audio import, untrusted `data:` URIs in covers, dependency audit (`npm audit`, vendored C++ libs), unsafe `eval`/`new Function`/`v-html`, unbounded buffers, integer overflow in sample-count math, port 8765 exposure (loopback-only?).
+8. **Security** — Electron hardening (`contextIsolation`, `nodeIntegration: false`, `sandbox`, CSP, `webSecurity`), IPC input validation, preload surface least-privilege, file-path traversal in audio import, untrusted `data:` URIs in covers, dependency audit (`pnpm audit`, vendored C++ libs), unsafe `eval`/`new Function`/`v-html`, unbounded buffers, integer overflow in sample-count math, port 8765 exposure (loopback-only?).
 9. **Duplication & dead code** — duplicated dispatch branches, mirrored helpers across stores, orphan preload methods (e.g. `showStatusDialog`), unused imports / vars / props / emits / store actions, unreachable branches, redundant CMake entries.
 10. **Observability & operations** — logging consistency (`std::cerr` vs `juce::Logger` vs `console.log` vs a dedicated logger), absence of contextual IDs, missing structured events for bridge errors, lifecycle on disconnect, graceful shutdown, crash recovery, preferences-file integrity.
 11. **Documentation & DX** — README accuracy, install/build/run instructions match `tasks.json`, comment intent (the _why_), public-API doc-comments (JSDoc/TSDoc on exported TS, Doxygen-style on public C++ headers), CONTRIBUTING / AGENTS guidance, `.vscode/tasks.json` discoverability, ergonomics of the dev shell wrapper.
@@ -100,7 +100,7 @@ In the final report, include a concise **Rubber-duck validation** note covering:
 - Testing adequacy & gaps
 - Observability (logs, structured events, lifecycle)
 - Tooling & config hygiene (`.clang-tidy`, `.clangd`, eslint, tsconfig, CMake, scripts, tasks)
-- Packaging / build reproducibility (`scripts/Invoke-DevShell.ps1`, CMake presets, pnpm/npm lockfile)
+- Packaging / build reproducibility (`scripts/Invoke-DevShell.ps1`, CMake presets, pnpm lockfile)
 - Documentation & DX
 
 ## Output requirements (produce all of the following)
@@ -133,7 +133,7 @@ In the final report, include a concise **Rubber-duck validation** note covering:
 
 - **C++**: `clang-tidy` via `scripts/Invoke-ClangTidy.ps1` (mirrors `.clangd` checks); `clang-format` via `.clang-format`; static analysis with MSVC `/analyze` or `cppcheck`; sanitizers (`-fsanitize=address,undefined`) on a Clang/Linux CI leg; tests with Catch2 or GoogleTest.
 - **TS/Vue**: `eslint` + `vue-eslint-parser` + `plugin:vue/vue3-recommended`; `vue-tsc --noEmit` for typecheck; `prettier` if adopted; runtime validation with `zod` for IPC/bridge payloads; tests with Vitest + Vue Test Utils + Playwright for Electron e2e.
-- **Cross-cutting**: pre-commit hook running lint+typecheck+clang-tidy on staged files; coverage gate in CI; dependency audit (`npm audit`, `pip-audit`-style for any vendored deps); SBOM via CycloneDX if shipping.
+- **Cross-cutting**: pre-commit hook running lint+typecheck+clang-tidy on staged files; coverage gate in CI; dependency audit (`pnpm audit`, `pip-audit`-style for any vendored deps); SBOM via CycloneDX if shipping.
 - If any tool is not installed, emulate its checks conceptually and proceed.
 
 ## Guardrails

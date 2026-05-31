@@ -29,18 +29,18 @@ export interface Clip {
    *  for cheap rendering lookups; PROJECT_STATE refreshes them when
    *  the library item is relinked. */
   libraryItemId: string
-  /** Cached source-file path (== library item filePath at the time
-   *  this clip was created). Read-only convenience for the drawing
-   *  / drag / save code paths that don't want a library lookup on
-   *  every access. */
-  readonly filePath: string
+  /** Cached source-file path (== library item filePath). Mutable
+   *  because PROJECT_STATE refreshes it when the library item is
+   *  relinked; kept as a convenience for the drawing / drag / save
+   *  code paths that don't want a library lookup on every access. */
+  filePath: string
   /**
    * Cached backend-loadable path (== library item playbackFilePath).
    * Used to match `CLIP_ADDED` / `CLIP_ADD_FAILED` acks back to the
-   * originating clip in the renderer.
+   * originating clip in the renderer. Refreshed on relink.
    */
-  readonly playbackFilePath?: string
-  readonly fileName: string
+  playbackFilePath?: string
+  fileName: string
   /** Offset from the timeline origin (ms). Mutable so clips can be dragged. */
   startMs: number
   /** Where inside the source file this clip begins reading (the
@@ -2473,7 +2473,22 @@ export const useProjectStore = defineStore('project', {
       // these adds back as LIBRARY_ADD envelopes.
       if (snapshot.library) {
         for (const item of snapshot.library) {
-          if (library.items.some((i) => i.id === item.id)) continue
+          const already = library.byId[item.id]
+          if (already) {
+            // The item was hydrated on an earlier snapshot. Refresh the
+            // mutable source-binding fields so a relink (which re-points
+            // filePath and clears the missing-source flag) is reflected
+            // in the renderer — the hydrate path below only runs once per
+            // item id, so without this an existing item would keep its
+            // stale path / `unresolved` after relinking.
+            already.filePath = item.filePath
+            already.fileName = item.fileName?.trim()
+              ? item.fileName
+              : filePathToBasename(item.filePath)
+            already.playbackFilePath = item.filePath
+            already.unresolved = item.unresolved === true ? true : undefined
+            continue
+          }
           const libId = library.addItem({
             id: item.id,
             kind: item.kind ?? 'audio-file',
@@ -2485,6 +2500,7 @@ export const useProjectStore = defineStore('project', {
             channelCount: Math.max(0, item.channelCount ?? 0),
             peaks: new Float32Array(0),
             key: item.key,
+            unresolved: item.unresolved === true,
             // The decoded-WAV cache is a backend-internal
             // optimisation. The renderer always sends the source
             // `filePath` in CLIP_ADD; the backend swaps in its
@@ -2646,6 +2662,15 @@ export const useProjectStore = defineStore('project', {
             existing.inMs = Math.max(0, c.inMs ?? 0)
             existing.durationMs = Math.max(0, c.durationMs)
             existing.unresolved = c.unresolved === true
+            // Keep the clip's cached source binding in sync with its
+            // library item. Relinking changes the library item's path,
+            // and the clip derives its path from there — without this,
+            // an already-drawn clip would keep the stale path/name after
+            // a relink (and any path-keyed UI, e.g. the Relink dialog,
+            // would group it under the wrong, missing path).
+            existing.filePath = clipFilePath
+            existing.fileName = filePathToDisplayName(clipFilePath)
+            existing.playbackFilePath = libItem.playbackFilePath
             existing.colorIndex = typeof c.colorIndex === 'number' ? c.colorIndex : undefined
             existing.name = typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined
             existing.warpEnabled = typeof c.warpEnabled === 'boolean' ? c.warpEnabled : undefined

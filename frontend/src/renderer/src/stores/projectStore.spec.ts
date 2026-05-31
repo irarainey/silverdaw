@@ -409,6 +409,113 @@ describe('projectStore', () => {
     expect(sendMock).toHaveBeenCalledWith('WAVEFORM_REQUEST', { clipId: 'c1' })
   })
 
+  it('relinks every library item sharing a missing source and refreshes placed clips', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+
+    const missing = 'C:\\old\\song.wav'
+    const found = 'C:\\new\\song.wav'
+
+    // Initial load: an audio-file source AND a saved clip derived from it
+    // both reference the same missing file, but ONLY the saved clip is
+    // placed on the timeline. The audio-file source has no clip of its own.
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\mix.silverdaw',
+      name: 'Mix',
+      reset: true,
+      library: [
+        {
+          id: 'l1',
+          kind: 'audio-file',
+          filePath: missing,
+          fileName: 'song.wav',
+          durationMs: 4_000,
+          sampleRate: 44_100,
+          channelCount: 2,
+          unresolved: true
+        },
+        {
+          id: 'l2',
+          kind: 'saved-clip',
+          name: 'Chop',
+          filePath: missing,
+          fileName: 'song.wav',
+          durationMs: 1_000,
+          sourceItemId: 'l1',
+          sourceClipId: 'c1',
+          sourceInMs: 0,
+          sourceDurationMs: 1_000,
+          unresolved: true
+        }
+      ],
+      tracks: [
+        {
+          id: 't1',
+          name: 'T1',
+          clips: [
+            { id: 'c1', libraryItemId: 'l2', offsetMs: 0, inMs: 0, durationMs: 1_000, unresolved: true }
+          ]
+        }
+      ]
+    })
+
+    // Both items — including the unplaced audio-file source — are flagged
+    // unresolved, so the Relink dialog can fan out to both.
+    expect(library.byId.l1?.unresolved).toBe(true)
+    expect(library.byId.l2?.unresolved).toBe(true)
+    expect(project.clips.c1?.filePath).toBe(missing)
+    expect(project.clips.c1?.unresolved).toBe(true)
+
+    // Relink rebroadcast: the backend re-points BOTH items and clears the
+    // missing-source flags. This arrives as a normal (non-reset) snapshot.
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\mix.silverdaw',
+      name: 'Mix',
+      library: [
+        {
+          id: 'l1',
+          kind: 'audio-file',
+          filePath: found,
+          fileName: 'song.wav',
+          durationMs: 4_000,
+          sampleRate: 44_100,
+          channelCount: 2
+        },
+        {
+          id: 'l2',
+          kind: 'saved-clip',
+          name: 'Chop',
+          filePath: found,
+          fileName: 'song.wav',
+          durationMs: 1_000,
+          sourceItemId: 'l1',
+          sourceClipId: 'c1',
+          sourceInMs: 0,
+          sourceDurationMs: 1_000
+        }
+      ],
+      tracks: [
+        {
+          id: 't1',
+          name: 'T1',
+          clips: [{ id: 'c1', libraryItemId: 'l2', offsetMs: 0, inMs: 0, durationMs: 1_000 }]
+        }
+      ]
+    })
+
+    // Existing library items are refreshed (path updated, flag cleared) —
+    // the unplaced source no longer keeps the stale path that broke the
+    // saved project file.
+    expect(library.byId.l1?.filePath).toBe(found)
+    expect(library.byId.l1?.unresolved).toBeUndefined()
+    expect(library.byId.l2?.filePath).toBe(found)
+    expect(library.byId.l2?.unresolved).toBeUndefined()
+    // The already-drawn clip's cached source binding follows the relink.
+    expect(project.clips.c1?.filePath).toBe(found)
+    expect(project.clips.c1?.unresolved).toBe(false)
+  })
+
+
   it('adopts the autosave manifest id while restoring an untitled project', async () => {
     const project = useProjectStore()
     sendMock.mockReturnValueOnce(true)

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-// Dialog shown when a project loads with one or more clips whose
-// source files are missing on disk. The list is derived from the
-// store (clips where `unresolved === true`), then **deduplicated by
-// file path** — if the same broken path is referenced by 10 clips
-// (or by several library items), the dialog shows it once. Locating
-// the replacement file fans the relink out to every library item
-// that referenced the missing path, so a single dialog interaction
-// fixes every clip that pointed at it.
+// Dialog shown when a project loads with one or more missing source
+// files. The list is derived from the **library** (items where
+// `unresolved === true`) — the durable record of every source path the
+// project file persists — then **deduplicated by file path**. Locating
+// the replacement file fans the relink out to every library item that
+// referenced the missing path (e.g. an audio-file source and any saved
+// clips derived from it), so a single dialog interaction fixes every
+// item — and every clip — that pointed at it.
 //
 // As clips are successfully relinked the backend re-broadcasts
 // PROJECT_STATE; the corresponding row disappears from the dialog.
@@ -18,11 +18,13 @@
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
+import { useLibraryStore } from '@/stores/libraryStore'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const project = useProjectStore()
+const library = useLibraryStore()
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 
@@ -42,23 +44,36 @@ interface MissingFileRow {
 
 const missingFiles = computed<MissingFileRow[]>(() => {
   const byPath = new Map<string, MissingFileRow>()
-  for (const clip of Object.values(project.clips)) {
-    if (!clip.unresolved) continue
-    const key = clip.filePath
+  const rowByItemId = new Map<string, MissingFileRow>()
+  // Seed from unresolved LIBRARY ITEMS — the durable source of truth for
+  // the paths persisted in the project file. Grouping by exact filePath
+  // means every item that shares a missing source (e.g. an audio-file
+  // source AND any saved clips derived from it) is collected into one row
+  // and relinked together. Deriving the list from clips alone (as a prior
+  // version did) missed sibling library items that no timeline clip
+  // referenced, leaving their stale path in the saved project.
+  for (const item of library.items) {
+    if (!item.unresolved) continue
+    const key = item.filePath
     let row = byPath.get(key)
     if (!row) {
       row = {
-        filePath: clip.filePath,
-        fileName: clip.fileName,
+        filePath: item.filePath,
+        fileName: item.fileName,
         libraryItemIds: [],
         clipCount: 0
       }
       byPath.set(key, row)
     }
-    if (!row.libraryItemIds.includes(clip.libraryItemId)) {
-      row.libraryItemIds.push(clip.libraryItemId)
-    }
-    row.clipCount++
+    if (!row.libraryItemIds.includes(item.id)) row.libraryItemIds.push(item.id)
+    rowByItemId.set(item.id, row)
+  }
+  // Tally how many timeline clips each missing source affects, so the row
+  // can surface the impact ("Used by N clips").
+  for (const clip of Object.values(project.clips)) {
+    if (!clip.unresolved) continue
+    const row = rowByItemId.get(clip.libraryItemId)
+    if (row) row.clipCount++
   }
   return Array.from(byPath.values())
 })

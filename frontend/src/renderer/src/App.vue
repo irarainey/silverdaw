@@ -103,20 +103,23 @@ const stopBusyCursorWatcher = watch(
 )
 
 // ─── Missing-file detection ────────────────────────────────────────────
-// Watch the set of unresolved clip ids — when it transitions from empty
-// to non-empty (i.e. a project just loaded with missing files), pop
-// the RelinkDialog and a single toast. We watch on id-string so the
-// dialog doesn't bounce open every time a clip property changes; it
-// only re-opens when NEW unresolved clips appear.
-const unresolvedClipIds = computed(() =>
-  Object.values(project.clips)
-    .filter((c) => c.unresolved)
-    .map((c) => c.id)
+// Watch the set of unresolved LIBRARY ITEM ids — when it transitions from
+// empty to non-empty (i.e. a project just loaded with missing sources),
+// pop the RelinkDialog and a single toast. We key on library items rather
+// than clips because the library is the durable record of every persisted
+// source path: a missing source that isn't currently placed on the
+// timeline (or whose sibling item has no clip) still needs relinking.
+// We watch on id-string so the dialog doesn't bounce open every time a
+// property changes; it only re-opens when NEW unresolved items appear.
+const unresolvedLibraryItemIds = computed(() =>
+  library.items
+    .filter((i) => i.unresolved)
+    .map((i) => i.id)
     .sort()
     .join('|')
 )
 const stopUnresolvedWatch = watch(
-  unresolvedClipIds,
+  unresolvedLibraryItemIds,
   (next, prev) => {
     if (!next || next === prev) return
     const ids = next.split('|').filter((s) => s.length > 0)
@@ -127,14 +130,14 @@ const stopUnresolvedWatch = watch(
     const isNew = ids.some((id) => !prevIds.includes(id))
     if (!isNew) return
     relinkDialogOpen.value = true
-    // Count UNIQUE missing file paths (not clip references) so the
+    // Count UNIQUE missing file paths (not item references) so the
     // toast matches the row count the RelinkDialog actually shows —
-    // a project with five clips referencing one missing file should
-    // say "1 audio file is missing", not "5 audio files".
+    // an audio-file source and a saved clip derived from it share one
+    // path and should count as "1 audio file is missing".
     const uniqueMissingPaths = new Set<string>()
     for (const id of ids) {
-      const clip = project.clips[id]
-      if (clip) uniqueMissingPaths.add(clip.filePath)
+      const item = library.byId[id]
+      if (item) uniqueMissingPaths.add(item.filePath)
     }
     const fileCount = uniqueMissingPaths.size
     notifications.push(

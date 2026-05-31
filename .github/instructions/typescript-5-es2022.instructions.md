@@ -36,7 +36,7 @@ applyTo: "**/*.ts"
 
 ## Formatting & Style
 
-- Run the repository's lint/format scripts (e.g., `npm run lint`) after making changes and fix any issues that arise.
+- Run the repository's lint/format scripts (this repo uses **pnpm**, never `npm` — e.g., `pnpm run lint`) after making changes and fix any issues that arise.
 - Match the project's indentation, quote style, and trailing comma rules.
 - Keep functions focused; extract helpers when logic branches grow.
 - Favor immutable data and pure functions when practical.

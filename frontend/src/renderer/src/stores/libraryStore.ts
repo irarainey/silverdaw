@@ -31,8 +31,14 @@ export interface LibraryItem {
   readonly kind: LibraryItemKind
   /** User-facing reusable name. Saved clips use this; audio files fall back to tags/fileName. */
   name?: string
-  readonly filePath: string
-  readonly fileName: string
+  /** Source file path. Mutable because relinking a missing source
+   *  re-points the item (and is refreshed from PROJECT_STATE). */
+  filePath: string
+  fileName: string
+  /** True when the backend reports this item's source file is missing
+   *  on disk (mirrors the per-item `unresolved` flag in PROJECT_STATE).
+   *  Drives the Relink dialog and the missing-file prompt. */
+  unresolved?: boolean
   durationMs: number
   /**
    * Sample rate of the source file. May be 0 for placeholder items
@@ -374,6 +380,8 @@ export const useLibraryStore = defineStore('library', {
       tempoRatio?: number
       semitones?: number
       cents?: number
+      /** Backend's per-item missing-source flag from PROJECT_STATE. */
+      unresolved?: boolean
     }): string {
       const kind = audio.kind ?? 'audio-file'
       if (kind === 'saved-clip' && !audio.derivedFrom) {
@@ -434,7 +442,8 @@ export const useLibraryStore = defineStore('library', {
         warpMode: kind === 'saved-clip' ? audio.warpMode : undefined,
         tempoRatio: kind === 'saved-clip' ? audio.tempoRatio : undefined,
         semitones: kind === 'saved-clip' ? audio.semitones : undefined,
-        cents: kind === 'saved-clip' ? audio.cents : undefined
+        cents: kind === 'saved-clip' ? audio.cents : undefined,
+        unresolved: audio.unresolved === true ? true : undefined
       })
       log.info(
         'library',
