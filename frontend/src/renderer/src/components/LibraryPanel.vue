@@ -147,16 +147,16 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     if (!item) return []
     const inUse = library.isItemInUse(item.id)
     const items: ClipContextMenuItem[] = [
-        { command: 'library.edit', label: 'Open in editor' },
-        { command: 'library.info', label: 'Show information' },
+        { command: 'library.edit', label: 'Open in Editor' },
+        { command: 'library.info', label: 'Show Information' },
         { command: 'library.rename', label: 'Rename', separatorAbove: true }
     ]
     if (item.kind === 'audio-file') {
-        items.push({ command: 'library.reanalyse', label: 'Reanalyse file' })
+        items.push({ command: 'library.reanalyse', label: 'Reanalyse File' })
     } else if (item.kind === 'saved-clip') {
         items.push({
             command: 'library.saveSample',
-            label: 'Save as sample',
+            label: 'Save as Sample',
             title:
                 'Bakes the saved clip\u2019s current trim, warp, and pitch into a new independent WAV file. ' +
                 'Re-running it always creates another fresh sample \u2014 baked samples are not linked back ' +
@@ -178,12 +178,12 @@ const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
         })
         items.push({
             command: 'library.classifyMusic',
-            label: 'Treat as music',
+            label: 'Treat as Music',
             disabled: item.sampleMode === 'music'
         })
         items.push({
             command: 'library.classifySample',
-            label: 'Treat as sample',
+            label: 'Treat as Sample',
             title: 'Hide BPM / key / beat markers, and skip auto-warp on drop. Warp and pitch dialogs still work manually.',
             disabled: item.sampleMode === 'sample'
         })

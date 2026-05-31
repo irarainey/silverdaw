@@ -1868,7 +1868,7 @@ app.whenReady().then(async () => {
         defaultId: 1,
         cancelId: 1,
         title: 'Replace existing file?',
-        message: `“${basename(filePath)}” already exists.`,
+        message: `"${basename(filePath)}" already exists.`,
         detail: 'Choose Overwrite to replace it, or Cancel to edit the filename.'
       })
       return result.response === 0 ? 'overwrite' : 'cancel'

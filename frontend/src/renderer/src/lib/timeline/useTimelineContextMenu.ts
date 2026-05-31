@@ -97,12 +97,12 @@ export function useTimelineContextMenu(
     const hasLibraryItem = !!clipParent
     items.push({
       command: 'clip.openEditor',
-      label: 'Open in editor',
+      label: 'Open in Editor',
       disabled: !clip || clip.unresolved || !hasLibraryItem
     })
     items.push({
       command: 'clip.info',
-      label: 'Show information',
+      label: 'Show Information',
       disabled: !clip || clip.unresolved || !hasLibraryItem
     })
     items.push({ command: 'clip.delete', label: 'Delete' })
@@ -126,7 +126,7 @@ export function useTimelineContextMenu(
       transport.positionMs < clip.startMs + effectiveClipDurationMs(clip)
     items.push({
       command: 'clip.split',
-      label: clip?.locked ? 'Split at playhead (clip is locked)' : 'Split at playhead',
+      label: clip?.locked ? 'Split at Playhead (clip is locked)' : 'Split at Playhead',
       disabled: isLinkedClip || !playheadOverClip
     })
     if (clip) {
@@ -149,16 +149,16 @@ export function useTimelineContextMenu(
     items.push({ command: 'clip.pitch', label: 'Pitch' })
     items.push({
       command: 'clip.saveToLibrary',
-      label: 'Save clip to library',
+      label: 'Save Clip to Library',
       separatorAbove: true,
       disabled: isLinkedClip
     })
     if (clip && isLinkedClip) {
-      items.push({ command: 'clip.unlink', label: 'Unlink from library' })
+      items.push({ command: 'clip.unlink', label: 'Unlink from Library' })
     }
     items.push({
       command: 'clip.saveSample',
-      label: 'Save as sample',
+      label: 'Save as Sample',
       title:
         'Bakes the clip\u2019s current trim, warp, and pitch into a new independent WAV file ' +
         'under the project\u2019s Samples folder. Re-running it always creates another fresh ' +

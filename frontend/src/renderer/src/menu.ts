@@ -92,15 +92,15 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
       label: 'File',
       items: [
         { label: 'New Project', action: 'file.newProject', accelerator: 'Ctrl+N' },
-        { label: 'Open Project', action: 'file.openProject', accelerator: 'Ctrl+O' },
+        { label: 'Open Project\u2026', action: 'file.openProject', accelerator: 'Ctrl+O' },
         recentMenuItem,
         SEP,
         { label: 'Save', action: 'file.save', accelerator: 'Ctrl+S' },
-        { label: 'Save As', action: 'file.saveAs', accelerator: 'Ctrl+Shift+S' },
+        { label: 'Save As\u2026', action: 'file.saveAs', accelerator: 'Ctrl+Shift+S' },
         SEP,
         { label: 'Project Properties\u2026', action: 'file.projectProperties' },
         SEP,
-        { label: 'Add Track', action: 'file.addTrack', accelerator: 'Ctrl+T' },
+        { label: 'Add Track\u2026', action: 'file.addTrack', accelerator: 'Ctrl+T' },
         {
           label: 'Export Mixdown\u2026',
           action: 'file.exportMixdown',
@@ -125,9 +125,9 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Duplicate Clip', action: 'edit.duplicateClip', accelerator: 'D' },
         { label: 'Delete Clip', action: 'edit.deleteClip', accelerator: 'Delete' },
         SEP,
-        { label: 'Crop Project to Last Clip', action: 'edit.cropProjectToLastClip' },
+        { label: 'Trim Project to Last Clip', action: 'edit.cropProjectToLastClip' },
         SEP,
-        { label: 'Preferences', action: 'edit.preferences' }
+        { label: 'Preferences\u2026', action: 'edit.preferences' }
       ]
     },
     {

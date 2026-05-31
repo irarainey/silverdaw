@@ -557,7 +557,7 @@ function channelLabel(count: number): string {
             </h3>
             <dl class="grid grid-cols-[120px_minmax(0,1fr)] gap-x-3 gap-y-1.5 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2">
               <dt class="text-zinc-500">
-                Library id
+                Library ID
               </dt>
               <dd class="break-all font-mono text-[11px] text-zinc-300">
                 {{ item.id }}
@@ -575,7 +575,7 @@ function channelLabel(count: number): string {
                 {{ item.filePath }}
               </dd>
               <dt class="text-zinc-500">
-                Decoded WAV cache
+                Playback cache
               </dt>
               <dd class="break-all font-mono text-[11px] text-zinc-300">
                 {{ displayDecodedCachePath }}

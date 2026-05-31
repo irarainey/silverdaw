@@ -217,8 +217,8 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       if (!sent) {
         this.pendingSelection = null
         this.pendingPersistUserPreference = true
-        this.lastError = 'Backend is not connected'
-        useNotificationsStore().pushError('Could not switch audio device: backend not connected.')
+        this.lastError = 'The audio engine isn\'t connected'
+        useNotificationsStore().pushError('Could not switch audio device: the audio engine isn\'t connected.')
       }
     },
 

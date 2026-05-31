@@ -187,7 +187,7 @@ watch(
             class="dialog-btn-primary"
             @click="onSwitch"
           >
-            Switch project to {{ formatHz(switchProjectTargetHz) }}
+            Switch Project to {{ formatHz(switchProjectTargetHz) }}
           </button>
         </div>
       </div>

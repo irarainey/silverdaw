@@ -781,7 +781,7 @@ function handleMenuAction(action: string): void {
       void project.saveAndWait(project.currentFilePath, false).then((result) => {
         if (
           !result.ok &&
-          (result.error?.startsWith('Timed out') || result.error === 'Backend is not connected')
+          (result.error?.startsWith('Timed out') || result.error === 'The audio engine isn\'t connected')
         ) {
           notifications.pushError(`Save failed: ${result.error}.`)
         }
@@ -799,7 +799,7 @@ function handleMenuAction(action: string): void {
         void project.saveAndWait(filePath, true).then((result) => {
           if (
             !result.ok &&
-            (result.error?.startsWith('Timed out') || result.error === 'Backend is not connected')
+            (result.error?.startsWith('Timed out') || result.error === 'The audio engine isn\'t connected')
           ) {
             notifications.pushError(`Save failed: ${result.error}.`)
           }
@@ -871,7 +871,7 @@ function handleMenuAction(action: string): void {
       if (end > maxEndMs) maxEndMs = end
     }
     if (maxEndMs <= 0) {
-      notifications.pushInfo('No clips on the timeline — nothing to crop.')
+      notifications.pushInfo('No clips on the timeline — nothing to trim.')
       return
     }
     const before = project.durationMs
@@ -942,7 +942,7 @@ async function onUnsavedPromptSave(): Promise<void> {
   if (!result.ok) {
     if (
       result.error?.startsWith('Timed out') ||
-      result.error === 'Backend is not connected'
+      result.error === 'The audio engine isn\'t connected'
     ) {
       notifications.pushError(`Save failed: ${result.error}.`)
     }

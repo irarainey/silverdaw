@@ -28,7 +28,7 @@ const zoomTooltip = computed(() => `Timeline zoom — ${ui.zoomPxPerSecond.toFix
            glance state colour. -->
       <span
         class="flex items-center gap-1.5"
-        :title="transport.connected ? 'Backend connected' : 'Backend disconnected'"
+        :title="transport.connected ? 'Audio engine connected' : 'Audio engine disconnected'"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

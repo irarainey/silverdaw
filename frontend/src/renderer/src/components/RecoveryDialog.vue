@@ -79,7 +79,7 @@ async function restore(entry: RecoverableEntry): Promise<void> {
     )
     if (!result.ok) {
       log.warn('recovery', `restore failed: ${result.error ?? 'unknown error'}`)
-      if (result.error?.startsWith('Timed out') || result.error === 'Backend is not connected') {
+      if (result.error?.startsWith('Timed out') || result.error === 'The audio engine isn\'t connected') {
         notifications.pushError(`Could not restore project: ${result.error}`)
       }
       return
@@ -209,7 +209,7 @@ onBeforeUnmount(() => {
             :disabled="busyId !== null"
             @click="skip"
           >
-            Skip for now
+            Skip for Now
           </button>
         </footer>
       </div>

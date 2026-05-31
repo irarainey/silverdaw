@@ -649,7 +649,7 @@ const dropIndicatorTopPx = computed<number>(() => {
                 ? 'border-cyan-400 bg-cyan-500 text-zinc-950 hover:bg-cyan-400'
                 : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
               "
-              :title="project.anySoloed && !track.soloed ? 'Another track is soloed' : (track.soloed ? 'Un-solo' : 'Solo')"
+              :title="project.anySoloed && !track.soloed ? 'Another track is soloed' : (track.soloed ? 'Unsolo' : 'Solo')"
               :disabled="project.anySoloed && !track.soloed"
               @click="project.toggleSolo(track.id)"
             >

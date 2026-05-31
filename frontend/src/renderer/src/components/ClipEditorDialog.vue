@@ -1708,10 +1708,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                   type="button"
                   class="rounded px-2 py-1 text-[11px] font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
                   :disabled="!canApplyCrop"
-                  title="Crop the working view to the selection (Ctrl+Z to undo)"
+                  title="Trim the working view to the selection (Ctrl+Z to undo)"
                   @click="onApplyCrop"
                 >
-                  Crop
+                  Trim
                 </button>
                 <button
                   v-if="editsExistingClip"
@@ -1835,7 +1835,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             :disabled="!canSaveAsNew"
             @click="onSaveAsNew"
           >
-            Save as new clip
+            Save as New Clip
           </button>
         </footer>
       </div>

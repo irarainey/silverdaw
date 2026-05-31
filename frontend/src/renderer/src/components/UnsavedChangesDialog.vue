@@ -85,7 +85,7 @@ onBeforeUnmount(() => {
             class="dialog-btn-cancel"
             @click="emit('discard')"
           >
-            Don't save
+            Don't Save
           </button>
           <button
             type="button"

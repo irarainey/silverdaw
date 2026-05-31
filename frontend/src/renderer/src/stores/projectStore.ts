@@ -2225,7 +2225,7 @@ export const useProjectStore = defineStore('project', {
       }
       const message = error
         ? `Couldn't add clip: ${error}`
-        : 'Couldn\u2019t add clip (backend rejected the file).'
+        : 'Couldn\'t add clip (the audio engine rejected the file).'
       useNotificationsStore().pushError(message)
     },
 
@@ -2887,7 +2887,7 @@ export const useProjectStore = defineStore('project', {
         positionMs: marker.positionMs
       })
       if (!sent) {
-        useNotificationsStore().pushError('Marker was added locally, but the backend is not connected.')
+        useNotificationsStore().pushError('Marker was added locally, but the audio engine isn\'t connected.')
       }
       log.info('project', `addMarkerAt id=${marker.id} position=${marker.positionMs}`)
       return true
@@ -2906,7 +2906,7 @@ export const useProjectStore = defineStore('project', {
       const [marker] = this.markers.splice(index, 1)
       const sent = sendBridge('PROJECT_MARKER_REMOVE', { markerId })
       if (!sent) {
-        useNotificationsStore().pushError('Marker was removed locally, but the backend is not connected.')
+        useNotificationsStore().pushError('Marker was removed locally, but the audio engine isn\'t connected.')
       }
       log.info('project', `removeMarker id=${markerId} position=${marker?.positionMs ?? '?'}`)
       return true
@@ -2926,7 +2926,7 @@ export const useProjectStore = defineStore('project', {
         positionMs: safePositionMs
       })
       if (!sent) {
-        useNotificationsStore().pushError('Marker was moved locally, but the backend is not connected.')
+        useNotificationsStore().pushError('Marker was moved locally, but the audio engine isn\'t connected.')
       }
       return true
     },
@@ -2944,7 +2944,7 @@ export const useProjectStore = defineStore('project', {
         viewScrollX: this.viewScrollX ?? undefined
       })
       if (!sent) {
-        useNotificationsStore().pushError('Save failed: backend is not connected.')
+        useNotificationsStore().pushError('Save failed: the audio engine isn\'t connected.')
       }
       return true
     },
@@ -2954,7 +2954,7 @@ export const useProjectStore = defineStore('project', {
       log.info('project', `requestSaveAs path=${filePath}`)
       const sent = sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
       if (!sent) {
-        useNotificationsStore().pushError('Save failed: backend is not connected.')
+        useNotificationsStore().pushError('Save failed: the audio engine isn\'t connected.')
       }
     },
 
@@ -2978,7 +2978,7 @@ export const useProjectStore = defineStore('project', {
         pendingSaveTimeout = setTimeout(() => {
           pendingSaveTimeout = null
           if (!pendingSaveResolver) return
-          pendingSaveResolver({ ok: false, error: 'Timed out waiting for backend save acknowledgement' })
+          pendingSaveResolver({ ok: false, error: 'Timed out waiting for the audio engine to save' })
           pendingSaveResolver = null
         }, PENDING_SAVE_TIMEOUT_MS)
       })
@@ -2990,7 +2990,7 @@ export const useProjectStore = defineStore('project', {
           clearTimeout(pendingSaveTimeout)
           pendingSaveTimeout = null
         }
-        pendingSaveResolver?.({ ok: false, error: 'Backend is not connected' })
+        pendingSaveResolver?.({ ok: false, error: 'The audio engine isn\'t connected' })
         pendingSaveResolver = null
       }
       return promise
@@ -3059,7 +3059,7 @@ export const useProjectStore = defineStore('project', {
       })
       if (!sent) {
         pendingAutosaveResolvers.delete(filePath)
-        return Promise.resolve({ ok: false, error: 'Backend is not connected' })
+        return Promise.resolve({ ok: false, error: 'The audio engine isn\'t connected' })
       }
       // Safety timeout: a backend that drops the ack must not leak a
       // resolver. Mirrors the explicit-save timeout.
@@ -3128,7 +3128,7 @@ export const useProjectStore = defineStore('project', {
           if (!pendingRecoveryLoadResolver) return
           pendingRecoveryLoadResolver({
             ok: false,
-            error: 'Timed out waiting for backend recovery load acknowledgement'
+            error: 'Timed out waiting for the audio engine to load'
           })
           pendingRecoveryLoadResolver = null
         }, PENDING_LOAD_TIMEOUT_MS)
@@ -3140,7 +3140,7 @@ export const useProjectStore = defineStore('project', {
           pendingRecoveryLoadTimeout = null
         }
         this.pendingRecoveredProjectId = null
-        pendingRecoveryLoadResolver?.({ ok: false, error: 'Backend is not connected' })
+        pendingRecoveryLoadResolver?.({ ok: false, error: 'The audio engine isn\'t connected' })
         pendingRecoveryLoadResolver = null
       }
       return promise

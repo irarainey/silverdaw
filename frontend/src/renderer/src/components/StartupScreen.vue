@@ -86,8 +86,8 @@ const allResolved = computed(
 
 const liveStatusText = computed(() => {
   if (bridgeFailed.value) return ''
-  if (!transport.connected) return 'Waiting for the backend to start…'
-  if (!transport.bridgeReady) return 'Connecting to audio engine…'
+  if (!transport.connected) return 'Waiting for the audio engine to start…'
+  if (!transport.bridgeReady) return 'Connecting to the audio engine…'
   if (audioDevices.scanInProgress) return 'Scanning audio devices…'
   if (!props.startupFlowComplete && !props.recoveryOpen) {
     return 'Checking for recovered projects…'
