@@ -98,8 +98,7 @@ Silverdaw currently supports the core arrangement workflow:
   export so the rendered file matches what the user hears.
 - **Mixdown export** (File ▸ Export Mixdown…) renders the whole project to a
   single stereo file. Formats: WAV (16 / 24 / 32-float), FLAC (16 / 24), AIFF
-  (16 / 24), MP3 (128 / 192 / 320 kbps, bundled LAME) and Ogg Vorbis (quality
-  index 0..10, exposed as ~96 / 192 / 320 kbps). Optional TPDF dither for
+  (16 / 24), MP3 (128 / 192 / 320 kbps, bundled LAME). Optional TPDF dither for
   16-bit targets, configurable silence tail, file-level tags (mapped per-format
   to ID3 / RIFF INFO / VORBIS_COMMENT / AIFF text chunks) and ITU-R BS.1770-4
   loudness analysis with optional two-pass normalisation to a target LUFS with
@@ -438,8 +437,8 @@ via z-index when crash-recovery autosaves are available.
 
 ## Audio formats
 
-The JUCE backend decodes formats supported by its `AudioFormatManager`: WAV, AIFF, FLAC, Ogg
-Vorbis, MP3, and the Windows Media family (WMA / WMV / ASF / WM) via the Windows Media Format
+The JUCE backend decodes formats supported by its `AudioFormatManager`: WAV, AIFF, FLAC,
+MP3, and the Windows Media family (WMA / WMV / ASF / WM) via the Windows Media Format
 SDK that ships with JUCE.
 
 Other formats (notably **AAC / M4A / MP4**, which JUCE doesn't decode out of the box on

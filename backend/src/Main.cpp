@@ -3875,7 +3875,6 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         const auto lengthMode = tryGetRequiredString(payload, "lengthMode").value_or(juce::String("trim-to-last-clip"));
         const double lengthMsHint = static_cast<double>(payload.getProperty("lengthMs", 0.0));
         const int bitrateKbps = static_cast<int>(payload.getProperty("bitrateKbps", 192));
-        const int vorbisQualityIndex = static_cast<int>(payload.getProperty("vorbisQualityIndex", 6));
         // Phase A export fields. All optional with safe defaults so
         // older renderer builds keep working. Validated below before
         // we hand them to the engine.
@@ -3981,8 +3980,6 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             options.format = silverdaw::MixdownOptions::Format::Flac;
         else if (formatStr == "aiff")
             options.format = silverdaw::MixdownOptions::Format::Aiff;
-        else if (formatStr == "ogg-vorbis" || formatStr == "ogg")
-            options.format = silverdaw::MixdownOptions::Format::OggVorbis;
         else
             options.format = silverdaw::MixdownOptions::Format::Wav;
 
@@ -4026,10 +4023,6 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             case silverdaw::MixdownOptions::Format::Mp3:
                 // MP3 ignores bit-depth; nothing to validate here.
                 break;
-            case silverdaw::MixdownOptions::Format::OggVorbis:
-                // Ogg Vorbis is lossy; bit-depth ignored. Quality index
-                // is clamped by the engine to [0, 10].
-                break;
         }
         options.bitDepth = bitDepthRaw;
         // Tail seconds: finite, non-negative, capped at 60s. The
@@ -4044,7 +4037,6 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         options.tailSeconds = tailSecondsRaw;
         options.dither = ditherRaw;
         options.bitrateKbps = bitrateKbps;
-        options.vorbisQualityIndex = juce::jlimit(0, 10, vorbisQualityIndex);
 
         // Loudness block: optional. Accepts `{ mode, targetLufs?,
         // ceilingDbtp? }` where mode ∈ {off, analyze, normalize}.

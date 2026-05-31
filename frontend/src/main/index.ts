@@ -86,7 +86,7 @@ const COLOUR_BG = '#18181b' // zinc-900
 // File extensions accepted by every audio open-dialog and (later) by the
 // path-validation guard on `audio:readFile` / `audio:readMetadata`. Keep in
 // sync with the JUCE backend's supported formats.
-const AUDIO_FILE_EXTENSIONS = ['wav', 'mp3', 'flac', 'aiff', 'aif', 'ogg', 'm4a'] as const
+const AUDIO_FILE_EXTENSIONS = ['wav', 'mp3', 'flac', 'aiff', 'aif', 'm4a'] as const
 const AUDIO_FILE_EXTENSIONS_SET: ReadonlySet<string> = new Set<string>(AUDIO_FILE_EXTENSIONS)
 
 /**
@@ -1458,7 +1458,7 @@ app.whenReady().then(async () => {
   // WAV file the JUCE backend can read. Used for formats the backend's
   // AudioFormatManager doesn't understand natively on this platform —
   // notably AAC / M4A / MP4 on Windows, where JUCE's bundled formats only
-  // cover WAV/AIFF/FLAC/Ogg + the Windows Media SDK (WMA family + MP3).
+  // cover WAV/AIFF/FLAC + the Windows Media SDK (WMA family + MP3).
   //
   // Returns the absolute path to the written WAV, or `null` on failure.
   // The path is added to the audio allow-list so the renderer may re-read
@@ -1791,9 +1791,7 @@ app.whenReady().then(async () => {
             ? 'flac'
             : format === 'aiff'
               ? 'aiff'
-              : format === 'ogg-vorbis'
-                ? 'ogg'
-                : 'wav'
+              : 'wav'
       const baseDir =
         typeof projectFilePath === 'string' && projectFilePath.length > 0
           ? dirname(projectFilePath)
@@ -1817,9 +1815,7 @@ app.whenReady().then(async () => {
             ? 'flac'
             : format === 'aiff'
               ? 'aiff'
-              : format === 'ogg-vorbis'
-                ? 'ogg'
-                : 'wav'
+              : 'wav'
       const filters =
         ext === 'mp3'
           ? [{ name: 'MP3 audio', extensions: ['mp3'] }]
@@ -1827,9 +1823,7 @@ app.whenReady().then(async () => {
             ? [{ name: 'FLAC audio', extensions: ['flac'] }]
             : ext === 'aiff'
               ? [{ name: 'AIFF audio', extensions: ['aiff', 'aif'] }]
-              : ext === 'ogg'
-                ? [{ name: 'Ogg Vorbis audio', extensions: ['ogg'] }]
-                : [{ name: 'WAV audio', extensions: ['wav'] }]
+              : [{ name: 'WAV audio', extensions: ['wav'] }]
       // Ensure the parent dir exists so the dialog lands in the right
       // place; ignore errors so a missing-volume case just falls back
       // to the user's last cwd.

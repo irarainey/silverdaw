@@ -733,12 +733,12 @@ export interface AudioFileProbePayload {
 export interface MixdownStartPayload {
   outputPath: string
   sampleRate: 44100 | 48000
-  format: 'wav' | 'mp3' | 'flac' | 'aiff' | 'ogg-vorbis'
+  format: 'wav' | 'mp3' | 'flac' | 'aiff'
   /** Output bit-depth.
    *  - `'wav'`: 16 / 24 (PCM) or 32 (IEEE float).
    *  - `'flac'`: 16 / 24.
    *  - `'aiff'`: 16 / 24.
-   *  - `'mp3'` / `'ogg-vorbis'`: ignored.
+   *  - `'mp3'`: ignored.
    *  Defaults to 16 if omitted. */
   bitDepth?: 16 | 24 | 32
   /** Apply TPDF dither immediately before integer quantisation.
@@ -773,12 +773,8 @@ export interface MixdownStartPayload {
     targetLufs?: number
     ceilingDbtp?: number
   }
-  /** MP3 only: target bitrate in kbps. Ignored for WAV / FLAC / AIFF / Ogg. */
+  /** MP3 only: target bitrate in kbps. Ignored for WAV / FLAC / AIFF. */
   bitrateKbps?: 128 | 192 | 320
-  /** Ogg Vorbis only: JUCE quality index 0..10 (≈64..500 kbps VBR).
-   *  Ignored for other formats. UI exposes 2 / 6 / 9 (≈96/192/320 kbps).
-   *  Defaults to 6 if omitted. */
-  vorbisQualityIndex?: number
   lengthMode: 'trim-to-last-clip' | 'fixed-duration'
   /** Required when `lengthMode === 'fixed-duration'`. Ignored otherwise. */
   lengthMs?: number
@@ -788,8 +784,7 @@ export interface MixdownStartPayload {
  *    - MP3  → ID3v2 frames (TIT2 / TPE1 / TALB / TYER / TCON / COMM).
  *    - WAV  → RIFF INFO chunk (INAM / IART / IPRD / ICRD / IGNR / ICMT).
  *    - FLAC → VORBIS_COMMENT block (TITLE / ARTIST / ALBUM / DATE / GENRE / COMMENT).
- *    - AIFF → NAME / AUTH / (c) / ANNO text chunks (year + genre folded into ANNO).
- *    - Ogg  → VORBIS_COMMENT (TITLE / ARTIST / ALBUM / DATE / GENRE / COMMENT). */
+ *    - AIFF → NAME / AUTH / (c) / ANNO text chunks (year + genre folded into ANNO). */
   metadata?: {
     title?: string
     artist?: string

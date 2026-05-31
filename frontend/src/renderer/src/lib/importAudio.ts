@@ -33,7 +33,6 @@ const BACKEND_NATIVE_EXTS: ReadonlySet<string> = new Set([
   '.aif',
   '.aiff',
   '.flac',
-  '.ogg',
   '.mp3',
   '.wma'
 ])

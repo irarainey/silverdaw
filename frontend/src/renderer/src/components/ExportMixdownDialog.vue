@@ -35,7 +35,7 @@ const dialogEl = ref<HTMLDivElement | null>(null)
 
 // ── Draft fields ───────────────────────────────────────────────────────
 const draftOutputPath = ref('')
-const draftFormat = ref<'wav' | 'mp3' | 'flac' | 'aiff' | 'ogg-vorbis'>('wav')
+const draftFormat = ref<'wav' | 'mp3' | 'flac' | 'aiff'>('wav')
 const draftSampleRate = ref<44100 | 48000>(44100)
 const draftBitDepth = ref<16 | 24 | 32>(16)
 const draftDither = ref<boolean>(true)
@@ -43,9 +43,6 @@ const draftDither = ref<boolean>(true)
  *  to a number on submit. Empty / blank means "no tail". */
 const draftTailSecondsText = ref('0')
 const draftBitrate = ref<128 | 192 | 320>(192)
-/** Ogg Vorbis VBR quality preset. Three exposed indices map to JUCE's
- *  0..10 scale (≈64..500 kbps): 2 ≈ 96 kbps, 6 ≈ 192 kbps, 9 ≈ 320 kbps. */
-const draftVorbisQuality = ref<2 | 6 | 9>(6)
 // ── Loudness / normalization ───────────────────────────────────────────
 /** Loudness preset. `off` is no analysis (default), four normalization
  *  presets cover the dominant delivery targets (Spotify / Apple / EBU
@@ -136,7 +133,6 @@ const availableBitDepths = computed<readonly (16 | 24 | 32)[]>(() => {
 const ditherApplies = computed<boolean>(
   () =>
     draftFormat.value !== 'mp3' &&
-    draftFormat.value !== 'ogg-vorbis' &&
     draftBitDepth.value === 16
 )
 
@@ -201,9 +197,7 @@ const expectedFileExtension = computed(() =>
       ? 'flac'
       : draftFormat.value === 'aiff'
         ? 'aiff'
-        : draftFormat.value === 'ogg-vorbis'
-          ? 'ogg'
-          : 'wav'
+        : 'wav'
 )
 
 // ── Persisted export settings (project level) ─────────────────────────
@@ -224,7 +218,7 @@ const expectedFileExtension = computed(() =>
 //    future build that understands a newer version can still read it).
 const EXPORT_SETTINGS_VERSION = 1 as const
 
-type ExportFormat = 'wav' | 'mp3' | 'flac' | 'aiff' | 'ogg-vorbis'
+type ExportFormat = 'wav' | 'mp3' | 'flac' | 'aiff'
 
 interface PersistedExportSettings {
   version: typeof EXPORT_SETTINGS_VERSION
@@ -235,7 +229,6 @@ interface PersistedExportSettings {
   dither: boolean
   tailSecondsText: string
   bitrate: 128 | 192 | 320
-  vorbisQuality: 2 | 6 | 9
   loudnessPreset: LoudnessPreset
   customTargetText: string
   customCeilingText: string
@@ -262,7 +255,7 @@ function applyPersistedExportSettings(blob: string | null): boolean {
   const obj = parsed as Record<string, unknown>
   if (obj.version !== EXPORT_SETTINGS_VERSION) return false
 
-  const validFormats: ExportFormat[] = ['wav', 'mp3', 'flac', 'aiff', 'ogg-vorbis']
+  const validFormats: ExportFormat[] = ['wav', 'mp3', 'flac', 'aiff']
   if (typeof obj.format === 'string' && (validFormats as string[]).includes(obj.format)) {
     draftFormat.value = obj.format as ExportFormat
   }
@@ -276,9 +269,6 @@ function applyPersistedExportSettings(blob: string | null): boolean {
   if (typeof obj.tailSecondsText === 'string') draftTailSecondsText.value = obj.tailSecondsText
   if (obj.bitrate === 128 || obj.bitrate === 192 || obj.bitrate === 320) {
     draftBitrate.value = obj.bitrate
-  }
-  if (obj.vorbisQuality === 2 || obj.vorbisQuality === 6 || obj.vorbisQuality === 9) {
-    draftVorbisQuality.value = obj.vorbisQuality
   }
   const validPresets: LoudnessPreset[] = [
     'off',
@@ -323,7 +313,6 @@ function snapshotExportSettings(): PersistedExportSettings {
     dither: draftDither.value,
     tailSecondsText: draftTailSecondsText.value,
     bitrate: draftBitrate.value,
-    vorbisQuality: draftVorbisQuality.value,
     loudnessPreset: draftLoudnessPreset.value,
     customTargetText: draftCustomTargetText.value,
     customCeilingText: draftCustomCeilingText.value,
@@ -354,7 +343,6 @@ watch(
     draftDither.value = true
     draftTailSecondsText.value = '0'
     draftBitrate.value = 192
-    draftVorbisQuality.value = 6
     draftLoudnessPreset.value = 'off'
     draftCustomTargetText.value = '-14'
     draftCustomCeilingText.value = '-1'
@@ -505,8 +493,6 @@ async function doSave(): Promise<void> {
     }
     if (draftFormat.value === 'mp3') {
       payload.bitrateKbps = draftBitrate.value
-    } else if (draftFormat.value === 'ogg-vorbis') {
-      payload.vorbisQualityIndex = draftVorbisQuality.value
     } else {
       payload.bitDepth = draftBitDepth.value
       payload.dither = draftDither.value
@@ -623,9 +609,6 @@ onBeforeUnmount(() => {
                 <option value="mp3">
                   MP3 (lossy, 16-bit)
                 </option>
-                <option value="ogg-vorbis">
-                  Ogg Vorbis (lossy)
-                </option>
               </select>
             </div>
             <div>
@@ -661,25 +644,6 @@ onBeforeUnmount(() => {
                   :value="kbps"
                 >
                   {{ kbps }} kbps
-                </option>
-              </select>
-            </div>
-            <div v-else-if="draftFormat === 'ogg-vorbis'">
-              <label class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500">
-                Quality
-              </label>
-              <select
-                v-model.number="draftVorbisQuality"
-                class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
-              >
-                <option :value="2">
-                  Low (~96 kbps)
-                </option>
-                <option :value="6">
-                  Medium (~192 kbps)
-                </option>
-                <option :value="9">
-                  High (~320 kbps)
                 </option>
               </select>
             </div>

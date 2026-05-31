@@ -466,7 +466,7 @@ class ProjectState : public juce::ValueTree::Listener
     void setTargetSampleRate(int sampleRate);
 
     /** Opaque JSON blob of the last-used export-dialog settings (format,
-     *  bit depth, dither, tail seconds, MP3 bitrate, Ogg quality,
+     *  bit depth, dither, tail seconds, MP3 bitrate,
      *  loudness preset / target, length mode, file-level tags, …).
      *  The renderer owns the schema; the backend just round-trips the
      *  string verbatim. Empty when the project has never run an export.

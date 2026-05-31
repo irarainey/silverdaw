@@ -162,21 +162,6 @@ buildWavMetadataMap(const ExportMetadata& md)
     return m;
 }
 
-std::unordered_map<juce::String, juce::String>
-buildVorbisMetadataMap(const ExportMetadata& md)
-{
-    // JUCE's OggVorbisAudioFormat writer recognises these id3* keys and
-    // emits them as Vorbis comments (TITLE/ARTIST/ALBUM/COMMENT/DATE/GENRE).
-    std::unordered_map<juce::String, juce::String> m;
-    if (md.title.isNotEmpty())   m[juce::OggVorbisAudioFormat::id3title]   = md.title;
-    if (md.artist.isNotEmpty())  m[juce::OggVorbisAudioFormat::id3artist]  = md.artist;
-    if (md.album.isNotEmpty())   m[juce::OggVorbisAudioFormat::id3album]   = md.album;
-    if (md.year.isNotEmpty())    m[juce::OggVorbisAudioFormat::id3date]    = md.year;
-    if (md.genre.isNotEmpty())   m[juce::OggVorbisAudioFormat::id3genre]   = md.genre;
-    if (md.comment.isNotEmpty()) m[juce::OggVorbisAudioFormat::id3comment] = md.comment;
-    return m;
-}
-
 /**
  * Insert AIFF text metadata chunks (NAME, AUTH, (c) , ANNO) into an
  * already-written AIFF file. JUCE 8's `AiffAudioFormat` writer ignores
@@ -1145,7 +1130,6 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         // front so the rest of the pump loop's PCM quantisation path
         // does the right thing regardless of what the frontend sent.
         const bool mp3 = options.format == MixdownOptions::Format::Mp3;
-        const bool ogg = options.format == MixdownOptions::Format::OggVorbis;
         juce::File lameApp;
         if (mp3)
         {
@@ -1157,14 +1141,6 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                          "See backend/third_party/lame/README.md.");
                 return;
             }
-            options.bitDepth = 16;
-            options.dither = true;
-        }
-        if (ogg)
-        {
-            // Vorbis is a 16-bit lossy codec; mirror MP3's path so the
-            // PCM quantisation/dither stage feeds the encoder the right
-            // sample format regardless of what the frontend sent.
             options.bitDepth = 16;
             options.dither = true;
         }
@@ -1290,21 +1266,6 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             juce::AiffAudioFormat aiff;
             writer = aiff.createWriterFor(outStream, writerOptions);
         }
-        else if (options.format == MixdownOptions::Format::OggVorbis)
-        {
-            // Vorbis is lossy and operates on 16-bit integer input; the
-            // codec quality is selected via withQualityOptionIndex
-            // (0..10, see OggVorbisAudioFormat::getQualityOptions()).
-            juce::OggVorbisAudioFormat ogg;
-            auto oggOpts = writerOptions
-                               .withBitsPerSample(16)
-                               .withSampleFormat(
-                                   juce::AudioFormatWriterOptions::SampleFormat::integral)
-                               .withQualityOptionIndex(
-                                   juce::jlimit(0, 10, options.vorbisQualityIndex))
-                               .withMetadataValues(buildVorbisMetadataMap(options.metadata));
-            writer = ogg.createWriterFor(outStream, oggOpts);
-        }
         else if (options.format == MixdownOptions::Format::Mp3)
         {
             juce::LAMEEncoderAudioFormat lame(lameApp);
@@ -1331,9 +1292,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                                                    ? juce::String("MP3")
                                                    : (options.format == MixdownOptions::Format::Aiff
                                                           ? juce::String("AIFF")
-                                                          : (options.format == MixdownOptions::Format::OggVorbis
-                                                                 ? juce::String("Ogg Vorbis")
-                                                                 : juce::String("WAV")))));
+                                                          : juce::String("WAV"))));
             failWith(MixdownFailureCode::Io,
                      "Failed to create " + fmtName + " writer (bitDepth=" +
                          juce::String(pass1BitDepth) + ", sr=" + juce::String(options.outputSampleRate) + ").");
@@ -1362,9 +1321,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                                    ? "mp3"
                                    : (options.format == MixdownOptions::Format::Aiff
                                           ? "aiff"
-                                          : (options.format == MixdownOptions::Format::OggVorbis
-                                                 ? "ogg"
-                                                 : "wav"))))) +
+                                          : "wav")))) +
                 " bitDepth=" + juce::String(pass1BitDepth) +
                 " float=" + (writer->isFloatingPoint() ? "true" : "false") +
                 " loudnessMode=" + (analyzing ? (normalizing ? "normalize" : "analyze") : "off"));
@@ -1903,19 +1860,6 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                 // AIFF tags injected post-encode via writeAiffTextChunks().
                 juce::AiffAudioFormat aiff;
                 p2Writer = aiff.createWriterFor(p2Stream, p2Opts);
-            }
-            else if (options.format == MixdownOptions::Format::OggVorbis)
-            {
-                juce::OggVorbisAudioFormat ogg;
-                auto oggOpts = p2Opts
-                                   .withBitsPerSample(16)
-                                   .withSampleFormat(
-                                       juce::AudioFormatWriterOptions::SampleFormat::integral)
-                                   .withQualityOptionIndex(
-                                       juce::jlimit(0, 10, options.vorbisQualityIndex))
-                                   .withMetadataValues(
-                                       buildVorbisMetadataMap(options.metadata));
-                p2Writer = ogg.createWriterFor(p2Stream, oggOpts);
             }
             else if (options.format == MixdownOptions::Format::Mp3)
             {
