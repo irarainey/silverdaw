@@ -13,6 +13,15 @@ import { setLogEnabled } from './lib/log'
 // calls would slip through as no-ops on disabled sessions but still
 // hit the IPC layer on enabled ones).
 async function bootstrap(): Promise<void> {
+  // Wire the static splash's close button (declared in `index.html`) to
+  // the same quit path as the title-bar ×. It only needs to work during
+  // the brief window before `app.mount()` swaps the splash markup out for
+  // the Vue tree, but the hydrate() await below can keep the static
+  // splash on screen long enough that a user may want to bail early.
+  document
+    .getElementById('splash-close')
+    ?.addEventListener('click', () => window.silverdaw.closeWindow())
+
   const app = createApp(App)
   const pinia = createPinia()
   app.use(pinia)
