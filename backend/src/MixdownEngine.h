@@ -48,6 +48,11 @@ struct MixdownSnapshot
         double durationMs{0.0};
         /** Effective duration on the timeline after warp / pitch (ms). */
         double effectiveDurationMs{0.0};
+        /** Clip-local fade lengths (post-warp ms). Applied inside the
+         *  offline `OffsetSource` exactly as the live engine does, so
+         *  exported audio carries the same fades the user hears. */
+        double fadeInMs{0.0};
+        double fadeOutMs{0.0};
         bool warpEnabled{false};
         juce::String warpMode; // "rhythmic" / "tonal" / "complex"
         double tempoRatio{1.0};

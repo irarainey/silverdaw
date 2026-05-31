@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "AudioConstants.h"
 #include "Log.h"
 
 #include <cmath>
@@ -440,10 +441,10 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
     // MP3 source landed in quick succession (each addClip blocking
     // the message thread for ~1 s on a fresh BufferingAudioSource).
     track->transportSource->setSource(track->offsetSource.get(),
-                                      8192,             // read-ahead buffer size in samples
+                                      kTransportReadAheadSamples, // read-ahead buffer size in samples
                                       &readAheadThread, // background reader thread (required when buffer > 0)
                                       track->sampleRate, track->numChannels);
-    track->transportSource->setGain(juce::jlimit(0.0F, 4.0F, initialGain));
+    track->transportSource->setGain(juce::jlimit(kMinTrackGain, kMaxTrackGain, initialGain));
 
     // Per-track transports are kept in the "started" state for their entire
     // lifetime in the engine. The master clock is the single play/pause gate;
@@ -527,7 +528,7 @@ bool AudioEngine::setClipGain(const juce::String& clipId, float gain)
 
     if (it->second->transportSource != nullptr)
     {
-        it->second->transportSource->setGain(juce::jlimit(0.0F, 4.0F, gain));
+        it->second->transportSource->setGain(juce::jlimit(kMinTrackGain, kMaxTrackGain, gain));
     }
     silverdaw::log::debug("engine", "setClipGain id=" + clipId + " gain=" + juce::String(gain));
     return true;
@@ -1125,7 +1126,8 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     // used 8192 with warp and play cleanly, so align preview with the
     // proven track-side discipline. ~85ms at 96kHz, still well above
     // the audio block size.
-    preview.transportSource->setSource(preview.offsetSource.get(), /*readAheadBufferSize=*/8192,
+    preview.transportSource->setSource(preview.offsetSource.get(),
+                                       /*readAheadBufferSize=*/kTransportReadAheadSamples,
                                        &readAheadThread, preview.sampleRate);
     preview.transportSource->setPosition(0.0);
 

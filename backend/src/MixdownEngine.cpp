@@ -1,6 +1,7 @@
 #include "MixdownEngine.h"
 
 #include "AudioEngine.h"   // for silverdaw::OffsetSource
+#include "AudioConstants.h"
 #include "BridgeServer.h"
 #include "BusGraph.h"
 #include "Log.h"
@@ -735,6 +736,11 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
         static_cast<juce::int64>(clip.inMs * out->sourceRate / 1000.0));
     out->offsetSource->setClipDurationSamples(
         static_cast<juce::int64>(clip.durationMs * out->sourceRate / 1000.0));
+    // Fades run inside OffsetSource at source rate (before the transport's
+    // resampler), identical to AudioEngine::setClipFades — guaranteeing the
+    // exported render carries the same fade shape the live engine produces.
+    out->offsetSource->setFadesMs(juce::jmax(0.0, clip.fadeInMs),
+                                  juce::jmax(0.0, clip.fadeOutMs));
 
     if (clip.warpEnabled)
     {
@@ -930,9 +936,9 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
 {
     MixdownSnapshot snapshot;
     const int explicitRate = project.getTargetSampleRate();
-    snapshot.projectSampleRate = (explicitRate == 44100 || explicitRate == 48000)
+    snapshot.projectSampleRate = isSupportedSampleRate(explicitRate)
                                      ? explicitRate
-                                     : 44100;
+                                     : kDefaultSampleRate;
     snapshot.masterGain = juce::jlimit(0.0F, 1.0F, project.getMasterVolume());
 
     static const juce::Identifier kTrack{"TRACK"};
@@ -965,7 +971,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         // applies whatever raw gain ProjectState carries and diverges
         // from playback for tracks whose user gain is outside [0, 4].
         const float rawEffectiveGain = project.getEffectiveTrackGain(track.id);
-        track.gain = juce::jlimit(0.0F, 4.0F, rawEffectiveGain);
+        track.gain = juce::jlimit(kMinTrackGain, kMaxTrackGain, rawEffectiveGain);
 
         // Phase 5 — capture per-track Tone EQ so the offline render
         // applies the same tilt the live engine does (§7.9.6 parity).
@@ -1019,6 +1025,11 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             clip.semitones = static_cast<double>(clipTree.getProperty(kSemitones, 0.0));
             clip.cents = static_cast<double>(clipTree.getProperty(kCents, 0.0));
             clip.effectiveDurationMs = timing.durationMs > 0.0 ? timing.durationMs : clip.durationMs;
+            // Read fades through the canonical accessor (single source of
+            // truth) so the offline OffsetSource receives the same values
+            // the live engine applied via `setClipFades`.
+            clip.fadeInMs = project.getClipFadeInMs(clip.id);
+            clip.fadeOutMs = project.getClipFadeOutMs(clip.id);
 
             // Pull the source's native rate from the library item — useful
             // for diagnostics; the renderer reads the authoritative rate
@@ -1053,6 +1064,8 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
                         " effectiveDurationMs=" + juce::String(clip.effectiveDurationMs, 1) +
                         " semitones=" + juce::String(clip.semitones, 2) +
                         " cents=" + juce::String(clip.cents, 2) +
+                        " fadeInMs=" + juce::String(clip.fadeInMs, 1) +
+                        " fadeOutMs=" + juce::String(clip.fadeOutMs, 1) +
                         " warpMode=" + clip.warpMode);
                 track.clips.push_back(std::move(clip));
             }

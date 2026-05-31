@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
 import type { AudioMetadata, DebugPreferences } from '../shared/types'
+import { IPC } from '../shared/ipc-channels'
 
 // ─── Audio metadata ─────────────────────────────────────────────────────────
 // `AudioMetadata` lives in `src/shared/types.ts` and is shared with preload +
@@ -989,7 +990,7 @@ function createWindow(): void {
     // close, which this branch then lets through) or stays put.
     if (!userConfirmedClose) {
       event.preventDefault()
-      mainWindow?.webContents.send('menu:action', 'app.requestClose')
+      mainWindow?.webContents.send(IPC.menu.action, 'app.requestClose')
     }
   })
 
@@ -1022,40 +1023,40 @@ function handleMenuAction(action: string): void {
   switch (action) {
     // File
     case 'file.newProject':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'file.openProject':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'file.save':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'file.saveAs':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'file.renameProject':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'file.projectProperties':
       // Opens the in-renderer Project Properties dialog (name, tempo,
       // duration). Forwarded straight through — the dialog lives in
       // the renderer so it can read the live transport/project stores
       // and commit changes via the existing bridge envelopes.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'file.addTrack':
       // Forwarded to the renderer (see below); the renderer drives the
       // open-file flow so it can decode + render in one place.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'file.exportMixdown':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'file.exit':
       // Run through the renderer's unsaved-changes guard. The renderer
       // either fires `file.exitConfirmed` (proceed with quit) or stays
       // on the current project.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'file.exitConfirmed':
     case 'app.confirmClose':
@@ -1075,48 +1076,48 @@ function handleMenuAction(action: string): void {
       // envelope). Text-input native undo is still reachable via the
       // keyboard shortcut, which `menuShortcuts` keeps out of this
       // path while focus is in an editable target.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'edit.redo':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'edit.cut':
       // Forward to renderer so it can target the selected clip. The
       // renderer falls back to `wc.cut()` if there's nothing to cut at
       // the clip level — keeps native text-field cut working from the
       // menu UI too.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'edit.copy':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'edit.paste':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'edit.preferences':
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'edit.splitAtPlayhead':
       // Forwarded to the renderer, which walks every clip whose
       // timeline window straddles the current playhead and splits
       // each at that position.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'edit.duplicateClip':
       // Forwarded to the renderer, which duplicates the currently-
       // selected clip immediately after the original on the same track.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'edit.deleteClip':
       // Forwarded to the renderer, which removes the currently-selected
       // clip from its track.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
     case 'edit.cropProjectToLastClip':
       // Forwarded to the renderer, which collapses the project length
       // to the end of the latest clip on any track and emits a single
       // PROJECT_SET_LENGTH envelope so the backend ruler matches.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
 
     // View
@@ -1138,7 +1139,7 @@ function handleMenuAction(action: string): void {
     case 'help.about':
       // Forwarded to the renderer so the in-app About dialog can render in
       // the same dark Vue UI rather than the native OS message box.
-      wc.send('menu:action', action)
+      wc.send(IPC.menu.action, action)
       break
 
     default:
@@ -1146,11 +1147,11 @@ function handleMenuAction(action: string): void {
       // They're purely renderer-side (the renderer owns the MRU mirror
       // and the open-project flow) so we forward without parsing.
       if (action.startsWith('file.openRecentByIndex:')) {
-        wc.send('menu:action', action)
+        wc.send(IPC.menu.action, action)
         break
       }
       if (action === 'file.clearRecentProjects') {
-        wc.send('menu:action', action)
+        wc.send(IPC.menu.action, action)
         break
       }
       console.warn('[menu] unknown action:', action)
@@ -1220,7 +1221,7 @@ app.on('second-instance', (_event, argv) => {
   if (filePath && mainWindow) {
     // Push directly to the renderer; it runs the same unsaved-changes
     // guard + prepareProjectOpen + requestLoad flow as File > Open.
-    mainWindow.webContents.send('project:openFromPath', filePath)
+    mainWindow.webContents.send(IPC.project.openFromPath, filePath)
   }
 })
 
@@ -1277,14 +1278,14 @@ app.whenReady().then(async () => {
   // Hide the native application menu — we render our own in HTML.
   Menu.setApplicationMenu(null)
 
-  ipcMain.on('menu:action', (_evt, action: string) => handleMenuAction(action))
+  ipcMain.on(IPC.menu.action, (_evt, action: string) => handleMenuAction(action))
 
   // Renderer-side logger flushes batches of structured log entries here so
   // they land in the same session directory as main / backend events.
   // Each entry is { level, tag, message, timestamp }; the level is the
   // same 5-char padded form used by the backend so columns align.
   ipcMain.handle(
-    'log:append-batch',
+    IPC.log.appendBatch,
     (_evt, entries: Array<{ level: LogLevel; tag: string; message: string; timestamp: number }>) => {
       if (!Array.isArray(entries)) return
       for (const e of entries) {
@@ -1297,17 +1298,17 @@ app.whenReady().then(async () => {
   // Tell the renderer which port the JUCE bridge is listening on. Resolved
   // once at main-process start (env var or default) and shared with the
   // spawned backend via `--port`.
-  ipcMain.handle('bridge:getPort', () => bridgePort)
+  ipcMain.handle(IPC.bridge.getPort, () => bridgePort)
 
   // Hand the renderer the per-session AUTH token so it can send the
   // initial `{type:'AUTH',payload:{token}}` envelope. The token never
   // appears in argv or in the renderer's HTML — only the trusted preload
   // bridge can fetch it.
-  ipcMain.handle('bridge:getToken', () => bridgeToken)
+  ipcMain.handle(IPC.bridge.getToken, () => bridgeToken)
 
   // Static app / runtime info for the in-app About dialog. Resolved once at
   // start; never changes for the lifetime of the process.
-  ipcMain.handle('app:getInfo', () => ({
+  ipcMain.handle(IPC.app.getInfo, () => ({
     appVersion: app.getVersion(),
     electron: process.versions.electron,
     chromium: process.versions.chrome,
@@ -1316,7 +1317,7 @@ app.whenReady().then(async () => {
 
   // Open an external URL in the user's default browser. We only forward
   // http/https — anything else (file:, data:, custom schemes) is dropped.
-  ipcMain.on('app:openExternal', (_evt, url: unknown) => {
+  ipcMain.on(IPC.app.openExternal, (_evt, url: unknown) => {
     if (typeof url !== 'string') return
     let parsed: URL
     try {
@@ -1331,7 +1332,7 @@ app.whenReady().then(async () => {
 
   // Open an audio file via the OS dialog and stream its bytes back to the renderer.
   // Returns null if the user cancels.
-  ipcMain.handle('audio:open', async () => {
+  ipcMain.handle(IPC.audio.open, async () => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Add Track from File',
@@ -1353,7 +1354,7 @@ app.whenReady().then(async () => {
 
   // Multi-file variant used by the library panel's Import button.
   // Returns an array of opened files (paths + bytes) or `[]` if cancelled.
-  ipcMain.handle('audio:openMany', async () => {
+  ipcMain.handle(IPC.audio.openMany, async () => {
     if (!mainWindow) return []
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Import Audio into Library',
@@ -1385,7 +1386,7 @@ app.whenReady().then(async () => {
   // allow-list so the subsequent `audio:readMetadata` for cover-art
   // refresh works without a separate registerDroppedPath round-trip.
   ipcMain.handle(
-    'audio:chooseFile',
+    IPC.audio.chooseFile,
     async (_evt, args: unknown): Promise<string | null> => {
       if (!mainWindow) return null
       const a = (args ?? {}) as { title?: string; defaultPath?: string }
@@ -1413,7 +1414,7 @@ app.whenReady().then(async () => {
   // OS shell can have populated this string (the renderer can't fabricate
   // a `File` with an arbitrary path), and even if it could, the actual
   // read still has to satisfy the extension allow-list below.
-  ipcMain.on('audio:registerDroppedPath', (_evt, filePath: unknown) => {
+  ipcMain.on(IPC.audio.registerDroppedPath, (_evt, filePath: unknown) => {
     if (typeof filePath !== 'string') return
     registerIssuedPath(filePath)
   })
@@ -1421,7 +1422,7 @@ app.whenReady().then(async () => {
   // Read an audio file by absolute path (e.g. one obtained from an OS
   // drag-drop via `webUtils.getPathForFile`). Returns null on failure or
   // when the path is not on the allow-list.
-  ipcMain.handle('audio:readFile', async (_evt, filePath: unknown) => {
+  ipcMain.handle(IPC.audio.readFile, async (_evt, filePath: unknown) => {
     if (!isAllowedAudioPath(filePath)) {
       console.warn('[audio:readFile] rejected path not on allow-list:', filePath)
       return null
@@ -1440,7 +1441,7 @@ app.whenReady().then(async () => {
   // a normalized subset of fields the renderer can display in the library
   // card and tooltip. Resolves to `null` if parsing fails (the import still
   // succeeds with only the technical info from Web Audio).
-  ipcMain.handle('audio:readMetadata', async (_evt, filePath: unknown) => {
+  ipcMain.handle(IPC.audio.readMetadata, async (_evt, filePath: unknown) => {
     if (!isAllowedAudioPath(filePath)) {
       console.warn('[audio:readMetadata] rejected path not on allow-list:', filePath)
       return null
@@ -1464,7 +1465,7 @@ app.whenReady().then(async () => {
   // The path is added to the audio allow-list so the renderer may re-read
   // it via `audio:readFile` if it ever needs to (the backend reads it via
   // its own filesystem access, independently of the allow-list).
-  ipcMain.handle('audio:writeTempWav', async (_evt, payload: unknown) => {
+  ipcMain.handle(IPC.audio.writeTempWav, async (_evt, payload: unknown) => {
     if (!payload || typeof payload !== 'object') return null
     const p = payload as {
       sourcePath?: unknown
@@ -1575,26 +1576,26 @@ app.whenReady().then(async () => {
 
   // Hand the renderer its persisted preferences (UI panel sizes etc.) on
   // request. Window bounds are applied by main so they aren't included.
-  ipcMain.handle('prefs:getUi', () => prefs.ui)
+  ipcMain.handle(IPC.prefs.getUi, () => prefs.ui)
 
-  ipcMain.on('window:minimize', () => {
+  ipcMain.on(IPC.window.minimize, () => {
     mainWindow?.minimize()
   })
 
-  ipcMain.on('window:toggleMaximize', () => {
+  ipcMain.on(IPC.window.toggleMaximize, () => {
     if (!mainWindow) return
     if (mainWindow.isMaximized()) mainWindow.unmaximize()
     else mainWindow.maximize()
   })
 
-  ipcMain.on('window:close', () => {
-    mainWindow?.webContents.send('menu:action', 'app.requestClose')
+  ipcMain.on(IPC.window.close, () => {
+    mainWindow?.webContents.send(IPC.menu.action, 'app.requestClose')
   })
 
   // Update one or more UI preference keys. Explicit Preferences-dialog saves
   // should be durable immediately; high-frequency window bounds still use the
   // debounced writer in `captureWindowState`.
-  ipcMain.on('prefs:setUi', (_evt, partial: Partial<UiPrefs>) => {
+  ipcMain.on(IPC.prefs.setUi, (_evt, partial: Partial<UiPrefs>) => {
     prefs.ui = { ...prefs.ui, ...partial }
     flushPrefsSaveSync()
   })
@@ -1604,13 +1605,13 @@ app.whenReady().then(async () => {
   // Saved values may differ during this session; changes take effect on
   // next launch.
 
-  ipcMain.handle('debug:getStartupPrefs', () => ({
+  ipcMain.handle(IPC.debug.getStartupPrefs, () => ({
     loggingEnabled: startupLoggingEnabled,
     devToolsEnabled: startupDevToolsEnabled,
     logDirectory: prefs.debug.logDirectory
   }))
-  ipcMain.handle('debug:getPrefs', () => ({ ...prefs.debug }))
-  ipcMain.on('debug:setPrefs', (_evt, partial: unknown) => {
+  ipcMain.handle(IPC.debug.getPrefs, () => ({ ...prefs.debug }))
+  ipcMain.on(IPC.debug.setPrefs, (_evt, partial: unknown) => {
     if (!partial || typeof partial !== 'object') return
     const p = partial as Partial<DebugPrefs>
     const next: DebugPrefs = { ...prefs.debug }
@@ -1632,24 +1633,16 @@ app.whenReady().then(async () => {
     // hit disk before the user immediately quits/relaunches.
     flushPrefsSaveSync()
   })
-  // Legacy aliases retained for older renderer code during development.
-  ipcMain.handle('debug:getStartupEnabled', () => startupDevToolsEnabled)
-  ipcMain.handle('debug:getEnabled', () => prefs.debug.loggingEnabled || prefs.debug.devToolsEnabled)
-  ipcMain.on('debug:setEnabled', (_evt, value: unknown) => {
-    const next = value === true
-    prefs.debug = { ...prefs.debug, loggingEnabled: next, devToolsEnabled: next }
-    flushPrefsSaveSync()
-  })
 
   // ─── Quality-of-life preferences (toasts, default paths) ────────────────
   // Used by the Preferences dialog. The renderer reads everything in one
   // round-trip and writes back partial updates as the user changes them.
-  ipcMain.handle('prefs:getQol', () => ({
+  ipcMain.handle(IPC.prefs.getQol, () => ({
     toasts: { ...prefs.toasts },
     paths: { ...prefs.paths }
   }))
 
-  ipcMain.on('prefs:setQol', (_evt, partial: unknown) => {
+  ipcMain.on(IPC.prefs.setQol, (_evt, partial: unknown) => {
     if (!partial || typeof partial !== 'object') return
     const p = partial as {
       toasts?: Partial<ToastPrefs>
@@ -1686,7 +1679,7 @@ app.whenReady().then(async () => {
    * dialog's "Change…" buttons for the two default-paths fields.
    */
   ipcMain.handle(
-    'prefs:chooseDirectory',
+    IPC.prefs.chooseDirectory,
     async (_evt, args: unknown): Promise<string | null> => {
       if (!mainWindow) return null
       const a = (args ?? {}) as { title?: string; defaultPath?: string }
@@ -1706,7 +1699,7 @@ app.whenReady().then(async () => {
   // surface it in the File menu and on the Start Screen. The MRU head
   // doubles as the "last opened project" — there's no separate slot.
 
-  ipcMain.on('project:setLastPath', (_evt, value: unknown) => {
+  ipcMain.on(IPC.project.setLastPath, (_evt, value: unknown) => {
     if (typeof value !== 'string' || value.length === 0) return
     // A successful save / load bumps the Recent Projects MRU. Bridge
     // service calls this IPC from both the PROJECT_SAVED arm and the
@@ -1715,7 +1708,7 @@ app.whenReady().then(async () => {
     if (bumpRecentProject(value)) flushPrefsSaveSync()
   })
 
-  ipcMain.handle('project:fileExists', async (_evt, value: unknown): Promise<boolean> => {
+  ipcMain.handle(IPC.project.fileExists, async (_evt, value: unknown): Promise<boolean> => {
     if (typeof value !== 'string' || value.length === 0) return false
     try {
       await readFile(value, { encoding: null, flag: 'r' })
@@ -1725,7 +1718,7 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('project:chooseOpen', async (): Promise<string | null> => {
+  ipcMain.handle(IPC.project.chooseOpen, async (): Promise<string | null> => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Open Silverdaw Project',
@@ -1738,7 +1731,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle(
-    'project:chooseSaveAs',
+    IPC.project.chooseSaveAs,
     async (_evt, defaultName: unknown): Promise<string | null> => {
       if (!mainWindow) return null
       const suggested =
@@ -1769,7 +1762,7 @@ app.whenReady().then(async () => {
    * cancel from the save dialog doesn't litter the filesystem.
    */
   ipcMain.handle(
-    'mixdown:resolveDefaultPath',
+    IPC.mixdown.resolveDefaultPath,
     async (
       _evt,
       projectFilePath: unknown,
@@ -1801,7 +1794,7 @@ app.whenReady().then(async () => {
   )
 
   ipcMain.handle(
-    'mixdown:chooseSaveAs',
+    IPC.mixdown.chooseSaveAs,
     async (_evt, defaultPath: unknown, format: unknown): Promise<string | null> => {
       if (!mainWindow) return null
       const suggestedDefaultPath =
@@ -1857,7 +1850,7 @@ app.whenReady().then(async () => {
    * dispatching the bridge envelope.
    */
   ipcMain.handle(
-    'mixdown:confirmOverwrite',
+    IPC.mixdown.confirmOverwrite,
     async (_evt, filePath: unknown): Promise<'overwrite' | 'cancel' | 'not-found'> => {
       if (typeof filePath !== 'string' || filePath.length === 0) return 'not-found'
       if (!existsSync(filePath)) return 'not-found'
@@ -1893,7 +1886,7 @@ app.whenReady().then(async () => {
    * registration failures are silent (the renderer will surface them
    * later as missing-file toasts when the backend tries to load them).
    */
-  ipcMain.handle('project:prepareOpen', async (_evt, filePath: unknown): Promise<boolean> => {
+  ipcMain.handle(IPC.project.prepareOpen, async (_evt, filePath: unknown): Promise<boolean> => {
     if (typeof filePath !== 'string' || filePath.length === 0) return false
     if (extname(filePath).toLowerCase() !== '.silverdaw') return false
     try {
@@ -1942,16 +1935,16 @@ app.whenReady().then(async () => {
    * re-open the same project) and the renderer drives the normal load
    * flow. Returns `null` when there's no pending path.
    */
-  ipcMain.handle('project:consumePendingOpenPath', (): string | null => {
+  ipcMain.handle(IPC.project.consumePendingOpenPath, (): string | null => {
     const p = pendingOpenPath
     pendingOpenPath = null
     return p
   })
 
   // ─── Recent projects (MRU) ─────────────────────────────────────────────
-  ipcMain.handle('prefs:getRecentProjects', (): string[] => [...prefs.recentProjects])
+  ipcMain.handle(IPC.prefs.getRecentProjects, (): string[] => [...prefs.recentProjects])
 
-  ipcMain.on('prefs:removeRecentProject', (_evt, value: unknown) => {
+  ipcMain.on(IPC.prefs.removeRecentProject, (_evt, value: unknown) => {
     if (typeof value !== 'string' || value.length === 0) return
     const key = value.toLowerCase()
     const before = prefs.recentProjects.length
@@ -1959,7 +1952,7 @@ app.whenReady().then(async () => {
     if (prefs.recentProjects.length !== before) flushPrefsSaveSync()
   })
 
-  ipcMain.on('prefs:clearRecentProjects', () => {
+  ipcMain.on(IPC.prefs.clearRecentProjects, () => {
     if (prefs.recentProjects.length === 0) return
     prefs.recentProjects = []
     flushPrefsSaveSync()
@@ -1967,11 +1960,11 @@ app.whenReady().then(async () => {
 
   // ─── Autosave preferences ───────────────────────────────────────────────
   ipcMain.handle(
-    'prefs:getAutosaveConfig',
+    IPC.prefs.getAutosaveConfig,
     (): { enabled: boolean; intervalSeconds: number } => ({ ...prefs.autosave })
   )
 
-  ipcMain.on('prefs:setAutosaveConfig', (_evt, partial: unknown) => {
+  ipcMain.on(IPC.prefs.setAutosaveConfig, (_evt, partial: unknown) => {
     if (!partial || typeof partial !== 'object') return
     const p = partial as Partial<AutosavePrefs>
     let changed = false
@@ -1998,11 +1991,11 @@ app.whenReady().then(async () => {
   // failed to open never gets persisted (and won't repeatedly fail
   // on subsequent launches).
   ipcMain.handle(
-    'prefs:getAudioOutput',
+    IPC.prefs.getAudioOutput,
     (): { typeName: string | null; deviceName: string | null } => ({ ...prefs.audioOutput })
   )
 
-  ipcMain.on('prefs:setAudioOutput', (_evt, partial: unknown) => {
+  ipcMain.on(IPC.prefs.setAudioOutput, (_evt, partial: unknown) => {
     if (!partial || typeof partial !== 'object') return
     const p = partial as Partial<AudioOutputPrefs>
     const nextTypeName = typeof p.typeName === 'string' && p.typeName.length > 0 ? p.typeName : null
@@ -2027,7 +2020,7 @@ app.whenReady().then(async () => {
   // `projectId` is validated against `AUTOSAVE_ID_REGEX` first.
 
   ipcMain.handle(
-    'autosave:resolveDir',
+    IPC.autosave.resolveDir,
     async (_evt, projectId: unknown): Promise<{ dir: string; filePath: string } | null> => {
       if (typeof projectId !== 'string') return null
       try {
@@ -2041,7 +2034,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('autosave:writeManifest', async (_evt, payload: unknown): Promise<boolean> => {
+  ipcMain.handle(IPC.autosave.writeManifest, async (_evt, payload: unknown): Promise<boolean> => {
     if (!payload || typeof payload !== 'object') return false
     const p = payload as Partial<AutosaveManifest>
     if (typeof p.projectId !== 'string' || !AUTOSAVE_ID_REGEX.test(p.projectId)) return false
@@ -2064,7 +2057,7 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('autosave:listRecoverable', async (): Promise<
+  ipcMain.handle(IPC.autosave.listRecoverable, async (): Promise<
     Array<{
       projectId: string
       originalPath: string | null
@@ -2140,7 +2133,7 @@ app.whenReady().then(async () => {
     return out
   })
 
-  ipcMain.handle('autosave:clear', async (_evt, projectId: unknown): Promise<boolean> => {
+  ipcMain.handle(IPC.autosave.clear, async (_evt, projectId: unknown): Promise<boolean> => {
     if (typeof projectId !== 'string' || !AUTOSAVE_ID_REGEX.test(projectId)) return false
     try {
       const dir = resolveAutosaveDir(projectId)
@@ -2174,7 +2167,7 @@ app.whenReady().then(async () => {
    * actively produced.
    */
   const peaksCacheDir = pathResolve(app.getPath('appData'), 'Silverdaw', 'peaks')
-  ipcMain.handle('peaks:readCacheFile', async (_evt, value: unknown): Promise<ArrayBuffer | null> => {
+  ipcMain.handle(IPC.peaks.readCacheFile, async (_evt, value: unknown): Promise<ArrayBuffer | null> => {
     if (typeof value !== 'string' || value.length === 0) return null
     const canonical = pathResolve(value)
     if (!canonical.toLowerCase().startsWith(peaksCacheDir.toLowerCase() + '\\') &&

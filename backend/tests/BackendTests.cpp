@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "BridgeAuth.h"
 #include "LoudnessAnalyzer.h"
+#include "MixdownEngine.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
@@ -900,6 +901,57 @@ void testAudioEngineSetPreviewWarpUnderRapidCalls()
             "reader thread should have observed at least one engine state read");
 }
 
+// ─── Mixdown snapshot fade parity ─────────────────────────────────────────
+//
+// Regression guard for the offline-render fade fix. Exported audio must
+// carry the same per-clip fades the live engine applies. The live engine
+// wires fades into `OffsetSource::setFadesMs`; the offline render reuses
+// the identical OffsetSource, but `buildOfflineClip` can only apply the
+// fades the snapshot carries. Before the fix, `snapshotProjectForMixdown`
+// never read kFadeInMs / kFadeOutMs, so every export rendered with zero
+// fades regardless of the user's settings.
+//
+// This test asserts the snapshot faithfully carries the clip fades from
+// ProjectState (the single source of truth the live load path also uses)
+// and that clips with no fades default to zero. If a future change drops
+// the fade reads from the snapshot, this fails deterministically.
+
+void testMixdownSnapshotCarriesClipFades()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "addTrack should succeed");
+    require(state.addLibraryItem("lib1", "C:\\audio\\a.wav", "a.wav", 5000.0, 48000, 2),
+            "addLibraryItem should succeed");
+    // Faded clip.
+    require(state.addClip("t1", "c-faded", "lib1", 100.0, 1000.0),
+            "addClip should succeed for faded clip");
+    require(state.setClipFades("c-faded", 250.0, 400.0),
+            "setClipFades should succeed");
+    // Un-faded clip on the same track — defaults must stay zero.
+    require(state.addClip("t1", "c-plain", "lib1", 2000.0, 1000.0),
+            "addClip should succeed for plain clip");
+
+    const auto snapshot = silverdaw::snapshotProjectForMixdown(state);
+
+    const silverdaw::MixdownSnapshot::ClipSnapshot* faded = nullptr;
+    const silverdaw::MixdownSnapshot::ClipSnapshot* plain = nullptr;
+    for (const auto& track : snapshot.tracks)
+    {
+        for (const auto& clip : track.clips)
+        {
+            if (clip.id == "c-faded") faded = &clip;
+            else if (clip.id == "c-plain") plain = &clip;
+        }
+    }
+
+    require(faded != nullptr, "faded clip should appear in the mixdown snapshot");
+    require(plain != nullptr, "plain clip should appear in the mixdown snapshot");
+    requireNear(faded->fadeInMs, 250.0, 0.0001, "snapshot should carry the clip fade-in");
+    requireNear(faded->fadeOutMs, 400.0, 0.0001, "snapshot should carry the clip fade-out");
+    requireNear(plain->fadeInMs, 0.0, 0.0001, "un-faded clip should default fade-in to zero");
+    requireNear(plain->fadeOutMs, 0.0, 0.0001, "un-faded clip should default fade-out to zero");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -1184,6 +1236,8 @@ int main()
          testProjectStateDelayNoteValueGuard},
         {"ProjectState per-track tone round-trips through tracksAsJson",
          testProjectStateTrackToneJsonRoundTrip},
+        {"Mixdown snapshot carries per-clip fades",
+         testMixdownSnapshotCarriesClipFades},
     };
 
     int failed = 0;
