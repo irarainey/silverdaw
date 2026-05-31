@@ -2186,6 +2186,10 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
     {
         engine.setPositionMs(persistedPlayhead);
     }
+    // Block-prime the read-ahead buffers at the restored playhead so the
+    // first "press play" after a load is instant — never an audible gap
+    // while the background reader catches up at a non-zero position.
+    engine.primeTracksForPlayback(silverdaw::kLoadPrimeBudgetMs);
     session.currentPath = filePath;
 
     bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, true));
@@ -2569,6 +2573,9 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
     {
         engine.setPositionMs(persistedPlayhead);
     }
+    // Block-prime the read-ahead buffers at the restored playhead so the
+    // first "press play" after a recovery is instant (see PROJECT_LOAD).
+    engine.primeTracksForPlayback(silverdaw::kLoadPrimeBudgetMs);
 
     // Aim the user's "current project" pointer at the original backing
     // path (or clear it for an untitled recovery). The autosave path

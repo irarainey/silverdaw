@@ -433,16 +433,26 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
         static_cast<juce::int64>(clampedDurMs * track->sampleRate / 1000.0));
 
     track->transportSource = std::make_unique<juce::AudioTransportSource>();
-    // 8192 samples (~186 ms at 44.1 kHz) of read-ahead is plenty for
-    // SSD-backed file reads — enough to hide disk-IO latency on a
-    // 60 Hz audio callback without the heavy synchronous initial-fill
-    // cost a 32 768-sample buffer paid every time a clip was added.
-    // Large buffers were biting hard when several duplicates of an
-    // MP3 source landed in quick succession (each addClip blocking
-    // the message thread for ~1 s on a fresh BufferingAudioSource).
-    track->transportSource->setSource(track->offsetSource.get(),
-                                      kTransportReadAheadSamples, // read-ahead buffer size in samples
-                                      &readAheadThread, // background reader thread (required when buffer > 0)
+    // Own the read-ahead BufferingAudioSource explicitly instead of letting
+    // AudioTransportSource create a hidden internal one. Owning it is what
+    // lets us block-prime to an exact playhead via waitForNextAudioBlockReady
+    // (see primeTracksForPlayback) so "press play" is instant from any
+    // position. 8192 samples (~186 ms at 44.1 kHz) of read-ahead is plenty
+    // for SSD-backed file reads — enough to hide disk-IO latency on a 60 Hz
+    // audio callback without the heavy synchronous initial-fill cost a larger
+    // buffer paid every time a clip was added (large buffers bit hard when
+    // several duplicates of an MP3 source landed in quick succession, each
+    // addClip blocking the message thread for ~1 s on a fresh buffer).
+    track->bufferingSource = std::make_unique<juce::BufferingAudioSource>(
+        track->offsetSource.get(), readAheadThread,
+        /*deleteSourceWhenDeleted=*/false,
+        kTransportReadAheadSamples, track->numChannels);
+    // readAhead=0 / thread=nullptr here: the read-ahead is performed by our
+    // owned bufferingSource above, so AudioTransportSource must not wrap it in
+    // a second hidden BufferingAudioSource.
+    track->transportSource->setSource(track->bufferingSource.get(),
+                                      0,       // read-ahead handled by our owned bufferingSource
+                                      nullptr, // ditto — no extra reader thread
                                       track->sampleRate, track->numChannels);
     track->transportSource->setGain(juce::jlimit(kMinTrackGain, kMaxTrackGain, initialGain));
 
@@ -612,9 +622,58 @@ void AudioEngine::play()
 {
     rebuildTimer.stopTimer();
     flushAllDirtyRebuildsSync();
+    // Block-prime every track's read-ahead buffer at the current playhead
+    // before opening the master gate, so the very first audio block is a
+    // buffer hit. Bounded (kPlayPrimeBudgetMs) so a cold disk or a stalled
+    // track can never turn pressing play into a long stall — in the common
+    // case the buffers are already warm (primed at load / after a seek) and
+    // this returns immediately.
+    primeTracksForPlayback(kPlayPrimeBudgetMs);
     master.setPlaying(true);
     silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
                                        " pos=" + juce::String(master.getPositionSamples()) + ")");
+}
+
+void AudioEngine::primeTracksForPlayback(int totalBudgetMs)
+{
+    // Message-thread only. If no device is open the per-track buffering
+    // sources are not prepared and can never fill, so waiting would just
+    // burn `kPrimePerTrackTimeoutMs` per track for nothing. Bail early.
+    if (master.getSampleRate() <= 0.0)
+    {
+        return;
+    }
+
+    const double deadline = juce::Time::getMillisecondCounterHiRes() +
+                            static_cast<double>(juce::jmax(0, totalBudgetMs));
+    // waitForNextAudioBlockReady only reads info.numSamples and never touches
+    // info.buffer, but we back it with a real (stereo) scratch buffer to keep
+    // the AudioSourceChannelInfo contract clean.
+    juce::AudioBuffer<float> scratch(2, kPrimeProbeSamples);
+
+    for (auto& [id, track] : tracks)
+    {
+        if (track->transportSource == nullptr || track->bufferingSource == nullptr)
+        {
+            continue;
+        }
+        // Seek to the live master position first so the buffering source is
+        // refilling at the right spot (covers the case where a debounced
+        // rebuild has not run yet), then clear the dirty flag we are about to
+        // satisfy by waiting.
+        track->transportSource->setPosition(trackSeekSecondsFor(*track, master.getPositionSamples()));
+        track->prefetchDirty = false;
+
+        const double remaining = deadline - juce::Time::getMillisecondCounterHiRes();
+        if (remaining <= 0.0)
+        {
+            break;
+        }
+        const auto perTrack = static_cast<juce::uint32>(
+            juce::jmin(remaining, static_cast<double>(kPrimePerTrackTimeoutMs)));
+        juce::AudioSourceChannelInfo info(&scratch, 0, kPrimeProbeSamples);
+        track->bufferingSource->waitForNextAudioBlockReady(info, perTrack);
+    }
 }
 
 void AudioEngine::pause()

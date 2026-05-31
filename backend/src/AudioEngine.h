@@ -971,6 +971,22 @@ class AudioEngine
     /** Start playback of all tracks from their current positions. */
     void play();
 
+    /**
+     * Block-fill every track's read-ahead buffer at the current master
+     * position, bounded by `totalBudgetMs` of wall-clock time overall and
+     * `kPrimePerTrackTimeoutMs` per track. After this returns the next audio
+     * block each track produces is a buffer hit rather than a cache miss, so
+     * opening the master gate (or a subsequent `play()`) starts instantly
+     * from any playhead — including straight after a project load or a seek.
+     *
+     * Message-thread only. No-ops when no audio device is open (the buffering
+     * sources can never fill, so waiting would just burn the budget). `play()`
+     * calls this internally with a tight budget; `Main.cpp` also calls it at
+     * the end of a project load/recovery with a more generous budget so the
+     * first play after a load is already warm.
+     */
+    void primeTracksForPlayback(int totalBudgetMs);
+
     /** Pause playback (positions retained). */
     void pause();
 
@@ -1334,6 +1350,15 @@ class AudioEngine
     {
         std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
         std::unique_ptr<OffsetSource> offsetSource;
+        /** Read-ahead buffer for this track, owned explicitly (rather than
+         *  letting AudioTransportSource create a hidden internal one) so we
+         *  can block-prime it to a specific playhead via
+         *  `waitForNextAudioBlockReady`. Declared AFTER `offsetSource` (its
+         *  non-owned input) and BEFORE `transportSource` (which holds a
+         *  non-owning pointer to it) so reverse-order member destruction
+         *  tears the chain down safely: transportSource → bufferingSource →
+         *  offsetSource → readerSource. */
+        std::unique_ptr<juce::BufferingAudioSource> bufferingSource;
         std::unique_ptr<juce::AudioTransportSource> transportSource;
         /** Owns the lifetime of the per-clip warp engine when warp is
          *  enabled. nullptr means "no warp / bypass" — the fast path.

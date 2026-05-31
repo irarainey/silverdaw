@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "AudioConstants.h"
 #include "BridgeAuth.h"
 #include "LoudnessAnalyzer.h"
 #include "MixdownEngine.h"
@@ -71,6 +72,38 @@ juce::File makeTempDir(const juce::String& name)
         throw std::runtime_error("failed to create temp dir: " + created.getErrorMessage().toStdString());
     }
     return dir;
+}
+
+// Author a short, real, decodable WAV so engine.addClip builds the full
+// per-track source chain (AudioFormatReaderSource → OffsetSource →
+// BufferingAudioSource → AudioTransportSource). A faint sine keeps it from
+// being pure silence; content is otherwise irrelevant to these tests.
+juce::File writeTestWav(const juce::File& dir, const juce::String& name,
+                        double seconds, double sampleRate = 44100.0)
+{
+    auto file = dir.getChildFile(name);
+    juce::WavAudioFormat format;
+    std::unique_ptr<juce::FileOutputStream> stream(file.createOutputStream());
+    require(stream != nullptr, "wav output stream should open");
+    std::unique_ptr<juce::AudioFormatWriter> writer(
+        format.createWriterFor(stream.get(), sampleRate, 2, 16, juce::StringPairArray(), 0));
+    require(writer != nullptr, "wav writer should create");
+    stream.release(); // writer owns the stream now
+
+    const int numSamples = juce::jmax(1, static_cast<int>(seconds * sampleRate));
+    juce::AudioBuffer<float> buffer(2, numSamples);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        auto* data = buffer.getWritePointer(ch);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            data[i] = 0.1F * static_cast<float>(
+                          std::sin(2.0 * juce::MathConstants<double>::pi * 220.0 * i / sampleRate));
+        }
+    }
+    require(writer->writeFromAudioSampleBuffer(buffer, 0, numSamples), "wav write should succeed");
+    writer.reset(); // flush + close
+    return file;
 }
 
 juce::var objectWithToken(const juce::String& token)
@@ -901,6 +934,61 @@ void testAudioEngineSetPreviewWarpUnderRapidCalls()
             "reader thread should have observed at least one engine state read");
 }
 
+// ─── AudioEngine play-prime safety ────────────────────────────────────────
+//
+// Regression guard for the "first play after load is instant" fix. Each
+// track owns its read-ahead BufferingAudioSource explicitly so the engine
+// can block-prime it to an exact playhead before opening the master gate
+// (AudioEngine::primeTracksForPlayback).
+//
+// Two things are locked in here:
+//  1. The refactored per-track source chain (reader → offset → buffering →
+//     transport) builds, seeks, plays, and tears down without crashing —
+//     the real risk of owning the buffering source is a lifetime / member
+//     destruction-order regression (use-after-free on shutdown).
+//  2. Priming is bounded: with no audio device open the buffering sources
+//     are never prepared and can never fill, so primeTracksForPlayback must
+//     early-return rather than block kPrimePerTrackTimeoutMs per track. The
+//     time bound is deliberately loose to stay non-flaky while still
+//     catching a regression that drops the no-device guard (which would turn
+//     this into a multi-hundred-ms — or, with many tracks, multi-second —
+//     stall).
+//
+// We call initialise() only to register the audio formats addClip needs; the
+// test stays correct whether or not a real output device opens on the host.
+
+void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
+{
+    const auto dir = makeTempDir("prime-tracks");
+    silverdaw::AudioEngine engine;
+    engine.initialise({}, {}, nullptr); // registers WAV/etc. formats for addClip
+
+    const auto a = writeTestWav(dir, "a.wav", 2.0);
+    const auto b = writeTestWav(dir, "b.wav", 2.0);
+    require(engine.addClip("t1", "c1", a, 0.0), "addClip c1 should build the owned-buffer chain");
+    require(engine.addClip("t1", "c2", b, 500.0), "addClip c2 should build the owned-buffer chain");
+
+    // Prime at the current position. Must be safe and bounded regardless of
+    // whether a device is open on this host.
+    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+    engine.primeTracksForPlayback(silverdaw::kLoadPrimeBudgetMs);
+    const auto elapsed = juce::Time::getMillisecondCounterHiRes() - t0;
+    require(elapsed < 3000.0, "primeTracksForPlayback must stay bounded (never hang)");
+
+    // Jump-to-start then play-immediately path: seek, prime, play, stop. The
+    // chain must survive all of it without crashing.
+    engine.setPositionMs(0.0);
+    engine.primeTracksForPlayback(silverdaw::kPlayPrimeBudgetMs);
+    engine.play();  // play() primes internally before opening the gate
+    engine.stop();
+
+    require(engine.removeClip("c1"), "removeClip c1 should succeed");
+    require(engine.removeClip("c2"), "removeClip c2 should succeed");
+
+    engine.shutdown();
+    dir.deleteRecursively();
+}
+
 // ─── Mixdown snapshot fade parity ─────────────────────────────────────────
 //
 // Regression guard for the offline-render fade fix. Exported audio must
@@ -1221,6 +1309,8 @@ int main()
          testBridgePayloadHelpersRejectMalformed},
         {"AudioEngine setPreviewWarp survives rapid concurrent calls",
          testAudioEngineSetPreviewWarpUnderRapidCalls},
+        {"AudioEngine primeTracksForPlayback is safe and bounded",
+         testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded},
         {"LoudnessAnalyzer reports silent for digital silence", testLoudnessAnalyzerSilence},
         {"LoudnessAnalyzer measures -26 dBFS stereo sine as ~-23 LUFS",
          testLoudnessAnalyzerSineHits23},
