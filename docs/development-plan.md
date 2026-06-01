@@ -1477,9 +1477,11 @@ playable at every point — no broken-build day):
   analysis), Advanced disclosure for classic knobs. Detector state
   resets on transport stop / seek; **never** at clip boundaries.
   Bridge: `TRACK_SET_LEVELER` handler activated.
-- [ ] **9. mute / solo / pan.** Track header gets mute/solo
-  buttons; Track FX tab adds equal-power pan. Bridges:
-  `TRACK_SET_MUTE_SOLO`, `TRACK_SET_PAN` handlers activated.
+- [ ] **9. mute / solo / pan.** _(mute / solo already shipped via the
+  existing `TRACK_MUTE` / `TRACK_SOLO` envelopes; only **pan** remains.)_
+  Track header has mute/solo buttons; Track FX tab still needs an
+  equal-power **pan** control. Bridge: a `TRACK_SET_PAN` handler (not
+  yet in the protocol) to be added and activated.
 - [x] **10. Master bus metering.** Transport-bar stereo peak meter
   + dB master fader is *shipped* (`PROJECT_SET_MASTER_VOLUME`).
   LUFS / RMS readouts and a master Limiter are deferred to
