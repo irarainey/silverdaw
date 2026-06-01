@@ -165,7 +165,7 @@ waveform indexing so transients stay aligned with beat markers over long clips.
 | Waveform drawing                            | PixiJS (using peaks arrays from backend)        |
 | Drag and drop                               | Electron / Vue                                  |
 | Audio playback                              | JUCE backend                                    |
-| Future routing / mixer / effects            | JUCE backend                                    |
+| Per-track FX, mixer routing                 | JUCE backend (per-track Tone EQ + filters shipped; sends / leveler in progress) |
 | Warping and pitch shift                     | JUCE backend (Rubber Band)                      |
 | BPM / beat detection                        | JUCE backend (BTrack)                           |
 | Key detection                               | Electron renderer (Web Audio chroma analysis)   |

@@ -45,8 +45,10 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   pitch-shifted independently, all without changing the source file.
 - **Saved clips and samples.** Save reusable clips to the library and bake any
   clip down to a fresh sample when you want to commit its current sound.
-- **Track and master controls.** Per-track volume faders, mute and solo,
-  drag-to-resize and reorder tracks, and a master output with live metering.
+- **Track and master controls.** Per-track volume faders, mute, solo, and an
+  **Fx** button (beside Solo) that opens a per-track effects panel with a Tone
+  EQ (Bass / Mid / Treble) and Low Cut / High Cut filters; plus drag-to-resize
+  and reorder tracks, and a master output with live metering.
 - **Per-project sample rate.** Pin a project to 44.1 or 48 kHz; imports are
   checked against the project rate and offer a clear path when they differ.
 - **Mixdown export.** Render the whole project to a single stereo file in WAV,
@@ -61,6 +63,12 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 
 - **Import:** WAV, AIFF, FLAC, MP3, AAC / M4A / MP4, and Windows Media audio.
 - **Export:** WAV, FLAC, AIFF, and MP3.
+- **Processing & quality:** Audio is processed internally in **32-bit floating
+  point** from end to end, so your imported files — whatever their original bit
+  depth — are never quantised while you edit or play, and the source files are
+  never altered. Conversion to a final bit depth happens only on export, which
+  **defaults to 16-bit** and also offers 24-bit and 32-bit float depending on
+  the chosen format (WAV: 16 / 24 / 32-float; FLAC and AIFF: 16 / 24).
 
 ## On the roadmap
 
@@ -71,7 +79,8 @@ are not part of the current feature set. See the
 
 - **Stem separation.** Split a track into parts, such as vocals and
   instrumental, to remix and recombine.
-- **Built-in effects and transitions.** A small, well-explained set of mixing
+- **More built-in effects and transitions.** Building on the per-track Tone EQ
+  and Low Cut / High Cut filters that already ship, a wider set of mixing
   effects, clip-to-clip transitions, and stereo channel controls for polishing a
   mix.
 - **More editing power.** Extra clip actions such as reverse, and manual

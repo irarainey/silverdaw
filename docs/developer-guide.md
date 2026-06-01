@@ -13,6 +13,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Bridge protocol](#bridge-protocol)
 - [Project state model](#project-state-model)
 - [Audio formats](#audio-formats)
+  - [Internal signal format and bit depth](#internal-signal-format-and-bit-depth)
 - [Peaks cache](#peaks-cache)
 - [Audio analysis](#audio-analysis)
   - [Key detection](#key-detection)
@@ -129,6 +130,15 @@ Silverdaw currently supports the core arrangement workflow:
   readout to type a value. The master gain is persisted with the project,
   marks the project dirty and is applied to both live playback and mixdown
   export so the rendered file matches what the user hears.
+- **Per-track effects.** Each track header has an **Fx** button (beside Mute /
+  Solo) that opens the per-track effects panel for the selected track. It hosts
+  a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) plus **Low Cut** and
+  **High Cut** filter toggles — edited live (slider drags coalesce into one undo
+  step) and applied to both playback and mixdown. The DSP lives in
+  [`ToneEq`](../backend/src/ToneEq.h) / [`TrackChain`](../backend/src/TrackChain.h)
+  on the backend. The panel-open flag and the selected track are project **view
+  state**, round-tripped through `PROJECT_SET_VIEW` and saved in the `.silverdaw`
+  file alongside mute / solo.
 - **Mixdown export** (File ▸ Export Mixdown…) renders the whole project to a
   single stereo file. Formats: WAV (16 / 24 / 32-float), FLAC (16 / 24), AIFF
   (16 / 24), MP3 (128 / 192 / 320 kbps, bundled LAME). Optional TPDF dither for
@@ -240,8 +250,10 @@ buffer's latency-hiding contract intact at clip boundaries so back-to-back loops
 play seamlessly.
 
 The main remaining roadmap areas are region selection on timeline clips, library
-search / tags / list view, ffmpeg-backed decoding for unsupported formats,
-mixer / effects / automation, per-clip processor chain (reverb / EQ /
+search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
+wider mixer / effects / automation work (shared reverb / echo sends, a leveler,
+and project FX — beyond the per-track Tone EQ and Low Cut / High Cut filters
+that already ship), per-clip processor chain (reverb / EQ /
 compressor — applied both live and in mixdown), stem separation, loop slicing,
 grouping compound operations (split / duplicate) into a single undo step, and
 a CI matrix that enforces a coverage floor over the existing backend and
@@ -491,6 +503,39 @@ Imports also preflight every file's **true** header sample rate via the
 [Project sample rate](#project-sample-rate). The probe avoids trusting the
 renderer's Web Audio decoder, which silently resamples to the AudioContext
 rate and so cannot report the source file's actual rate.
+
+### Internal signal format and bit depth
+
+Silverdaw processes audio internally in **32-bit floating point**, end to end.
+On import the JUCE `AudioFormatManager` (and the renderer's Web Audio fallback
+for AAC / M4A) decodes every source file into 32-bit float regardless of its
+on-disk bit depth — a 16-bit WAV, a 24-bit FLAC, or an MP3 all become float on
+the way in, and the original file is never modified (non-destructive editing).
+
+Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp and
+the composed fade × volume-shape multiplier, per-track summing, the per-track
+Tone EQ + Low Cut / High Cut filters
+([`ToneEq`](../backend/src/ToneEq.h) / [`TrackChain`](../backend/src/TrackChain.h)),
+track gain and mute / solo, equal-power panning, the master mix and metering,
+and the `MasterClockSource` that gates playback and feeds the device. The
+`AudioSourcePlayer` hands 32-bit float to the OS audio driver, which converts
+to whatever the hardware expects. Float gives very large headroom, so
+intermediate sums can briefly exceed 0 dBFS without clipping as long as the
+final master is back in range. (`TrackChain` is the canonical per-track DSP
+seam shared by live playback and mixdown; additional nodes such as a leveler
+and shared reverb / echo sends are planned there — see the
+[Development Plan](development-plan.md).)
+
+Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
+export writer** in [`MixdownEngine`](../backend/src/MixdownEngine.cpp). (The
+renderer's throwaway transcode / preview WAV is itself 32-bit float, so it does
+not quantise either.) Export bit depth defaults to **16-bit**
+(`MixdownOptions::bitDepth{16}`) and offers, per format: WAV 16 / 24 / 32-float,
+FLAC 16 / 24, AIFF 16 / 24 (MP3 is encoder-defined). TPDF dither is applied by
+default for 16-bit targets; 24-bit and 32-float skip it, since their noise
+floor is far below audibility. See the mixdown export notes under
+[Current status and roadmap](#current-status-and-roadmap) for the full dialog
+and loudness-normalisation options.
 
 ## Peaks cache
 
@@ -815,7 +860,7 @@ engine or the file. The settings are organised into four tabs on a left-hand
 sidebar:
 
 - **General** — toast notifications, follow-playback auto-scroll, library tile
-  imagery.
+  imagery, and the transport **previous / next button target**.
 - **Project** — default Save / Open / Import directories and background autosave
   configuration.
 - **Audio** — output device + driver selection (see below), and the
@@ -849,6 +894,11 @@ Persisted fields:
 - **Default project sample rate** — `ui.defaultProjectSampleRate`, `44100` or
   `48000`. Seeds new projects' effective sample rate when the project hasn't
   set `targetSampleRate` itself. See [Project sample rate](#project-sample-rate).
+- **Previous / next button target** — `ui.skipButtonTarget`, `timelineEnds`
+  (default) or `markers`. Controls where the transport bar's previous / next
+  buttons jump: `timelineEnds` seeks the project start / end; `markers` steps
+  through the timeline markers, falling back to the start / end past the last
+  marker in either direction.
 - **Recent Projects** MRU (max 10, head = most recent, case-insensitive dedupe on Windows).
 - **Write diagnostic logs** — enables the cross-layer file logger. When on,
   the next launch writes a per-session timestamped folder containing
@@ -1052,9 +1102,15 @@ and the following set takes over instead:
 | `+` / `-` / `0` | Zoom in / out / reset. |
 | `Esc` | Close the dialog. |
 
-Clicking **Skip to start** in the transport bar rewinds the playhead and returns the
-timeline's horizontal scroll position to the start. **Skip to end** and the matching
-keyboard shortcut seek to the project end and jump the viewport to the right edge.
+The transport bar's **previous / next** buttons honour the **Previous / next
+button target** preference (`ui.skipButtonTarget`). With the default
+`timelineEnds`, **previous** rewinds the playhead to the project start (and
+returns the timeline's horizontal scroll to the start) while **next** seeks the
+project end and jumps the viewport to the right edge. With `markers`, they step
+to the previous / next timeline marker instead, falling back to the start / end
+past the last marker. The `Ctrl + ←/→` and `Ctrl + Shift + ←/→` keyboard
+shortcuts keep their fixed marker / project-end behaviour regardless of this
+setting.
 
 The status bar shows the current zoom level (e.g. `🔍 150%`) next to the backend connection
 indicator (plug-and-socket icon + green/grey dot). The **Pos**, **Bar**, **Length**, and
