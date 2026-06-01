@@ -7,6 +7,7 @@
 #include "PeaksCache.h"
 #include "ProjectFile.h"
 #include "ProjectState.h"
+#include "ToneEq.h"
 #include "ValueTreeJson.h"
 #include "WarpProcessor.h"
 
@@ -989,6 +990,113 @@ void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
     dir.deleteRecursively();
 }
 
+// ─── ToneEq low-cut direction + shelf range ───────────────────────────────
+//
+// Regression guard for the per-track Tone EQ. Two defects this locks out:
+//  1. "Low Cut" was a high-pass in name only — `designHighPass` used the
+//     low-pass cookbook numerator (1 - cos w0), so it actually stripped
+//     everything ABOVE the corner and left only sub-bass, sounding like a
+//     mute. A real low-cut must pass highs and attenuate lows.
+//  2. The shelves/peak must deliver real range at ±15 dB (a flat/​off chain
+//     stays bit-transparent for the export-parity guarantee).
+//
+// We drive a stationary sine through ToneEq and compare steady-state output
+// RMS (second half, past filter warm-up) to input RMS.
+
+double toneRms(const juce::AudioBuffer<float>& buf, int startSample, int numSamples)
+{
+    double sum = 0.0;
+    int count = 0;
+    for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+    {
+        const float* d = buf.getReadPointer(ch);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const double v = d[startSample + i];
+            sum += v * v;
+            ++count;
+        }
+    }
+    return count > 0 ? std::sqrt(sum / count) : 0.0;
+}
+
+// Output/input RMS ratio for a stationary sine at `freq` after applying the
+// given Tone settings (snapped to steady state).
+double toneGainRatio(float bassDb, float midDb, float trebleDb, bool lowCut, bool highCut,
+                     double freq)
+{
+    constexpr double sr = 44100.0;
+    silverdaw::ToneEq eq;
+    eq.prepare(sr, 2);
+    eq.setParams(bassDb, midDb, trebleDb, lowCut, highCut, /*snap*/ true);
+
+    constexpr int n = 16384;
+    juce::AudioBuffer<float> buf(2, n);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        float* d = buf.getWritePointer(ch);
+        for (int i = 0; i < n; ++i)
+        {
+            d[i] = 0.25F * static_cast<float>(
+                       std::sin(2.0 * juce::MathConstants<double>::pi * freq * i / sr));
+        }
+    }
+    const double inRms = toneRms(buf, n / 2, n / 2); // input is stationary
+    eq.process(buf, 0, n);
+    const double outRms = toneRms(buf, n / 2, n / 2); // measure past warm-up
+    return inRms > 0.0 ? outRms / inRms : 0.0;
+}
+
+void testToneEqLowCutDirectionAndShelfRange()
+{
+    // Low Cut is a 4th-order (24 dB/oct) high-pass @ 120 Hz: 1 kHz passes
+    // ~unchanged while lows are strongly removed. The inverted (low-pass)
+    // regression fails the direction guard; a too-gentle 2nd-order voicing
+    // fails the 60 Hz slope guard below.
+    const double passHigh = toneGainRatio(0.0F, 0.0F, 0.0F, true, false, 1000.0);
+    const double cutLow = toneGainRatio(0.0F, 0.0F, 0.0F, true, false, 40.0);
+    const double cut60 = toneGainRatio(0.0F, 0.0F, 0.0F, true, false, 60.0);
+    require(passHigh > 0.9, "Low Cut must pass 1 kHz roughly unchanged");
+    require(cutLow < 0.1, "Low Cut must strongly attenuate 40 Hz");
+    // A 2nd-order 120 Hz high-pass leaves 60 Hz near -6 dB (~0.25); the
+    // 4th-order slope pushes it well below, so this locks in 24 dB/oct.
+    require(cut60 < 0.15, "Low Cut must have a 24 dB/oct slope (60 Hz well below 2nd-order)");
+    require(passHigh > cutLow + 0.3, "Low Cut must pass highs more than lows (not inverted)");
+
+    // High Cut is a 4th-order (24 dB/oct) low-pass @ 6 kHz: 1 kHz passes
+    // ~unchanged while highs are strongly removed (mirror of Low Cut).
+    const double passLow = toneGainRatio(0.0F, 0.0F, 0.0F, false, true, 1000.0);
+    const double cutHigh = toneGainRatio(0.0F, 0.0F, 0.0F, false, true, 12000.0);
+    const double cut9k = toneGainRatio(0.0F, 0.0F, 0.0F, false, true, 9000.0);
+    require(passLow > 0.9, "High Cut must pass 1 kHz roughly unchanged");
+    require(cutHigh < 0.1, "High Cut must strongly attenuate 12 kHz");
+    // A 2nd-order 6 kHz low-pass leaves 9 kHz near -8 dB (~0.41); the
+    // 4th-order slope pushes it well below, so this locks in 24 dB/oct.
+    require(cut9k < 0.3, "High Cut must have a 24 dB/oct slope (9 kHz well below 2nd-order)");
+    require(passLow > cutHigh + 0.3, "High Cut must pass lows more than highs (not inverted)");
+
+    // Shelves / peak must deliver real range at the full ±15 dB. +15 dB ≈
+    // 5.6× linear; assert clearly above unity. The clamp must also hold:
+    // an over-range request resolves to the same gain as the +15 dB limit.
+    const double bassMax = toneGainRatio(15.0F, 0.0F, 0.0F, false, false, 40.0);
+    require(bassMax > 3.0, "Bass +15 dB should strongly boost 40 Hz");
+    require(toneGainRatio(-15.0F, 0.0F, 0.0F, false, false, 40.0) < 0.4, "Bass -15 dB should strongly cut 40 Hz");
+    require(toneGainRatio(0.0F, 0.0F, 15.0F, false, false, 12000.0) > 3.0, "Treble +15 dB should strongly boost 12 kHz");
+    require(toneGainRatio(0.0F, 15.0F, 0.0F, false, false, 1000.0) > 3.0, "Mid +15 dB should strongly boost 1 kHz");
+    const double bassOverdriven = toneGainRatio(40.0F, 0.0F, 0.0F, false, false, 40.0);
+    require(std::abs(bassOverdriven - bassMax) < 0.05, "Tone gain must clamp at +15 dB");
+
+    // Revoiced corners: Bass shelf (250 Hz) lifts low-mid body at 200 Hz;
+    // Treble shelf (4 kHz) adds presence at 5 kHz — neither is parked out
+    // at the spectral extremes where the controls felt inert.
+    require(toneGainRatio(12.0F, 0.0F, 0.0F, false, false, 200.0) > 1.5, "Bass should act on low-mid body (~200 Hz)");
+    require(toneGainRatio(0.0F, 0.0F, 12.0F, false, false, 5000.0) > 1.5, "Treble should act on presence (~5 kHz)");
+
+    // Flat with both cuts off must be transparent (export-parity guarantee).
+    const double flat = toneGainRatio(0.0F, 0.0F, 0.0F, false, false, 1000.0);
+    require(std::abs(flat - 1.0) < 0.02, "Flat tone with both cuts off should be transparent");
+}
+
 // ─── Mixdown snapshot fade parity ─────────────────────────────────────────
 //
 // Regression guard for the offline-render fade fix. Exported audio must
@@ -1261,7 +1369,7 @@ int main()
 
         // Set a non-default tone and confirm every field round-trips
         // through the snapshot the renderer reads on PROJECT_STATE.
-        require(state.setTrackTone("t-tone", 3.5F, -2.0F, 6.0F, true),
+        require(state.setTrackTone("t-tone", 3.5F, -2.0F, 6.0F, true, true),
                 "non-default tone should report changed");
         {
             const auto json = findTrackJson(state.tracksAsJson(), "t-tone");
@@ -1274,10 +1382,12 @@ int main()
                         "treble should round-trip through tracksAsJson");
             require(static_cast<bool>(json.getProperty("toneLowCut", false)),
                     "lowCut=true should round-trip through tracksAsJson");
+            require(static_cast<bool>(json.getProperty("toneHighCut", false)),
+                    "highCut=true should round-trip through tracksAsJson");
         }
 
         // Reset to defaults: the snapshot must drop the fields again.
-        require(state.setTrackTone("t-tone", 0.0F, 0.0F, 0.0F, false),
+        require(state.setTrackTone("t-tone", 0.0F, 0.0F, 0.0F, false, false),
                 "reset to default should report changed");
         {
             const auto json = findTrackJson(state.tracksAsJson(), "t-tone");
@@ -1286,6 +1396,7 @@ int main()
             require(!json.hasProperty("toneMidDb"), "reset mid must be omitted");
             require(!json.hasProperty("toneTrebleDb"), "reset treble must be omitted");
             require(!json.hasProperty("toneLowCut"), "reset lowCut must be omitted");
+            require(!json.hasProperty("toneHighCut"), "reset highCut must be omitted");
         }
     };
 
@@ -1311,6 +1422,8 @@ int main()
          testAudioEngineSetPreviewWarpUnderRapidCalls},
         {"AudioEngine primeTracksForPlayback is safe and bounded",
          testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded},
+        {"ToneEq low-cut is a high-pass and shelves have ±15 dB range",
+         testToneEqLowCutDirectionAndShelfRange},
         {"LoudnessAnalyzer reports silent for digital silence", testLoudnessAnalyzerSilence},
         {"LoudnessAnalyzer measures -26 dBFS stereo sine as ~-23 LUFS",
          testLoudnessAnalyzerSineHits23},

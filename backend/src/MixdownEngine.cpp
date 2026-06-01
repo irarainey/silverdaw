@@ -979,6 +979,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         track.toneMidDb = project.getTrackToneMidDb(track.id);
         track.toneTrebleDb = project.getTrackToneTrebleDb(track.id);
         track.toneLowCut = project.getTrackToneLowCut(track.id);
+        track.toneHighCut = project.getTrackToneHighCut(track.id);
 
         const bool trackMuted = project.getTrackMuted(track.id);
         const bool trackSoloed = project.getTrackSoloed(track.id);
@@ -1394,7 +1395,8 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         for (const auto& trackSnap : snapshot.tracks)
         {
             busGraph.setTrackTone(trackSnap.id, trackSnap.toneBassDb, trackSnap.toneMidDb,
-                                  trackSnap.toneTrebleDb, trackSnap.toneLowCut, /*snap*/ true);
+                                  trackSnap.toneTrebleDb, trackSnap.toneLowCut,
+                                  trackSnap.toneHighCut, /*snap*/ true);
         }
         FinalResampler finalResampler(snapshot.projectSampleRate, options.outputSampleRate);
         if (!finalResampler.ok())

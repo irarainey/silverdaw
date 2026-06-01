@@ -17,7 +17,7 @@ namespace silverdaw
  * (3-band fixed-frequency tilt + Low Cut, see `ToneEq.h`). Remaining
  * nodes are inserted in the order documented in §7.9.2:
  *
- *   Tone (3-band EQ + Low Cut)  → Leveler (Compressor)
+ *   Tone (3-band EQ + Low Cut + High Cut)  → Leveler (Compressor)
  *     → gain  → mute / solo gate
  *
  * Tone is the first populated node; Leveler / gain / gate still land in
@@ -79,9 +79,9 @@ public:
      *  offline export matches live playback exactly (§7.9.6). Live UI
      *  gestures pass `snap=false` to glide and avoid zipper noise. */
     void setTone(float bassDb, float midDb, float trebleDb, bool lowCut,
-                 bool snap) noexcept
+                 bool highCut, bool snap) noexcept
     {
-        tone.setParams(bassDb, midDb, trebleDb, lowCut, snap);
+        tone.setParams(bassDb, midDb, trebleDb, lowCut, highCut, snap);
     }
 
     /** In-place per-block DSP on a stereo (or mono) block already
@@ -91,9 +91,9 @@ public:
      *  forward straight through).
      *
      *  Applies the per-track Tone EQ in place. When all bands sit at
-     *  0 dB and Low Cut is off the EQ is sample-transparent (identity
-     *  coefficients), preserving the §7.9.6 parity guarantee for
-     *  untouched tracks. */
+     *  0 dB and Low Cut / High Cut are off the EQ is sample-transparent
+     *  (identity coefficients), preserving the §7.9.6 parity guarantee
+     *  for untouched tracks. */
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
         tone.process(buffer, startSample, numSamples);

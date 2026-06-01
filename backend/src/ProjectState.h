@@ -172,19 +172,21 @@ class ProjectState : public juce::ValueTree::Listener
     float getTrackReverbSend(const juce::String& trackId) const;
     float getTrackDelaySend(const juce::String& trackId) const;
 
-    /** Per-track Tone (3-band fixed EQ + global low-cut). All gain
-     *  values are in dB; the setter clamps to `[-12, +12]`. `lowCut`
-     *  is a boolean engaging a fixed high-pass when true. Defaults
-     *  (`0 dB`, `lowCut=false`) are suppressed so legacy projects
-     *  round-trip byte-equivalent.
+    /** Per-track Tone (3-band fixed EQ + low-cut + high-cut). All gain
+     *  values are in dB; the setter clamps to `[-15, +15]`. `lowCut`
+     *  engages a fixed high-pass and `highCut` a fixed low-pass when true.
+     *  Defaults (`0 dB`, `lowCut=false`, `highCut=false`) are suppressed so
+     *  legacy projects round-trip byte-equivalent.
      *
      *  Returns `true` iff the track exists AND any stored scalar
      *  actually changed. */
-    bool setTrackTone(const juce::String& trackId, float bassDb, float midDb, float trebleDb, bool lowCut);
+    bool setTrackTone(const juce::String& trackId, float bassDb, float midDb, float trebleDb,
+                      bool lowCut, bool highCut);
     float getTrackToneBassDb(const juce::String& trackId) const;
     float getTrackToneMidDb(const juce::String& trackId) const;
     float getTrackToneTrebleDb(const juce::String& trackId) const;
     bool getTrackToneLowCut(const juce::String& trackId) const;
+    bool getTrackToneHighCut(const juce::String& trackId) const;
 
     /** Per-track Leveler "amount" knob, range `[0, 1]`. Real
      *  compressor wiring lands when DSP is added; for now this is
@@ -829,6 +831,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kToneMidDb;
     static const juce::Identifier kToneTrebleDb;
     static const juce::Identifier kToneLowCut;
+    static const juce::Identifier kToneHighCut;
 
     // Phase 5 — per-track Leveler. Just the user-facing "amount" knob
     // until the compressor DSP and Advanced controls land.

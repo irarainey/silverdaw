@@ -456,7 +456,7 @@ clips[clipId]
   → fade × volume-shape composed multiplier (per clip, §7.11)
   → TrackRuntime.preBuffer  (sum of all clips on this track)
   → TrackChain:
-      Tone (3-band EQ + Low Cut)
+      Tone (3-band EQ + Low Cut + High Cut)
       Leveler (Compressor)
       gain
       mute / solo gate
@@ -493,8 +493,8 @@ which is what users expect.
 - `gain` (shipped) — linear, presented in dB via `lib/audio/db.ts`, range
   `-∞..+6 dB`.
 - **Tone** — 3-band fixed-frequency shelving / bell EQ (Bass low-shelf,
-  Mid peak, Treble high-shelf) plus a one-button Low Cut. Each band is
-  `-12..+12 dB` with a 0 dB detent. No sweepable Q, no band count toggle.
+  Mid peak, Treble high-shelf) plus one-button Low Cut and High Cut. Each band
+  is `-15..+15 dB` with a 0 dB detent. No sweepable Q, no band count toggle.
 - **Leveler** — single "Amount" knob (0..100 %) driving a curated path
   through `juce::dsp::Compressor` parameters, with a deterministic
   static makeup-gain map (no live loudness analysis — see §7.10). An
@@ -627,12 +627,14 @@ DSP class in `code`.
 
 **Per-track (one of each, baked into every Track):**
 
-- **Tone** — 3-band fixed-frequency EQ: Bass (low shelf @ ~120 Hz),
-  Mid (peak @ ~1 kHz, fixed Q), Treble (high shelf @ ~6 kHz), each
-  `-12..+12 dB`. Plus a one-button **Low Cut** (2nd-order high-pass @
-  ~80 Hz). Implementation: three `juce::dsp::IIR::Filter` instances per
-  channel + an optional 4th for the high-pass. Coefficient updates use
-  smoothed parameter changes on the audio thread to avoid zipper noise.
+- **Tone** — 3-band fixed-frequency EQ: Bass (low shelf @ ~250 Hz),
+  Mid (peak @ ~1 kHz, fixed Q), Treble (high shelf @ ~4 kHz), each
+  `-15..+15 dB`. Plus a one-button **Low Cut** (4th-order high-pass @
+  ~120 Hz, 24 dB/oct) and a one-button **High Cut** (4th-order low-pass @
+  ~6 kHz, 24 dB/oct). Implementation: three biquad sections per channel
+  for the shelves/peak + two cascaded biquads each for the high-pass and
+  low-pass. Coefficient updates use smoothed parameter changes on the audio
+  thread to avoid zipper noise.
 - **Leveler** — gentle dynamics control with one user-facing **Amount**
   knob (0..100 %) that drives a curated path through
   `juce::dsp::Compressor` (threshold / ratio / attack / release) plus
@@ -1448,9 +1450,10 @@ playable at every point — no broken-build day):
   hiding a panel mid-drag does not reliably fire `dragend`, and a
   stale drag source would leak into timeline drop logic.
 - [x] **6. Per-track Tone** — 3-band fixed EQ (Bass / Mid /
-  Treble) + Low Cut toggle. Three `juce::dsp::IIR::Filter`s +
-  optional 4th for the high-pass, with smoothed coefficient
-  updates. Bridge: `TRACK_SET_TONE` handler activated.
+  Treble) + Low Cut + High Cut toggles. Three biquad sections for the
+  shelves/peak + two cascaded biquads each for the 4th-order high-pass and
+  low-pass, with smoothed coefficient updates. Bridge: `TRACK_SET_TONE`
+  handler activated.
 - [ ] **7. Shared project Room + Echo** with per-track send
   amounts (sends taken pre-pan, post-mute/solo per §7.9.2).
   Backend: one `juce::dsp::Reverb` and one tempo-synced stereo

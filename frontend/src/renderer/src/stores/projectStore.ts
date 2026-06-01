@@ -146,15 +146,17 @@ export interface Track {
   heightPx?: number
   /**
    * Per-track Tone EQ — fixed 3-band shelving/peak tilt + a one-button
-   * low-cut. dB fields are in `[-12, +12]`; 0 = flat. All optional and
-   * suppressed-when-default so a flat track carries no tone state (and a
-   * legacy project hydrates cleanly). Mirrors the backend ValueTree flat
-   * properties `toneBassDb` / `toneMidDb` / `toneTrebleDb` / `toneLowCut`.
+   * low-cut and high-cut. dB fields are in `[-15, +15]`; 0 = flat. All
+   * optional and suppressed-when-default so a flat track carries no tone
+   * state (and a legacy project hydrates cleanly). Mirrors the backend
+   * ValueTree flat properties `toneBassDb` / `toneMidDb` / `toneTrebleDb`
+   * / `toneLowCut` / `toneHighCut`.
    */
   toneBassDb?: number
   toneMidDb?: number
   toneTrebleDb?: number
   toneLowCut?: boolean
+  toneHighCut?: boolean
 }
 
 /** Default visible length of a new empty track — 10 minutes. */
@@ -1607,13 +1609,13 @@ export const useProjectStore = defineStore('project', {
      */
     setTrackTone(
       trackId: string,
-      patch: { bassDb?: number; midDb?: number; trebleDb?: number; lowCut?: boolean },
+      patch: { bassDb?: number; midDb?: number; trebleDb?: number; lowCut?: boolean; highCut?: boolean },
       opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
     ): void {
       const track = this.tracks.find((t) => t.id === trackId)
       if (!track) return
       const clampDb = (v: number): number =>
-        Math.max(-12, Math.min(12, Number.isFinite(v) ? v : 0))
+        Math.max(-15, Math.min(15, Number.isFinite(v) ? v : 0))
       if (patch.bassDb !== undefined) {
         const v = clampDb(patch.bassDb)
         track.toneBassDb = v !== 0 ? v : undefined
@@ -1629,6 +1631,9 @@ export const useProjectStore = defineStore('project', {
       if (patch.lowCut !== undefined) {
         track.toneLowCut = patch.lowCut ? true : undefined
       }
+      if (patch.highCut !== undefined) {
+        track.toneHighCut = patch.highCut ? true : undefined
+      }
       if (!opts?.localOnly) {
         sendBridge('TRACK_SET_TONE', {
           trackId,
@@ -1636,6 +1641,7 @@ export const useProjectStore = defineStore('project', {
           midDb: patch.midDb,
           trebleDb: patch.trebleDb,
           lowCut: patch.lowCut,
+          highCut: patch.highCut,
           gestureId: opts?.gestureId,
           gestureEnd: opts?.gestureEnd
         })
@@ -2613,7 +2619,8 @@ export const useProjectStore = defineStore('project', {
             toneMidDb: typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined,
             toneTrebleDb:
               typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined,
-            toneLowCut: t.toneLowCut === true ? true : undefined
+            toneLowCut: t.toneLowCut === true ? true : undefined,
+            toneHighCut: t.toneHighCut === true ? true : undefined
           }
           this.tracks.push(track)
         } else {
@@ -2639,6 +2646,7 @@ export const useProjectStore = defineStore('project', {
           track.toneTrebleDb =
             typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined
           track.toneLowCut = t.toneLowCut === true ? true : undefined
+          track.toneHighCut = t.toneHighCut === true ? true : undefined
         }
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)

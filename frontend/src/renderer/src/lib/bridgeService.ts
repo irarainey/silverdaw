@@ -791,7 +791,8 @@ function dispatch(msg: BridgeInboundMessage): void {
           bassDb: msg.payload.bassDb,
           midDb: msg.payload.midDb,
           trebleDb: msg.payload.trebleDb,
-          lowCut: msg.payload.lowCut
+          lowCut: msg.payload.lowCut,
+          highCut: msg.payload.highCut
         },
         { localOnly: true }
       )

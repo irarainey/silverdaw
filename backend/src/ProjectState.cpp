@@ -66,6 +66,7 @@ const juce::Identifier ProjectState::kToneBassDb{"toneBassDb"};
 const juce::Identifier ProjectState::kToneMidDb{"toneMidDb"};
 const juce::Identifier ProjectState::kToneTrebleDb{"toneTrebleDb"};
 const juce::Identifier ProjectState::kToneLowCut{"toneLowCut"};
+const juce::Identifier ProjectState::kToneHighCut{"toneHighCut"};
 const juce::Identifier ProjectState::kLevelerAmount{"levelerAmount"};
 const juce::Identifier ProjectState::kFadeInMs{"fadeInMs"};
 const juce::Identifier ProjectState::kFadeOutMs{"fadeOutMs"};
@@ -598,7 +599,7 @@ static bool applyClampedDb(juce::ValueTree& tree,
                            float value,
                            juce::UndoManager* undo)
 {
-    const auto clamped = juce::jlimit(-12.0f, 12.0f, value);
+    const auto clamped = juce::jlimit(-15.0f, 15.0f, value);
     const bool hadProperty = tree.hasProperty(id);
     const auto previous = hadProperty
         ? static_cast<float>(static_cast<double>(tree.getProperty(id)))
@@ -654,7 +655,7 @@ static bool applyBoolDefaultFalse(juce::ValueTree& tree,
 }
 
 bool ProjectState::setTrackTone(const juce::String& trackId, float bassDb, float midDb,
-                                float trebleDb, bool lowCut)
+                                float trebleDb, bool lowCut, bool highCut)
 {
     auto track = findTrack(trackId);
     if (!track.isValid()) return false;
@@ -663,6 +664,7 @@ bool ProjectState::setTrackTone(const juce::String& trackId, float bassDb, float
     changed |= applyClampedDb(track, kToneMidDb, midDb, &undoManager);
     changed |= applyClampedDb(track, kToneTrebleDb, trebleDb, &undoManager);
     changed |= applyBoolDefaultFalse(track, kToneLowCut, lowCut, &undoManager);
+    changed |= applyBoolDefaultFalse(track, kToneHighCut, highCut, &undoManager);
     return changed;
 }
 
@@ -692,6 +694,13 @@ bool ProjectState::getTrackToneLowCut(const juce::String& trackId) const
     const auto track = findTrack(trackId);
     if (!track.isValid()) return false;
     return static_cast<bool>(track.getProperty(kToneLowCut, false));
+}
+
+bool ProjectState::getTrackToneHighCut(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+    return static_cast<bool>(track.getProperty(kToneHighCut, false));
 }
 
 bool ProjectState::setTrackLevelerAmount(const juce::String& trackId, float amount)
@@ -2225,6 +2234,10 @@ juce::var ProjectState::tracksAsJson() const
         if (static_cast<bool>(track.getProperty(kToneLowCut, false)))
         {
             trackObj->setProperty("toneLowCut", true);
+        }
+        if (static_cast<bool>(track.getProperty(kToneHighCut, false)))
+        {
+            trackObj->setProperty("toneHighCut", true);
         }
 
         juce::Array<juce::var> clipsArray;

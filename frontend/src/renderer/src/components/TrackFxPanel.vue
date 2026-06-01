@@ -40,6 +40,7 @@ function bandValue(band: ToneBand): number {
 }
 
 const lowCutOn = computed(() => selectedTrack.value?.toneLowCut === true)
+const highCutOn = computed(() => selectedTrack.value?.toneHighCut === true)
 
 // Per-drag gesture id so an entire slider drag collapses into a single undo
 // step. Scoped to a single band: minting a fresh id whenever the active band
@@ -110,6 +111,12 @@ function onToggleLowCut(): void {
   project.setTrackTone(track.id, { lowCut: !lowCutOn.value }, { gestureEnd: true })
 }
 
+function onToggleHighCut(): void {
+  const track = selectedTrack.value
+  if (!track) return
+  project.setTrackTone(track.id, { highCut: !highCutOn.value }, { gestureEnd: true })
+}
+
 // If the selection changes (incl. the selected track being deleted) mid-drag,
 // abandon any open gesture so the next interaction starts a clean undo step.
 watch(() => project.selectedTrackId, endGesture)
@@ -156,8 +163,8 @@ onBeforeUnmount(endGesture)
             <input
               class="tone-range-input w-full"
               type="range"
-              min="-12"
-              max="12"
+              min="-15"
+              max="15"
               step="0.5"
               :value="bandValue(band)"
               :aria-label="band.label + ' gain in decibels'"
@@ -182,6 +189,21 @@ onBeforeUnmount(endGesture)
             <span class="uppercase tracking-wider">Low Cut</span>
             <span class="font-mono text-[10px]">{{ lowCutOn ? 'ON' : 'OFF' }}</span>
           </button>
+
+          <button
+            type="button"
+            class="flex items-center justify-between rounded border px-2 py-1.5 text-[11px] transition-colors"
+            :class="
+              highCutOn
+                ? 'border-sky-500 bg-sky-500/15 text-sky-200'
+                : 'border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100'
+            "
+            :aria-pressed="highCutOn"
+            @click="onToggleHighCut"
+          >
+            <span class="uppercase tracking-wider">High Cut</span>
+            <span class="font-mono text-[10px]">{{ highCutOn ? 'ON' : 'OFF' }}</span>
+          </button>
         </div>
       </ClipEffectModule>
     </div>
@@ -194,7 +216,7 @@ onBeforeUnmount(endGesture)
    further effects as they are added. */
 .track-fx-rack {
   --cell-w: 17rem; /* 272px */
-  --cell-h: 14rem; /* 224px — sized so the Tone EQ fits without an inner scrollbar */
+  --cell-h: 16rem; /* 256px — sized so the Tone EQ (3 bands + Low/High Cut) fits without an inner scrollbar */
   grid-template-rows: repeat(1, var(--cell-h));
   grid-auto-columns: var(--cell-w);
   grid-auto-flow: column dense;

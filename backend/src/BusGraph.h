@@ -247,7 +247,7 @@ public:
         if (toneIt != pendingTone.end())
         {
             const auto& t = toneIt->second;
-            rt->chain.setTone(t.bassDb, t.midDb, t.trebleDb, t.lowCut, /*snap*/ true);
+            rt->chain.setTone(t.bassDb, t.midDb, t.trebleDb, t.lowCut, t.highCut, /*snap*/ true);
         }
     }
 
@@ -298,14 +298,14 @@ public:
      *  runtime-creation paths); live UI gestures pass `snap=false`. */
     void setTrackTone(const juce::String& trackId,
                       float bassDb, float midDb, float trebleDb, bool lowCut,
-                      bool snap)
+                      bool highCut, bool snap)
     {
         if (trackId.isEmpty()) return;
         const juce::ScopedLock sl(lock);
-        pendingTone[trackId] = {bassDb, midDb, trebleDb, lowCut};
+        pendingTone[trackId] = {bassDb, midDb, trebleDb, lowCut, highCut};
         auto it = runtimes.find(trackId);
         if (it != runtimes.end())
-            it->second->chain.setTone(bassDb, midDb, trebleDb, lowCut, snap);
+            it->second->chain.setTone(bassDb, midDb, trebleDb, lowCut, highCut, snap);
     }
 
     /** Lightweight per-track peak snapshot used by the bridge
@@ -365,6 +365,7 @@ private:
         float midDb = 0.0F;
         float trebleDb = 0.0F;
         bool lowCut = false;
+        bool highCut = false;
     };
     std::unordered_map<juce::String, ToneParams> pendingTone;
 

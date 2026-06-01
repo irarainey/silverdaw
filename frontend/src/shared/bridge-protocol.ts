@@ -376,9 +376,9 @@ export interface TrackSetSendsPayload extends GestureHints {
 }
 
 /**
- * Per-track Tone — fixed 3-band shelving EQ + global low-cut. All gain
- * fields are dB in `[-12, +12]`; `lowCut` is a boolean engaging a
- * fixed high-pass filter when true. Every field is optional so the
+ * Per-track Tone — fixed 3-band shelving EQ + low-cut + high-cut. All gain
+ * fields are dB in `[-15, +15]`; `lowCut` engages a fixed high-pass and
+ * `highCut` a fixed low-pass when true. Every field is optional so the
  * renderer can drive one knob without echoing the rest — the backend
  * fills missing values from the current persisted state.
  */
@@ -388,6 +388,7 @@ export interface TrackSetTonePayload extends GestureHints {
   midDb?: number
   trebleDb?: number
   lowCut?: boolean
+  highCut?: boolean
 }
 
 /**
@@ -1038,6 +1039,7 @@ export const TrackToneAppliedPayloadSchema = z.object({
   midDb: z.number(),
   trebleDb: z.number(),
   lowCut: z.boolean(),
+  highCut: z.boolean(),
   ok: z.boolean()
 })
 export type TrackToneAppliedPayload = z.infer<typeof TrackToneAppliedPayloadSchema>
@@ -1214,12 +1216,14 @@ export const ProjectStateTrackSchema = z.object({
   sendReverb: z.number().optional(),
   /** Send to the project Echo bus, 0..1 linear. */
   sendDelay: z.number().optional(),
-  /** Per-track Tone — fixed 3-band EQ, dB in `[-12, +12]`. */
+  /** Per-track Tone — fixed 3-band EQ, dB in `[-15, +15]`. */
   toneBassDb: z.number().optional(),
   toneMidDb: z.number().optional(),
   toneTrebleDb: z.number().optional(),
   /** Per-track fixed high-pass low-cut filter engage flag. */
   toneLowCut: z.boolean().optional(),
+  /** Per-track fixed low-pass high-cut filter engage flag. */
+  toneHighCut: z.boolean().optional(),
   /** Per-track Leveler amount, 0..1 (Advanced controls land later). */
   levelerAmount: z.number().optional(),
   clips: z.array(ProjectStateClipSchema)

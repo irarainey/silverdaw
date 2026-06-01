@@ -1651,7 +1651,7 @@ void handleTrackSetSends(const juce::var& payload, silverdaw::ProjectState& proj
                      {{"trackId", trackId}, {"reverbSend", reverbSend}, {"delaySend", delaySend}});
 }
 
-// Phase 5 — per-track Tone (3-band fixed EQ + lowCut). Persists, pushes
+// Phase 5 — per-track Tone (3-band fixed EQ + lowCut + highCut). Persists, pushes
 // the live DSP targets to the AudioEngine, and acks the CANONICAL
 // clamped values re-read from ProjectState (the renderer reconciles to
 // these). Defaults for any field absent in the payload come from the
@@ -1672,8 +1672,10 @@ void handleTrackSetTone(const juce::var& payload, silverdaw::AudioEngine& engine
         readOptionalNumber(payload, "trebleDb").value_or(projectState.getTrackToneTrebleDb(trackId)));
     const bool lowCut =
         readOptionalBool(payload, "lowCut").value_or(projectState.getTrackToneLowCut(trackId));
+    const bool highCut =
+        readOptionalBool(payload, "highCut").value_or(projectState.getTrackToneHighCut(trackId));
 
-    const bool changed = projectState.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut);
+    const bool changed = projectState.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut, highCut);
     if (!changed) return;
 
     // Re-read the canonical (clamped / default-suppressed) values so the
@@ -1682,16 +1684,19 @@ void handleTrackSetTone(const juce::var& payload, silverdaw::AudioEngine& engine
     const float canonMid = projectState.getTrackToneMidDb(trackId);
     const float canonTreble = projectState.getTrackToneTrebleDb(trackId);
     const bool canonLowCut = projectState.getTrackToneLowCut(trackId);
+    const bool canonHighCut = projectState.getTrackToneHighCut(trackId);
 
     // Live UI gesture → glide (snap=false) to avoid zipper noise.
-    engine.setTrackTone(trackId, canonBass, canonMid, canonTreble, canonLowCut, /*snap*/ false);
+    engine.setTrackTone(trackId, canonBass, canonMid, canonTreble, canonLowCut,
+                        canonHighCut, /*snap*/ false);
 
     broadcastApplied(bridge, "TRACK_TONE_APPLIED",
                      {{"trackId", trackId},
                       {"bassDb", canonBass},
                       {"midDb", canonMid},
                       {"trebleDb", canonTreble},
-                      {"lowCut", canonLowCut}});
+                      {"lowCut", canonLowCut},
+                      {"highCut", canonHighCut}});
 }
 
 // Phase 5 — per-track Leveler. Just the user-facing "amount" knob
@@ -2004,8 +2009,9 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             const float tMid = projectState.getTrackToneMidDb(toneTrackId);
             const float tTreble = projectState.getTrackToneTrebleDb(toneTrackId);
             const bool tLowCut = projectState.getTrackToneLowCut(toneTrackId);
-            if (tBass != 0.0F || tMid != 0.0F || tTreble != 0.0F || tLowCut)
-                engine.setTrackTone(toneTrackId, tBass, tMid, tTreble, tLowCut, /*snap*/ true);
+            const bool tHighCut = projectState.getTrackToneHighCut(toneTrackId);
+            if (tBass != 0.0F || tMid != 0.0F || tTreble != 0.0F || tLowCut || tHighCut)
+                engine.setTrackTone(toneTrackId, tBass, tMid, tTreble, tLowCut, tHighCut, /*snap*/ true);
         }
         for (int c = 0; c < track.getNumChildren(); ++c)
         {

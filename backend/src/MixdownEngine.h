@@ -75,6 +75,7 @@ struct MixdownSnapshot
         float toneMidDb{0.0F};
         float toneTrebleDb{0.0F};
         bool toneLowCut{false};
+        bool toneHighCut{false};
         std::vector<ClipSnapshot> clips;
     };
 
