@@ -13,7 +13,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore, libraryItemIsSample } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
-import type { ClipWarpMode, ProjectStatePayload } from '@shared/bridge-protocol'
+import type { ClipWarpMode, DelayNoteValue, ProjectStatePayload } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
 
 export interface Clip {
@@ -157,6 +157,43 @@ export interface Track {
   toneTrebleDb?: number
   toneLowCut?: boolean
   toneHighCut?: boolean
+  /**
+   * Per-track send amounts into the two project-shared FX buses — the
+   * Room (reverb) and the Echo (delay). Linear `[0, 1]`; 0 = no send.
+   * Both optional and suppressed-when-default so a dry track carries no
+   * send state and legacy projects hydrate cleanly. Mirrors the backend
+   * ValueTree flat properties `sendReverb` / `sendDelay`.
+   */
+  reverbSend?: number
+  delaySend?: number
+}
+
+/**
+ * Project-shared **Room** (reverb) parameters. One Room is shared by the
+ * whole project — "the song's room". Every scalar is linear `[0, 1]`;
+ * `mix` at 0 makes the Room inaudible (and export bit-identical to a
+ * project with no Room at all). Mirrors the backend `PROJECT` ValueTree
+ * properties `reverbSize` / `reverbDecay` / `reverbTone` / `reverbMix`.
+ */
+export interface ProjectReverbState {
+  size: number
+  decay: number
+  tone: number
+  mix: number
+}
+
+/**
+ * Project-shared **Echo** (tempo-locked delay) parameters. `noteValue`
+ * is a beat division resolved against the project BPM on the backend;
+ * `feedback` / `tone` / `mix` are linear `[0, 1]`. `mix` at 0 makes the
+ * Echo inaudible. Mirrors the backend `PROJECT` ValueTree properties
+ * `delayNoteValue` / `delayFeedback` / `delayTone` / `delayMix`.
+ */
+export interface ProjectDelayState {
+  noteValue: DelayNoteValue
+  feedback: number
+  tone: number
+  mix: number
 }
 
 /** Default visible length of a new empty track — 10 minutes. */
@@ -374,6 +411,15 @@ interface ProjectState {
    *  single source of truth, and it is restored on load. */
   fxPanelOpen: boolean
 
+  /** Which effects surface the bottom panel shows when `fxPanelOpen` is
+   *  true: the per-track rack (`'track'` — Tone + Sends for the selected
+   *  track) or the project-wide rack (`'project'` — the shared Room + Echo
+   *  buses). UI-only — not persisted and not sent to the backend; reopening
+   *  the FX area after a reload defaults back to the track rack. A single
+   *  source of truth so the tab strip and a track header's Fx button agree
+   *  on which rack is showing. */
+  fxTab: 'track' | 'project'
+
   /** Currently selected clip id (UI-only — not persisted, not sent to
    *  the backend). Used to render a thicker outline on the selected
    *  clip and to identify the target of Cut / Copy. `null` when
@@ -442,6 +488,18 @@ interface ProjectState {
    * slider position the user left it at.
    */
   masterVolume: number
+  /**
+   * Project-shared Room (reverb) parameters. One Room for the whole
+   * song; persisted on the PROJECT ValueTree. Defaults to all-zero
+   * (inaudible) so a fresh project sounds and exports exactly as it did
+   * before the shared FX existed.
+   */
+  projectReverb: ProjectReverbState
+  /**
+   * Project-shared Echo (tempo-locked delay) parameters. Defaults to a
+   * 1/8-note time with zero feedback / tone / mix (inaudible).
+   */
+  projectDelay: ProjectDelayState
 }
 
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
@@ -595,6 +653,7 @@ export const useProjectStore = defineStore('project', {
     viewPxPerSecond: null,
     viewScrollX: null,
     fxPanelOpen: false,
+    fxTab: 'track',
     selectedClipId: null,
     selectedTrackId: null,
     clipboardClip: null,
@@ -607,7 +666,9 @@ export const useProjectStore = defineStore('project', {
     audioOutputDeviceName: null,
     targetSampleRate: null,
     exportSettingsJson: null,
-    masterVolume: 1.0
+    masterVolume: 1.0,
+    projectReverb: { size: 0, decay: 0, tone: 0, mix: 0 },
+    projectDelay: { noteValue: '1/8', feedback: 0, tone: 0, mix: 0 }
   }),
 
   getters: {
@@ -1187,6 +1248,13 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_VIEW', { fxPanelOpen: open })
     },
 
+    /** Choose which effects rack the bottom FX panel shows (per-track Tone /
+     *  Sends, or the project-wide Room / Echo). UI-only state, so this never
+     *  touches the bridge or the dirty flag. */
+    setFxTab(tab: 'track' | 'project'): void {
+      this.fxTab = tab
+    },
+
     /**
      * Copy the currently-selected clip to the local clipboard. Stores
      * just enough metadata to mint a new clip on paste — same source
@@ -1663,6 +1731,100 @@ export const useProjectStore = defineStore('project', {
           trebleDb: patch.trebleDb,
           lowCut: patch.lowCut,
           highCut: patch.highCut,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /**
+     * Update a track's send amounts into the project-shared Room / Echo
+     * buses. Mirrors `setTrackTone`: applies the partial patch locally
+     * (default-suppressing 0 back to `undefined`) then forwards to the
+     * backend unless `opts.localOnly` (used by the `TRACK_SENDS_APPLIED`
+     * ack to reconcile to the canonical clamped values). `gestureId` /
+     * `gestureEnd` drive undo coalescing for knob drags. The backend ack
+     * always echoes both sends, so an `undefined` field here means "send
+     * the track's current value" — we read it back off the track.
+     */
+    setTrackSends(
+      trackId: string,
+      patch: { reverbSend?: number; delaySend?: number },
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const clampUnit = (v: number): number =>
+        Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0))
+      if (patch.reverbSend !== undefined) {
+        const v = clampUnit(patch.reverbSend)
+        track.reverbSend = v !== 0 ? v : undefined
+      }
+      if (patch.delaySend !== undefined) {
+        const v = clampUnit(patch.delaySend)
+        track.delaySend = v !== 0 ? v : undefined
+      }
+      if (!opts?.localOnly) {
+        sendBridge('TRACK_SET_SENDS', {
+          trackId,
+          reverbSend: patch.reverbSend ?? track.reverbSend ?? 0,
+          delaySend: patch.delaySend ?? track.delaySend ?? 0,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /**
+     * Update the project-shared Room (reverb). Applies the partial patch
+     * locally then forwards to the backend unless `opts.localOnly` (used
+     * by the `PROJECT_REVERB_APPLIED` ack to reconcile to canonical
+     * clamped values). `gestureId` / `gestureEnd` drive undo coalescing.
+     */
+    setProjectReverb(
+      patch: { size?: number; decay?: number; tone?: number; mix?: number },
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const clampUnit = (v: number): number =>
+        Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0))
+      if (patch.size !== undefined) this.projectReverb.size = clampUnit(patch.size)
+      if (patch.decay !== undefined) this.projectReverb.decay = clampUnit(patch.decay)
+      if (patch.tone !== undefined) this.projectReverb.tone = clampUnit(patch.tone)
+      if (patch.mix !== undefined) this.projectReverb.mix = clampUnit(patch.mix)
+      if (!opts?.localOnly) {
+        sendBridge('PROJECT_SET_REVERB', {
+          size: patch.size,
+          decay: patch.decay,
+          tone: patch.tone,
+          mix: patch.mix,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /**
+     * Update the project-shared Echo (tempo-locked delay). Applies the
+     * partial patch locally then forwards to the backend unless
+     * `opts.localOnly` (used by the `PROJECT_DELAY_APPLIED` ack).
+     * `gestureId` / `gestureEnd` drive undo coalescing.
+     */
+    setProjectDelay(
+      patch: { noteValue?: DelayNoteValue; feedback?: number; tone?: number; mix?: number },
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const clampUnit = (v: number): number =>
+        Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0))
+      if (patch.noteValue !== undefined) this.projectDelay.noteValue = patch.noteValue
+      if (patch.feedback !== undefined) this.projectDelay.feedback = clampUnit(patch.feedback)
+      if (patch.tone !== undefined) this.projectDelay.tone = clampUnit(patch.tone)
+      if (patch.mix !== undefined) this.projectDelay.mix = clampUnit(patch.mix)
+      if (!opts?.localOnly) {
+        sendBridge('PROJECT_SET_DELAY', {
+          noteValue: patch.noteValue,
+          feedback: patch.feedback,
+          tone: patch.tone,
+          mix: patch.mix,
           gestureId: opts?.gestureId,
           gestureEnd: opts?.gestureEnd
         })
@@ -2462,6 +2624,24 @@ export const useProjectStore = defineStore('project', {
         typeof incomingMasterVolume === 'number' && Number.isFinite(incomingMasterVolume)
           ? Math.min(1, Math.max(0, incomingMasterVolume))
           : 1.0
+      // Project-shared Room (reverb) + Echo (delay). Each scalar is
+      // absent-when-default on the wire, so a missing field reads back
+      // as the inaudible default — keeping legacy projects byte-clean
+      // and exporting bit-identical until the user dials a value in.
+      // Mutated in place (not reference-replaced) to mirror the per-track
+      // Tone / Sends reconcile below: an unrelated PROJECT_STATE refresh
+      // (e.g. one a TRACK_MUTE ack triggers) then can't force-end a Room /
+      // Echo drag by swapping the watched object reference.
+      const unit = (v: unknown): number =>
+        typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0
+      this.projectReverb.size = unit(snapshot.reverbSize)
+      this.projectReverb.decay = unit(snapshot.reverbDecay)
+      this.projectReverb.tone = unit(snapshot.reverbTone)
+      this.projectReverb.mix = unit(snapshot.reverbMix)
+      this.projectDelay.noteValue = snapshot.delayNoteValue ?? '1/8'
+      this.projectDelay.feedback = unit(snapshot.delayFeedback)
+      this.projectDelay.tone = unit(snapshot.delayTone)
+      this.projectDelay.mix = unit(snapshot.delayMix)
       const library = useLibraryStore()
       // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the
       // renderer's optimistic mirror must be wiped before re-applying so
@@ -2641,7 +2821,11 @@ export const useProjectStore = defineStore('project', {
             toneTrebleDb:
               typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined,
             toneLowCut: t.toneLowCut === true ? true : undefined,
-            toneHighCut: t.toneHighCut === true ? true : undefined
+            toneHighCut: t.toneHighCut === true ? true : undefined,
+            reverbSend:
+              typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined,
+            delaySend:
+              typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined
           }
           this.tracks.push(track)
         } else {
@@ -2668,6 +2852,10 @@ export const useProjectStore = defineStore('project', {
             typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined
           track.toneLowCut = t.toneLowCut === true ? true : undefined
           track.toneHighCut = t.toneHighCut === true ? true : undefined
+          track.reverbSend =
+            typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined
+          track.delaySend =
+            typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined
         }
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)
@@ -2844,6 +3032,10 @@ export const useProjectStore = defineStore('project', {
             ? savedSelected
             : null
         this.fxPanelOpen = snapshot.viewFxPanelOpen === true
+        // `fxTab` is UI-only (not persisted), so a fresh load starts the
+        // effects area on the per-track rack rather than inheriting the
+        // previous project's choice.
+        this.fxTab = 'track'
         this.peaksRevision++
       }
 

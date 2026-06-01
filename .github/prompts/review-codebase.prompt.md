@@ -60,18 +60,6 @@ checks analytically and proceed.
     error events, README/build accuracy, `.clang-tidy` / ESLint / tsconfig /
     CMake / scripts hygiene. Enforce the no-other-DAW-product rule in all docs.
 
-## Rubber-duck critique (required)
-
-Before finalising, run an adversarial critique of the major/critical findings and
-of any proposed patch touching real-time audio, Electron IPC, the bridge
-contract, persistence/recovery, or timeline rendering. All serious review work
-**must** be rubber-ducked across **three models**: the model running the review
-(**opus-4.8**), **gpt-5.5**, and **gpt-5.3-codex**. If any of the three is
-genuinely unavailable, explicitly note which one and complete the critique with
-the rest. Reconcile any disagreement between the models, then include a short
-**Rubber-duck validation** note (which three perspectives were consulted, what
-changed, any unresolved disagreement).
-
 ## Output
 
 1. **Executive Summary** (≤200 words) — quality, key risks, expected outcomes;

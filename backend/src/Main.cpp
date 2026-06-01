@@ -1625,14 +1625,15 @@ void handleTrackSolo(const juce::var& payload, silverdaw::AudioEngine& engine,
                      {{"trackId", trackId}, {"soloed", soloed}}, stored);
 }
 
-// Phase 5 — per-track Reverb / Echo send levels. Inert DSP for now: the
-// handler persists into ProjectState and acks with the clamped values;
-// the shared reverb/delay buses are wired in by a later per-feature todo.
+// Phase 5 — per-track Reverb / Echo send levels. Persists, pushes the
+// live send amounts to the AudioEngine (shared Room / Echo buses), and
+// acks the clamped values.
 //
 // Skips ack + dirty + undo entirely when the setter reports no change so
 // a 60 Hz drag that lands on the same value (or a stray echo of the
 // current state) doesn't pollute the undo history or fire wire traffic.
-void handleTrackSetSends(const juce::var& payload, silverdaw::ProjectState& projectState,
+void handleTrackSetSends(const juce::var& payload, silverdaw::AudioEngine& engine,
+                         silverdaw::ProjectState& projectState,
                          silverdaw::BridgeServer& bridge)
 {
     const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
@@ -1646,6 +1647,8 @@ void handleTrackSetSends(const juce::var& payload, silverdaw::ProjectState& proj
 
     const bool changed = projectState.setTrackSends(trackId, reverbSend, delaySend);
     if (!changed) return;
+
+    engine.setTrackSends(trackId, reverbSend, delaySend);
 
     broadcastApplied(bridge, "TRACK_SENDS_APPLIED",
                      {{"trackId", trackId}, {"reverbSend", reverbSend}, {"delaySend", delaySend}});
@@ -1770,7 +1773,8 @@ void handleClipSetEnvelope(const juce::var& payload, silverdaw::ProjectState& pr
 }
 
 // Phase 5 — project-shared Reverb bus.
-void handleProjectSetReverb(const juce::var& payload, silverdaw::ProjectState& projectState,
+void handleProjectSetReverb(const juce::var& payload, silverdaw::AudioEngine& engine,
+                            silverdaw::ProjectState& projectState,
                             silverdaw::BridgeServer& bridge)
 {
     const float size = static_cast<float>(
@@ -1785,15 +1789,24 @@ void handleProjectSetReverb(const juce::var& payload, silverdaw::ProjectState& p
     const bool changed = projectState.setProjectReverb(size, decay, tone, mix);
     if (!changed) return;
 
+    const float canonSize = projectState.getProjectReverbSize();
+    const float canonDecay = projectState.getProjectReverbDecay();
+    const float canonTone = projectState.getProjectReverbTone();
+    const float canonMix = projectState.getProjectReverbMix();
+
+    // Live UI gesture → glide (snap=false) to avoid zipper noise.
+    engine.setProjectReverb(canonSize, canonDecay, canonTone, canonMix, /*snap*/ false);
+
     broadcastApplied(bridge, "PROJECT_REVERB_APPLIED",
-                     {{"size", juce::jlimit(0.0f, 1.0f, size)},
-                      {"decay", juce::jlimit(0.0f, 1.0f, decay)},
-                      {"tone", juce::jlimit(0.0f, 1.0f, tone)},
-                      {"mix", juce::jlimit(0.0f, 1.0f, mix)}});
+                     {{"size", canonSize},
+                      {"decay", canonDecay},
+                      {"tone", canonTone},
+                      {"mix", canonMix}});
 }
 
 // Phase 5 — project-shared Echo / Delay bus.
-void handleProjectSetDelay(const juce::var& payload, silverdaw::ProjectState& projectState,
+void handleProjectSetDelay(const juce::var& payload, silverdaw::AudioEngine& engine,
+                           silverdaw::ProjectState& projectState,
                            silverdaw::BridgeServer& bridge)
 {
     const juce::String noteValue =
@@ -1808,11 +1821,21 @@ void handleProjectSetDelay(const juce::var& payload, silverdaw::ProjectState& pr
     const bool changed = projectState.setProjectDelay(noteValue, feedback, tone, mix);
     if (!changed) return;
 
+    const juce::String canonNote = projectState.getProjectDelayNoteValue();
+    const float canonFeedback = projectState.getProjectDelayFeedback();
+    const float canonTone = projectState.getProjectDelayTone();
+    const float canonMix = projectState.getProjectDelayMix();
+
+    // Resolve the tempo-locked note value to milliseconds via the shared
+    // helper so the live engine and the offline mixdown agree exactly.
+    const double delayMs = silverdaw::delayNoteToMs(canonNote, projectState.getBpm());
+    engine.setProjectDelay(delayMs, canonFeedback, canonTone, canonMix, /*snap*/ false);
+
     broadcastApplied(bridge, "PROJECT_DELAY_APPLIED",
-                     {{"noteValue", noteValue},
-                      {"feedback", juce::jlimit(0.0f, 1.0f, feedback)},
-                      {"tone", juce::jlimit(0.0f, 1.0f, tone)},
-                      {"mix", juce::jlimit(0.0f, 1.0f, mix)}});
+                     {{"noteValue", canonNote},
+                      {"feedback", canonFeedback},
+                      {"tone", canonTone},
+                      {"mix", canonMix}});
 }
 
 // ─── Project-level state (save / load / new / rename) ────────────────────
@@ -1903,6 +1926,26 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         const auto masterVolume = projectState.getMasterVolume();
         if (! juce::approximatelyEqual(masterVolume, 1.0F))
             obj->setProperty("masterVolume", masterVolume);
+    }
+    // Project-shared Room (reverb) + Echo (delay). Each scalar is emitted
+    // only when non-default so the Track FX Room / Echo modules restore
+    // after a reload while legacy projects round-trip byte-clean (the
+    // renderer reads each field as optional and falls back to the
+    // inaudible default when absent). The audio engine restores these
+    // separately in rebuildEngineFromProject.
+    {
+        const auto emitUnit = [obj](const char* key, float v) {
+            if (v > 1.0e-4f) obj->setProperty(key, v);
+        };
+        emitUnit("reverbSize", projectState.getProjectReverbSize());
+        emitUnit("reverbDecay", projectState.getProjectReverbDecay());
+        emitUnit("reverbTone", projectState.getProjectReverbTone());
+        emitUnit("reverbMix", projectState.getProjectReverbMix());
+        const auto noteValue = projectState.getProjectDelayNoteValue();
+        if (noteValue != "1/8") obj->setProperty("delayNoteValue", noteValue);
+        emitUnit("delayFeedback", projectState.getProjectDelayFeedback());
+        emitUnit("delayTone", projectState.getProjectDelayTone());
+        emitUnit("delayMix", projectState.getProjectDelayMix());
     }
     return juce::var(obj);
 }
@@ -2014,6 +2057,14 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             const bool tHighCut = projectState.getTrackToneHighCut(toneTrackId);
             if (tBass != 0.0F || tMid != 0.0F || tTreble != 0.0F || tLowCut || tHighCut)
                 engine.setTrackTone(toneTrackId, tBass, tMid, tTreble, tLowCut, tHighCut, /*snap*/ true);
+
+            // Phase 5 — restore persisted per-track Room / Echo send
+            // amounts. Snapped; only pushed when non-zero so a flat
+            // project doesn't fan out identity updates.
+            const float sReverb = projectState.getTrackReverbSend(toneTrackId);
+            const float sDelay = projectState.getTrackDelaySend(toneTrackId);
+            if (sReverb != 0.0F || sDelay != 0.0F)
+                engine.setTrackSends(toneTrackId, sReverb, sDelay);
         }
         for (int c = 0; c < track.getNumChildren(); ++c)
         {
@@ -2124,6 +2175,20 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
     // path so the slider value persists across a load and undo never
     // diverges audio from the visible UI value.
     engine.setMasterGain(projectState.getMasterVolume());
+
+    // Phase 5 — restore project-shared Room / Echo. Pushed UNCONDITIONALLY
+    // (snapped) so a PROJECT_NEW / PROJECT_LOAD resets the single shared
+    // FX instance to this project's values rather than inheriting the
+    // previous project's settings. Delay time resolves via the shared
+    // helper so live ↔ export parity holds.
+    engine.setProjectReverb(projectState.getProjectReverbSize(),
+                            projectState.getProjectReverbDecay(),
+                            projectState.getProjectReverbTone(),
+                            projectState.getProjectReverbMix(), /*snap*/ true);
+    engine.setProjectDelay(
+        silverdaw::delayNoteToMs(projectState.getProjectDelayNoteValue(), projectState.getBpm()),
+        projectState.getProjectDelayFeedback(), projectState.getProjectDelayTone(),
+        projectState.getProjectDelayMix(), /*snap*/ true);
 }
 
 void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
@@ -3537,7 +3602,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                   payload.getProperty("trackId", "").toString() +
                                   " rev=" + payload.getProperty("reverbSend", "").toString() +
                                   " dly=" + payload.getProperty("delaySend", "").toString());
-        handleTrackSetSends(payload, projectState, bridge);
+        handleTrackSetSends(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_SET_TONE")
     {
@@ -3567,12 +3632,12 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "PROJECT_SET_REVERB")
     {
         silverdaw::log::debug("bridge", "recv PROJECT_SET_REVERB");
-        handleProjectSetReverb(payload, projectState, bridge);
+        handleProjectSetReverb(payload, engine, projectState, bridge);
     }
     else if (type == "PROJECT_SET_DELAY")
     {
         silverdaw::log::debug("bridge", "recv PROJECT_SET_DELAY");
-        handleProjectSetDelay(payload, projectState, bridge);
+        handleProjectSetDelay(payload, engine, projectState, bridge);
     }
     else if (type == "WAVEFORM_REQUEST")
     {

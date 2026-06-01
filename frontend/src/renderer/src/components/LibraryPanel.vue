@@ -25,6 +25,7 @@ import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipCont
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import TrackFxPanel from '@/components/TrackFxPanel.vue'
+import ProjectFxPanel from '@/components/ProjectFxPanel.vue'
 
 const props = defineProps<{
     /** Current panel height in CSS pixels (excluding the resize handle). */
@@ -39,13 +40,25 @@ const library = useLibraryStore()
 const ui = useUiStore()
 const project = useProjectStore()
 
-// Which bottom-panel tab is showing. Backed by the project's persisted
-// `fxPanelOpen` view state so a track header's Fx button can switch to the
-// Track FX view from outside this component and the choice survives a
-// File > Save / Load. The panel opens on the Library.
-const activeTab = computed<'library' | 'trackfx'>({
-  get: () => (project.fxPanelOpen ? 'trackfx' : 'library'),
-  set: (tab) => project.setFxPanelOpen(tab === 'trackfx')
+// Which bottom-panel tab is showing. `fxPanelOpen` (persisted project view
+// state) records whether an effects rack is showing instead of the Library,
+// so a track header's Fx button can open the rack from outside this
+// component and the open/closed choice survives File > Save / Load.
+// `fxTab` (UI-only) selects which rack — per-track (Track FX) or project-wide
+// (Project FX). The panel opens on the Library.
+const activeTab = computed<'library' | 'trackfx' | 'projectfx'>({
+  get: () => {
+    if (!project.fxPanelOpen) return 'library'
+    return project.fxTab === 'project' ? 'projectfx' : 'trackfx'
+  },
+  set: (tab) => {
+    if (tab === 'library') {
+      project.setFxPanelOpen(false)
+      return
+    }
+    project.setFxTab(tab === 'projectfx' ? 'project' : 'track')
+    project.setFxPanelOpen(true)
+  }
 })
 
 // True while an OS drag is hovering over the panel — used to highlight the
@@ -521,8 +534,8 @@ function onResizePointerUp(): void {
       @pointerdown="onResizePointerDown"
     />
 
-    <!-- Header: [Library | Track FX] tab strip. The Import action belongs to
-         the Library tab only. -->
+    <!-- Header: [Library | Track FX | Project FX] tab strip. The Import
+         action belongs to the Library tab only. -->
     <header
       class="flex h-8 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-3 text-xs uppercase tracking-wide text-zinc-400"
     >
@@ -552,6 +565,19 @@ function onResizePointerUp(): void {
           @click="activeTab = 'trackfx'"
         >
           Track FX
+        </button>
+        <button
+          type="button"
+          class="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors"
+          :class="
+            activeTab === 'projectfx'
+              ? 'bg-zinc-800 text-zinc-100'
+              : 'text-zinc-500 hover:text-zinc-300'
+          "
+          :aria-pressed="activeTab === 'projectfx'"
+          @click="activeTab = 'projectfx'"
+        >
+          Project FX
         </button>
         <span
           v-if="activeTab === 'library'"
@@ -855,8 +881,14 @@ function onResizePointerUp(): void {
       </div>
     </div>
 
-    <!-- Track FX body. Edits the selected track's effects. -->
+    <!-- Track FX body. Edits the selected track's Tone + Sends. -->
     <TrackFxPanel
+      v-else-if="activeTab === 'trackfx'"
+      class="min-h-0 flex-1"
+    />
+
+    <!-- Project FX body. Edits the project-wide shared Room + Echo. -->
+    <ProjectFxPanel
       v-else
       class="min-h-0 flex-1"
     />

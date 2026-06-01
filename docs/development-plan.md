@@ -507,10 +507,12 @@ which is what users expect.
 
 #### 7.9.4 Project-level shared effects (Phase 5 scope)
 
-- **Room (shared reverb)** — `juce::dsp::Reverb`. Project-level parameters:
-  Size, Decay, Tone, Mix.
-- **Echo (shared delay)** — stereo tempo-synced delay (`juce::dsp::DelayLine`
-  + feedback + tone filter). Time set as a note value (1/4, 1/8, 1/8T,
+- **Room (shared reverb)** — `juce::Reverb` (the Freeverb implementation in
+  `juce_audio_basics`, used directly so the backend keeps its single-module,
+  no-`juce_dsp` build). Project-level parameters: Size, Decay, Tone, Mix.
+- **Echo (shared delay)** — a hand-rolled integer-sample stereo delay
+  (independent L/R lines, one-pole tone filter in the feedback path). Time set
+  as a note value (1/4, 1/8, 1/8T,
   1/16) plus feedback amount; resolves to milliseconds via project BPM.
   **BPM-change policy:** the new delay time is staged on a parameter
   change but does **not** mutate the live delay line; it takes effect at
@@ -654,10 +656,11 @@ DSP class in `code`.
 
 **Project-level (one of each, shared by every track):**
 
-- **Room** — `juce::dsp::Reverb`. Parameters: Size, Decay, Tone, Mix.
-  Each track contributes via its **Reverb amount** send (§7.9).
-- **Echo** — stereo tempo-synced delay (`juce::dsp::DelayLine` + feedback +
-  tone filter). Time is a note value (1/4, 1/8, 1/8T, 1/16); feedback,
+- **Room** — `juce::Reverb` (Freeverb, `juce_audio_basics`). Parameters: Size,
+  Decay, Tone, Mix. Each track contributes via its **Reverb amount** send (§7.9).
+- **Echo** — hand-rolled integer-sample stereo delay (independent L/R lines +
+  feedback + one-pole tone filter). Time is a note value (1/4, 1/8, 1/8T, 1/16);
+  feedback,
   tone, and overall mix are independent. Each track contributes via its
   **Echo amount** send (§7.9).
 
@@ -1440,13 +1443,17 @@ playable at every point — no broken-build day):
   `std::atomic<std::shared_ptr>`. Composition with the fade
   scalars happens at the same post-resample stage. Bridge:
   `CLIP_SET_ENVELOPE` handler activated. Coalesced per gesture.
-- [x] **5. Tabbed bottom panel** (Library / Track FX) inside
+- [x] **5. Tabbed bottom panel** (Library / Track FX / Project FX) inside
   `LibraryPanel`. The track header's **Fx** button switches the panel
-  to the Track FX view (`TrackFxPanel`); the active tab is persisted in
-  the project's view state (`fxPanelOpen`, round-tripped via
-  `PROJECT_SET_VIEW`) so the choice survives Save / Load — note this is
-  per-project memory, a deliberate deviation from the original
-  `uiStore` (global-preference) plan. The Library
+  to the Track FX view (`TrackFxPanel`); whether an effects rack is open
+  (vs the Library) is persisted in the project's view state (`fxPanelOpen`,
+  round-tripped via `PROJECT_SET_VIEW`) so it survives Save / Load — note
+  this is per-project memory, a deliberate deviation from the original
+  `uiStore` (global-preference) plan. Which rack is showing — the per-track
+  Track FX (Tone + Sends) or the project-wide Project FX (shared Room +
+  Echo) — is a UI-only `fxTab` selection that defaults back to Track FX on
+  reload, keeping the per-track and project-scoped effects on clearly
+  separate tabs rather than mixing both on one panel. The Library
   keeps its resizable `:height` / `@update:height` API.
   **Shipped as a one-at-a-time tab switch, _not_ the originally-
   specified side-by-side split-view.** The split-view + draggable
@@ -1462,15 +1469,17 @@ playable at every point — no broken-build day):
   shelves/peak + two cascaded biquads each for the 4th-order high-pass and
   low-pass, with smoothed coefficient updates. Bridge: `TRACK_SET_TONE`
   handler activated.
-- [ ] **7. Shared project Room + Echo** with per-track send
+- [x] **7. Shared project Room + Echo** with per-track send
   amounts (sends taken pre-pan, post-mute/solo per §7.9.2).
-  Backend: one `juce::dsp::Reverb` and one tempo-synced stereo
-  delay pulled by `BusGraph`; tail-render policy per §7.10
+  Backend: one `juce::Reverb` (Freeverb, `juce_audio_basics`) and one
+  tempo-synced stereo delay pulled by `BusGraph`; tail-render policy per §7.10
   (Room = RMS + hysteresis; Echo = repeat-aware hold + analytic
   floor; independent caps; transport stop/seek flushes FX state;
   mixdown loop invariant + hard fail-safe cutoff). Bridges:
   `PROJECT_SET_REVERB`, `PROJECT_SET_DELAY`, `TRACK_SET_SENDS`
-  handlers activated.
+  handlers activated. Live engine and offline mixdown consume the same
+  `SharedFx` unit so the rendered export matches the live mix at mix=0
+  bit-for-bit (§7.9.6 parity).
 - [ ] **8. Per-track Leveler** — `juce::dsp::Compressor` per
   `TrackRuntime` driven by a single Amount knob with a
   deterministic static makeup-gain map (no live loudness

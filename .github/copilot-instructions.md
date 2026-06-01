@@ -21,15 +21,6 @@ micro-optimisation.
 Maintainability is a first-class gate, not a nice-to-have. Treat the rules below
 as blocking-class review findings, not stylistic suggestions.
 
-## Rubber-duck rule
-
-All serious review work must be rubber-ducked across **three models**: the model
-in use (**opus-4.8**), **gpt-5.5**, and **gpt-5.3-codex**. Run major/critical
-findings and any patch touching real-time audio, Electron IPC, the bridge
-contract, persistence/recovery, or timeline rendering past all three, reconcile
-disagreement, and note which perspectives were consulted. If one is genuinely
-unavailable, say so and proceed with the rest.
-
 ## Maintainability rules (enforce strongly)
 
 - **Keep files small and single-purpose.** Flag oversized files and **propose a

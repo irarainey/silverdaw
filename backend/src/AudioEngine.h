@@ -1095,6 +1095,21 @@ class AudioEngine
                       float bassDb, float midDb, float trebleDb, bool lowCut,
                       bool highCut, bool snap);
 
+    /** Publish a track's wet send amounts into the shared Room / Echo
+     *  buses. Pure delegate to `BusGraph::setTrackSends`. Safe from the
+     *  message thread. */
+    void setTrackSends(const juce::String& trackId, float reverbSend, float delaySend);
+
+    /** Publish project Room (reverb) parameters to the shared FX. `snap`
+     *  collapses the smoother (load / mixdown fan-out). */
+    void setProjectReverb(float size, float decay, float tone, float mix, bool snap);
+
+    /** Publish project Echo (delay) parameters to the shared FX. The delay
+     *  TIME is staged while playing and applied immediately when stopped
+     *  (§7.9.4); feedback / tone / mix always apply live. `delayMs` is the
+     *  tempo-resolved delay time (see `silverdaw::delayNoteToMs`). */
+    void setProjectDelay(double delayMs, float feedback, float tone, float mix, bool snap);
+
     /** Drain every active track's post-chain peaks at once. Caller
      *  reuses a single vector across ticks for zero steady-state
      *  allocation. See `BusGraph::drainAllTrackPeaks`. */

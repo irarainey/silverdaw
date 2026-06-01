@@ -7,6 +7,7 @@
 #include "PeaksCache.h"
 #include "ProjectFile.h"
 #include "ProjectState.h"
+#include "SharedFx.h"
 #include "ToneEq.h"
 #include "ValueTreeJson.h"
 #include "WarpProcessor.h"
@@ -1103,7 +1104,132 @@ void testToneEqLowCutDirectionAndShelfRange()
     require(std::abs(flat - 1.0) < 0.02, "Flat tone with both cuts off should be transparent");
 }
 
-// ─── Mixdown snapshot fade parity ─────────────────────────────────────────
+// ─── SharedFx (Room reverb + Echo delay) ──────────────────────────────────
+//
+// The project-shared Room + Echo run identically in the live AudioEngine
+// and the offline MixdownEngine (§7.9.6 parity). These guards lock in the
+// four properties that parity and the tail-render policy depend on:
+//   1. The note-value → ms resolver both engines share.
+//   2. Bit-exact transparency when the FX is inactive (mix = 0) — an
+//      untouched project must export sample-identical to pre-step-7.
+//   3. The Room rings a tail after input stops and self-terminates.
+//   4. The Echo reproduces a delayed copy and self-terminates.
+
+void testSharedFxDelayNoteResolution()
+{
+    using silverdaw::delayNoteToMs;
+    requireNear(delayNoteToMs("1/4", 120.0), 500.0, 1e-6, "1/4 @120 BPM = 500 ms");
+    requireNear(delayNoteToMs("1/8", 120.0), 250.0, 1e-6, "1/8 @120 BPM = 250 ms");
+    requireNear(delayNoteToMs("1/16", 120.0), 125.0, 1e-6, "1/16 @120 BPM = 125 ms");
+    requireNear(delayNoteToMs("1/8T", 120.0), 1000.0 / 6.0, 1e-6, "1/8T @120 BPM = 1/3 beat");
+    requireNear(delayNoteToMs("bogus", 120.0), 250.0, 1e-6, "unknown note falls back to 1/8");
+    requireNear(delayNoteToMs("1/4", 0.0), 500.0, 1e-6, "non-positive BPM falls back to 120");
+}
+
+void testSharedFxUntouchedParityIsExactZero()
+{
+    silverdaw::SharedFx fx;
+    fx.prepare(48000.0, 512);
+    // Inactive FX: every knob (incl. mix) at 0, snapped.
+    fx.setReverbParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true);
+    fx.setDelayParams(250.0, 0.0F, 0.0F, 0.0F, /*snap*/ true, /*applyTimeNow*/ true);
+
+    juce::AudioBuffer<float> sendR(2, 512), sendD(2, 512), out(2, 512);
+    sendR.clear();
+    sendD.clear();
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < 512; ++i)
+            out.setSample(ch, i, std::sin(static_cast<float>(i) * 0.05F) * (ch ? 0.5F : 0.7F));
+
+    juce::AudioBuffer<float> before;
+    before.makeCopyOf(out);
+    fx.process(sendR, sendD, out, 0, 512);
+
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < 512; ++i)
+            require(out.getSample(ch, i) == before.getSample(ch, i),
+                    "inactive shared FX must not alter the dry bus by even one ULP");
+}
+
+void testSharedFxRoomTailRingsAndTerminates()
+{
+    silverdaw::SharedFx fx;
+    const double sr = 48000.0;
+    const int n = 512;
+    fx.prepare(sr, n);
+    fx.setReverbParams(/*size*/ 1.0F, /*decay*/ 1.0F, /*tone*/ 1.0F, /*mix*/ 1.0F, /*snap*/ true);
+    fx.setDelayParams(250.0, 0.0F, 0.0F, 0.0F, /*snap*/ true, /*applyTimeNow*/ true); // Echo off
+
+    juce::AudioBuffer<float> sendR(2, n), sendD(2, n), out(2, n);
+    sendD.clear();
+    sendR.clear();
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            sendR.setSample(ch, i, 0.5F);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(out.getMagnitude(0, 0, n) > 0.0, "Room must produce wet output while fed");
+    require(! fx.reverbTerminated(), "Room must not report terminated while being fed");
+
+    bool sawTail = false;
+    bool terminated = false;
+    sendR.clear();
+    const int maxBlocks = static_cast<int>(std::ceil(10.0 * sr / n));
+    for (int b = 0; b < maxBlocks; ++b)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        if (out.getMagnitude(0, 0, n) > 1.0e-5F) sawTail = true;
+        if (fx.reverbTerminated())
+        {
+            terminated = true;
+            break;
+        }
+    }
+    require(sawTail, "Room tail must keep ringing after the input stops");
+    require(terminated, "Room tail must self-terminate within the safety cap");
+}
+
+void testSharedFxEchoRepeatsAndTerminates()
+{
+    silverdaw::SharedFx fx;
+    const double sr = 48000.0;
+    const int n = 256;
+    fx.prepare(sr, n);
+    fx.setReverbParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true); // Room off
+    const double delayMs = 5.0; // 240 samples @48k, fits inside one block
+    fx.setDelayParams(delayMs, 0.5F, 1.0F, 1.0F, /*snap*/ true, /*applyTimeNow*/ true);
+
+    juce::AudioBuffer<float> sendR(2, n), sendD(2, n), out(2, n);
+    sendR.clear();
+    sendD.clear();
+    sendD.setSample(0, 0, 1.0F);
+    sendD.setSample(1, 0, 1.0F);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+
+    const int d = static_cast<int>(std::round(delayMs * sr / 1000.0));
+    require(std::abs(out.getSample(0, 0)) < 1.0e-6F, "Echo is wet-only: no dry signal at t=0");
+    require(std::abs(out.getSample(0, d)) > 0.5F,
+            "Echo must reproduce a delayed copy at the resolved delay time");
+
+    bool terminated = false;
+    sendD.clear();
+    const int maxBlocks = static_cast<int>(std::ceil(5.0 * sr / n));
+    for (int b = 0; b < maxBlocks; ++b)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        if (fx.echoTerminated())
+        {
+            terminated = true;
+            break;
+        }
+    }
+    require(terminated, "Echo tail must self-terminate within the safety cap");
+}
+
+
 //
 // Regression guard for the offline-render fade fix. Exported audio must
 // carry the same per-clip fades the live engine applies. The live engine
@@ -1406,6 +1532,56 @@ int main()
         }
     };
 
+    auto testProjectStateSendsJsonRoundTrip = []() {
+        silverdaw::ProjectState state;
+        require(state.addTrack("t-snd"), "addTrack should succeed");
+
+        const auto findTrackJson = [](const juce::var& tracks,
+                                      const juce::String& id) -> juce::var {
+            if (auto* arr = tracks.getArray())
+            {
+                for (const auto& tv : *arr)
+                {
+                    if (tv.getProperty("id", {}).toString() == id) return tv;
+                }
+            }
+            return {};
+        };
+
+        // Fresh track: send amounts are at their defaults and must be
+        // absent from the snapshot so reload / saved files stay tidy.
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-snd");
+            require(json.isObject(), "fresh track should appear in tracksAsJson");
+            require(!json.hasProperty("sendReverb"), "default sendReverb must be omitted");
+            require(!json.hasProperty("sendDelay"), "default sendDelay must be omitted");
+        }
+
+        // Set non-default sends and confirm they round-trip through the
+        // snapshot the renderer reads on PROJECT_STATE (so the Sends
+        // sliders restore after a reload).
+        require(state.setTrackSends("t-snd", 0.4F, 0.7F),
+                "non-default sends should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-snd");
+            require(json.isObject(), "track should appear in tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("sendReverb", 0.0)), 0.4, 0.0001,
+                        "sendReverb should round-trip through tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("sendDelay", 0.0)), 0.7, 0.0001,
+                        "sendDelay should round-trip through tracksAsJson");
+        }
+
+        // Reset to defaults: the snapshot must drop the fields again.
+        require(state.setTrackSends("t-snd", 0.0F, 0.0F),
+                "reset to default should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-snd");
+            require(json.isObject(), "track should still appear in tracksAsJson");
+            require(!json.hasProperty("sendReverb"), "reset sendReverb must be omitted");
+            require(!json.hasProperty("sendDelay"), "reset sendDelay must be omitted");
+        }
+    };
+
     const std::vector<TestCase> tests{
         {"ProjectState tracks, clips, and dirty tracking", testProjectStateTracksClipsAndDirty},
         {"ProjectState view, library, markers, and replaceTree", testProjectStateViewLibraryMarkersAndReplace},
@@ -1430,6 +1606,14 @@ int main()
          testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded},
         {"ToneEq low-cut is a high-pass and shelves have ±15 dB range",
          testToneEqLowCutDirectionAndShelfRange},
+        {"SharedFx delayNoteToMs resolves note values per BPM",
+         testSharedFxDelayNoteResolution},
+        {"SharedFx is bit-exact transparent when inactive (mix=0)",
+         testSharedFxUntouchedParityIsExactZero},
+        {"SharedFx Room rings a tail after input stops and terminates",
+         testSharedFxRoomTailRingsAndTerminates},
+        {"SharedFx Echo reproduces a delayed copy and terminates",
+         testSharedFxEchoRepeatsAndTerminates},
         {"LoudnessAnalyzer reports silent for digital silence", testLoudnessAnalyzerSilence},
         {"LoudnessAnalyzer measures -26 dBFS stereo sine as ~-23 LUFS",
          testLoudnessAnalyzerSineHits23},
@@ -1445,6 +1629,8 @@ int main()
          testProjectStateDelayNoteValueGuard},
         {"ProjectState per-track tone round-trips through tracksAsJson",
          testProjectStateTrackToneJsonRoundTrip},
+        {"ProjectState per-track sends round-trip through tracksAsJson",
+         testProjectStateSendsJsonRoundTrip},
         {"Mixdown snapshot carries per-clip fades",
          testMixdownSnapshotCarriesClipFades},
     };

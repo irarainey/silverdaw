@@ -2263,6 +2263,21 @@ juce::var ProjectState::tracksAsJson() const
         {
             trackObj->setProperty("toneHighCut", true);
         }
+        // Phase 5 — per-track Room / Echo send amounts. Like Tone, these
+        // live on the track node and are emitted only when non-default so
+        // the Track FX Sends sliders restore after a reload while legacy
+        // projects stay byte-clean. Identifiers are `sendReverb`/`sendDelay`
+        // (the renderer maps them onto its `reverbSend`/`delaySend` fields).
+        if (track.hasProperty(kSendReverb))
+        {
+            trackObj->setProperty("sendReverb",
+                                  static_cast<double>(track.getProperty(kSendReverb, 0.0)));
+        }
+        if (track.hasProperty(kSendDelay))
+        {
+            trackObj->setProperty("sendDelay",
+                                  static_cast<double>(track.getProperty(kSendDelay, 0.0)));
+        }
 
         juce::Array<juce::var> clipsArray;
         for (int c = 0; c < track.getNumChildren(); ++c)

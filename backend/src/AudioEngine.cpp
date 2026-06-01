@@ -735,6 +735,7 @@ void AudioEngine::stop()
 {
     master.setPlaying(false);
     master.setPositionSamples(0);
+    busGraph.resetSharedFx();
     for (auto& [id, track] : tracks)
     {
         if (track->transportSource != nullptr)
@@ -776,6 +777,25 @@ void AudioEngine::setTrackTone(const juce::String& trackId,
     busGraph.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut, highCut, snap);
 }
 
+void AudioEngine::setTrackSends(const juce::String& trackId, float reverbSend, float delaySend)
+{
+    busGraph.setTrackSends(trackId, reverbSend, delaySend);
+}
+
+void AudioEngine::setProjectReverb(float size, float decay, float tone, float mix, bool snap)
+{
+    busGraph.setProjectReverb(size, decay, tone, mix, snap);
+}
+
+void AudioEngine::setProjectDelay(double delayMs, float feedback, float tone, float mix, bool snap)
+{
+    // Stage the delay TIME while the transport is playing (it takes effect
+    // on the next stop/seek), but apply it immediately when stopped so a
+    // stationary preview hears the change at once (§7.9.4).
+    busGraph.setProjectDelay(delayMs, feedback, tone, mix, snap,
+                             /*applyTimeNow*/ ! master.isPlaying());
+}
+
 void AudioEngine::drainAllTrackPeaks(std::vector<BusGraph::TrackPeakSnapshot>& out)
 {
     busGraph.drainAllTrackPeaks(out);
@@ -790,6 +810,9 @@ void AudioEngine::setPositionMs(double ms)
                                    : static_cast<juce::int64>(0);
     master.setPositionSamples(masterSamples);
 
+    // Seeking starts the shared Room / Echo from cold state — wipe any
+    // ringing tail so it doesn't bleed across the jump (§7.10).
+    busGraph.resetSharedFx();
     // Per-track seek: also invalidate the read-ahead prefetch. JUCE's
     // `BufferingAudioSource` only flushes its cached samples when the
     // new position is OUTSIDE the cached range, so a backward seek of

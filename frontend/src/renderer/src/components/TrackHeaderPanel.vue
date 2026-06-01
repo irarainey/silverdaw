@@ -306,14 +306,20 @@ function onHeaderClick(track: { id: string }, ev: MouseEvent): void {
  * track it is already showing collapses back to the Library view.
  */
 function onToggleFx(track: { id: string }): void {
-  const showingThisTrackFx =
-    project.fxPanelOpen && project.selectedTrackId === track.id
-  if (showingThisTrackFx) {
+  if (isTrackFxShowing(track.id)) {
     project.setFxPanelOpen(false)
     return
   }
   project.selectTrack(track.id)
+  project.setFxTab('track')
   project.setFxPanelOpen(true)
+}
+
+/** True when the bottom panel is showing the Track FX rack for this track —
+ *  i.e. the FX area is open, on the per-track tab, and this track is the
+ *  selected one. Drives the header Fx button's pressed state and toggle. */
+function isTrackFxShowing(trackId: string): boolean {
+  return project.fxPanelOpen && project.fxTab === 'track' && project.selectedTrackId === trackId
 }
 
 function onGripPointerDown(track: { id: string }, ev: PointerEvent): void {
@@ -675,12 +681,12 @@ const dropIndicatorTopPx = computed<number>(() => {
             <button
               type="button"
               class="flex h-6 w-6 items-center justify-center rounded border text-[11px] font-bold transition-colors"
-              :class="(project.fxPanelOpen && project.selectedTrackId === track.id)
+              :class="isTrackFxShowing(track.id)
                 ? 'border-sky-400 bg-sky-500 text-zinc-950 hover:bg-sky-400'
                 : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
               "
-              :title="(project.fxPanelOpen && project.selectedTrackId === track.id) ? 'Hide track effects' : 'Show track effects'"
-              :aria-pressed="project.fxPanelOpen && project.selectedTrackId === track.id"
+              :title="isTrackFxShowing(track.id) ? 'Hide track effects' : 'Show track effects'"
+              :aria-pressed="isTrackFxShowing(track.id)"
               @click="onToggleFx(track)"
             >
               Fx

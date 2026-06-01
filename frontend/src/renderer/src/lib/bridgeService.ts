@@ -799,11 +799,55 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
-    case 'TRACK_SENDS_APPLIED':
+    case 'TRACK_SENDS_APPLIED': {
+      if (!msg.payload.ok) {
+        log.warn('bridge', `TRACK_SENDS_APPLIED ok=false for ${msg.payload.trackId}`)
+        break
+      }
+      useProjectStore().setTrackSends(
+        msg.payload.trackId,
+        { reverbSend: msg.payload.reverbSend, delaySend: msg.payload.delaySend },
+        { localOnly: true }
+      )
+      break
+    }
+
+    case 'PROJECT_REVERB_APPLIED': {
+      if (!msg.payload.ok) {
+        log.warn('bridge', 'PROJECT_REVERB_APPLIED ok=false')
+        break
+      }
+      useProjectStore().setProjectReverb(
+        {
+          size: msg.payload.size,
+          decay: msg.payload.decay,
+          tone: msg.payload.tone,
+          mix: msg.payload.mix
+        },
+        { localOnly: true }
+      )
+      break
+    }
+
+    case 'PROJECT_DELAY_APPLIED': {
+      if (!msg.payload.ok) {
+        log.warn('bridge', 'PROJECT_DELAY_APPLIED ok=false')
+        break
+      }
+      useProjectStore().setProjectDelay(
+        {
+          noteValue: msg.payload.noteValue,
+          feedback: msg.payload.feedback,
+          tone: msg.payload.tone,
+          mix: msg.payload.mix
+        },
+        { localOnly: true }
+      )
+      break
+    }
+
     case 'TRACK_LEVELER_APPLIED':
     case 'CLIP_ENVELOPE_APPLIED':
-    case 'PROJECT_REVERB_APPLIED':
-    case 'PROJECT_DELAY_APPLIED':
       break
 
     default:

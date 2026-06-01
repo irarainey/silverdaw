@@ -80,18 +80,6 @@ as blocking-class findings:
   Catch2/GoogleTest; frontend **Vitest**; Playwright for Electron e2e).
 - **Docs** — accuracy of any touched docs; enforce the no-other-DAW-product rule.
 
-## Rubber-duck before finalising
-
-All serious review work **must** be rubber-ducked across **three models**: the
-model currently running the review (**opus-4.8**), **gpt-5.5**, and
-**gpt-5.3-codex**. Run the adversarial critique of your **major/critical
-findings** and any **suggested patch** that touches real-time audio, Electron
-IPC, the bridge contract, persistence/recovery, or timeline rendering past all
-three perspectives. If any of the three is genuinely unavailable in this session,
-explicitly note which one and still complete the critique with the rest (never
-fewer than the in-use model's own adversarial self-critique). Reconcile
-disagreement between the models before delivering, and report what changed.
-
 ## Output
 
 1. **Verdict** — one line: overall risk (low / medium / high) and whether the
@@ -107,7 +95,6 @@ disagreement between the models before delivering, and report what changed.
    ` ```diff ` blocks (you do not apply them).
 6. **Next actions** — ordered: _quick wins_ (≤30 min, no risk), _targeted fixes_
    (one PR each), _structural_ (multi-PR).
-7. **Rubber-duck note** — perspectives consulted/emulated and what changed.
 
 Keep references concise (e.g. "C++ Core Guidelines: F.7", "Vue Style Guide:
 Component Names", "Electron Security: Context Isolation", "OWASP A05:2021").

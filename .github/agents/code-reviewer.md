@@ -29,11 +29,7 @@ workflow, lens order, and output format. The authoritative standards are
   `{ type, payload }` bridge contract (zod single source of truth; never hardcode
   the `--port`), Electron security, performance, dead code, tests against the
   existing harnesses only (`SilverdawBackendTests` via CTest; Vitest; Playwright).
-- **Rubber-duck (required):** all serious review work is rubber-ducked across
-  **three models** — the model in use (**opus-4.8**), **gpt-5.5**, and
-  **gpt-5.3-codex**. Reconcile disagreement; note any model that is genuinely
-  unavailable; report what changed.
 - **Output:** verdict + risk → maintainability scorecard (the three primary-lens
   items, ✅/⚠️/❌) → findings by severity with `surface · file:line` → split /
   dedupe proposals → up to 3 minimal `diff` suggestions (not applied) → next
-  actions (quick wins / targeted / structural) → rubber-duck note.
+  actions (quick wins / targeted / structural).

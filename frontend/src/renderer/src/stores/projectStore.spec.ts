@@ -593,4 +593,147 @@ describe('projectStore', () => {
       name: 'Vocal chop'
     })
   })
+
+  it('updates and forwards per-track Room / Echo sends, suppressing defaults', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    sendMock.mockClear()
+
+    project.setTrackSends(trackId, { reverbSend: 0.4, delaySend: 0.25 }, { gestureEnd: true })
+
+    const track = project.tracks.find((t) => t.id === trackId)
+    expect(track?.reverbSend).toBe(0.4)
+    expect(track?.delaySend).toBe(0.25)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SET_SENDS', {
+      trackId,
+      reverbSend: 0.4,
+      delaySend: 0.25,
+      gestureId: undefined,
+      gestureEnd: true
+    })
+
+    // Zero clamps back to undefined (default-suppressed) but is still
+    // forwarded so the backend clears the stored value — and the untouched
+    // sibling send is read back off the track so the wire carries both.
+    sendMock.mockClear()
+    project.setTrackSends(trackId, { reverbSend: 0 }, { gestureEnd: true })
+    expect(track?.reverbSend).toBeUndefined()
+    expect(track?.delaySend).toBe(0.25)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SET_SENDS', {
+      trackId,
+      reverbSend: 0,
+      delaySend: 0.25,
+      gestureId: undefined,
+      gestureEnd: true
+    })
+
+    // A mid-drag sample forwards the minted gestureId so the backend can
+    // coalesce the whole drag into one undo step.
+    sendMock.mockClear()
+    project.setTrackSends(trackId, { delaySend: 0.5 }, { gestureId: 'drag-1', gestureEnd: false })
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SET_SENDS', {
+      trackId,
+      reverbSend: 0,
+      delaySend: 0.5,
+      gestureId: 'drag-1',
+      gestureEnd: false
+    })
+
+    // localOnly reconciliation (the ack path) must not echo to the bridge.
+    sendMock.mockClear()
+    project.setTrackSends(trackId, { reverbSend: 0.6 }, { localOnly: true })
+    expect(track?.reverbSend).toBe(0.6)
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('updates and forwards the project Room and Echo, clamping to [0, 1]', () => {
+    const project = useProjectStore()
+    sendMock.mockClear()
+
+    project.setProjectReverb({ size: 0.5, decay: 2, mix: -1 }, { gestureEnd: true })
+    expect(project.projectReverb).toMatchObject({ size: 0.5, decay: 1, tone: 0, mix: 0 })
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_REVERB', {
+      size: 0.5,
+      decay: 2,
+      tone: undefined,
+      mix: -1,
+      gestureId: undefined,
+      gestureEnd: true
+    })
+
+    project.setProjectDelay({ noteValue: '1/16', feedback: 0.7 }, { gestureEnd: true })
+    expect(project.projectDelay).toMatchObject({ noteValue: '1/16', feedback: 0.7, tone: 0, mix: 0 })
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_DELAY', {
+      noteValue: '1/16',
+      feedback: 0.7,
+      tone: undefined,
+      mix: undefined,
+      gestureId: undefined,
+      gestureEnd: true
+    })
+
+    // The ack path reconciles without echoing back to the bridge.
+    sendMock.mockClear()
+    project.setProjectReverb({ mix: 0.8 }, { localOnly: true })
+    expect(project.projectReverb.mix).toBe(0.8)
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('hydrates project FX and per-track sends from a snapshot', () => {
+    const project = useProjectStore()
+
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\fx.silverdaw',
+      name: 'FX Mix',
+      reset: true,
+      bpm: 120,
+      reverbSize: 0.6,
+      reverbDecay: 0.4,
+      reverbTone: 0.3,
+      reverbMix: 0.5,
+      delayNoteValue: '1/16',
+      delayFeedback: 0.35,
+      delayTone: 0.2,
+      delayMix: 0.45,
+      tracks: [
+        {
+          id: 't1',
+          name: 'Synth',
+          gain: 1,
+          sendReverb: 0.7,
+          sendDelay: 0.2,
+          clips: []
+        }
+      ]
+    })
+
+    expect(project.projectReverb).toEqual({ size: 0.6, decay: 0.4, tone: 0.3, mix: 0.5 })
+    expect(project.projectDelay).toEqual({
+      noteValue: '1/16',
+      feedback: 0.35,
+      tone: 0.2,
+      mix: 0.45
+    })
+    const track = project.tracks.find((t) => t.id === 't1')
+    expect(track?.reverbSend).toBe(0.7)
+    expect(track?.delaySend).toBe(0.2)
+  })
+
+  it('hydrates project FX to inaudible defaults when the snapshot omits them', () => {
+    const project = useProjectStore()
+
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\bare.silverdaw',
+      name: 'Bare',
+      reset: true,
+      bpm: 120,
+      tracks: [{ id: 't1', name: 'Track 1', gain: 1, clips: [] }]
+    })
+
+    expect(project.projectReverb).toEqual({ size: 0, decay: 0, tone: 0, mix: 0 })
+    expect(project.projectDelay).toEqual({ noteValue: '1/8', feedback: 0, tone: 0, mix: 0 })
+    const track = project.tracks.find((t) => t.id === 't1')
+    expect(track?.reverbSend).toBeUndefined()
+    expect(track?.delaySend).toBeUndefined()
+  })
 })

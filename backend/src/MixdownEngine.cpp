@@ -941,6 +941,17 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
                                      : kDefaultSampleRate;
     snapshot.masterGain = juce::jlimit(0.0F, 1.0F, project.getMasterVolume());
 
+    // Phase 5 — project-shared Room / Echo, captured once for the render.
+    snapshot.reverbSize = project.getProjectReverbSize();
+    snapshot.reverbDecay = project.getProjectReverbDecay();
+    snapshot.reverbTone = project.getProjectReverbTone();
+    snapshot.reverbMix = project.getProjectReverbMix();
+    snapshot.delayNoteValue = project.getProjectDelayNoteValue();
+    snapshot.delayFeedback = project.getProjectDelayFeedback();
+    snapshot.delayTone = project.getProjectDelayTone();
+    snapshot.delayMix = project.getProjectDelayMix();
+    snapshot.bpm = project.getBpm();
+
     static const juce::Identifier kTrack{"TRACK"};
     static const juce::Identifier kClip{"CLIP"};
     static const juce::Identifier kLibrary{"LIBRARY"};
@@ -980,6 +991,8 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         track.toneTrebleDb = project.getTrackToneTrebleDb(track.id);
         track.toneLowCut = project.getTrackToneLowCut(track.id);
         track.toneHighCut = project.getTrackToneHighCut(track.id);
+        track.reverbSend = project.getTrackReverbSend(track.id);
+        track.delaySend = project.getTrackDelaySend(track.id);
 
         const bool trackMuted = project.getTrackMuted(track.id);
         const bool trackSoloed = project.getTrackSoloed(track.id);
@@ -1397,7 +1410,18 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             busGraph.setTrackTone(trackSnap.id, trackSnap.toneBassDb, trackSnap.toneMidDb,
                                   trackSnap.toneTrebleDb, trackSnap.toneLowCut,
                                   trackSnap.toneHighCut, /*snap*/ true);
+            busGraph.setTrackSends(trackSnap.id, trackSnap.reverbSend, trackSnap.delaySend);
         }
+
+        // Phase 5 — push the project-shared Room / Echo onto the offline
+        // bus. Snapped and with the delay time applied immediately so the
+        // first rendered block is steady-state. The delay time resolves
+        // via the same helper the live engine uses (§7.9.6 parity).
+        busGraph.setProjectReverb(snapshot.reverbSize, snapshot.reverbDecay, snapshot.reverbTone,
+                                  snapshot.reverbMix, /*snap*/ true);
+        busGraph.setProjectDelay(silverdaw::delayNoteToMs(snapshot.delayNoteValue, snapshot.bpm),
+                                 snapshot.delayFeedback, snapshot.delayTone, snapshot.delayMix,
+                                 /*snap*/ true, /*applyTimeNow*/ true);
         FinalResampler finalResampler(snapshot.projectSampleRate, options.outputSampleRate);
         if (!finalResampler.ok())
         {
@@ -1420,21 +1444,16 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         {
             maxTailFrames = std::max(maxTailFrames, cp->tailFrames);
         }
-        // Project-shared FX tail budget (Phase 5 step 1d, §7.10
-        // tail-render policy). Today both shared FX are unimplemented
-        // (Room reverb + Echo delay land in step 7) so the budget is
-        // 0; the named local makes the future addition a one-line
-        // change here. Per §7.10 the shared-FX tails run in PARALLEL,
-        // so the safety cap is the MAX of the per-FX caps, not their
-        // sum:
-        //
-        //     sharedFxMaxTailFrames =
-        //         std::max(roomSafetyCapFrames, echoSafetyCapFrames);
-        //
-        // (The real cutoff in step 7 will be detector-driven —
-        // terminate when both FX have decayed below -90 dBFS — with
-        // this value as the absolute fail-safe ceiling.)
-        const int64_t sharedFxMaxTailFrames = 0;
+        // Project-shared FX tail budget (§7.10 tail-render policy). The
+        // shared Room + Echo can ring out past the last clip's end, so we
+        // extend the render window by their fail-safe cap and break early
+        // (below) once both have actually decayed. Per §7.10 the two FX
+        // run in PARALLEL, so the absolute ceiling is the MAX of the
+        // per-FX caps (Room 8 s, Echo 4 s), not their sum. The real
+        // cutoff is detector-driven (`busGraph.sharedFxTerminated()`),
+        // with this value only as the hard fail-safe.
+        const int64_t sharedFxMaxTailFrames = static_cast<int64_t>(
+            std::ceil(8.0 * static_cast<double>(snapshot.projectSampleRate)));
         // Additive user-controlled silence tail, clamped sensibly by
         // the dispatch handler (0..60 s). Lets reverb/delay clips
         // ring out past the timeline end even when no processor-
@@ -1445,13 +1464,14 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
         const int64_t userTailFrames = static_cast<int64_t>(
             std::round(clampedTailSeconds * static_cast<double>(snapshot.projectSampleRate)));
         totalProjectFrames += maxTailFrames + sharedFxMaxTailFrames + userTailFrames;
-        // Effective rendered length (ms) seen by the user. Used for
-        // expected-output-frame computation, progress denominator
-        // and `MIXDOWN_DONE.durationMs`. Keep this single source of
-        // truth so the file on disk, the dialog, and the log all
-        // agree.
-        const double effectiveRenderLengthMs =
-            (static_cast<double>(totalProjectFrames) / projectFramesPerMs);
+        // Guaranteed-minimum render length: the timeline, the worst-case
+        // per-clip tail and the user-requested trailing silence are always
+        // rendered. The shared-FX cap on top is only consumed while the FX
+        // is still ringing — once `busGraph.sharedFxTerminated()` and we
+        // have passed this minimum, the loop breaks early (so a project
+        // with no/inactive shared FX exports at exactly the pre-step-7
+        // length, with bit-identical content).
+        const int64_t minRenderFrames = totalProjectFrames - sharedFxMaxTailFrames;
         int64_t projectFramesRendered = 0;
         int64_t outputFramesWritten = 0;
         double peakAmplitude = 0.0;
@@ -1583,8 +1603,6 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             }
             const int blockFrames = static_cast<int>(
                 std::min<int64_t>(kBlockFrames, totalProjectFrames - projectFramesRendered));
-            const bool isLastBlock =
-                projectFramesRendered + blockFrames >= totalProjectFrames;
 
             mixBus.clear(0, blockFrames);
             float* mixL = mixBus.getWritePointer(0);
@@ -1666,8 +1684,11 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             }
             ++blockIndex;
 
+            // Stream every block as non-final; the resampler is flushed
+            // once after the loop (below) so the same drain path serves
+            // both the natural end and the early FX-terminated break.
             if (!finalResampler.push(mixInterleaved.data(), blockFrames,
-                                     isLastBlock, writeStereo))
+                                     /*endOfInput*/ false, writeStereo))
             {
                 pass1File.deleteFile();
                 if (writerError.isNotEmpty())
@@ -1684,6 +1705,16 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             }
 
             projectFramesRendered += blockFrames;
+
+            // Early termination: once we have rendered the guaranteed
+            // minimum (timeline + clip tail + user silence) AND both shared
+            // FX tails have decayed, stop — don't burn the full fail-safe
+            // cap rendering inaudible decay (or trailing silence for a
+            // project with inactive FX).
+            if (projectFramesRendered >= minRenderFrames && busGraph.sharedFxTerminated())
+            {
+                break;
+            }
 
             const auto now = juce::Time::getMillisecondCounter();
             if (now - lastProgressMs >= kProgressMinIntervalMs)
@@ -1702,6 +1733,34 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                 lastProgressMs = now;
             }
         }
+
+        // Flush the final resampler exactly once (0-frame, end-of-input)
+        // so any samples buffered inside libsamplerate are drained for
+        // both the natural-end and early-break exit paths. Pass-through
+        // (no resample) treats this as a harmless 0-frame write.
+        if (!finalResampler.push(mixInterleaved.data(), 0, /*endOfInput*/ true, writeStereo))
+        {
+            pass1File.deleteFile();
+            if (writerError.isNotEmpty())
+            {
+                failWith(MixdownFailureCode::Io, writerError);
+            }
+            else
+            {
+                failWith(MixdownFailureCode::Invalid,
+                         juce::String("Final resample flush failed: ") +
+                             (finalResampler.error() ? finalResampler.error() : "unknown"));
+            }
+            return;
+        }
+
+        // Actual rendered length (ms) — computed from the frames we really
+        // rendered, which may be shorter than the upper-bound
+        // `totalProjectFrames` when the FX-terminated early break fired.
+        // Drives the pad-to-length safety net and (via outputFramesWritten)
+        // the reported duration.
+        const double effectiveRenderLengthMs =
+            static_cast<double>(projectFramesRendered) / projectFramesPerMs;
 
         // Tear down the BusGraph BEFORE we start padding / finalizing
         // so any per-runtime release of DSP state happens while the
