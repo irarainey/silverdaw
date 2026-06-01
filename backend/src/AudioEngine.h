@@ -1064,6 +1064,11 @@ class AudioEngine
      *  message thread. */
     void setTrackSends(const juce::String& trackId, float reverbSend, float delaySend);
 
+    /** Publish a track's equal-power pan (signed `[-1, 1]`, 0 = centre) to
+     *  the live bus graph. Pure delegate to `BusGraph::setTrackPan`. Safe
+     *  from the message thread. */
+    void setTrackPan(const juce::String& trackId, float pan);
+
     /** Publish project Room (reverb) parameters to the shared FX. `snap`
      *  collapses the smoother (load / mixdown fan-out). */
     void setProjectReverb(float size, float decay, float tone, float mix, bool snap);

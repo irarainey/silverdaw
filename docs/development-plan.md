@@ -1411,7 +1411,8 @@ playable at every point — no broken-build day):
   fixed test projects under the five conditions in §7.9.6.
 - [x] **2. Bridge protocol no-op compatibility layer.** _(Landed
   incrementally alongside steps 3 / 6 rather than as one commit; the
-  `TRACK_SET_PAN` / `TRACK_SET_MUTE_SOLO` envelopes are deferred to step 9.)_
+  `TRACK_SET_PAN` envelope landed with step 9 and `TRACK_SET_MUTE_SOLO`
+  ships as the existing `TRACK_MUTE` / `TRACK_SOLO` envelopes.)_
   Extend
   `ProjectStateClipSchema` (`fadeInMs`, `fadeOutMs`, breakpoints)
   and `ProjectStateTrackSchema` (`toneBassDb`, `toneMidDb`,
@@ -1522,11 +1523,15 @@ playable at every point — no broken-build day):
   analysis), Advanced disclosure for classic knobs. Detector state
   resets on transport stop / seek; **never** at clip boundaries.
   Bridge: `TRACK_SET_LEVELER` handler activated.
-- [ ] **9. mute / solo / pan.** _(mute / solo already shipped via the
-  existing `TRACK_MUTE` / `TRACK_SOLO` envelopes; only **pan** remains.)_
-  Track header has mute/solo buttons; Track FX tab still needs an
-  equal-power **pan** control. Bridge: a `TRACK_SET_PAN` handler (not
-  yet in the protocol) to be added and activated.
+- [x] **9. mute / solo / pan.** _(mute / solo shipped via the existing
+  `TRACK_MUTE` / `TRACK_SOLO` envelopes; **pan** now shipped.)_ Track
+  header has mute/solo buttons; the Track FX tab carries an equal-power
+  **pan** control (signed `[-1, 1]`, unity at centre so a centred track
+  is bit-exact with the no-pan path). Pan is applied to the dry path
+  AFTER the pre-pan send tap, so Room / Echo sends stay pre-pan, and is
+  mirrored in the offline `MixdownEngine` for export parity (§7.9.6).
+  Bridge: `TRACK_SET_PAN` handler / `TRACK_PAN_APPLIED` ack activated;
+  `pan` persists through `tracksAsJson` and survives save / reload.
 - [x] **10. Master bus metering.** Transport-bar stereo peak meter
   + dB master fader is *shipped* (`PROJECT_SET_MASTER_VOLUME`).
   LUFS / RMS readouts and a master Limiter are deferred to

@@ -81,6 +81,10 @@ struct MixdownSnapshot
         // the live engine does (§7.9.6 parity).
         float reverbSend{0.0F};
         float delaySend{0.0F};
+        // Phase 5 — per-track equal-power pan (signed `[-1, 1]`, 0 = centre),
+        // captured so the offline render places the dry path identically to
+        // the live engine (§7.9.6 parity).
+        float pan{0.0F};
         std::vector<ClipSnapshot> clips;
     };
 

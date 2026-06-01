@@ -172,6 +172,14 @@ class ProjectState : public juce::ValueTree::Listener
     float getTrackReverbSend(const juce::String& trackId) const;
     float getTrackDelaySend(const juce::String& trackId) const;
 
+    /** Per-track equal-power pan, signed `[-1, 1]` (`-1` = hard left,
+     *  `0` = centre, `+1` = hard right). The setter clamps to that range
+     *  and suppresses the centred default so legacy projects round-trip
+     *  byte-equivalent. Returns `true` iff the track exists AND the stored
+     *  pan actually changed. */
+    bool setTrackPan(const juce::String& trackId, float pan);
+    float getTrackPan(const juce::String& trackId) const;
+
     /** Per-track Tone (3-band fixed EQ + low-cut + high-cut). All gain
      *  values are in dB; the setter clamps to `[-15, +15]`. `lowCut`
      *  engages a fixed high-pass and `highCut` a fixed low-pass when true.
@@ -833,6 +841,7 @@ class ProjectState : public juce::ValueTree::Listener
     // Both default to 0 (no send) and are persisted only when non-zero.
     static const juce::Identifier kSendReverb;
     static const juce::Identifier kSendDelay;
+    static const juce::Identifier kPan;
 
     // Phase 5 — per-track Tone (3-band fixed EQ + low-cut). dB values
     // default to 0; the low-cut flag defaults to false. All four

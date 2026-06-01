@@ -172,6 +172,13 @@ export interface Track {
    */
   reverbSend?: number
   delaySend?: number
+  /**
+   * Per-track equal-power pan, signed `[-1, 1]` (`-1` = hard left, `0` =
+   * centre, `+1` = hard right). Optional and suppressed-when-default
+   * (centre) so a centred track carries no pan state and legacy projects
+   * hydrate cleanly. Mirrors the backend ValueTree flat property `pan`.
+   */
+  pan?: number
 }
 
 /**
@@ -1772,6 +1779,33 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * Update a track's equal-power pan. Mirrors `setTrackSends`: applies
+     * the value locally (default-suppressing centre `0` back to
+     * `undefined`) then forwards to the backend unless `opts.localOnly`
+     * (used by the `TRACK_PAN_APPLIED` ack to reconcile to the canonical
+     * clamped value). `gestureId` / `gestureEnd` drive undo coalescing for
+     * the pan-slider drag.
+     */
+    setTrackPan(
+      trackId: string,
+      pan: number,
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const clamped = Math.max(-1, Math.min(1, Number.isFinite(pan) ? pan : 0))
+      track.pan = clamped !== 0 ? clamped : undefined
+      if (!opts?.localOnly) {
+        sendBridge('TRACK_SET_PAN', {
+          trackId,
+          pan: clamped,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /**
      * Update the project-shared Room (reverb). Applies the partial patch
      * locally then forwards to the backend unless `opts.localOnly` (used
      * by the `PROJECT_REVERB_APPLIED` ack to reconcile to canonical
@@ -2821,7 +2855,8 @@ export const useProjectStore = defineStore('project', {
             reverbSend:
               typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined,
             delaySend:
-              typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined
+              typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined,
+            pan: typeof t.pan === 'number' && t.pan !== 0 ? t.pan : undefined
           }
           this.tracks.push(track)
         } else {
@@ -2852,6 +2887,7 @@ export const useProjectStore = defineStore('project', {
             typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined
           track.delaySend =
             typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined
+          track.pan = typeof t.pan === 'number' && t.pan !== 0 ? t.pan : undefined
         }
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)

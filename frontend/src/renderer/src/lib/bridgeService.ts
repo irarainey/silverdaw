@@ -69,6 +69,7 @@ import {
   isTrackSendsAppliedPayload,
   isTrackToneAppliedPayload,
   isTrackLevelerAppliedPayload,
+  isTrackPanAppliedPayload,
   isClipEnvelopeAppliedPayload,
   isProjectReverbAppliedPayload,
   isProjectDelayAppliedPayload,
@@ -798,6 +799,15 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'TRACK_PAN_APPLIED': {
+      if (!msg.payload.ok) {
+        log.warn('bridge', `TRACK_PAN_APPLIED ok=false for ${msg.payload.trackId}`)
+        break
+      }
+      useProjectStore().setTrackPan(msg.payload.trackId, msg.payload.pan, { localOnly: true })
+      break
+    }
+
     case 'PROJECT_REVERB_APPLIED': {
       if (!msg.payload.ok) {
         log.warn('bridge', 'PROJECT_REVERB_APPLIED ok=false')
@@ -1089,6 +1099,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isTrackToneAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_LEVELER_APPLIED':
       return isTrackLevelerAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_PAN_APPLIED':
+      return isTrackPanAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'CLIP_ENVELOPE_APPLIED':
       return isClipEnvelopeAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_REVERB_APPLIED':

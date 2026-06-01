@@ -90,6 +90,16 @@ public:
         // float discipline as the Tone targets in `TrackChain`.
         float reverbSend = 0.0F;
         float delaySend = 0.0F;
+        // Per-track equal-power pan (§7.9.3). `pan` is the signed request in
+        // `[-1, 1]` (0 = centre); `panGainL` / `panGainR` are the derived
+        // per-channel gains applied to the DRY contribution AFTER the pre-pan
+        // send tap, so the Room / Echo sends stay pre-pan. Centre keeps unity
+        // on both channels so a default project is bit-exact with the no-pan
+        // path. Written on the message thread, read on the audio thread, both
+        // under the BusGraph `lock`.
+        float pan = 0.0F;
+        float panGainL = 1.0F;
+        float panGainR = 1.0F;
         // Post-chain "max sample magnitude since last drain" per
         // channel. Lock-free atomic store from the audio thread,
         // drained by the message-thread broadcaster — same pattern
@@ -230,14 +240,32 @@ public:
 
                 const float rSend = kv.second->reverbSend;
                 const float dSend = kv.second->delaySend;
-                for (int ch = 0; ch < outChannels; ++ch)
-                    info.buffer->addFrom(ch, dst, scratch, ch, 0, n);
+                // Pre-pan send tap: the Room / Echo sends read the dry,
+                // un-panned track output so a hard-panned track still feeds
+                // the shared FX at full level (pan only places the dry path).
                 for (int ch = 0; ch < sendChannels; ++ch)
                 {
                     if (rSend != 0.0F)
                         reverbSendBuf.addFrom(ch, 0, scratch, ch, 0, n, rSend);
                     if (dSend != 0.0F)
                         delaySendBuf.addFrom(ch, 0, scratch, ch, 0, n, dSend);
+                }
+                // Equal-power pan on the DRY contribution. A centred track
+                // (pan == 0) takes the plain unity add so a default project
+                // stays bit-exact; only an actually panned track pays the
+                // per-channel gain. Mono output (outChannels < 2) can't be
+                // panned, so it also takes the unity path.
+                if (kv.second->pan == 0.0F || outChannels < 2)
+                {
+                    for (int ch = 0; ch < outChannels; ++ch)
+                        info.buffer->addFrom(ch, dst, scratch, ch, 0, n);
+                }
+                else
+                {
+                    info.buffer->addFrom(0, dst, scratch, 0, 0, n, kv.second->panGainL);
+                    info.buffer->addFrom(1, dst, scratch, 1, 0, n, kv.second->panGainR);
+                    for (int ch = 2; ch < outChannels; ++ch)
+                        info.buffer->addFrom(ch, dst, scratch, ch, 0, n);
                 }
             }
 
@@ -299,6 +327,15 @@ public:
         {
             rt->reverbSend = sendIt->second.reverbSend;
             rt->delaySend = sendIt->second.delaySend;
+        }
+
+        // Re-apply any per-track pan captured while the track had no runtime,
+        // mirroring the Tone / Sends re-application above.
+        auto panIt = pendingPans.find(trackId);
+        if (panIt != pendingPans.end())
+        {
+            rt->pan = panIt->second;
+            equalPowerPanGains(panIt->second, rt->panGainL, rt->panGainR);
         }
     }
 
@@ -375,6 +412,42 @@ public:
         {
             it->second->reverbSend = r;
             it->second->delaySend = d;
+        }
+    }
+
+    /** Compute the equal-power per-channel gains for a signed pan in
+     *  `[-1, 1]`. `theta` sweeps `0..pi/2` as pan goes `-1..+1`; the
+     *  `sqrt2` factor normalises the centre (`theta == pi/4`) to unity so a
+     *  centred track is 0 dB and matches the no-pan path bit-for-bit. */
+    static void equalPowerPanGains(float pan, float& gainL, float& gainR) noexcept
+    {
+        const float p = juce::jlimit(-1.0F, 1.0F, std::isfinite(pan) ? pan : 0.0F);
+        const float theta = (p + 1.0F) * (juce::MathConstants<float>::pi * 0.25F);
+        gainL = juce::MathConstants<float>::sqrt2 * std::cos(theta);
+        gainR = juce::MathConstants<float>::sqrt2 * std::sin(theta);
+    }
+
+    /** Publish a track's equal-power pan. Stored sticky in `pendingPans`
+     *  (like Tone / Sends) so it survives the runtime's lazy
+     *  create/destroy lifecycle, and forwarded to a live runtime
+     *  immediately. Takes the audio-thread `lock`. Pan is applied as a
+     *  per-sample gain (no smoothing) — the renderer streams fine-grained
+     *  drag samples, and a centred track keeps the bit-exact unity path. */
+    void setTrackPan(const juce::String& trackId, float pan)
+    {
+        if (trackId.isEmpty()) return;
+        const float p = juce::jlimit(-1.0F, 1.0F, std::isfinite(pan) ? pan : 0.0F);
+        float gL = 1.0F;
+        float gR = 1.0F;
+        equalPowerPanGains(p, gL, gR);
+        const juce::ScopedLock sl(lock);
+        pendingPans[trackId] = p;
+        auto it = runtimes.find(trackId);
+        if (it != runtimes.end())
+        {
+            it->second->pan = p;
+            it->second->panGainL = gL;
+            it->second->panGainR = gR;
         }
     }
 
@@ -456,6 +529,7 @@ public:
         clipToTrack.clear();
         pendingTone.clear();
         pendingSends.clear();
+        pendingPans.clear();
         sharedFx.reset();
     }
 
@@ -499,6 +573,10 @@ private:
         float delaySend = 0.0F;
     };
     std::unordered_map<juce::String, SendParams> pendingSends;
+
+    // Sticky per-track pan (signed `[-1, 1]`, 0 = centre), keyed by
+    // trackId — same lifecycle discipline as `pendingTone` / `pendingSends`.
+    std::unordered_map<juce::String, float> pendingPans;
 
     // Sticky project FX params so a device-driven re-prepare re-applies
     // them rather than resetting Room / Echo to silent defaults.

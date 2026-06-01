@@ -375,6 +375,13 @@ export interface TrackSetSendsPayload extends GestureHints {
   delaySend: number
 }
 
+/** Per-track equal-power pan. Signed `[-1, 1]` (`-1` = hard left, `0` =
+ *  centre, `+1` = hard right). Default 0 (centre). */
+export interface TrackSetPanPayload extends GestureHints {
+  trackId: string
+  pan: number
+}
+
 /**
  * Per-track Tone — fixed 3-band shelving EQ + low-cut + high-cut. All gain
  * fields are dB in `[-15, +15]`; `lowCut` engages a fixed high-pass and
@@ -505,6 +512,7 @@ export interface BridgeOutboundMap {
   TRACK_SET_SENDS: TrackSetSendsPayload
   TRACK_SET_TONE: TrackSetTonePayload
   TRACK_SET_LEVELER: TrackSetLevelerPayload
+  TRACK_SET_PAN: TrackSetPanPayload
   CLIP_SET_ENVELOPE: ClipSetEnvelopePayload
   PROJECT_SET_REVERB: ProjectSetReverbPayload
   PROJECT_SET_DELAY: ProjectSetDelayPayload
@@ -1037,6 +1045,17 @@ export const TrackLevelerAppliedPayloadSchema = z.object({
 })
 export type TrackLevelerAppliedPayload = z.infer<typeof TrackLevelerAppliedPayloadSchema>
 
+/** Ack for `TRACK_SET_PAN` — echoes the clamped signed pan in `[-1, 1]`.
+ *  `ok === false` means the track id was unknown. Mirrors the delta-ack
+ *  pattern used by `TRACK_SENDS_APPLIED` so 60 Hz pan drags don't trigger
+ *  full `PROJECT_STATE` serialisations. */
+export const TrackPanAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  pan: z.number(),
+  ok: z.boolean()
+})
+export type TrackPanAppliedPayload = z.infer<typeof TrackPanAppliedPayloadSchema>
+
 const ClipEnvelopePointSchema = z.object({
   timeMs: z.number().nonnegative(),
   gain: z.number().min(0).max(4)
@@ -1196,6 +1215,8 @@ export const ProjectStateTrackSchema = z.object({
   toneHighCut: z.boolean().optional(),
   /** Per-track Leveler amount, 0..1 (Advanced controls land later). */
   levelerAmount: z.number().optional(),
+  /** Per-track equal-power pan, signed `[-1, 1]` (0 = centre). */
+  pan: z.number().optional(),
   clips: z.array(ProjectStateClipSchema)
 })
 export type ProjectStateTrack = z.infer<typeof ProjectStateTrackSchema>
@@ -1777,6 +1798,7 @@ export interface BridgeInboundMap {
   TRACK_SENDS_APPLIED: TrackSendsAppliedPayload
   TRACK_TONE_APPLIED: TrackToneAppliedPayload
   TRACK_LEVELER_APPLIED: TrackLevelerAppliedPayload
+  TRACK_PAN_APPLIED: TrackPanAppliedPayload
   CLIP_ENVELOPE_APPLIED: ClipEnvelopeAppliedPayload
   PROJECT_REVERB_APPLIED: ProjectReverbAppliedPayload
   PROJECT_DELAY_APPLIED: ProjectDelayAppliedPayload
@@ -1842,6 +1864,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_SENDS_APPLIED',
   'TRACK_TONE_APPLIED',
   'TRACK_LEVELER_APPLIED',
+  'TRACK_PAN_APPLIED',
   'CLIP_ENVELOPE_APPLIED',
   'PROJECT_REVERB_APPLIED',
   'PROJECT_DELAY_APPLIED',
@@ -1990,6 +2013,11 @@ export function isTrackToneAppliedPayload(value: unknown): value is TrackToneApp
 /** Guard for `TrackLevelerAppliedPayload`. */
 export function isTrackLevelerAppliedPayload(value: unknown): value is TrackLevelerAppliedPayload {
   return TrackLevelerAppliedPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `TrackPanAppliedPayload`. */
+export function isTrackPanAppliedPayload(value: unknown): value is TrackPanAppliedPayload {
+  return TrackPanAppliedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ClipEnvelopeAppliedPayload`. */

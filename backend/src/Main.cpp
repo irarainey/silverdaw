@@ -1654,6 +1654,31 @@ void handleTrackSetSends(const juce::var& payload, silverdaw::AudioEngine& engin
                      {{"trackId", trackId}, {"reverbSend", reverbSend}, {"delaySend", delaySend}});
 }
 
+// Phase 5 — per-track equal-power pan. Persists the signed `[-1, 1]` value,
+// pushes the live pan to the AudioEngine (which derives the equal-power
+// per-channel gains), and acks the clamped value. Like Sends, skips
+// ack + dirty + undo entirely when the setter reports no change so a 60 Hz
+// drag landing on the same value doesn't pollute undo or fire wire traffic.
+void handleTrackSetPan(const juce::var& payload, silverdaw::AudioEngine& engine,
+                       silverdaw::ProjectState& projectState,
+                       silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+    const auto panVar = tryGetNumber(payload, "pan");
+    if (!panVar.has_value()) return;
+
+    const auto pan = juce::jlimit(-1.0f, 1.0f, static_cast<float>(*panVar));
+
+    const bool changed = projectState.setTrackPan(trackId, pan);
+    if (!changed) return;
+
+    engine.setTrackPan(trackId, pan);
+
+    broadcastApplied(bridge, "TRACK_PAN_APPLIED",
+                     {{"trackId", trackId}, {"pan", pan}});
+}
+
 // Phase 5 — per-track Tone (3-band fixed EQ + lowCut + highCut). Persists, pushes
 // the live DSP targets to the AudioEngine, and acks the CANONICAL
 // clamped values re-read from ProjectState (the renderer reconciles to
@@ -2042,6 +2067,13 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             const float sDelay = projectState.getTrackDelaySend(toneTrackId);
             if (sReverb != 0.0F || sDelay != 0.0F)
                 engine.setTrackSends(toneTrackId, sReverb, sDelay);
+
+            // Phase 5 — restore persisted per-track pan. Pushed only when
+            // off-centre so a default project doesn't fan out identity
+            // updates (the engine keeps the bit-exact unity path at 0).
+            const float pan = projectState.getTrackPan(toneTrackId);
+            if (pan != 0.0F)
+                engine.setTrackPan(toneTrackId, pan);
         }
         for (int c = 0; c < track.getNumChildren(); ++c)
         {
@@ -2670,6 +2702,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "TRACK_GAIN" || type == "TRACK_MUTE" || type == "TRACK_SOLO" ||
            type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
            type == "TRACK_SET_SENDS" || type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
+           type == "TRACK_SET_PAN" ||
            type == "CLIP_SET_ENVELOPE" ||
            type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
@@ -2706,6 +2739,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_SET_SENDS") return "Change track sends";
     if (type == "TRACK_SET_TONE") return "Change track tone";
     if (type == "TRACK_SET_LEVELER") return "Change track leveler";
+    if (type == "TRACK_SET_PAN") return "Change track pan";
     if (type == "CLIP_SET_ENVELOPE") return "Edit clip volume envelope";
     if (type == "PROJECT_SET_REVERB") return "Change reverb";
     if (type == "PROJECT_SET_DELAY") return "Change echo";
@@ -2779,7 +2813,8 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
         idPart = payload.getProperty("clipId", "").toString();
     }
     else if (type == "TRACK_GAIN" || type == "TRACK_SET_SENDS" ||
-             type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER")
+             type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
+             type == "TRACK_SET_PAN")
     {
         idPart = payload.getProperty("trackId", "").toString();
     }
@@ -3584,6 +3619,13 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                             payload.getProperty("trackId", "").toString() +
                                             " amount=" + payload.getProperty("amount", "").toString());
         handleTrackSetLeveler(payload, projectState, bridge);
+    }
+    else if (type == "TRACK_SET_PAN")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_PAN trackId=" +
+                                            payload.getProperty("trackId", "").toString() +
+                                            " pan=" + payload.getProperty("pan", "").toString());
+        handleTrackSetPan(payload, engine, projectState, bridge);
     }
     else if (type == "CLIP_SET_ENVELOPE")
     {

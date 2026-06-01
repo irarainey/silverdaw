@@ -64,6 +64,7 @@ const juce::Identifier ProjectState::kCents{"cents"};
 const juce::Identifier ProjectState::kPendingAutoWarp{"pendingAutoWarp"};
 const juce::Identifier ProjectState::kSendReverb{"sendReverb"};
 const juce::Identifier ProjectState::kSendDelay{"sendDelay"};
+const juce::Identifier ProjectState::kPan{"pan"};
 const juce::Identifier ProjectState::kToneBassDb{"toneBassDb"};
 const juce::Identifier ProjectState::kToneMidDb{"toneMidDb"};
 const juce::Identifier ProjectState::kToneTrebleDb{"toneTrebleDb"};
@@ -577,6 +578,58 @@ float ProjectState::getTrackDelaySend(const juce::String& trackId) const
         return 0.0f;
     }
     return static_cast<float>(static_cast<double>(track.getProperty(kSendDelay, 0.0)));
+}
+
+// Per-track equal-power pan. Stored signed in `[-1, 1]` (0 = centre) and
+// suppressed within `kPanEpsilon` of zero so a centred (default) track
+// carries no `pan` property and legacy projects round-trip byte-clean.
+static constexpr float kPanEpsilon = 1.0e-4f;
+
+static bool applyClampedPan(juce::ValueTree& track,
+                            const juce::Identifier& id,
+                            float value,
+                            juce::UndoManager* undo)
+{
+    const auto clamped = juce::jlimit(-1.0f, 1.0f, std::isfinite(value) ? value : 0.0f);
+    const bool hadProperty = track.hasProperty(id);
+    const auto previous = hadProperty
+        ? static_cast<float>(static_cast<double>(track.getProperty(id)))
+        : 0.0f;
+    if (std::abs(clamped) < kPanEpsilon)
+    {
+        if (!hadProperty)
+        {
+            return false;
+        }
+        track.removeProperty(id, undo);
+        return true;
+    }
+    if (hadProperty && std::abs(previous - clamped) < kPanEpsilon)
+    {
+        return false;
+    }
+    track.setProperty(id, clamped, undo);
+    return true;
+}
+
+bool ProjectState::setTrackPan(const juce::String& trackId, float pan)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid())
+    {
+        return false;
+    }
+    return applyClampedPan(track, kPan, pan, &undoManager);
+}
+
+float ProjectState::getTrackPan(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid())
+    {
+        return 0.0f;
+    }
+    return static_cast<float>(static_cast<double>(track.getProperty(kPan, 0.0)));
 }
 
 // ─── Phase 5: per-track Tone / Leveler, per-clip Envelope,
@@ -2225,6 +2278,14 @@ juce::var ProjectState::tracksAsJson() const
         {
             trackObj->setProperty("sendDelay",
                                   static_cast<double>(track.getProperty(kSendDelay, 0.0)));
+        }
+        // Phase 5 — per-track equal-power pan, signed `[-1, 1]` (0 = centre).
+        // Emitted only when non-default so the Track FX Pan control restores
+        // after a reload while centred / legacy tracks stay byte-clean.
+        if (track.hasProperty(kPan))
+        {
+            trackObj->setProperty("pan",
+                                  static_cast<double>(track.getProperty(kPan, 0.0)));
         }
 
         juce::Array<juce::var> clipsArray;

@@ -1001,6 +1001,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         track.toneHighCut = project.getTrackToneHighCut(track.id);
         track.reverbSend = project.getTrackReverbSend(track.id);
         track.delaySend = project.getTrackDelaySend(track.id);
+        track.pan = project.getTrackPan(track.id);
 
         const bool trackMuted = project.getTrackMuted(track.id);
         const bool trackSoloed = project.getTrackSoloed(track.id);
@@ -1416,6 +1417,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
                                   trackSnap.toneTrebleDb, trackSnap.toneLowCut,
                                   trackSnap.toneHighCut, /*snap*/ true);
             busGraph.setTrackSends(trackSnap.id, trackSnap.reverbSend, trackSnap.delaySend);
+            busGraph.setTrackPan(trackSnap.id, trackSnap.pan);
         }
 
         // Phase 5 — push the project-shared Room / Echo onto the offline

@@ -1681,6 +1681,90 @@ int main()
         }
     };
 
+    auto testProjectStatePanJsonRoundTrip = []() {
+        silverdaw::ProjectState state;
+        require(state.addTrack("t-pan"), "addTrack should succeed");
+
+        const auto findTrackJson = [](const juce::var& tracks,
+                                      const juce::String& id) -> juce::var {
+            if (auto* arr = tracks.getArray())
+            {
+                for (const auto& tv : *arr)
+                {
+                    if (tv.getProperty("id", {}).toString() == id) return tv;
+                }
+            }
+            return {};
+        };
+
+        // Fresh track: pan is centred (default) and must be absent from the
+        // snapshot so reload / saved files stay byte-clean.
+        require(!state.setTrackPan("t-pan", 0.0F),
+                "setTrackPan 0 on a fresh track should be a no-op");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-pan");
+            require(json.isObject(), "fresh track should appear in tracksAsJson");
+            require(!json.hasProperty("pan"), "default (centre) pan must be omitted");
+        }
+
+        // Set an off-centre pan and confirm it round-trips through the
+        // snapshot the renderer reads on PROJECT_STATE (so the Pan slider
+        // restores after a project reload — the bug that bit the envelope).
+        require(state.setTrackPan("t-pan", -0.5F), "off-centre pan should report changed");
+        requireNear(state.getTrackPan("t-pan"), -0.5, 0.0001, "pan round-trip");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-pan");
+            require(json.isObject(), "track should appear in tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("pan", 0.0)), -0.5, 0.0001,
+                        "pan should round-trip through tracksAsJson");
+        }
+
+        // Out-of-range requests clamp to the signed unit range.
+        require(state.setTrackPan("t-pan", 5.0F), "over-range pan should report changed");
+        requireNear(state.getTrackPan("t-pan"), 1.0, 0.0001, "pan should clamp to +1.0");
+
+        // Reset to centre: the snapshot must drop the field again.
+        require(state.setTrackPan("t-pan", 0.0F), "reset to centre should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-pan");
+            require(json.isObject(), "track should still appear in tracksAsJson");
+            require(!json.hasProperty("pan"), "reset pan must be omitted");
+        }
+
+        require(!state.setTrackPan("missing", 0.5F),
+                "setTrackPan should reject unknown trackId");
+    };
+
+    auto testEqualPowerPanGains = []() {
+        float gL = 0.0F;
+        float gR = 0.0F;
+
+        // Centre is unity on both channels (0 dB) so a centred track matches
+        // the no-pan path bit-for-bit.
+        silverdaw::BusGraph::equalPowerPanGains(0.0F, gL, gR);
+        requireNear(gL, 1.0, 1.0e-5, "centre left gain is unity");
+        requireNear(gR, 1.0, 1.0e-5, "centre right gain is unity");
+
+        // Hard left: the right channel is silent; left rises by +3 dB
+        // (sqrt2) under the constant-power law.
+        silverdaw::BusGraph::equalPowerPanGains(-1.0F, gL, gR);
+        requireNear(gL, std::sqrt(2.0), 1.0e-5, "hard-left left gain is sqrt2");
+        requireNear(gR, 0.0, 1.0e-5, "hard-left right gain is zero");
+
+        // Hard right is the mirror image.
+        silverdaw::BusGraph::equalPowerPanGains(1.0F, gL, gR);
+        requireNear(gL, 0.0, 1.0e-5, "hard-right left gain is zero");
+        requireNear(gR, std::sqrt(2.0), 1.0e-5, "hard-right right gain is sqrt2");
+
+        // Constant power: gainL^2 + gainR^2 == 2 at every position.
+        for (const float p : {-1.0F, -0.6F, -0.25F, 0.0F, 0.33F, 0.75F, 1.0F})
+        {
+            silverdaw::BusGraph::equalPowerPanGains(p, gL, gR);
+            requireNear(static_cast<double>(gL * gL + gR * gR), 2.0, 1.0e-5,
+                        "equal-power law keeps constant power across the sweep");
+        }
+    };
+
     const std::vector<TestCase> tests{
         {"ProjectState tracks, clips, and dirty tracking", testProjectStateTracksClipsAndDirty},
         {"ProjectState view, library, markers, and replaceTree", testProjectStateViewLibraryMarkersAndReplace},
@@ -1730,6 +1814,10 @@ int main()
          testProjectStateTrackToneJsonRoundTrip},
         {"ProjectState per-track sends round-trip through tracksAsJson",
          testProjectStateSendsJsonRoundTrip},
+        {"ProjectState per-track pan round-trips through tracksAsJson",
+         testProjectStatePanJsonRoundTrip},
+        {"BusGraph equal-power pan gains (unity centre, constant power)",
+         testEqualPowerPanGains},
         {"EnvelopeSnapshot interpolates linear-in-dB with endpoint clamping",
          testEnvelopeSnapshotInterpolation},
         {"Mixdown snapshot carries per-clip volume envelope",

@@ -784,6 +784,11 @@ void AudioEngine::setTrackSends(const juce::String& trackId, float reverbSend, f
     busGraph.setTrackSends(trackId, reverbSend, delaySend);
 }
 
+void AudioEngine::setTrackPan(const juce::String& trackId, float pan)
+{
+    busGraph.setTrackPan(trackId, pan);
+}
+
 void AudioEngine::setProjectReverb(float size, float decay, float tone, float mix, bool snap)
 {
     busGraph.setProjectReverb(size, decay, tone, mix, snap);
