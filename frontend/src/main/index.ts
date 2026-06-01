@@ -9,7 +9,7 @@ import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogL
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
-import type { AudioMetadata, DebugPreferences } from '../shared/types'
+import type { AudioMetadata, DebugPreferences, SkipButtonTarget } from '../shared/types'
 import { IPC } from '../shared/ipc-channels'
 
 // ─── Audio metadata ─────────────────────────────────────────────────────────
@@ -281,6 +281,11 @@ interface UiPrefs {
    * unaffected.
    */
   defaultProjectSampleRate: number
+  /** What the transport previous / next buttons jump to: `timelineEnds`
+   *  seeks the project start / end (default), `markers` steps through
+   *  the timeline markers. Anything else snaps back to `timelineEnds`
+   *  on load. */
+  skipButtonTarget: SkipButtonTarget
 }
 
 type DebugPrefs = DebugPreferences
@@ -411,7 +416,8 @@ function buildDefaultPrefs(): Preferences {
       followPlayback: true,
       showLibraryTileImages: true,
       matchProjectTempoOnDrop: true,
-      defaultProjectSampleRate: 44100
+      defaultProjectSampleRate: 44100,
+      skipButtonTarget: 'timelineEnds'
     },
     debug: {
       loggingEnabled: false,
@@ -434,7 +440,8 @@ let prefs: Preferences = {
     followPlayback: true,
     showLibraryTileImages: true,
     matchProjectTempoOnDrop: true,
-    defaultProjectSampleRate: 44100
+    defaultProjectSampleRate: 44100,
+    skipButtonTarget: 'timelineEnds'
   },
   debug: { loggingEnabled: false, devToolsEnabled: false, logDirectory: '' },
   toasts: { enabled: true },
@@ -561,6 +568,11 @@ async function loadPreferences(): Promise<void> {
     // older alpha build, etc.) snaps to the safer 44 100 default.
     if (prefs.ui.defaultProjectSampleRate !== 44100 && prefs.ui.defaultProjectSampleRate !== 48000) {
       prefs.ui.defaultProjectSampleRate = 44100
+    }
+    // Snap an unrecognised skip-button target (manual edit / older build)
+    // back to the safe default.
+    if (prefs.ui.skipButtonTarget !== 'timelineEnds' && prefs.ui.skipButtonTarget !== 'markers') {
+      prefs.ui.skipButtonTarget = 'timelineEnds'
     }
   } catch (err) {
     // ENOENT on first run is expected; anything else is logged but we still

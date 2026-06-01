@@ -293,6 +293,13 @@ const playButtonTitle = computed(() => {
   return 'Play'
 })
 
+const skipBackTitle = computed(() =>
+  ui.skipButtonTarget === 'markers' ? 'Skip to previous marker' : 'Skip to start'
+)
+const skipForwardTitle = computed(() =>
+  ui.skipButtonTarget === 'markers' ? 'Skip to next marker' : 'Skip to end'
+)
+
 const projectBpmPending = computed(() => {
   if (!timingEditable.value || projectClipCount.value === 0) return false
   const projectHasAnalysedItem = library.items.some((item) => typeof item.bpm === 'number' && item.bpm > 0)
@@ -386,9 +393,15 @@ function bumpBpm(delta: number): void {
 }
 
 function onSkipBack(): void {
-  // Skip-back rewinds the playhead and scrolls the view to the start
-  // but never changes the playback state — if playback was running,
-  // it just carries on from position 0.
+  // Skip-back never changes the playback state — if playback was running,
+  // it just carries on from the new position.
+  if (ui.skipButtonTarget === 'markers') {
+    const target = previousMarkerMs()
+    log.info('transport', `click skip-back -> prev marker ${target}ms`)
+    seekToSkipTarget(target)
+    return
+  }
+  // Default: rewind to the start of the timeline and scroll the view there.
   log.info('transport', 'click skip-back')
   project.viewScrollX = 0
   sendBridge('PROJECT_SET_VIEW', { scrollX: 0 })
@@ -423,10 +436,63 @@ function onSkipForward(): void {
   // Seek to the end of the project — the union of every track's length
   // and every clip's end time. Mirrors the existing back/stop semantics:
   // we send the seek and let the backend's PLAYHEAD_UPDATE confirm.
+  if (ui.skipButtonTarget === 'markers') {
+    const target = nextMarkerMs()
+    if (target === null) return
+    log.info('transport', `click skip-forward -> next marker ${target}ms`)
+    seekToSkipTarget(target)
+    return
+  }
   const end = project.durationMs
   if (!Number.isFinite(end) || end <= 0) return
   log.info('transport', `click skip-forward -> ${end}ms`)
   sendBridge('TRANSPORT_SEEK', { positionMs: end })
+}
+
+// Markers sit on whole-millisecond positions but the playhead is a float,
+// so we exclude any marker within this slop of the current position to
+// stop a button press snapping back onto the marker we're parked on.
+const MARKER_SKIP_EPSILON_MS = 1
+
+/** Nearest marker strictly before the playhead, or 0 (project start) when
+ *  there's none. */
+function previousMarkerMs(): number {
+  const pos = transport.positionMs
+  let target = 0
+  for (const marker of project.markers) {
+    if (marker.positionMs < pos - MARKER_SKIP_EPSILON_MS && marker.positionMs > target) {
+      target = marker.positionMs
+    }
+  }
+  return target
+}
+
+/** Nearest marker strictly after the playhead, falling back to the end of
+ *  the project. Returns null when there's nowhere valid to seek. */
+function nextMarkerMs(): number | null {
+  const pos = transport.positionMs
+  let target = Number.POSITIVE_INFINITY
+  for (const marker of project.markers) {
+    if (marker.positionMs > pos + MARKER_SKIP_EPSILON_MS && marker.positionMs < target) {
+      target = marker.positionMs
+    }
+  }
+  if (Number.isFinite(target)) return target
+  const end = project.durationMs
+  return Number.isFinite(end) && end > pos + MARKER_SKIP_EPSILON_MS ? end : null
+}
+
+/** Seek to a marker-mode target: move the playhead and bring it into view
+ *  without changing the playback state. */
+function seekToSkipTarget(positionMs: number): void {
+  transport.setPosition(positionMs)
+  sendBridge('TRANSPORT_SEEK', { positionMs })
+  if (positionMs <= 0) {
+    project.viewScrollX = 0
+    sendBridge('PROJECT_SET_VIEW', { scrollX: 0 })
+  } else {
+    ui.requestTimelineScrollToPosition(positionMs)
+  }
 }
 
 function onToggleFollow(): void {
@@ -607,7 +673,7 @@ function onMasterVolumeInput(event: Event): void {
         type="button"
         data-borderless-button="true"
         class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-        title="Skip to start"
+        :title="skipBackTitle"
         @click="onSkipBack"
       >
         <svg
@@ -651,7 +717,7 @@ function onMasterVolumeInput(event: Event): void {
         type="button"
         data-borderless-button="true"
         class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-        title="Skip to end"
+        :title="skipForwardTitle"
         @click="onSkipForward"
       >
         <svg

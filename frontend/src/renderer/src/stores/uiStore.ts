@@ -7,6 +7,9 @@
 
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
+import type { SkipButtonTarget } from '@shared/types'
+
+export type { SkipButtonTarget }
 
 export type TimelineScrollEdge = 'start' | 'end'
 export type TimelineScrollRequest =
@@ -30,6 +33,10 @@ interface UiState {
    *  Preferences ▸ Audio so the user can change the default applied
    *  to freshly-created projects without touching existing ones. */
   defaultProjectSampleRate: number
+  /** What the transport previous / next buttons jump to. `timelineEnds`
+   *  seeks the project start / end; `markers` steps through the timeline
+   *  markers (falling back to start / end past the last marker). */
+  skipButtonTarget: SkipButtonTarget
   /** Live horizontal-zoom value (px per second). NOT persisted to
    *  preferences.json — this just mirrors `geometry.pxPerSecond` from
    *  the timeline so other components (e.g. StatusBar) can show the
@@ -59,7 +66,8 @@ const DEFAULTS = {
   followPlayback: true,
   showLibraryTileImages: true,
   matchProjectTempoOnDrop: true,
-  defaultProjectSampleRate: 44100
+  defaultProjectSampleRate: 44100,
+  skipButtonTarget: 'timelineEnds'
 } as const
 
 const SUPPORTED_PROJECT_SAMPLE_RATES = new Set([44100, 48000])
@@ -95,6 +103,7 @@ let pendingPush: {
   followPlayback?: boolean
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
+  skipButtonTarget?: SkipButtonTarget
 } = {}
 
 interface UiPushPayload {
@@ -104,6 +113,7 @@ interface UiPushPayload {
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
   defaultProjectSampleRate?: number
+  skipButtonTarget?: SkipButtonTarget
 }
 
 /**
@@ -130,6 +140,7 @@ export const useUiStore = defineStore('ui', {
     showLibraryTileImages: DEFAULTS.showLibraryTileImages,
     matchProjectTempoOnDrop: DEFAULTS.matchProjectTempoOnDrop,
     defaultProjectSampleRate: DEFAULTS.defaultProjectSampleRate,
+    skipButtonTarget: DEFAULTS.skipButtonTarget,
     zoomPxPerSecond: 100,
     timelineScrollRequest: null,
     timelineZoomRequest: null,
@@ -159,6 +170,10 @@ export const useUiStore = defineStore('ui', {
             ? saved.matchProjectTempoOnDrop
             : DEFAULTS.matchProjectTempoOnDrop
         this.defaultProjectSampleRate = sanitiseProjectSampleRate(saved.defaultProjectSampleRate)
+        this.skipButtonTarget =
+          saved.skipButtonTarget === 'markers' || saved.skipButtonTarget === 'timelineEnds'
+            ? saved.skipButtonTarget
+            : DEFAULTS.skipButtonTarget
       } catch (err) {
         log.warn('ui', `hydrate failed, using defaults: ${String(err)}`)
       } finally {
@@ -202,6 +217,13 @@ export const useUiStore = defineStore('ui', {
       if (this.matchProjectTempoOnDrop === value) return
       this.matchProjectTempoOnDrop = value
       if (this.hydrated) schedulePush({ matchProjectTempoOnDrop: value })
+    },
+
+    /** Choose what the transport previous / next buttons jump to. */
+    setSkipButtonTarget(value: SkipButtonTarget): void {
+      if (this.skipButtonTarget === value) return
+      this.skipButtonTarget = value
+      if (this.hydrated) schedulePush({ skipButtonTarget: value })
     },
 
     /** Update the application default for new-project sample rate.

@@ -10,7 +10,7 @@
 
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
-import { useUiStore } from '@/stores/uiStore'
+import { useUiStore, type SkipButtonTarget } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import {
   BACKEND_PREFERENCE,
@@ -105,6 +105,7 @@ const toastsEnabled = ref(true)
 const followPlayback = ref(true)
 const showLibraryTileImages = ref(true)
 const matchProjectTempoOnDrop = ref(true)
+const skipButtonTarget = ref<SkipButtonTarget>('timelineEnds')
 const defaultProjectSampleRate = ref<number>(44100)
 const defaultProjectDir = ref('')
 const defaultClipDir = ref('')
@@ -121,6 +122,7 @@ const initialToasts = ref(true)
 const initialFollow = ref(true)
 const initialShowLibraryTileImages = ref(true)
 const initialMatchProjectTempoOnDrop = ref(true)
+const initialSkipButtonTarget = ref<SkipButtonTarget>('timelineEnds')
 const initialDefaultProjectSampleRate = ref<number>(44100)
 const initialProjectDir = ref('')
 const initialClipDir = ref('')
@@ -136,6 +138,7 @@ const hasChanges = computed(
     followPlayback.value !== initialFollow.value ||
     showLibraryTileImages.value !== initialShowLibraryTileImages.value ||
     matchProjectTempoOnDrop.value !== initialMatchProjectTempoOnDrop.value ||
+    skipButtonTarget.value !== initialSkipButtonTarget.value ||
     defaultProjectSampleRate.value !== initialDefaultProjectSampleRate.value ||
     defaultProjectDir.value !== initialProjectDir.value ||
     defaultClipDir.value !== initialClipDir.value ||
@@ -187,6 +190,7 @@ async function loadCurrent(): Promise<void> {
   followPlayback.value = ui.followPlayback
   showLibraryTileImages.value = ui.showLibraryTileImages
   matchProjectTempoOnDrop.value = ui.matchProjectTempoOnDrop
+  skipButtonTarget.value = ui.skipButtonTarget
   defaultProjectSampleRate.value = ui.defaultProjectSampleRate
   initialLoggingEnabled.value = loggingEnabled.value
   initialDevToolsEnabled.value = devToolsEnabled.value
@@ -195,6 +199,7 @@ async function loadCurrent(): Promise<void> {
   initialFollow.value = followPlayback.value
   initialShowLibraryTileImages.value = showLibraryTileImages.value
   initialMatchProjectTempoOnDrop.value = matchProjectTempoOnDrop.value
+  initialSkipButtonTarget.value = skipButtonTarget.value
   initialDefaultProjectSampleRate.value = defaultProjectSampleRate.value
   initialProjectDir.value = defaultProjectDir.value
   initialClipDir.value = defaultClipDir.value
@@ -313,6 +318,9 @@ function onSave(): void {
   }
   if (matchProjectTempoOnDrop.value !== initialMatchProjectTempoOnDrop.value) {
     ui.setMatchProjectTempoOnDrop(matchProjectTempoOnDrop.value)
+  }
+  if (skipButtonTarget.value !== initialSkipButtonTarget.value) {
+    ui.setSkipButtonTarget(skipButtonTarget.value)
   }
   if (defaultProjectSampleRate.value !== initialDefaultProjectSampleRate.value) {
     ui.setDefaultProjectSampleRate(defaultProjectSampleRate.value)
@@ -473,6 +481,52 @@ function onSave(): void {
                   </span>
                 </span>
               </label>
+              <div class="mt-4">
+                <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+                  Previous / next buttons
+                </h2>
+                <p class="mb-3 text-zinc-500">
+                  Choose where the transport's previous and next buttons jump to.
+                </p>
+                <div class="space-y-2">
+                  <label
+                    class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+                  >
+                    <input
+                      v-model="skipButtonTarget"
+                      type="radio"
+                      name="skip-button-target"
+                      value="timelineEnds"
+                      class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                    >
+                    <span class="flex-1">
+                      <span class="block font-medium text-zinc-200">Start and end of the timeline</span>
+                      <span class="mt-0.5 block text-zinc-500">
+                        Previous jumps to the start of the project; next jumps to
+                        the end.
+                      </span>
+                    </span>
+                  </label>
+                  <label
+                    class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+                  >
+                    <input
+                      v-model="skipButtonTarget"
+                      type="radio"
+                      name="skip-button-target"
+                      value="markers"
+                      class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+                    >
+                    <span class="flex-1">
+                      <span class="block font-medium text-zinc-200">Previous and next marker</span>
+                      <span class="mt-0.5 block text-zinc-500">
+                        Step through your timeline markers. Past the last marker
+                        in either direction, jumps to the start or end instead.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </div>
             </section>
 
             <!-- Project -->

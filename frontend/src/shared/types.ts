@@ -89,7 +89,16 @@ export interface UiPreferences {
    *  back to 44 100 on load. Existing projects with their own stored
    *  rate are unaffected. */
   defaultProjectSampleRate: number
+
+  /** What the transport's previous / next buttons jump to. `timelineEnds`
+   *  (default) seeks the start / end of the project; `markers` steps to
+   *  the previous / next timeline marker, falling back to the start / end
+   *  when there's no marker in that direction. */
+  skipButtonTarget: SkipButtonTarget
 }
+
+/** Target for the transport previous / next (skip) buttons. */
+export type SkipButtonTarget = 'timelineEnds' | 'markers'
 
 /** Developer diagnostics preferences. These are sampled at startup because
  *  logging, backend environment variables, and DevTools access are wired
