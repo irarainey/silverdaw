@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // A single labelled range slider used by every Track FX module (Tone
-// bands, track Sends, project Room / Echo). Presentational only: it owns
+// bands, per-track Reverb / Delay amounts, project Reverb / Delay).
+// Presentational only: it owns
 // the slider chrome (the dark track + light thumb, no focus ring) and the
 // label / value-readout layout, and re-emits the raw numeric value on
 // `input` / `change` plus a `reset` on double-click. The parent owns the
@@ -9,7 +10,7 @@
 // every effect shares.
 
 defineProps<{
-  /** Short uppercase control label, e.g. "Bass", "Room", "Mix". */
+  /** Short uppercase control label, e.g. "Bass", "Reverb", "Mix". */
   label: string
   /** Pre-formatted right-aligned value readout, e.g. "+3.0 dB", "45%". */
   display: string

@@ -360,16 +360,17 @@ how a beginner actually thinks about the work:
 - **Per clip** — "fix this one bit" → the Volume Shape envelope on the clip
   itself, which also covers fade-in / fade-out (see §7.11).
 - **Per track** — "shape this instrument" → a small set of always-the-same
-  controls (Tone, Leveler, Reverb amount, Echo amount) in the new **Track FX**
+  controls (Tone, Leveler, Reverb amount, Delay amount) in the new **Track FX**
   tab of the bottom panel (see §7.12).
-- **Per project** — "the song's room" → one shared Reverb and one shared
-  Delay (Echo) for the whole project, with character set once.
+- **Per project** — "the song's space" → one shared Reverb and one shared
+  Delay for the whole project, with character set once.
 
-User-facing language avoids DAW jargon throughout: **Bass / Mid / Treble**
-(not "low shelf / parametric peak / high shelf"), **Leveler** (not
-"compressor"), **Room** (not "reverb"), **Echo** (not "delay"),
-**Volume Shape** (not "automation / envelope"). The implementation names
-inside the codebase keep the technical terms.
+User-facing language favours familiar, DAW-standard terms — **Reverb**,
+**Delay**, **Pan**, **Bass / Mid / Treble** — so the app reads the way users
+expect across tools, while still avoiding the most technical jargon
+(no "low shelf / parametric peak / high shelf", and **Volume Shape** rather than
+"automation / envelope"). The implementation names inside the codebase keep the
+matching technical terms (`reverb*`, `delay*`).
 
 #### 7.9.1 Engine architecture (Phase 5 foundation)
 
@@ -393,8 +394,8 @@ The new topology introduces two runtime objects:
 - **`BusGraph`** — one per engine. Replaces `MixerAudioSource` as the
   root pull source. Owns block lifecycle deterministically and runs the
   signal flow in a strict order each block (see §7.9.2 below). Pulls
-  each `TrackRuntime` exactly once per block; pulls the shared Room and
-  Echo processors exactly once per block; sums into the master bus;
+  each `TrackRuntime` exactly once per block; pulls the shared Reverb and
+  Delay processors exactly once per block; sums into the master bus;
   hands off to `MeteringSource`.
 
 This deliberately avoids the full `juce::AudioProcessorGraph` migration
@@ -406,8 +407,8 @@ render share one DSP path.
 
 **`BusGraph` invariants (must hold every block, audio-thread):**
 
-- All scratch buffers (per-`TrackRuntime` output, shared Room input,
-  shared Echo input, master accumulator) are owned by `BusGraph` and
+- All scratch buffers (per-`TrackRuntime` output, shared Reverb input,
+  shared Delay input, master accumulator) are owned by `BusGraph` and
   **preallocated in `prepareToPlay`** sized for the prepared
   `maxExpectedBlock × maxExpectedChannels`. **No allocation, no
   resize, no lock acquisition** inside `getNextAudioBlock`. If the
@@ -443,7 +444,7 @@ does not flow through `BusGraph` — it remains a fully independent
 top-mixer input that bypasses track FX, project FX, and sends. This
 preserves "click a sample in the Library, hear it instantly"
 behaviour and avoids preview audio accidentally ringing the shared
-Room.
+Reverb.
 
 #### 7.9.2 Signal order
 
@@ -462,12 +463,12 @@ clips[clipId]
       mute / solo gate
   → SEND TAP (pre-pan, post everything above)
       → wet ⊕= reverbSend × signal  → shared Reverb input bus
-      → wet ⊕= delaySend  × signal  → shared Echo   input bus
+      → wet ⊕= delaySend  × signal  → shared Delay   input bus
   → pan (equal-power)
   → BusGraph.dryBus
   ┌───────────────────────────────────────┐
   │ Shared Reverb (pulled once)           │
-  │ Shared Echo   (pulled once, BPM-sync) │
+  │ Shared Delay   (pulled once, BPM-sync) │
   └───────────────────────────────────────┘
   → wet returns ⊕= dryBus → master mix
   → MeteringSource (master gain + peak meter)
@@ -478,14 +479,14 @@ Sends are taken **pre-pan** so the shared FX see the centred, gain-
 normalised, gated signal: this is a deliberate "simple cohesive room"
 choice, **not** a claim that pre-pan is technically more correct than
 post-pan. A pre-pan send means a hard-left guitar and a hard-right
-synth both contribute to a centred Room — the room itself stays
+synth both contribute to a centred Reverb — the room itself stays
 spatially neutral and acts as glue across the whole mix. A post-pan
 send would preserve each source's pan in the wet image, which can
 sound more "realistic" but tends to muddy beginner mixes (the wet
 chases the dry around the stereo field). The pre-pan choice is the
 beginner-friendly default. Post-pan / per-track-insert reverb is
 deferred to Phase 8 if users ask for it. Sends are **post-mute/solo
-gate** so muting a track also kills its contribution to Room/Echo,
+gate** so muting a track also kills its contribution to Reverb/Delay,
 which is what users expect.
 
 #### 7.9.3 Per-track controls (Phase 5 scope)
@@ -501,16 +502,16 @@ which is what users expect.
   Advanced disclosure exposes classic threshold / ratio / attack /
   release / makeup gain for power users.
 - **Reverb amount** — send into the one shared project reverb (0..100 %).
-- **Echo amount** — send into the one shared project delay (0..100 %).
+- **Delay amount** — send into the one shared project delay (0..100 %).
 - **mute** / **solo** — surfaced on the track header.
 - **pan** — equal-power, surfaced in the Track FX tab.
 
 #### 7.9.4 Project-level shared effects (Phase 5 scope)
 
-- **Room (shared reverb)** — `juce::Reverb` (the Freeverb implementation in
+- **Reverb** — `juce::Reverb` (the Freeverb implementation in
   `juce_audio_basics`, used directly so the backend keeps its single-module,
   no-`juce_dsp` build). Project-level parameters: Size, Decay, Tone, Mix.
-- **Echo (shared delay)** — a hand-rolled integer-sample stereo delay
+- **Delay** — a hand-rolled integer-sample stereo delay
   (independent L/R lines, one-pole tone filter in the feedback path). Time set
   as a note value (1/4, 1/8, 1/8T,
   1/16) plus feedback amount; resolves to milliseconds via project BPM.
@@ -558,8 +559,8 @@ bus**:
 1. Both paths use the same `TrackChain` / `BusGraph` instances of the
    canonical chain, with identical parameter snapshots captured at
    render start.
-2. Identical reset state — every DSP processor (shared Room, shared
-   Echo, per-track Tone filters, per-track Leveler detector, master
+2. Identical reset state — every DSP processor (shared Reverb, shared
+   Delay, per-track Tone filters, per-track Leveler detector, master
    meter smoother) is reset to its prepared/initial state before the
    first block on both paths.
 3. Smoothed parameters (master gain, Tone coefficients, pan law) have
@@ -618,7 +619,7 @@ diverges from mixdown in real conditions.
 **Status today:** per-track linear `gain` is shipped; master meter + fader
 is shipped; mixdown export is shipped (see Phase 5 checklist). The
 engine refactor (`TrackRuntime` + `BusGraph` + canonical `TrackChain`),
-Tone, Leveler, Reverb / Echo sends, shared Room / Echo, pan / mute /
+Tone, Leveler, Reverb / Delay sends, shared Reverb / Delay, pan / mute /
 solo, and the per-clip Volume Shape are all Phase 5 work.
 
 ### 7.10 Effects (Built-in)
@@ -656,13 +657,13 @@ DSP class in `code`.
 
 **Project-level (one of each, shared by every track):**
 
-- **Room** — `juce::Reverb` (Freeverb, `juce_audio_basics`). Parameters: Size,
+- **Reverb** — `juce::Reverb` (Freeverb, `juce_audio_basics`). Parameters: Size,
   Decay, Tone, Mix. Each track contributes via its **Reverb amount** send (§7.9).
-- **Echo** — hand-rolled integer-sample stereo delay (independent L/R lines +
+- **Delay** — hand-rolled integer-sample stereo delay (independent L/R lines +
   feedback + one-pole tone filter). Time is a note value (1/4, 1/8, 1/8T, 1/16);
   feedback,
   tone, and overall mix are independent. Each track contributes via its
-  **Echo amount** send (§7.9).
+  **Delay amount** send (§7.9).
 
 **Per-clip (one of each, per Clip — see §7.11):**
 
@@ -672,13 +673,13 @@ DSP class in `code`.
   fade feature).
 
 **Tail-render policy.** After every dry track has gone silent the
-`BusGraph` keeps pulling the shared Room and Echo processors with zero
+`BusGraph` keeps pulling the shared Reverb and Delay processors with zero
 dry input so their tails ring out. The two FX use **different
 termination detectors** because their tail shapes are fundamentally
 different — a single rule cannot serve both without either truncating
-Echo between repeats or running Room far past audibility.
+Delay between repeats or running Reverb far past audibility.
 
-- **Room (Reverb)** — monotonically-decaying dense tail. Independent
+- **Reverb** — monotonically-decaying dense tail. Independent
   safety cap **8 s**. Early termination when **post-processor stereo
   RMS** is below `-60 dBFS` for `N` consecutive blocks
   (`N = ceil(50 ms / blockMs)`), with **+3 dB hysteresis** (a tail that
@@ -686,7 +687,7 @@ Echo between repeats or running Room far past audibility.
   count). RMS is computed once per block as
   `sqrt(mean((L² + R²) / 2))` over the whole block, stored in a small
   per-FX accumulator on `BusGraph`.
-- **Echo (Delay)** — sparse, repeating, gaps between hits routinely
+- **Delay** — sparse, repeating, gaps between hits routinely
   ≥250 ms and can exceed 1 s on long synced times. A 50 ms RMS rule
   would cut between repeats. Independent safety cap **4 s**.
   Feedback is **clamped to `[0, 0.95]`** in both the UI and the
@@ -725,7 +726,7 @@ dry input has actually gone silent. Live transport rules:
 - **Pause:** processors are **not reset**. Pulling stops mid-block,
   resume continues from the same processor state. Tails do not ring
   out during pause (no blocks are being pulled).
-- **Stop:** processors **are reset** (Room reverb tank cleared, Echo
+- **Stop:** processors **are reset** (Reverb reverb tank cleared, Delay
   delay line zeroed, Leveler detector zeroed). A subsequent Play
   starts from cold state.
 - **Seek (`setNextReadPosition`)** in live or mixdown: processors are
@@ -735,7 +736,7 @@ dry input has actually gone silent. Live transport rules:
 **Mixdown loop invariant.** The mixdown render loop runs until
 `(timelineDone && allSharedFxTerminated && addedSilenceDone)` is true.
 `timelineDone` = the project's last clip has finished its dry output.
-`allSharedFxTerminated` = both Room and Echo have hit either their
+`allSharedFxTerminated` = both Reverb and Delay have hit either their
 detector-based termination or their safety cap. `addedSilenceDone` =
 the user's "silence tail" knob's frame count has been written after
 FX termination. A **hard fail-safe cutoff** at
@@ -753,10 +754,10 @@ silence.
   right-click → **Volume & Fades…** dialog mirroring the existing
   `ClipWarpDialog` pattern; and a right-click → **Show Volume Shape**
   toggle for the inline overlay.
-- **Per-track Tone / Leveler / Reverb amount / Echo amount** — surfaced
+- **Per-track Tone / Leveler / Reverb amount / Delay amount** — surfaced
   in a new **Track FX** tab of the bottom panel (shares its space with
   the Library; tabbed surface with optional split view — see §7.12).
-- **Project Room / Echo** — a small **Project FX** subtab within the
+- **Project Reverb / Delay** — a small **Project FX** subtab within the
   same bottom panel area, or pinned at the top of the Track FX tab so
   it is always reachable. (Final placement decided during
   `tabbed-library-panel` work.)
@@ -1166,9 +1167,9 @@ project transport.
 The current focus order, ahead of the longer phase list below:
 
 1. **Finish Phase 5 mixing & core effects** — building on the shipped Tone
-   controls, Volume Shape, Room + Echo, and mute/solo/pan (Leveler still to
+   controls, Volume Shape, Reverb + Delay, and mute/solo/pan (Leveler still to
    come). **Clip transitions (§12.1) are pulled in as part of this work**, since
-   they build directly on the per-clip Volume Shape, Tone EQ and the shared Echo.
+   they build directly on the per-clip Volume Shape, Tone EQ and the shared Delay.
 2. **Fast import-to-arrangement (§12.6)** — promoted up the list as a core remix
    accelerator, tackled once the core effects are in place.
 3. **Stem support (Phase 6)** — the next major focus after the above.
@@ -1487,8 +1488,8 @@ playable at every point — no broken-build day):
   round-tripped via `PROJECT_SET_VIEW`) so it survives Save / Load — note
   this is per-project memory, a deliberate deviation from the original
   `uiStore` (global-preference) plan. Which rack is showing — the per-track
-  Track FX (Tone + Sends) or the project-wide Project FX (shared Room +
-  Echo) — is a UI-only `fxTab` selection that defaults back to Track FX on
+  Track FX (Tone + Pan + Reverb/Delay) or the project-wide Project FX (shared
+  Reverb + Delay) — is a UI-only `fxTab` selection that defaults back to Track FX on
   reload, keeping the per-track and project-scoped effects on clearly
   separate tabs rather than mixing both on one panel. The Library
   keeps its resizable `:height` / `@update:height` API.
@@ -1506,11 +1507,11 @@ playable at every point — no broken-build day):
   shelves/peak + two cascaded biquads each for the 4th-order high-pass and
   low-pass, with smoothed coefficient updates. Bridge: `TRACK_SET_TONE`
   handler activated.
-- [x] **7. Shared project Room + Echo** with per-track send
+- [x] **7. Shared project Reverb + Delay** with per-track send
   amounts (sends taken pre-pan, post-mute/solo per §7.9.2).
   Backend: one `juce::Reverb` (Freeverb, `juce_audio_basics`) and one
   tempo-synced stereo delay pulled by `BusGraph`; tail-render policy per §7.10
-  (Room = RMS + hysteresis; Echo = repeat-aware hold + analytic
+  (Reverb = RMS + hysteresis; Delay = repeat-aware hold + analytic
   floor; independent caps; transport stop/seek flushes FX state;
   mixdown loop invariant + hard fail-safe cutoff). Bridges:
   `PROJECT_SET_REVERB`, `PROJECT_SET_DELAY`, `TRACK_SET_SENDS`
@@ -1528,7 +1529,7 @@ playable at every point — no broken-build day):
   header has mute/solo buttons; the Track FX tab carries an equal-power
   **pan** control (signed `[-1, 1]`, unity at centre so a centred track
   is bit-exact with the no-pan path). Pan is applied to the dry path
-  AFTER the pre-pan send tap, so Room / Echo sends stay pre-pan, and is
+  AFTER the pre-pan send tap, so Reverb / Delay sends stay pre-pan, and is
   mirrored in the offline `MixdownEngine` for export parity (§7.9.6).
   Bridge: `TRACK_SET_PAN` handler / `TRACK_PAN_APPLIED` ack activated;
   `pan` persists through `tracksAsJson` and survives save / reload.
@@ -1553,7 +1554,7 @@ playable at every point — no broken-build day):
   canonical chain the live engine uses
   (`OffsetSource → AudioTransportSource → per-clip volume shape →
   TrackRuntime → TrackChain (Tone → Leveler → gain → mute/solo) →
-  pre-pan send tap → pan → BusGraph dryBus + shared Room/Echo →
+  pre-pan send tap → pan → BusGraph dryBus + shared Reverb/Delay →
   master meter → final-stage libsamplerate`) so warped / pitch-
   shifted / effected output is **sample-equivalent to live
   playback at the internal master float bus** under deterministic
@@ -1871,8 +1872,8 @@ Three independent design critiques converged on the following constraints.
 - [ ] **Transition Zones between adjacent clips** — drag one
   clip's edge over its neighbour to create a bounded transition object. Built-in
   recipes only at first: **Smooth blend**, **Bass swap**, **Filter fade**,
-  **Echo out**, **Fade out/in**. Built on the existing per-clip Volume Shape +
-  per-track Tone EQ + shared Echo. Custom curves are a later disclosure; a user-saved
+  **Delay out**, **Fade out/in**. Built on the existing per-clip Volume Shape +
+  per-track Tone EQ + shared Delay. Custom curves are a later disclosure; a user-saved
   **preset browser is explicitly deferred** until the recipe set proves stable.
 - [ ] **"Vocal Focus" ducking** — one action derives a
   ducking volume-shape on music clips/tracks under a selected vocal clip.
@@ -1906,7 +1907,7 @@ Three independent design critiques converged on the following constraints.
 - [ ] **Timeline loop / cycle playback** — loop a
   selected timeline range for auditioning (distinct from the existing Clip Editor
   audition loop). Decide FX-tail behaviour at loop wrap up front (flush vs let
-  Room/Echo tails ring) — pick one intentionally.
+  Reverb/Delay tails ring) — pick one intentionally.
 - [ ] **Reverse & selection effects in the Clip Editor** (issue #43) — let the
   Clip Editor's region selection (§7.2.1 / §7.14) apply destructive actions —
   reverse, gain, and simple effects — rendered into a new clip/sample so the
@@ -2046,4 +2047,3 @@ to the application itself.
 - [ ] **Documentation site** (issue #40) — a **GitHub Pages** site driven by the
   Markdown files in `docs/`, presented as a simple, easy-to-follow user guide for
   the application.
-

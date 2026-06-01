@@ -3,14 +3,15 @@
 // Track FX tabs. Hosts the project-wide effects that are shared across the
 // whole song (not tied to any one track):
 //
-//   • Room (shared reverb) — "the song's room", a single space that every
-//     track feeds via its per-track Send.
-//   • Echo (shared tempo-locked delay) — one project-wide delay, likewise
-//     fed by each track's Send.
+//   • Reverb (shared) — "the song's space", a single reverb that every
+//     track feeds via its per-track amount.
+//   • Delay (shared, tempo-locked) — one project-wide delay, likewise
+//     fed by each track's amount.
 //
 // These deliberately do not change with the selected track: they are the
-// return buses that the Track FX panel's Sends route into. Each module owns
-// its own live editing + undo-gesture wiring; this panel just lays them out.
+// return buses that the Track FX panel's Reverb & Delay amounts route into.
+// Each module owns its own live editing + undo-gesture wiring; this panel
+// just lays them out.
 
 import ProjectRoomModule from '@/components/ProjectRoomModule.vue'
 import ProjectEchoModule from '@/components/ProjectEchoModule.vue'

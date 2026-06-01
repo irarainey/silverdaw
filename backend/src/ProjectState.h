@@ -156,7 +156,7 @@ class ProjectState : public juce::ValueTree::Listener
     bool setTrackMuted(const juce::String& trackId, bool muted);
     bool setTrackSoloed(const juce::String& trackId, bool soloed);
 
-    /** Per-track send levels to the project Reverb / Echo buses. Both
+    /** Per-track send levels to the project Reverb / Delay buses. Both
      *  scalars are clamped to `[0, 1]`. Values within `kSendEpsilon` of
      *  zero are stored as "absent" (`removeProperty`) so legacy /
      *  unconfigured projects keep their existing on-disk shape.
@@ -225,7 +225,7 @@ class ProjectState : public juce::ValueTree::Listener
     float getProjectReverbTone() const;
     float getProjectReverbMix() const;
 
-    /** Project-shared Echo / Delay bus parameters. `noteValue` is one
+    /** Project-shared Delay bus parameters. `noteValue` is one
      *  of `"1/4" | "1/8" | "1/8T" | "1/16"` — any other string
      *  (including whitespace variants) is rejected and the setter
      *  returns false without mutating. `feedback`, `tone`, `mix` are
@@ -837,7 +837,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kCents;
     static const juce::Identifier kPendingAutoWarp;
 
-    // Phase 5 — per-track send levels to the project Reverb / Echo buses.
+    // Phase 5 — per-track send levels to the project Reverb / Delay buses.
     // Both default to 0 (no send) and are persisted only when non-zero.
     static const juce::Identifier kSendReverb;
     static const juce::Identifier kSendDelay;
@@ -869,7 +869,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kReverbTone;
     static const juce::Identifier kReverbMix;
 
-    // Phase 5 — project-shared Echo / Delay bus. `noteValue` is a
+    // Phase 5 — project-shared Delay bus. `noteValue` is a
     // tempo-locked beat division string; the others are 0..1 linear.
     static const juce::Identifier kDelayNoteValue;
     static const juce::Identifier kDelayFeedback;

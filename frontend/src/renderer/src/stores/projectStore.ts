@@ -165,7 +165,7 @@ export interface Track {
   toneHighCut?: boolean
   /**
    * Per-track send amounts into the two project-shared FX buses — the
-   * Room (reverb) and the Echo (delay). Linear `[0, 1]`; 0 = no send.
+   * Reverb and the Delay. Linear `[0, 1]`; 0 = no send.
    * Both optional and suppressed-when-default so a dry track carries no
    * send state and legacy projects hydrate cleanly. Mirrors the backend
    * ValueTree flat properties `sendReverb` / `sendDelay`.
@@ -182,10 +182,10 @@ export interface Track {
 }
 
 /**
- * Project-shared **Room** (reverb) parameters. One Room is shared by the
- * whole project — "the song's room". Every scalar is linear `[0, 1]`;
- * `mix` at 0 makes the Room inaudible (and export bit-identical to a
- * project with no Room at all). Mirrors the backend `PROJECT` ValueTree
+ * Project-shared **Reverb** parameters. One Reverb is shared by the
+ * whole project — "the song's space". Every scalar is linear `[0, 1]`;
+ * `mix` at 0 makes the Reverb inaudible (and export bit-identical to a
+ * project with no reverb at all). Mirrors the backend `PROJECT` ValueTree
  * properties `reverbSize` / `reverbDecay` / `reverbTone` / `reverbMix`.
  */
 export interface ProjectReverbState {
@@ -196,10 +196,10 @@ export interface ProjectReverbState {
 }
 
 /**
- * Project-shared **Echo** (tempo-locked delay) parameters. `noteValue`
+ * Project-shared **Delay** (tempo-locked) parameters. `noteValue`
  * is a beat division resolved against the project BPM on the backend;
  * `feedback` / `tone` / `mix` are linear `[0, 1]`. `mix` at 0 makes the
- * Echo inaudible. Mirrors the backend `PROJECT` ValueTree properties
+ * Delay inaudible. Mirrors the backend `PROJECT` ValueTree properties
  * `delayNoteValue` / `delayFeedback` / `delayTone` / `delayMix`.
  */
 export interface ProjectDelayState {
@@ -425,9 +425,10 @@ interface ProjectState {
   fxPanelOpen: boolean
 
   /** Which effects surface the bottom panel shows when `fxPanelOpen` is
-   *  true: the per-track rack (`'track'` — Tone + Sends for the selected
-   *  track) or the project-wide rack (`'project'` — the shared Room + Echo
-   *  buses). UI-only — not persisted and not sent to the backend; reopening
+   *  true: the per-track rack (`'track'` — Tone, Pan, and Reverb/Delay
+   *  amounts for the selected track) or the project-wide rack (`'project'`
+   *  — the shared Reverb + Delay buses). UI-only — not persisted and not
+   *  sent to the backend; reopening
    *  the FX area after a reload defaults back to the track rack. A single
    *  source of truth so the tab strip and a track header's Fx button agree
    *  on which rack is showing. */
@@ -502,14 +503,14 @@ interface ProjectState {
    */
   masterVolume: number
   /**
-   * Project-shared Room (reverb) parameters. One Room for the whole
+   * Project-shared Reverb parameters. One Reverb for the whole
    * song; persisted on the PROJECT ValueTree. Defaults to all-zero
    * (inaudible) so a fresh project sounds and exports exactly as it did
    * before the shared FX existed.
    */
   projectReverb: ProjectReverbState
   /**
-   * Project-shared Echo (tempo-locked delay) parameters. Defaults to a
+   * Project-shared Delay (tempo-locked) parameters. Defaults to a
    * 1/8-note time with zero feedback / tone / mix (inaudible).
    */
   projectDelay: ProjectDelayState
@@ -1262,8 +1263,8 @@ export const useProjectStore = defineStore('project', {
     },
 
     /** Choose which effects rack the bottom FX panel shows (per-track Tone /
-     *  Sends, or the project-wide Room / Echo). UI-only state, so this never
-     *  touches the bridge or the dirty flag. */
+     *  Pan / Reverb / Delay, or the project-wide Reverb / Delay). UI-only
+     *  state, so this never touches the bridge or the dirty flag. */
     setFxTab(tab: 'track' | 'project'): void {
       this.fxTab = tab
     },
@@ -1741,7 +1742,7 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Update a track's send amounts into the project-shared Room / Echo
+     * Update a track's send amounts into the project-shared Reverb / Delay
      * buses. Mirrors `setTrackTone`: applies the partial patch locally
      * (default-suppressing 0 back to `undefined`) then forwards to the
      * backend unless `opts.localOnly` (used by the `TRACK_SENDS_APPLIED`
@@ -1806,7 +1807,7 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Update the project-shared Room (reverb). Applies the partial patch
+     * Update the project-shared Reverb. Applies the partial patch
      * locally then forwards to the backend unless `opts.localOnly` (used
      * by the `PROJECT_REVERB_APPLIED` ack to reconcile to canonical
      * clamped values). `gestureId` / `gestureEnd` drive undo coalescing.
@@ -1834,7 +1835,7 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Update the project-shared Echo (tempo-locked delay). Applies the
+     * Update the project-shared Delay (tempo-locked). Applies the
      * partial patch locally then forwards to the backend unless
      * `opts.localOnly` (used by the `PROJECT_DELAY_APPLIED` ack).
      * `gestureId` / `gestureEnd` drive undo coalescing.
@@ -2654,14 +2655,14 @@ export const useProjectStore = defineStore('project', {
         typeof incomingMasterVolume === 'number' && Number.isFinite(incomingMasterVolume)
           ? Math.min(1, Math.max(0, incomingMasterVolume))
           : 1.0
-      // Project-shared Room (reverb) + Echo (delay). Each scalar is
+      // Project-shared Reverb + Delay. Each scalar is
       // absent-when-default on the wire, so a missing field reads back
       // as the inaudible default — keeping legacy projects byte-clean
       // and exporting bit-identical until the user dials a value in.
       // Mutated in place (not reference-replaced) to mirror the per-track
-      // Tone / Sends reconcile below: an unrelated PROJECT_STATE refresh
-      // (e.g. one a TRACK_MUTE ack triggers) then can't force-end a Room /
-      // Echo drag by swapping the watched object reference.
+      // Tone / send reconcile below: an unrelated PROJECT_STATE refresh
+      // (e.g. one a TRACK_MUTE ack triggers) then can't force-end a Reverb /
+      // Delay drag by swapping the watched object reference.
       const unit = (v: unknown): number =>
         typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0
       this.projectReverb.size = unit(snapshot.reverbSize)

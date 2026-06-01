@@ -1625,8 +1625,8 @@ void handleTrackSolo(const juce::var& payload, silverdaw::AudioEngine& engine,
                      {{"trackId", trackId}, {"soloed", soloed}}, stored);
 }
 
-// Phase 5 — per-track Reverb / Echo send levels. Persists, pushes the
-// live send amounts to the AudioEngine (shared Room / Echo buses), and
+// Phase 5 — per-track Reverb / Delay send levels. Persists, pushes the
+// live send amounts to the AudioEngine (shared Reverb / Delay buses), and
 // acks the clamped values.
 //
 // Skips ack + dirty + undo entirely when the setter reports no change so
@@ -1806,7 +1806,7 @@ void handleProjectSetReverb(const juce::var& payload, silverdaw::AudioEngine& en
                       {"mix", canonMix}});
 }
 
-// Phase 5 — project-shared Echo / Delay bus.
+// Phase 5 — project-shared Delay bus.
 void handleProjectSetDelay(const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState,
                            silverdaw::BridgeServer& bridge)
@@ -1929,8 +1929,8 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         if (! juce::approximatelyEqual(masterVolume, 1.0F))
             obj->setProperty("masterVolume", masterVolume);
     }
-    // Project-shared Room (reverb) + Echo (delay). Each scalar is emitted
-    // only when non-default so the Track FX Room / Echo modules restore
+    // Project-shared Reverb + Delay. Each scalar is emitted
+    // only when non-default so the Track FX Reverb / Delay modules restore
     // after a reload while legacy projects round-trip byte-clean (the
     // renderer reads each field as optional and falls back to the
     // inaudible default when absent). The audio engine restores these
@@ -2060,7 +2060,7 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             if (tBass != 0.0F || tMid != 0.0F || tTreble != 0.0F || tLowCut || tHighCut)
                 engine.setTrackTone(toneTrackId, tBass, tMid, tTreble, tLowCut, tHighCut, /*snap*/ true);
 
-            // Phase 5 — restore persisted per-track Room / Echo send
+            // Phase 5 — restore persisted per-track Reverb / Delay send
             // amounts. Snapped; only pushed when non-zero so a flat
             // project doesn't fan out identity updates.
             const float sReverb = projectState.getTrackReverbSend(toneTrackId);
@@ -2180,7 +2180,7 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
     // diverges audio from the visible UI value.
     engine.setMasterGain(projectState.getMasterVolume());
 
-    // Phase 5 — restore project-shared Room / Echo. Pushed UNCONDITIONALLY
+    // Phase 5 — restore project-shared Reverb / Delay. Pushed UNCONDITIONALLY
     // (snapped) so a PROJECT_NEW / PROJECT_LOAD resets the single shared
     // FX instance to this project's values rather than inheriting the
     // previous project's settings. Delay time resolves via the shared
@@ -2736,13 +2736,13 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_SOLO") return "Solo track";
     if (type == "TRACK_SET_HEIGHT") return "Resize track";
     if (type == "TRACK_REORDER") return "Reorder track";
-    if (type == "TRACK_SET_SENDS") return "Change track sends";
+    if (type == "TRACK_SET_SENDS") return "Change track reverb/delay";
     if (type == "TRACK_SET_TONE") return "Change track tone";
     if (type == "TRACK_SET_LEVELER") return "Change track leveler";
     if (type == "TRACK_SET_PAN") return "Change track pan";
     if (type == "CLIP_SET_ENVELOPE") return "Edit clip volume envelope";
     if (type == "PROJECT_SET_REVERB") return "Change reverb";
-    if (type == "PROJECT_SET_DELAY") return "Change echo";
+    if (type == "PROJECT_SET_DELAY") return "Change delay";
     if (type == "LIBRARY_ADD") return "Update library item";
     if (type == "LIBRARY_REMOVE") return "Remove library item";
     if (type == "LIBRARY_REANALYSE") return "Reanalyse library item";

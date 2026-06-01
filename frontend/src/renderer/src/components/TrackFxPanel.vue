@@ -5,8 +5,8 @@
 //
 //   • Tone — 3-band EQ plus Low / High Cut.
 //   • Pan — equal-power placement of the track's dry signal.
-//   • Sends — how much this track feeds the project-wide Room and Echo
-//     buses (the buses themselves live on the Project FX tab).
+//   • Reverb & Delay — how much this track feeds the project-wide Reverb
+//     and Delay buses (the buses themselves live on the Project FX tab).
 //
 // All modules are keyed by track id so switching selection remounts them:
 // the native range inputs are recreated with the new track's values rather
@@ -51,7 +51,7 @@ const selectedTrackId = computed(() =>
       v-else
       class="flex items-center justify-center rounded-lg border border-dashed border-zinc-800 bg-zinc-900/40 px-4 text-center text-xs text-zinc-500"
     >
-      Select a track to edit its Tone, Pan, and Sends.
+      Select a track to edit its Tone, Pan, and Reverb &amp; Delay.
     </div>
   </FxRack>
 </template>

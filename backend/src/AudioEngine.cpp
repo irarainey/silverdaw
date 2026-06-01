@@ -817,7 +817,7 @@ void AudioEngine::setPositionMs(double ms)
                                    : static_cast<juce::int64>(0);
     master.setPositionSamples(masterSamples);
 
-    // Seeking starts the shared Room / Echo from cold state — wipe any
+    // Seeking starts the shared Reverb / Delay from cold state — wipe any
     // ringing tail so it doesn't bleed across the jump (§7.10).
     busGraph.resetSharedFx();
     // Per-track seek: also invalidate the read-ahead prefetch. JUCE's

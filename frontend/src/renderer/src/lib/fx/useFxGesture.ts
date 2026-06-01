@@ -1,5 +1,6 @@
 // Per-drag gesture-id machinery shared by every FX control in the Track FX
-// panel (Tone bands, track Sends, project Room, project Echo). A continuous
+// panel (Tone bands, per-track Reverb / Delay amounts, project Reverb,
+// project Delay). A continuous
 // slider drag must collapse into a single undo step, so the renderer mints
 // one stable `gestureId` at the first `input` and re-uses it for every
 // coalesced sample until the gesture ends. Each gesture is scoped to a

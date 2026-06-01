@@ -366,12 +366,12 @@ export interface GestureHints {
   gestureEnd?: boolean
 }
 
-/** Per-track Reverb / Echo send levels. Both default to 0 (no send). */
+/** Per-track Reverb / Delay send levels. Both default to 0 (no send). */
 export interface TrackSetSendsPayload extends GestureHints {
   trackId: string
   /** Send to the project Reverb bus, 0..1 linear. Default 0. */
   reverbSend: number
-  /** Send to the project Echo bus, 0..1 linear. Default 0. */
+  /** Send to the project Delay bus, 0..1 linear. Default 0. */
   delaySend: number
 }
 
@@ -443,7 +443,7 @@ export interface ProjectSetReverbPayload extends GestureHints {
 export type DelayNoteValue = '1/4' | '1/8' | '1/8T' | '1/16'
 
 /**
- * Project-shared Echo / Delay bus parameters. `noteValue` MUST match
+ * Project-shared Delay bus parameters. `noteValue` MUST match
  * one of the legal beat divisions exactly — whitespace / case
  * variants are rejected by the backend (the message is dropped).
  */
@@ -1017,7 +1017,7 @@ export const TrackSendsAppliedPayloadSchema = z.object({
   trackId: z.string(),
   /** Project-Reverb send, 0..1 linear, after backend clamp. */
   reverbSend: z.number(),
-  /** Project-Echo send, 0..1 linear, after backend clamp. */
+  /** Project-Delay send, 0..1 linear, after backend clamp. */
   delaySend: z.number(),
   ok: z.boolean()
 })
@@ -1203,7 +1203,7 @@ export const ProjectStateTrackSchema = z.object({
   //     suppressed-when-default so legacy projects round-trip unchanged.
   /** Send to the project Reverb bus, 0..1 linear. */
   sendReverb: z.number().optional(),
-  /** Send to the project Echo bus, 0..1 linear. */
+  /** Send to the project Delay bus, 0..1 linear. */
   sendDelay: z.number().optional(),
   /** Per-track Tone — fixed 3-band EQ, dB in `[-15, +15]`. */
   toneBassDb: z.number().optional(),

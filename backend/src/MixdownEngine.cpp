@@ -949,7 +949,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
                                      : kDefaultSampleRate;
     snapshot.masterGain = juce::jlimit(0.0F, 1.0F, project.getMasterVolume());
 
-    // Phase 5 — project-shared Room / Echo, captured once for the render.
+    // Phase 5 — project-shared Reverb / Delay, captured once for the render.
     snapshot.reverbSize = project.getProjectReverbSize();
     snapshot.reverbDecay = project.getProjectReverbDecay();
     snapshot.reverbTone = project.getProjectReverbTone();
@@ -1420,7 +1420,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             busGraph.setTrackPan(trackSnap.id, trackSnap.pan);
         }
 
-        // Phase 5 — push the project-shared Room / Echo onto the offline
+        // Phase 5 — push the project-shared Reverb / Delay onto the offline
         // bus. Snapped and with the delay time applied immediately so the
         // first rendered block is steady-state. The delay time resolves
         // via the same helper the live engine uses (§7.9.6 parity).
@@ -1452,11 +1452,11 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             maxTailFrames = std::max(maxTailFrames, cp->tailFrames);
         }
         // Project-shared FX tail budget (§7.10 tail-render policy). The
-        // shared Room + Echo can ring out past the last clip's end, so we
+        // shared Reverb + Delay can ring out past the last clip's end, so we
         // extend the render window by their fail-safe cap and break early
         // (below) once both have actually decayed. Per §7.10 the two FX
         // run in PARALLEL, so the absolute ceiling is the MAX of the
-        // per-FX caps (Room 8 s, Echo 4 s), not their sum. The real
+        // per-FX caps (Reverb 8 s, Delay 4 s), not their sum. The real
         // cutoff is detector-driven (`busGraph.sharedFxTerminated()`),
         // with this value only as the hard fail-safe.
         const int64_t sharedFxMaxTailFrames = static_cast<int64_t>(

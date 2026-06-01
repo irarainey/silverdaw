@@ -2264,7 +2264,7 @@ juce::var ProjectState::tracksAsJson() const
         {
             trackObj->setProperty("toneHighCut", true);
         }
-        // Phase 5 — per-track Room / Echo send amounts. Like Tone, these
+        // Phase 5 — per-track Reverb / Delay send amounts. Like Tone, these
         // live on the track node and are emitted only when non-default so
         // the Track FX Sends sliders restore after a reload while legacy
         // projects stay byte-clean. Identifiers are `sendReverb`/`sendDelay`

@@ -594,7 +594,7 @@ describe('projectStore', () => {
     })
   })
 
-  it('updates and forwards per-track Room / Echo sends, suppressing defaults', () => {
+  it('updates and forwards per-track Reverb / Delay sends, suppressing defaults', () => {
     const project = useProjectStore()
     const trackId = project.addTrack()
     sendMock.mockClear()
@@ -646,7 +646,7 @@ describe('projectStore', () => {
     expect(sendMock).not.toHaveBeenCalled()
   })
 
-  it('updates and forwards the project Room and Echo, clamping to [0, 1]', () => {
+  it('updates and forwards the project Reverb and Delay, clamping to [0, 1]', () => {
     const project = useProjectStore()
     sendMock.mockClear()
 

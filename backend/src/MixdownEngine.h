@@ -76,7 +76,7 @@ struct MixdownSnapshot
         float toneTrebleDb{0.0F};
         bool toneLowCut{false};
         bool toneHighCut{false};
-        // Phase 5 — per-track wet send amounts into the shared Room / Echo
+        // Phase 5 — per-track wet send amounts into the shared Reverb / Delay
         // buses, captured so the offline render feeds the same shared FX
         // the live engine does (§7.9.6 parity).
         float reverbSend{0.0F};
@@ -98,9 +98,9 @@ struct MixdownSnapshot
      *  Mirrors the live engine's `setMasterGain` so the exported file
      *  matches what the user heard. Linear, clamped [0, 1]. */
     float masterGain{1.0F};
-    // Phase 5 — project-shared Room (reverb) + Echo (delay) parameters.
+    // Phase 5 — project-shared Reverb + Delay parameters.
     // The offline render runs the identical `SharedFx` the live engine
-    // does (§7.9.6 parity). The Echo delay time is resolved from the
+    // does (§7.9.6 parity). The Delay delay time is resolved from the
     // note value + BPM via `silverdaw::delayNoteToMs` so live and export
     // agree exactly.
     float reverbSize{0.0F};

@@ -1,13 +1,13 @@
 <script setup lang="ts">
-// Project Echo — the one shared tempo-locked delay for the whole song.
+// Project Delay — the one shared tempo-locked delay for the whole song.
 // A Time control (beat division, locked to the project tempo) plus three
 // amount sliders in `[0, 1]` (Feedback, Tone, Mix), shown as a
 // percentage. Project-level, so always reachable regardless of selection.
 // Editing is live: slider drags push `setProjectDelay` on every `input`
 // (coalesced into one undo step via a per-control `gestureId`) and commit
 // with `gestureEnd` on `change`; the Time select pushes a single
-// non-coalesced update. With Mix at 0 the Echo is silent and exports stay
-// bit-identical to a project with no Echo.
+// non-coalesced update. With Mix at 0 the Delay is silent and exports stay
+// bit-identical to a project with no delay.
 
 import { computed, onBeforeUnmount, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -83,7 +83,7 @@ onBeforeUnmount(gesture.endGesture)
 
 <template>
   <ClipEffectModule
-    title="Echo"
+    title="Delay"
     :cols="1"
     :rows="1"
   >
@@ -93,7 +93,7 @@ onBeforeUnmount(gesture.endGesture)
         <select
           class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs font-mono tabular-nums text-zinc-100 outline-none focus:border-sky-500"
           :value="noteValue"
-          aria-label="Echo time, in beats"
+          aria-label="Delay time, in beats"
           @change="onNoteChange(($event.target as HTMLSelectElement).value)"
         >
           <option
@@ -115,7 +115,7 @@ onBeforeUnmount(gesture.endGesture)
         :min="0"
         :max="1"
         :step="0.01"
-        :assistive-label="'Echo ' + control.label"
+        :assistive-label="'Delay ' + control.label"
         title="Double-click to reset to 0%"
         @input="onInput(control, $event)"
         @change="onChange(control, $event)"

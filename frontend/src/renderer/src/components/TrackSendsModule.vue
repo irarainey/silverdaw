@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// Per-track Sends — how much of the selected track feeds the two
-// project-shared FX buses, the Room (reverb) and the Echo (delay). Two
+// Per-track Reverb & Delay amounts — how much of the selected track feeds
+// the two project-shared FX buses, the Reverb and the Delay. Two
 // amount sliders in `[0, 1]`, shown as a percentage. Editing is live:
 // each drag pushes `setTrackSends` on every `input` (coalesced into one
 // undo step via a per-control `gestureId`) and commits with `gestureEnd`
@@ -22,8 +22,8 @@ const track = computed(() => project.tracks.find((t) => t.id === props.trackId) 
 // `key` is the `setTrackSends` patch field; `prop` is the (default-
 // suppressed) store property holding the persisted amount.
 const SENDS = [
-  { key: 'reverbSend', prop: 'reverbSend', label: 'Room' },
-  { key: 'delaySend', prop: 'delaySend', label: 'Echo' }
+  { key: 'reverbSend', prop: 'reverbSend', label: 'Reverb' },
+  { key: 'delaySend', prop: 'delaySend', label: 'Delay' }
 ] as const
 
 type Send = (typeof SENDS)[number]
@@ -77,7 +77,7 @@ onBeforeUnmount(gesture.endGesture)
 
 <template>
   <ClipEffectModule
-    title="Sends"
+    :title="'Reverb & Delay'"
     :cols="1"
     :rows="1"
   >

@@ -881,13 +881,13 @@ function onResizePointerUp(): void {
       </div>
     </div>
 
-    <!-- Track FX body. Edits the selected track's Tone + Sends. -->
+    <!-- Track FX body. Edits the selected track's Tone, Pan, and Reverb/Delay amounts. -->
     <TrackFxPanel
       v-else-if="activeTab === 'trackfx'"
       class="min-h-0 flex-1"
     />
 
-    <!-- Project FX body. Edits the project-wide shared Room + Echo. -->
+    <!-- Project FX body. Edits the project-wide shared Reverb + Delay. -->
     <ProjectFxPanel
       v-else
       class="min-h-0 flex-1"

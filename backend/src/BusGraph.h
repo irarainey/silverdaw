@@ -20,7 +20,7 @@ namespace silverdaw
  * purpose-built mixer that owns block lifecycle deterministically,
  * runs the canonical signal flow in a strict order each block, and
  * gives subsequent Phase 5 steps a single seam to insert shared
- * project FX (Room, Echo — step 7) and the master accumulator.
+ * project FX (Reverb, Delay — step 7) and the master accumulator.
  *
  * **Topology after step 1c:**
  *
@@ -84,7 +84,7 @@ public:
         juce::MixerAudioSource innerMixer;
         TrackChain chain;
         int clipCount = 0;
-        // Per-track wet send amounts into the shared Room / Echo buses
+        // Per-track wet send amounts into the shared Reverb / Delay buses
         // (§7.9.4). Read on the audio thread and written on the message
         // thread, both under the BusGraph `lock` — same race-free plain
         // float discipline as the Tone targets in `TrackChain`.
@@ -93,7 +93,7 @@ public:
         // Per-track equal-power pan (§7.9.3). `pan` is the signed request in
         // `[-1, 1]` (0 = centre); `panGainL` / `panGainR` are the derived
         // per-channel gains applied to the DRY contribution AFTER the pre-pan
-        // send tap, so the Room / Echo sends stay pre-pan. Centre keeps unity
+        // send tap, so the Reverb / Delay sends stay pre-pan. Centre keeps unity
         // on both channels so a default project is bit-exact with the no-pan
         // path. Written on the message thread, read on the audio thread, both
         // under the BusGraph `lock`.
@@ -240,7 +240,7 @@ public:
 
                 const float rSend = kv.second->reverbSend;
                 const float dSend = kv.second->delaySend;
-                // Pre-pan send tap: the Room / Echo sends read the dry,
+                // Pre-pan send tap: the Reverb / Delay sends read the dry,
                 // un-panned track output so a hard-panned track still feeds
                 // the shared FX at full level (pan only places the dry path).
                 for (int ch = 0; ch < sendChannels; ++ch)
@@ -269,7 +269,7 @@ public:
                 }
             }
 
-            // Sum the wet Room + Echo returns into the dry master bus.
+            // Sum the wet Reverb + Delay returns into the dry master bus.
             sharedFx.process(reverbSendBuf, delaySendBuf, *info.buffer, dst, n);
 
             remaining -= n;
@@ -396,7 +396,7 @@ public:
             it->second->chain.setTone(bassDb, midDb, trebleDb, lowCut, highCut, snap);
     }
 
-    /** Publish a track's wet send amounts into the shared Room / Echo
+    /** Publish a track's wet send amounts into the shared Reverb / Delay
      *  buses. Stored sticky in `pendingSends` (like Tone) so they survive
      *  the runtime's lazy create/destroy lifecycle, and forwarded to a
      *  live runtime immediately. Takes the audio-thread `lock`. */
@@ -451,7 +451,7 @@ public:
         }
     }
 
-    /** Publish project Room (reverb) parameters to the shared FX. Stored
+    /** Publish project Reverb parameters to the shared FX. Stored
      *  sticky so a device-driven re-`prepareToPlay` re-applies them. */
     void setProjectReverb(float size, float decay, float tone, float mix, bool snap)
     {
@@ -460,7 +460,7 @@ public:
         sharedFx.setReverbParams(size, decay, tone, mix, snap);
     }
 
-    /** Publish project Echo (delay) parameters to the shared FX.
+    /** Publish project Delay parameters to the shared FX.
      *  `delayMs` is the tempo-resolved delay time; `applyTimeNow`
      *  promotes it immediately rather than staging for the next play. */
     void setProjectDelay(double delayMs, float feedback, float tone, float mix, bool snap,
@@ -471,7 +471,7 @@ public:
         sharedFx.setDelayParams(delayMs, feedback, tone, mix, snap, applyTimeNow);
     }
 
-    /** Wipe the shared FX decay state (Room tank, Echo line, tail
+    /** Wipe the shared FX decay state (Reverb tank, Delay line, tail
      *  detectors). Called by the engine on transport stop and seek. */
     void resetSharedFx()
     {
@@ -536,7 +536,7 @@ public:
 private:
     /** Re-apply the sticky project FX parameters (snapped) after the
      *  shared FX is (re)prepared, so a device-driven re-`prepareToPlay`
-     *  doesn't silently reset Room / Echo to defaults. Caller holds `lock`. */
+     *  doesn't silently reset Reverb / Delay to defaults. Caller holds `lock`. */
     void reapplyStickyProjectFx() noexcept
     {
         if (stickyReverb.valid)
@@ -579,7 +579,7 @@ private:
     std::unordered_map<juce::String, float> pendingPans;
 
     // Sticky project FX params so a device-driven re-prepare re-applies
-    // them rather than resetting Room / Echo to silent defaults.
+    // them rather than resetting Reverb / Delay to silent defaults.
     struct StickyReverb
     {
         float size = 0.0F, decay = 0.0F, tone = 0.0F, mix = 0.0F;

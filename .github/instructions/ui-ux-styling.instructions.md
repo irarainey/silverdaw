@@ -172,16 +172,19 @@ Selected/active items use the `sky` accent consistently:
 
 ## 10. Language & terminology
 
-User-facing copy must stay friendly and jargon-free; the codebase keeps the
-technical terms internally (plan §7.9). Use the **left** column in the UI:
+User-facing copy favours the familiar, DAW-standard name for each feature — the
+words the audience already meets in other tools — while avoiding the deepest
+signal-processing jargon. **Reverb**, **Delay**, and **Pan** are used directly;
+do **not** soften them to non-standard labels like "Room", "Echo", or
+"Balance" (which only add confusion). The codebase keeps matching internal
+terms (plan §7.9). Where a plain word is clearer than an engineer's term, use
+the **left** column in the UI:
 
-| Say (user-facing) | Not (technical) |
+| Say (user-facing) | Not (over-technical) |
 | --- | --- |
 | Tone, with **Bass / Mid / Treble** | EQ / low shelf / parametric peak / high shelf |
 | **Low Cut** | high-pass filter |
 | **Leveler** | Compressor |
-| **Room** | Reverb |
-| **Echo** | Delay |
 | **Volume Shape** | automation / envelope |
 
 Wording rules:

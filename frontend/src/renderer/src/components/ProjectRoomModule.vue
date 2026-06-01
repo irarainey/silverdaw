@@ -1,12 +1,12 @@
 <script setup lang="ts">
-// Project Room — the one shared reverb "the whole song sits in". Four
+// Project Reverb — the one shared reverb "the whole song sits in". Four
 // amount sliders in `[0, 1]` (Size, Decay, Tone, Mix), shown as a
-// percentage. The Room is project-level (not per-track), so this is
+// percentage. The Reverb is project-level (not per-track), so this is
 // always reachable regardless of selection. Editing is live: each drag
 // pushes `setProjectReverb` on every `input` (coalesced into one undo
 // step via a per-control `gestureId`) and commits with `gestureEnd` on
-// `change`. Double-click resets a control to 0. With Mix at 0 the Room is
-// silent and exports stay bit-identical to a project with no Room.
+// `change`. Double-click resets a control to 0. With Mix at 0 the Reverb is
+// silent and exports stay bit-identical to a project with no reverb.
 
 import { onBeforeUnmount, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -72,7 +72,7 @@ onBeforeUnmount(gesture.endGesture)
 
 <template>
   <ClipEffectModule
-    title="Room"
+    title="Reverb"
     :cols="1"
     :rows="1"
   >
@@ -86,7 +86,7 @@ onBeforeUnmount(gesture.endGesture)
         :min="0"
         :max="1"
         :step="0.01"
-        :assistive-label="'Room ' + control.label"
+        :assistive-label="'Reverb ' + control.label"
         title="Double-click to reset to 0%"
         @input="onInput(control, $event)"
         @change="onChange(control, $event)"

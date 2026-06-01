@@ -86,7 +86,7 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
     BusGraph.*           Root pull graph: per-track runtimes (incl. equal-power pan) + shared FX bus
     TrackChain.*         Canonical per-track DSP chain (Tone → Leveler → gain → mute/solo)
     ToneEq.*             Per-track 3-band EQ + Low / High Cut filters
-    SharedFx.*           Project-wide shared Room (reverb) + Echo (delay) buses
+    SharedFx.*           Project-wide shared Reverb + Delay buses
     EnvelopeSnapshot.*   Compiled, audio-thread-readable per-clip volume envelope
     MixdownEngine.*      Offline render on the same canonical chain as playback
     WarpProcessor.*      Rubber Band time-stretch / pitch-shift wrapper
@@ -146,10 +146,10 @@ Silverdaw currently supports the core arrangement workflow:
   collapses back to the Library). **Track FX** edits the selected track and hosts
   a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) plus **Low Cut** and
   **High Cut** filter toggles — a **Pan** control (equal-power, signed
-  `[-1, 1]`, unity at centre), and a **Sends** rack setting how much the track
-  feeds the project-wide Room and Echo buses. **Project FX** hosts the shared,
-  song-wide returns those sends route into: a **Room** (reverb) and an **Echo**
-  (tempo-locked delay). All are edited live (slider drags coalesce into one undo
+  `[-1, 1]`, unity at centre), and a **Reverb & Delay** rack setting how much the
+  track feeds the project-wide Reverb and Delay buses. **Project FX** hosts the
+  shared, song-wide returns those amounts route into: a **Reverb** and a
+  **Delay** (tempo-locked). All are edited live (slider drags coalesce into one undo
   step) and applied to both playback and mixdown. The DSP lives in
   [`ToneEq`](../backend/src/ToneEq.h) / [`TrackChain`](../backend/src/TrackChain.h)
   / [`BusGraph`](../backend/src/BusGraph.h) (which applies pan to the dry path
@@ -277,8 +277,8 @@ The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
 wider mixer / effects / automation work (a per-track leveler and a deeper
 per-clip processor chain — compressor / saturation — applied both live and in
-mixdown, beyond the per-track Tone EQ + Low / High Cut, the project-wide Room and
-Echo sends, and the per-clip Volume Shape that already ship), stem separation,
+mixdown, beyond the per-track Tone EQ + Low / High Cut, the project-wide Reverb
+and Delay sends, and the per-clip Volume Shape that already ship), stem separation,
 loop slicing, grouping compound operations (split / duplicate) into a single undo
 step, and a CI matrix that enforces a coverage floor over the existing backend
 and frontend test suites.
@@ -423,12 +423,12 @@ fields, all suppressed from save when at their defaults so legacy projects stay
 bit-clean: `toneBassDb` / `toneMidDb` / `toneTrebleDb` are the per-track 3-band
 EQ gains in dB, `toneLowCut` / `toneHighCut` are filter toggles,
 `sendReverb` / `sendDelay` are `[0, 1]` send amounts feeding the project-wide
-Room and Echo buses, and `pan` is the equal-power pan position, signed
+Reverb and Delay buses, and `pan` is the equal-power pan position, signed
 `[-1, 1]` (`-1` = hard left, `0` = centre, `+1` = hard right). The shared buses
 themselves live on the `PROJECT` node:
 `reverbSize` / `reverbDecay` / `reverbTone` / `reverbMix` describe the single
-project **Room** (reverb), and `delayNoteValue` / `delayFeedback` / `delayTone` /
-`delayMix` the project **Echo** (tempo-locked delay). `CLIP.envelopePoints` is
+project **Reverb**, and `delayNoteValue` / `delayFeedback` / `delayTone` /
+`delayMix` the project **Delay** (tempo-locked). `CLIP.envelopePoints` is
 an optional `{ timeMs, gain }` breakpoint array — the per-clip **Volume Shape**;
 `gain` is linear in `[0, 4]` (`1.0` = unity) and the property is normalised
 (sorted, clamped, de-duplicated) backend-side and removed entirely when the
@@ -564,7 +564,7 @@ Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp and
 the per-clip volume-shape multiplier, per-track summing, the per-track
 Tone EQ + Low Cut / High Cut filters
 ([`ToneEq`](../backend/src/ToneEq.h) / [`TrackChain`](../backend/src/TrackChain.h)),
-the per-track Room / Echo sends into the project-wide shared-FX buses,
+the per-track Reverb / Delay sends into the project-wide shared-FX buses,
 track gain and mute / solo, equal-power panning, the master mix and metering,
 and the `MasterClockSource` that gates playback and feeds the device. The
 `AudioSourcePlayer` hands 32-bit float to the OS audio driver, which converts
