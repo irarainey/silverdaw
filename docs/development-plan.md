@@ -912,7 +912,8 @@ sees. Mixdown applies the multiplier at the same stage so live and
 offline outputs match.
 
 **Bridge envelopes:** `CLIP_SET_FADES { clipId, fadeInMs, fadeOutMs }`
-and `CLIP_SET_VOLUME_SHAPE { clipId, points: [{timeMs, gainDb}] }`.
+and `CLIP_SET_ENVELOPE { clipId, points: [{timeMs, gain}] }` (`gain` is
+linear in `[0, 4]`, `1.0` = unity).
 
 - **Drag-time granularity.** While the user is dragging a handle or
   breakpoint, the renderer emits throttled updates at **~25 Hz** (and
@@ -1393,7 +1394,10 @@ playable at every point — no broken-build day):
   rule (§7.10) but no FX in the chain yet. Acceptance: pre/post
   refactor mixdown sample-equivalent at the master float bus for
   fixed test projects under the five conditions in §7.9.6.
-- [ ] **2. Bridge protocol no-op compatibility layer.** Extend
+- [x] **2. Bridge protocol no-op compatibility layer.** _(Landed
+  incrementally alongside steps 3 / 6 rather than as one commit; the
+  `TRACK_SET_PAN` / `TRACK_SET_MUTE_SOLO` envelopes are deferred to step 9.)_
+  Extend
   `ProjectStateClipSchema` (`fadeInMs`, `fadeOutMs`, breakpoints)
   and `ProjectStateTrackSchema` (`toneBassDb`, `toneMidDb`,
   `toneTrebleDb`, `lowCutEnabled`, `levelerAmount`,
@@ -1405,7 +1409,7 @@ playable at every point — no broken-build day):
   that don't touch any Phase 5 field remain bit-identical on disk —
   no surprise rewrites of existing user projects). Add
   `BridgeOutboundMap` entries for every new envelope
-  (`CLIP_SET_FADES`, `CLIP_SET_VOLUME_SHAPE`, `TRACK_SET_TONE`,
+  (`CLIP_SET_FADES`, `CLIP_SET_ENVELOPE`, `TRACK_SET_TONE`,
   `TRACK_SET_LEVELER`, `TRACK_SET_SENDS`, `TRACK_SET_PAN`,
   `TRACK_SET_MUTE_SOLO`, `PROJECT_SET_REVERB`, `PROJECT_SET_DELAY`)
   pointing at **inert backend handlers** that validate, persist to
@@ -1418,7 +1422,7 @@ playable at every point — no broken-build day):
   schema-version bump** — Phase 5 only adds optional fields with
   defaults; bump `schemaVersion` only when a genuinely incompatible
   field is added.
-- [ ] **3. Per-clip fades** (`fadeInMs` / `fadeOutMs`). Triangular
+- [x] **3. Per-clip fades** (`fadeInMs` / `fadeOutMs`). Triangular
   drag handles on the timeline clip corners (12 px hit zones,
   hidden below 24 px clip width — fall back to the dialog).
   Backend applies the fade multiplier at the post-resample stage
@@ -1435,20 +1439,24 @@ playable at every point — no broken-build day):
   thread retire queue (§7.11) — explicitly **not**
   `std::atomic<std::shared_ptr>`. Composition with the fade
   scalars happens at the same post-resample stage. Bridge:
-  `CLIP_SET_VOLUME_SHAPE` handler activated. Coalesced per gesture.
-- [ ] **5. Tabbed bottom panel** (Library / Track FX) replacing
-  the current single-purpose `LibraryPanel`. Active tab persisted
-  in `uiStore`. **Split-view is required, not stretch** — the
-  primary workflow is to browse the Library while shaping the
-  selected track's sound, so the panel must support showing
-  Library + Track FX side-by-side with a small splitter the user
-  can drag. Existing `LibraryPanel` API
-  (`:height` / `@update:height` / drag source state) is preserved
-  by keeping `LibraryPanel` mounted (`v-show`, not `v-if`) on tab
-  switch. On tab / split visibility change, explicitly clear
-  `libraryStore.currentDragItemId` and any in-flight drag preview —
-  hiding a panel mid-drag does not reliably fire `dragend`, and a
-  stale drag source would leak into timeline drop logic.
+  `CLIP_SET_ENVELOPE` handler activated. Coalesced per gesture.
+- [x] **5. Tabbed bottom panel** (Library / Track FX) inside
+  `LibraryPanel`. The track header's **Fx** button switches the panel
+  to the Track FX view (`TrackFxPanel`); the active tab is persisted in
+  the project's view state (`fxPanelOpen`, round-tripped via
+  `PROJECT_SET_VIEW`) so the choice survives Save / Load — note this is
+  per-project memory, a deliberate deviation from the original
+  `uiStore` (global-preference) plan. The Library
+  keeps its resizable `:height` / `@update:height` API.
+  **Shipped as a one-at-a-time tab switch, _not_ the originally-
+  specified side-by-side split-view.** The split-view + draggable
+  splitter (and the related `v-show` / drag-source-cleanup machinery)
+  was dropped as over-engineering for the non-pro ethos — browsing the
+  Library and shaping a track read as sequential tasks, not
+  simultaneous ones, so a single visible tab keeps the surface simpler.
+  Because the inactive tab is `v-if`-unmounted rather than `v-show`-
+  hidden, there is no mid-switch stale-drag-source hazard to guard
+  against.
 - [x] **6. Per-track Tone** — 3-band fixed EQ (Bass / Mid /
   Treble) + Low Cut + High Cut toggles. Three biquad sections for the
   shelves/peak + two cascaded biquads each for the 4th-order high-pass and
