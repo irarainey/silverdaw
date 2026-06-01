@@ -5,6 +5,7 @@
 //
 //   M  — mute       (yellow when active, sends TRACK_GAIN=0)
 //   S  — solo       (cyan when active, mutes every non-soloed track)
+//   Fx — track FX   (sky when active, opens the Track FX panel for this track)
 //   ↓  — import     (opens an audio file and adds it as a clip on the track)
 //   X  — remove     (sends TRACK_REMOVE and drops the track locally)
 //
@@ -299,6 +300,22 @@ function onHeaderClick(track: { id: string }, ev: MouseEvent): void {
   project.selectTrack(track.id)
 }
 
+/**
+ * Toggle the Track FX panel for this track. Selecting a different track
+ * while the FX panel is open just retargets it; pressing Fx again on the
+ * track it is already showing collapses back to the Library view.
+ */
+function onToggleFx(track: { id: string }): void {
+  const showingThisTrackFx =
+    ui.bottomPanelTab === 'trackfx' && project.selectedTrackId === track.id
+  if (showingThisTrackFx) {
+    ui.setBottomPanelTab('library')
+    return
+  }
+  project.selectTrack(track.id)
+  ui.setBottomPanelTab('trackfx')
+}
+
 function onGripPointerDown(track: { id: string }, ev: PointerEvent): void {
   if (ev.button !== 0) return
   ev.preventDefault()
@@ -574,7 +591,7 @@ const dropIndicatorTopPx = computed<number>(() => {
             </button>
           </div>
 
-          <!-- Bottom row: close / import / mute / solo. -->
+          <!-- Bottom row: remove / import / mute / solo / fx. -->
           <div class="flex items-center gap-1">
             <button
               type="button"
@@ -654,6 +671,19 @@ const dropIndicatorTopPx = computed<number>(() => {
               @click="project.toggleSolo(track.id)"
             >
               S
+            </button>
+            <button
+              type="button"
+              class="flex h-6 w-6 items-center justify-center rounded border text-[11px] font-bold transition-colors"
+              :class="(ui.bottomPanelTab === 'trackfx' && project.selectedTrackId === track.id)
+                ? 'border-sky-400 bg-sky-500 text-zinc-950 hover:bg-sky-400'
+                : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
+              "
+              :title="(ui.bottomPanelTab === 'trackfx' && project.selectedTrackId === track.id) ? 'Hide track effects' : 'Show track effects'"
+              :aria-pressed="ui.bottomPanelTab === 'trackfx' && project.selectedTrackId === track.id"
+              @click="onToggleFx(track)"
+            >
+              Fx
             </button>
           </div>
         </div>

@@ -37,9 +37,13 @@ const emit = defineEmits<{
 const library = useLibraryStore()
 const ui = useUiStore()
 
-// Which bottom-panel tab is showing. Renderer-only UI state (not persisted):
-// the panel always opens on the Library.
-const activeTab = ref<'library' | 'trackfx'>('library')
+// Which bottom-panel tab is showing. Renderer-only UI state (not persisted)
+// owned by the ui store, so a track header's Fx button can switch to the
+// Track FX view from outside this component. The panel opens on the Library.
+const activeTab = computed<'library' | 'trackfx'>({
+  get: () => ui.bottomPanelTab,
+  set: (tab) => ui.setBottomPanelTab(tab)
+})
 
 // True while an OS drag is hovering over the panel — used to highlight the
 // drop zone. We track depth to handle nested dragenter/dragleave correctly.
