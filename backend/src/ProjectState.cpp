@@ -70,8 +70,6 @@ const juce::Identifier ProjectState::kToneTrebleDb{"toneTrebleDb"};
 const juce::Identifier ProjectState::kToneLowCut{"toneLowCut"};
 const juce::Identifier ProjectState::kToneHighCut{"toneHighCut"};
 const juce::Identifier ProjectState::kLevelerAmount{"levelerAmount"};
-const juce::Identifier ProjectState::kFadeInMs{"fadeInMs"};
-const juce::Identifier ProjectState::kFadeOutMs{"fadeOutMs"};
 const juce::Identifier ProjectState::kEnvelopePoints{"envelopePoints"};
 const juce::Identifier ProjectState::kEnvelopeTimeMs{"timeMs"};
 const juce::Identifier ProjectState::kEnvelopeGain{"gain"};
@@ -581,7 +579,7 @@ float ProjectState::getTrackDelaySend(const juce::String& trackId) const
     return static_cast<float>(static_cast<double>(track.getProperty(kSendDelay, 0.0)));
 }
 
-// ─── Phase 5: per-track Tone / Leveler, per-clip Fades / Envelope,
+// ─── Phase 5: per-track Tone / Leveler, per-clip Envelope,
 // ─── project-shared Reverb / Delay. All follow the same
 // ─── default-suppression contract as `setTrackSends`: setters return
 // ─── `true` only when the stored shape changes, so dispatchers can
@@ -592,7 +590,6 @@ float ProjectState::getTrackDelaySend(const juce::String& trackId) const
 // renderer's pixel resolution.
 static constexpr float kToneDbEpsilon = 1.0e-3f;
 static constexpr float kLevelerEpsilon = 1.0e-4f;
-static constexpr double kFadeMsEpsilon = 1.0e-2;
 static constexpr float kReverbEpsilon = 1.0e-4f;
 static constexpr float kDelayEpsilon = 1.0e-4f;
 
@@ -717,55 +714,6 @@ float ProjectState::getTrackLevelerAmount(const juce::String& trackId) const
     const auto track = findTrack(trackId);
     if (!track.isValid()) return 0.0f;
     return static_cast<float>(static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
-}
-
-// Apply a non-negative ms value to a clip under `id` with the
-// fade-default-suppression discipline. Negative inputs clamp to 0.
-// Runtime is responsible for `fadeIn + fadeOut <= clipDuration`;
-// this storage layer only enforces non-negativity.
-static bool applyClipMs(juce::ValueTree& clip,
-                        const juce::Identifier& id,
-                        double valueMs,
-                        juce::UndoManager* undo)
-{
-    const auto clamped = juce::jmax(0.0, valueMs);
-    const bool hadProperty = clip.hasProperty(id);
-    const auto previous = hadProperty
-        ? static_cast<double>(clip.getProperty(id))
-        : 0.0;
-    if (clamped < kFadeMsEpsilon)
-    {
-        if (!hadProperty) return false;
-        clip.removeProperty(id, undo);
-        return true;
-    }
-    if (hadProperty && std::abs(previous - clamped) < kFadeMsEpsilon) return false;
-    clip.setProperty(id, clamped, undo);
-    return true;
-}
-
-bool ProjectState::setClipFades(const juce::String& clipId, double fadeInMs, double fadeOutMs)
-{
-    auto clip = findClip(clipId);
-    if (!clip.isValid()) return false;
-    bool changed = false;
-    changed |= applyClipMs(clip, kFadeInMs, fadeInMs, &undoManager);
-    changed |= applyClipMs(clip, kFadeOutMs, fadeOutMs, &undoManager);
-    return changed;
-}
-
-double ProjectState::getClipFadeInMs(const juce::String& clipId) const
-{
-    const auto clip = findClip(clipId);
-    if (!clip.isValid()) return 0.0;
-    return static_cast<double>(clip.getProperty(kFadeInMs, 0.0));
-}
-
-double ProjectState::getClipFadeOutMs(const juce::String& clipId) const
-{
-    const auto clip = findClip(clipId);
-    if (!clip.isValid()) return 0.0;
-    return static_cast<double>(clip.getProperty(kFadeOutMs, 0.0));
 }
 
 // Returns the existing envelope array as a copy or an empty array if
@@ -2343,6 +2291,14 @@ juce::var ProjectState::tracksAsJson() const
             {
                 clipObj->setProperty("pendingAutoWarp", static_cast<bool>(clip.getProperty(kPendingAutoWarp, false)));
             }
+            if (clip.hasProperty(kEnvelopePoints))
+            {
+                // Pass the stored `juce::var` ARRAY straight through — each
+                // element is a `{ timeMs, gain }` object, ready for JSON and
+                // matching the renderer's `ProjectStateClipSchema`. Without
+                // this the per-clip Volume Shape is lost on project reload.
+                clipObj->setProperty("envelopePoints", clip.getProperty(kEnvelopePoints));
+            }
             // Resolve the source file through the linked library item so
             // the renderer can flag clips whose underlying file went
             // missing since the project was last saved. An empty library
@@ -2364,6 +2320,26 @@ juce::var ProjectState::tracksAsJson() const
     return tracksArray;
 }
 
+namespace
+{
+
+void removeLegacyClipFadeProperties(juce::ValueTree& tree)
+{
+    if (tree.hasType(juce::Identifier{"CLIP"}))
+    {
+        tree.removeProperty(juce::Identifier{"fadeInMs"}, nullptr);
+        tree.removeProperty(juce::Identifier{"fadeOutMs"}, nullptr);
+    }
+
+    for (int i = 0; i < tree.getNumChildren(); ++i)
+    {
+        auto child = tree.getChild(i);
+        removeLegacyClipFadeProperties(child);
+    }
+}
+
+} // namespace
+
 juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
 {
     if (!newTree.isValid() || !newTree.hasType(kProject))
@@ -2381,6 +2357,7 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
         root.removeAllChildren(nullptr);
         root.removeAllProperties(nullptr);
         root.copyPropertiesAndChildrenFrom(newTree, nullptr);
+        removeLegacyClipFadeProperties(root);
         // Ensure the standard container children exist even if the
         // loaded project file pre-dates them, so subsequent add+remove
         // cycles round-trip cleanly against the clean-snapshot baseline.

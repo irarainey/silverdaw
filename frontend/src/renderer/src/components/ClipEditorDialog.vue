@@ -22,10 +22,17 @@ import {
   pitchNeedsProcessor,
   useClipEditorWarpDraft
 } from '@/lib/clipEditor/useClipEditorWarpDraft'
-import { useClipEditorFadesDraft } from '@/lib/clipEditor/useClipEditorFadesDraft'
+import { useClipEditorVolumeShapeDraft } from '@/lib/clipEditor/useClipEditorVolumeShapeDraft'
+import { envelopeGainAtMs } from '@/lib/envelope'
+import {
+  hitTestHandle,
+  overlayGainToY,
+  overlayYToGain,
+  sourceMsToVolumeTime,
+  volumeTimeToSourceMs
+} from '@/lib/clipEditor/volumeOverlay'
 import ClipEditorWarpPanel from '@/components/ClipEditorWarpPanel.vue'
 import ClipEditorPitchPanel from '@/components/ClipEditorPitchPanel.vue'
-import ClipEditorFadesPanel from '@/components/ClipEditorFadesPanel.vue'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
@@ -81,16 +88,39 @@ const {
   initialise: initialiseWarpDraft
 } = warpDraft
 
-// Draft fade state. Mirrors the warp draft pattern: dialog owns the
-// hook, panel binds to its refs, Save commits, Cancel discards.
-const fadesDraft = useClipEditorFadesDraft()
+// Draft volume-shape (gain envelope) state. Same transactional pattern:
+// the dialog owns the hook, the panel binds to it, Save commits via
+// `setClipEnvelope`, Cancel discards.
+const volumeShapeDraft = useClipEditorVolumeShapeDraft()
 const {
-  draftFadeInMs,
-  draftFadeOutMs,
-  hasChanged: hasFadesChanged,
-  initialise: initialiseFadesDraft,
-  clampAgainstDuration: clampFadesAgainstDuration
-} = fadesDraft
+  hasChanged: hasVolumeShapeChanged,
+  initialise: initialiseVolumeShapeDraft,
+  committedPoints: volumeShapeCommittedPoints
+} = volumeShapeDraft
+
+// "Volume" edit mode for the waveform: when on, the canvas pointer edits
+// the gain envelope (add / drag / delete breakpoints) instead of the
+// selection. Only meaningful in the cropped Clip view, where the envelope
+// spans the whole clip; toggled off automatically in Source view.
+const volumeEditMode = ref(false)
+
+// Effective (post-warp) audible duration of the clip being edited — the
+// horizontal span of the volume-shape editor and the basis its endpoints
+// are pinned to. Matches the ms basis the backend persists the envelope in.
+const volumeShapeDurationMs = computed(() => {
+  const clip = timelineClip.value
+  if (!clip) return 0
+  return effectiveClipDurationMs(clip)
+})
+
+// The envelope overlay is a single-timeline-clip feature shown over the
+// cropped Clip view (where the breakpoint axis spans the whole clip).
+const volumeShapeAvailable = computed(
+  () => editsSingleTimelineClip.value && !viewExpanded.value && volumeShapeDurationMs.value > 0
+)
+// Pointer edits the envelope (vs the selection) only while the Volume
+// toggle is on and the overlay is actually shown.
+const volumeEditActive = computed(() => volumeEditMode.value && volumeShapeAvailable.value)
 
 
 const warpActive = computed(() => {
@@ -172,24 +202,23 @@ function scheduleDraftPreviewWarp(): void {
   previewWarpUpdateTimer = window.setTimeout(sendDraftPreviewWarp, 33)
 }
 
-// Fade draft → preview voice. Mirrors the warp scheduler's 33ms
-// throttle so dragging the fade input doesn't flood the bridge but
-// still tracks the audition in close-to-real-time.
-let previewFadesUpdateTimer: number | null = null
-function clearPreviewFadesUpdateTimer(): void {
-  if (previewFadesUpdateTimer === null) return
-  window.clearTimeout(previewFadesUpdateTimer)
-  previewFadesUpdateTimer = null
+// Volume-shape draft → preview voice. A 33ms throttle so dragging a
+// breakpoint auditions live without flooding the bridge.
+let previewEnvelopeUpdateTimer: number | null = null
+function clearPreviewEnvelopeUpdateTimer(): void {
+  if (previewEnvelopeUpdateTimer === null) return
+  window.clearTimeout(previewEnvelopeUpdateTimer)
+  previewEnvelopeUpdateTimer = null
 }
-function sendDraftPreviewFades(): void {
-  previewFadesUpdateTimer = null
+function sendDraftPreviewEnvelope(): void {
+  previewEnvelopeUpdateTimer = null
   if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
-  preview.setFades(draftFadeInMs.value, draftFadeOutMs.value)
+  preview.setEnvelope(volumeShapeCommittedPoints())
 }
-function scheduleDraftPreviewFades(): void {
+function scheduleDraftPreviewEnvelope(): void {
   if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
-  if (previewFadesUpdateTimer !== null) return
-  previewFadesUpdateTimer = window.setTimeout(sendDraftPreviewFades, 33)
+  if (previewEnvelopeUpdateTimer !== null) return
+  previewEnvelopeUpdateTimer = window.setTimeout(sendDraftPreviewEnvelope, 33)
 }
 
 // While the preview is playing, keep the playhead visible on the canvas
@@ -308,11 +337,11 @@ const hasWarpPitchChanged = computed(() => {
 
 const canSaveChanges = computed(() => {
   if (!editsExistingClip.value) return false
-  // Fades only persist on single-timeline-clip edits today (saved-clip
-  // library updates don't carry fade defaults). Don't let a fade-only
-  // edit enable Save in modes where it would be silently dropped.
-  const fadesDirty = editsSingleTimelineClip.value && hasFadesChanged.value
-  return hasSelectionChanged.value || hasWarpPitchChanged.value || fadesDirty
+  // The volume shape only persists on single-timeline-clip edits today
+  // (saved-clip library updates don't carry shape defaults). Don't let a
+  // shape-only edit enable Save in modes where it would be silently dropped.
+  const volumeShapeDirty = editsSingleTimelineClip.value && hasVolumeShapeChanged.value
+  return hasSelectionChanged.value || hasWarpPitchChanged.value || volumeShapeDirty
 })
 
 // Non-destructive crop: snap the cropped working view to the current
@@ -345,7 +374,8 @@ watch(
       resetZoom()
       initSelectionForItem()
       initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
-      initialiseFadesDraft(timelineClip.value)
+      initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
+      volumeEditMode.value = false
       loopEnabled.value = false
       lastHiResRequestKey = ''
       cropUndoStack.value = []
@@ -360,7 +390,7 @@ watch(
       loadPreviewForView()
     } else {
       clearPreviewWarpUpdateTimer()
-      clearPreviewFadesUpdateTimer()
+      clearPreviewEnvelopeUpdateTimer()
       preview.unload()
       lastPreviewLoadKey = ''
       library.setEditorHiResPeaks(null)
@@ -376,11 +406,12 @@ watch(
   () => {
     if (!props.open) return
     viewExpanded.value = false
+    volumeEditMode.value = false
     resetZoom()
     lastPreviewLoadKey = ''
     initSelectionForItem()
     initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
-    initialiseFadesDraft(timelineClip.value)
+    initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
     lastHiResRequestKey = ''
     cropUndoStack.value = []
     cropRedoStack.value = []
@@ -397,19 +428,26 @@ watch(
   }
 )
 
-// Audition the fade draft live. Also triggers a redraw so the canvas
-// fade overlay tracks the input value frame-by-frame.
+// Audition the volume-shape draft live. The hook reassigns the points
+// ref on every edit, so a shallow watch fires on each breakpoint change.
+// Also redraws so the on-waveform envelope overlay tracks the edit.
 watch(
-  [draftFadeInMs, draftFadeOutMs],
+  () => volumeShapeDraft.draftPoints.value,
   () => {
-    scheduleDraftPreviewFades()
+    scheduleDraftPreviewEnvelope()
     drawWaveform()
   }
 )
 
-// PREVIEW_LOAD is async. If the user changes fade values between
+// Redraw when the Volume edit toggle flips so the overlay appears/disappears
+// immediately, even before any breakpoint has been edited.
+watch(volumeEditActive, () => {
+  drawWaveform()
+})
+
+// PREVIEW_LOAD is async. If the user edits the volume shape between
 // sending the load and the backend signalling isLoaded=true, those
-// `setFades` calls are no-ops (gated on isLoaded). Re-push the
+// `setEnvelope` calls are no-ops (gated on isLoaded). Re-push the
 // current draft once the preview transitions to loaded so the voice
 // always matches the UI.
 watch(
@@ -417,7 +455,7 @@ watch(
   (loaded, prev) => {
     if (!loaded || loaded === prev) return
     if (!props.open || !editsExistingClip.value) return
-    preview.setFades(draftFadeInMs.value, draftFadeOutMs.value)
+    preview.setEnvelope(volumeShapeCommittedPoints())
   }
 )
 
@@ -437,6 +475,11 @@ watch(
 // clip window) sits inside the visible window — saves the user from
 // hunting for it on long sources.
 watch(viewExpanded, async (expanded) => {
+  if (expanded) {
+    // The envelope overlay spans the cropped clip; leaving Clip view
+    // exits Volume edit mode so the canvas returns to selection editing.
+    volumeEditMode.value = false
+  }
   if (!expanded) {
     // Snap the cropped view to the user's current selection so it
     // becomes the new focused range. Fall back to keeping the
@@ -582,7 +625,7 @@ watch(
 onBeforeUnmount(() => {
   ui.clipEditorOpen = false
   clearPreviewWarpUpdateTimer()
-  clearPreviewFadesUpdateTimer()
+  clearPreviewEnvelopeUpdateTimer()
   preview.unload()
   window.removeEventListener('keydown', onWindowKeydownCapture, { capture: true })
   if (resizeObserver) {
@@ -643,22 +686,10 @@ function loadPreviewForView(): void {
     inMs: viewInMs.value,
     durationMs: viewDurationMs.value,
     warp
-    // Fades intentionally excluded — fade-only edits route through
-    // PREVIEW_SET_FADES (live setFades on the existing voice) and
-    // never need a full PREVIEW_LOAD rebuild. The seed values in the
-    // load payload below cover the cold-start case.
   })
   if (loadKey === lastPreviewLoadKey) return
   lastPreviewLoadKey = loadKey
-  preview.load(
-    src.id,
-    viewInMs.value,
-    viewDurationMs.value,
-    warp,
-    editsExistingClip.value
-      ? { fadeInMs: draftFadeInMs.value, fadeOutMs: draftFadeOutMs.value }
-      : undefined
-  )
+  preview.load(src.id, viewInMs.value, viewDurationMs.value, warp)
 }
 
 // On-demand high-resolution peaks for the Clip Editor. The default
@@ -925,84 +956,74 @@ function drawWaveform(): void {
     ctx.stroke()
   }
 
-  // --- Fade overlay ----------------------------------------------------
-  // Fades are persisted/applied in TIMELINE (post-warp) ms. The canvas
-  // draws SOURCE ms. Convert: sourceMs = timelineMs * tempoRatio. For
-  // the no-warp common case (ratio=1) this is a no-op.
-  //
-  // The fade is drawn as a GAIN ENVELOPE across the clip height: the top
-  // edge (waveTop) is unity gain, the bottom edge (h) is silence. A
-  // fade-in ramps the envelope line from the bottom-left up to the top;
-  // a fade-out ramps it from the top down to the bottom-right. The wedge
-  // ABOVE the line — the gain that's been removed — is dimmed so the eye
-  // reads "the clip is quieter here, ramping in/out". A small handle dot
-  // marks the unity-gain corner (the point the fade reaches/leaves full
-  // volume). Each fade is drawn independently; a pre-Save clamp keeps
-  // the persisted values inside the audible window.
-  if (editsExistingClip.value && selectionDurationMs.value > 0) {
-    const ratio = warpDraft.draftEffectiveRatio.value > 0 ? warpDraft.draftEffectiveRatio.value : 1
-    const sourceFadeIn = Math.max(0, draftFadeInMs.value * ratio)
-    const sourceFadeOut = Math.max(0, draftFadeOutMs.value * ratio)
-    const selStart = selectionInMs.value
-    const selEnd = selectionEndMs.value
-    const audibleSourceMs = selEnd - selStart
-    const inWidth = Math.min(sourceFadeIn, audibleSourceMs)
-    const outWidth = Math.min(sourceFadeOut, audibleSourceMs)
+  // --- Volume Shape (gain envelope) overlay ----------------------------
+  // Drawn directly over the waveform so it's obvious which part of the clip
+  // each breakpoint affects. Editable in place when Volume mode is on (see
+  // `volumeEditActive`); otherwise rendered faint as read-only context.
+  // Only shown in the cropped Clip view, where the breakpoint time axis
+  // (clip-local post-warp ms) spans the whole clip from its source start.
+  if (volumeShapeAvailable.value) {
+    const points = volumeShapeDraft.draftPoints.value
+    const editing = volumeEditActive.value
+    // The volume line is always visible as context; the Volume toggle only
+    // controls whether it's editable (brighter line + grabbable handles).
+    if (points.length >= 2) {
+      const ratio = warpDraft.draftEffectiveRatio.value > 0 ? warpDraft.draftEffectiveRatio.value : 1
+      const clipStartSourceMs = viewInMs.value
+      const durMs = volumeShapeDurationMs.value
+      const envX = (timelineMs: number): number =>
+        msToX(volumeTimeToSourceMs(timelineMs, clipStartSourceMs, ratio))
+      const envY = (gain: number): number => overlayGainToY(gain, waveTop, waveH)
 
-    const maskFill = 'rgba(9, 9, 11, 0.62)'
-    const lineColor = 'rgba(56, 189, 248, 0.95)'
-    const dotR = 3.5 * dpr
-
-    const drawHandle = (x: number, y: number): void => {
-      ctx.fillStyle = lineColor
+      // Unity (0 dB) reference line across the clip span.
+      const xStart = envX(0)
+      const xEnd = envX(durMs)
+      ctx.strokeStyle = 'rgba(63, 63, 70, 0.9)'
+      ctx.lineWidth = 1
+      ctx.setLineDash([3 * dpr, 3 * dpr])
       ctx.beginPath()
-      ctx.arc(x, y, dotR, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.fillStyle = '#0b0f14'
-      ctx.beginPath()
-      ctx.arc(x, y, dotR * 0.45, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    ctx.lineWidth = 2
-
-    if (inWidth > 0) {
-      const x0 = msToX(selStart)
-      const x1 = msToX(selStart + inWidth)
-      // Dim the removed-gain wedge (above the rising envelope line).
-      ctx.fillStyle = maskFill
-      ctx.beginPath()
-      ctx.moveTo(x0, waveTop)
-      ctx.lineTo(x1, waveTop)
-      ctx.lineTo(x0, h)
-      ctx.closePath()
-      ctx.fill()
-      // Envelope line: silent (bottom-left) -> unity (top-right).
-      ctx.strokeStyle = lineColor
-      ctx.beginPath()
-      ctx.moveTo(x0, h)
-      ctx.lineTo(x1, waveTop)
+      const uy = envY(1)
+      ctx.moveTo(xStart, uy)
+      ctx.lineTo(xEnd, uy)
       ctx.stroke()
-      drawHandle(x1, waveTop)
-    }
-    if (outWidth > 0) {
-      const x0 = msToX(selEnd - outWidth)
-      const x1 = msToX(selEnd)
-      // Dim the removed-gain wedge (above the falling envelope line).
-      ctx.fillStyle = maskFill
+      ctx.setLineDash([])
+
+      // Sampled curve (linear-in-dB segments are curved in linear gain).
+      const steps = Math.max(16, Math.round((xEnd - xStart) / (3 * dpr)))
+      ctx.strokeStyle = editing ? 'rgba(167, 139, 250, 0.95)' : 'rgba(167, 139, 250, 0.5)'
+      ctx.lineWidth = editing ? 2 * dpr : 1.5 * dpr
       ctx.beginPath()
-      ctx.moveTo(x0, waveTop)
-      ctx.lineTo(x1, waveTop)
-      ctx.lineTo(x1, h)
-      ctx.closePath()
-      ctx.fill()
-      // Envelope line: unity (top-left) -> silent (bottom-right).
-      ctx.strokeStyle = lineColor
-      ctx.beginPath()
-      ctx.moveTo(x0, waveTop)
-      ctx.lineTo(x1, h)
+      for (let i = 0; i <= steps; i++) {
+        const t = (i / steps) * durMs
+        const x = envX(t)
+        const y = envY(envelopeGainAtMs(points, t))
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
       ctx.stroke()
-      drawHandle(x0, waveTop)
+
+      // Breakpoint handles. Brighter and larger when editing.
+      const r = (editing ? 4 : 2.5) * dpr
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i]
+        if (!p) continue
+        const x = envX(p.timeMs)
+        const y = envY(p.gain)
+        const isEndpoint = i === 0 || i === points.length - 1
+        ctx.fillStyle = editing
+          ? isEndpoint
+            ? '#8b5cf6'
+            : '#c4b5fd'
+          : 'rgba(196, 181, 253, 0.6)'
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, Math.PI * 2)
+        ctx.fill()
+        if (editing) {
+          ctx.strokeStyle = '#2e1065'
+          ctx.lineWidth = 1 * dpr
+          ctx.stroke()
+        }
+      }
     }
   }
 }
@@ -1032,6 +1053,15 @@ function onCanvasMouseDown(e: MouseEvent): void {
   const fullIn = viewInMs.value
   const fullEnd = viewEndMs.value
   if (vDur <= 0) return
+
+  // Volume edit mode hijacks the canvas pointer to edit the gain envelope
+  // instead of the selection. Handled first so none of the selection logic
+  // below runs while shaping volume.
+  if (volumeEditActive.value) {
+    onCanvasEnvelopePointerDown(e, rect, vIn, vDur)
+    return
+  }
+
   const xToMs = (clientX: number): number =>
     Math.max(fullIn, Math.min(fullEnd, vIn + ((clientX - rect.left) / rect.width) * vDur))
   const startSx = ((selectionInMs.value - vIn) / vDur) * rect.width
@@ -1094,6 +1124,79 @@ function onCanvasMouseDown(e: MouseEvent): void {
   }
   window.addEventListener('mousemove', onMove)
   window.addEventListener('mouseup', onUp)
+}
+
+// Envelope editing on the waveform canvas. Mirrors the SVG editor's gestures
+// (drag a handle to move it, click the curve to add a breakpoint then drag,
+// Alt-click / right-click a handle to remove it) but in the canvas's own
+// pixel space. All coordinates here are CSS pixels (getBoundingClientRect),
+// whereas `drawWaveform` works in device pixels — both map gain/time the
+// same way via the shared `volumeOverlay` helpers, just with a different
+// height/ruler scale.
+function onCanvasEnvelopePointerDown(
+  e: MouseEvent,
+  rect: DOMRect,
+  vIn: number,
+  vDur: number
+): void {
+  const ratio = warpDraft.draftEffectiveRatio.value > 0 ? warpDraft.draftEffectiveRatio.value : 1
+  const clipStartSourceMs = viewInMs.value
+  const durMs = volumeShapeDurationMs.value
+  const rulerCss = 18
+  const waveTopCss = rulerCss
+  const waveHCss = Math.max(1, rect.height - rulerCss)
+
+  const timeToXCss = (timelineMs: number): number => {
+    const sourceMs = volumeTimeToSourceMs(timelineMs, clipStartSourceMs, ratio)
+    return ((sourceMs - vIn) / vDur) * rect.width
+  }
+  const xToTime = (clientX: number): number => {
+    const sourceMs = vIn + ((clientX - rect.left) / rect.width) * vDur
+    return Math.max(0, Math.min(durMs, sourceMsToVolumeTime(sourceMs, clipStartSourceMs, ratio)))
+  }
+  const yToGain = (clientY: number): number =>
+    overlayYToGain(clientY - rect.top, waveTopCss, waveHCss)
+
+  const lx = e.clientX - rect.left
+  const ly = e.clientY - rect.top
+  const points = volumeShapeDraft.draftPoints.value
+  const positions = points.map((p) => ({
+    x: timeToXCss(p.timeMs),
+    y: overlayGainToY(p.gain, waveTopCss, waveHCss)
+  }))
+  const hit = hitTestHandle(positions, lx, ly, 12)
+
+  // Alt-click or right-click on a handle removes it (endpoints are pinned
+  // and protected inside `removePoint`).
+  if (hit !== null && (e.altKey || e.button === 2)) {
+    volumeShapeDraft.removePoint(hit)
+    return
+  }
+  // Right-click on empty space does nothing (the context menu is suppressed).
+  if (e.button === 2) return
+
+  let dragIndex = hit
+  if (dragIndex === null) {
+    dragIndex = volumeShapeDraft.addPoint(xToTime(e.clientX), yToGain(e.clientY))
+  }
+  e.preventDefault()
+
+  const onMove = (ev: MouseEvent): void => {
+    if (dragIndex === null) return
+    volumeShapeDraft.movePoint(dragIndex, xToTime(ev.clientX), yToGain(ev.clientY))
+  }
+  const onUp = (): void => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
+// Suppress the browser context menu over the canvas while shaping volume so
+// right-click can delete a breakpoint instead.
+function onCanvasContextMenu(e: MouseEvent): void {
+  if (volumeEditActive.value) e.preventDefault()
 }
 
 function seekPlayheadToSourceMs(sourceMs: number): void {
@@ -1486,22 +1589,9 @@ function onSaveChanges(): void {
     }
     project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
     project.setClipWarp(clip.id, warpPatch)
-    // Commit fades LAST so the trim + warp commits have settled the
-    // clip's audible window before we clamp / persist the fade lengths
-    // against the *new* effective duration. Per-feature backend
-    // currently stores 0 as undefined (see `projectStore.setClipFades`),
-    // so a no-fade clip stays a no-op here.
-    const effectiveMs = effectiveDurationMs(targetDur, {
-      warpEnabled: draftTempoEnabled.value,
-      tempoRatio: warpPatch.tempoRatio ?? undefined,
-      sourceBpm: sourceBpm.value,
-      projectBpm: transport.bpm
-    })
-    clampFadesAgainstDuration(effectiveMs)
-    project.setClipFades(clip.id, {
-      fadeInMs: draftFadeInMs.value,
-      fadeOutMs: draftFadeOutMs.value
-    })
+    // Volume shape is stored in clip-local timeline-ms basis; a flat unity
+    // draft commits as an empty array, clearing it.
+    project.setClipEnvelope(clip.id, volumeShapeCommittedPoints())
     notifications.pushInfo(`Saved changes for "${titleText.value}".`)
     emit('close')
     return
@@ -1661,8 +1751,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
           <div class="flex min-w-0 flex-col gap-3">
             <canvas
               ref="waveformEl"
-              class="h-[min(260px,26vh)] w-full cursor-crosshair rounded border border-zinc-800 bg-zinc-950"
+              class="h-[min(260px,26vh)] w-full rounded border border-zinc-800 bg-zinc-950"
+              :class="volumeEditActive ? 'cursor-pointer' : 'cursor-crosshair'"
               @mousedown="onCanvasMouseDown"
+              @contextmenu="onCanvasContextMenu"
               @wheel="onCanvasWheel"
             />
             <div
@@ -1700,6 +1792,31 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                 </div>
               </div>
               <div class="flex shrink-0 items-center gap-1">
+                <!-- Volume Shape edit toggle: turns the waveform into a gain
+                     envelope editor. Single timeline clips only, and only in
+                     the cropped Clip view (the envelope axis spans the clip);
+                     disabled in Source view. -->
+                <button
+                  v-if="editsSingleTimelineClip"
+                  type="button"
+                  class="rounded px-2 py-1 text-[11px] font-medium"
+                  :class="
+                    volumeEditMode && !viewExpanded
+                      ? 'bg-violet-600 text-white hover:bg-violet-500'
+                      : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40'
+                  "
+                  :disabled="viewExpanded"
+                  :title="
+                    viewExpanded
+                      ? 'Switch to the Clip view to shape volume'
+                      : volumeEditMode
+                        ? 'Volume shaping on — click the waveform to add or drag breakpoints'
+                        : 'Shape the clip volume over time on the waveform'
+                  "
+                  @click="volumeEditMode = !volumeEditMode"
+                >
+                  Volume
+                </button>
                 <!-- Non-destructive crop: narrows the working view to the
                      current selection so the user can audition/tweak before
                      committing. Local Ctrl+Z / Ctrl+Y undo/redo while the
@@ -1795,14 +1912,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                   :draft="warpDraft"
                   :source-key="sourceKey"
                 />
-              </ClipEffectModule>
-              <ClipEffectModule
-                v-if="editsSingleTimelineClip"
-                title="Fades"
-                :cols="1"
-                :rows="1"
-              >
-                <ClipEditorFadesPanel :draft="fadesDraft" />
               </ClipEffectModule>
             </div>
           </div>

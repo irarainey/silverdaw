@@ -8,12 +8,18 @@ import { defineStore } from 'pinia'
 import { decodeAudioToPeaks, PEAKS_PER_SECOND } from '@/lib/audio'
 import { MAX_TRACK_GAIN_LINEAR } from '@/lib/audio/db'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { sanitizeEnvelopePoints, envelopesEqual } from '@/lib/envelope'
 import { log } from '@/lib/log'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore, libraryItemIsSample } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
-import type { ClipWarpMode, DelayNoteValue, ProjectStatePayload } from '@shared/bridge-protocol'
+import type {
+  ClipEnvelopePoint,
+  ClipWarpMode,
+  DelayNoteValue,
+  ProjectStatePayload
+} from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
 
 export interface Clip {
@@ -87,11 +93,11 @@ export interface Clip {
   tempoRatio?: number
   semitones?: number
   cents?: number
-  /** Linear ramp-in length applied to the audible window (post-warp, post-trim).
-   *  Clamped >= 0; undefined means "no fade" — equivalent to 0. */
-  fadeInMs?: number
-  /** Linear ramp-out length applied at the tail of the audible window. */
-  fadeOutMs?: number
+  /** Per-clip volume-shape breakpoints (clip-local post-warp ms, linear
+   *  gain in `[0, 4]`, sorted ascending by `timeMs`). undefined / empty
+   *  means "no shape" — unity gain across the clip. Backend normalises
+   *  (sort, clamp, dedupe); the renderer mirrors the stored shape. */
+  envelopePoints?: ClipEnvelopePoint[]
   /** Bookkeeping flag: clip was dropped before its library item's BPM
    *  was detected. Cleared automatically by `LIBRARY_ITEM_ANALYSIS`
    *  (auto-flip warp on) or by any manual warp edit (user opt-out). */
@@ -1645,43 +1651,33 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Set per-clip linear fade-in / fade-out lengths (ms). Either field
-     * may be omitted to leave it unchanged. `localOnly: true` skips the
-     * backend round-trip (used by the bridgeService inbound handler
-     * when echoing a server-side ack). Both lengths are clamped to >= 0
-     * locally; the backend re-clamps and additionally caps
-     * `fadeIn + fadeOut <= clipDuration` at the DSP layer.
+     * Replace a clip's volume-shape envelope with `points` (one atomic
+     * mutation per edit / drag). Points are sanitised locally (clamp,
+     * sort, dedupe) so the optimistic render matches the backend's
+     * normalisation; the backend re-normalises authoritatively. An empty
+     * (or sub-two-point) result clears the shape. `localOnly: true` skips
+     * the backend round-trip — used by the bridgeService inbound handler
+     * when echoing a server ack.
      */
-    setClipFades(
+    setClipEnvelope(
       clipId: string,
-      patch: { fadeInMs?: number; fadeOutMs?: number },
+      points: ClipEnvelopePoint[],
       opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
     ): void {
       const clip = this.clips[clipId]
       if (!clip) return
-      let touched = false
-      if (patch.fadeInMs !== undefined) {
-        const v = Math.max(0, Number.isFinite(patch.fadeInMs) ? patch.fadeInMs : 0)
-        const next = v > 0 ? v : undefined
-        if (clip.fadeInMs !== next) {
-          clip.fadeInMs = next
-          touched = true
-        }
+      const cleaned = sanitizeEnvelopePoints(points)
+      // A shape needs at least two breakpoints (start + end) to mean
+      // anything; anything less is "no shape" and clears the property.
+      const next = cleaned.length >= 2 ? cleaned : undefined
+      if (!envelopesEqual(clip.envelopePoints, next)) {
+        clip.envelopePoints = next
+        this.peaksRevision++
       }
-      if (patch.fadeOutMs !== undefined) {
-        const v = Math.max(0, Number.isFinite(patch.fadeOutMs) ? patch.fadeOutMs : 0)
-        const next = v > 0 ? v : undefined
-        if (clip.fadeOutMs !== next) {
-          clip.fadeOutMs = next
-          touched = true
-        }
-      }
-      if (touched) this.peaksRevision++
       if (!opts?.localOnly) {
-        sendBridge('CLIP_SET_FADES', {
+        sendBridge('CLIP_SET_ENVELOPE', {
           clipId,
-          fadeInMs: patch.fadeInMs,
-          fadeOutMs: patch.fadeOutMs,
+          points: cleaned,
           gestureId: opts?.gestureId,
           gestureEnd: opts?.gestureEnd
         })
@@ -1689,7 +1685,7 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Update a track's Tone EQ. Mirrors `setClipFades`: applies the partial
+     * Update a track's Tone EQ. Mirrors `setClipEnvelope`: applies the partial
      * patch locally (default-suppressing 0 dB / off back to `undefined`)
      * then forwards to the backend unless `opts.localOnly` (used by the
      * `TRACK_TONE_APPLIED` ack to reconcile to canonical values without
@@ -2895,10 +2891,10 @@ export const useProjectStore = defineStore('project', {
             existing.tempoRatio = typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined
             existing.semitones = typeof c.semitones === 'number' ? c.semitones : undefined
             existing.cents = typeof c.cents === 'number' ? c.cents : undefined
-            existing.fadeInMs =
-              typeof c.fadeInMs === 'number' && c.fadeInMs > 0 ? c.fadeInMs : undefined
-            existing.fadeOutMs =
-              typeof c.fadeOutMs === 'number' && c.fadeOutMs > 0 ? c.fadeOutMs : undefined
+            existing.envelopePoints =
+              Array.isArray(c.envelopePoints) && c.envelopePoints.length >= 2
+                ? sanitizeEnvelopePoints(c.envelopePoints)
+                : undefined
             existing.effectiveDurationMs =
               typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined
             existing.effectiveTempoRatio =
@@ -2936,10 +2932,10 @@ export const useProjectStore = defineStore('project', {
             tempoRatio: typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined,
             semitones: typeof c.semitones === 'number' ? c.semitones : undefined,
             cents: typeof c.cents === 'number' ? c.cents : undefined,
-            fadeInMs:
-              typeof c.fadeInMs === 'number' && c.fadeInMs > 0 ? c.fadeInMs : undefined,
-            fadeOutMs:
-              typeof c.fadeOutMs === 'number' && c.fadeOutMs > 0 ? c.fadeOutMs : undefined,
+            envelopePoints:
+              Array.isArray(c.envelopePoints) && c.envelopePoints.length >= 2
+                ? sanitizeEnvelopePoints(c.envelopePoints)
+                : undefined,
             effectiveDurationMs:
               typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined,
             effectiveTempoRatio:

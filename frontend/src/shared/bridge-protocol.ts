@@ -401,19 +401,6 @@ export interface TrackSetLevelerPayload extends GestureHints {
   amount: number
 }
 
-/**
- * Per-clip fade-in / fade-out lengths in clip-local **post-warp**
- * milliseconds. Both are optional so the renderer can drive a single
- * handle drag without re-asserting the other. The runtime clamps
- * `fadeIn + fadeOut <= clipDuration` so neither value can exceed the
- * clip; storage only enforces non-negativity.
- */
-export interface ClipSetFadesPayload extends GestureHints {
-  clipId: string
-  fadeInMs?: number
-  fadeOutMs?: number
-}
-
 /** One breakpoint on a clip volume envelope. */
 export interface ClipEnvelopePoint {
   /** Clip-local post-warp ms in `[0, clipDuration]`. */
@@ -518,7 +505,6 @@ export interface BridgeOutboundMap {
   TRACK_SET_SENDS: TrackSetSendsPayload
   TRACK_SET_TONE: TrackSetTonePayload
   TRACK_SET_LEVELER: TrackSetLevelerPayload
-  CLIP_SET_FADES: ClipSetFadesPayload
   CLIP_SET_ENVELOPE: ClipSetEnvelopePayload
   PROJECT_SET_REVERB: ProjectSetReverbPayload
   PROJECT_SET_DELAY: ProjectSetDelayPayload
@@ -555,7 +541,7 @@ export interface BridgeOutboundMap {
   PREVIEW_STOP: undefined
   PREVIEW_SEEK: PreviewSeekPayload
   PREVIEW_SET_WARP: PreviewSetWarpPayload
-  PREVIEW_SET_FADES: PreviewSetFadesPayload
+  PREVIEW_SET_ENVELOPE: PreviewSetEnvelopePayload
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   EDIT_UNDO: undefined
@@ -835,13 +821,6 @@ export interface PreviewLoadPayload extends PreviewSetWarpPayload {
   libraryItemId: string
   inMs?: number
   durationMs?: number
-  /** Clip-local fade-in length (timeline/post-warp ms). Applied to the
-   *  new preview `OffsetSource` atomically before the source is wired
-   *  into the transport so the very first playback already includes
-   *  the ramp. Omit / 0 = no fade-in. */
-  fadeInMs?: number
-  /** Clip-local fade-out length (timeline/post-warp ms). See `fadeInMs`. */
-  fadeOutMs?: number
 }
 
 /** Seek within the currently loaded preview window. `positionMs` is
@@ -867,16 +846,16 @@ export interface PreviewSetWarpPayload {
 }
 
 /**
- * Configure the fade envelope on the currently-loaded preview voice.
- * Both fields are clip-local post-warp milliseconds (same units as
- * `ClipSetFadesPayload`). Sent live by the Clip Editor while the
- * user edits the fade controls — the backend stores the values onto
- * the preview's `OffsetSource` atomically, so the next audio block
- * already uses the new ramp. No ack: matches `PREVIEW_SET_WARP`.
+ * Configure the volume shape (gain envelope) on the currently-loaded
+ * preview voice. `points` are clip-local post-warp milliseconds + linear
+ * gain (same units as `ClipSetEnvelopePayload`); an empty array clears
+ * the envelope. Sent live by the Clip Editor while the user edits the
+ * volume-shape curve — the backend installs a compiled snapshot onto the
+ * preview's `OffsetSource` atomically so the next audio block already
+ * reflects it. No ack: matches `PREVIEW_SET_WARP`.
  */
-export interface PreviewSetFadesPayload {
-  fadeInMs: number
-  fadeOutMs: number
+export interface PreviewSetEnvelopePayload {
+  points: ClipEnvelopePoint[]
 }
 
 /**
@@ -1058,17 +1037,6 @@ export const TrackLevelerAppliedPayloadSchema = z.object({
 })
 export type TrackLevelerAppliedPayload = z.infer<typeof TrackLevelerAppliedPayloadSchema>
 
-/** Ack for `CLIP_SET_FADES` — echoes the fade lengths after non-negativity
- *  clamping. The runtime's `fadeIn + fadeOut <= duration` clamp does NOT
- *  alter the persisted values, so this ack matches what's stored. */
-export const ClipFadesAppliedPayloadSchema = z.object({
-  clipId: z.string(),
-  fadeInMs: z.number().nonnegative(),
-  fadeOutMs: z.number().nonnegative(),
-  ok: z.boolean()
-})
-export type ClipFadesAppliedPayload = z.infer<typeof ClipFadesAppliedPayloadSchema>
-
 const ClipEnvelopePointSchema = z.object({
   timeMs: z.number().nonnegative(),
   gain: z.number().min(0).max(4)
@@ -1180,14 +1148,10 @@ export const ProjectStateClipSchema = z.object({
    *  handler when it auto-flips warp on, or by any explicit
    *  `CLIP_SET_WARP` from the user. */
   pendingAutoWarp: z.boolean().optional(),
-  // ─── Phase 5 per-clip volume tailoring. All flat on the CLIP node
+  // ─── Phase 5 per-clip volume tailoring. Stored flat on the CLIP node
   //     to match ValueTree storage. `envelopePoints` is a `juce::var`
   //     ARRAY property; an empty array (or absent property) means the
   //     envelope is unused.
-  /** Fade-in length, clip-local post-warp ms. >= 0. */
-  fadeInMs: z.number().nonnegative().optional(),
-  /** Fade-out length, clip-local post-warp ms. >= 0. */
-  fadeOutMs: z.number().nonnegative().optional(),
   /** Volume-envelope breakpoints. Stored sorted ascending by `timeMs`. */
   envelopePoints: z
     .array(
@@ -1813,7 +1777,6 @@ export interface BridgeInboundMap {
   TRACK_SENDS_APPLIED: TrackSendsAppliedPayload
   TRACK_TONE_APPLIED: TrackToneAppliedPayload
   TRACK_LEVELER_APPLIED: TrackLevelerAppliedPayload
-  CLIP_FADES_APPLIED: ClipFadesAppliedPayload
   CLIP_ENVELOPE_APPLIED: ClipEnvelopeAppliedPayload
   PROJECT_REVERB_APPLIED: ProjectReverbAppliedPayload
   PROJECT_DELAY_APPLIED: ProjectDelayAppliedPayload
@@ -1879,7 +1842,6 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_SENDS_APPLIED',
   'TRACK_TONE_APPLIED',
   'TRACK_LEVELER_APPLIED',
-  'CLIP_FADES_APPLIED',
   'CLIP_ENVELOPE_APPLIED',
   'PROJECT_REVERB_APPLIED',
   'PROJECT_DELAY_APPLIED',
@@ -2028,11 +1990,6 @@ export function isTrackToneAppliedPayload(value: unknown): value is TrackToneApp
 /** Guard for `TrackLevelerAppliedPayload`. */
 export function isTrackLevelerAppliedPayload(value: unknown): value is TrackLevelerAppliedPayload {
   return TrackLevelerAppliedPayloadSchema.safeParse(value).success
-}
-
-/** Guard for `ClipFadesAppliedPayload`. */
-export function isClipFadesAppliedPayload(value: unknown): value is ClipFadesAppliedPayload {
-  return ClipFadesAppliedPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ClipEnvelopeAppliedPayload`. */

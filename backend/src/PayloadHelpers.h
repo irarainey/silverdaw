@@ -83,7 +83,7 @@ inline std::optional<juce::String> tryGetRequiredString(const juce::var& payload
 
 // ─── Optional (partial-update) reads ─────────────────────────────────────
 //
-// Partial-update handlers (Tone, Fades, Reverb, Delay) accept envelopes
+// Partial-update handlers (Tone, Reverb, Delay) accept envelopes
 // that carry only the fields the user touched and fall back to the
 // stored value for the rest. For those, an ABSENT field is legitimate —
 // it means "keep the current value" — so these readers return

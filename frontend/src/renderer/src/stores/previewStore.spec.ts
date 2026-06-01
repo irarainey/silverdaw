@@ -145,6 +145,30 @@ describe('previewStore', () => {
     expect(preview.isPlaying).toBe(false)
   })
 
+  it('does not send envelope updates until the preview is loaded, then sends PREVIEW_SET_ENVELOPE', () => {
+    const preview = usePreviewStore()
+    preview.load('lib1', 0, 1_000)
+    sendMock.mockClear()
+
+    const points = [
+      { timeMs: 0, gain: 1 },
+      { timeMs: 1_000, gain: 0.5 }
+    ]
+    preview.setEnvelope(points)
+    expect(sendMock).not.toHaveBeenCalled()
+
+    preview.applyState({
+      libraryItemId: 'lib1',
+      isPlaying: false,
+      isLoaded: true,
+      durationMs: 1_000,
+      generation: 1
+    })
+    preview.setEnvelope(points)
+
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_SET_ENVELOPE', { points })
+  })
+
   it('applyEnded resets isPlaying without bumping older state', () => {
     const preview = usePreviewStore()
     preview.applyState({

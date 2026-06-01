@@ -69,7 +69,6 @@ import {
   isTrackSendsAppliedPayload,
   isTrackToneAppliedPayload,
   isTrackLevelerAppliedPayload,
-  isClipFadesAppliedPayload,
   isClipEnvelopeAppliedPayload,
   isProjectReverbAppliedPayload,
   isProjectDelayAppliedPayload,
@@ -765,19 +764,6 @@ function dispatch(msg: BridgeInboundMessage): void {
     //     when the renderer-side UI for each effect ships. Until then
     //     PROJECT_STATE refreshes (on save / load / undo) carry the
     //     persisted values, so dropping the deltas here is harmless.
-    case 'CLIP_FADES_APPLIED': {
-      // Mirror the backend-clamped fade lengths into the local clip so
-      // undo / redo / cross-renderer ACKs flow without waiting for a
-      // full PROJECT_STATE.
-      useProjectStore().setClipFades(
-        msg.payload.clipId,
-        { fadeInMs: msg.payload.fadeInMs, fadeOutMs: msg.payload.fadeOutMs },
-        { localOnly: true }
-      )
-      log.info('bridge', `CLIP_FADES_APPLIED clipId=${msg.payload.clipId} in=${msg.payload.fadeInMs}ms out=${msg.payload.fadeOutMs}ms`)
-      break
-    }
-
     case 'TRACK_TONE_APPLIED': {
       // Reconcile to the backend-canonical (clamped / default-suppressed)
       // Tone values without echoing the gesture back to the engine.
@@ -847,8 +833,20 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'TRACK_LEVELER_APPLIED':
-    case 'CLIP_ENVELOPE_APPLIED':
       break
+
+    case 'CLIP_ENVELOPE_APPLIED': {
+      // Mirror the backend-normalised volume-shape breakpoints into the
+      // local clip so undo / redo / cross-renderer ACKs flow without
+      // waiting for a full PROJECT_STATE. An empty array clears the shape.
+      useProjectStore().setClipEnvelope(
+        msg.payload.clipId,
+        msg.payload.points ?? [],
+        { localOnly: true }
+      )
+      log.info('bridge', `CLIP_ENVELOPE_APPLIED clipId=${msg.payload.clipId} points=${msg.payload.points?.length ?? 0}`)
+      break
+    }
 
     default:
       assertNever(msg)
@@ -1091,8 +1089,6 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isTrackToneAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_LEVELER_APPLIED':
       return isTrackLevelerAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'CLIP_FADES_APPLIED':
-      return isClipFadesAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'CLIP_ENVELOPE_APPLIED':
       return isClipEnvelopeAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_REVERB_APPLIED':

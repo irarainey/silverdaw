@@ -678,6 +678,11 @@ struct OfflineClip
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     std::unique_ptr<WarpProcessor> warp;
     std::unique_ptr<OffsetSource> offsetSource;
+    /** Owns the volume-envelope snapshot for the offline render. The
+     *  `OffsetSource` holds a non-owning pointer; rendering is single-
+     *  threaded so no retire discipline is needed here — the snapshot
+     *  simply outlives the clip's source chain. */
+    std::unique_ptr<EnvelopeSnapshot> envelopeSnapshot;
     std::unique_ptr<juce::AudioTransportSource> transport;
     /** Wraps `transport` for attachment to `BusGraph::TrackRuntime`
      *  (Phase 5 step 1d). Declared LAST so it destructs FIRST — the
@@ -736,11 +741,14 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
         static_cast<juce::int64>(clip.inMs * out->sourceRate / 1000.0));
     out->offsetSource->setClipDurationSamples(
         static_cast<juce::int64>(clip.durationMs * out->sourceRate / 1000.0));
-    // Fades run inside OffsetSource at source rate (before the transport's
-    // resampler), identical to AudioEngine::setClipFades — guaranteeing the
-    // exported render carries the same fade shape the live engine produces.
-    out->offsetSource->setFadesMs(juce::jmax(0.0, clip.fadeInMs),
-                                  juce::jmax(0.0, clip.fadeOutMs));
+    // Volume shape runs inside the same OffsetSource as the live engine
+    // (post-warp, pre-transport-resample), so the export carries the
+    // identical envelope the user hears. Empty point list => no shape.
+    out->envelopeSnapshot = EnvelopeSnapshot::fromVarArray(clip.envelopePoints);
+    if (out->envelopeSnapshot != nullptr && !out->envelopeSnapshot->isEmpty())
+    {
+        out->offsetSource->setEnvelopeSnapshot(out->envelopeSnapshot.get());
+    }
 
     if (clip.warpEnabled)
     {
@@ -1039,11 +1047,10 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             clip.semitones = static_cast<double>(clipTree.getProperty(kSemitones, 0.0));
             clip.cents = static_cast<double>(clipTree.getProperty(kCents, 0.0));
             clip.effectiveDurationMs = timing.durationMs > 0.0 ? timing.durationMs : clip.durationMs;
-            // Read fades through the canonical accessor (single source of
-            // truth) so the offline OffsetSource receives the same values
-            // the live engine applied via `setClipFades`.
-            clip.fadeInMs = project.getClipFadeInMs(clip.id);
-            clip.fadeOutMs = project.getClipFadeOutMs(clip.id);
+            // Volume-envelope breakpoints via the canonical accessor so
+            // the offline render applies the exact same shape the live
+            // engine received through `setClipEnvelope`.
+            clip.envelopePoints = project.getClipEnvelope(clip.id);
 
             // Pull the source's native rate from the library item — useful
             // for diagnostics; the renderer reads the authoritative rate
@@ -1078,8 +1085,6 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
                         " effectiveDurationMs=" + juce::String(clip.effectiveDurationMs, 1) +
                         " semitones=" + juce::String(clip.semitones, 2) +
                         " cents=" + juce::String(clip.cents, 2) +
-                        " fadeInMs=" + juce::String(clip.fadeInMs, 1) +
-                        " fadeOutMs=" + juce::String(clip.fadeOutMs, 1) +
                         " warpMode=" + clip.warpMode);
                 track.clips.push_back(std::move(clip));
             }

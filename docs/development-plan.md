@@ -666,10 +666,10 @@ DSP class in `code`.
 
 **Per-clip (one of each, per Clip — see §7.11):**
 
-- **Fade In / Fade Out** — two scalars on the clip (`fadeInMs`,
-  `fadeOutMs`), edited via drag handles on the clip's top corners.
-- **Volume Shape** — breakpoint envelope edited on top of the clip
-  waveform or in the Clip Editor.
+- **Volume Shape** — breakpoint gain envelope edited on top of the clip
+  waveform in the Clip Editor. Fade-in / fade-out are expressed by
+  dragging the end breakpoints down to silence (there is no separate
+  fade feature).
 
 **Tail-render policy.** After every dry track has gone silent the
 `BusGraph` keeps pulling the shared Room and Echo processors with zero
@@ -772,11 +772,23 @@ silence.
 - Saturator and Utility (gain / phase / mono).
 - Master Limiter.
 
-### 7.11 Clip Fades & Volume Shape
+### 7.11 Clip Volume Shape
 
-Per-clip volume tailoring, surfaced as two related controls the user
-experiences as one thing. User-facing name is **Volume Shape** plus
-**Fade In / Fade Out**; the word "automation" never appears in the UI.
+> **Status update — fades removed.** The per-clip Fade In / Fade Out
+> feature described historically in this section has been **removed
+> entirely**. The Volume Shape breakpoint envelope is now the single
+> per-clip volume-tailoring mechanism: a fade-in / fade-out is created by
+> dragging the first / last breakpoint down to silence. All
+> `fadeInMs` / `fadeOutMs` storage, the `CLIP_SET_FADES` /
+> `PREVIEW_SET_FADES` / `CLIP_FADES_APPLIED` bridge messages, the
+> backend fade DSP (`applyFadeGain` / `FadeSnapshot`), the numeric Fades
+> panel, and the timeline / Clip-Editor fade overlays are gone. Legacy
+> project files that still carry fade attributes load cleanly (the
+> attributes are stripped on load). The fade-coupled design prose below
+> is retained only as historical context.
+
+Per-clip volume tailoring via the **Volume Shape** breakpoint envelope;
+the word "automation" never appears in the UI.
 Coordinates are in **timeline milliseconds relative to clip start** at
 the project rate (post-warp, post-resample), not source-file time — so
 the visible shape on a warped clip matches what the user hears.
@@ -914,9 +926,9 @@ make fade lengths and breakpoint times drift relative to what the user
 sees. Mixdown applies the multiplier at the same stage so live and
 offline outputs match.
 
-**Bridge envelopes:** `CLIP_SET_FADES { clipId, fadeInMs, fadeOutMs }`
-and `CLIP_SET_ENVELOPE { clipId, points: [{timeMs, gain}] }` (`gain` is
-linear in `[0, 4]`, `1.0` = unity).
+**Bridge envelopes:** `CLIP_SET_ENVELOPE { clipId, points: [{timeMs, gain}] }`
+(`gain` is linear in `[0, 4]`, `1.0` = unity). _(The historical
+`CLIP_SET_FADES` envelope was removed along with the fade feature.)_
 
 - **Drag-time granularity.** While the user is dragging a handle or
   breakpoint, the renderer emits throttled updates at **~25 Hz** (and
@@ -1425,24 +1437,48 @@ playable at every point — no broken-build day):
   schema-version bump** — Phase 5 only adds optional fields with
   defaults; bump `schemaVersion` only when a genuinely incompatible
   field is added.
-- [x] **3. Per-clip fades** (`fadeInMs` / `fadeOutMs`). Triangular
-  drag handles on the timeline clip corners (12 px hit zones,
-  hidden below 24 px clip width — fall back to the dialog).
-  Backend applies the fade multiplier at the post-resample stage
-  inside the canonical chain (not inside `OffsetSource`).
-  Bridge: `CLIP_SET_FADES` handler activated (was inert in step 2).
-  Coalesced per gesture.
-- [ ] **4. Per-clip Volume Shape** (breakpoint envelope) per §7.11:
-  inline overlay on the timeline clip (mounted only when "Show
-  Volume Shape" is on for that clip; breakpoints inside fade zones
-  ghosted/disabled per §7.11), panel in the Clip Editor, and a
-  dedicated **Volume & Fades…** dialog mirroring `ClipWarpDialog`.
-  Audio-thread consumes a compiled immutable `EnvelopeSnapshot` via
-  the lock-free `atomic<const T*>` publication scheme + message-
-  thread retire queue (§7.11) — explicitly **not**
-  `std::atomic<std::shared_ptr>`. Composition with the fade
-  scalars happens at the same post-resample stage. Bridge:
-  `CLIP_SET_ENVELOPE` handler activated. Coalesced per gesture.
+- [x] ~~**3. Per-clip fades** (`fadeInMs` / `fadeOutMs`).~~ **Removed.**
+  Per-clip fades were implemented (triangular timeline handles + backend
+  post-resample fade multiplier + `CLIP_SET_FADES`) and then **removed
+  entirely** once the Volume Shape envelope (item 4) subsumed them — a
+  fade-in / fade-out is now made by dragging the end breakpoints to
+  silence. All fade storage, bridge messages, DSP, and overlays were
+  deleted; legacy projects strip the attributes on load.
+- [x] **4. Per-clip Volume Shape** (breakpoint envelope) per §7.11:
+  the audio thread consumes a compiled immutable `EnvelopeSnapshot`
+  published to `OffsetSource` via the lock-free `atomic<const T*>`
+  scheme + message-thread retire queue (drained at pause/stop) —
+  explicitly **not** `std::atomic<std::shared_ptr>`. The envelope gain
+  is applied at the per-clip post-warp stage (`applyEnvelopeGain`), so
+  live playback and mixdown export stay bit-identical. Interpolation is
+  linear-in-dB with a smooth ramp to a
+  true-zero breakpoint. Persisted as the optional `envelopePoints`
+  clip property (normalised + restored on load), carried through
+  `MixdownEngine` for export parity. Bridge `CLIP_SET_ENVELOPE`
+  handler activated (gesture-coalesced).
+  **Shipped as an interactive Volume Shape editor drawn directly over the
+  Clip Editor waveform** (per §7.11's "single line drawn over the
+  waveform"): a **Volume** toggle in the canvas toolbar turns the
+  waveform into a breakpoint editor — click the curve to add, drag to
+  bend, Alt-click / right-click to remove — so it is obvious which part
+  of the audio each breakpoint affects. The envelope renders faint as
+  read-only context when the toggle is off, and editing is limited to the
+  cropped Clip view (the breakpoint time axis spans the whole clip).
+  Edits commit transactionally on Save alongside the other Clip Editor
+  drafts — _not_ the originally-specified separate "Volume & Fades…"
+  dialog, and no longer the interim boxed SVG rack panel (removed in
+  favour of the on-waveform surface). The envelope is the **only**
+  per-clip volume mechanism — the previously separate raised-cosine fade
+  feature has been removed (a fade-in / fade-out is made by dragging the
+  end breakpoints to silence). Shared
+  envelope math + edit helpers live in `frontend/.../lib/envelope.ts`
+  (single source of truth, mirroring the backend snapshot); the canvas
+  gain/time/pixel mapping + hit-testing live in the unit-tested
+  `frontend/.../lib/clipEditor/volumeOverlay.ts`. The draft also auditions
+  live in the Clip Editor preview voice via a throttled
+  `PREVIEW_SET_ENVELOPE` bridge message (the preview `OffsetSource` reuses
+  the same snapshot publication path), so edits are heard immediately
+  while previewing.
 - [x] **5. Tabbed bottom panel** (Library / Track FX / Project FX) inside
   `LibraryPanel`. The track header's **Fx** button switches the panel
   to the Track FX view (`TrackFxPanel`); whether an effects rack is open

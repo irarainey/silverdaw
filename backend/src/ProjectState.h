@@ -194,14 +194,6 @@ class ProjectState : public juce::ValueTree::Listener
     bool setTrackLevelerAmount(const juce::String& trackId, float amount);
     float getTrackLevelerAmount(const juce::String& trackId) const;
 
-    /** Per-clip fade-in / fade-out lengths in clip-local post-warp
-     *  milliseconds. Both are clamped to `>= 0`; the runtime clamps
-     *  `fadeIn + fadeOut <= clipDuration` so the persisted values
-     *  don't have to. Default `0/0` is suppressed. */
-    bool setClipFades(const juce::String& clipId, double fadeInMs, double fadeOutMs);
-    double getClipFadeInMs(const juce::String& clipId) const;
-    double getClipFadeOutMs(const juce::String& clipId) const;
-
     /** Per-clip volume envelope. Stored as a single `juce::var` array
      *  property on the clip — one atomic mutation per drag, no child
      *  nodes (keeps default-suppression trivial). Each entry is a
@@ -856,11 +848,8 @@ class ProjectState : public juce::ValueTree::Listener
     // until the compressor DSP and Advanced controls land.
     static const juce::Identifier kLevelerAmount;
 
-    // Phase 5 — per-clip fades + volume envelope. Fades are scalars
-    // (ms, clip-local post-warp); the envelope is a single ARRAY
+    // Phase 5 — per-clip volume envelope. The envelope is a single ARRAY
     // property of `{ timeMs, gain }` objects.
-    static const juce::Identifier kFadeInMs;
-    static const juce::Identifier kFadeOutMs;
     static const juce::Identifier kEnvelopePoints;
     static const juce::Identifier kEnvelopeTimeMs;
     static const juce::Identifier kEnvelopeGain;

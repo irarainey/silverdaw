@@ -1229,55 +1229,154 @@ void testSharedFxEchoRepeatsAndTerminates()
     require(terminated, "Echo tail must self-terminate within the safety cap");
 }
 
+// EnvelopeSnapshot is the audio-thread-readable compiled form of a clip
+// volume shape. Verifies endpoint clamping, linear-in-dB interpolation,
+// and the "fewer than two points => empty (no-op)" invariant that keeps
+// the unshaped common path bit-identical.
+void testEnvelopeSnapshotInterpolation()
+{
+    const auto makePoint = [](double timeMs, double gain) {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("timeMs", timeMs);
+        obj->setProperty("gain", gain);
+        return juce::var(obj);
+    };
 
-//
-// Regression guard for the offline-render fade fix. Exported audio must
-// carry the same per-clip fades the live engine applies. The live engine
-// wires fades into `OffsetSource::setFadesMs`; the offline render reuses
-// the identical OffsetSource, but `buildOfflineClip` can only apply the
-// fades the snapshot carries. Before the fix, `snapshotProjectForMixdown`
-// never read kFadeInMs / kFadeOutMs, so every export rendered with zero
-// fades regardless of the user's settings.
-//
-// This test asserts the snapshot faithfully carries the clip fades from
-// ProjectState (the single source of truth the live load path also uses)
-// and that clips with no fades default to zero. If a future change drops
-// the fade reads from the snapshot, this fails deterministically.
+    // Empty / single-point arrays compile to an empty (skipped) snapshot.
+    require(silverdaw::EnvelopeSnapshot::fromVarArray({})->isEmpty(),
+            "empty point array must be an empty snapshot");
+    juce::Array<juce::var> single;
+    single.add(makePoint(0.0, 0.5));
+    require(silverdaw::EnvelopeSnapshot::fromVarArray(single)->isEmpty(),
+            "single-point array must be an empty snapshot");
 
-void testMixdownSnapshotCarriesClipFades()
+    // Two points: 1.0 (0 dB) at 0 ms down to 0.5 (~-6.02 dB) at 1000 ms.
+    juce::Array<juce::var> ramp;
+    ramp.add(makePoint(0.0, 1.0));
+    ramp.add(makePoint(1000.0, 0.5));
+    const auto snap = silverdaw::EnvelopeSnapshot::fromVarArray(ramp);
+    require(!snap->isEmpty(), "two-point ramp must be a usable snapshot");
+
+    std::size_t seg = 0;
+    // Endpoints return the exact stored linear gains.
+    requireNear(snap->gainAtMs(0.0, seg), 1.0, 1.0e-4, "gain at start endpoint");
+    seg = 0;
+    requireNear(snap->gainAtMs(1000.0, seg), 0.5, 1.0e-4, "gain at end endpoint");
+    // Before/after the range clamps to the nearest endpoint.
+    seg = 0;
+    requireNear(snap->gainAtMs(-50.0, seg), 1.0, 1.0e-4, "before range clamps to first point");
+    seg = 0;
+    requireNear(snap->gainAtMs(5000.0, seg), 0.5, 1.0e-4, "after range clamps to last point");
+    // Midpoint is linear in dB: halfway between 0 dB and -6.0206 dB is
+    // -3.0103 dB => 10^(-3.0103/20) ≈ 0.70711, NOT the linear-in-gain 0.75.
+    seg = 0;
+    requireNear(snap->gainAtMs(500.0, seg), 0.70711, 1.0e-3,
+                "midpoint interpolates linear-in-dB (~0.707), not linear-in-gain (0.75)");
+}
+
+void testMixdownSnapshotCarriesClipEnvelope()
 {
     silverdaw::ProjectState state;
     require(state.addTrack("t1"), "addTrack should succeed");
     require(state.addLibraryItem("lib1", "C:\\audio\\a.wav", "a.wav", 5000.0, 48000, 2),
             "addLibraryItem should succeed");
-    // Faded clip.
-    require(state.addClip("t1", "c-faded", "lib1", 100.0, 1000.0),
-            "addClip should succeed for faded clip");
-    require(state.setClipFades("c-faded", 250.0, 400.0),
-            "setClipFades should succeed");
-    // Un-faded clip on the same track — defaults must stay zero.
+    require(state.addClip("t1", "c-env", "lib1", 100.0, 1000.0),
+            "addClip should succeed for shaped clip");
+
+    const auto makePoint = [](double timeMs, double gain) {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("timeMs", timeMs);
+        obj->setProperty("gain", gain);
+        return juce::var(obj);
+    };
+    juce::Array<juce::var> pts;
+    pts.add(makePoint(0.0, 1.0));
+    pts.add(makePoint(500.0, 0.25));
+    require(state.setClipEnvelope("c-env", pts), "setClipEnvelope should succeed");
+
+    // Un-shaped clip on the same track — must carry an empty envelope.
     require(state.addClip("t1", "c-plain", "lib1", 2000.0, 1000.0),
             "addClip should succeed for plain clip");
 
     const auto snapshot = silverdaw::snapshotProjectForMixdown(state);
 
-    const silverdaw::MixdownSnapshot::ClipSnapshot* faded = nullptr;
+    const silverdaw::MixdownSnapshot::ClipSnapshot* shaped = nullptr;
     const silverdaw::MixdownSnapshot::ClipSnapshot* plain = nullptr;
     for (const auto& track : snapshot.tracks)
     {
         for (const auto& clip : track.clips)
         {
-            if (clip.id == "c-faded") faded = &clip;
+            if (clip.id == "c-env") shaped = &clip;
             else if (clip.id == "c-plain") plain = &clip;
         }
     }
 
-    require(faded != nullptr, "faded clip should appear in the mixdown snapshot");
+    require(shaped != nullptr, "shaped clip should appear in the mixdown snapshot");
     require(plain != nullptr, "plain clip should appear in the mixdown snapshot");
-    requireNear(faded->fadeInMs, 250.0, 0.0001, "snapshot should carry the clip fade-in");
-    requireNear(faded->fadeOutMs, 400.0, 0.0001, "snapshot should carry the clip fade-out");
-    requireNear(plain->fadeInMs, 0.0, 0.0001, "un-faded clip should default fade-in to zero");
-    requireNear(plain->fadeOutMs, 0.0, 0.0001, "un-faded clip should default fade-out to zero");
+    require(shaped->envelopePoints.size() == 2,
+            "snapshot should carry the clip volume-envelope points");
+    require(plain->envelopePoints.isEmpty(),
+            "un-shaped clip should default to an empty envelope");
+    const auto compiled = silverdaw::EnvelopeSnapshot::fromVarArray(shaped->envelopePoints);
+    require(!compiled->isEmpty(),
+            "carried envelope points must compile to a usable snapshot");
+}
+
+void testTracksAsJsonCarriesClipEnvelope()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "addTrack should succeed");
+    require(state.addLibraryItem("lib1", "C:\\audio\\a.wav", "a.wav", 5000.0, 48000, 2),
+            "addLibraryItem should succeed");
+    require(state.addClip("t1", "c-env", "lib1", 100.0, 1000.0),
+            "addClip should succeed for shaped clip");
+
+    const auto makePoint = [](double timeMs, double gain) {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("timeMs", timeMs);
+        obj->setProperty("gain", gain);
+        return juce::var(obj);
+    };
+    juce::Array<juce::var> pts;
+    pts.add(makePoint(0.0, 1.0));
+    pts.add(makePoint(500.0, 0.25));
+    require(state.setClipEnvelope("c-env", pts), "setClipEnvelope should succeed");
+
+    // Un-shaped clip on the same track — must omit envelopePoints entirely.
+    require(state.addClip("t1", "c-plain", "lib1", 2000.0, 1000.0),
+            "addClip should succeed for plain clip");
+
+    // tracksAsJson() is the exact serialisation the renderer receives in the
+    // PROJECT_STATE envelope. A clip's volume shape must survive this hop or
+    // it is lost on every project reload (regression guard).
+    const auto tracks = state.tracksAsJson();
+    auto* tracksArr = tracks.getArray();
+    require(tracksArr != nullptr && tracksArr->size() == 1, "tracksAsJson should yield one track");
+
+    auto* clipsVar = (*tracksArr)[0].getDynamicObject()->getProperty("clips").getArray();
+    require(clipsVar != nullptr && clipsVar->size() == 2, "track should carry two clips");
+
+    const juce::var* shaped = nullptr;
+    const juce::var* plain = nullptr;
+    for (const auto& clipVar : *clipsVar)
+    {
+        const auto id = clipVar.getDynamicObject()->getProperty("id").toString();
+        if (id == "c-env") shaped = &clipVar;
+        else if (id == "c-plain") plain = &clipVar;
+    }
+    require(shaped != nullptr && plain != nullptr, "both clips should serialise");
+
+    auto* shapedObj = shaped->getDynamicObject();
+    require(shapedObj->hasProperty("envelopePoints"),
+            "shaped clip must carry envelopePoints in PROJECT_STATE");
+    auto* envArr = shapedObj->getProperty("envelopePoints").getArray();
+    require(envArr != nullptr && envArr->size() == 2,
+            "serialised envelope must carry both breakpoints");
+    requireNear(static_cast<double>((*envArr)[1].getDynamicObject()->getProperty("gain")), 0.25, 1e-9,
+                "serialised envelope must preserve breakpoint gain");
+
+    require(!plain->getDynamicObject()->hasProperty("envelopePoints"),
+            "un-shaped clip must omit envelopePoints to keep PROJECT_STATE tidy");
 }
 
 int main()
@@ -1631,8 +1730,12 @@ int main()
          testProjectStateTrackToneJsonRoundTrip},
         {"ProjectState per-track sends round-trip through tracksAsJson",
          testProjectStateSendsJsonRoundTrip},
-        {"Mixdown snapshot carries per-clip fades",
-         testMixdownSnapshotCarriesClipFades},
+        {"EnvelopeSnapshot interpolates linear-in-dB with endpoint clamping",
+         testEnvelopeSnapshotInterpolation},
+        {"Mixdown snapshot carries per-clip volume envelope",
+         testMixdownSnapshotCarriesClipEnvelope},
+        {"tracksAsJson carries per-clip volume envelope into PROJECT_STATE",
+         testTracksAsJsonCarriesClipEnvelope},
     };
 
     int failed = 0;

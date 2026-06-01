@@ -1720,38 +1720,11 @@ void handleTrackSetLeveler(const juce::var& payload, silverdaw::ProjectState& pr
                      {{"trackId", trackId}, {"amount", amount}});
 }
 
-// Phase 5 — per-clip fade-in / fade-out lengths. Both are clip-local
-// post-warp ms (>= 0). The runtime clamps `fadeIn + fadeOut <=
-// clipDuration`; storage just enforces non-negativity.
-void handleClipSetFades(const juce::var& payload, silverdaw::AudioEngine& engine,
-                        silverdaw::ProjectState& projectState,
-                        silverdaw::BridgeServer& bridge)
-{
-    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
-    if (clipId.isEmpty()) return;
-
-    const double fadeInMs =
-        readOptionalNumber(payload, "fadeInMs").value_or(projectState.getClipFadeInMs(clipId));
-    const double fadeOutMs =
-        readOptionalNumber(payload, "fadeOutMs").value_or(projectState.getClipFadeOutMs(clipId));
-
-    const bool changed = projectState.setClipFades(clipId, fadeInMs, fadeOutMs);
-    if (!changed) return;
-
-    // Persisted setter clamps to >= 0, so re-read post-write to make
-    // sure the ack carries the actually-stored values.
-    const double inMs = projectState.getClipFadeInMs(clipId);
-    const double outMs = projectState.getClipFadeOutMs(clipId);
-    engine.setClipFades(clipId, inMs, outMs);
-
-    broadcastApplied(bridge, "CLIP_FADES_APPLIED",
-                     {{"clipId", clipId}, {"fadeInMs", inMs}, {"fadeOutMs", outMs}});
-}
-
 // Phase 5 — per-clip volume envelope. `points` is a `juce::var` array
 // of `{ timeMs, gain }` objects. An empty array clears the envelope
 // entirely.
-void handleClipSetEnvelope(const juce::var& payload, silverdaw::ProjectState& projectState,
+void handleClipSetEnvelope(const juce::var& payload, silverdaw::AudioEngine& engine,
+                           silverdaw::ProjectState& projectState,
                            silverdaw::BridgeServer& bridge)
 {
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
@@ -1767,9 +1740,13 @@ void handleClipSetEnvelope(const juce::var& payload, silverdaw::ProjectState& pr
     const bool changed = projectState.setClipEnvelope(clipId, points);
     if (!changed) return;
 
+    // Push the normalised, persisted shape onto the audio engine so the
+    // change is audible on the next block, then ack with the stored form.
+    const auto stored = projectState.getClipEnvelope(clipId);
+    engine.setClipEnvelope(clipId, stored);
+
     broadcastApplied(bridge, "CLIP_ENVELOPE_APPLIED",
-                     {{"clipId", clipId},
-                      {"points", juce::var(projectState.getClipEnvelope(clipId))}});
+                     {{"clipId", clipId}, {"points", juce::var(stored)}});
 }
 
 // Phase 5 — project-shared Reverb bus.
@@ -2139,21 +2116,16 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                     engine.setClipWarp(clipId, true, warpMode, tempoRatio, semitones, cents);
                 }
 
-                // Phase 5 — restore persisted per-clip fades. Both
-                // values default to 0; only push if either is set so
-                // we don't hammer the audio thread with no-ops at
-                // project-load time.
-                const double restoredFadeInMs =
-                    clip.hasProperty("fadeInMs")
-                        ? static_cast<double>(clip.getProperty("fadeInMs", 0.0))
-                        : 0.0;
-                const double restoredFadeOutMs =
-                    clip.hasProperty("fadeOutMs")
-                        ? static_cast<double>(clip.getProperty("fadeOutMs", 0.0))
-                        : 0.0;
-                if (restoredFadeInMs > 0.0 || restoredFadeOutMs > 0.0)
+                // Phase 5 — restore persisted per-clip volume envelope.
+                // Only push when the clip actually carries breakpoints so
+                // legacy / unshaped clips stay on the no-op fast path.
+                if (clip.hasProperty("envelopePoints"))
                 {
-                    engine.setClipFades(clipId, restoredFadeInMs, restoredFadeOutMs);
+                    const auto& envVar = clip.getProperty("envelopePoints");
+                    if (envVar.isArray() && envVar.getArray()->size() > 0)
+                    {
+                        engine.setClipEnvelope(clipId, *envVar.getArray());
+                    }
                 }
             }
             else
@@ -2698,7 +2670,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "TRACK_GAIN" || type == "TRACK_MUTE" || type == "TRACK_SOLO" ||
            type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
            type == "TRACK_SET_SENDS" || type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
-           type == "CLIP_SET_FADES" || type == "CLIP_SET_ENVELOPE" ||
+           type == "CLIP_SET_ENVELOPE" ||
            type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
@@ -2734,7 +2706,6 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_SET_SENDS") return "Change track sends";
     if (type == "TRACK_SET_TONE") return "Change track tone";
     if (type == "TRACK_SET_LEVELER") return "Change track leveler";
-    if (type == "CLIP_SET_FADES") return "Change clip fades";
     if (type == "CLIP_SET_ENVELOPE") return "Edit clip volume envelope";
     if (type == "PROJECT_SET_REVERB") return "Change reverb";
     if (type == "PROJECT_SET_DELAY") return "Change echo";
@@ -2803,7 +2774,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
 
     juce::String idPart;
     if (type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_SET_WARP" ||
-        type == "CLIP_SET_FADES" || type == "CLIP_SET_ENVELOPE")
+        type == "CLIP_SET_ENVELOPE")
     {
         idPart = payload.getProperty("clipId", "").toString();
     }
@@ -3420,8 +3391,6 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             std::optional<double> tempoRatio;
             std::optional<double> semitones;
             std::optional<double> cents;
-            std::optional<double> fadeInMs;
-            std::optional<double> fadeOutMs;
             if (payload.hasProperty("warpEnabled"))
             {
                 warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
@@ -3437,13 +3406,8 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                 if (payload.hasProperty("cents"))
                     cents = static_cast<double>(payload.getProperty("cents", 0.0));
             }
-            if (payload.hasProperty("fadeInMs"))
-                fadeInMs = static_cast<double>(payload.getProperty("fadeInMs", 0.0));
-            if (payload.hasProperty("fadeOutMs"))
-                fadeOutMs = static_cast<double>(payload.getProperty("fadeOutMs", 0.0));
             if (!engine.loadPreview(juce::File(playbackPath), inMs, durationMs, &err,
-                                    warpEnabled, warpMode, tempoRatio, semitones, cents,
-                                    fadeInMs, fadeOutMs))
+                                    warpEnabled, warpMode, tempoRatio, semitones, cents))
             {
                 silverdaw::log::warn("preview", "PREVIEW_LOAD failed: " + err.toStdString());
             }
@@ -3534,11 +3498,15 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
             cents = static_cast<double>(payload.getProperty("cents", 0.0));
         engine.setPreviewWarp(warpEnabled, warpMode, tempoRatio, semitones, cents);
     }
-    else if (type == "PREVIEW_SET_FADES")
+    else if (type == "PREVIEW_SET_ENVELOPE")
     {
-        const double fIn  = static_cast<double>(payload.getProperty("fadeInMs", 0.0));
-        const double fOut = static_cast<double>(payload.getProperty("fadeOutMs", 0.0));
-        engine.setPreviewFades(fIn, fOut);
+        juce::Array<juce::var> points;
+        const auto& pointsVar = payload.getProperty("points", juce::var());
+        if (pointsVar.isArray())
+        {
+            points = *pointsVar.getArray();
+        }
+        engine.setPreviewEnvelope(points);
     }
     else if (type == "TRACK_ADD")
     {
@@ -3617,17 +3585,11 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                             " amount=" + payload.getProperty("amount", "").toString());
         handleTrackSetLeveler(payload, projectState, bridge);
     }
-    else if (type == "CLIP_SET_FADES")
-    {
-        silverdaw::log::debug("bridge", "recv CLIP_SET_FADES clipId=" +
-                                            payload.getProperty("clipId", "").toString());
-        handleClipSetFades(payload, engine, projectState, bridge);
-    }
     else if (type == "CLIP_SET_ENVELOPE")
     {
         silverdaw::log::debug("bridge", "recv CLIP_SET_ENVELOPE clipId=" +
                                             payload.getProperty("clipId", "").toString());
-        handleClipSetEnvelope(payload, projectState, bridge);
+        handleClipSetEnvelope(payload, engine, projectState, bridge);
     }
     else if (type == "PROJECT_SET_REVERB")
     {

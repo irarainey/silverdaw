@@ -727,6 +727,7 @@ void AudioEngine::pause()
     for (auto& [id, track] : tracks)
     {
         track->retiredWarps.clear();
+        track->retiredEnvelopes.clear();
     }
     silverdaw::log::info("engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
 }
@@ -744,6 +745,7 @@ void AudioEngine::stop()
         }
         // Transport is stopped — safe to drain (see pause()).
         track->retiredWarps.clear();
+        track->retiredEnvelopes.clear();
     }
     silverdaw::log::info("engine", "stop");
 }
@@ -960,7 +962,7 @@ bool AudioEngine::setClipTrim(const juce::String& clipId, double startMs, double
     return true;
 }
 
-bool AudioEngine::setClipFades(const juce::String& clipId, double fadeInMs, double fadeOutMs)
+bool AudioEngine::setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points)
 {
     auto it = tracks.find(clipId);
     if (it == tracks.end())
@@ -972,7 +974,21 @@ bool AudioEngine::setClipFades(const juce::String& clipId, double fadeInMs, doub
     {
         return false;
     }
-    track->offsetSource->setFadesMs(juce::jmax(0.0, fadeInMs), juce::jmax(0.0, fadeOutMs));
+
+    // Compile the immutable snapshot off the audio thread. An empty /
+    // single-point shape is treated as "no envelope" — publish nullptr.
+    auto snapshot = EnvelopeSnapshot::fromVarArray(points);
+    const EnvelopeSnapshot* published = snapshot->isEmpty() ? nullptr : snapshot.get();
+
+    // Publish the new pointer (release) BEFORE retiring the old object,
+    // so the audio thread either sees the previous snapshot (still alive
+    // in `retiredEnvelopes`) or the new one — never a freed pointer.
+    track->offsetSource->setEnvelopeSnapshot(published);
+    if (track->envelopeSnapshot != nullptr)
+    {
+        track->retiredEnvelopes.push_back(std::move(track->envelopeSnapshot));
+    }
+    track->envelopeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
     return true;
 }
 
@@ -1175,9 +1191,7 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
                               std::optional<juce::String> initialWarpMode,
                               std::optional<double> initialTempoRatio,
                               std::optional<double> initialSemitones,
-                              std::optional<double> initialCents,
-                              std::optional<double> initialFadeInMs,
-                              std::optional<double> initialFadeOutMs)
+                              std::optional<double> initialCents)
 {
     // Always start from a clean slate. unloadPreview() handles the case
     // where nothing is currently loaded.
@@ -1211,16 +1225,6 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
         static_cast<juce::int64>((preview.inMs / 1000.0) * preview.sampleRate));
     preview.offsetSource->setClipDurationSamples(
         static_cast<juce::int64>((preview.durationMs / 1000.0) * preview.sampleRate));
-
-    // Seed fades atomically before the source is wired into the
-    // transport / mixer so the very first audible block already has
-    // the correct ramp — no "unfaded first 50 ms" race on a fresh
-    // preview load.
-    {
-        const double fIn  = juce::jmax(0.0, initialFadeInMs.value_or(0.0));
-        const double fOut = juce::jmax(0.0, initialFadeOutMs.value_or(0.0));
-        preview.offsetSource->setFadesMs(fIn, fOut);
-    }
 
     if (initialWarpEnabled.value_or(false))
     {
@@ -1274,6 +1278,8 @@ void AudioEngine::unloadPreview()
     preview.offsetSource.reset();
     preview.warp.reset();
     preview.retiredWarps.clear();
+    preview.envelopeSnapshot.reset();
+    preview.retiredEnvelopes.clear();
     preview.readerSource.reset();
     preview.inMs = 0.0;
     preview.durationMs = 0.0;
@@ -1326,11 +1332,23 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
     return true;
 }
 
-bool AudioEngine::setPreviewFades(double fadeInMs, double fadeOutMs)
+bool AudioEngine::setPreviewEnvelope(const juce::Array<juce::var>& points)
 {
     if (preview.offsetSource == nullptr) return false;
-    preview.offsetSource->setFadesMs(juce::jmax(0.0, fadeInMs),
-                                     juce::jmax(0.0, fadeOutMs));
+
+    // Compile the immutable snapshot off the audio thread; an empty /
+    // single-point shape is "no envelope" → publish nullptr. Publish the
+    // new pointer (release) BEFORE retiring the old object so the audio
+    // thread only ever sees a live snapshot or nullptr — never a freed
+    // pointer. Mirrors `setClipEnvelope`.
+    auto snapshot = EnvelopeSnapshot::fromVarArray(points);
+    const EnvelopeSnapshot* published = snapshot->isEmpty() ? nullptr : snapshot.get();
+    preview.offsetSource->setEnvelopeSnapshot(published);
+    if (preview.envelopeSnapshot != nullptr)
+    {
+        preview.retiredEnvelopes.push_back(std::move(preview.envelopeSnapshot));
+    }
+    preview.envelopeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
     return true;
 }
 
