@@ -542,6 +542,8 @@ void testProjectFileSaveLoadAndViewState()
     state.replaceTree(makeProjectTree());
     state.setViewScrollX(12.0);
     state.setPlayheadMs(34.0);
+    state.setViewSelectedTrack("t1");
+    state.setViewFxPanelOpen(true);
     // Rename a clip and confirm the user-facing name survives the
     // ValueTree JSON round-trip — this is the persistence the timeline
     // inline-rename relies on.
@@ -567,13 +569,17 @@ void testProjectFileSaveLoadAndViewState()
     expectTreeEquivalent(loaded.getTree(), state.getTree());
     require(!loaded.isDirty(), "loaded project should be clean");
     requireEqual(loaded.getClipName("c1"), "Verse chop", "clip name should persist through save/load");
+    requireEqual(loaded.getViewSelectedTrack(), "t1", "selected track should persist through save/load");
+    require(loaded.getViewFxPanelOpen(), "fx-panel-open flag should persist through save/load");
 
-    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, -10.0, 99.0);
+    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, -10.0, 99.0, "t1", true);
     require(viewStateResult.wasOk(), "saveViewState should update existing project file");
     silverdaw::ProjectState reloaded;
     require(silverdaw::ProjectFile::load(file, reloaded).ok, "reloading after view-state save should work");
     requireNear(reloaded.getViewScrollX(), 0.0, 0.0001, "saveViewState should clamp negative scroll");
     requireNear(reloaded.getPlayheadMs(), 99.0, 0.0001, "saveViewState should update playhead");
+    requireEqual(reloaded.getViewSelectedTrack(), "t1", "saveViewState should persist selected track");
+    require(reloaded.getViewFxPanelOpen(), "saveViewState should persist fx-panel-open flag");
 
     const auto missing = dir.getChildFile("missing.silverdaw");
     silverdaw::ProjectState untouched;

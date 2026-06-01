@@ -421,6 +421,23 @@ class ProjectState : public juce::ValueTree::Listener
     /** Update the persisted scroll position. Does NOT mark the project dirty. */
     void setViewScrollX(double scrollX);
 
+    /** Id of the track whose header is selected, or an empty string when
+     *  none. Persisted view state — restores the timeline selection and
+     *  the Track FX panel's target on load. Defaults to empty. */
+    juce::String getViewSelectedTrack() const;
+
+    /** Update the persisted selected-track id. Does NOT mark the project
+     *  dirty (selection is navigation, not a content edit). */
+    void setViewSelectedTrack(const juce::String& trackId);
+
+    /** Whether the bottom panel shows the Track FX view (vs the Library).
+     *  Persisted view state. Defaults to false. */
+    bool getViewFxPanelOpen() const;
+
+    /** Update the persisted Track-FX-panel-open flag. Does NOT mark the
+     *  project dirty. */
+    void setViewFxPanelOpen(bool open);
+
     /** Persisted playhead position in ms. Defaults to 0. */
     double getPlayheadMs() const;
 
@@ -778,6 +795,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kLocked;
     static const juce::Identifier kViewPxPerSecond;
     static const juce::Identifier kViewScrollX;
+    static const juce::Identifier kViewSelectedTrack;
+    static const juce::Identifier kViewFxPanelOpen;
     static const juce::Identifier kPlayheadMs;
     static const juce::Identifier kBpm;
     static const juce::Identifier kProjectLengthMs;

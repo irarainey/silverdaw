@@ -368,15 +368,23 @@ interface ProjectState {
    *  as `viewPxPerSecond`. */
   viewScrollX: number | null
 
+  /** Whether the bottom panel shows the Track FX view (vs the Library).
+   *  Persisted with the project as view state (non-dirty): the Fx button
+   *  on a track header and the bottom-panel tab strip both drive this
+   *  single source of truth, and it is restored on load. */
+  fxPanelOpen: boolean
+
   /** Currently selected clip id (UI-only — not persisted, not sent to
    *  the backend). Used to render a thicker outline on the selected
    *  clip and to identify the target of Cut / Copy. `null` when
    *  nothing is selected. */
   selectedClipId: string | null
 
-  /** Currently selected track id (UI-only). The selected track is the
-   *  paste target — `pasteClipAtPlayhead` places the new clip on this
-   *  track at the playhead. Drawn with a highlighted row border. */
+  /** Currently selected track id. The selected track is the paste target
+   *  (`pasteClipAtPlayhead` places the new clip on this track at the
+   *  playhead) and the Track FX panel's target. Drawn with a highlighted
+   *  row border. Persisted with the project as view state (non-dirty) so
+   *  reopening restores the selection and the active Fx button. */
   selectedTrackId: string | null
 
   /** Local cut / copy buffer. Holds the minimum data needed to mint a
@@ -586,6 +594,7 @@ export const useProjectStore = defineStore('project', {
     previousProjectId: null,
     viewPxPerSecond: null,
     viewScrollX: null,
+    fxPanelOpen: false,
     selectedClipId: null,
     selectedTrackId: null,
     clipboardClip: null,
@@ -1153,17 +1162,29 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Set (or clear, with `null`) the selected track. Selection is a
-     * pure UI concept: the timeline draws a highlighted border around
-     * the row, and `pasteClipAtPlayhead` uses it as the destination
-     * track (falling back to the clipboard's source track when no
-     * track is selected). Bumps `peaksRevision` so the highlight
-     * repaints immediately.
+     * Set (or clear, with `null`) the selected track. Selection is the
+     * paste destination (`pasteClipAtPlayhead`) and the Track FX panel's
+     * target; the timeline draws a highlighted border around the row.
+     * Bumps `peaksRevision` so the highlight repaints immediately, and
+     * pushes the new selection to the backend as non-dirty view state so
+     * reopening the project restores it (mirrors `viewScrollX`).
      */
     selectTrack(trackId: string | null): void {
       if (this.selectedTrackId === trackId) return
       this.selectedTrackId = trackId
       this.peaksRevision++
+      sendBridge('PROJECT_SET_VIEW', { selectedTrackId: trackId })
+    },
+
+    /**
+     * Show or hide the Track FX view in the bottom panel. Persisted with
+     * the project as non-dirty view state, so reopening restores which
+     * surface (Library vs Track FX) the user was on.
+     */
+    setFxPanelOpen(open: boolean): void {
+      if (this.fxPanelOpen === open) return
+      this.fxPanelOpen = open
+      sendBridge('PROJECT_SET_VIEW', { fxPanelOpen: open })
     },
 
     /**
@@ -2804,6 +2825,26 @@ export const useProjectStore = defineStore('project', {
       // disagrees with the on-disk tracks degrades gracefully.
       if (pendingProjectLengthMs !== null && this.tracks.length > 0) {
         this.setProjectLengthMs(pendingProjectLengthMs)
+      }
+
+      // Restore persisted view state for the Track FX panel on a full
+      // load / new (reset). Selection was just cleared above, so adopt
+      // the saved selected track (only if it still exists) and the
+      // panel-open flag. Assigned directly — not via `selectTrack` /
+      // `setFxPanelOpen` — so restoring doesn't echo back to the backend.
+      // Skipped on additive connect snapshots and on undo/redo
+      // (soft-replace), which preserve the live selection.
+      if (snapshot.reset === true) {
+        const savedSelected =
+          typeof snapshot.viewSelectedTrack === 'string' && snapshot.viewSelectedTrack.length > 0
+            ? snapshot.viewSelectedTrack
+            : null
+        this.selectedTrackId =
+          savedSelected !== null && this.tracks.some((t) => t.id === savedSelected)
+            ? savedSelected
+            : null
+        this.fxPanelOpen = snapshot.viewFxPanelOpen === true
+        this.peaksRevision++
       }
 
       // Migration: rebind any timeline clip whose (libraryItemId,

@@ -14,8 +14,6 @@ export type TimelineScrollRequest =
   | { positionMs: number; id: number }
 export type TimelineZoomAction = 'in' | 'out' | 'reset'
 export type TimelineZoomRequest = { action: TimelineZoomAction; id: number }
-/** Which view occupies the bottom panel. Renderer-only UI state. */
-export type BottomPanelTab = 'library' | 'trackfx'
 
 interface UiState {
   trackHeaderWidth: number
@@ -47,11 +45,6 @@ interface UiState {
    *  shortcuts (Space play/pause etc.) should defer to the dialog while
    *  this is set. */
   clipEditorOpen: boolean
-  /** Which view the bottom panel shows — the media Library or the
-   *  selected track's effects. Renderer-only (not persisted); the Fx
-   *  button on a track header and the bottom-panel tab strip both
-   *  drive this single source of truth. */
-  bottomPanelTab: BottomPanelTab
   /** True once `hydrate()` has read the saved values from main. */
   hydrated: boolean
 }
@@ -141,7 +134,6 @@ export const useUiStore = defineStore('ui', {
     timelineScrollRequest: null,
     timelineZoomRequest: null,
     clipEditorOpen: false,
-    bottomPanelTab: 'library',
     hydrated: false
   }),
 
@@ -251,13 +243,6 @@ export const useUiStore = defineStore('ui', {
         action,
         id: nextTimelineZoomRequestId++
       }
-    },
-
-    /** Switch the bottom panel between the Library and Track FX views.
-     *  Renderer-only — not persisted to preferences. */
-    setBottomPanelTab(tab: BottomPanelTab): void {
-      if (this.bottomPanelTab === tab) return
-      this.bottomPanelTab = tab
     }
   }
 })

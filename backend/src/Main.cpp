@@ -1869,6 +1869,8 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     obj->setProperty("markers", projectState.markersAsJson());
     obj->setProperty("viewPxPerSecond", projectState.getViewPxPerSecond());
     obj->setProperty("viewScrollX", projectState.getViewScrollX());
+    obj->setProperty("viewSelectedTrack", projectState.getViewSelectedTrack());
+    obj->setProperty("viewFxPanelOpen", projectState.getViewFxPanelOpen());
     obj->setProperty("playheadMs", projectState.getPlayheadMs());
     obj->setProperty("bpm", projectState.getBpm());
     obj->setProperty("projectLengthMs", projectState.getProjectLengthMs());
@@ -2301,7 +2303,14 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
     projectState.setViewScrollX(scrollX);
     projectState.setPlayheadMs(playheadMs);
 
-    const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), scrollX, playheadMs);
+    // Selection + panel state are kept current on the project tree via
+    // PROJECT_SET_VIEW pushes, so the lightweight view-state save just
+    // mirrors whatever is already there into the file.
+    const juce::String selectedTrackId = projectState.getViewSelectedTrack();
+    const bool fxPanelOpen = projectState.getViewFxPanelOpen();
+
+    const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), scrollX, playheadMs,
+                                                              selectedTrackId, fxPanelOpen);
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())
     {
@@ -3640,6 +3649,21 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         if (sxVar.isDouble() || sxVar.isInt() || sxVar.isInt64())
         {
             projectState.setViewScrollX(juce::jmax(0.0, static_cast<double>(sxVar)));
+        }
+        // Selected track + Track-FX-panel-open flag travel with the
+        // project too, so reopening restores which track's effects the
+        // user was editing. Both are non-dirty view state. Guard on the
+        // property being present: scroll/zoom-only pushes omit these and
+        // must not be treated as "clear the selection".
+        if (payload.hasProperty("selectedTrackId"))
+        {
+            const auto selVar = payload.getProperty("selectedTrackId", juce::var());
+            projectState.setViewSelectedTrack(selVar.isString() ? selVar.toString() : juce::String{});
+        }
+        const auto fxVar = payload.getProperty("fxPanelOpen", juce::var());
+        if (fxVar.isBool())
+        {
+            projectState.setViewFxPanelOpen(static_cast<bool>(fxVar));
         }
     }
     else if (type == "PROJECT_SET_BPM")

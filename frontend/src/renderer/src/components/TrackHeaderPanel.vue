@@ -307,13 +307,13 @@ function onHeaderClick(track: { id: string }, ev: MouseEvent): void {
  */
 function onToggleFx(track: { id: string }): void {
   const showingThisTrackFx =
-    ui.bottomPanelTab === 'trackfx' && project.selectedTrackId === track.id
+    project.fxPanelOpen && project.selectedTrackId === track.id
   if (showingThisTrackFx) {
-    ui.setBottomPanelTab('library')
+    project.setFxPanelOpen(false)
     return
   }
   project.selectTrack(track.id)
-  ui.setBottomPanelTab('trackfx')
+  project.setFxPanelOpen(true)
 }
 
 function onGripPointerDown(track: { id: string }, ev: PointerEvent): void {
@@ -675,12 +675,12 @@ const dropIndicatorTopPx = computed<number>(() => {
             <button
               type="button"
               class="flex h-6 w-6 items-center justify-center rounded border text-[11px] font-bold transition-colors"
-              :class="(ui.bottomPanelTab === 'trackfx' && project.selectedTrackId === track.id)
+              :class="(project.fxPanelOpen && project.selectedTrackId === track.id)
                 ? 'border-sky-400 bg-sky-500 text-zinc-950 hover:bg-sky-400'
                 : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
               "
-              :title="(ui.bottomPanelTab === 'trackfx' && project.selectedTrackId === track.id) ? 'Hide track effects' : 'Show track effects'"
-              :aria-pressed="ui.bottomPanelTab === 'trackfx' && project.selectedTrackId === track.id"
+              :title="(project.fxPanelOpen && project.selectedTrackId === track.id) ? 'Hide track effects' : 'Show track effects'"
+              :aria-pressed="project.fxPanelOpen && project.selectedTrackId === track.id"
               @click="onToggleFx(track)"
             >
               Fx

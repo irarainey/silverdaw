@@ -25,6 +25,8 @@ const juce::Identifier ProjectState::kColorIndex{"colorIndex"};
 const juce::Identifier ProjectState::kLocked{"locked"};
 const juce::Identifier ProjectState::kViewPxPerSecond{"viewPxPerSecond"};
 const juce::Identifier ProjectState::kViewScrollX{"viewScrollX"};
+const juce::Identifier ProjectState::kViewSelectedTrack{"viewSelectedTrack"};
+const juce::Identifier ProjectState::kViewFxPanelOpen{"viewFxPanelOpen"};
 const juce::Identifier ProjectState::kPlayheadMs{"playheadMs"};
 const juce::Identifier ProjectState::kBpm{"bpm"};
 const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
@@ -1366,6 +1368,28 @@ void ProjectState::setViewScrollX(double scrollX)
     // cleanSnapshot so a later undo cleanly returns to the un-dirty
     // baseline.
     setNonDirtyRootProperty(kViewScrollX, scrollX);
+}
+
+juce::String ProjectState::getViewSelectedTrack() const
+{
+    return root.getProperty(kViewSelectedTrack, juce::String{}).toString();
+}
+
+void ProjectState::setViewSelectedTrack(const juce::String& trackId)
+{
+    // Selection is navigation, not a content edit — view state, never
+    // marks dirty (mirrors scroll/zoom).
+    setNonDirtyRootProperty(kViewSelectedTrack, trackId);
+}
+
+bool ProjectState::getViewFxPanelOpen() const
+{
+    return static_cast<bool>(root.getProperty(kViewFxPanelOpen, false));
+}
+
+void ProjectState::setViewFxPanelOpen(bool open)
+{
+    setNonDirtyRootProperty(kViewFxPanelOpen, open);
 }
 
 double ProjectState::getPlayheadMs() const

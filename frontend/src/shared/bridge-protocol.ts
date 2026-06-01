@@ -641,6 +641,12 @@ export interface ProjectAutosavePayload {
 export interface ProjectSetViewPayload {
   pxPerSecond?: number
   scrollX?: number
+  /** Id of the selected track, or `null` to clear. Persisted view state
+   *  (non-dirty) so reopening restores the Track FX panel's target. */
+  selectedTrackId?: string | null
+  /** Whether the bottom panel shows the Track FX view. Persisted view
+   *  state (non-dirty). */
+  fxPanelOpen?: boolean
 }
 
 /** Tempo edit. Marks the project dirty on the backend. */
@@ -1354,6 +1360,12 @@ export const ProjectStatePayloadSchema = z.object({
   viewPxPerSecond: z.number().optional(),
   /** Horizontal scroll position (px) persisted with the project. */
   viewScrollX: z.number().optional(),
+  /** Id of the selected track persisted with the project (empty string =
+   *  none). Restores the timeline selection + Track FX panel target. */
+  viewSelectedTrack: z.string().optional(),
+  /** Whether the bottom panel shows the Track FX view, persisted with the
+   *  project. */
+  viewFxPanelOpen: z.boolean().optional(),
   /** Last playhead position (ms) persisted with the project. */
   playheadMs: z.number().optional(),
   /** Project tempo (BPM) persisted with the project. */

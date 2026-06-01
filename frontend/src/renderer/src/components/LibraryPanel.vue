@@ -16,6 +16,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useLibraryStore, libraryItemDisplayName, libraryItemIsSample, type LibraryItem } from '@/stores/libraryStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { importAudioIntoLibrary, preflightSampleRates, reanalyseLibraryItem } from '@/lib/importAudio'
 import { log } from '@/lib/log'
 import { keyBadgeClass } from '@/lib/keyBadge'
@@ -36,13 +37,15 @@ const emit = defineEmits<{
 
 const library = useLibraryStore()
 const ui = useUiStore()
+const project = useProjectStore()
 
-// Which bottom-panel tab is showing. Renderer-only UI state (not persisted)
-// owned by the ui store, so a track header's Fx button can switch to the
-// Track FX view from outside this component. The panel opens on the Library.
+// Which bottom-panel tab is showing. Backed by the project's persisted
+// `fxPanelOpen` view state so a track header's Fx button can switch to the
+// Track FX view from outside this component and the choice survives a
+// File > Save / Load. The panel opens on the Library.
 const activeTab = computed<'library' | 'trackfx'>({
-  get: () => ui.bottomPanelTab,
-  set: (tab) => ui.setBottomPanelTab(tab)
+  get: () => (project.fxPanelOpen ? 'trackfx' : 'library'),
+  set: (tab) => project.setFxPanelOpen(tab === 'trackfx')
 })
 
 // True while an OS drag is hovering over the panel — used to highlight the
