@@ -30,20 +30,53 @@ inline constexpr int kTransportReadAheadSamples = 8192;
  *  rather than a cache miss — making playback start instant from any
  *  position, even straight after a project load or a seek.
  *
- *  - kPrimeProbeSamples: how much (in source-rate samples) we require to be
- *    buffered ahead of the playhead. Comfortably larger than any realistic
- *    device block (after resampling) so the whole first callback is covered.
+ *  - kPrimeProbeSamples: the minimum (in source-rate samples) we ever require
+ *    to be buffered — comfortably larger than any realistic device block after
+ *    resampling, so even a near-EOF clip covers the first callback.
+ *  - kPrimeReadyTargetSamples: the deep cushion we actually fill before opening
+ *    the master gate. It must absorb the whole cold-start transient, not just
+ *    the first callback. JUCE's BufferingAudioSource *drops* (does not delay)
+ *    samples on a partial cache miss — getNextAudioBlock clears the unbuffered
+ *    tail yet still advances its read cursor — so any underrun while the shared
+ *    read-ahead thread is still warming up (resampler priming, RubberBand warp,
+ *    cold file cache) permanently swallows the start of the audio. A small
+ *    low-latency output buffer plus many resampled/warped tracks is exactly
+ *    when that bites, so we prime most of the read-ahead buffer up front.
  *  - kPrimePerTrackTimeoutMs: ceiling on the wait for any single track.
- *  - kPlayPrimeBudgetMs: total wall-clock ceiling when priming from play(),
- *    kept tight so a cold disk or stalled track can never turn pressing play
- *    into a long stall — we would rather start a touch early than block.
+ *  - kPlayPrimeBudgetMs: total wall-clock ceiling when priming from play().
+ *    Biased towards correctness (always start from the very first millisecond)
+ *    over a few ms of start latency — in the common case the buffers are
+ *    already warm from the load/seek prime and this returns near-instantly.
  *  - kLoadPrimeBudgetMs: total ceiling when priming at project-load time,
  *    off the interactive hot path, so the first play after a load is already
  *    fully warm. */
 inline constexpr int kPrimeProbeSamples = 4096;
-inline constexpr int kPrimePerTrackTimeoutMs = 120;
-inline constexpr int kPlayPrimeBudgetMs = 300;
+inline constexpr int kPrimeReadyTargetSamples = (kTransportReadAheadSamples * 7) / 8;
+inline constexpr int kPrimePerTrackTimeoutMs = 250;
+inline constexpr int kPlayPrimeBudgetMs = 1200;
 inline constexpr int kLoadPrimeBudgetMs = 1500;
+
+/** Output "keep-alive" dither peak amplitude (linear, full scale = 1.0),
+ *  injected into master output blocks that are otherwise (near-)silent —
+ *  see MasterClockSource::applyKeepAlive. The output device must never see
+ *  a sustained run of digital silence: some USB DAC endpoints — notably
+ *  USB-C headphone dongles and USB-Audio-Class endpoints — silence-detect
+ *  and soft-mute during silence, then apply a wake-up fade on the next
+ *  audible block, swallowing the attack of the first audio after the gap.
+ *  That silence happens while paused AND while *playing* through leading
+ *  silence or any gap with no active clip (worst on the USB path; the
+ *  built-in card has no such mute). A first attempt at ~-84 dBFS did not
+ *  keep this endpoint awake, so the floor sits at ~-48 dBFS — comfortably
+ *  above a typical silence-detector threshold yet far below content level.
+ *  It is gated to silent blocks only (kKeepAliveSilenceThreshold) so it is
+ *  never mixed into real audio: clean playback, awake device. */
+inline constexpr float kKeepAliveDitherAmplitude = 0.004F; // ~-48 dBFS peak
+
+/** Block-peak below which the produced mix is treated as silence and the
+ *  keep-alive floor is injected (≈ -60 dBFS). Above this the block carries
+ *  real audio and is left untouched, so the keep-alive never colours
+ *  content — it only fills true gaps to keep the device awake. */
+inline constexpr float kKeepAliveSilenceThreshold = 1.0e-3F;
 
 /** Sample rates the engine renders at natively. Any other requested
  *  rate is treated as "follow the default" and resampled on the final

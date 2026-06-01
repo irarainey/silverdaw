@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BusGraph.h"
+#include "AudioConstants.h"
 #include "Log.h"
 #include "TrackChain.h"
 #include "WarpProcessor.h"
@@ -820,12 +821,21 @@ class MasterClockSource : public juce::AudioSource
         if (!playing.load(std::memory_order_acquire))
         {
             info.clearActiveBufferRegion();
+            applyKeepAlive(info);
             maybeLogAudioPerf(count, startTicks, info.numSamples);
             return;
         }
 
         child.getNextAudioBlock(info);
         positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
+        // Keep the output device awake through silence — while paused AND while
+        // playing into a gap with no active clip. Some USB DAC endpoints
+        // silence-detect and soft-mute on a sustained run of silence, then fade
+        // back in on the next audible block, swallowing the attack of the first
+        // audio after the gap. applyKeepAlive injects a low dither floor only
+        // when the produced block is (near-)silent, so true gaps keep the device
+        // awake while real content is never coloured.
+        applyKeepAlive(info);
         maybeLogAudioPerf(count, startTicks, info.numSamples);
     }
 
@@ -853,6 +863,57 @@ class MasterClockSource : public juce::AudioSource
     }
 
   private:
+    // Silence-gated output "keep-alive". Real-time safe: no allocation, no
+    // locks, no exceptions, bounded work. If the produced block is (near-)
+    // silent (peak below kKeepAliveSilenceThreshold) it injects a low TPDF
+    // dither floor driven by a cheap xorshift PRNG so the output device never
+    // sees a sustained run of silence and its silence-mute never engages. If
+    // the block already carries real audio it is left untouched — the floor
+    // only ever fills true gaps, so playback content is never coloured.
+    void applyKeepAlive(const juce::AudioSourceChannelInfo& info) noexcept
+    {
+        auto* const buffer = info.buffer;
+        if (buffer == nullptr) return;
+        const int numChannels = buffer->getNumChannels();
+        const int numSamples = info.numSamples;
+
+        float peak = 0.0F;
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* const src = buffer->getReadPointer(ch, info.startSample);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float s = src[i];
+                const float a = s < 0.0F ? -s : s;
+                if (a > peak) peak = a;
+            }
+        }
+        if (peak > silverdaw::kKeepAliveSilenceThreshold) return;
+
+        constexpr float int32Scale = 1.0F / 2147483648.0F; // int32 → ~[-1, 1)
+        constexpr float ditherScale = silverdaw::kKeepAliveDitherAmplitude * 0.5F;
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float* const dest = buffer->getWritePointer(ch, info.startSample);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float u1 = static_cast<float>(static_cast<juce::int32>(nextRandom())) * int32Scale;
+                const float u2 = static_cast<float>(static_cast<juce::int32>(nextRandom())) * int32Scale;
+                dest[i] += (u1 + u2) * ditherScale;
+            }
+        }
+    }
+
+    juce::uint32 nextRandom() noexcept
+    {
+        juce::uint32 x = rngState;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        rngState = x;
+        return x;
+    }
+
     void maybeLogAudioPerf(std::uint64_t count, juce::int64 startTicks, int numSamples) const
     {
         // Diagnostic heartbeat: ~1 s at 48 kHz / 512 buffer. Logged only
@@ -882,6 +943,11 @@ class MasterClockSource : public juce::AudioSource
     std::atomic<double> sampleRate{0.0};
     // Diagnostic counter for the audio-callback heartbeat log.
     std::atomic<std::uint64_t> callbackCount{0};
+    // xorshift PRNG state for the keep-alive dither. Touched only on the audio
+    // thread inside getNextAudioBlock, so a plain (non-atomic) word is
+    // sufficient. Seeded to a non-zero constant (xorshift requires a non-zero
+    // state).
+    juce::uint32 rngState{0x9E3779B9u};
 
     static_assert(std::atomic<juce::int64>::is_always_lock_free,
                   "MasterClockSource requires a lock-free 64-bit atomic counter on the audio thread");

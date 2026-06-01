@@ -624,10 +624,12 @@ void AudioEngine::play()
     flushAllDirtyRebuildsSync();
     // Block-prime every track's read-ahead buffer at the current playhead
     // before opening the master gate, so the very first audio block is a
-    // buffer hit. Bounded (kPlayPrimeBudgetMs) so a cold disk or a stalled
-    // track can never turn pressing play into a long stall — in the common
+    // buffer hit and playback starts from the very first millisecond. Bounded
+    // (kPlayPrimeBudgetMs) so a cold disk or a stalled track can never turn
+    // pressing play into an unbounded stall — but biased towards filling the
+    // cushion fully over shaving a few ms off start latency. In the common
     // case the buffers are already warm (primed at load / after a seek) and
-    // this returns immediately.
+    // this returns near-instantly.
     primeTracksForPlayback(kPlayPrimeBudgetMs);
     master.setPlaying(true);
     silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
@@ -646,10 +648,19 @@ void AudioEngine::primeTracksForPlayback(int totalBudgetMs)
 
     const double deadline = juce::Time::getMillisecondCounterHiRes() +
                             static_cast<double>(juce::jmax(0, totalBudgetMs));
-    // waitForNextAudioBlockReady only reads info.numSamples and never touches
-    // info.buffer, but we back it with a real (stereo) scratch buffer to keep
-    // the AudioSourceChannelInfo contract clean.
-    juce::AudioBuffer<float> scratch(2, kPrimeProbeSamples);
+    // Fill a deep cushion (kPrimeReadyTargetSamples) — not just one device
+    // block — before opening the master gate. JUCE's BufferingAudioSource drops
+    // rather than delays samples on a partial cache miss (it clears the
+    // unbuffered tail yet still advances its read cursor), so an underrun during
+    // the cold-start transient permanently swallows the start of the audio. A
+    // small low-latency output buffer plus many resampled/warped tracks sharing
+    // one read-ahead thread is exactly when that transient bites — priming deep
+    // here guarantees playback from the very first millisecond.
+    //
+    // waitForNextAudioBlockReady only inspects info.numSamples and never reads
+    // info.buffer, but we back it with a real (stereo) scratch buffer sized to
+    // the target so the AudioSourceChannelInfo contract stays clean.
+    juce::AudioBuffer<float> scratch(2, kPrimeReadyTargetSamples);
 
     for (auto& [id, track] : tracks)
     {
@@ -659,20 +670,48 @@ void AudioEngine::primeTracksForPlayback(int totalBudgetMs)
         }
         // Seek to the live master position first so the buffering source is
         // refilling at the right spot (covers the case where a debounced
-        // rebuild has not run yet), then clear the dirty flag we are about to
-        // satisfy by waiting.
+        // rebuild has not run yet).
         track->transportSource->setPosition(trackSeekSecondsFor(*track, master.getPositionSamples()));
-        track->prefetchDirty = false;
 
         const double remaining = deadline - juce::Time::getMillisecondCounterHiRes();
         if (remaining <= 0.0)
         {
             break;
         }
+
+        // Never wait for more samples than the clip actually has left at this
+        // position — a short clip or a near-EOF seek would otherwise burn the
+        // whole per-track timeout waiting for samples that will never exist.
+        int want = kPrimeReadyTargetSamples;
+        const juce::int64 total = track->bufferingSource->getTotalLength();
+        if (total > 0)
+        {
+            const juce::int64 left = total - track->bufferingSource->getNextReadPosition();
+            want = static_cast<int>(juce::jlimit<juce::int64>(0, kPrimeReadyTargetSamples, left));
+        }
+        if (want <= 0)
+        {
+            // Clip ends at or before the playhead: nothing to buffer here.
+            track->prefetchDirty = false;
+            continue;
+        }
+
         const auto perTrack = static_cast<juce::uint32>(
             juce::jmin(remaining, static_cast<double>(kPrimePerTrackTimeoutMs)));
-        juce::AudioSourceChannelInfo info(&scratch, 0, kPrimeProbeSamples);
-        track->bufferingSource->waitForNextAudioBlockReady(info, perTrack);
+        juce::AudioSourceChannelInfo info(&scratch, 0, want);
+        const bool ready = track->bufferingSource->waitForNextAudioBlockReady(info, perTrack);
+        // Only clear the dirty flag once the cushion is actually filled. A track
+        // that timed out stays marked so a later rebuild keeps warming it rather
+        // than the engine assuming it is safe to play.
+        if (ready)
+        {
+            track->prefetchDirty = false;
+        }
+        else
+        {
+            silverdaw::log::warn("engine",
+                                 "prime incomplete id=" + id + " want=" + juce::String(want));
+        }
     }
 }
 
