@@ -83,7 +83,7 @@ Threading invariants:
 backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
   src/
     AudioEngine.*        Master transport clock, mixer, per-track audio sources
-    BusGraph.*           Root pull graph: per-track runtimes + shared FX bus
+    BusGraph.*           Root pull graph: per-track runtimes (incl. equal-power pan) + shared FX bus
     TrackChain.*         Canonical per-track DSP chain (Tone → Leveler → gain → mute/solo)
     ToneEq.*             Per-track 3-band EQ + Low / High Cut filters
     SharedFx.*           Project-wide shared Room (reverb) + Echo (delay) buses
@@ -145,15 +145,17 @@ Silverdaw currently supports the core arrangement workflow:
   (beside Mute / Solo) that opens **Track FX** for that track (pressing it again
   collapses back to the Library). **Track FX** edits the selected track and hosts
   a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) plus **Low Cut** and
-  **High Cut** filter toggles — and a **Sends** rack setting how much the track
+  **High Cut** filter toggles — a **Pan** control (equal-power, signed
+  `[-1, 1]`, unity at centre), and a **Sends** rack setting how much the track
   feeds the project-wide Room and Echo buses. **Project FX** hosts the shared,
   song-wide returns those sends route into: a **Room** (reverb) and an **Echo**
   (tempo-locked delay). All are edited live (slider drags coalesce into one undo
   step) and applied to both playback and mixdown. The DSP lives in
   [`ToneEq`](../backend/src/ToneEq.h) / [`TrackChain`](../backend/src/TrackChain.h)
-  and the shared-FX engine on the backend. The open FX tab and the selected track
-  are project **view state**, round-tripped through `PROJECT_SET_VIEW` and saved
-  in the `.silverdaw` file alongside mute / solo.
+  / [`BusGraph`](../backend/src/BusGraph.h) (which applies pan to the dry path
+  after the pre-pan send tap) and the shared-FX engine on the backend. The open
+  FX tab and the selected track are project **view state**, round-tripped through
+  `PROJECT_SET_VIEW` and saved in the `.silverdaw` file alongside mute / solo.
 - **Per-clip Volume Shape.** The Clip Editor draws an editable volume envelope
   directly over the clip waveform: a faint line is always shown, and the
   **Volume** toolbar toggle makes it editable so the user can add / drag
@@ -346,7 +348,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         delayNoteValue?, delayFeedback?, delayTone?, delayMix?]
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
         toneBassDb?, toneMidDb?, toneTrebleDb?, toneLowCut?, toneHighCut?,
-        sendReverb?, sendDelay?]
+        sendReverb?, sendDelay?, pan?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          locked?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
@@ -419,9 +421,11 @@ not propagated across linked-saved-clip siblings, and round-trips through
 **Phase 5 effects properties.** Each `TRACK` carries optional sound-shaping
 fields, all suppressed from save when at their defaults so legacy projects stay
 bit-clean: `toneBassDb` / `toneMidDb` / `toneTrebleDb` are the per-track 3-band
-EQ gains in dB, `toneLowCut` / `toneHighCut` are filter toggles, and
+EQ gains in dB, `toneLowCut` / `toneHighCut` are filter toggles,
 `sendReverb` / `sendDelay` are `[0, 1]` send amounts feeding the project-wide
-Room and Echo buses. The shared buses themselves live on the `PROJECT` node:
+Room and Echo buses, and `pan` is the equal-power pan position, signed
+`[-1, 1]` (`-1` = hard left, `0` = centre, `+1` = hard right). The shared buses
+themselves live on the `PROJECT` node:
 `reverbSize` / `reverbDecay` / `reverbTone` / `reverbMix` describe the single
 project **Room** (reverb), and `delayNoteValue` / `delayFeedback` / `delayTone` /
 `delayMix` the project **Echo** (tempo-locked delay). `CLIP.envelopePoints` is
