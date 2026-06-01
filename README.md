@@ -45,10 +45,15 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   pitch-shifted independently, all without changing the source file.
 - **Saved clips and samples.** Save reusable clips to the library and bake any
   clip down to a fresh sample when you want to commit its current sound.
-- **Track and master controls.** Per-track volume faders, mute, solo, and an
-  **Fx** button (beside Solo) that opens a per-track effects panel with a Tone
-  EQ (Bass / Mid / Treble) and Low Cut / High Cut filters; plus drag-to-resize
-  and reorder tracks, and a master output with live metering.
+- **Track, project, and master controls.** Per-track volume faders, mute, solo,
+  and a bottom panel with **Track FX**, **Project FX**, and **Library** tabs.
+  Track FX gives each track a Tone EQ (Bass / Mid / Treble) with Low Cut / High
+  Cut filters plus Room and Echo sends; Project FX hosts the song-wide Room
+  (reverb) and Echo (delay) those sends feed. Plus drag-to-resize and reorder
+  tracks, and a master output with live metering.
+- **Per-clip volume shaping.** Draw a volume envelope right on a clip's waveform
+  in the Clip Editor to swell, duck, fade in, or fade out — all non-destructive
+  and applied to both playback and export.
 - **Per-project sample rate.** Pin a project to 44.1 or 48 kHz; imports are
   checked against the project rate and offer a clear path when they differ.
 - **Mixdown export.** Render the whole project to a single stereo file in WAV,
@@ -80,9 +85,9 @@ are not part of the current feature set. See the
 - **Stem separation.** Split a track into parts, such as vocals and
   instrumental, to remix and recombine.
 - **More built-in effects and transitions.** Building on the per-track Tone EQ
-  and Low Cut / High Cut filters that already ship, a wider set of mixing
-  effects, clip-to-clip transitions, and stereo channel controls for polishing a
-  mix.
+  and Low Cut / High Cut filters, the project-wide Room and Echo sends, and the
+  per-clip volume shaping that already ship, a wider set of mixing effects,
+  clip-to-clip transitions, and stereo channel controls for polishing a mix.
 - **More editing power.** Extra clip actions such as reverse, and manual
   correction of the detected beat grid.
 - **MIDI devices and scratch authoring.** Support for external MIDI controllers

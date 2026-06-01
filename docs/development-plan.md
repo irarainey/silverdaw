@@ -357,8 +357,8 @@ is a friction step that beginner-friendly tools avoid. The
 sound-shaping surfaces are instead split across three locations that match
 how a beginner actually thinks about the work:
 
-- **Per clip** — "fix this one bit" → fades + volume shape on the clip itself
-  (see §7.11).
+- **Per clip** — "fix this one bit" → the Volume Shape envelope on the clip
+  itself, which also covers fade-in / fade-out (see §7.11).
 - **Per track** — "shape this instrument" → a small set of always-the-same
   controls (Tone, Leveler, Reverb amount, Echo amount) in the new **Track FX**
   tab of the bottom panel (see §7.12).
@@ -619,7 +619,7 @@ diverges from mixdown in real conditions.
 is shipped; mixdown export is shipped (see Phase 5 checklist). The
 engine refactor (`TrackRuntime` + `BusGraph` + canonical `TrackChain`),
 Tone, Leveler, Reverb / Echo sends, shared Room / Echo, pan / mute /
-solo, and per-clip fades + volume shape are all Phase 5 work.
+solo, and the per-clip Volume Shape are all Phase 5 work.
 
 ### 7.10 Effects (Built-in)
 
@@ -1166,9 +1166,9 @@ project transport.
 The current focus order, ahead of the longer phase list below:
 
 1. **Finish Phase 5 mixing & core effects** — building on the shipped Tone
-   controls (Volume Shape, Room + Echo, Leveler, mute/solo/pan, fades). **Clip
-   transitions (§12.1) are pulled in as part of this work**, since they build
-   directly on per-clip fades, Tone EQ and the shared Echo.
+   controls, Volume Shape, Room + Echo, and mute/solo/pan (Leveler still to
+   come). **Clip transitions (§12.1) are pulled in as part of this work**, since
+   they build directly on the per-clip Volume Shape, Tone EQ and the shared Echo.
 2. **Fast import-to-arrangement (§12.6)** — promoted up the list as a core remix
    accelerator, tackled once the core effects are in place.
 3. **Stem support (Phase 6)** — the next major focus after the above.
@@ -1546,7 +1546,7 @@ playable at every point — no broken-build day):
   clamp + schema-version guard on parse, no undo entries — only a
   dirty-mark). Once step 1 lands, mixdown pumps the same
   canonical chain the live engine uses
-  (`OffsetSource → AudioTransportSource → per-clip fade × shape →
+  (`OffsetSource → AudioTransportSource → per-clip volume shape →
   TrackRuntime → TrackChain (Tone → Leveler → gain → mute/solo) →
   pre-pan send tap → pan → BusGraph dryBus + shared Room/Echo →
   master meter → final-stage libsamplerate`) so warped / pitch-
@@ -1866,8 +1866,8 @@ Three independent design critiques converged on the following constraints.
 - [ ] **Transition Zones between adjacent clips** — drag one
   clip's edge over its neighbour to create a bounded transition object. Built-in
   recipes only at first: **Smooth blend**, **Bass swap**, **Filter fade**,
-  **Echo out**, **Fade out/in**. Built on the existing per-clip fades + per-track
-  Tone EQ + shared Echo. Custom curves are a later disclosure; a user-saved
+  **Echo out**, **Fade out/in**. Built on the existing per-clip Volume Shape +
+  per-track Tone EQ + shared Echo. Custom curves are a later disclosure; a user-saved
   **preset browser is explicitly deferred** until the recipe set proves stable.
 - [ ] **"Vocal Focus" ducking** — one action derives a
   ducking volume-shape on music clips/tracks under a selected vocal clip.

@@ -83,6 +83,15 @@ Threading invariants:
 backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
   src/
     AudioEngine.*        Master transport clock, mixer, per-track audio sources
+    BusGraph.*           Root pull graph: per-track runtimes + shared FX bus
+    TrackChain.*         Canonical per-track DSP chain (Tone → Leveler → gain → mute/solo)
+    ToneEq.*             Per-track 3-band EQ + Low / High Cut filters
+    SharedFx.*           Project-wide shared Room (reverb) + Echo (delay) buses
+    EnvelopeSnapshot.*   Compiled, audio-thread-readable per-clip volume envelope
+    MixdownEngine.*      Offline render on the same canonical chain as playback
+    WarpProcessor.*      Rubber Band time-stretch / pitch-shift wrapper
+    BpmDetector.*        BTrack-based BPM / beat analysis
+    LoudnessAnalyzer.*   ITU-R BS.1770-4 loudness + true-peak measurement
     BridgeServer.*       IXWebSocket loopback server + AUTH + text-frame broadcast
     Main.cpp             Entry point, message dispatch, PlayheadEmitter, peaks ThreadPool
     PeaksCache.*         Disk-backed peaks cache (%APPDATA%/Silverdaw/peaks/)
@@ -90,6 +99,7 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
     ProjectState.*       juce::ValueTree wrapper + UndoManager + dirty tracking
     ValueTreeJson.*      Generic juce::ValueTree ↔ juce::var converter (used by ProjectFile)
     Waveform.*           Min/max peak computation
+  tests/                 SilverdawBackendTests custom harness (wired into CTest)
   CMakeLists.txt         FetchContent for JUCE + IXWebSocket
 frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
   resources/icons/       Multi-resolution .ico + PNG set (consumed by main + renderer)
@@ -130,15 +140,27 @@ Silverdaw currently supports the core arrangement workflow:
   readout to type a value. The master gain is persisted with the project,
   marks the project dirty and is applied to both live playback and mixdown
   export so the rendered file matches what the user hears.
-- **Per-track effects.** Each track header has an **Fx** button (beside Mute /
-  Solo) that opens the per-track effects panel for the selected track. It hosts
+- **Track & project effects.** The bottom panel has three tabs — **Library**,
+  **Track FX**, and **Project FX**. Each track header also has an **Fx** button
+  (beside Mute / Solo) that opens **Track FX** for that track (pressing it again
+  collapses back to the Library). **Track FX** edits the selected track and hosts
   a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) plus **Low Cut** and
-  **High Cut** filter toggles — edited live (slider drags coalesce into one undo
+  **High Cut** filter toggles — and a **Sends** rack setting how much the track
+  feeds the project-wide Room and Echo buses. **Project FX** hosts the shared,
+  song-wide returns those sends route into: a **Room** (reverb) and an **Echo**
+  (tempo-locked delay). All are edited live (slider drags coalesce into one undo
   step) and applied to both playback and mixdown. The DSP lives in
   [`ToneEq`](../backend/src/ToneEq.h) / [`TrackChain`](../backend/src/TrackChain.h)
-  on the backend. The panel-open flag and the selected track are project **view
-  state**, round-tripped through `PROJECT_SET_VIEW` and saved in the `.silverdaw`
-  file alongside mute / solo.
+  and the shared-FX engine on the backend. The open FX tab and the selected track
+  are project **view state**, round-tripped through `PROJECT_SET_VIEW` and saved
+  in the `.silverdaw` file alongside mute / solo.
+- **Per-clip Volume Shape.** The Clip Editor draws an editable volume envelope
+  directly over the clip waveform: a faint line is always shown, and the
+  **Volume** toolbar toggle makes it editable so the user can add / drag
+  breakpoints. A fade-in or fade-out is just the envelope's end breakpoints
+  dragged down to silence (there is no separate fade control). Points are stored
+  on the clip as `envelopePoints`, applied non-destructively to both live
+  playback and mixdown export.
 - **Mixdown export** (File ▸ Export Mixdown…) renders the whole project to a
   single stereo file. Formats: WAV (16 / 24 / 32-float), FLAC (16 / 24), AIFF
   (16 / 24), MP3 (128 / 192 / 320 kbps, bundled LAME). Optional TPDF dither for
@@ -251,13 +273,13 @@ play seamlessly.
 
 The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
-wider mixer / effects / automation work (shared reverb / echo sends, a leveler,
-and project FX — beyond the per-track Tone EQ and Low Cut / High Cut filters
-that already ship), per-clip processor chain (reverb / EQ /
-compressor — applied both live and in mixdown), stem separation, loop slicing,
-grouping compound operations (split / duplicate) into a single undo step, and
-a CI matrix that enforces a coverage floor over the existing backend and
-frontend test suites.
+wider mixer / effects / automation work (a per-track leveler and a deeper
+per-clip processor chain — compressor / saturation — applied both live and in
+mixdown, beyond the per-track Tone EQ + Low / High Cut, the project-wide Room and
+Echo sends, and the per-clip Volume Shape that already ship), stem separation,
+loop slicing, grouping compound operations (split / duplicate) into a single undo
+step, and a CI matrix that enforces a coverage floor over the existing backend
+and frontend test suites.
 
 ## Bridge protocol
 
@@ -317,12 +339,18 @@ malformed values up front instead of silently coercing them via
 
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
+        viewSelectedTrack?, viewFxPanelOpen?,
         audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
-        masterVolume?, exportSettingsJson?]
-  TRACK[id, name, gain, heightPx?]
+        masterVolume?, exportSettingsJson?,
+        reverbSize?, reverbDecay?, reverbTone?, reverbMix?,
+        delayNoteValue?, delayFeedback?, delayTone?, delayMix?]
+  TRACK[id, name, gain, heightPx?, muted?, soloed?,
+        toneBassDb?, toneMidDb?, toneTrebleDb?, toneLowCut?, toneHighCut?,
+        sendReverb?, sendDelay?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          locked?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
+         envelopePoints?,
          effectiveDurationMs?, effectiveTempoRatio?, effectiveWarpActive?]
   LIBRARY
      ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
@@ -387,6 +415,22 @@ clamp / schema-version guards on load, and does not generate undo entries
 against move / trim / split gestures on the timeline; the lock is per-clip,
 not propagated across linked-saved-clip siblings, and round-trips through
 `PROJECT_STATE`.
+
+**Phase 5 effects properties.** Each `TRACK` carries optional sound-shaping
+fields, all suppressed from save when at their defaults so legacy projects stay
+bit-clean: `toneBassDb` / `toneMidDb` / `toneTrebleDb` are the per-track 3-band
+EQ gains in dB, `toneLowCut` / `toneHighCut` are filter toggles, and
+`sendReverb` / `sendDelay` are `[0, 1]` send amounts feeding the project-wide
+Room and Echo buses. The shared buses themselves live on the `PROJECT` node:
+`reverbSize` / `reverbDecay` / `reverbTone` / `reverbMix` describe the single
+project **Room** (reverb), and `delayNoteValue` / `delayFeedback` / `delayTone` /
+`delayMix` the project **Echo** (tempo-locked delay). `CLIP.envelopePoints` is
+an optional `{ timeMs, gain }` breakpoint array — the per-clip **Volume Shape**;
+`gain` is linear in `[0, 4]` (`1.0` = unity) and the property is normalised
+(sorted, clamped, de-duplicated) backend-side and removed entirely when the
+shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` are view state for the
+bottom-panel FX tabs, round-tripped through `PROJECT_SET_VIEW`.
+
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
 added, moved or removed.
@@ -513,17 +557,18 @@ on-disk bit depth — a 16-bit WAV, a 24-bit FLAC, or an MP3 all become float on
 the way in, and the original file is never modified (non-destructive editing).
 
 Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp and
-the composed fade × volume-shape multiplier, per-track summing, the per-track
+the per-clip volume-shape multiplier, per-track summing, the per-track
 Tone EQ + Low Cut / High Cut filters
 ([`ToneEq`](../backend/src/ToneEq.h) / [`TrackChain`](../backend/src/TrackChain.h)),
+the per-track Room / Echo sends into the project-wide shared-FX buses,
 track gain and mute / solo, equal-power panning, the master mix and metering,
 and the `MasterClockSource` that gates playback and feeds the device. The
 `AudioSourcePlayer` hands 32-bit float to the OS audio driver, which converts
 to whatever the hardware expects. Float gives very large headroom, so
 intermediate sums can briefly exceed 0 dBFS without clipping as long as the
 final master is back in range. (`TrackChain` is the canonical per-track DSP
-seam shared by live playback and mixdown; additional nodes such as a leveler
-and shared reverb / echo sends are planned there — see the
+seam shared by live playback and mixdown; further nodes such as a per-track
+leveler are planned there — see the
 [Development Plan](development-plan.md).)
 
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
@@ -1097,6 +1142,9 @@ and the following set takes over instead:
 | `L` | Toggle loop mode. With loop on, playback loops the selection — or the whole saved clip if no selection is set. Source files only loop when a selection is set. |
 | Drag on waveform | Mark a sub-selection. The selection drives Save-as-new and Apply-trim. |
 | Drag on a selection handle | Fine-tune the selection edge. |
+| **Volume** toolbar toggle (cropped Clip view only) | Turn Volume Shape editing on / off. The volume line is always drawn faint as read-only context; toggling on makes its breakpoints editable. |
+| Click / drag on waveform (Volume mode on) | Add a breakpoint, or drag an existing one. Endpoints keep their pinned times. |
+| `Alt` + click or right-click a breakpoint (Volume mode on) | Remove that breakpoint (pinned endpoints can't be removed). |
 | Mouse wheel | Zoom (anchored on the pointer), capped at 64× / 6400%. |
 | `Shift` + wheel | Pan left / right. |
 | `+` / `-` / `0` | Zoom in / out / reset. |
