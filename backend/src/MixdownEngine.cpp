@@ -999,6 +999,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         track.toneTrebleDb = project.getTrackToneTrebleDb(track.id);
         track.toneLowCut = project.getTrackToneLowCut(track.id);
         track.toneHighCut = project.getTrackToneHighCut(track.id);
+        track.levelerAmount = project.getTrackLevelerAmount(track.id);
         track.reverbSend = project.getTrackReverbSend(track.id);
         track.delaySend = project.getTrackDelaySend(track.id);
         track.pan = project.getTrackPan(track.id);
@@ -1416,6 +1417,7 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
             busGraph.setTrackTone(trackSnap.id, trackSnap.toneBassDb, trackSnap.toneMidDb,
                                   trackSnap.toneTrebleDb, trackSnap.toneLowCut,
                                   trackSnap.toneHighCut, /*snap*/ true);
+            busGraph.setTrackLeveler(trackSnap.id, trackSnap.levelerAmount, /*snap*/ true);
             busGraph.setTrackSends(trackSnap.id, trackSnap.reverbSend, trackSnap.delaySend);
             busGraph.setTrackPan(trackSnap.id, trackSnap.pan);
         }

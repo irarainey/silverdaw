@@ -2264,6 +2264,14 @@ juce::var ProjectState::tracksAsJson() const
         {
             trackObj->setProperty("toneHighCut", true);
         }
+        // Phase 5 — per-track Leveler Amount (`[0, 1]`). Like Tone, emitted
+        // only when non-default so the Track FX Leveler knob restores after a
+        // reload while flat / legacy tracks stay byte-clean.
+        if (track.hasProperty(kLevelerAmount))
+        {
+            trackObj->setProperty("levelerAmount",
+                                  static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
+        }
         // Phase 5 — per-track Reverb / Delay send amounts. Like Tone, these
         // live on the track node and are emitted only when non-default so
         // the Track FX Sends sliders restore after a reload while legacy

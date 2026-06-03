@@ -779,6 +779,11 @@ void AudioEngine::setTrackTone(const juce::String& trackId,
     busGraph.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut, highCut, snap);
 }
 
+void AudioEngine::setTrackLeveler(const juce::String& trackId, float amount, bool snap)
+{
+    busGraph.setTrackLeveler(trackId, amount, snap);
+}
+
 void AudioEngine::setTrackSends(const juce::String& trackId, float reverbSend, float delaySend)
 {
     busGraph.setTrackSends(trackId, reverbSend, delaySend);

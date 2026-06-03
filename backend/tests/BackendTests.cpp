@@ -2,6 +2,7 @@
 #include "AudioConstants.h"
 #include "BridgeAuth.h"
 #include "LoudnessAnalyzer.h"
+#include "Leveler.h"
 #include "MixdownEngine.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
@@ -19,6 +20,7 @@
 #include <exception>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1126,6 +1128,134 @@ void testToneEqLowCutDirectionAndShelfRange()
     require(std::abs(flat - 1.0) < 0.02, "Flat tone with both cuts off should be transparent");
 }
 
+// ─── Leveler (single-knob compressor) ─────────────────────────────────────
+//
+// Guards the per-track Leveler's two load-bearing properties:
+//   1. Amount 0 is a TRUE bit-exact passthrough — an untouched track must
+//      export sample-identical to a project with no Leveler (the §7.9.6
+//      parity guarantee, same as ToneEq / SharedFx mix=0).
+//   2. A non-zero Amount actually reduces the peak of a hot signal (gain
+//      reduction happens) while the output stays finite (no NaN/denormal
+//      poisoning at the extremes).
+
+void testLevelerPassthroughAndCompression()
+{
+    constexpr double sr = 44100.0;
+    constexpr int n = 8192;
+    const auto fillSine = [sr](juce::AudioBuffer<float>& buf, float amp, double freq) {
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+        {
+            float* d = buf.getWritePointer(ch);
+            for (int i = 0; i < buf.getNumSamples(); ++i)
+                d[i] = amp * static_cast<float>(
+                                 std::sin(2.0 * juce::MathConstants<double>::pi * freq * i / sr));
+        }
+    };
+
+    // Amount 0 (snapped) must leave every sample untouched, bit-for-bit.
+    {
+        silverdaw::Leveler lev;
+        lev.prepare(sr, 2);
+        lev.setParams(0.0F, /*snap*/ true);
+        juce::AudioBuffer<float> buf(2, n);
+        juce::AudioBuffer<float> ref(2, n);
+        fillSine(buf, 0.8F, 220.0);
+        fillSine(ref, 0.8F, 220.0);
+        lev.process(buf, 0, n);
+        bool identical = true;
+        for (int ch = 0; ch < 2 && identical; ++ch)
+            for (int i = 0; i < n; ++i)
+                if (buf.getSample(ch, i) != ref.getSample(ch, i)) { identical = false; break; }
+        require(identical, "Amount 0 Leveler must be bit-exact passthrough");
+    }
+
+    // Amount 1 must compress a hot signal: the steady-state peak (past the
+    // attack ramp) is clearly below the input peak, and output stays finite.
+    {
+        silverdaw::Leveler lev;
+        lev.prepare(sr, 2);
+        lev.setParams(1.0F, /*snap*/ true);
+        juce::AudioBuffer<float> buf(2, n);
+        fillSine(buf, 0.9F, 220.0);
+        lev.process(buf, 0, n);
+        float peak = 0.0F;
+        bool finite = true;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = n / 2; i < n; ++i)
+            {
+                const float v = buf.getSample(ch, i);
+                if (! std::isfinite(v)) finite = false;
+                peak = juce::jmax(peak, std::abs(v));
+            }
+        require(finite, "Leveler output must stay finite");
+        require(peak < 0.8F, "Leveler at Amount 1 must reduce a hot signal's peak");
+    }
+
+    // Digital silence must stay silent and finite (denormal / NaN guard).
+    {
+        silverdaw::Leveler lev;
+        lev.prepare(sr, 2);
+        lev.setParams(1.0F, /*snap*/ true);
+        juce::AudioBuffer<float> buf(2, n);
+        buf.clear();
+        lev.process(buf, 0, n);
+        float maxAbs = 0.0F;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < n; ++i)
+                maxAbs = juce::jmax(maxAbs, std::abs(buf.getSample(ch, i)));
+        require(maxAbs == 0.0F, "Leveler must keep digital silence silent");
+    }
+
+    // A live glide to Amount 0 (snap=false) must eventually return to a
+    // bit-exact passthrough once the smoother and detector have settled —
+    // otherwise a track dialled back to off would silently diverge from a
+    // never-touched track on export.
+    {
+        silverdaw::Leveler lev;
+        lev.prepare(sr, 2);
+        lev.setParams(1.0F, /*snap*/ true);
+        juce::AudioBuffer<float> buf(2, n);
+        fillSine(buf, 0.9F, 220.0);
+        lev.process(buf, 0, n); // compress a hot signal first
+        lev.setParams(0.0F, /*snap*/ false); // dial back to off with a glide
+        for (int b = 0; b < 80; ++b)
+        {
+            fillSine(buf, 0.9F, 220.0);
+            lev.process(buf, 0, n); // let the glide + release settle
+        }
+        juce::AudioBuffer<float> ref(2, n);
+        fillSine(buf, 0.7F, 330.0);
+        fillSine(ref, 0.7F, 330.0);
+        lev.process(buf, 0, n);
+        bool identical = true;
+        for (int ch = 0; ch < 2 && identical; ++ch)
+            for (int i = 0; i < n; ++i)
+                if (buf.getSample(ch, i) != ref.getSample(ch, i)) { identical = false; break; }
+        require(identical,
+                "Leveler must return to bit-exact passthrough after a live glide to Amount 0");
+    }
+
+    // A single non-finite input sample must not permanently poison the
+    // detector: a later clean block must come out fully finite again.
+    {
+        silverdaw::Leveler lev;
+        lev.prepare(sr, 2);
+        lev.setParams(1.0F, /*snap*/ true);
+        juce::AudioBuffer<float> buf(2, n);
+        fillSine(buf, 0.5F, 220.0);
+        buf.setSample(0, 100, std::numeric_limits<float>::quiet_NaN());
+        buf.setSample(1, 200, std::numeric_limits<float>::infinity());
+        lev.process(buf, 0, n);
+        fillSine(buf, 0.5F, 220.0); // a clean block after the bad input
+        lev.process(buf, 0, n);
+        bool finite = true;
+        for (int ch = 0; ch < 2 && finite; ++ch)
+            for (int i = 0; i < n; ++i)
+                if (! std::isfinite(buf.getSample(ch, i))) { finite = false; break; }
+        require(finite, "Leveler must recover to finite output after a NaN/Inf input sample");
+    }
+}
+
 // ─── SharedFx (Room reverb + Echo delay) ──────────────────────────────────
 //
 // The project-shared Room + Echo run identically in the live AudioEngine
@@ -1653,6 +1783,51 @@ int main()
         }
     };
 
+    auto testProjectStateLevelerJsonRoundTrip = []() {
+        silverdaw::ProjectState state;
+        require(state.addTrack("t-lev"), "addTrack should succeed");
+
+        const auto findTrackJson = [](const juce::var& tracks,
+                                      const juce::String& id) -> juce::var {
+            if (auto* arr = tracks.getArray())
+            {
+                for (const auto& tv : *arr)
+                {
+                    if (tv.getProperty("id", {}).toString() == id) return tv;
+                }
+            }
+            return {};
+        };
+
+        // Fresh track: the Leveler is at its default (0) and must be absent
+        // from the snapshot so saved files / acks stay tidy.
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-lev");
+            require(json.isObject(), "fresh track should appear in tracksAsJson");
+            require(!json.hasProperty("levelerAmount"), "default leveler amount must be omitted");
+        }
+
+        // A non-default amount must round-trip through the snapshot the
+        // renderer reads on PROJECT_STATE.
+        require(state.setTrackLevelerAmount("t-lev", 0.6F),
+                "non-default leveler amount should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-lev");
+            require(json.isObject(), "track should appear in tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("levelerAmount", 0.0)), 0.6, 0.0001,
+                        "leveler amount should round-trip through tracksAsJson");
+        }
+
+        // Reset to default: the snapshot must drop the field again.
+        require(state.setTrackLevelerAmount("t-lev", 0.0F),
+                "reset to default should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-lev");
+            require(json.isObject(), "track should still appear in tracksAsJson");
+            require(!json.hasProperty("levelerAmount"), "reset leveler amount must be omitted");
+        }
+    };
+
     auto testProjectStateSendsJsonRoundTrip = []() {
         silverdaw::ProjectState state;
         require(state.addTrack("t-snd"), "addTrack should succeed");
@@ -1811,6 +1986,8 @@ int main()
          testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded},
         {"ToneEq low-cut is a high-pass and shelves have ±15 dB range",
          testToneEqLowCutDirectionAndShelfRange},
+        {"Leveler is bit-exact at Amount 0 and compresses a hot signal at Amount 1",
+         testLevelerPassthroughAndCompression},
         {"SharedFx delayNoteToMs resolves note values per BPM",
          testSharedFxDelayNoteResolution},
         {"SharedFx is bit-exact transparent when inactive (mix=0)",
@@ -1834,6 +2011,8 @@ int main()
          testProjectStateDelayNoteValueGuard},
         {"ProjectState per-track tone round-trips through tracksAsJson",
          testProjectStateTrackToneJsonRoundTrip},
+        {"ProjectState per-track leveler round-trips through tracksAsJson",
+         testProjectStateLevelerJsonRoundTrip},
         {"ProjectState per-track sends round-trip through tracksAsJson",
          testProjectStateSendsJsonRoundTrip},
         {"ProjectState per-track pan round-trips through tracksAsJson",

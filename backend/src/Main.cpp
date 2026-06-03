@@ -1730,9 +1730,11 @@ void handleTrackSetTone(const juce::var& payload, silverdaw::AudioEngine& engine
                       {"highCut", canonHighCut}});
 }
 
-// Phase 5 — per-track Leveler. Just the user-facing "amount" knob
-// until the compressor DSP and Advanced controls land.
-void handleTrackSetLeveler(const juce::var& payload, silverdaw::ProjectState& projectState,
+// Phase 5 — per-track Leveler. The single user-facing "amount" knob
+// (`[0, 1]`) drives the curated compressor in `Leveler.h`; the Advanced
+// disclosure of raw threshold / ratio / attack / release is deferred.
+void handleTrackSetLeveler(const juce::var& payload, silverdaw::AudioEngine& engine,
+                           silverdaw::ProjectState& projectState,
                            silverdaw::BridgeServer& bridge)
 {
     const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
@@ -1744,8 +1746,15 @@ void handleTrackSetLeveler(const juce::var& payload, silverdaw::ProjectState& pr
     const bool changed = projectState.setTrackLevelerAmount(trackId, amount);
     if (!changed) return;
 
+    // Re-read the canonical (clamped / default-suppressed) value so the
+    // engine and the renderer both reconcile to the persisted truth.
+    const float canonAmount = projectState.getTrackLevelerAmount(trackId);
+
+    // Live UI gesture → glide (snap=false) to avoid zipper noise.
+    engine.setTrackLeveler(trackId, canonAmount, /*snap*/ false);
+
     broadcastApplied(bridge, "TRACK_LEVELER_APPLIED",
-                     {{"trackId", trackId}, {"amount", amount}});
+                     {{"trackId", trackId}, {"amount", canonAmount}});
 }
 
 // Phase 5 — per-clip volume envelope. `points` is a `juce::var` array
@@ -2062,6 +2071,13 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             const bool tHighCut = projectState.getTrackToneHighCut(toneTrackId);
             if (tBass != 0.0F || tMid != 0.0F || tTreble != 0.0F || tLowCut || tHighCut)
                 engine.setTrackTone(toneTrackId, tBass, tMid, tTreble, tLowCut, tHighCut, /*snap*/ true);
+
+            // Phase 5 — restore persisted per-track Leveler Amount. Snapped so
+            // the compressor response is steady-state immediately; only pushed
+            // when non-zero so a flat project doesn't fan out identity updates.
+            const float tLeveler = projectState.getTrackLevelerAmount(toneTrackId);
+            if (tLeveler != 0.0F)
+                engine.setTrackLeveler(toneTrackId, tLeveler, /*snap*/ true);
 
             // Phase 5 — restore persisted per-track Reverb / Delay send
             // amounts. Snapped; only pushed when non-zero so a flat
@@ -3621,7 +3637,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::debug("bridge", "recv TRACK_SET_LEVELER trackId=" +
                                             payload.getProperty("trackId", "").toString() +
                                             " amount=" + payload.getProperty("amount", "").toString());
-        handleTrackSetLeveler(payload, projectState, bridge);
+        handleTrackSetLeveler(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_SET_PAN")
     {

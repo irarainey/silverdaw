@@ -86,6 +86,7 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
     BusGraph.*           Root pull graph: per-track runtimes (incl. equal-power pan) + shared FX bus
     TrackChain.*         Canonical per-track DSP chain (Tone → Leveler → gain → mute/solo)
     ToneEq.*             Per-track 3-band EQ + Low / High Cut filters
+    Leveler.*            Per-track single-knob soft-knee compressor (the Leveler)
     SharedFx.*           Project-wide shared Reverb + Delay buses
     EnvelopeSnapshot.*   Compiled, audio-thread-readable per-clip volume envelope
     MixdownEngine.*      Offline render on the same canonical chain as playback
@@ -146,12 +147,15 @@ Silverdaw currently supports the core arrangement workflow:
   collapses back to the Library). **Track FX** edits the selected track and hosts
   a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) plus **Low Cut** and
   **High Cut** filter toggles — a **Pan** control (equal-power, signed
-  `[-1, 1]`, unity at centre), and a **Reverb & Delay** rack setting how much the
+  `[-1, 1]`, unity at centre), a **Leveler** (a single **Amount** knob `0..1`
+  driving a hand-rolled stereo-linked soft-knee compressor; Amount 0 is a
+  bit-exact passthrough), and a **Reverb & Delay** rack setting how much the
   track feeds the project-wide Reverb and Delay buses. **Project FX** hosts the
   shared, song-wide returns those amounts route into: a **Reverb** and a
   **Delay** (tempo-locked). All are edited live (slider drags coalesce into one undo
   step) and applied to both playback and mixdown. The DSP lives in
-  [`ToneEq`](../backend/src/ToneEq.h) / [`TrackChain`](../backend/src/TrackChain.h)
+  [`ToneEq`](../backend/src/ToneEq.h) / [`Leveler`](../backend/src/Leveler.h) /
+  [`TrackChain`](../backend/src/TrackChain.h)
   / [`BusGraph`](../backend/src/BusGraph.h) (which applies pan to the dry path
   after the pre-pan send tap) and the shared-FX engine on the backend. The open
   FX tab and the selected track are project **view state**, round-tripped through
@@ -278,10 +282,10 @@ play seamlessly.
 
 The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
-wider mixer / effects / automation work (a per-track leveler and a deeper
-per-clip processor chain — compressor / saturation — applied both live and in
-mixdown, beyond the per-track Tone EQ + Low / High Cut, the project-wide Reverb
-and Delay sends, and the per-clip Volume Shape that already ship), stem separation,
+wider mixer / effects / automation work (a deeper per-clip processor chain —
+saturation — applied both live and in mixdown, beyond the per-track Tone EQ +
+Low / High Cut, the per-track Leveler, the project-wide Reverb and Delay sends,
+and the per-clip Volume Shape that already ship), stem separation,
 loop slicing, grouping compound operations (split / duplicate) into a single undo
 step, and a CI matrix that enforces a coverage floor over the existing backend
 and frontend test suites.
@@ -426,9 +430,10 @@ fields, all suppressed from save when at their defaults so legacy projects stay
 bit-clean: `toneBassDb` / `toneMidDb` / `toneTrebleDb` are the per-track 3-band
 EQ gains in dB, `toneLowCut` / `toneHighCut` are filter toggles,
 `sendReverb` / `sendDelay` are `[0, 1]` send amounts feeding the project-wide
-Reverb and Delay buses, and `pan` is the equal-power pan position, signed
-`[-1, 1]` (`-1` = hard left, `0` = centre, `+1` = hard right). The shared buses
-themselves live on the `PROJECT` node:
+Reverb and Delay buses, `pan` is the equal-power pan position, signed
+`[-1, 1]` (`-1` = hard left, `0` = centre, `+1` = hard right), and
+`levelerAmount` is the per-track **Leveler** strength in `[0, 1]` (`0` = off /
+bypassed). The shared buses themselves live on the `PROJECT` node:
 `reverbSize` / `reverbDecay` / `reverbTone` / `reverbMix` describe the single
 project **Reverb**, and `delayNoteValue` / `delayFeedback` / `delayTone` /
 `delayMix` the project **Delay** (tempo-locked). `CLIP.envelopePoints` is
@@ -565,8 +570,9 @@ the way in, and the original file is never modified (non-destructive editing).
 
 Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp and
 the per-clip volume-shape multiplier, per-track summing, the per-track
-Tone EQ + Low Cut / High Cut filters
-([`ToneEq`](../backend/src/ToneEq.h) / [`TrackChain`](../backend/src/TrackChain.h)),
+Tone EQ + Low Cut / High Cut filters and the per-track Leveler
+([`ToneEq`](../backend/src/ToneEq.h) / [`Leveler`](../backend/src/Leveler.h) /
+[`TrackChain`](../backend/src/TrackChain.h)),
 the per-track Reverb / Delay sends into the project-wide shared-FX buses,
 track gain and mute / solo, equal-power panning, the master mix and metering,
 and the `MasterClockSource` that gates playback and feeds the device. The
@@ -574,8 +580,8 @@ and the `MasterClockSource` that gates playback and feeds the device. The
 to whatever the hardware expects. Float gives very large headroom, so
 intermediate sums can briefly exceed 0 dBFS without clipping as long as the
 final master is back in range. (`TrackChain` is the canonical per-track DSP
-seam shared by live playback and mixdown; further nodes such as a per-track
-leveler are planned there — see the
+seam shared by live playback and mixdown, running Tone → Leveler → gain →
+mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown

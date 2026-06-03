@@ -76,6 +76,10 @@ struct MixdownSnapshot
         float toneTrebleDb{0.0F};
         bool toneLowCut{false};
         bool toneHighCut{false};
+        // Phase 5 — per-track Leveler Amount (`[0, 1]`), captured so the
+        // offline render compresses identically to the live engine (§7.9.6
+        // parity).
+        float levelerAmount{0.0F};
         // Phase 5 — per-track wet send amounts into the shared Reverb / Delay
         // buses, captured so the offline render feeds the same shared FX
         // the live engine does (§7.9.6 parity).

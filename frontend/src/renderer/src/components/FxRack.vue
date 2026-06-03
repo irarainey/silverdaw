@@ -29,8 +29,12 @@ defineProps<{
    further modules. */
 .fx-rack {
   --cell-w: 17rem; /* 272px */
-  --cell-h: 16rem; /* 256px — sized so a 4-control module fits without an inner scrollbar */
-  grid-template-rows: repeat(1, var(--cell-h));
+  --cell-h: 13.25rem; /* 212px — full-height module; comfortably fits the tallest
+                         content (Tone, Project Room/Echo) without an inner scrollbar */
+  --cell-gap: 0.75rem; /* matches the Tailwind gap-3 row/column gap below */
+  /* Two half-height row tracks: a full module spans both (= --cell-h), while two
+     stacked half modules plus the gap between them also sum to --cell-h. */
+  grid-template-rows: repeat(2, calc((var(--cell-h) - var(--cell-gap)) / 2));
   grid-auto-columns: var(--cell-w);
   grid-auto-flow: column dense;
   justify-content: start;

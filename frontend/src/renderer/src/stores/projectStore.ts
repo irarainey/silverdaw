@@ -179,6 +179,14 @@ export interface Track {
    * hydrate cleanly. Mirrors the backend ValueTree flat property `pan`.
    */
   pan?: number
+  /**
+   * Per-track Leveler (single-knob soft-knee compressor) amount, linear
+   * `[0, 1]` (`0` = off / bypassed, `1` = maximum levelling). Optional and
+   * suppressed-when-default (`0`) so an unlevelled track carries no state
+   * and legacy projects hydrate cleanly. Mirrors the backend ValueTree flat
+   * property `levelerAmount`.
+   */
+  levelerAmount?: number
 }
 
 /**
@@ -1813,6 +1821,33 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * Update a track's Leveler amount. Mirrors `setTrackPan`: applies the
+     * value locally (default-suppressing `0` back to `undefined`) then
+     * forwards to the backend unless `opts.localOnly` (used by the
+     * `TRACK_LEVELER_APPLIED` ack to reconcile to the canonical clamped
+     * value). `gestureId` / `gestureEnd` drive undo coalescing for the
+     * knob drag.
+     */
+    setTrackLeveler(
+      trackId: string,
+      amount: number,
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const clamped = Math.max(0, Math.min(1, Number.isFinite(amount) ? amount : 0))
+      track.levelerAmount = clamped !== 0 ? clamped : undefined
+      if (!opts?.localOnly) {
+        sendBridge('TRACK_SET_LEVELER', {
+          trackId,
+          amount: clamped,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /**
      * Update the project-shared Reverb. Applies the partial patch
      * locally then forwards to the backend unless `opts.localOnly` (used
      * by the `PROJECT_REVERB_APPLIED` ack to reconcile to canonical
@@ -2879,7 +2914,11 @@ export const useProjectStore = defineStore('project', {
               typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined,
             delaySend:
               typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined,
-            pan: typeof t.pan === 'number' && t.pan !== 0 ? t.pan : undefined
+            pan: typeof t.pan === 'number' && t.pan !== 0 ? t.pan : undefined,
+            levelerAmount:
+              typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
+                ? t.levelerAmount
+                : undefined
           }
           this.tracks.push(track)
         } else {
@@ -2911,6 +2950,10 @@ export const useProjectStore = defineStore('project', {
           track.delaySend =
             typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined
           track.pan = typeof t.pan === 'number' && t.pan !== 0 ? t.pan : undefined
+          track.levelerAmount =
+            typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
+              ? t.levelerAmount
+              : undefined
         }
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)

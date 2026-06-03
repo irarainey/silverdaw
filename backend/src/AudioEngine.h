@@ -1059,6 +1059,12 @@ class AudioEngine
                       float bassDb, float midDb, float trebleDb, bool lowCut,
                       bool highCut, bool snap);
 
+    /** Publish a track's Leveler Amount (`[0, 1]`) to the live bus graph.
+     *  Pure delegate to `BusGraph::setTrackLeveler`. `snap` collapses the
+     *  Amount smoother (use for load/reset fan-out; live UI gestures pass
+     *  false). Safe from the message thread. */
+    void setTrackLeveler(const juce::String& trackId, float amount, bool snap);
+
     /** Publish a track's wet send amounts into the shared Reverb / Delay
      *  buses. Pure delegate to `BusGraph::setTrackSends`. Safe from the
      *  message thread. */

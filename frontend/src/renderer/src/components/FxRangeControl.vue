@@ -37,7 +37,7 @@ function num(target: EventTarget | null): number {
 </script>
 
 <template>
-  <label class="flex flex-col gap-1">
+  <label class="flex flex-col gap-1.5">
     <span class="flex items-center justify-between">
       <span class="text-[10px] uppercase tracking-wider text-zinc-500">{{ label }}</span>
       <span class="font-mono text-[10px] tabular-nums text-zinc-400">{{ display }}</span>

@@ -81,7 +81,7 @@ onBeforeUnmount(gesture.endGesture)
     :cols="1"
     :rows="1"
   >
-    <div class="flex w-full flex-col gap-3 text-xs">
+    <div class="grid w-full grid-cols-2 gap-3 text-xs">
       <FxRangeControl
         v-for="send in SENDS"
         :key="send.key"

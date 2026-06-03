@@ -94,7 +94,7 @@ onBeforeUnmount(gesture.endGesture)
   <ClipEffectModule
     title="Tone"
     :cols="1"
-    :rows="1"
+    :rows="2"
   >
     <div class="flex w-full flex-col gap-3 text-xs">
       <FxRangeControl
@@ -113,35 +113,37 @@ onBeforeUnmount(gesture.endGesture)
         @reset="onReset(band)"
       />
 
-      <button
-        type="button"
-        class="flex items-center justify-between rounded border px-2 py-1.5 text-[11px] transition-colors"
-        :class="
-          lowCutOn
-            ? 'border-sky-500 bg-sky-500/15 text-sky-200'
-            : 'border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100'
-        "
-        :aria-pressed="lowCutOn"
-        @click="onToggleLowCut"
-      >
-        <span class="uppercase tracking-wider">Low Cut</span>
-        <span class="font-mono text-[10px]">{{ lowCutOn ? 'ON' : 'OFF' }}</span>
-      </button>
+      <div class="mt-2 grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          class="flex items-center justify-between rounded border px-2 py-1.5 text-[11px] transition-colors"
+          :class="
+            lowCutOn
+              ? 'border-sky-500 bg-sky-500/15 text-sky-200'
+              : 'border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100'
+          "
+          :aria-pressed="lowCutOn"
+          @click="onToggleLowCut"
+        >
+          <span class="uppercase tracking-wider">Low Cut</span>
+          <span class="font-mono text-[10px]">{{ lowCutOn ? 'ON' : 'OFF' }}</span>
+        </button>
 
-      <button
-        type="button"
-        class="flex items-center justify-between rounded border px-2 py-1.5 text-[11px] transition-colors"
-        :class="
-          highCutOn
-            ? 'border-sky-500 bg-sky-500/15 text-sky-200'
-            : 'border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100'
-        "
-        :aria-pressed="highCutOn"
-        @click="onToggleHighCut"
-      >
-        <span class="uppercase tracking-wider">High Cut</span>
-        <span class="font-mono text-[10px]">{{ highCutOn ? 'ON' : 'OFF' }}</span>
-      </button>
+        <button
+          type="button"
+          class="flex items-center justify-between rounded border px-2 py-1.5 text-[11px] transition-colors"
+          :class="
+            highCutOn
+              ? 'border-sky-500 bg-sky-500/15 text-sky-200'
+              : 'border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100'
+          "
+          :aria-pressed="highCutOn"
+          @click="onToggleHighCut"
+        >
+          <span class="uppercase tracking-wider">High Cut</span>
+          <span class="font-mono text-[10px]">{{ highCutOn ? 'ON' : 'OFF' }}</span>
+        </button>
+      </div>
     </div>
   </ClipEffectModule>
 </template>

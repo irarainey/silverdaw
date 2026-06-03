@@ -842,8 +842,16 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
-    case 'TRACK_LEVELER_APPLIED':
+    case 'TRACK_LEVELER_APPLIED': {
+      if (!msg.payload.ok) {
+        log.warn('bridge', `TRACK_LEVELER_APPLIED ok=false for ${msg.payload.trackId}`)
+        break
+      }
+      useProjectStore().setTrackLeveler(msg.payload.trackId, msg.payload.amount, {
+        localOnly: true
+      })
       break
+    }
 
     case 'CLIP_ENVELOPE_APPLIED': {
       // Mirror the backend-normalised volume-shape breakpoints into the

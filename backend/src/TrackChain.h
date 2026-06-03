@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Leveler.h"
 #include "ToneEq.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -20,7 +21,7 @@ namespace silverdaw
  *   Tone (3-band EQ + Low Cut + High Cut)  → Leveler (Compressor)
  *     → gain  → mute / solo gate
  *
- * Tone is the first populated node; Leveler / gain / gate still land in
+ * Tone and Leveler are populated; gain / gate still land in
  * later steps. The `process` call is the one signal-domain insertion
  * point both engines call per block — adding a node later means
  * populating it
@@ -64,12 +65,17 @@ public:
     {
         juce::ignoreUnused(maxBlockSize);
         tone.prepare(sampleRate, numChannels);
+        leveler.prepare(sampleRate, numChannels);
     }
 
     /** Wipe all DSP node state. Called on transport stop and on
      *  catastrophic seek (per §7.10 transport rules). Pause does NOT
      *  call reset — see §7.10. */
-    void reset() noexcept { tone.reset(); }
+    void reset() noexcept
+    {
+        tone.reset();
+        leveler.reset();
+    }
 
     /** Publish per-track Tone EQ targets. Called from the message thread
      *  under the owning `BusGraph` lock (the audio thread holds the same
@@ -84,6 +90,14 @@ public:
         tone.setParams(bassDb, midDb, trebleDb, lowCut, highCut, snap);
     }
 
+    /** Publish the per-track Leveler Amount (`[0, 1]`). Called from the
+     *  message thread under the owning `BusGraph` lock (same discipline as
+     *  `setTone`). `snap` collapses the Amount smoother so the response is
+     *  steady-state on the next block — used by the project-load /
+     *  mixdown-setup / runtime-creation paths for live↔export parity; live UI
+     *  gestures pass `snap=false` to glide. */
+    void setLeveler(float amount, bool snap) noexcept { leveler.setParams(amount, snap); }
+
     /** In-place per-block DSP on a stereo (or mono) block already
      *  summed from this track's clips. `startSample` and `numSamples`
      *  bracket the active region inside `buffer` (matching JUCE's
@@ -97,19 +111,21 @@ public:
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
         tone.process(buffer, startSample, numSamples);
+        leveler.process(buffer, startSample, numSamples);
     }
 
     TrackChain(const TrackChain&) = delete;
     TrackChain& operator=(const TrackChain&) = delete;
     // Move is allowed so callers can hold `TrackChain` directly inside
     // moveable owners (e.g. `OfflineTrack` in `std::vector` in
-    // `MixdownEngine`). `ToneEq` holds only plain value members (no
-    // atomics), so the defaulted move stays valid and move-safe.
+    // `MixdownEngine`). `ToneEq` and `Leveler` hold only plain value members
+    // (no atomics), so the defaulted move stays valid and move-safe.
     TrackChain(TrackChain&&) noexcept = default;
     TrackChain& operator=(TrackChain&&) noexcept = default;
 
 private:
     ToneEq tone;
+    Leveler leveler;
 };
 
 } // namespace silverdaw

@@ -5,6 +5,8 @@
 //
 //   • Tone — 3-band EQ plus Low / High Cut.
 //   • Pan — equal-power placement of the track's dry signal.
+//   • Leveler — a single-knob soft-knee compressor that evens out the
+//     track's dynamics.
 //   • Reverb & Delay — how much this track feeds the project-wide Reverb
 //     and Delay buses (the buses themselves live on the Project FX tab).
 //
@@ -20,6 +22,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import TrackToneModule from '@/components/TrackToneModule.vue'
 import TrackSendsModule from '@/components/TrackSendsModule.vue'
 import TrackPanModule from '@/components/TrackPanModule.vue'
+import TrackLevelerModule from '@/components/TrackLevelerModule.vue'
 import FxRack from '@/components/FxRack.vue'
 
 const project = useProjectStore()
@@ -42,6 +45,10 @@ const selectedTrackId = computed(() =>
         :key="`pan-${selectedTrackId}`"
         :track-id="selectedTrackId"
       />
+      <TrackLevelerModule
+        :key="`leveler-${selectedTrackId}`"
+        :track-id="selectedTrackId"
+      />
       <TrackSendsModule
         :key="`sends-${selectedTrackId}`"
         :track-id="selectedTrackId"
@@ -51,7 +58,7 @@ const selectedTrackId = computed(() =>
       v-else
       class="flex items-center justify-center rounded-lg border border-dashed border-zinc-800 bg-zinc-900/40 px-4 text-center text-xs text-zinc-500"
     >
-      Select a track to edit its Tone, Pan, and Reverb &amp; Delay.
+      Select a track to edit its Tone, Pan, Leveler, and Reverb &amp; Delay.
     </div>
   </FxRack>
 </template>

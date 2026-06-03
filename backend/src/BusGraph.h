@@ -320,6 +320,15 @@ public:
             rt->chain.setTone(t.bassDb, t.midDb, t.trebleDb, t.lowCut, t.highCut, /*snap*/ true);
         }
 
+        // Re-apply any per-track Leveler Amount captured for this track while
+        // it had no runtime, mirroring the Tone re-application above. Snapped
+        // so the compressor response is steady-state immediately.
+        auto levelerIt = pendingLeveler.find(trackId);
+        if (levelerIt != pendingLeveler.end())
+        {
+            rt->chain.setLeveler(levelerIt->second, /*snap*/ true);
+        }
+
         // Re-apply any per-track send amounts captured for this track while
         // it had no runtime, mirroring the Tone re-application above.
         auto sendIt = pendingSends.find(trackId);
@@ -394,6 +403,23 @@ public:
         auto it = runtimes.find(trackId);
         if (it != runtimes.end())
             it->second->chain.setTone(bassDb, midDb, trebleDb, lowCut, highCut, snap);
+    }
+
+    /** Publish a track's Leveler Amount (`[0, 1]`). Stored sticky in
+     *  `pendingLeveler` (like Tone) so it survives the runtime's lazy
+     *  create/destroy lifecycle, and forwarded to a live runtime
+     *  immediately. Takes the audio-thread `lock`; `snap` collapses the
+     *  Amount smoother (load / mixdown / runtime-creation paths) while live
+     *  UI gestures pass `snap=false` to glide. */
+    void setTrackLeveler(const juce::String& trackId, float amount, bool snap)
+    {
+        if (trackId.isEmpty()) return;
+        const float a = juce::jlimit(0.0F, 1.0F, std::isfinite(amount) ? amount : 0.0F);
+        const juce::ScopedLock sl(lock);
+        pendingLeveler[trackId] = a;
+        auto it = runtimes.find(trackId);
+        if (it != runtimes.end())
+            it->second->chain.setLeveler(a, snap);
     }
 
     /** Publish a track's wet send amounts into the shared Reverb / Delay
@@ -528,6 +554,7 @@ public:
         runtimes.clear();
         clipToTrack.clear();
         pendingTone.clear();
+        pendingLeveler.clear();
         pendingSends.clear();
         pendingPans.clear();
         sharedFx.reset();
@@ -564,6 +591,10 @@ private:
         bool highCut = false;
     };
     std::unordered_map<juce::String, ToneParams> pendingTone;
+
+    // Sticky per-track Leveler Amount (`[0, 1]`), keyed by trackId — same
+    // lifecycle discipline as `pendingTone`.
+    std::unordered_map<juce::String, float> pendingLeveler;
 
     // Sticky per-track send amounts, keyed by trackId — same lifecycle
     // discipline as `pendingTone`.

@@ -169,7 +169,7 @@ whether the renderer draws the single summary lane or the stacked L/R lanes.
 | Waveform drawing                            | PixiJS (using peaks arrays from backend)        |
 | Drag and drop                               | Electron / Vue                                  |
 | Audio playback                              | JUCE backend                                    |
-| Per-track FX, mixer routing                 | JUCE backend (per-track Tone EQ + filters shipped; sends / leveler in progress) |
+| Per-track FX, mixer routing                 | JUCE backend (per-track Tone EQ + filters, sends, pan, and Leveler shipped) |
 | Warping and pitch shift                     | JUCE backend (Rubber Band)                      |
 | BPM / beat detection                        | JUCE backend (BTrack)                           |
 | Key detection                               | Electron renderer (Web Audio chroma analysis)   |
@@ -1119,8 +1119,8 @@ project transport.
 The current focus order, ahead of the longer phase list below:
 
 1. **Finish Phase 5 mixing & core effects** — building on the shipped Tone
-   controls, Volume Shape, Reverb + Delay, and mute/solo/pan (Leveler still to
-   come). **Clip transitions (§12.1) are pulled in as part of this work**, since
+   controls, Volume Shape, Reverb + Delay, mute/solo/pan, and the per-track
+   Leveler. **Clip transitions (§12.1) are pulled in as part of this work**, since
    they build directly on the per-clip Volume Shape, Tone EQ and the shared Delay.
 2. **Fast import-to-arrangement (§12.6)** — promoted up the list as a core remix
    accelerator, tackled once the core effects are in place.
@@ -1470,12 +1470,19 @@ playable at every point — no broken-build day):
   handlers activated. Live engine and offline mixdown consume the same
   `SharedFx` unit so the rendered export matches the live mix at mix=0
   bit-for-bit (§7.9.6 parity).
-- [ ] **8. Per-track Leveler** — `juce::dsp::Compressor` per
-  `TrackRuntime` driven by a single Amount knob with a
-  deterministic static makeup-gain map (no live loudness
-  analysis), Advanced disclosure for classic knobs. Detector state
-  resets on transport stop / seek; **never** at clip boundaries.
-  Bridge: `TRACK_SET_LEVELER` handler activated.
+- [x] **8. Per-track Leveler** — _(shipped, Amount-only.)_ A hand-rolled
+  stereo-linked feed-forward soft-knee compressor per `TrackChain` (the
+  build carries no `juce_dsp`, so the compressor is hand-written like
+  `ToneEq` / `SharedFx`), driven by a single **Amount** knob (`0..1`) with
+  a deterministic static makeup-gain map (no live loudness analysis).
+  Amount 0 is a bit-exact passthrough (§7.9.6 parity); the detector lives
+  across the track's lifetime and resets on transport stop / seek,
+  **never** at clip boundaries. Runs in `TrackChain` after Tone
+  (Tone → Leveler) and is mirrored in the offline `MixdownEngine` for
+  export parity. Bridge: `TRACK_SET_LEVELER` / `TRACK_LEVELER_APPLIED`
+  activated end-to-end (engine push + persistence + renderer snapshot).
+  The **Advanced** disclosure (threshold / ratio / attack / release /
+  makeup) is deferred as a clean follow-up.
 - [x] **9. mute / solo / pan.** _(mute / solo shipped via the existing
   `TRACK_MUTE` / `TRACK_SOLO` envelopes; **pan** now shipped.)_ Track
   header has mute/solo buttons; the Track FX tab carries an equal-power

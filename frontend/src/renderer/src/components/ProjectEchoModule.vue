@@ -85,7 +85,7 @@ onBeforeUnmount(gesture.endGesture)
   <ClipEffectModule
     title="Delay"
     :cols="1"
-    :rows="1"
+    :rows="2"
   >
     <div class="flex w-full flex-col gap-3 text-xs">
       <label class="flex flex-col gap-1">

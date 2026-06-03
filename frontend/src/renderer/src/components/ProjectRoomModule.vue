@@ -74,7 +74,7 @@ onBeforeUnmount(gesture.endGesture)
   <ClipEffectModule
     title="Reverb"
     :cols="1"
-    :rows="1"
+    :rows="2"
   >
     <div class="flex w-full flex-col gap-3 text-xs">
       <FxRangeControl
