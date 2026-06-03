@@ -309,9 +309,9 @@ decoded-WAV cache) at the time it loads the clip's audio source.
   merges additively.
 
 **Bulk data goes via disk, never via the socket.** When the backend has fresh waveform peaks
-ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate }`
+ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate, laneCount }`
 envelope. The cache file at `cachePath` (under `%APPDATA%/Silverdaw/peaks/`) holds the peaks
-themselves; the renderer reads it via main's `peaks:readCacheFile` IPC and parses the 24-byte
+themselves; the renderer reads it via main's `peaks:readCacheFile` IPC and parses the 28-byte
 header + float32 payload locally. This mirrors how the same architecture treats audio files,
 project files, and (future) stems / mixdowns — the WebSocket carries the control plane, the
 filesystem carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight text-only path
@@ -588,7 +588,7 @@ and loudness-normalisation options.
 
 ## Peaks cache
 
-Waveform peaks (mono-mixed `min, max` float32 pairs) are computed once per source
+Waveform peaks (`min, max` float32 pairs) are computed once per source
 file and persisted under `%APPDATA%/Silverdaw/peaks/<hash>.peaks`. The default
 requested resolution is **500 peaks/sec** — enough detail to keep the main
 timeline crisp at 600 % zoom without ballooning the cache. Because peak buckets
@@ -601,12 +601,28 @@ rendering for the item currently on screen via `CLIP_EDITOR_PEAKS_REQUEST` /
 disk (the cache key uses the requested `peaksPerSecond`) and is held in
 renderer memory only while the dialog is open. The cache key is a 64-bit hash of
 `(filePath | mtime | size | requestedPeaksPerSecond)` — any change to the file
-or requested resolution invalidates the entry automatically. The on-disk format
-is a 24-byte header (magic, version, requested peaksPerSecond, peakCount,
-sampleRate) followed by `peakCount × 2 × float32` little-endian peak values.
+or requested resolution invalidates the entry automatically.
+
+The peaks are stored **channel-major in lanes**. A stereo (exactly two-channel)
+source stores three lanes — `[summary, left, right]` (`laneCount = 3`) — where
+lane 0 is the same mono `sum-then-min/max` summary used by the single-waveform
+display, byte-for-byte. Mono and >2-channel sources store the summary lane only
+(`laneCount = 1`). The on-disk format is a **28-byte header** (magic, version,
+requested peaksPerSecond, peakCount *(buckets per lane)*, laneCount, sampleRate)
+followed by `peakCount × laneCount × 2 × float32` little-endian peak values.
 Versioned so a future format change is detected as a miss rather than a
 corrupted read; the same layout is what the renderer reads via the
-`peaks:readCacheFile` IPC.
+`peaks:readCacheFile` IPC and the shared `parsePeaksCacheBuffer` parser, which
+returns the summary plus (for stereo) the per-channel arrays.
+
+The renderer keeps the per-channel peaks in a session-only
+`libraryStore.channelPeaksByItemId` map (keyed by the audio-file source item id,
+each with its own LOD pyramid). The **Waveform display** preference (Preferences ▸
+Interface) chooses between *Single waveform* (summary, default) and *Left and
+right channels* (stacked L/R lanes for stereo sources); the choice is persisted
+to `preferences.json` and applied to both the timeline and the Clip Editor. Mono
+sources, and rows too short to fit two readable lanes, always fall back to the
+single summary lane.
 
 The cache survives backend restarts.
 
@@ -909,7 +925,8 @@ engine or the file. The settings are organised into four tabs on a left-hand
 sidebar:
 
 - **General** — toast notifications, follow-playback auto-scroll, library tile
-  imagery, and the transport **previous / next button target**.
+  imagery, the transport **previous / next button target**, and the **waveform
+  display** mode (single vs. left/right channels).
 - **Project** — default Save / Open / Import directories and background autosave
   configuration.
 - **Audio** — output device + driver selection (see below), and the
@@ -948,6 +965,11 @@ Persisted fields:
   buttons jump: `timelineEnds` seeks the project start / end; `markers` steps
   through the timeline markers, falling back to the start / end past the last
   marker in either direction.
+- **Waveform display** — `ui.waveformDisplayMode`, `summary` (default) or
+  `stereo`. `summary` draws a single combined waveform per clip; `stereo`
+  stacks separate left / right lanes for two-channel sources (mono sources and
+  rows too short for two lanes still show one lane). Applies to both the
+  timeline and the Clip Editor.
 - **Recent Projects** MRU (max 10, head = most recent, case-insensitive dedupe on Windows).
 - **Write diagnostic logs** — enables the cross-layer file logger. When on,
   the next launch writes a per-session timestamped folder containing

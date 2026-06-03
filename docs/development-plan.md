@@ -138,8 +138,8 @@ type-checked list of every currently-defined envelope.
 { "type": "PLAYHEAD_UPDATE", "payload": { "positionMs": 4250, "isPlaying": true } }
 { "type": "CLIP_ADDED", "payload": { "trackId": "t1", "clipId": "c1", "ok": true } }
 { "type": "LIBRARY_ITEM_ANALYSIS", "payload": { "itemId": "l1", "bpm": 124.37, "beats": [0.487, 0.972], "beatAnchorSec": 0.487, "variableTempo": false, "playbackFilePath": "..." } }
-{ "type": "WAVEFORM_READY", "payload": { "clipId": "c1", "cachePath": "C:/Users/.../Silverdaw/peaks/<hash>.peaks", "peakCount": 158310, "peaksPerSecond": 501.13, "sampleRate": 44100 } }
-{ "type": "CLIP_EDITOR_PEAKS_READY", "payload": { "libraryItemId": "l1", "cachePath": "C:/Users/.../Silverdaw/peaks/<hash>.peaks", "peakCount": 633240, "peaksPerSecond": 2004.54, "sampleRate": 44100 } }
+{ "type": "WAVEFORM_READY", "payload": { "clipId": "c1", "cachePath": "C:/Users/.../Silverdaw/peaks/<hash>.peaks", "peakCount": 158310, "peaksPerSecond": 501.13, "sampleRate": 44100, "laneCount": 3 } }
+{ "type": "CLIP_EDITOR_PEAKS_READY", "payload": { "libraryItemId": "l1", "cachePath": "C:/Users/.../Silverdaw/peaks/<hash>.peaks", "peakCount": 633240, "peaksPerSecond": 2004.54, "sampleRate": 44100, "laneCount": 3 } }
 { "type": "PROJECT_SAVED", "payload": { "filePath": "...", "ok": true } }
 { "type": "PROJECT_DIRTY", "payload": { "dirty": true } }
 ```
@@ -155,6 +155,10 @@ for the cached peak array. This can differ slightly from the requested nominal
 rate (for example 500 peaks/sec) because waveform buckets contain a whole
 number of source samples. The renderer uses the reported rate for timeline
 waveform indexing so transients stay aligned with beat markers over long clips.
+They also carry `laneCount`: stereo sources cache three channel-major lanes
+(`[summary, left, right]`, `laneCount = 3`); mono / >2-channel sources cache the
+summary lane only (`laneCount = 1`). The **Waveform display** preference selects
+whether the renderer draws the single summary lane or the stacked L/R lanes.
 
 ### Responsibility split
 
@@ -1629,10 +1633,12 @@ playable at every point — no broken-build day):
   warped clips) and show a toast when the requested length is too
   short.
 - [x] Preferences panel: General (toasts, follow-playback, library
-  tile imagery), Project (default Save / Open / Import dirs + autosave
-  config), **Audio** (output device selection + driver picker with
-  Bluetooth-latency heuristic), Developer (separate diagnostic logging,
-  log folder and DevTools toggles). Theme selection is deferred to Phase 8.
+  tile imagery, previous/next button target, **waveform display** mode —
+  single summary vs. stacked left/right channels), Project (default Save /
+  Open / Import dirs + autosave config), **Audio** (output device selection +
+  driver picker with Bluetooth-latency heuristic), Developer (separate
+  diagnostic logging, log folder and DevTools toggles). Theme selection is
+  deferred to Phase 8.
 - [x] Undo/redo surfaced in the Edit menu (Ctrl+Z / Ctrl+Y). Each
   bridge envelope that mutates the ValueTree is wrapped in its own
   JUCE `UndoManager` transaction by `dispatchBridgeMessage`; drag

@@ -590,20 +590,21 @@ void produceAndBroadcastPeaks(const juce::String& clipId, const juce::File& file
     }
 
     // Build a small JSON envelope. `peakCount` is the number of (min,max)
-    // pairs — the renderer reads `peakCount * 2 * sizeof(float)` bytes
-    // from the file after the 24-byte header. Same layout the cache
-    // itself uses (see `PeaksCache.cpp::CacheHeader`).
+    // pairs PER LANE — the renderer reads `peakCount * laneCount * 2 *
+    // sizeof(float)` bytes from the file after the 28-byte header. Same
+    // layout the cache itself uses (see `PeaksCache.cpp`).
     const auto cacheFile = cache.getCacheFilePath(filePath, kPeaksPerSecond);
     auto* obj = new juce::DynamicObject();
     obj->setProperty("clipId", clipId);
     obj->setProperty("cachePath", cacheFile.getFullPathName());
-    obj->setProperty("peakCount", static_cast<int>(result.peaks.size() / 2U));
+    obj->setProperty("peakCount", result.bucketsPerLane());
+    obj->setProperty("laneCount", result.laneCount);
     obj->setProperty("peaksPerSecond", effectivePeaksPerSecond(result));
     obj->setProperty("sampleRate", result.sampleRate);
     bridge.broadcast("WAVEFORM_READY", juce::var(obj));
 
     silverdaw::log::info("peaksjob", "done clipId=" + clipId + " peaks=" +
-                                          juce::String(static_cast<int>(result.peaks.size() / 2U)) +
+                                          juce::String(result.bucketsPerLane()) +
                                           (fromCache ? " (cache hit)" : " (computed)"));
 }
 
@@ -1295,12 +1296,13 @@ void produceAndBroadcastEditorPeaks(const juce::String& libraryItemId, const juc
     auto* obj = new juce::DynamicObject();
     obj->setProperty("libraryItemId", libraryItemId);
     obj->setProperty("cachePath", cacheFile.getFullPathName());
-    obj->setProperty("peakCount", static_cast<int>(result.peaks.size() / 2U));
+    obj->setProperty("peakCount", result.bucketsPerLane());
+    obj->setProperty("laneCount", result.laneCount);
     obj->setProperty("peaksPerSecond", effectivePeaksPerSecond(result));
     obj->setProperty("sampleRate", result.sampleRate);
     bridge.broadcast("CLIP_EDITOR_PEAKS_READY", juce::var(obj));
     silverdaw::log::info("peaksjob", "editor done libId=" + libraryItemId + " peaks=" +
-                                          juce::String(static_cast<int>(result.peaks.size() / 2U)) +
+                                          juce::String(result.bucketsPerLane()) +
                                           (fromCache ? " (cache hit)" : " (computed)"));
 }
 
@@ -1365,7 +1367,8 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     obj->setProperty("sampleRate", sampleRate);
                     obj->setProperty("channelCount", channels);
                     obj->setProperty("cachePath", peaksFile.getFullPathName());
-                    obj->setProperty("peakCount", static_cast<int>(peaks.peaks.size() / 2U));
+                    obj->setProperty("peakCount", peaks.bucketsPerLane());
+                    obj->setProperty("laneCount", peaks.laneCount);
                     obj->setProperty("peaksPerSecond", effectivePeaksPerSecond(peaks));
                     bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
                     broadcastEditUndoState(projectState, bridge);

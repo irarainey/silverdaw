@@ -291,6 +291,9 @@ export async function importAudioIntoLibrary(opened: {
       playbackFilePath,
       key: enrichedMetadata?.key
     })
+    if (decoded.channelPeaks.length > 0) {
+      library.setItemChannelPeaks(itemId, decoded.channelPeaks, decoded.peaksPerSecond)
+    }
     library.setItemMetadata(itemId, enrichedMetadata)
     library.markImportAnalyzing(importEntryId, itemId)
     return itemId
@@ -349,6 +352,7 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
 
     library.setItemAudioDetails(item.id, decoded.durationMs, trueSampleRate, decoded.channelCount)
     library.setItemPeaks(item.id, decoded.peaks, trueSampleRate, decoded.peaksPerSecond)
+    library.setItemChannelPeaks(item.id, decoded.channelPeaks, decoded.peaksPerSecond)
     library.setItemKey(item.id, enrichedMetadata?.key)
     library.setItemMetadata(item.id, enrichedMetadata)
     library.clearItemAnalysis(item.id)

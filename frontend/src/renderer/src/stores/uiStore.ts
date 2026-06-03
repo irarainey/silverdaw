@@ -7,9 +7,9 @@
 
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
-import type { SkipButtonTarget } from '@shared/types'
+import type { SkipButtonTarget, WaveformDisplayMode } from '@shared/types'
 
-export type { SkipButtonTarget }
+export type { SkipButtonTarget, WaveformDisplayMode }
 
 export type TimelineScrollEdge = 'start' | 'end'
 export type TimelineScrollRequest =
@@ -42,6 +42,9 @@ interface UiState {
    *  seeks the project start / end; `markers` steps through the timeline
    *  markers (falling back to start / end past the last marker). */
   skipButtonTarget: SkipButtonTarget
+  /** How source waveforms are drawn: `summary` (single mono lane) or
+   *  `stereo` (stacked L/R lanes for two-channel sources). */
+  waveformDisplayMode: WaveformDisplayMode
   /** Live horizontal-zoom value (px per second). NOT persisted to
    *  preferences.json — this just mirrors `geometry.pxPerSecond` from
    *  the timeline so other components (e.g. StatusBar) can show the
@@ -72,7 +75,8 @@ const DEFAULTS = {
   showLibraryTileImages: true,
   matchProjectTempoOnDrop: true,
   defaultProjectSampleRate: 44100,
-  skipButtonTarget: 'timelineEnds'
+  skipButtonTarget: 'timelineEnds',
+  waveformDisplayMode: 'summary'
 } as const
 
 const SUPPORTED_PROJECT_SAMPLE_RATES = new Set([44100, 48000])
@@ -109,6 +113,7 @@ let pendingPush: {
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
   skipButtonTarget?: SkipButtonTarget
+  waveformDisplayMode?: WaveformDisplayMode
 } = {}
 
 interface UiPushPayload {
@@ -119,6 +124,7 @@ interface UiPushPayload {
   matchProjectTempoOnDrop?: boolean
   defaultProjectSampleRate?: number
   skipButtonTarget?: SkipButtonTarget
+  waveformDisplayMode?: WaveformDisplayMode
 }
 
 /**
@@ -146,6 +152,7 @@ export const useUiStore = defineStore('ui', {
     matchProjectTempoOnDrop: DEFAULTS.matchProjectTempoOnDrop,
     defaultProjectSampleRate: DEFAULTS.defaultProjectSampleRate,
     skipButtonTarget: DEFAULTS.skipButtonTarget,
+    waveformDisplayMode: DEFAULTS.waveformDisplayMode,
     zoomPxPerSecond: 100,
     timelineScrollRequest: null,
     timelineZoomRequest: null,
@@ -179,6 +186,10 @@ export const useUiStore = defineStore('ui', {
           saved.skipButtonTarget === 'markers' || saved.skipButtonTarget === 'timelineEnds'
             ? saved.skipButtonTarget
             : DEFAULTS.skipButtonTarget
+        this.waveformDisplayMode =
+          saved.waveformDisplayMode === 'stereo' || saved.waveformDisplayMode === 'summary'
+            ? saved.waveformDisplayMode
+            : DEFAULTS.waveformDisplayMode
       } catch (err) {
         log.warn('ui', `hydrate failed, using defaults: ${String(err)}`)
       } finally {
@@ -229,6 +240,13 @@ export const useUiStore = defineStore('ui', {
       if (this.skipButtonTarget === value) return
       this.skipButtonTarget = value
       if (this.hydrated) schedulePush({ skipButtonTarget: value })
+    },
+
+    /** Choose how source waveforms are drawn (summary vs stereo). */
+    setWaveformDisplayMode(value: WaveformDisplayMode): void {
+      if (this.waveformDisplayMode === value) return
+      this.waveformDisplayMode = value
+      if (this.hydrated) schedulePush({ waveformDisplayMode: value })
     },
 
     /** Update the application default for new-project sample rate.

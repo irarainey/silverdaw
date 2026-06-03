@@ -626,6 +626,28 @@ void testPeaksCacheRoundTripAndValidation()
 
     require(cache.tryLoad(source, 100).peaks.empty(), "different peak resolution should miss");
 
+    // Stereo (multi-lane) round-trip: lane 0 summary + lanes 1/2 L/R,
+    // stored channel-major. `peakCount` in the header is per-lane.
+    silverdaw::waveform::PeaksResult stereo;
+    stereo.peaksPerSecond = 200;
+    stereo.sampleRate = 48000.0;
+    stereo.laneCount = 3;
+    // 2 buckets per lane × 3 lanes × (min,max): [summary..][L..][R..]
+    stereo.peaks = {-0.1F, 0.1F, -0.2F, 0.2F, // summary
+                    -0.5F, 0.5F, -0.6F, 0.6F, // left
+                    -0.7F, 0.7F, -0.8F, 0.8F}; // right
+    const auto stereoSource = dir.getChildFile("stereo.wav");
+    require(stereoSource.replaceWithText("stereo cache key source"), "stereo source should write");
+    cache.store(stereoSource, stereo);
+    const auto loadedStereo = cache.tryLoad(stereoSource, 200);
+    require(loadedStereo.laneCount == 3, "stereo cache load should restore lane count");
+    require(loadedStereo.peaks.size() == stereo.peaks.size(), "stereo cache load should restore all lanes");
+    require(loadedStereo.bucketsPerLane() == 2, "stereo cache load should report per-lane bucket count");
+    for (std::size_t i = 0; i < stereo.peaks.size(); ++i)
+    {
+        requireNear(loadedStereo.peaks[i], stereo.peaks[i], 0.0001, "stereo cache load should restore lane data");
+    }
+
     const auto corrupt = cache.getCacheFilePath(source, 300);
     require(corrupt.replaceWithData("short", 5), "corrupt cache fixture should write");
     require(cache.tryLoad(source, 300).peaks.empty(), "short cache file should be treated as miss");

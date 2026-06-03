@@ -592,6 +592,13 @@ watch(
   () => redraw()
 )
 
+// Switching the waveform display mode (summary ↔ stereo) changes how
+// every clip's waveform is drawn, so force a full repaint.
+watch(
+  () => ui.waveformDisplayMode,
+  () => redraw()
+)
+
 watch(
   () => project.markers.map((marker) => `${marker.id}:${marker.positionMs}`).join('|'),
   () => redraw()

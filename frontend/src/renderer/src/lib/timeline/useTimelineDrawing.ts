@@ -53,6 +53,12 @@ import type { ClipHitRegion } from './useDragHandlers'
 import type { DropPreview } from './useDropZone'
 import type { GridGeometry } from './useGridGeometry'
 
+/** Minimum height (px) each stereo lane needs before the timeline will
+ *  split a clip's waveform into stacked left / right lanes. Below twice
+ *  this, the clip falls back to the single summary lane so short rows
+ *  stay legible. */
+const MIN_STEREO_LANE_HEIGHT = 18
+
 export interface TimelineDrawingOptions {
   // ─── Pixi handles (from `usePixiApp`) ─────────────────────────────────
   app: ShallowRef<Application | null>
@@ -641,22 +647,37 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       peaks = baseLibPeaks
       peaksPerSecond = baseLibPps ?? PEAKS_PER_SECOND
     }
-    const peakCount = peaks.length / 2
-    const half = innerH / 2 - 2
+    // Stereo display: when the user has opted into the stereo waveform
+    // mode AND this clip's source has per-channel peaks AND the clip row
+    // is tall enough to fit two readable lanes, draw separate L/R lanes.
+    // Otherwise fall back to the single summary lane (the default).
+    const channelSourceItem =
+      libItem?.kind === 'saved-clip'
+        ? libItem.derivedFrom?.sourceItemId
+          ? library.byId[libItem.derivedFrom.sourceItemId]
+          : undefined
+        : libItem
+    const channelEntry = channelSourceItem
+      ? library.channelPeaksByItemId[channelSourceItem.id]
+      : undefined
+    const wantStereo =
+      ui.waveformDisplayMode === 'stereo' &&
+      !!channelEntry &&
+      channelEntry.channels.length === 2 &&
+      innerH >= MIN_STEREO_LANE_HEIGHT * 2
 
-    if (peakCount > 0 && w > 0) {
-      // Peaks are at a constant rate over the SOURCE file; the actual
-      // rate can differ slightly from the requested nominal rate because
-      // peak buckets contain an integer number of samples. Use the
-      // payload-provided rate so transients do not drift against beat
-      // markers over long clips. The clip may be a trimmed window.
-      // Convert the clip's
-      // `[inMs, inMs + durationMs]` ms-window into peak indices and
-      // distribute those across the clip's pixel width.
-      const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * peaksPerSecond))
+    // Draw one waveform lane into `wave` from `lanePeaks`, centred on
+    // `laneMidY` with a half-height of `laneHalf`. Windows the source
+    // peaks by the clip's `[inMs, inMs + durationMs]` range and maps the
+    // window across the clip's pixel width (see the zoom notes above).
+    let drewAny = false
+    const drawLane = (lanePeaks: Float32Array, lanePps: number, laneMidY: number, laneHalf: number): void => {
+      const lanePeakCount = lanePeaks.length / 2
+      if (lanePeakCount <= 0 || w <= 0) return
+      const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * lanePps))
       const endPeak = Math.min(
-        peakCount,
-        Math.max(startPeak + 1, Math.ceil(((clip.inMs + clip.durationMs) / 1000) * peaksPerSecond))
+        lanePeakCount,
+        Math.max(startPeak + 1, Math.ceil(((clip.inMs + clip.durationMs) / 1000) * lanePps))
       )
       const windowSize = endPeak - startPeak
       const peaksPerPixel = windowSize / w
@@ -674,16 +695,44 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         let min = 0
         let max = 0
         for (let i = startIdx; i < endIdx; i++) {
-          const lo = peaks[i * 2]!
-          const hi = peaks[i * 2 + 1]!
+          const lo = lanePeaks[i * 2]!
+          const hi = lanePeaks[i * 2 + 1]!
           if (lo < min) min = lo
           if (hi > max) max = hi
         }
 
-        const yTop = midY + max * -half
-        const yBot = midY + min * -half
+        const yTop = laneMidY + max * -laneHalf
+        const yBot = laneMidY + min * -laneHalf
         wave.moveTo(absX + px + 0.5, yTop).lineTo(absX + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
+        drewAny = true
       }
+    }
+
+    if (wantStereo && channelEntry) {
+      // Two stacked half-height lanes (left on top, right below), each
+      // reading from its own LOD pyramid so a column still covers ~1–2
+      // peaks at the current zoom.
+      const laneH = innerH / 2
+      const laneHalf = laneH / 2 - 2
+      const drawPxPerSrcSec = pxPerSecond.value / warpRatio
+      for (let ch = 0; ch < 2; ch++) {
+        let lanePeaks = channelEntry.channels[ch]!
+        let lanePps = channelEntry.peaksPerSecond
+        const clod = channelEntry.lod[ch]
+        if (clod && clod.length > 0 && pxPerSecond.value > 0) {
+          const picked = pickPeaksLod(clod, drawPxPerSrcSec, lanePps)
+          if (picked.peaks.length >= 4 && picked.peaksPerSecond > 0) {
+            lanePeaks = picked.peaks
+            lanePps = picked.peaksPerSecond
+          }
+        }
+        drawLane(lanePeaks, lanePps, innerY + laneH * ch + laneH / 2, laneHalf)
+      }
+    } else {
+      drawLane(peaks, peaksPerSecond, midY, innerH / 2 - 2)
+    }
+
+    if (drewAny) {
       wave.stroke({ color: waveColour, width: 1, alpha: 0.95 })
       tracksL.addChild(wave)
     }

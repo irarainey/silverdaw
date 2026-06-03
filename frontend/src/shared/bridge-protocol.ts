@@ -1445,15 +1445,19 @@ export type ProjectDirtyPayload = z.infer<typeof ProjectDirtyPayloadSchema>
  * `readPeaksCacheFile` IPC — peaks bytes are NOT streamed over the
  * WebSocket (that approach hit recurring IXWebSocket I/O-loop
  * starvation issues with concurrent peak deliveries). The cache file
- * layout is fixed: a 24-byte header followed by `peakCount * 2`
- * little-endian float32 peak values (`min, max, min, max, …`).
+ * layout is fixed: a 28-byte header followed by `peakCount * laneCount *
+ * 2` little-endian float32 peak values laid out channel-major — lane 0
+ * is the mono summary, and for stereo files lanes 1/2 are left/right
+ * (`laneCount === 3`). `peakCount` is the (min, max) pair count PER LANE.
  */
 export const WaveformReadyPayloadSchema = z.object({
   clipId: z.string(),
   /** Absolute path of the cache file under `%APPDATA%/Silverdaw/peaks/`. */
   cachePath: z.string(),
-  /** Number of (min, max) pairs in the file (NOT bytes, NOT individual floats). */
+  /** Number of (min, max) pairs PER LANE (NOT bytes, NOT individual floats). */
   peakCount: z.number(),
+  /** Number of channel-major lanes: 1 (summary only) or 3 (summary + L/R). */
+  laneCount: z.number().int().min(1).max(8).optional().default(1),
   peaksPerSecond: z.number(),
   sampleRate: z.number()
 })
@@ -1468,6 +1472,7 @@ export const ClipEditorPeaksReadyPayloadSchema = z.object({
   libraryItemId: z.string(),
   cachePath: z.string(),
   peakCount: z.number(),
+  laneCount: z.number().int().min(1).max(8).optional().default(1),
   peaksPerSecond: z.number(),
   sampleRate: z.number()
 })
@@ -1498,6 +1503,7 @@ const SampleSavedSuccessSchema = z.object({
   channelCount: z.number(),
   cachePath: z.string(),
   peakCount: z.number(),
+  laneCount: z.number().int().min(1).max(8).optional().default(1),
   peaksPerSecond: z.number(),
   error: z.string().optional()
 })

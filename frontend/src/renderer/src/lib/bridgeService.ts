@@ -864,17 +864,98 @@ function dispatch(msg: BridgeInboundMessage): void {
 }
 
 /**
- * Cache-file binary layout (mirrors `backend/src/PeaksCache.cpp::CacheHeader`):
+ * Cache-file binary layout (mirrors `backend/src/PeaksCache.cpp`):
  *
  *   bytes  0..3   u32 LE magic       — 0x53445057 ('SDPW')
- *   bytes  4..7   u32 LE version     — 1
+ *   bytes  4..7   u32 LE version     — 2
  *   bytes  8..11  u32 LE peaksPerSec
- *   bytes 12..15  u32 LE peakCount   — (min, max) pair count
- *   bytes 16..23  f64 LE sampleRate
- *   bytes 24..    peakCount * 2 * f32 LE peak values, alternating min, max
+ *   bytes 12..15  u32 LE peakCount   — (min, max) pair count PER LANE
+ *   bytes 16..19  u32 LE laneCount   — 1 (summary only) or 3 (summary + L/R)
+ *   bytes 20..27  f64 LE sampleRate
+ *   bytes 28..    laneCount * peakCount * 2 * f32 LE peak values, laid out
+ *                 channel-major: lane 0 (mono summary) in full, then lane 1
+ *                 (left) and lane 2 (right) for stereo files.
  */
 const PEAKS_FILE_MAGIC = 0x53445057
-const PEAKS_FILE_HEADER_SIZE = 24
+const PEAKS_FILE_VERSION = 2
+const PEAKS_FILE_HEADER_SIZE = 28
+const PEAKS_MAX_LANES = 8
+
+interface ParsedPeaksCache {
+  /** Lane 0 — the mono summary. Existing draw/LOD code consumes this. */
+  readonly summary: Float32Array
+  /** Per-channel lanes for stereo (index 0 = left, 1 = right); empty for mono. */
+  readonly channels: Float32Array[]
+  readonly laneCount: number
+}
+
+/**
+ * Parse + validate a `.peaks` cache buffer read from disk. Returns null
+ * (with a warning) on any malformation so callers can simply bail. Each
+ * returned `Float32Array` is freshly copied so it is NOT backed by the raw
+ * IPC buffer (which the Pinia store would otherwise retain for the lifetime
+ * of the clip — multi-MB live retention for every project).
+ *
+ * Shared by all three peaks-cache consumers (`WAVEFORM_READY`,
+ * `SAMPLE_SAVED`, `CLIP_EDITOR_PEAKS_READY`) so the binary contract lives
+ * in exactly one place.
+ */
+function parsePeaksCacheBuffer(
+  buffer: ArrayBuffer | null,
+  expectedPeakCount: number,
+  label: string
+): ParsedPeaksCache | null {
+  if (!buffer) {
+    log.warn('bridge', `${label} no data`)
+    return null
+  }
+  if (buffer.byteLength < PEAKS_FILE_HEADER_SIZE) {
+    log.warn('bridge', `${label} short file bytes=${buffer.byteLength}`)
+    return null
+  }
+  const view = new DataView(buffer)
+  const magic = view.getUint32(0, /* littleEndian */ true)
+  if (magic !== PEAKS_FILE_MAGIC) {
+    log.warn('bridge', `${label} bad magic 0x${magic.toString(16)}`)
+    return null
+  }
+  const version = view.getUint32(4, true)
+  if (version !== PEAKS_FILE_VERSION) {
+    log.warn('bridge', `${label} unsupported version=${version}`)
+    return null
+  }
+  const headerPeakCount = view.getUint32(12, true)
+  const laneCount = view.getUint32(16, true)
+  if (laneCount < 1 || laneCount > PEAKS_MAX_LANES) {
+    log.warn('bridge', `${label} bad laneCount=${laneCount}`)
+    return null
+  }
+  // The header's per-lane peak count is authoritative for sizing; cross-check
+  // it against the envelope so a stale/corrupt file is rejected rather than
+  // mis-sliced. (Note: the header stores the integer peaks/sec request while
+  // the envelope carries the fractional effective rate, so those two are
+  // deliberately NOT compared.)
+  if (headerPeakCount !== expectedPeakCount) {
+    log.warn('bridge', `${label} peakCount mismatch header=${headerPeakCount} payload=${expectedPeakCount}`)
+    return null
+  }
+  const floatsPerLane = headerPeakCount * 2
+  const totalFloats = floatsPerLane * laneCount
+  const expectedBytes = PEAKS_FILE_HEADER_SIZE + totalFloats * Float32Array.BYTES_PER_ELEMENT
+  if (buffer.byteLength < expectedBytes) {
+    log.warn('bridge', `${label} size mismatch got=${buffer.byteLength} expected>=${expectedBytes}`)
+    return null
+  }
+  const all = new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, totalFloats)
+  const summary = new Float32Array(all.subarray(0, floatsPerLane))
+  const channels: Float32Array[] = []
+  // Only 3-lane (summary + L + R) files carry separable stereo channels.
+  if (laneCount === 3) {
+    channels.push(new Float32Array(all.subarray(floatsPerLane, floatsPerLane * 2)))
+    channels.push(new Float32Array(all.subarray(floatsPerLane * 2, floatsPerLane * 3)))
+  }
+  return { summary, channels, laneCount }
+}
 
 async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise<void> {
   const { clipId, cachePath, peakCount, sampleRate, peaksPerSecond } = payload
@@ -885,36 +966,13 @@ async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise<void> 
     log.warn('bridge', `WAVEFORM_READY read failed clipId=${clipId}: ${String(err)}`)
     return
   }
-  if (!buffer) {
-    log.warn('bridge', `WAVEFORM_READY no data clipId=${clipId} cachePath=${cachePath}`)
-    return
-  }
-  if (buffer.byteLength < PEAKS_FILE_HEADER_SIZE) {
-    log.warn('bridge', `WAVEFORM_READY short file clipId=${clipId} bytes=${buffer.byteLength}`)
-    return
-  }
-  const view = new DataView(buffer)
-  const magic = view.getUint32(0, /* littleEndian */ true)
-  if (magic !== PEAKS_FILE_MAGIC) {
-    log.warn('bridge', `WAVEFORM_READY bad magic clipId=${clipId} magic=0x${magic.toString(16)}`)
-    return
-  }
-  const floatCount = peakCount * 2
-  const expectedBytes = PEAKS_FILE_HEADER_SIZE + floatCount * Float32Array.BYTES_PER_ELEMENT
-  if (buffer.byteLength < expectedBytes) {
-    log.warn(
-      'bridge',
-      `WAVEFORM_READY size mismatch clipId=${clipId} got=${buffer.byteLength} expected>=${expectedBytes}`
-    )
-    return
-  }
-  // Slice + copy into a fresh Float32Array so it isn't backed by the
-  // raw IPC buffer (which the Pinia store would otherwise hold for the
-  // lifetime of the clip — multi-MB live retention for every project).
-  const view32 = new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, floatCount)
-  const peaks = new Float32Array(view32)
-  useProjectStore().setClipPeaks(clipId, peaks, sampleRate, peaksPerSecond)
-  log.info('bridge', `WAVEFORM_READY clipId=${clipId} peaks=${peakCount} ppS=${peaksPerSecond}`)
+  const parsed = parsePeaksCacheBuffer(buffer, peakCount, `WAVEFORM_READY clipId=${clipId}`)
+  if (!parsed) return
+  useProjectStore().setClipPeaks(clipId, parsed.summary, sampleRate, peaksPerSecond, parsed.channels)
+  log.info(
+    'bridge',
+    `WAVEFORM_READY clipId=${clipId} peaks=${peakCount} lanes=${parsed.laneCount} ppS=${peaksPerSecond}`
+  )
 }
 
 async function applySampleSaved(payload: SampleSavedPayload): Promise<void> {
@@ -926,12 +984,11 @@ async function applySampleSaved(payload: SampleSavedPayload): Promise<void> {
   }
 
   const buffer = await window.silverdaw.readPeaksCacheFile(payload.cachePath).catch(() => null)
-  let peaks = new Float32Array()
-  if (buffer && buffer.byteLength >= PEAKS_FILE_HEADER_SIZE + payload.peakCount * 2 * Float32Array.BYTES_PER_ELEMENT) {
-    peaks = new Float32Array(new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, payload.peakCount * 2))
-  }
+  const parsed = parsePeaksCacheBuffer(buffer, payload.peakCount, `SAMPLE_SAVED itemId=${payload.itemId}`)
+  const peaks = parsed?.summary ?? new Float32Array()
 
-  useLibraryStore().addItem({
+  const library = useLibraryStore()
+  library.addItem({
     id: payload.itemId,
     kind: 'audio-file',
     name: payload.name,
@@ -945,6 +1002,9 @@ async function applySampleSaved(payload: SampleSavedPayload): Promise<void> {
     playbackFilePath: payload.filePath,
     fromSnapshot: true
   })
+  if (parsed && parsed.channels.length > 0) {
+    library.setItemChannelPeaks(payload.itemId, parsed.channels, payload.peaksPerSecond)
+  }
   notifications.pushInfo(`Saved sample "${payload.name}".`)
   log.info('bridge', `SAMPLE_SAVED itemId=${payload.itemId} file=${payload.fileName}`)
 }
@@ -964,38 +1024,18 @@ async function loadEditorPeaksFromCache(payload: {
     log.warn('bridge', `CLIP_EDITOR_PEAKS_READY read failed libId=${libraryItemId}: ${String(err)}`)
     return
   }
-  if (!buffer) {
-    log.warn('bridge', `CLIP_EDITOR_PEAKS_READY no data libId=${libraryItemId} cachePath=${cachePath}`)
-    return
-  }
-  if (buffer.byteLength < PEAKS_FILE_HEADER_SIZE) {
-    log.warn('bridge', `CLIP_EDITOR_PEAKS_READY short file libId=${libraryItemId} bytes=${buffer.byteLength}`)
-    return
-  }
-  const view = new DataView(buffer)
-  const magic = view.getUint32(0, /* littleEndian */ true)
-  if (magic !== PEAKS_FILE_MAGIC) {
-    log.warn(
-      'bridge',
-      `CLIP_EDITOR_PEAKS_READY bad magic libId=${libraryItemId} magic=0x${magic.toString(16)}`
-    )
-    return
-  }
-  const floatCount = peakCount * 2
-  const expectedBytes = PEAKS_FILE_HEADER_SIZE + floatCount * Float32Array.BYTES_PER_ELEMENT
-  if (buffer.byteLength < expectedBytes) {
-    log.warn(
-      'bridge',
-      `CLIP_EDITOR_PEAKS_READY size mismatch libId=${libraryItemId} got=${buffer.byteLength} expected>=${expectedBytes}`
-    )
-    return
-  }
-  const view32 = new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, floatCount)
-  const peaks = new Float32Array(view32)
-  useLibraryStore().setEditorHiResPeaks({ libraryItemId, peaksPerSecond, sampleRate, peaks })
+  const parsed = parsePeaksCacheBuffer(buffer, peakCount, `CLIP_EDITOR_PEAKS_READY libId=${libraryItemId}`)
+  if (!parsed) return
+  useLibraryStore().setEditorHiResPeaks({
+    libraryItemId,
+    peaksPerSecond,
+    sampleRate,
+    peaks: parsed.summary,
+    channels: parsed.channels
+  })
   log.info(
     'bridge',
-    `CLIP_EDITOR_PEAKS_READY libId=${libraryItemId} peaks=${peakCount} ppS=${peaksPerSecond}`
+    `CLIP_EDITOR_PEAKS_READY libId=${libraryItemId} peaks=${peakCount} lanes=${parsed.laneCount} ppS=${peaksPerSecond}`
   )
 }
 

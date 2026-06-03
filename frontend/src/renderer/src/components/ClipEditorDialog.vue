@@ -526,6 +526,7 @@ watch(
     scrollMs,
     canvasCssWidth,
     () => ui.zoomPxPerSecond,
+    () => ui.waveformDisplayMode,
     () => library.editorHiResPeaks
   ],
   () => {
@@ -699,6 +700,11 @@ function loadPreviewForView(): void {
 // uses, cached on disk by `PeaksCache` so subsequent dialog opens
 // for the same source are instant.
 const EDITOR_HI_RES_PEAKS_PER_SECOND = 2000
+
+/** Minimum CSS-px height each stereo lane needs before the Clip Editor
+ *  splits the waveform into stacked left / right lanes. Below twice
+ *  this, it falls back to the single summary lane. */
+const EDITOR_MIN_STEREO_LANE_PX = 24
 const EDITOR_HI_RES_ZOOM_THRESHOLD = 4
 let lastHiResRequestKey = ''
 
@@ -838,29 +844,72 @@ function drawWaveform(): void {
     peaks = src.peaks
     peaksPerSec = src.peaksPerSecond ?? 0
   }
-  if (peaks && peaks.length >= 2 && sourceTotal > 0) {
-    const pairs = Math.floor(peaks.length / 2)
+
+  // Draw a single waveform lane from `lanePeaks` centred on `laneMid`
+  // with a half-height of `laneHalfH`. Shared by the summary lane and
+  // the two stereo lanes so the column-mapping math stays identical.
+  const drawWaveLane = (
+    lanePeaks: Float32Array,
+    lanePps: number,
+    laneMid: number,
+    laneHalfH: number
+  ): void => {
+    if (!(lanePeaks.length >= 2) || sourceTotal <= 0) return
+    const pairs = Math.floor(lanePeaks.length / 2)
     // Map each canvas column to a peak index. When the LOD's actual
     // ppS is known, use it for a sample-accurate mapping (so transients
     // do not drift against the ruler/beat grid). Otherwise fall back
     // to the legacy proportional mapping over `sourceTotal`.
-    const useRate = peaksPerSec > 0
-    const peakStart = useRate
-      ? (vIn / 1000) * peaksPerSec
-      : (vIn / sourceTotal) * pairs
-    const peakSpan = useRate
-      ? (vDur / 1000) * peaksPerSec
-      : (vDur / sourceTotal) * pairs
-    ctx.fillStyle = '#3b82f6'
+    const useRate = lanePps > 0
+    const peakStart = useRate ? (vIn / 1000) * lanePps : (vIn / sourceTotal) * pairs
+    const peakSpan = useRate ? (vDur / 1000) * lanePps : (vDur / sourceTotal) * pairs
     for (let x = 0; x < w; x++) {
       const i = Math.floor(peakStart + (x / w) * peakSpan)
       if (i < 0 || i >= pairs) continue
-      const lo = peaks[i * 2] || 0
-      const hi = peaks[i * 2 + 1] || 0
-      const y0 = waveMid - hi * (waveH / 2)
-      const y1 = waveMid - lo * (waveH / 2)
+      const lo = lanePeaks[i * 2] || 0
+      const hi = lanePeaks[i * 2 + 1] || 0
+      const y0 = laneMid - hi * laneHalfH
+      const y1 = laneMid - lo * laneHalfH
       ctx.fillRect(x, Math.min(y0, y1), 1, Math.max(1, Math.abs(y1 - y0)))
     }
+  }
+
+  // Stereo display: when the user has opted in AND this clip's source
+  // has 2-channel peaks AND the wave band is tall enough, stack separate
+  // L/R lanes; otherwise draw the single summary lane (the default).
+  const channelSourceId =
+    src.kind === 'saved-clip' ? src.derivedFrom?.sourceItemId : src.id
+  const hiResChannels =
+    usingHiRes && hiRes!.channels.length === 2 ? hiRes!.channels : undefined
+  const channelEntry = channelSourceId ? library.channelPeaksByItemId[channelSourceId] : undefined
+  const stereoAvailable = !!hiResChannels || (!!channelEntry && channelEntry.channels.length === 2)
+  const wantStereo =
+    ui.waveformDisplayMode === 'stereo' && stereoAvailable && waveH >= EDITOR_MIN_STEREO_LANE_PX * 2 * dpr
+
+  ctx.fillStyle = '#3b82f6'
+  if (wantStereo) {
+    const laneH = waveH / 2
+    const laneHalfH = laneH / 2
+    for (let ch = 0; ch < 2; ch++) {
+      let lanePeaks: Float32Array
+      let lanePps: number
+      if (hiResChannels) {
+        lanePeaks = hiResChannels[ch]!
+        lanePps = hiRes!.peaksPerSecond
+      } else {
+        lanePeaks = channelEntry!.channels[ch]!
+        lanePps = channelEntry!.peaksPerSecond
+        const clod = channelEntry!.lod[ch]
+        if (clod && clod.length > 0 && canvasPxPerSourceSec > 0) {
+          const picked = pickPeaksLod(clod, canvasPxPerSourceSec)
+          lanePeaks = picked.peaks
+          lanePps = picked.peaksPerSecond
+        }
+      }
+      drawWaveLane(lanePeaks, lanePps, waveTop + laneH * ch + laneH / 2, laneHalfH)
+    }
+  } else if (peaks && peaks.length >= 2 && sourceTotal > 0) {
+    drawWaveLane(peaks, peaksPerSec, waveMid, waveH / 2)
   }
 
   // --- Beat lines (extrapolated uniformly across the full source so the

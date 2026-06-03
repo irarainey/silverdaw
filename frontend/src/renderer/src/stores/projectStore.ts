@@ -314,6 +314,12 @@ async function refreshLibraryItemMedia(itemId: string, filePath: string): Promis
     if (item.peaks.length === 0) {
       library.setItemPeaks(itemId, decoded.peaks, decoded.sampleRate, decoded.peaksPerSecond)
     }
+    // Populate the stereo display map from the renderer-side decode so the
+    // L/R lanes are available without waiting for a backend WAVEFORM_READY.
+    // Non-stereo decodes pass an empty array, which clears any prior entry.
+    if (decoded.peaksPerSecond > 0) {
+      library.setItemChannelPeaks(itemId, decoded.channelPeaks ?? [], decoded.peaksPerSecond)
+    }
   } catch (err) {
     log.warn('library', `readAudioFile/decode failed for ${filePath}: ${String(err)}`)
   }
@@ -2504,7 +2510,13 @@ export const useProjectStore = defineStore('project', {
      * rehydrate. Silent no-op for unknown clipIds (the clip may have
      * been removed between request and response).
      */
-    setClipPeaks(clipId: string, peaks: Float32Array, sampleRate: number, peaksPerSecond?: number): void {
+    setClipPeaks(
+      clipId: string,
+      peaks: Float32Array,
+      sampleRate: number,
+      peaksPerSecond?: number,
+      channels?: Float32Array[]
+    ): void {
       const clip = this.clips[clipId]
       if (!clip) return
       clip.peaks = peaks
@@ -2525,6 +2537,16 @@ export const useProjectStore = defineStore('project', {
         lib.items.find((i) => i.filePath === clip.filePath)
       if (item && item.peaks.length === 0) {
         lib.setItemPeaks(item.id, peaks, sampleRate, peaksPerSecond)
+      }
+      // Stereo per-channel peaks live in a separate library map keyed by
+      // item id (see libraryStore.channelPeaksByItemId). Publish them
+      // whenever the backend supplies them so the stereo display mode has
+      // data for this source, regardless of whether the summary above was
+      // (re)built. When the backend reports a summary-only source (mono file,
+      // legacy cache, or missing channel lanes) we pass an empty array so any
+      // prior stereo entry for this item is cleared rather than left stale.
+      if (item && typeof peaksPerSecond === 'number' && peaksPerSecond > 0) {
+        lib.setItemChannelPeaks(item.id, channels ?? [], peaksPerSecond)
       }
       log.debug('project', `setClipPeaks id=${clipId} peaks=${peaks.length / 2} sr=${sampleRate} pps=${clip.peaksPerSecond ?? 'undef'}`)
     },

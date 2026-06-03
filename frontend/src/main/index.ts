@@ -9,7 +9,7 @@ import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogL
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
-import type { AudioMetadata, DebugPreferences, SkipButtonTarget } from '../shared/types'
+import type { AudioMetadata, DebugPreferences, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
 import { IPC } from '../shared/ipc-channels'
 
 // ─── Audio metadata ─────────────────────────────────────────────────────────
@@ -286,6 +286,10 @@ interface UiPrefs {
    *  the timeline markers. Anything else snaps back to `timelineEnds`
    *  on load. */
   skipButtonTarget: SkipButtonTarget
+  /** How source waveforms are drawn: `summary` (single mono lane,
+   *  default) or `stereo` (stacked L/R lanes for two-channel sources).
+   *  Anything else snaps back to `summary` on load. */
+  waveformDisplayMode: WaveformDisplayMode
 }
 
 type DebugPrefs = DebugPreferences
@@ -417,7 +421,8 @@ function buildDefaultPrefs(): Preferences {
       showLibraryTileImages: true,
       matchProjectTempoOnDrop: true,
       defaultProjectSampleRate: 44100,
-      skipButtonTarget: 'timelineEnds'
+      skipButtonTarget: 'timelineEnds',
+      waveformDisplayMode: 'summary'
     },
     debug: {
       loggingEnabled: false,
@@ -441,7 +446,8 @@ let prefs: Preferences = {
     showLibraryTileImages: true,
     matchProjectTempoOnDrop: true,
     defaultProjectSampleRate: 44100,
-    skipButtonTarget: 'timelineEnds'
+    skipButtonTarget: 'timelineEnds',
+    waveformDisplayMode: 'summary'
   },
   debug: { loggingEnabled: false, devToolsEnabled: false, logDirectory: '' },
   toasts: { enabled: true },
@@ -573,6 +579,10 @@ async function loadPreferences(): Promise<void> {
     // back to the safe default.
     if (prefs.ui.skipButtonTarget !== 'timelineEnds' && prefs.ui.skipButtonTarget !== 'markers') {
       prefs.ui.skipButtonTarget = 'timelineEnds'
+    }
+    // Snap an unrecognised waveform display mode back to the safe default.
+    if (prefs.ui.waveformDisplayMode !== 'summary' && prefs.ui.waveformDisplayMode !== 'stereo') {
+      prefs.ui.waveformDisplayMode = 'summary'
     }
   } catch (err) {
     // ENOENT on first run is expected; anything else is logged but we still

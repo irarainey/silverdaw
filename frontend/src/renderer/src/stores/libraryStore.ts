@@ -218,7 +218,26 @@ interface LibraryState {
     peaksPerSecond: number
     sampleRate: number
     peaks: Float32Array
+    /** Per-channel high-res peaks `[left, right]` for stereo sources;
+     *  empty for mono. Used by the Clip Editor's stereo display mode. */
+    channels: Float32Array[]
   } | null
+  /**
+   * Per-library-item stereo peak data, keyed by item id. Held in a
+   * separate map (rather than threaded through the `LibraryItem`
+   * constructors) so the summary-mode path stays untouched and the
+   * blast radius of the stereo feature is bounded. Each entry carries
+   * the raw per-channel peaks plus a per-channel LOD pyramid so the
+   * timeline can pick a level near one peak per pixel per lane. Only
+   * populated for 2-channel sources; cleared in `removeItem`. */
+  channelPeaksByItemId: Record<
+    string,
+    {
+      channels: Float32Array[]
+      lod: import('@/lib/peaksLod').PeaksLodLayer[][]
+      peaksPerSecond: number
+    }
+  >
 }
 
 function touchTimelineClipsForLibraryItem(itemId: string): number {
@@ -278,7 +297,8 @@ export const useLibraryStore = defineStore('library', {
     importDone: 0,
     imports: [],
     currentDragItemId: null,
-    editorHiResPeaks: null
+    editorHiResPeaks: null,
+    channelPeaksByItemId: {}
   }),
 
   getters: {
@@ -339,6 +359,8 @@ export const useLibraryStore = defineStore('library', {
       }
       this.items = []
       this.imports = []
+      this.channelPeaksByItemId = {}
+      this.editorHiResPeaks = null
       log.info('library', 'cleared')
     },
 
@@ -1229,6 +1251,7 @@ export const useLibraryStore = defineStore('library', {
           if (!child || child.derivedFrom?.sourceItemId !== itemId) continue
           revokeItemCoverArt(child)
           this.items.splice(i, 1)
+          delete this.channelPeaksByItemId[child.id]
           sendBridge('LIBRARY_REMOVE', { itemId: child.id })
           log.info('library', `removeItem id=${child.id} (cascade)`)
         }
@@ -1241,6 +1264,7 @@ export const useLibraryStore = defineStore('library', {
       if (finalIdx < 0) return true
       revokeItemCoverArt(this.items[finalIdx])
       this.items.splice(finalIdx, 1)
+      delete this.channelPeaksByItemId[itemId]
       sendBridge('LIBRARY_REMOVE', { itemId })
       log.info('library', `removeItem id=${itemId}`)
       return true
@@ -1393,6 +1417,39 @@ export const useLibraryStore = defineStore('library', {
       log.debug('library', `setItemPeaks id=${itemId} peaks=${peaks.length / 2} sr=${sampleRate} pps=${item.peaksPerSecond ?? 'undef'}`)
     },
 
+    /**
+     * Store per-channel stereo peaks for `itemId` and eagerly build a
+     * per-channel LOD pyramid. Only meaningful for 2-channel sources;
+     * an empty / non-stereo `channels` array clears any existing entry.
+     * Held outside the `LibraryItem` so the summary path is untouched.
+     */
+    setItemChannelPeaks(itemId: string, channels: Float32Array[], peaksPerSecond: number): void {
+      if (!this.items.some((i) => i.id === itemId)) return
+      if (channels.length !== 2 || !(peaksPerSecond > 0)) {
+        delete this.channelPeaksByItemId[itemId]
+        return
+      }
+      // Skip the (synchronous) per-channel LOD rebuild when an identical entry
+      // already exists. Many clips can share one source file, so each
+      // WAVEFORM_READY would otherwise rebuild the same two pyramids and stall
+      // the UI. Reference + rate equality is a cheap, sufficient identity check.
+      const existing = this.channelPeaksByItemId[itemId]
+      if (
+        existing &&
+        existing.peaksPerSecond === peaksPerSecond &&
+        existing.channels.length === channels.length &&
+        existing.channels.every((ch, i) => ch === channels[i])
+      ) {
+        return
+      }
+      const lod = channels.map((ch) => buildPeaksLodPyramid(ch, peaksPerSecond))
+      this.channelPeaksByItemId[itemId] = { channels, lod, peaksPerSecond }
+      log.debug(
+        'library',
+        `setItemChannelPeaks id=${itemId} lanes=${channels.length} pps=${peaksPerSecond}`
+      )
+    },
+
     /** Set the session-scoped high-resolution peaks payload used by
      *  the Clip Editor. Pass null to clear (called on dialog close /
      *  item switch so the multi-MB Float32Array is GC-eligible). */
@@ -1402,6 +1459,7 @@ export const useLibraryStore = defineStore('library', {
         peaksPerSecond: number
         sampleRate: number
         peaks: Float32Array
+        channels: Float32Array[]
       } | null
     ): void {
       this.editorHiResPeaks = payload

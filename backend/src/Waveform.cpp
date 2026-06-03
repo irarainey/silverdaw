@@ -2,6 +2,7 @@
 #include "Log.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <limits>
@@ -53,9 +54,18 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
     const int samplesPerPeak = juce::jmax(1, static_cast<int>(reader->sampleRate / peaksPerSecond));
     const auto peakCount = static_cast<int>((totalSamples + samplesPerPeak - 1) / samplesPerPeak);
 
-    // Pre-size so we can write into the vector by index without reallocating.
+    // Lane 0 is always the mono summary. Stereo (exactly 2-channel) files
+    // additionally store per-channel left/right lanes so the renderer can
+    // draw a stacked stereo waveform; mono and >2-channel files store the
+    // summary only. Keep this policy in lockstep with the renderer's
+    // `computePeaks` in `audio.ts`.
+    const bool stereo = numChannels == 2;
+    const int laneCount = stereo ? 3 : 1;
+    result.laneCount = laneCount;
+
+    // Channel-major layout: lane L spans [L*peakCount*2 .. (L+1)*peakCount*2).
     // Two floats per bucket (min, max), default-initialised to 0.0F.
-    result.peaks.assign(static_cast<std::size_t>(peakCount) * 2U, 0.0F);
+    result.peaks.assign(static_cast<std::size_t>(peakCount) * 2U * static_cast<std::size_t>(laneCount), 0.0F);
 
     juce::AudioBuffer<float> buffer(numChannels, kChunkSamples);
 
@@ -64,10 +74,29 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
     int bucketCount = 0;
     // Sentinel values for std::min/max so the first sample of each
     // bucket always replaces them. Avoids a special-case branch on
-    // the first sample of every bucket.
-    float bucketMin = std::numeric_limits<float>::infinity();
-    float bucketMax = -std::numeric_limits<float>::infinity();
+    // the first sample of every bucket. One (min,max) accumulator per lane.
+    constexpr int kMaxLanes = 3;
+    const float inf = std::numeric_limits<float>::infinity();
+    std::array<float, kMaxLanes> laneMin;
+    std::array<float, kMaxLanes> laneMax;
+    laneMin.fill(inf);
+    laneMax.fill(-inf);
     const float invChannels = numChannels > 0 ? 1.0F / static_cast<float>(numChannels) : 1.0F;
+
+    const auto flushBucket = [&]()
+    {
+        if (peakIndex < peakCount)
+        {
+            for (int lane = 0; lane < laneCount; ++lane)
+            {
+                const auto base = (static_cast<std::size_t>(lane) * static_cast<std::size_t>(peakCount) +
+                                   static_cast<std::size_t>(peakIndex)) *
+                                  2U;
+                result.peaks[base] = laneMin[static_cast<std::size_t>(lane)];
+                result.peaks[base + 1U] = laneMax[static_cast<std::size_t>(lane)];
+            }
+        }
+    };
 
     while (readPos < totalSamples)
     {
@@ -80,30 +109,36 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
 
         for (int i = 0; i < toRead; ++i)
         {
-            // Average across channels for a mono peak — same convention
-            // as the renderer's `computePeaks` in `audio.ts`.
+            // Lane 0: average across channels for a mono summary peak.
             float sum = 0.0F;
             for (int c = 0; c < numChannels; ++c)
             {
                 sum += buffer.getReadPointer(c)[i];
             }
-            const float v = sum * invChannels;
+            const float summary = sum * invChannels;
+            laneMin[0] = std::min(summary, laneMin[0]);
+            laneMax[0] = std::max(summary, laneMax[0]);
 
-            bucketMin = std::min(v, bucketMin);
-            bucketMax = std::max(v, bucketMax);
+            // Lanes 1..2: raw per-channel samples (stereo only).
+            if (stereo)
+            {
+                for (int c = 0; c < 2; ++c)
+                {
+                    const float v = buffer.getReadPointer(c)[i];
+                    const auto lane = static_cast<std::size_t>(c) + 1U;
+                    laneMin[lane] = std::min(v, laneMin[lane]);
+                    laneMax[lane] = std::max(v, laneMax[lane]);
+                }
+            }
 
             ++bucketCount;
             if (bucketCount >= samplesPerPeak)
             {
-                if (peakIndex < peakCount)
-                {
-                    result.peaks[(static_cast<std::size_t>(peakIndex) * 2U)] = bucketMin;
-                    result.peaks[(static_cast<std::size_t>(peakIndex) * 2U) + 1U] = bucketMax;
-                }
+                flushBucket();
                 ++peakIndex;
                 bucketCount = 0;
-                bucketMin = std::numeric_limits<float>::infinity();
-                bucketMax = -std::numeric_limits<float>::infinity();
+                laneMin.fill(inf);
+                laneMax.fill(-inf);
             }
         }
 
@@ -112,13 +147,12 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
 
     if (bucketCount > 0 && peakIndex < peakCount)
     {
-        result.peaks[(static_cast<std::size_t>(peakIndex) * 2U)] = bucketMin;
-        result.peaks[(static_cast<std::size_t>(peakIndex) * 2U) + 1U] = bucketMax;
+        flushBucket();
     }
 
     const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - startMs;
     silverdaw::log::info("waveform", "compute done " + file.getFileName() + " peaks=" + juce::String(peakCount) +
-                                          " ms=" + juce::String(elapsedMs, 1));
+                                          " lanes=" + juce::String(laneCount) + " ms=" + juce::String(elapsedMs, 1));
     return result;
 }
 

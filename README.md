@@ -54,6 +54,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Per-clip volume shaping.** Draw a volume envelope right on a clip's waveform
   in the Clip Editor to swell, duck, fade in, or fade out — all non-destructive
   and applied to both playback and export.
+- **Single or stereo waveforms.** Choose whether clips show one combined
+  waveform or stacked left / right channels, in Preferences — applied across the
+  timeline and the Clip Editor.
 - **Per-project sample rate.** Pin a project to 44.1 or 48 kHz; imports are
   checked against the project rate and offer a clear path when they differ.
 - **Mixdown export.** Render the whole project to a single stereo file in WAV,

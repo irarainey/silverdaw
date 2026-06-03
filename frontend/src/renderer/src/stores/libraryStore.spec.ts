@@ -800,4 +800,95 @@ describe('libraryStore', () => {
     })
     expect(sendMock).not.toHaveBeenCalled()
   })
+
+  it('stores and clears per-channel stereo peaks keyed by item id', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\stereo.wav',
+      fileName: 'stereo.wav',
+      durationMs: 1_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+
+    const left = new Float32Array([-0.5, 0.5, -0.4, 0.4])
+    const right = new Float32Array([-0.3, 0.3, -0.2, 0.2])
+    library.setItemChannelPeaks(id, [left, right], 200)
+
+    const entry = library.channelPeaksByItemId[id]
+    expect(entry).toBeDefined()
+    expect(entry?.channels).toHaveLength(2)
+    expect(entry?.channels[0]).toBe(left)
+    expect(entry?.lod).toHaveLength(2)
+    expect(entry?.lod[0]?.[0]?.peaks).toBe(left)
+    expect(entry?.peaksPerSecond).toBe(200)
+
+    // A non-stereo (or empty) update clears the entry.
+    library.setItemChannelPeaks(id, [left], 200)
+    expect(library.channelPeaksByItemId[id]).toBeUndefined()
+  })
+
+  it('drops per-channel stereo peaks when the item is removed', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\stereo2.wav',
+      fileName: 'stereo2.wav',
+      durationMs: 1_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    library.setItemChannelPeaks(id, [new Float32Array([0, 1]), new Float32Array([0, 1])], 200)
+    expect(library.channelPeaksByItemId[id]).toBeDefined()
+
+    library.removeItem(id)
+    expect(library.channelPeaksByItemId[id]).toBeUndefined()
+  })
+
+  it('reuses an identical channel entry instead of rebuilding its LOD', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\stereo3.wav',
+      fileName: 'stereo3.wav',
+      durationMs: 1_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    const left = new Float32Array([0, 1])
+    const right = new Float32Array([0, 1])
+    library.setItemChannelPeaks(id, [left, right], 200)
+    const firstLod = library.channelPeaksByItemId[id]?.lod
+    // Same references + rate must short-circuit and keep the existing LOD.
+    library.setItemChannelPeaks(id, [left, right], 200)
+    expect(library.channelPeaksByItemId[id]?.lod).toBe(firstLod)
+    // A different rate forces a rebuild.
+    library.setItemChannelPeaks(id, [left, right], 400)
+    expect(library.channelPeaksByItemId[id]?.lod).not.toBe(firstLod)
+  })
+
+  it('clears per-channel and hi-res peaks when the library is cleared', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\stereo4.wav',
+      fileName: 'stereo4.wav',
+      durationMs: 1_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    library.setItemChannelPeaks(id, [new Float32Array([0, 1]), new Float32Array([0, 1])], 200)
+    library.setEditorHiResPeaks({
+      libraryItemId: id,
+      peaksPerSecond: 200,
+      sampleRate: 48_000,
+      peaks: new Float32Array([0, 1]),
+      channels: []
+    })
+
+    library.clear()
+    expect(library.channelPeaksByItemId).toEqual({})
+    expect(library.editorHiResPeaks).toBeNull()
+  })
 })

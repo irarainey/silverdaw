@@ -95,7 +95,16 @@ export interface UiPreferences {
    *  the previous / next timeline marker, falling back to the start / end
    *  when there's no marker in that direction. */
   skipButtonTarget: SkipButtonTarget
+
+  /** How source waveforms are drawn. `summary` (default) shows a single
+   *  mono-summed lane for every clip; `stereo` stacks separate left /
+   *  right lanes for two-channel sources (mono sources still show one
+   *  lane). Applies to both the timeline and the Clip Editor. */
+  waveformDisplayMode: WaveformDisplayMode
 }
+
+/** How source waveforms are drawn in the timeline and Clip Editor. */
+export type WaveformDisplayMode = 'summary' | 'stereo'
 
 /** Target for the transport previous / next (skip) buttons. */
 export type SkipButtonTarget = 'timelineEnds' | 'markers'

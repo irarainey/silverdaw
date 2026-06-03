@@ -39,6 +39,10 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
   channelCount: number
   /** Alternating min, max pairs at `PEAKS_PER_SECOND` resolution. */
   peaks: Float32Array
+  /** Per-channel min/max peaks (index 0 = left, 1 = right) for stereo
+   *  sources; empty for mono / >2-channel sources. Mirrors the backend's
+   *  per-lane peaks so the renderer-decoded path can also draw stereo. */
+  channelPeaks: Float32Array[]
   /** Actual peak-pair rate after integer sample buckets are applied. */
   peaksPerSecond: number
   /** Planar PCM, one Float32Array per channel. */
@@ -61,6 +65,7 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
   }
 
   const peaks = computePeaks(audioBuffer, PEAKS_PER_SECOND)
+  const channelPeaks = computeChannelPeaks(audioBuffer, PEAKS_PER_SECOND)
   const peaksPerSecond = effectivePeaksPerSecond(audioBuffer.sampleRate, PEAKS_PER_SECOND)
 
   return {
@@ -68,6 +73,7 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
     sampleRate: audioBuffer.sampleRate,
     channelCount: audioBuffer.numberOfChannels,
     peaks,
+    channelPeaks,
     peaksPerSecond,
     channels
   }
@@ -221,4 +227,41 @@ function computePeaks(buffer: AudioBuffer, peaksPerSecond: number): Float32Array
   }
 
   return out
+}
+
+/**
+ * Compute per-channel min/max peaks for a STEREO (exactly 2-channel)
+ * buffer, returning `[left, right]` where each entry is alternating
+ * min, max pairs at the same bucketing as `computePeaks`. Mono and
+ * >2-channel buffers return an empty array (they render from the mono
+ * summary only). Keeps the renderer-decoded path in lockstep with the
+ * backend's per-lane peaks (see `backend/src/Waveform.cpp`).
+ */
+function computeChannelPeaks(buffer: AudioBuffer, peaksPerSecond: number): Float32Array[] {
+  const { sampleRate, length, numberOfChannels } = buffer
+  if (numberOfChannels !== 2) return []
+  const samplesPerPeak = Math.max(1, Math.floor(sampleRate / peaksPerSecond))
+  const peakCount = Math.ceil(length / samplesPerPeak)
+  const result: Float32Array[] = []
+
+  for (let c = 0; c < 2; c++) {
+    const data = buffer.getChannelData(c)
+    const out = new Float32Array(peakCount * 2)
+    for (let p = 0; p < peakCount; p++) {
+      const start = p * samplesPerPeak
+      const end = Math.min(start + samplesPerPeak, length)
+      let min = 0
+      let max = 0
+      for (let i = start; i < end; i++) {
+        const v = data[i]!
+        if (v < min) min = v
+        else if (v > max) max = v
+      }
+      out[p * 2] = min
+      out[p * 2 + 1] = max
+    }
+    result.push(out)
+  }
+
+  return result
 }

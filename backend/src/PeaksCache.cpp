@@ -9,21 +9,25 @@ namespace silverdaw
 namespace
 {
 
-// On-disk preamble. Kept minimal but versioned so future format changes
-// (e.g. switching to int16-quantised peaks) can be detected as a miss
-// rather than misinterpreted.
+// On-disk preamble. Kept minimal but versioned so format changes are
+// detected as a miss rather than misinterpreted. Serialised field-by-field
+// at explicit byte offsets — NOT via `sizeof(CacheHeader)`, because the
+// natural struct layout pads the trailing `double` to an 8-byte boundary
+// (making the struct 32 bytes, not the 28 bytes actually written).
 constexpr std::uint32_t kCacheMagic = 0x53445057U; // 'SDPW' little-endian
-constexpr std::uint32_t kCacheVersion = 1U;
+constexpr std::uint32_t kCacheVersion = 2U;
 
-struct CacheHeader
-{
-    std::uint32_t magic;
-    std::uint32_t version;
-    std::uint32_t peaksPerSecond;
-    std::uint32_t peakCount;
-    double sampleRate;
-};
-static_assert(sizeof(CacheHeader) == 24, "CacheHeader layout assumption changed");
+// Byte offsets within the header.
+constexpr int kOffMagic = 0;
+constexpr int kOffVersion = 4;
+constexpr int kOffPeaksPerSecond = 8;
+constexpr int kOffPeakCount = 12; // buckets PER LANE
+constexpr int kOffLaneCount = 16;
+constexpr int kOffSampleRate = 20; // f64
+constexpr int kHeaderSize = 28;
+
+// Defensive upper bound on stored lanes (mono summary = 1, stereo = 3).
+constexpr std::uint32_t kMaxLaneCount = 8U;
 
 void writeU32(std::uint8_t* dest, std::uint32_t value)
 {
@@ -102,26 +106,28 @@ waveform::PeaksResult PeaksCache::tryLoad(const juce::File& sourceFile, int peak
         return result;
     }
 
-    std::uint8_t hdrBytes[sizeof(CacheHeader)]{};
+    std::uint8_t hdrBytes[kHeaderSize]{};
     if (stream.read(hdrBytes, sizeof(hdrBytes)) != sizeof(hdrBytes))
     {
         return result;
     }
-    const auto magic = readU32(hdrBytes);
-    const auto version = readU32(hdrBytes + 4);
-    const auto peaksPerSec = readU32(hdrBytes + 8);
-    const auto peakCount = readU32(hdrBytes + 12);
+    const auto magic = readU32(hdrBytes + kOffMagic);
+    const auto version = readU32(hdrBytes + kOffVersion);
+    const auto peaksPerSec = readU32(hdrBytes + kOffPeaksPerSecond);
+    const auto peakCount = readU32(hdrBytes + kOffPeakCount);
+    const auto laneCount = readU32(hdrBytes + kOffLaneCount);
     double sampleRate = 0.0;
-    std::memcpy(&sampleRate, hdrBytes + 16, sizeof(double));
+    std::memcpy(&sampleRate, hdrBytes + kOffSampleRate, sizeof(double));
 
     if (magic != kCacheMagic || version != kCacheVersion ||
-        peaksPerSec != static_cast<std::uint32_t>(peaksPerSecond))
+        peaksPerSec != static_cast<std::uint32_t>(peaksPerSecond) || laneCount < 1U || laneCount > kMaxLaneCount)
     {
         silverdaw::log::info("peakscache", "stale entry; recomputing " + sourceFile.getFileName());
         return result;
     }
 
-    const auto floatCount = static_cast<std::size_t>(peakCount) * 2U;
+    result.laneCount = static_cast<int>(laneCount);
+    const auto floatCount = static_cast<std::size_t>(peakCount) * 2U * static_cast<std::size_t>(laneCount);
     result.peaks.resize(floatCount);
     const auto bytesNeeded = floatCount * sizeof(float);
     if (bytesNeeded > 0)
@@ -153,12 +159,15 @@ void PeaksCache::store(const juce::File& sourceFile, const waveform::PeaksResult
     const auto tmp = target.getSiblingFile(target.getFileName() + ".tmp");
     tmp.deleteFile();
 
-    std::uint8_t hdr[sizeof(CacheHeader)]{};
-    writeU32(hdr, kCacheMagic);
-    writeU32(hdr + 4, kCacheVersion);
-    writeU32(hdr + 8, static_cast<std::uint32_t>(result.peaksPerSecond));
-    writeU32(hdr + 12, static_cast<std::uint32_t>(result.peaks.size() / 2U));
-    std::memcpy(hdr + 16, &result.sampleRate, sizeof(double));
+    std::uint8_t hdr[kHeaderSize]{};
+    const auto laneCount = result.laneCount > 0 ? result.laneCount : 1;
+    const auto bucketsPerLane = static_cast<std::uint32_t>(result.peaks.size() / (2U * static_cast<std::size_t>(laneCount)));
+    writeU32(hdr + kOffMagic, kCacheMagic);
+    writeU32(hdr + kOffVersion, kCacheVersion);
+    writeU32(hdr + kOffPeaksPerSecond, static_cast<std::uint32_t>(result.peaksPerSecond));
+    writeU32(hdr + kOffPeakCount, bucketsPerLane);
+    writeU32(hdr + kOffLaneCount, static_cast<std::uint32_t>(laneCount));
+    std::memcpy(hdr + kOffSampleRate, &result.sampleRate, sizeof(double));
 
     {
         juce::FileOutputStream out(tmp);
@@ -185,7 +194,8 @@ void PeaksCache::store(const juce::File& sourceFile, const waveform::PeaksResult
         return;
     }
     silverdaw::log::info("peakscache", "store " + sourceFile.getFileName() + " peaks=" +
-                                            juce::String(static_cast<int>(result.peaks.size() / 2U)));
+                                            juce::String(static_cast<int>(bucketsPerLane)) +
+                                            " lanes=" + juce::String(laneCount));
 }
 
 } // namespace silverdaw
