@@ -101,6 +101,12 @@ export interface UiPreferences {
    *  right lanes for two-channel sources (mono sources still show one
    *  lane). Applies to both the timeline and the Clip Editor. */
   waveformDisplayMode: WaveformDisplayMode
+
+  /** When true, the bottom tabbed panel (Library / Track FX / Project FX)
+   *  is minimised to just its tab strip, freeing vertical space for the
+   *  timeline. The tab strip stays visible so the panel can be reopened
+   *  with one click. Defaults to false (expanded). */
+  libraryPanelCollapsed: boolean
 }
 
 /** How source waveforms are drawn in the timeline and Clip Editor. */

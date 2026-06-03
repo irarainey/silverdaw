@@ -290,6 +290,9 @@ interface UiPrefs {
    *  default) or `stereo` (stacked L/R lanes for two-channel sources).
    *  Anything else snaps back to `summary` on load. */
   waveformDisplayMode: WaveformDisplayMode
+  /** When true, the bottom tabbed panel is minimised to its tab strip.
+   *  Non-boolean values snap back to false (expanded) on load. */
+  libraryPanelCollapsed: boolean
 }
 
 type DebugPrefs = DebugPreferences
@@ -422,7 +425,8 @@ function buildDefaultPrefs(): Preferences {
       matchProjectTempoOnDrop: true,
       defaultProjectSampleRate: 44100,
       skipButtonTarget: 'timelineEnds',
-      waveformDisplayMode: 'summary'
+      waveformDisplayMode: 'summary',
+      libraryPanelCollapsed: false
     },
     debug: {
       loggingEnabled: false,
@@ -447,7 +451,8 @@ let prefs: Preferences = {
     matchProjectTempoOnDrop: true,
     defaultProjectSampleRate: 44100,
     skipButtonTarget: 'timelineEnds',
-    waveformDisplayMode: 'summary'
+    waveformDisplayMode: 'summary',
+    libraryPanelCollapsed: false
   },
   debug: { loggingEnabled: false, devToolsEnabled: false, logDirectory: '' },
   toasts: { enabled: true },
@@ -583,6 +588,11 @@ async function loadPreferences(): Promise<void> {
     // Snap an unrecognised waveform display mode back to the safe default.
     if (prefs.ui.waveformDisplayMode !== 'summary' && prefs.ui.waveformDisplayMode !== 'stereo') {
       prefs.ui.waveformDisplayMode = 'summary'
+    }
+    // Coerce a non-boolean collapsed flag (manual edit / older build) to
+    // the expanded default.
+    if (typeof prefs.ui.libraryPanelCollapsed !== 'boolean') {
+      prefs.ui.libraryPanelCollapsed = false
     }
   } catch (err) {
     // ENOENT on first run is expected; anything else is logged but we still

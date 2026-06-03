@@ -35,30 +35,31 @@ const selectedTrackId = computed(() =>
 </script>
 
 <template>
-  <FxRack assistive-label="Track effects">
-    <template v-if="selectedTrackId">
-      <TrackToneModule
-        :key="`tone-${selectedTrackId}`"
-        :track-id="selectedTrackId"
-      />
-      <TrackPanModule
-        :key="`pan-${selectedTrackId}`"
-        :track-id="selectedTrackId"
-      />
-      <TrackLevelerModule
-        :key="`leveler-${selectedTrackId}`"
-        :track-id="selectedTrackId"
-      />
-      <TrackSendsModule
-        :key="`sends-${selectedTrackId}`"
-        :track-id="selectedTrackId"
-      />
-    </template>
-    <div
-      v-else
-      class="flex items-center justify-center rounded-lg border border-dashed border-zinc-800 bg-zinc-900/40 px-4 text-center text-xs text-zinc-500"
-    >
-      Select a track to edit its Tone, Pan, Leveler, and Reverb &amp; Delay.
-    </div>
+  <FxRack
+    v-if="selectedTrackId"
+    assistive-label="Track effects"
+  >
+    <TrackToneModule
+      :key="`tone-${selectedTrackId}`"
+      :track-id="selectedTrackId"
+    />
+    <TrackPanModule
+      :key="`pan-${selectedTrackId}`"
+      :track-id="selectedTrackId"
+    />
+    <TrackLevelerModule
+      :key="`leveler-${selectedTrackId}`"
+      :track-id="selectedTrackId"
+    />
+    <TrackSendsModule
+      :key="`sends-${selectedTrackId}`"
+      :track-id="selectedTrackId"
+    />
   </FxRack>
+  <div
+    v-else
+    class="flex h-full min-h-0 w-full items-center justify-center px-4 text-center text-xs text-zinc-500"
+  >
+    Select a track to edit its Tone, Pan, Leveler, and Reverb &amp; Delay.
+  </div>
 </template>

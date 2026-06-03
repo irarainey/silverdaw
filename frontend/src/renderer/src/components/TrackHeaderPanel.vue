@@ -313,13 +313,20 @@ function onToggleFx(track: { id: string }): void {
   project.selectTrack(track.id)
   project.setFxTab('track')
   project.setFxPanelOpen(true)
+  ui.setLibraryPanelCollapsed(false)
 }
 
 /** True when the bottom panel is showing the Track FX rack for this track —
- *  i.e. the FX area is open, on the per-track tab, and this track is the
- *  selected one. Drives the header Fx button's pressed state and toggle. */
+ *  i.e. the FX area is open, on the per-track tab, this track is the
+ *  selected one, and the panel isn't minimised. A minimised panel shows
+ *  nothing, so its Fx buttons read as deselected. */
 function isTrackFxShowing(trackId: string): boolean {
-  return project.fxPanelOpen && project.fxTab === 'track' && project.selectedTrackId === trackId
+  return (
+    project.fxPanelOpen &&
+    project.fxTab === 'track' &&
+    project.selectedTrackId === trackId &&
+    !ui.libraryPanelCollapsed
+  )
 }
 
 function onGripPointerDown(track: { id: string }, ev: PointerEvent): void {

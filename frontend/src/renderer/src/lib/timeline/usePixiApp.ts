@@ -165,6 +165,14 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
         opts.viewportHeight.value = h
       }
       opts.onResize()
+      // ResizeObserver callbacks run after layout but before the browser
+      // paints the frame. Force an immediate render so the freshly-resized
+      // canvas is painted with content in this same frame. Without this a
+      // large one-shot size change (e.g. collapsing/expanding the bottom
+      // panel) leaves a single blank frame that reads as a flicker across
+      // the timeline; the incremental resizes from dragging a handle never
+      // expose enough blank area to notice.
+      a.render()
     })
     resizeObserver.observe(opts.host.value)
   })

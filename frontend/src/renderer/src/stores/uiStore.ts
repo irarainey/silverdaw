@@ -45,6 +45,9 @@ interface UiState {
   /** How source waveforms are drawn: `summary` (single mono lane) or
    *  `stereo` (stacked L/R lanes for two-channel sources). */
   waveformDisplayMode: WaveformDisplayMode
+  /** When true, the bottom tabbed panel is minimised to its tab strip,
+   *  hiding the body to give the timeline more vertical room. */
+  libraryPanelCollapsed: boolean
   /** Live horizontal-zoom value (px per second). NOT persisted to
    *  preferences.json — this just mirrors `geometry.pxPerSecond` from
    *  the timeline so other components (e.g. StatusBar) can show the
@@ -76,7 +79,8 @@ const DEFAULTS = {
   matchProjectTempoOnDrop: true,
   defaultProjectSampleRate: 44100,
   skipButtonTarget: 'timelineEnds',
-  waveformDisplayMode: 'summary'
+  waveformDisplayMode: 'summary',
+  libraryPanelCollapsed: false
 } as const
 
 const SUPPORTED_PROJECT_SAMPLE_RATES = new Set([44100, 48000])
@@ -114,6 +118,7 @@ let pendingPush: {
   matchProjectTempoOnDrop?: boolean
   skipButtonTarget?: SkipButtonTarget
   waveformDisplayMode?: WaveformDisplayMode
+  libraryPanelCollapsed?: boolean
 } = {}
 
 interface UiPushPayload {
@@ -125,6 +130,7 @@ interface UiPushPayload {
   defaultProjectSampleRate?: number
   skipButtonTarget?: SkipButtonTarget
   waveformDisplayMode?: WaveformDisplayMode
+  libraryPanelCollapsed?: boolean
 }
 
 /**
@@ -153,6 +159,7 @@ export const useUiStore = defineStore('ui', {
     defaultProjectSampleRate: DEFAULTS.defaultProjectSampleRate,
     skipButtonTarget: DEFAULTS.skipButtonTarget,
     waveformDisplayMode: DEFAULTS.waveformDisplayMode,
+    libraryPanelCollapsed: DEFAULTS.libraryPanelCollapsed,
     zoomPxPerSecond: 100,
     timelineScrollRequest: null,
     timelineZoomRequest: null,
@@ -190,6 +197,10 @@ export const useUiStore = defineStore('ui', {
           saved.waveformDisplayMode === 'stereo' || saved.waveformDisplayMode === 'summary'
             ? saved.waveformDisplayMode
             : DEFAULTS.waveformDisplayMode
+        this.libraryPanelCollapsed =
+          typeof saved.libraryPanelCollapsed === 'boolean'
+            ? saved.libraryPanelCollapsed
+            : DEFAULTS.libraryPanelCollapsed
       } catch (err) {
         log.warn('ui', `hydrate failed, using defaults: ${String(err)}`)
       } finally {
@@ -211,6 +222,19 @@ export const useUiStore = defineStore('ui', {
       if (next === this.libraryPanelHeight) return
       this.libraryPanelHeight = next
       if (this.hydrated) schedulePush({ libraryPanelHeight: next })
+    },
+
+    /** Collapse / expand the bottom tabbed panel and persist. Persists
+     *  immediately (a click, not a continuous drag). */
+    setLibraryPanelCollapsed(value: boolean): void {
+      if (this.libraryPanelCollapsed === value) return
+      this.libraryPanelCollapsed = value
+      if (this.hydrated) schedulePush({ libraryPanelCollapsed: value })
+    },
+
+    /** Toggle the bottom tabbed panel's collapsed state. */
+    toggleLibraryPanelCollapsed(): void {
+      this.setLibraryPanelCollapsed(!this.libraryPanelCollapsed)
     },
 
     /** Toggle follow-playback. Persists immediately (no debounce needed

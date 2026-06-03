@@ -49,9 +49,15 @@ const project = useProjectStore()
 const activeTab = computed<'library' | 'trackfx' | 'projectfx'>({
   get: () => {
     if (!project.fxPanelOpen) return 'library'
+    // The Track FX tab stays selectable even with no track selected: rather
+    // than silently bouncing to the Library (which made the tab feel broken),
+    // TrackFxPanel shows a "select a track" hint so the surface is clear.
     return project.fxTab === 'project' ? 'projectfx' : 'trackfx'
   },
   set: (tab) => {
+    // Clicking any tab while minimised should reveal the panel — the user
+    // clicked it expecting to see that surface.
+    ui.setLibraryPanelCollapsed(false)
     if (tab === 'library') {
       project.setFxPanelOpen(false)
       return
@@ -489,11 +495,23 @@ function tileIsSample(item: LibraryItem): boolean {
 const MIN_PANEL_HEIGHT = 80
 const MAX_PANEL_HEIGHT_FRACTION = 0.7 // never more than 70% of the window
 
+// Height the panel animates down to when minimised: just the tab strip.
+// Matches the 32px header (h-8) plus the section's 1px top border, so the
+// header stays fully visible while the body slides out of view.
+const COLLAPSED_PANEL_HEIGHT = 33
+
+// True only while the user is actively dragging the resize handle. The
+// height transition (used for the minimise / expand slide) is suppressed
+// during a drag so direct manipulation stays instant rather than lagging
+// behind the pointer.
+const isResizing = ref(false)
+
 let resizeStartY = 0
 let resizeStartHeight = 0
 
 function onResizePointerDown(e: PointerEvent): void {
     if (e.button !== 0) return
+    isResizing.value = true
     resizeStartY = e.clientY
     resizeStartHeight = props.height
     window.addEventListener('pointermove', onResizePointerMove)
@@ -511,6 +529,7 @@ function onResizePointerMove(e: PointerEvent): void {
 }
 
 function onResizePointerUp(): void {
+    isResizing.value = false
     window.removeEventListener('pointermove', onResizePointerMove)
     window.removeEventListener('pointerup', onResizePointerUp)
     window.removeEventListener('pointercancel', onResizePointerUp)
@@ -520,15 +539,18 @@ function onResizePointerUp(): void {
 <template>
   <section
     class="relative flex shrink-0 flex-col border-t border-zinc-800 bg-zinc-900 text-zinc-100"
-    :style="{ height: height + 'px' }"
+    :class="isResizing ? '' : 'transition-[height] duration-150 ease-out'"
+    :style="{ height: (ui.libraryPanelCollapsed ? COLLAPSED_PANEL_HEIGHT : height) + 'px' }"
     @dragenter="onPanelDragEnter"
     @dragover="onPanelDragOver"
     @dragleave="onPanelDragLeave"
     @drop="onPanelDrop"
   >
     <!-- Top resize handle. The visible line is 1px; the hit area is 6px tall
-             so it's easy to grab. The cursor changes to row-resize on hover. -->
+             so it's easy to grab. The cursor changes to row-resize on hover.
+             Hidden while minimised — there's nothing to resize. -->
     <div
+      v-if="!ui.libraryPanelCollapsed"
       class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize"
       title="Drag to resize"
       @pointerdown="onResizePointerDown"
@@ -540,6 +562,25 @@ function onResizePointerUp(): void {
       class="flex h-8 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-3 text-xs uppercase tracking-wide text-zinc-400"
     >
       <div class="flex items-center gap-1">
+        <button
+          type="button"
+          class="mr-1 flex h-5 w-5 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+          :title="ui.libraryPanelCollapsed ? 'Expand panel' : 'Minimise panel'"
+          :aria-label="ui.libraryPanelCollapsed ? 'Expand panel' : 'Minimise panel'"
+          :aria-expanded="!ui.libraryPanelCollapsed"
+          @click="ui.toggleLibraryPanelCollapsed()"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            class="h-3.5 w-3.5 transition-transform"
+            :class="ui.libraryPanelCollapsed ? 'rotate-180' : ''"
+            aria-hidden="true"
+          >
+            <path d="M7 10l5 5 5-5H7z" />
+          </svg>
+        </button>
         <button
           type="button"
           class="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors"
@@ -595,303 +636,315 @@ function onResizePointerUp(): void {
       </button>
     </header>
 
-    <!-- Body. Tiles wrap to the available width; only vertical overflow scrolls. -->
+    <!-- Body wrapper. Kept mounted (not v-show / v-if) so collapsing and
+         expanding the panel slides the body in / out via the section's
+         height transition instead of unmounting it — that remount, plus the
+         one-shot resize, is what caused the flicker. `overflow-hidden` clips
+         the body as the panel shrinks; `inert` blocks interaction with the
+         clipped content while minimised. The active tab inside still
+         switches with v-if. -->
     <div
-      v-if="activeTab === 'library'"
-      class="library-panel-body silverdaw-scroll relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2"
+      class="flex min-h-0 flex-1 flex-col overflow-hidden"
+      :inert="ui.libraryPanelCollapsed"
     >
+      <!-- Body. Tiles wrap to the available width; only vertical overflow scrolls. -->
       <div
-        v-if="library.items.length === 0"
-        class="flex h-full w-full items-center justify-center text-xs text-zinc-500"
+        v-if="activeTab === 'library'"
+        class="library-panel-body silverdaw-scroll relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2"
       >
-        Drop audio files here, or click <span class="mx-1 font-medium text-zinc-300">Import</span> to add them.
-      </div>
-      <div
-        v-else
-        class="flex w-full min-w-0 flex-wrap items-start content-start gap-3"
-      >
-        <!-- Source group: source tile on top, derived saved clips below in a sub-list.
+        <div
+          v-if="library.items.length === 0"
+          class="flex h-full w-full items-center justify-center text-xs text-zinc-500"
+        >
+          Drop audio files here, or click <span class="mx-1 font-medium text-zinc-300">Import</span> to add them.
+        </div>
+        <div
+          v-else
+          class="flex w-full min-w-0 flex-wrap items-start content-start gap-3"
+        >
+          <!-- Source group: source tile on top, derived saved clips below in a sub-list.
                        When the source has no saved clips, drop the group framing so the tile
                        reads as a standalone item rather than an empty container. -->
-        <div
-          v-for="source in sourceItems"
-          :key="source.id"
-          class="library-group flex w-[240px] max-w-full shrink-0 flex-col overflow-hidden rounded-md border"
-          :class="
-            childItems(source).length > 0
-              ? 'border-zinc-800 bg-zinc-950/50'
-              : 'border-zinc-800 bg-zinc-950/30'
-          "
-        >
           <div
-            draggable="true"
-            class="library-item group relative flex cursor-grab select-none items-stretch overflow-hidden bg-zinc-950/60 text-left transition-colors hover:bg-zinc-900 active:cursor-grabbing"
-            @dragstart="(e) => onItemDragStart(e, source)"
-            @dragend="onItemDragEnd"
-            @dblclick="openItemEditor(source)"
-            @contextmenu.prevent="(e) => openItemContextMenu(e, source)"
+            v-for="source in sourceItems"
+            :key="source.id"
+            class="library-group flex w-[240px] max-w-full shrink-0 flex-col overflow-hidden rounded-md border"
+            :class="
+              childItems(source).length > 0
+                ? 'border-zinc-800 bg-zinc-950/50'
+                : 'border-zinc-800 bg-zinc-950/30'
+            "
           >
-            <!-- Cover art thumbnail (or fallback) on the left edge. -->
             <div
-              v-if="ui.showLibraryTileImages"
-              class="flex aspect-square w-[75px] shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
+              draggable="true"
+              class="library-item group relative flex cursor-grab select-none items-stretch overflow-hidden bg-zinc-950/60 text-left transition-colors hover:bg-zinc-900 active:cursor-grabbing"
+              @dragstart="(e) => onItemDragStart(e, source)"
+              @dragend="onItemDragEnd"
+              @dblclick="openItemEditor(source)"
+              @contextmenu.prevent="(e) => openItemContextMenu(e, source)"
             >
-              <img
-                v-if="source.coverArtUrl"
-                :src="source.coverArtUrl"
-                alt=""
-                class="h-full w-full object-cover"
-                draggable="false"
-              >
-              <svg
-                v-else
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                class="h-6 w-6 text-zinc-700"
-                aria-hidden="true"
-              >
-                <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
-              </svg>
-            </div>
-            <!-- Text body. -->
-            <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">
-              <input
-                v-if="editingItemId === source.id"
-                :ref="setNameInputEl"
-                v-model="editingValue"
-                type="text"
-                spellcheck="false"
-                draggable="false"
-                data-borderless-button="true"
-                class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-xs font-medium text-zinc-100 outline-none focus:border-cyan-500"
-                @click.stop
-                @dblclick.stop
-                @mousedown.stop
-                @dragstart.stop.prevent
-              >
+              <!-- Cover art thumbnail (or fallback) on the left edge. -->
               <div
-                v-else
-                class="min-w-0 truncate text-xs font-medium text-zinc-100"
-                title="Double-click to rename"
-                @dblclick.stop="startRename(source)"
+                v-if="ui.showLibraryTileImages"
+                class="flex aspect-square w-[75px] shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
               >
-                {{ displayTitle(source) }}
+                <img
+                  v-if="source.coverArtUrl"
+                  :src="source.coverArtUrl"
+                  alt=""
+                  class="h-full w-full object-cover"
+                  draggable="false"
+                >
+                <svg
+                  v-else
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="h-6 w-6 text-zinc-700"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
+                </svg>
               </div>
-              <div
-                v-if="displayArtist(source)"
-                class="min-w-0 truncate text-[11px] text-zinc-400"
-              >
-                {{ displayArtist(source) }}
-              </div>
-              <div class="mt-auto flex items-center justify-between gap-2 text-[10px] text-zinc-500">
-                <span class="font-mono tabular-nums">{{ formatDuration(source.durationMs) }}</span>
-                <span class="ml-auto flex items-center gap-1">
-                  <span
-                    v-if="tileIsSample(source)"
-                    :class="SAMPLE_PILL_CLASS"
-                    title="Treated as a non-musical sample — beat / key analysis is hidden and auto-warp on drop is skipped. Toggle from the right-click menu."
-                  >
-                    Sample
-                  </span>
-                  <template v-else>
+              <!-- Text body. -->
+              <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">
+                <input
+                  v-if="editingItemId === source.id"
+                  :ref="setNameInputEl"
+                  v-model="editingValue"
+                  type="text"
+                  spellcheck="false"
+                  draggable="false"
+                  data-borderless-button="true"
+                  class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-xs font-medium text-zinc-100 outline-none focus:border-cyan-500"
+                  @click.stop
+                  @dblclick.stop
+                  @mousedown.stop
+                  @dragstart.stop.prevent
+                >
+                <div
+                  v-else
+                  class="min-w-0 truncate text-xs font-medium text-zinc-100"
+                  title="Double-click to rename"
+                  @dblclick.stop="startRename(source)"
+                >
+                  {{ displayTitle(source) }}
+                </div>
+                <div
+                  v-if="displayArtist(source)"
+                  class="min-w-0 truncate text-[11px] text-zinc-400"
+                >
+                  {{ displayArtist(source) }}
+                </div>
+                <div class="mt-auto flex items-center justify-between gap-2 text-[10px] text-zinc-500">
+                  <span class="font-mono tabular-nums">{{ formatDuration(source.durationMs) }}</span>
+                  <span class="ml-auto flex items-center gap-1">
                     <span
-                      v-if="source.key"
-                      :class="keyBadgeClass(source.key)"
-                      title="Detected key"
+                      v-if="tileIsSample(source)"
+                      :class="SAMPLE_PILL_CLASS"
+                      title="Treated as a non-musical sample — beat / key analysis is hidden and auto-warp on drop is skipped. Toggle from the right-click menu."
                     >
-                      {{ source.key }}
+                      Sample
                     </span>
-                    <span
-                      v-if="source.bpm"
-                      :class="
-                        source.variableTempo
-                          ? `${SAVED_CLIP_PILL_CLASS} border-amber-800 bg-amber-900/60 text-amber-200`
-                          : SAVED_CLIP_BPM_PILL_CLASS
-                      "
-                      :title="
-                        source.variableTempo
-                          ? 'Tempo varies across the file - the BPM shown is a rough average'
-                          : 'Detected tempo'
-                      "
-                    >
+                    <template v-else>
                       <span
-                        v-if="source.variableTempo"
-                        class="mr-0.5"
-                      >~</span>{{ source.bpm.toFixed(2) }} BPM
-                    </span>
-                  </template>
-                </span>
+                        v-if="source.key"
+                        :class="keyBadgeClass(source.key)"
+                        title="Detected key"
+                      >
+                        {{ source.key }}
+                      </span>
+                      <span
+                        v-if="source.bpm"
+                        :class="
+                          source.variableTempo
+                            ? `${SAVED_CLIP_PILL_CLASS} border-amber-800 bg-amber-900/60 text-amber-200`
+                            : SAVED_CLIP_BPM_PILL_CLASS
+                        "
+                        :title="
+                          source.variableTempo
+                            ? 'Tempo varies across the file - the BPM shown is a rough average'
+                            : 'Detected tempo'
+                        "
+                      >
+                        <span
+                          v-if="source.variableTempo"
+                          class="mr-0.5"
+                        >~</span>{{ source.bpm.toFixed(2) }} BPM
+                      </span>
+                    </template>
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <!-- Saved clip sub-list derived from this source. Compact rows so
+            <!-- Saved clip sub-list derived from this source. Compact rows so
                        a source with many saved clips stays readable. The user
                        can collapse the sub-list with the disclosure chevron;
                        collapse state persists with the project. -->
-          <div
-            v-if="childItems(source).length > 0"
-            class="flex flex-col bg-zinc-900/60"
-          >
-            <button
-              type="button"
-              data-borderless-button="true"
-              class="flex w-full items-center gap-1.5 border-t border-zinc-800/80 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-300"
-              :title="source.collapsed ? 'Show saved clips' : 'Hide saved clips'"
-              @click="library.setItemCollapsed(source.id, !source.collapsed)"
+            <div
+              v-if="childItems(source).length > 0"
+              class="flex flex-col bg-zinc-900/60"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                class="h-3 w-3 transition-transform"
-                :class="source.collapsed ? '-rotate-90' : ''"
-                aria-hidden="true"
-              >
-                <path d="M7 10l5 5 5-5H7z" />
-              </svg>
-              <span>{{ childItems(source).length }} saved {{ childItems(source).length === 1 ? 'clip' : 'clips' }}</span>
-            </button>
-            <template v-if="!source.collapsed">
-              <div
-                v-for="item in childItems(source)"
-                :key="item.id"
-                draggable="true"
-                class="saved-clip group relative flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 pr-1 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
-                @dragstart="(e) => onItemDragStart(e, item)"
-                @dragend="onItemDragEnd"
-                @dblclick="openItemEditor(item)"
-                @contextmenu.prevent="(e) => openItemContextMenu(e, item)"
-              >
-                <span
-                  class="h-6 w-1 shrink-0 rounded-sm bg-cyan-500/60"
-                  aria-hidden="true"
-                />
-                <div class="flex min-w-0 flex-1 flex-col">
-                  <input
-                    v-if="editingItemId === item.id"
-                    :ref="setNameInputEl"
-                    v-model="editingValue"
-                    type="text"
-                    spellcheck="false"
-                    draggable="false"
-                    data-borderless-button="true"
-                    class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-[11px] font-medium text-zinc-100 outline-none focus:border-cyan-500"
-                    @click.stop
-                    @dblclick.stop
-                    @mousedown.stop
-                    @dragstart.stop.prevent
-                  >
-                  <div
-                    v-else
-                    class="min-w-0 truncate text-[11px] font-medium text-zinc-100"
-                    title="Double-click to rename"
-                    @dblclick.stop="startRename(item)"
-                  >
-                    {{ displayTitle(item) }}
-                  </div>
-                  <div class="min-w-0 truncate font-mono text-[10px] tabular-nums text-zinc-500">
-                    {{ formatClipDuration(item.durationMs) }}
-                  </div>
-                </div>
-                <div class="ml-auto flex shrink-0 items-center gap-1">
-                  <span
-                    v-if="item.key && ((item.semitones ?? 0) !== 0 || (item.cents ?? 0) !== 0)"
-                    :class="keyBadgeClass(item.key)"
-                    title="Clip pitch key"
-                  >
-                    {{ item.key }}
-                  </span>
-                  <span
-                    v-if="savedClipEffectiveBpm(item)"
-                    :class="SAVED_CLIP_BPM_PILL_CLASS"
-                    title="Warped clip tempo"
-                  >
-                    {{ savedClipEffectiveBpm(item)?.toFixed(2) }} BPM
-                  </span>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- Orphan saved clips: source file was removed from the library. -->
-        <div
-          v-if="orphanSavedClipItems.length > 0"
-          class="library-group flex w-[240px] max-w-full shrink-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/50"
-        >
-          <div class="px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-            Saved clips (source missing)
-          </div>
-          <div
-            v-for="item in orphanSavedClipItems"
-            :key="item.id"
-            draggable="true"
-            class="saved-clip group flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
-            @dragstart="(e) => onItemDragStart(e, item)"
-            @dragend="onItemDragEnd"
-            @dblclick="openItemEditor(item)"
-            @contextmenu.prevent="(e) => openItemContextMenu(e, item)"
-          >
-            <span
-              class="h-6 w-1 shrink-0 rounded-sm bg-amber-500/60"
-              aria-hidden="true"
-            />
-            <div class="flex min-w-0 flex-1 flex-col">
-              <input
-                v-if="editingItemId === item.id"
-                :ref="setNameInputEl"
-                v-model="editingValue"
-                type="text"
-                spellcheck="false"
-                draggable="false"
+              <button
+                type="button"
                 data-borderless-button="true"
-                class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-[11px] font-medium text-zinc-100 outline-none focus:border-cyan-500"
-                @click.stop
-                @dblclick.stop
-                @mousedown.stop
-                @dragstart.stop.prevent
+                class="flex w-full items-center gap-1.5 border-t border-zinc-800/80 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-300"
+                :title="source.collapsed ? 'Show saved clips' : 'Hide saved clips'"
+                @click="library.setItemCollapsed(source.id, !source.collapsed)"
               >
-              <div
-                v-else
-                class="min-w-0 truncate text-[11px] font-medium text-zinc-100"
-                title="Double-click to rename"
-                @dblclick.stop="startRename(item)"
-              >
-                {{ displayTitle(item) }}
-              </div>
-              <div class="min-w-0 truncate text-[10px] text-amber-300/80">
-                Source file missing
-              </div>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="h-3 w-3 transition-transform"
+                  :class="source.collapsed ? '-rotate-90' : ''"
+                  aria-hidden="true"
+                >
+                  <path d="M7 10l5 5 5-5H7z" />
+                </svg>
+                <span>{{ childItems(source).length }} saved {{ childItems(source).length === 1 ? 'clip' : 'clips' }}</span>
+              </button>
+              <template v-if="!source.collapsed">
+                <div
+                  v-for="item in childItems(source)"
+                  :key="item.id"
+                  draggable="true"
+                  class="saved-clip group relative flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 pr-1 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
+                  @dragstart="(e) => onItemDragStart(e, item)"
+                  @dragend="onItemDragEnd"
+                  @dblclick="openItemEditor(item)"
+                  @contextmenu.prevent="(e) => openItemContextMenu(e, item)"
+                >
+                  <span
+                    class="h-6 w-1 shrink-0 rounded-sm bg-cyan-500/60"
+                    aria-hidden="true"
+                  />
+                  <div class="flex min-w-0 flex-1 flex-col">
+                    <input
+                      v-if="editingItemId === item.id"
+                      :ref="setNameInputEl"
+                      v-model="editingValue"
+                      type="text"
+                      spellcheck="false"
+                      draggable="false"
+                      data-borderless-button="true"
+                      class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-[11px] font-medium text-zinc-100 outline-none focus:border-cyan-500"
+                      @click.stop
+                      @dblclick.stop
+                      @mousedown.stop
+                      @dragstart.stop.prevent
+                    >
+                    <div
+                      v-else
+                      class="min-w-0 truncate text-[11px] font-medium text-zinc-100"
+                      title="Double-click to rename"
+                      @dblclick.stop="startRename(item)"
+                    >
+                      {{ displayTitle(item) }}
+                    </div>
+                    <div class="min-w-0 truncate font-mono text-[10px] tabular-nums text-zinc-500">
+                      {{ formatClipDuration(item.durationMs) }}
+                    </div>
+                  </div>
+                  <div class="ml-auto flex shrink-0 items-center gap-1">
+                    <span
+                      v-if="item.key && ((item.semitones ?? 0) !== 0 || (item.cents ?? 0) !== 0)"
+                      :class="keyBadgeClass(item.key)"
+                      title="Clip pitch key"
+                    >
+                      {{ item.key }}
+                    </span>
+                    <span
+                      v-if="savedClipEffectiveBpm(item)"
+                      :class="SAVED_CLIP_BPM_PILL_CLASS"
+                      title="Warped clip tempo"
+                    >
+                      {{ savedClipEffectiveBpm(item)?.toFixed(2) }} BPM
+                    </span>
+                  </div>
+                </div>
+              </template>
             </div>
-            <span class="shrink-0 font-mono text-[10px] tabular-nums text-zinc-400">
-              {{ formatClipDuration(item.durationMs) }}
-            </span>
           </div>
+
+          <!-- Orphan saved clips: source file was removed from the library. -->
+          <div
+            v-if="orphanSavedClipItems.length > 0"
+            class="library-group flex w-[240px] max-w-full shrink-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/50"
+          >
+            <div class="px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+              Saved clips (source missing)
+            </div>
+            <div
+              v-for="item in orphanSavedClipItems"
+              :key="item.id"
+              draggable="true"
+              class="saved-clip group flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
+              @dragstart="(e) => onItemDragStart(e, item)"
+              @dragend="onItemDragEnd"
+              @dblclick="openItemEditor(item)"
+              @contextmenu.prevent="(e) => openItemContextMenu(e, item)"
+            >
+              <span
+                class="h-6 w-1 shrink-0 rounded-sm bg-amber-500/60"
+                aria-hidden="true"
+              />
+              <div class="flex min-w-0 flex-1 flex-col">
+                <input
+                  v-if="editingItemId === item.id"
+                  :ref="setNameInputEl"
+                  v-model="editingValue"
+                  type="text"
+                  spellcheck="false"
+                  draggable="false"
+                  data-borderless-button="true"
+                  class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-[11px] font-medium text-zinc-100 outline-none focus:border-cyan-500"
+                  @click.stop
+                  @dblclick.stop
+                  @mousedown.stop
+                  @dragstart.stop.prevent
+                >
+                <div
+                  v-else
+                  class="min-w-0 truncate text-[11px] font-medium text-zinc-100"
+                  title="Double-click to rename"
+                  @dblclick.stop="startRename(item)"
+                >
+                  {{ displayTitle(item) }}
+                </div>
+                <div class="min-w-0 truncate text-[10px] text-amber-300/80">
+                  Source file missing
+                </div>
+              </div>
+              <span class="shrink-0 font-mono text-[10px] tabular-nums text-zinc-400">
+                {{ formatClipDuration(item.durationMs) }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- OS-drag overlay - blue dashed outline + tint when dragging files in. -->
+        <div
+          v-if="isDragOver"
+          class="pointer-events-none absolute inset-1 flex items-center justify-center rounded border-2 border-dashed border-blue-500 bg-blue-500/10 text-sm font-medium text-blue-200"
+        >
+          Drop audio files to add them to the library
         </div>
       </div>
 
-      <!-- OS-drag overlay - blue dashed outline + tint when dragging files in. -->
-      <div
-        v-if="isDragOver"
-        class="pointer-events-none absolute inset-1 flex items-center justify-center rounded border-2 border-dashed border-blue-500 bg-blue-500/10 text-sm font-medium text-blue-200"
-      >
-        Drop audio files to add them to the library
-      </div>
+      <!-- Track FX body. Edits the selected track's Tone, Pan, and Reverb/Delay amounts. -->
+      <TrackFxPanel
+        v-else-if="activeTab === 'trackfx'"
+        class="min-h-0 flex-1"
+      />
+
+      <!-- Project FX body. Edits the project-wide shared Reverb + Delay. -->
+      <ProjectFxPanel
+        v-else
+        class="min-h-0 flex-1"
+      />
     </div>
-
-    <!-- Track FX body. Edits the selected track's Tone, Pan, and Reverb/Delay amounts. -->
-    <TrackFxPanel
-      v-else-if="activeTab === 'trackfx'"
-      class="min-h-0 flex-1"
-    />
-
-    <!-- Project FX body. Edits the project-wide shared Reverb + Delay. -->
-    <ProjectFxPanel
-      v-else
-      class="min-h-0 flex-1"
-    />
     <LibraryItemInfoDialog
       :open="infoItem !== null"
       :item="infoItem"
