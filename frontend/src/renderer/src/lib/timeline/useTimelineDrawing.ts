@@ -526,7 +526,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
           typeof clip.colorIndex === 'number'
             ? TRACK_PALETTE[clip.colorIndex % TRACK_PALETTE.length]!
             : trackPalette
-        drawClip(clip, worldY, rowHeight, palette, worldLeft, worldRight)
+        drawClip(clip, worldY, rowHeight, palette, worldLeft, worldRight, track.pan ?? 0)
         ++visibleClipCount
       }
     }
@@ -539,7 +539,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     rowHeight: number,
     palette: (typeof TRACK_PALETTE)[number],
     worldLeft: number,
-    worldRight: number
+    worldRight: number,
+    trackPan: number
   ): void {
     const tracksL = tracksLayer.value
     const G = GraphicsCtor.value
@@ -608,7 +609,6 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     //     spaced peaks 1 px apart regardless of width — causing the
     //     waveform to "drift" leftward off its clip block at high
     //     zoom.
-    const wave = new G()
     const baseLibPeaks = libItem?.peaks
     const baseLibPps = libItem?.peaksPerSecond
     const baseLibLod = libItem?.peaksLod
@@ -666,14 +666,21 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       channelEntry.channels.length === 2 &&
       innerH >= MIN_STEREO_LANE_HEIGHT * 2
 
-    // Draw one waveform lane into `wave` from `lanePeaks`, centred on
+    // Draw one waveform lane into `target` from `lanePeaks`, centred on
     // `laneMidY` with a half-height of `laneHalf`. Windows the source
     // peaks by the clip's `[inMs, inMs + durationMs]` range and maps the
     // window across the clip's pixel width (see the zoom notes above).
-    let drewAny = false
-    const drawLane = (lanePeaks: Float32Array, lanePps: number, laneMidY: number, laneHalf: number): void => {
+    // Returns whether any column was drawn so the caller can skip an
+    // empty stroke.
+    const drawLane = (
+      target: InstanceType<NonNullable<typeof GraphicsCtor.value>>,
+      lanePeaks: Float32Array,
+      lanePps: number,
+      laneMidY: number,
+      laneHalf: number
+    ): boolean => {
       const lanePeakCount = lanePeaks.length / 2
-      if (lanePeakCount <= 0 || w <= 0) return
+      if (lanePeakCount <= 0 || w <= 0) return false
       const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * lanePps))
       const endPeak = Math.min(
         lanePeakCount,
@@ -681,6 +688,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       )
       const windowSize = endPeak - startPeak
       const peaksPerPixel = windowSize / w
+      let didDraw = false
       for (let px = 0; px < w; px++) {
         const startIdx = startPeak + Math.floor(px * peaksPerPixel)
         // Always read at least one peak per pixel — when zoomed in
@@ -703,18 +711,27 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
         const yTop = laneMidY + max * -laneHalf
         const yBot = laneMidY + min * -laneHalf
-        wave.moveTo(absX + px + 0.5, yTop).lineTo(absX + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
-        drewAny = true
+        target.moveTo(absX + px + 0.5, yTop).lineTo(absX + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
+        didDraw = true
       }
+      return didDraw
     }
 
     if (wantStereo && channelEntry) {
       // Two stacked half-height lanes (left on top, right below), each
       // reading from its own LOD pyramid so a column still covers ~1–2
-      // peaks at the current zoom.
+      // peaks at the current zoom. Per-channel pan is reflected visually:
+      // an equal-power pan law gives each channel a gain, normalised so
+      // the louder channel stays full-height. A panned-away channel is
+      // drawn shorter and more faded so the user can see the clip is
+      // altered per channel.
       const laneH = innerH / 2
-      const laneHalf = laneH / 2 - 2
+      const fullHalf = laneH / 2 - 2
       const drawPxPerSrcSec = pxPerSecond.value / warpRatio
+      const angle = ((Math.max(-1, Math.min(1, Number.isFinite(trackPan) ? trackPan : 0)) + 1) * Math.PI) / 4
+      const rawGains = [Math.cos(angle), Math.sin(angle)] as const
+      const norm = Math.max(rawGains[0], rawGains[1]) || 1
+      const laneGains = [rawGains[0] / norm, rawGains[1] / norm] as const
       for (let ch = 0; ch < 2; ch++) {
         let lanePeaks = channelEntry.channels[ch]!
         let lanePps = channelEntry.peaksPerSecond
@@ -726,15 +743,26 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
             lanePps = picked.peaksPerSecond
           }
         }
-        drawLane(lanePeaks, lanePps, innerY + laneH * ch + laneH / 2, laneHalf)
+        const gain = laneGains[ch]!
+        const laneGfx = new G()
+        const drew = drawLane(
+          laneGfx,
+          lanePeaks,
+          lanePps,
+          innerY + laneH * ch + laneH / 2,
+          fullHalf * gain
+        )
+        if (drew) {
+          laneGfx.stroke({ color: waveColour, width: 1, alpha: 0.95 * (0.25 + 0.75 * gain) })
+          tracksL.addChild(laneGfx)
+        }
       }
     } else {
-      drawLane(peaks, peaksPerSecond, midY, innerH / 2 - 2)
-    }
-
-    if (drewAny) {
-      wave.stroke({ color: waveColour, width: 1, alpha: 0.95 })
-      tracksL.addChild(wave)
+      const wave = new G()
+      if (drawLane(wave, peaks, peaksPerSecond, midY, innerH / 2 - 2)) {
+        wave.stroke({ color: waveColour, width: 1, alpha: 0.95 })
+        tracksL.addChild(wave)
+      }
     }
 
     // Beat markers — synthesised on a *source-global* beat grid so a

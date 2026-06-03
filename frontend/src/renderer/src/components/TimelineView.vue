@@ -599,6 +599,15 @@ watch(
   () => redraw()
 )
 
+// Per-track pan changes how stereo waveform lanes are drawn (each
+// channel's height + opacity reflects its equal-power pan gain), so
+// repaint when any track's pan changes. Cheap string signature avoids a
+// deep watch on the track array.
+watch(
+  () => project.tracks.map((t) => t.pan ?? 0).join(','),
+  () => redraw()
+)
+
 watch(
   () => project.markers.map((marker) => `${marker.id}:${marker.positionMs}`).join('|'),
   () => redraw()

@@ -622,7 +622,10 @@ Interface) chooses between *Single waveform* (summary, default) and *Left and
 right channels* (stacked L/R lanes for stereo sources); the choice is persisted
 to `preferences.json` and applied to both the timeline and the Clip Editor. Mono
 sources, and rows too short to fit two readable lanes, always fall back to the
-single summary lane.
+single summary lane. On the timeline, stereo lanes also reflect the track's
+**pan**: each channel's lane height and opacity scale with its normalised
+equal-power pan gain, so a hard-panned channel collapses to a faint near-flat
+lane while the other stays full — a centred track leaves both lanes full.
 
 The cache survives backend restarts.
 
