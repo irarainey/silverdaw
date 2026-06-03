@@ -29,6 +29,8 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
 import { pickPeaksLod } from '@/lib/peaksLod'
+import { envelopeGainAtMs } from '@/lib/envelope'
+import { waveformColumnExcursion } from './waveformColumn'
 import {
   GRID_BAR,
   GRID_BEAT,
@@ -677,7 +679,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       lanePeaks: Float32Array,
       lanePps: number,
       laneMidY: number,
-      laneHalf: number
+      laneHalf: number,
+      columnGain?: (px: number) => number
     ): boolean => {
       const lanePeakCount = lanePeaks.length / 2
       if (lanePeakCount <= 0 || w <= 0) return false
@@ -709,13 +712,34 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
           if (hi > max) max = hi
         }
 
-        const yTop = laneMidY + max * -laneHalf
-        const yBot = laneMidY + min * -laneHalf
+        // Scale the column's vertical excursion by the clip's volume
+        // envelope at this time so the rendered waveform visibly shrinks or
+        // grows with the gain shape (a fade-out tapers toward nothing, a
+        // boost fills the lane). With no envelope `columnGain` is omitted and
+        // the lane draws at its natural amplitude (see waveformColumn.ts).
+        const colGain = columnGain ? columnGain(px) : 1
+        const { up, down } = waveformColumnExcursion(min, max, laneHalf, colGain)
+        const yTop = laneMidY - up
+        const yBot = laneMidY + down
         target.moveTo(absX + px + 0.5, yTop).lineTo(absX + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
         didDraw = true
       }
       return didDraw
     }
+
+    // Volume envelope reflection: a per-column gain multiplier derived from
+    // the clip's persisted gain shape (clip-local post-warp ms, the same
+    // basis `w` spans). The envelope is sampled at each column's pixel centre
+    // (`(px + 0.5) / w`) so steep fades aren't biased by up to a pixel.
+    // Passed to `drawLane` so both the single summary lane and the stereo
+    // channel lanes render at the clip's volume level. Omitted when the clip
+    // has no envelope so unenveloped clips draw unchanged.
+    const envPoints = clip.envelopePoints
+    const volumeColumnGain =
+      envPoints && envPoints.length >= 2 && effectiveDurMs > 0 && w > 0
+        ? (px: number): number =>
+            envelopeGainAtMs(envPoints, Math.min(effectiveDurMs, ((px + 0.5) / w) * effectiveDurMs))
+        : undefined
 
     if (wantStereo && channelEntry) {
       // Two stacked half-height lanes (left on top, right below), each
@@ -750,7 +774,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
           lanePeaks,
           lanePps,
           innerY + laneH * ch + laneH / 2,
-          fullHalf * gain
+          fullHalf * gain,
+          volumeColumnGain
         )
         if (drew) {
           laneGfx.stroke({ color: waveColour, width: 1, alpha: 0.95 * (0.25 + 0.75 * gain) })
@@ -759,7 +784,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       }
     } else {
       const wave = new G()
-      if (drawLane(wave, peaks, peaksPerSecond, midY, innerH / 2 - 2)) {
+      if (drawLane(wave, peaks, peaksPerSecond, midY, innerH / 2 - 2, volumeColumnGain)) {
         wave.stroke({ color: waveColour, width: 1, alpha: 0.95 })
         tracksL.addChild(wave)
       }

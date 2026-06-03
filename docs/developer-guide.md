@@ -630,6 +630,16 @@ single summary lane. On the timeline, stereo lanes also reflect the track's
 equal-power pan gain, so a hard-panned channel collapses to a faint near-flat
 lane while the other stays full — a centred track leaves both lanes full.
 
+The timeline waveform also reflects a clip's **volume shape**: each rendered
+column's height is scaled by the clip's gain envelope sampled at that point in
+time (clip-local post-warp ms), so a fade-out visibly tapers toward nothing and
+a dip shows as a notch. This applies to both the single summary lane and the
+stereo lanes (composing on top of the pan scaling), and works for mono and
+stereo sources alike. Unity gain renders identically to an unenveloped clip, and
+greater-than-unity boosts are clamped to the lane so the waveform never spills
+outside the clip block. The clamped excursion maths is the pure, unit-tested
+`waveformColumnExcursion` helper (`lib/timeline/waveformColumn.ts`).
+
 The cache survives backend restarts.
 
 ## Audio analysis
