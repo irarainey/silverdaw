@@ -89,3 +89,55 @@ export function hitTestHandle(
   }
   return best
 }
+
+/** A horizontal band the Volume Shape overlay is drawn into. */
+export interface OverlayLane {
+  top: number
+  height: number
+}
+
+/**
+ * Vertical bands the gain envelope is drawn into. In the single-waveform
+ * view this is one full-height band; in stereo view the same envelope is
+ * mirrored into the upper (left) and lower (right) channel lanes so the
+ * one shared shape reads against both channels. The bands are contiguous
+ * and exactly partition `[top, top + height]`.
+ */
+export function volumeOverlayLanes(top: number, height: number, stereo: boolean): OverlayLane[] {
+  if (!stereo) return [{ top, height }]
+  const laneH = height / 2
+  return [
+    { top, height: laneH },
+    { top: top + laneH, height: laneH }
+  ]
+}
+
+/**
+ * Index of the lane a y pixel falls in. Lane bounds are half-open at the
+ * shared seam — a y exactly on the boundary between two lanes belongs to the
+ * lower lane — so the visual top of the lower lane reads as that lane's max
+ * gain rather than the upper lane's silence. Pixels above the first lane or
+ * below the last clamp to the nearest lane.
+ */
+export function overlayLaneIndexForY(y: number, lanes: readonly OverlayLane[]): number {
+  for (let i = 0; i < lanes.length; i++) {
+    const lane = lanes[i]
+    if (!lane) continue
+    const isLast = i === lanes.length - 1
+    if (isLast || y < lane.top + lane.height) return i
+  }
+  return Math.max(0, lanes.length - 1)
+}
+
+/**
+ * Map a y pixel to a linear gain using whichever lane it falls in. Pixels
+ * above the first lane or below the last clamp into the nearest lane (so a
+ * drag past the band edge still reads as max / min gain). Used for editing
+ * the synchronised envelope from either stereo channel lane.
+ */
+export function overlayYToGainForLanes(y: number, lanes: readonly OverlayLane[]): number {
+  const idx = overlayLaneIndexForY(y, lanes)
+  const chosen = lanes[idx]
+  if (!chosen) return overlayYToGain(y, 0, 1)
+  return overlayYToGain(y, chosen.top, chosen.height)
+}

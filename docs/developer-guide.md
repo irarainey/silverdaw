@@ -162,7 +162,10 @@ Silverdaw currently supports the core arrangement workflow:
   breakpoints. A fade-in or fade-out is just the envelope's end breakpoints
   dragged down to silence (there is no separate fade control). Points are stored
   on the clip as `envelopePoints`, applied non-destructively to both live
-  playback and mixdown export.
+  playback and mixdown export. In the stereo waveform display the single
+  envelope line is mirrored and kept in sync across both channel lanes —
+  editing a breakpoint in either lane edits the one shared shape (the engine
+  applies that shape equally to both channels).
 - **Mixdown export** (File ▸ Export Mixdown…) renders the whole project to a
   single stereo file. Formats: WAV (16 / 24 / 32-float), FLAC (16 / 24), AIFF
   (16 / 24), MP3 (128 / 192 / 320 kbps, bundled LAME). Optional TPDF dither for

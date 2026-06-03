@@ -5,8 +5,11 @@ import {
   hitTestHandle,
   overlayGainToDb,
   overlayGainToY,
+  overlayLaneIndexForY,
   overlayYToGain,
+  overlayYToGainForLanes,
   sourceMsToVolumeTime,
+  volumeOverlayLanes,
   volumeTimeToSourceMs
 } from './volumeOverlay'
 
@@ -91,3 +94,61 @@ describe('volumeOverlay hit-testing', () => {
 function ENVELOPE_MAX_AS_GAIN(): number {
   return Math.pow(10, OVERLAY_DB_MAX / 20)
 }
+
+describe('volumeOverlay stereo lanes', () => {
+  it('returns one full-height band in summary view', () => {
+    const lanes = volumeOverlayLanes(18, 200, false)
+    expect(lanes).toEqual([{ top: 18, height: 200 }])
+  })
+
+  it('splits into two contiguous half-height bands in stereo view', () => {
+    const lanes = volumeOverlayLanes(18, 200, true)
+    expect(lanes).toEqual([
+      { top: 18, height: 100 },
+      { top: 118, height: 100 }
+    ])
+  })
+
+  it('maps a y in the upper lane to the same gain as the lower lane', () => {
+    const lanes = volumeOverlayLanes(0, 200, true)
+    // Unity gain sits at the same fraction within each half-height lane.
+    const yTop = overlayGainToY(1, lanes[0]!.top, lanes[0]!.height)
+    const yBot = overlayGainToY(1, lanes[1]!.top, lanes[1]!.height)
+    expect(overlayYToGainForLanes(yTop, lanes)).toBeCloseTo(1, 3)
+    expect(overlayYToGainForLanes(yBot, lanes)).toBeCloseTo(1, 3)
+  })
+
+  it('clamps a y above the first lane and below the last into range', () => {
+    const lanes = volumeOverlayLanes(0, 200, true)
+    // Above the top clamps to the linear ceiling (ENVELOPE_MAX_GAIN = 4),
+    // below the bottom snaps to true silence.
+    expect(overlayYToGainForLanes(-50, lanes)).toBe(4)
+    expect(overlayYToGainForLanes(500, lanes)).toBe(0)
+  })
+
+  it('matches the single-lane mapping when not stereo', () => {
+    const lanes = volumeOverlayLanes(18, 200, false)
+    const y = overlayGainToY(0.5, 18, 200)
+    expect(overlayYToGainForLanes(y, lanes)).toBeCloseTo(overlayYToGain(y, 18, 200), 6)
+  })
+
+  it('reports the lane index a y falls in, clamping outside bounds', () => {
+    const lanes = volumeOverlayLanes(0, 200, true)
+    expect(overlayLaneIndexForY(10, lanes)).toBe(0)
+    expect(overlayLaneIndexForY(150, lanes)).toBe(1)
+    // Above the first lane clamps to 0; below the last clamps to the last.
+    expect(overlayLaneIndexForY(-20, lanes)).toBe(0)
+    expect(overlayLaneIndexForY(999, lanes)).toBe(1)
+  })
+
+  it('assigns the shared seam to the lower lane (max gain, not silence)', () => {
+    const lanes = volumeOverlayLanes(0, 200, true)
+    // The seam at y=100 is the bottom of the upper lane and the top of the
+    // lower lane; it must resolve to the lower lane so a click there reads as
+    // that lane's near-max gain rather than the upper lane's silence.
+    expect(overlayLaneIndexForY(100, lanes)).toBe(1)
+    const seamGain = overlayYToGainForLanes(100, lanes)
+    expect(seamGain).toBeCloseTo(overlayYToGain(100, 100, 100), 6)
+    expect(seamGain).toBeGreaterThan(3)
+  })
+})

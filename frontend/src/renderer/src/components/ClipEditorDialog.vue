@@ -27,8 +27,10 @@ import { envelopeGainAtMs } from '@/lib/envelope'
 import {
   hitTestHandle,
   overlayGainToY,
+  overlayLaneIndexForY,
   overlayYToGain,
   sourceMsToVolumeTime,
+  volumeOverlayLanes,
   volumeTimeToSourceMs
 } from '@/lib/clipEditor/volumeOverlay'
 import ClipEditorWarpPanel from '@/components/ClipEditorWarpPanel.vue'
@@ -103,6 +105,13 @@ const {
 // selection. Only meaningful in the cropped Clip view, where the envelope
 // spans the whole clip; toggled off automatically in Source view.
 const volumeEditMode = ref(false)
+
+// Whether the most recent `drawWaveform` rendered the waveform as two
+// stacked stereo lanes. The Volume Shape overlay mirrors its envelope
+// into each lane when true, and the canvas pointer handler reads this to
+// hit-test handles + map gain across both lanes. Kept as a ref (set by
+// `drawWaveform`) so the pointer geometry always matches what was drawn.
+const waveformStereoLanes = ref(false)
 
 // Effective (post-warp) audible duration of the clip being edited — the
 // horizontal span of the volume-shape editor and the basis its endpoints
@@ -885,6 +894,7 @@ function drawWaveform(): void {
   const stereoAvailable = !!hiResChannels || (!!channelEntry && channelEntry.channels.length === 2)
   const wantStereo =
     ui.waveformDisplayMode === 'stereo' && stereoAvailable && waveH >= EDITOR_MIN_STEREO_LANE_PX * 2 * dpr
+  waveformStereoLanes.value = wantStereo
 
   ctx.fillStyle = '#3b82f6'
   if (wantStereo) {
@@ -1022,55 +1032,62 @@ function drawWaveform(): void {
       const durMs = volumeShapeDurationMs.value
       const envX = (timelineMs: number): number =>
         msToX(volumeTimeToSourceMs(timelineMs, clipStartSourceMs, ratio))
-      const envY = (gain: number): number => overlayGainToY(gain, waveTop, waveH)
-
-      // Unity (0 dB) reference line across the clip span.
       const xStart = envX(0)
       const xEnd = envX(durMs)
-      ctx.strokeStyle = 'rgba(63, 63, 70, 0.9)'
-      ctx.lineWidth = 1
-      ctx.setLineDash([3 * dpr, 3 * dpr])
-      ctx.beginPath()
-      const uy = envY(1)
-      ctx.moveTo(xStart, uy)
-      ctx.lineTo(xEnd, uy)
-      ctx.stroke()
-      ctx.setLineDash([])
-
-      // Sampled curve (linear-in-dB segments are curved in linear gain).
       const steps = Math.max(16, Math.round((xEnd - xStart) / (3 * dpr)))
-      ctx.strokeStyle = editing ? 'rgba(167, 139, 250, 0.95)' : 'rgba(167, 139, 250, 0.5)'
-      ctx.lineWidth = editing ? 2 * dpr : 1.5 * dpr
-      ctx.beginPath()
-      for (let i = 0; i <= steps; i++) {
-        const t = (i / steps) * durMs
-        const x = envX(t)
-        const y = envY(envelopeGainAtMs(points, t))
-        if (i === 0) ctx.moveTo(x, y)
-        else ctx.lineTo(x, y)
-      }
-      ctx.stroke()
-
-      // Breakpoint handles. Brighter and larger when editing.
       const r = (editing ? 4 : 2.5) * dpr
-      for (let i = 0; i < points.length; i++) {
-        const p = points[i]
-        if (!p) continue
-        const x = envX(p.timeMs)
-        const y = envY(p.gain)
-        const isEndpoint = i === 0 || i === points.length - 1
-        ctx.fillStyle = editing
-          ? isEndpoint
-            ? '#8b5cf6'
-            : '#c4b5fd'
-          : 'rgba(196, 181, 253, 0.6)'
+
+      // In stereo view the one shared envelope is mirrored into both the
+      // left (upper) and right (lower) channel lanes so it reads against
+      // each channel; in summary view it spans the full waveform height.
+      const lanes = volumeOverlayLanes(waveTop, waveH, waveformStereoLanes.value)
+      for (const lane of lanes) {
+        const envY = (gain: number): number => overlayGainToY(gain, lane.top, lane.height)
+
+        // Unity (0 dB) reference line across the clip span.
+        ctx.strokeStyle = 'rgba(63, 63, 70, 0.9)'
+        ctx.lineWidth = 1
+        ctx.setLineDash([3 * dpr, 3 * dpr])
         ctx.beginPath()
-        ctx.arc(x, y, r, 0, Math.PI * 2)
-        ctx.fill()
-        if (editing) {
-          ctx.strokeStyle = '#2e1065'
-          ctx.lineWidth = 1 * dpr
-          ctx.stroke()
+        const uy = envY(1)
+        ctx.moveTo(xStart, uy)
+        ctx.lineTo(xEnd, uy)
+        ctx.stroke()
+        ctx.setLineDash([])
+
+        // Sampled curve (linear-in-dB segments are curved in linear gain).
+        ctx.strokeStyle = editing ? 'rgba(167, 139, 250, 0.95)' : 'rgba(167, 139, 250, 0.5)'
+        ctx.lineWidth = editing ? 2 * dpr : 1.5 * dpr
+        ctx.beginPath()
+        for (let i = 0; i <= steps; i++) {
+          const t = (i / steps) * durMs
+          const x = envX(t)
+          const y = envY(envelopeGainAtMs(points, t))
+          if (i === 0) ctx.moveTo(x, y)
+          else ctx.lineTo(x, y)
+        }
+        ctx.stroke()
+
+        // Breakpoint handles. Brighter and larger when editing.
+        for (let i = 0; i < points.length; i++) {
+          const p = points[i]
+          if (!p) continue
+          const x = envX(p.timeMs)
+          const y = envY(p.gain)
+          const isEndpoint = i === 0 || i === points.length - 1
+          ctx.fillStyle = editing
+            ? isEndpoint
+              ? '#8b5cf6'
+              : '#c4b5fd'
+            : 'rgba(196, 181, 253, 0.6)'
+          ctx.beginPath()
+          ctx.arc(x, y, r, 0, Math.PI * 2)
+          ctx.fill()
+          if (editing) {
+            ctx.strokeStyle = '#2e1065'
+            ctx.lineWidth = 1 * dpr
+            ctx.stroke()
+          }
         }
       }
     }
@@ -1203,15 +1220,26 @@ function onCanvasEnvelopePointerDown(
     const sourceMs = vIn + ((clientX - rect.left) / rect.width) * vDur
     return Math.max(0, Math.min(durMs, sourceMsToVolumeTime(sourceMs, clipStartSourceMs, ratio)))
   }
-  const yToGain = (clientY: number): number =>
-    overlayYToGain(clientY - rect.top, waveTopCss, waveHCss)
-
+  // In stereo view the one shared envelope is mirrored into two channel
+  // lanes. Interaction is lane-local: the lane under the pointer is chosen
+  // first, then both hit-testing and the gain mapping happen only within
+  // that lane. This keeps exactly one handle per breakpoint in play (so a
+  // click can never grab the duplicated handle from the other lane) and
+  // pins the whole drag to one lane's gain scale. In summary view there is
+  // a single full-height lane, so this is identical to the original mapping.
+  const lanes = volumeOverlayLanes(waveTopCss, waveHCss, waveformStereoLanes.value)
   const lx = e.clientX - rect.left
   const ly = e.clientY - rect.top
+  const activeLane = lanes[overlayLaneIndexForY(ly, lanes)] ?? lanes[lanes.length - 1]!
+  const yToGain = (clientY: number): number =>
+    overlayYToGain(clientY - rect.top, activeLane.top, activeLane.height)
+
   const points = volumeShapeDraft.draftPoints.value
+  // Hit-test handles only in the active lane; the index maps straight to the
+  // breakpoint (each point is drawn once per lane).
   const positions = points.map((p) => ({
     x: timeToXCss(p.timeMs),
-    y: overlayGainToY(p.gain, waveTopCss, waveHCss)
+    y: overlayGainToY(p.gain, activeLane.top, activeLane.height)
   }))
   const hit = hitTestHandle(positions, lx, ly, 12)
 
@@ -1572,11 +1600,21 @@ function savedClipWarpPatch(): {
   const nextSemitones = clampNumber(draftSemitones.value, -12, 12)
   const nextCents = clampNumber(draftCents.value, -100, 100)
   const pitchActive = pitchNeedsProcessor(nextSemitones, nextCents)
+  // When the tempo is pinned but the source BPM is unknown, the draft can't
+  // re-derive a ratio from the pinned BPM (`tempoRatioFromPinnedBpm` returns
+  // undefined). Fall back to the clip's existing pinned ratio so reconstructing
+  // this patch on save preserves the warp instead of clearing it to null —
+  // otherwise a volume- or trim-only save would silently drop the warp.
+  const current = timelineClip.value ?? editorItem.value
+  const existingPinnedRatio =
+    typeof current?.tempoRatio === 'number' && current.tempoRatio > 0 && current.tempoRatio !== 1
+      ? current.tempoRatio
+      : null
   return {
     warpEnabled: draftTempoEnabled.value || pitchActive,
     warpMode: draftMode.value,
     tempoRatio: draftTempoEnabled.value
-      ? (draftTempoPinned.value ? tempoRatioFromPinnedBpm() ?? null : null)
+      ? (draftTempoPinned.value ? tempoRatioFromPinnedBpm() ?? existingPinnedRatio : null)
       : (pitchActive ? 1 : null),
     semitones: nextSemitones,
     cents: nextCents
@@ -1637,7 +1675,15 @@ function onSaveChanges(): void {
       return
     }
     project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
-    project.setClipWarp(clip.id, warpPatch)
+    // Only re-apply warp when the user actually changed it. `savedClipWarpPatch`
+    // reconstructs the patch from the draft, which is lossy for follow-project
+    // clips (it emits `tempoRatio: null`); re-applying it on a volume-only save
+    // would clear an existing warp on the backend, leaving the clip flagged as
+    // warped but playing at its original tempo. `trimClip` self-guards and
+    // `setClipEnvelope` round-trips, so only warp needs gating here.
+    if (hasWarpPitchChanged.value) {
+      project.setClipWarp(clip.id, warpPatch)
+    }
     // Volume shape is stored in clip-local timeline-ms basis; a flat unity
     // draft commits as an empty array, clearing it.
     project.setClipEnvelope(clip.id, volumeShapeCommittedPoints())
