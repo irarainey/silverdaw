@@ -456,9 +456,8 @@ The signal path for every block, top-down:
 
 ```
 clips[clipId]
-  → OffsetSource (per clip: warp, in/out window)
+  → OffsetSource (per clip: warp, in/out window, volume-shape envelope §7.11)
   → AudioTransportSource (read-ahead in live; direct read in mixdown)
-  → fade × volume-shape composed multiplier (per clip, §7.11)
   → TrackRuntime.preBuffer  (sum of all clips on this track)
   → TrackChain:
       Tone (3-band EQ + Low Cut + High Cut)
@@ -508,7 +507,11 @@ which is what users expect.
 - **Reverb amount** — send into the one shared project reverb (0..100 %).
 - **Delay amount** — send into the one shared project delay (0..100 %).
 - **mute** / **solo** — surfaced on the track header.
-- **pan** — equal-power, surfaced in the Track FX tab.
+- **pan** — equal-power, surfaced in the Track FX tab. In the **stereo**
+  waveform display the timeline reflects pan per channel: each channel's
+  lane height and opacity scale with its normalised equal-power pan gain,
+  so a hard-panned channel collapses to a faint near-flat lane while the
+  other stays full (a centred track leaves both lanes full).
 
 #### 7.9.4 Project-level shared effects (Phase 5 scope)
 
@@ -594,9 +597,9 @@ float`). Test matrix explicitly covers:
 - Render starting at a **non-zero timeline position** that lands
   **mid-block** (not just at a block boundary).
 - **Clips that start and end mid-block** (no alignment to block grid).
-- **Fade start and fade end crossing a block boundary** — fade in
-  region split across two callbacks.
-- **Breakpoints exactly at clip start, clip end, fade inner edge**
+- **Envelope ramp crossing a block boundary** — a breakpoint segment
+  split across two callbacks.
+- **Breakpoints exactly at clip start and clip end**
   (boundary-of-segment math).
 - **Adjacent clips on the same track** — back-to-back, no gap.
 - **Overlapping clips on the same track** — both contributing
@@ -753,11 +756,11 @@ silence.
 
 **UI surfaces.** Where each effect lives in the renderer:
 
-- **Per-clip Fade / Volume Shape** — drag handles + overlay on the
-  timeline clip; a dedicated panel inside the Clip Editor; a
-  right-click → **Volume & Fades…** dialog mirroring the existing
-  `ClipWarpDialog` pattern; and a right-click → **Show Volume Shape**
-  toggle for the inline overlay.
+- **Per-clip Volume Shape** — a breakpoint gain envelope edited directly on
+  the clip waveform in the **Clip Editor**, toggled by the canvas toolbar's
+  **Volume** button (see §7.11). There is no separate fade control, no
+  timeline drag handles, and no standalone dialog; on the timeline the
+  envelope is reflected in the waveform's height rather than as an overlay.
 - **Per-track Tone / Leveler / Reverb amount / Delay amount** — surfaced
   in a new **Track FX** tab of the bottom panel (shares its space with
   the Library; tabbed surface with optional split view — see §7.12).
@@ -779,157 +782,81 @@ silence.
 
 ### 7.11 Clip Volume Shape
 
-> **Status update — fades removed.** The per-clip Fade In / Fade Out
-> feature described historically in this section has been **removed
-> entirely**. The Volume Shape breakpoint envelope is now the single
-> per-clip volume-tailoring mechanism: a fade-in / fade-out is created by
-> dragging the first / last breakpoint down to silence. All
-> `fadeInMs` / `fadeOutMs` storage, the `CLIP_SET_FADES` /
-> `PREVIEW_SET_FADES` / `CLIP_FADES_APPLIED` bridge messages, the
-> backend fade DSP (`applyFadeGain` / `FadeSnapshot`), the numeric Fades
-> panel, and the timeline / Clip-Editor fade overlays are gone. Legacy
-> project files that still carry fade attributes load cleanly (the
-> attributes are stripped on load). The fade-coupled design prose below
-> is retained only as historical context.
+Per-clip volume tailoring via the **Volume Shape** breakpoint envelope —
+the **single** per-clip volume mechanism. The word "automation" never
+appears in the UI. (A previously separate Fade In / Fade Out feature was
+removed entirely; a fade-in / fade-out is now made by dragging the first /
+last breakpoint down to silence. All `fadeInMs` / `fadeOutMs` storage, the
+`CLIP_SET_FADES` / `PREVIEW_SET_FADES` / `CLIP_FADES_APPLIED` bridge
+messages, the backend fade DSP, and the fade overlays are gone; legacy
+project files load cleanly because the fade attributes are stripped on
+load.)
 
-Per-clip volume tailoring via the **Volume Shape** breakpoint envelope;
-the word "automation" never appears in the UI.
 Coordinates are in **timeline milliseconds relative to clip start** at
 the project rate (post-warp, post-resample), not source-file time — so
-the visible shape on a warped clip matches what the user hears.
+the visible shape on a warped clip matches what the user hears. The
+envelope is a list of `(clipTimeMs, gainDb)` breakpoints on the clip,
+with the first and last breakpoints pinned to clip start / end. The
+default envelope is two endpoints at 0 dB (unity). Interpolation is
+**linear in dB** between adjacent breakpoints (linear in dB ≈ exponential
+in gain, which is what "ramp down to silence" looks musically right), with
+a smooth ramp into a true-silence breakpoint.
 
-**Two edit surfaces, one composed display.** Internally the data is
-stored as two strictly separate pieces:
+**Edit surface.** The envelope is edited directly on the clip waveform in
+the **Clip Editor** (§7.14), in the cropped Clip view:
 
-- `fadeInMs` and `fadeOutMs` scalars on the Clip (raised cosine shape,
-  applied from each clip edge inward).
-- A list of `(clipTimeMs, gainDb)` breakpoints on the Clip, with the
-  first and last breakpoints pinned to clip start / end. Default
-  envelope is two endpoints at 0 dB (unity). Interpolation is **linear
-  in dB** between adjacent breakpoints (linear in dB ≈ exponential in
-  gain, which is what "ramp down to silence" looks musically right).
+- A faint envelope line is **always drawn** over the waveform as read-only
+  context.
+- The canvas toolbar's **Volume** toggle turns that line into a breakpoint
+  editor: click the curve to add a breakpoint, drag a breakpoint to move it,
+  and `Alt`-click or right-click a breakpoint to remove it. The pinned start
+  / end breakpoints keep their times and cannot be removed.
+- The breakpoint time axis spans the whole (cropped) clip, so it is obvious
+  which part of the audio each breakpoint affects.
+- In the **stereo** waveform display the single envelope line is mirrored
+  and kept in sync across both channel lanes — editing a breakpoint in
+  either lane edits the one shared shape, which the engine applies equally
+  to both channels.
 
-The **render-time gain** for every sample is
-`fadeMultiplier(t) × envelopeMultiplier(t)`. Both editors show the user
-the composed result as a single line drawn over the waveform — never
-two stacked lines — so the visual matches what's heard.
+Edits commit transactionally on the Clip Editor's **Save** alongside the
+other clip drafts (trim / warp / pitch); **Cancel** discards them. There is
+no separate fades control and no standalone volume dialog — the on-waveform
+editor is the only surface. While previewing inside the Clip Editor, draft
+edits are auditioned live via a throttled `PREVIEW_SET_ENVELOPE` message so
+the change is heard immediately.
 
-**Edit ownership (locked rule).** The composed line is the **display**;
-edits do not round-trip through it. Each tool operates on exactly one
-underlying piece:
+**Backend (audio-thread data model).** The renderer holds the editable
+breakpoint list; the backend stores it on the clip's `ValueTree` and
+compiles it into an immutable **`EnvelopeSnapshot`**
+(`backend/src/EnvelopeSnapshot.h`): a sorted flat array of
+`(timeMs, gainLinear, gainDb)` points, built off the audio thread whenever
+the points change. A snapshot with fewer than two points is treated as "no
+envelope", so the common no-shape path is bit-identical to pre-envelope
+output.
 
-- **Fade handles** edit **only** `fadeInMs` / `fadeOutMs`.
-- **Volume Shape tools** (click to add, drag to move, right-click to
-  delete, Alt-drag to nudge whole shape) edit **only** breakpoints.
-- **Breakpoints inside a fade zone are disallowed** at the inline
-  editor: clicking inside a fade region either snaps the new
-  breakpoint to the inner edge of the fade or shows a brief "shorten
-  the fade first" tooltip. Existing breakpoints inside a newly-
-  enlarged fade region are rendered **ghosted** (still stored, not
-  drag-targetable) and the composed-line tooltip warns the user. This
-  is the friendlier rule for the non-pro audience: a beginner placing
-  a 0 dB breakpoint inside a fade-in and watching the line still rise
-  would conclude "the editor ignored me", which violates the simple
-  ethos. Power users who actually want a breakpoint inside a fade can
-  add it via the **Volume & Fades…** dialog's numeric breakpoint
-  list, which is unrestricted (and where the composed-line preview
-  makes the `fade × envelope` math obvious).
-- Drag interactions never *swap* which piece they edit mid-gesture.
+**Publication is a lock-free raw-pointer swap, not
+`std::atomic<std::shared_ptr<…>>`** (which on MSVC may fall back to a mutex
+and does refcount work on `load()` — both real-time violations). The owning
+`Track` keeps the live `std::unique_ptr<EnvelopeSnapshot>`; the clip's
+`OffsetSource` holds a non-owning `std::atomic<const EnvelopeSnapshot*>`.
+The message thread builds the new snapshot, stores the pointer with
+`std::memory_order_release`, and the audio thread loads it with
+`std::memory_order_acquire` inside `applyEnvelopeGain`.
 
-**Edit interactions:**
+**Reclamation mirrors the `WarpProcessor` retire discipline.** A replaced
+snapshot is pushed onto a per-track `retiredEnvelopes` vector rather than
+freed inline — the audio thread may have just loaded the old raw pointer.
+That vector is drained only at **quiescent windows** (transport pause / stop
+and clip unload), when the audio thread is guaranteed not to be inside the
+source, so no snapshot is freed while a callback could still be reading it.
+There is no refcount, lock, or allocation / free on the audio thread.
 
-- **Fade handles:** small triangular grips on the top-left and
-  top-right of every clip. Drag inward to set fade length; drag back to
-  the edge to remove; double-click to clear. Snap to project sub-beat
-  by default; `Alt` switches to 1 ms steps.
-  - **Small-clip policy.** Hit zones are always 12 px regardless of
-    visible handle size. Below a clip width of **24 px** the inline
-    handles vanish entirely and editing falls back to the **Volume &
-    Fades…** dialog or the Clip Editor — the timeline does not get a
-    handle the user can't grab.
-- **Volume Shape line:** right-click clip → **Show Volume Shape**
-  toggles the overlay. Click an empty point on the line to add a
-  breakpoint; drag a breakpoint to move; right-click a breakpoint to
-  delete; `Alt`-drag on the line itself to nudge the whole shape up or
-  down. Snap to sub-beat by default; `Alt` overrides.
-- **Dedicated dialog:** right-click clip → **Volume & Fades…** opens a
-  modal that mirrors the `ClipWarpDialog` pattern — composed-curve
-  preview at the top, numeric fade-in / fade-out fields, breakpoint
-  list. Draft state held locally until Save; Cancel / Escape / backdrop
-  close discards.
-- **Clip Editor panel:** the existing Clip Editor dialog (§7.14) gains
-  a **Volume Shape** panel alongside the Warp / Pitch panel, with the
-  same composed-curve UX as the standalone dialog. Edits made here
-  apply to the underlying clip / saved-clip the same way trim does.
-
-**Backend (audio-thread data model).** UI breakpoint lists are an
-editable working copy on the renderer + backend `ValueTree`. The audio
-thread consumes a **compiled immutable `EnvelopeSnapshot`**: a sorted
-flat array of `(timeMs, gainLinear)` plus precomputed segment slopes,
-generated whenever the `ValueTree` mutates.
-
-**Publication is lock-free, not `std::atomic<std::shared_ptr<…>>`.**
-`std::atomic<std::shared_ptr<T>>` on MSVC is not guaranteed lock-free —
-its implementation may fall back to an internal mutex, and even when
-lock-free the refcount inc/dec on `load()` plus the possible
-last-reference destruction on the audio thread are real-time
-violations. Phase 5 therefore uses a hand-rolled scheme that has
-**zero locks, zero refcount work, and zero allocation/destruction on
-the audio thread**:
-
-- The clip owns a single `std::atomic<const EnvelopeSnapshot*>`
-  (`current`). The pointed-to snapshot is fully immutable. A
-  `static_assert(std::atomic<const EnvelopeSnapshot*>::is_always_lock_free)`
-  guards against silent platform regressions; the same assert applies
-  to `std::atomic<const FadeSnapshot*>`.
-- The message thread (parameter handler) allocates a new
-  `EnvelopeSnapshot` off the audio thread, then publishes it with
-  `current.store(newPtr, std::memory_order_release)`. The audio
-  thread reads with `current.load(std::memory_order_acquire)` exactly
-  once at the top of every block.
-- **Reclamation is audio-callback-epoch based, not wall-clock based.**
-  A timer-tick grace period is unsafe: a callback that loaded the old
-  pointer can be preempted for longer than the grace, and then
-  dereference a freed snapshot. The correct gate is "no callback
-  active when reclamation happens, and at least one callback has
-  *fully completed* since the publish became visible".
-  - The audio thread maintains a `std::atomic<uint64_t>
-    callbackCounter` (incremented with release at block end) and a
-    `std::atomic<uint64_t> activeCallbackEpoch` set to
-    `callbackCounter` at block start, cleared at block end.
-  - On publish, the message thread reads `callbackCounter` and tags
-    the retired snapshot with `retireAfter = callbackCounter + 2`.
-  - A message-thread timer (~10 Hz) walks the retire queue and frees
-    snapshots whose `retireAfter` is `<= callbackCounter.load()` **and**
-    where `activeCallbackEpoch.load() == 0 || > retireAfter` —
-    guaranteeing every callback that could have loaded the old
-    pointer has returned.
-  - The +2 margin tolerates one in-flight callback at publish time
-    plus one more for ordering safety. Transport stop additionally
-    drains the entire retire queue on the message thread (free path
-    is unobstructed when audio is not running).
-- A monotonic **generation counter** on each snapshot lets the audio
-  thread's segment-search cursor know to reset on swap (once per
-  block, not per sample — the cursor advances linearly within a
-  block).
-- Fade scalars use the same publication pattern with a tiny
-  `FadeSnapshot { fadeInSamples, fadeOutSamples }` plain struct
-  reached via the same `atomic<const T*>` so the audio thread never
-  reads partially-written values.
-
-This is a deliberate departure from the master-gain smoother's
-atomic-scalar pattern — pointer publication is required because the
-data is a list, not a scalar; the callback-epoch reclamation keeps
-it real-time-safe without falling back to `shared_ptr` lifetime or
-timer-tick guesswork.
-
-The composed multiplier is applied at the **canonical chain's per-clip
-post-resample stage** (after `AudioTransportSource`, before the clip
-buffer is summed into `TrackRuntime.preBuffer`) — **not** inside
-`OffsetSource`, which operates pre-resample on warped clips and would
-make fade lengths and breakpoint times drift relative to what the user
-sees. Mixdown applies the multiplier at the same stage so live and
-offline outputs match.
+The envelope gain is applied **inside `OffsetSource`** — the per-clip stage
+that already owns the warp / offset read — using **clip-local post-warp
+milliseconds**, so the breakpoint times line up with what the user sees and
+hears on a warped clip. `applyEnvelopeGain` multiplies the same gain into
+every channel and bails immediately when no snapshot is installed. Mixdown
+applies the identical stage so live and offline outputs match.
 
 **Bridge envelopes:** `CLIP_SET_ENVELOPE { clipId, points: [{timeMs, gain}] }`
 (`gain` is linear in `[0, 4]`, `1.0` = unity). _(The historical
@@ -954,30 +881,35 @@ offline outputs match.
   coalescing in `Main.cpp` for backward compatibility — one undo
   step per gesture, regardless of how many intermediate messages
   flowed.
-- Both messages are registered in the hardcoded undoable type list
-  and the coalesce-key map.
+- `CLIP_SET_ENVELOPE` is registered in the hardcoded undoable type list
+  and the coalesce-key map. `PREVIEW_SET_ENVELOPE` is preview-only —
+  applied directly to the Clip Editor preview voice, never undoable and
+  never persisted.
 
-**Persistence.** Fields are suppressed from the saved `.silverdaw` JSON
-when at their default (both fades 0; envelope = two pinned end points
-at unity gain) so existing project files remain bit-clean. The
+**Persistence.** The envelope is suppressed from the saved `.silverdaw`
+JSON when at its default (two pinned end points at unity gain) so
+existing project files remain bit-clean. The
 `ProjectStateClipSchema` (`bridge-protocol.ts`) and
 `ProjectState::tracksAsJson` are explicitly extended to round-trip the
-new fields — without this, undo/redo soft-replace and reconnect would
-silently drop them.
+`envelopePoints` field — without this, undo/redo soft-replace and
+reconnect would silently drop it.
 
-**PixiJS rendering.** Per-clip envelope graphics (line + breakpoint
-handles + triangular fade region) are **not** mounted on every clip by
-default. The fade-region triangles are cheap and always-on (two
-`Graphics` calls per clip that already has non-zero fades). The
-**Volume Shape line and breakpoint handles** are mounted **only**
-when "Show Volume Shape" is toggled on for that clip, and detached
-when it is toggled off — there is **no always-on polyline** for clips
-with a non-default envelope (the previous spec had one; we drop it to
-keep the simple-ethos visual: clip with envelope edits looks identical
-to one without until the user explicitly opens the editor for it).
-The envelope is always rendered live in the **Clip Editor** and the
-**Volume & Fades…** dialog. This avoids the per-clip Pixi child
-explosion at zoomed-out views with many clips.
+**PixiJS rendering.** There is no always-on per-clip envelope overlay on
+the timeline (no polyline, no breakpoint handles). Instead the clip's
+volume envelope is **reflected in the waveform itself**: each rendered
+column's height is scaled by the envelope gain sampled at that column's
+point in time (clip-local post-warp ms), so a fade-out visibly tapers
+toward nothing and a dip shows as a notch. This applies to both the single
+summary lane and the stereo lanes (composing on top of the per-channel pan
+scaling — see §7.9.3), and to mono and stereo sources alike. Unity gain
+renders identically to an unenveloped clip, and greater-than-unity boosts
+are clamped to the lane so the waveform never spills outside the clip
+block; the clamped excursion maths is the pure, unit-tested
+`waveformColumnExcursion` helper (`frontend/.../lib/timeline/waveformColumn.ts`).
+No extra Pixi children are mounted for this — the existing per-column
+min/max scan is scaled in place — so it stays cheap at zoomed-out views
+with many clips. The editable envelope line and breakpoint handles live
+only in the **Clip Editor**, drawn over its waveform.
 
 **Deferred to Phase 8:** pan envelopes, send-level envelopes, plugin
 parameter envelopes — all built on top of the same `EnvelopeSnapshot`
@@ -1124,6 +1056,18 @@ project transport.
   explicit selection is set (the source file itself is immutable).
 - Smooth ease-in catch-up follow during playback, matching the main
   timeline's behaviour.
+- **Volume Shape editor.** In the cropped **Clip** view a faint volume
+  envelope is always drawn over the waveform; the canvas toolbar's
+  **Volume** toggle makes it editable — click the curve to add a
+  breakpoint, drag to move one, `Alt`-click / right-click to remove
+  (pinned start / end breakpoints stay). In the **stereo** waveform
+  display the single shape is mirrored and kept in sync across both
+  channel lanes. Edits commit on **Save** with the other drafts and are
+  auditioned live in the preview voice via `PREVIEW_SET_ENVELOPE` (see
+  §7.11).
+- **Waveform display** honours the `ui.waveformDisplayMode` preference:
+  a single summary waveform or stacked left / right lanes for stereo
+  sources, matching the timeline.
 - **Save as new clip** writes a new saved-clip entry to the library.
 - **Apply trim** (saved clips only) updates the saved-clip's
   `derivedFrom` window in place AND propagates the new window to
@@ -1144,13 +1088,17 @@ project transport.
   the same rebind, no destructive prompt needed.
 - Bridge envelopes: inbound `PREVIEW_LOAD` / `PREVIEW_PLAY` /
   `PREVIEW_PAUSE` / `PREVIEW_STOP` / `PREVIEW_SEEK` / `PREVIEW_UNLOAD`
-  / `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_REBIND`; outbound
+  / `PREVIEW_SET_ENVELOPE` / `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_REBIND`
+  / `CLIP_SET_ENVELOPE`; outbound
   `PREVIEW_STATE` / `PREVIEW_POSITION` / `PREVIEW_ENDED` /
   `CLIP_EDITOR_PEAKS_READY`. A monotonic `generation` counter on the
   preview voice silently drops stale events for a preview the user
   has already closed.
-- Entry point from a timeline clip (in addition to the library tile)
-  remains future work.
+- The Clip Editor opens from a timeline clip too — double-click a clip
+  body (off the title strip) on the timeline (see the keyboard & mouse
+  reference in the developer guide). Trim / warp / pitch / volume-shape
+  edits are held as a draft until **Save**, whose scope follows the
+  clip's linked / unlinked state.
 
 ### 7.15 Audio Format Support
 - JUCE-native formats (WAV / AIFF / FLAC + MP3/WMA on Windows) decode directly on the backend.
@@ -1956,7 +1904,7 @@ Three independent design critiques converged on the following constraints.
   resettable **Auto Gain** badge after analysis completes; gated heuristics with
   an RMS/peak fallback for short clips and a capped adjustment range. Subsumes a
   separate "normalize clip" command (keep peak-normalize advanced/internal only).
-- [ ] **Fade out the ending** — one action writes a fade/volume-shape
+- [ ] **Fade out the ending** — one action writes a volume-shape fade-out
   across clips crossing the project end. Implemented via §7.11 shapes, **not** a
   master automation lane.
 - [ ] **Stereo channel control** (issue #45) — per-track control over the left
@@ -1981,7 +1929,7 @@ These scored highest in triage as on-ethos remix accelerators:
   the library by BPM-near-project, compatible key, duration and tags. More
   on-ethos than generic FX-preset browsing; folds into the Phase 8 library polish.
 - [ ] **Replace source, preserve edits** — swap a clip's underlying
-  loop/sample while keeping timeline position, trim, fades, pitch and warp where
+  loop/sample while keeping timeline position, trim, volume shape, pitch and warp where
   compatible (extends the existing `CLIP_REBIND`).
 
 ### 12.7 Onboarding & simplicity — *cross-cutting*
