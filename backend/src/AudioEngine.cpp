@@ -503,6 +503,10 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
         master.setPlaying(true);
     }
 
+    // A project now has audio content — let the master keep the device awake
+    // through pauses so the first play after a pause is instant.
+    master.setContentLoaded(! tracks.empty());
+
     return true;
 }
 
@@ -523,6 +527,9 @@ bool AudioEngine::removeClip(const juce::String& clipId)
     busGraph.detachClip(clipId, it->second->transportSource.get());
     it->second->transportSource->setSource(nullptr);
     tracks.erase(it);
+    // Drop the keep-alive floor once the last clip is gone so an emptied or
+    // closed project leaves the device in true silence rather than idle hiss.
+    master.setContentLoaded(! tracks.empty());
     silverdaw::log::info("engine", "removeClip id=" + clipId);
     return true;
 }

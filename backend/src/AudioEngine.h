@@ -785,20 +785,30 @@ class MasterClockSource : public juce::AudioSource
         if (!playing.load(std::memory_order_acquire))
         {
             info.clearActiveBufferRegion();
-            applyKeepAlive(info);
+            // Keep the output device awake through a PAUSE only when a
+            // project has audio content loaded, so a paused→play transition
+            // on a sleep-prone endpoint (notably USB DACs) stays instant.
+            // While the app sits idle with nothing loaded there is nothing to
+            // play, so we leave true digital silence and never emit the
+            // keep-alive floor — otherwise the ~-48 dBFS dither is audible as
+            // a constant hiss on every output device.
+            if (contentLoaded.load(std::memory_order_acquire))
+                applyKeepAlive(info);
             maybeLogAudioPerf(count, startTicks, info.numSamples);
             return;
         }
 
         child.getNextAudioBlock(info);
         positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
-        // Keep the output device awake through silence — while paused AND while
-        // playing into a gap with no active clip. Some USB DAC endpoints
-        // silence-detect and soft-mute on a sustained run of silence, then fade
-        // back in on the next audible block, swallowing the attack of the first
-        // audio after the gap. applyKeepAlive injects a low dither floor only
-        // when the produced block is (near-)silent, so true gaps keep the device
-        // awake while real content is never coloured.
+        // Keep the output device awake while PLAYING into silence — leading
+        // silence before the first clip, or a gap with no active clip. Some
+        // endpoints (notably USB DACs) silence-detect and soft-mute on a
+        // sustained run of silence, then fade back in on the next audible
+        // block, swallowing the attack of the first audio after the gap.
+        // applyKeepAlive injects a low dither floor only when the produced
+        // block is (near-)silent, so true gaps keep the device awake while
+        // real content is never coloured. (The paused/idle case is handled in
+        // the not-playing branch above, gated on `contentLoaded`.)
         applyKeepAlive(info);
         maybeLogAudioPerf(count, startTicks, info.numSamples);
     }
@@ -810,6 +820,15 @@ class MasterClockSource : public juce::AudioSource
     bool isPlaying() const noexcept
     {
         return playing.load(std::memory_order_acquire);
+    }
+
+    /** Message-thread setter: true once a project has audio content (clips)
+     *  loaded. Gates the paused/idle keep-alive floor so the device is only
+     *  kept awake while there is something to play — the app sits in true
+     *  digital silence when no project is open. */
+    void setContentLoaded(bool loaded) noexcept
+    {
+        contentLoaded.store(loaded, std::memory_order_release);
     }
 
     void setPositionSamples(juce::int64 p) noexcept
@@ -831,9 +850,12 @@ class MasterClockSource : public juce::AudioSource
     // locks, no exceptions, bounded work. If the produced block is (near-)
     // silent (peak below kKeepAliveSilenceThreshold) it injects a low TPDF
     // dither floor driven by a cheap xorshift PRNG so the output device never
-    // sees a sustained run of silence and its silence-mute never engages. If
-    // the block already carries real audio it is left untouched — the floor
-    // only ever fills true gaps, so playback content is never coloured.
+    // sees a sustained run of silence and its silence-mute never engages.
+    // Callers gate WHEN this runs: always while playing (gaps / leading
+    // silence), but while stopped only when `contentLoaded` is set — an idle
+    // app with no project stays truly silent rather than hissing. If the block
+    // already carries real audio it is left untouched — the floor only ever
+    // fills true gaps, so playback content is never coloured.
     void applyKeepAlive(const juce::AudioSourceChannelInfo& info) noexcept
     {
         auto* const buffer = info.buffer;
@@ -901,6 +923,11 @@ class MasterClockSource : public juce::AudioSource
     juce::AudioSource& child;
     std::atomic<juce::int64> positionSamples{0};
     std::atomic<bool> playing{false};
+    // True while a project has audio content (clips) loaded. Gates the
+    // paused keep-alive floor: with nothing loaded the idle output stays
+    // truly silent instead of emitting an audible dither hiss. Written from
+    // the message thread, read on the audio thread.
+    std::atomic<bool> contentLoaded{false};
     // Device sample rate. Updated only from `prepareToPlay`, read from
     // message-thread accessors that convert samples↔ms. The audio
     // callback path itself doesn't read it.

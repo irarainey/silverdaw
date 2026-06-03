@@ -59,17 +59,18 @@ inline constexpr int kLoadPrimeBudgetMs = 1500;
 /** Output "keep-alive" dither peak amplitude (linear, full scale = 1.0),
  *  injected into master output blocks that are otherwise (near-)silent —
  *  see MasterClockSource::applyKeepAlive. The output device must never see
- *  a sustained run of digital silence: some USB DAC endpoints — notably
- *  USB-C headphone dongles and USB-Audio-Class endpoints — silence-detect
- *  and soft-mute during silence, then apply a wake-up fade on the next
- *  audible block, swallowing the attack of the first audio after the gap.
- *  That silence happens while paused AND while *playing* through leading
- *  silence or any gap with no active clip (worst on the USB path; the
- *  built-in card has no such mute). A first attempt at ~-84 dBFS did not
- *  keep this endpoint awake, so the floor sits at ~-48 dBFS — comfortably
- *  above a typical silence-detector threshold yet far below content level.
- *  It is gated to silent blocks only (kKeepAliveSilenceThreshold) so it is
- *  never mixed into real audio: clean playback, awake device. */
+ *  a sustained run of digital silence: some endpoints — notably USB-C
+ *  headphone dongles and USB-Audio-Class endpoints — silence-detect and
+ *  soft-mute during silence, then apply a wake-up fade on the next audible
+ *  block, swallowing the attack of the first audio after the gap. That
+ *  silence happens while *playing* through leading silence or any gap with
+ *  no active clip, and while *paused* with a project loaded. A first attempt
+ *  at ~-84 dBFS did not keep this endpoint awake, so the floor sits at
+ *  ~-48 dBFS — comfortably above a typical silence-detector threshold yet far
+ *  below content level. It is gated to silent blocks only
+ *  (kKeepAliveSilenceThreshold) so it is never mixed into real audio, and the
+ *  paused floor is suppressed entirely while no project is loaded so an idle
+ *  app makes no sound on any device: clean playback, awake device, silent idle. */
 inline constexpr float kKeepAliveDitherAmplitude = 0.004F; // ~-48 dBFS peak
 
 /** Block-peak below which the produced mix is treated as silence and the
