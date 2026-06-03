@@ -1170,6 +1170,15 @@ indicator (plug-and-socket icon + green/grey dot). The **Pos**, **Bar**, **Lengt
 track — empty-project edits to those fields would have no visible effect, so we hide
 the affordance until it's meaningful.
 
+The same zoom commands are reachable from the **View** menu — **Zoom In** (`Ctrl +`),
+**Zoom Out** (`Ctrl -`), **Reset Zoom** (`Ctrl 0`), and a **Zoom Presets** submenu of
+fixed levels (20% / 50% / 100% / 200% / 400%). The View-menu accelerators are display-only
+labels; the keys themselves are handled by App.vue's global shortcut handler, so
+`menuShortcuts` deliberately skips binding them to avoid a double-fire (see
+`GLOBAL_SHORTCUT_ACTIONS`). Presets are defined once in
+`lib/timeline/zoomPresets.ts` (px-per-second values that are exact multiples of the zoom
+step, so they survive the geometry's snap-to-step) and shared by the menu and its handler.
+
 ### Selection model
 
 A click selects two things at once: the **selected clip** (thick outline) is the target of

@@ -16,7 +16,12 @@ export type TimelineScrollRequest =
   | { edge: TimelineScrollEdge; id: number }
   | { positionMs: number; id: number }
 export type TimelineZoomAction = 'in' | 'out' | 'reset'
-export type TimelineZoomRequest = { action: TimelineZoomAction; id: number }
+/** A one-shot zoom request consumed by TimelineView. `step` nudges by the
+ *  fixed zoom increment (or resets to default); `absolute` jumps straight to
+ *  a target px/sec (used by the View ▸ Zoom Presets menu). */
+export type TimelineZoomRequest =
+  | { kind: 'step'; action: TimelineZoomAction; id: number }
+  | { kind: 'absolute'; pxPerSecond: number; id: number }
 
 interface UiState {
   trackHeaderWidth: number
@@ -262,7 +267,19 @@ export const useUiStore = defineStore('ui', {
 
     requestTimelineZoom(action: TimelineZoomAction): void {
       this.timelineZoomRequest = {
+        kind: 'step',
         action,
+        id: nextTimelineZoomRequestId++
+      }
+    },
+
+    /** Request an absolute zoom level (px per second), e.g. from a preset.
+     *  Out-of-range values are clamped downstream by the timeline geometry. */
+    requestTimelineZoomTo(pxPerSecond: number): void {
+      if (!Number.isFinite(pxPerSecond) || pxPerSecond <= 0) return
+      this.timelineZoomRequest = {
+        kind: 'absolute',
+        pxPerSecond,
         id: nextTimelineZoomRequestId++
       }
     }

@@ -21,6 +21,7 @@ import { effectiveClipDurationMs, isClipTempoWarpActive, useProjectStore } from 
 import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import type { TimelineZoomRequest } from '@/stores/uiStore'
 import { isWarpPending } from '@/lib/warp'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 import ClipContextMenu from '@/components/ClipContextMenu.vue'
@@ -430,17 +431,21 @@ watch(renamingClipId, (id) => {
 })
 
 /**
- * Apply a global keyboard zoom request from App.vue.
- * Anchors on the current playhead position when on-screen, otherwise
- * on the viewport centre.
+ * Apply a zoom request (global keyboard shortcut or a View-menu preset).
+ * `step` requests nudge by the fixed increment or reset to default;
+ * `absolute` requests jump straight to a target px/sec. Either way the
+ * geometry clamps the result. Anchors on the current playhead position
+ * when on-screen, otherwise on the viewport centre.
  */
-function applyKeyboardZoom(action: 'in' | 'out' | 'reset'): void {
+function applyZoomRequest(request: TimelineZoomRequest): void {
   const prev = pxPerSecond.value
-  const next = geometry.setPxPerSecond(
-    action === 'reset'
-      ? DEFAULT_PX_PER_SECOND
-      : prev + (action === 'in' ? ZOOM_STEP_PX_PER_SECOND : -ZOOM_STEP_PX_PER_SECOND)
-  )
+  const target =
+    request.kind === 'absolute'
+      ? request.pxPerSecond
+      : request.action === 'reset'
+        ? DEFAULT_PX_PER_SECOND
+        : prev + (request.action === 'in' ? ZOOM_STEP_PX_PER_SECOND : -ZOOM_STEP_PX_PER_SECOND)
+  const next = geometry.setPxPerSecond(target)
   if (next === prev) return
 
   // Anchor on the playhead position (in viewport pixels) when visible,
@@ -469,7 +474,7 @@ watch(
   () => ui.timelineZoomRequest,
   (request, previous) => {
     if (!request || request.id === previous?.id) return
-    applyKeyboardZoom(request.action)
+    applyZoomRequest(request)
   }
 )
 

@@ -1,6 +1,12 @@
 // Menu bar definitions used by the custom title bar.
 // `action` IDs are sent to the main process via window.silverdaw.menuAction().
 
+import {
+  ZOOM_PRESET_PX_PER_SECOND,
+  zoomPercentLabel,
+  zoomPresetAction
+} from '@/lib/timeline/zoomPresets'
+
 export interface MenuItemDef {
   /** Visible label, or `null` for a separator. */
   label: string | null
@@ -132,7 +138,26 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
     },
     {
       label: 'View',
-      items: [{ label: 'Toggle Full Screen', action: 'view.toggleFullScreen', accelerator: 'F11' }]
+      items: [
+        // Zoom In / Out / Reset are display-only accelerators here — the
+        // global handler in App.vue owns the keys (it needs '+'/'='/numpad
+        // parsing the '+'-delimited accelerator grammar can't express, plus
+        // the modal / editable-target guards). `menuShortcuts` deliberately
+        // skips binding them (see GLOBAL_SHORTCUT_ACTIONS) so they can't
+        // double-fire.
+        { label: 'Zoom In', action: 'view.zoomIn', accelerator: 'Ctrl++' },
+        { label: 'Zoom Out', action: 'view.zoomOut', accelerator: 'Ctrl+-' },
+        { label: 'Reset Zoom', action: 'view.zoomReset', accelerator: 'Ctrl+0' },
+        {
+          label: 'Zoom Presets',
+          submenu: ZOOM_PRESET_PX_PER_SECOND.map((px) => ({
+            label: zoomPercentLabel(px),
+            action: zoomPresetAction(px)
+          }))
+        },
+        SEP,
+        { label: 'Toggle Full Screen', action: 'view.toggleFullScreen', accelerator: 'F11' }
+      ]
     },
     {
       label: 'Help',

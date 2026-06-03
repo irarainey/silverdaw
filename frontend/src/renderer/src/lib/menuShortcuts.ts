@@ -16,6 +16,7 @@
 //      undo. A renderer listener can see the focus target; main cannot.
 
 import { buildMenus } from '@/menu'
+import type { BuildMenusOptions } from '@/menu'
 import { useUiStore } from '@/stores/uiStore'
 
 interface ParsedAccelerator {
@@ -50,6 +51,24 @@ const TEXT_EDIT_ACTIONS: ReadonlySet<string> = new Set([
   // pressing Delete inside the project rename field removes the
   // character under the cursor rather than the selected clip.
   'edit.deleteClip'
+])
+
+/**
+ * Actions whose accelerators are DISPLAY-ONLY in the menu — a different,
+ * purpose-built handler owns the key, so we must NOT also bind them here.
+ *
+ * Timeline zoom is driven by `App.vue`'s global `onGlobalShortcutKey`
+ * handler. It supports `+` / `=` / numpad variants that the `+`-delimited
+ * accelerator grammar in `parseAccelerator` can't express, and it applies
+ * the modal / editable-target guards. Binding the menu accelerators here
+ * too would double-fire: both this listener and the global one are on
+ * `window` in the capture phase, and `stopPropagation()` does not stop the
+ * other same-target listener (only `stopImmediatePropagation()` would).
+ */
+const GLOBAL_SHORTCUT_ACTIONS: ReadonlySet<string> = new Set([
+  'view.zoomIn',
+  'view.zoomOut',
+  'view.zoomReset'
 ])
 
 function parseAccelerator(accel: string): ParsedAccelerator | null {
@@ -94,6 +113,33 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.isContentEditable
 }
 
+export interface ShortcutBinding {
+  accel: ParsedAccelerator
+  action: string
+}
+
+/**
+ * Flatten the menu definitions into the list of keyboard bindings to
+ * register. Top-level items only — submenu entries (Recent Projects, Zoom
+ * Presets) are click-only and carry no accelerators. Items without an
+ * action/accelerator, disabled items, and accelerators owned by another
+ * handler (`GLOBAL_SHORTCUT_ACTIONS`) are excluded.
+ *
+ * Exported so the exclusion rules can be unit-tested without a DOM.
+ */
+export function collectShortcutBindings(opts: BuildMenusOptions): ShortcutBinding[] {
+  const bindings: ShortcutBinding[] = []
+  for (const menu of buildMenus(opts)) {
+    for (const item of menu.items) {
+      if (!item.action || !item.accelerator || item.disabled) continue
+      if (GLOBAL_SHORTCUT_ACTIONS.has(item.action)) continue
+      const accel = parseAccelerator(item.accelerator)
+      if (accel) bindings.push({ accel, action: item.action })
+    }
+  }
+  return bindings
+}
+
 /**
  * Wire every enabled menu item with an `accelerator` to a document-level
  * `keydown` listener that fires the same `menuAction` IPC the click
@@ -107,14 +153,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function registerMenuShortcuts(opts: { devToolsEnabled: boolean }): () => void {
   // Pre-parse the menu definitions into a flat list. Disabled items
   // are skipped — their accelerator is shown for documentation only.
-  const bindings: { accel: ParsedAccelerator; action: string }[] = []
-  for (const menu of buildMenus(opts)) {
-    for (const item of menu.items) {
-      if (!item.action || !item.accelerator || item.disabled) continue
-      const accel = parseAccelerator(item.accelerator)
-      if (accel) bindings.push({ accel, action: item.action })
-    }
-  }
+  const bindings = collectShortcutBindings(opts)
 
   function onKeyDown(e: KeyboardEvent): void {
     // Modal dialogs that own their own keyboard interactions (e.g.

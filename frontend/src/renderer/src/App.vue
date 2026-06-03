@@ -34,6 +34,7 @@ import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
+import { isZoomPresetAction, parseZoomPresetAction } from '@/lib/timeline/zoomPresets'
 import { useAppStore } from '@/stores/appStore'
 
 const project = useProjectStore()
@@ -726,6 +727,26 @@ function handleMenuAction(action: string): void {
   // the action (it'd race the snapshot apply pass).
   if (!transport.bridgeReady) {
     log.warn('menu', `dropped ${action} (bridge not ready)`)
+    return
+  }
+  // Timeline zoom — menu-click path only. The keyboard path is owned by
+  // `onGlobalShortcutKey` and never routes through here. Mirror that
+  // handler's modal guard so a menu click can't zoom the timeline behind
+  // an open dialog (clip editor, export, recovery, …).
+  if (
+    action === 'view.zoomIn' ||
+    action === 'view.zoomOut' ||
+    action === 'view.zoomReset' ||
+    isZoomPresetAction(action)
+  ) {
+    if (isShortcutModalOpen()) return
+    if (action === 'view.zoomIn') ui.requestTimelineZoom('in')
+    else if (action === 'view.zoomOut') ui.requestTimelineZoom('out')
+    else if (action === 'view.zoomReset') ui.requestTimelineZoom('reset')
+    else {
+      const px = parseZoomPresetAction(action)
+      if (px !== null) ui.requestTimelineZoomTo(px)
+    }
     return
   }
   // Adding a track is now just "create an empty track". Importing a file

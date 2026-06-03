@@ -1596,6 +1596,13 @@ playable at every point — no broken-build day):
 **Goal:** The whole app feels effortless and solid, and we can ship it.
 
 - [x] **Main timeline zoom cap raised to 600 %** (`MAX_PX_PER_SECOND = 600`) so the user can land fine edits without leaving the main view; the Clip Editor still goes to 6400 % for sample-level work.
+- [x] **View-menu zoom controls** — **Zoom In** / **Zoom Out** / **Reset Zoom**
+  (`Ctrl +` / `Ctrl -` / `Ctrl 0`, also on the mouse wheel) plus a **Zoom
+  Presets** submenu (20% / 50% / 100% / 200% / 400%). Presets live once in
+  `lib/timeline/zoomPresets.ts` as px-per-second multiples of the zoom step
+  (so they survive snap-to-step) and feed both the menu and its handler. The
+  global shortcut handler owns the keys; `menuShortcuts` skips binding the
+  display-only accelerators to avoid a double-fire.
 - [x] **Track row resize** — drag the bottom edge of any track
   header to change just that track's row height (clamp 60..400 px).
   Persisted with the project and undoable. `TRACK_SET_HEIGHT` bridge

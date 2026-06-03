@@ -1133,6 +1133,13 @@ function handleMenuAction(action: string): void {
       break
 
     // View
+    case 'view.zoomIn':
+    case 'view.zoomOut':
+    case 'view.zoomReset':
+      // Timeline zoom is renderer-owned (TimelineView holds pxPerSecond).
+      // Forward so App.vue's menu-action handler can apply it.
+      wc.send(IPC.menu.action, action)
+      break
     case 'view.toggleDevTools':
       if (app.isPackaged && !startupDevToolsEnabled) break
       wc.toggleDevTools()
@@ -1163,6 +1170,12 @@ function handleMenuAction(action: string): void {
         break
       }
       if (action === 'file.clearRecentProjects') {
+        wc.send(IPC.menu.action, action)
+        break
+      }
+      // Zoom presets arrive as `view.zoomPreset:<pxPerSecond>` — renderer-
+      // owned like the other zoom actions, so forward without parsing.
+      if (action.startsWith('view.zoomPreset:')) {
         wc.send(IPC.menu.action, action)
         break
       }
