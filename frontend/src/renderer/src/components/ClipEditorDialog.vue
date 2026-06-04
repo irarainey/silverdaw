@@ -4,39 +4,29 @@ import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useTransportStore } from '@/stores/transportStore'
-import { effectiveClipDurationMs, useProjectStore, type Clip } from '@/stores/projectStore'
-import { libraryItemSourceBpm, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { effectiveClipDurationMs, useProjectStore } from '@/stores/projectStore'
+import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { formatTime } from '@/lib/musicTime'
-import { effectiveDurationMs, effectiveTempoRatio, isWarpActive } from '@/lib/warp'
-import { send as sendBridge } from '@/lib/bridgeService'
-import { pickPeaksLod } from '@/lib/peaksLod'
+import { isWarpActive } from '@/lib/warp'
 import { useClipEditorTarget } from '@/lib/clipEditor/useClipEditorTarget'
 import {
   MAX_ZOOM,
-  useClipEditorViewport,
-  type CropSnapshot
+  useClipEditorViewport
 } from '@/lib/clipEditor/useClipEditorViewport'
 import {
-  clampNumber,
   currentHasTempoWarp,
-  pitchNeedsProcessor,
   useClipEditorWarpDraft
 } from '@/lib/clipEditor/useClipEditorWarpDraft'
 import { useClipEditorVolumeShapeDraft } from '@/lib/clipEditor/useClipEditorVolumeShapeDraft'
-import { envelopeGainAtMs } from '@/lib/envelope'
-import {
-  hitTestHandle,
-  overlayGainToY,
-  overlayLaneIndexForY,
-  overlayYToGain,
-  sourceMsToVolumeTime,
-  volumeOverlayLanes,
-  volumeTimeToSourceMs
-} from '@/lib/clipEditor/volumeOverlay'
+import { useClipEditorWaveform } from '@/lib/clipEditor/useClipEditorWaveform'
+import { useClipEditorPreview } from '@/lib/clipEditor/useClipEditorPreview'
+import { useClipEditorCropHistory } from '@/lib/clipEditor/useClipEditorCropHistory'
+import { useClipEditorSave } from '@/lib/clipEditor/useClipEditorSave'
+import { useClipEditorCanvasInteraction } from '@/lib/clipEditor/useClipEditorCanvasInteraction'
+import { useClipEditorKeyboard } from '@/lib/clipEditor/useClipEditorKeyboard'
 import ClipEditorWarpPanel from '@/components/ClipEditorWarpPanel.vue'
 import ClipEditorPitchPanel from '@/components/ClipEditorPitchPanel.vue'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
-import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
   open: boolean
@@ -184,124 +174,6 @@ const {
 } = viewport
 void _basePxPerMs
 
-let lastPreviewLoadKey = ''
-let previewWarpUpdateTimer: number | null = null
-
-function clearPreviewWarpUpdateTimer(): void {
-  if (previewWarpUpdateTimer === null) return
-  window.clearTimeout(previewWarpUpdateTimer)
-  previewWarpUpdateTimer = null
-}
-
-function sendDraftPreviewWarp(): void {
-  previewWarpUpdateTimer = null
-  if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
-  preview.setWarp({
-    warpEnabled: draftProcessorEnabled.value,
-    warpMode: draftMode.value,
-    tempoRatio: previewTempoRatio() ?? null,
-    semitones: clampNumber(draftSemitones.value, -12, 12),
-    cents: clampNumber(draftCents.value, -100, 100)
-  })
-}
-
-function scheduleDraftPreviewWarp(): void {
-  if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
-  if (previewWarpUpdateTimer !== null) return
-  previewWarpUpdateTimer = window.setTimeout(sendDraftPreviewWarp, 33)
-}
-
-// Volume-shape draft → preview voice. A 33ms throttle so dragging a
-// breakpoint auditions live without flooding the bridge.
-let previewEnvelopeUpdateTimer: number | null = null
-function clearPreviewEnvelopeUpdateTimer(): void {
-  if (previewEnvelopeUpdateTimer === null) return
-  window.clearTimeout(previewEnvelopeUpdateTimer)
-  previewEnvelopeUpdateTimer = null
-}
-function sendDraftPreviewEnvelope(): void {
-  previewEnvelopeUpdateTimer = null
-  if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
-  preview.setEnvelope(volumeShapeCommittedPoints())
-}
-function scheduleDraftPreviewEnvelope(): void {
-  if (!props.open || !editsExistingClip.value || !preview.isLoaded) return
-  if (previewEnvelopeUpdateTimer !== null) return
-  previewEnvelopeUpdateTimer = window.setTimeout(sendDraftPreviewEnvelope, 33)
-}
-
-// While the preview is playing, keep the playhead visible on the canvas
-// (always-follow, regardless of the main timeline's followPlayback pref).
-// Behaviour mirrors the main timeline: scroll forward only, recentre the
-// playhead when it crosses past ~75% of the way across the visible window.
-let lastFollowMs = 0
-function autoFollowPlayhead(): void {
-  const fullDur = viewDurationMs.value
-  const visDur = visibleDurationMs.value
-  if (fullDur <= 0 || visDur <= 0 || visDur >= fullDur - 0.5) {
-    lastFollowMs = 0
-    return
-  }
-  if (!preview.isPlaying) {
-    lastFollowMs = 0
-    return
-  }
-  const now = performance.now()
-  const dtSec = lastFollowMs === 0 ? 0 : Math.min(0.1, (now - lastFollowMs) / 1000)
-  lastFollowMs = now
-
-  const phRel = playheadAbsMs.value - viewInMs.value
-  const maxScroll = Math.max(0, fullDur - visDur)
-  const desired = Math.max(0, Math.min(maxScroll, phRel - visDur / 2))
-
-  // Match useTimelineDrawing: hold scroll if target is behind us (avoids
-  // jarring backward teleports), and ease in when ahead.
-  if (desired <= scrollMs.value) return
-  const gap = desired - scrollMs.value
-  if (gap <= 0.5) return
-  // In ms-space, playback advances at 1000 ms (source) per 1 s (real).
-  // Approach rate = 3× playback; proportional term closes a gap in ~0.2s.
-  const approachMsPerSec = 1000 * 3
-  const proportionalMsPerSec = gap * 5
-  const ratePerSec = Math.max(approachMsPerSec, proportionalMsPerSec)
-  const step = Math.min(gap, ratePerSec * dtSec)
-  if (step > 0) {
-    scrollMs.value = Math.max(0, Math.min(maxScroll, scrollMs.value + step))
-  }
-}
-
-// When a selection is active, playback is bounded by it. As soon as
-// the playhead reaches the selection end, pause and rewind to the
-// selection start so the next Play press replays the section.
-// Natural end-of-window (the entire preview window finished playing)
-// is handled separately via the `endedCount` watcher further below
-// — applyEnded resets positionMs to 0, so a position-based check
-// here can't detect that transition.
-function enforceSelectionPlaybackBounds(): void {
-  if (!preview.isPlaying) return
-
-  if (!editorItem.value) return
-  const isSavedClip = editsExistingClip.value
-  const hasSel = hasPlaybackSelection.value
-  // Loop applies whenever there's a selection, OR for a saved clip with
-  // no selection (loops the whole clip). Source files only loop when
-  // there is an explicit selection.
-  const looping = loopEnabled.value && (hasSel || isSavedClip)
-
-  // While playing, enforce the selection bounds before reaching the
-  // natural end of the preview window.
-  if (!hasSel && !looping) return
-  const pos = preview.positionMs
-  const endRel = playbackEndMs.value - viewInMs.value
-  if (pos < endRel - 0.5) return
-  const startRel = Math.max(0, playbackStartMs.value - viewInMs.value)
-  if (looping) {
-    preview.seek(startRel)
-  } else {
-    preview.pause()
-    preview.seek(startRel)
-  }
-}
 
 // Selection / playback range computeds owned by `useClipEditorViewport`;
 // `selectionInMs` / `selectionDurationMs` / `selectionEndMs` /
@@ -374,6 +246,44 @@ const playheadAbsMs = computed(() => viewInMs.value + preview.positionMs)
 
 const loopEnabled = ref(false)
 
+// Preview-voice scheduling (debounced draft pushes, follow-playhead,
+// selection/loop bounds, de-duped load) lives in a composable; the SFC keeps
+// the watchers + lifecycle hooks and calls these.
+const {
+  clearPreviewWarpUpdateTimer,
+  scheduleDraftPreviewWarp,
+  clearPreviewEnvelopeUpdateTimer,
+  scheduleDraftPreviewEnvelope,
+  autoFollowPlayhead,
+  enforceSelectionPlaybackBounds,
+  loadPreviewForView,
+  resetPreviewLoadKey
+} = useClipEditorPreview({
+  preview,
+  isOpen: () => props.open,
+  editorItem: () => editorItem.value,
+  timelineClip: () => timelineClip.value,
+  sourceItem: () => sourceItem.value,
+  editsExistingClip: () => editsExistingClip.value,
+  libraryById: () => library.byId,
+  projectBpm: () => transport.bpm,
+  draftProcessorEnabled: () => draftProcessorEnabled.value,
+  draftMode: () => draftMode.value,
+  draftSemitones: () => draftSemitones.value,
+  draftCents: () => draftCents.value,
+  previewTempoRatio,
+  committedEnvelopePoints: volumeShapeCommittedPoints,
+  viewInMs: () => viewInMs.value,
+  viewDurationMs: () => viewDurationMs.value,
+  visibleDurationMs: () => visibleDurationMs.value,
+  playheadAbsMs: () => playheadAbsMs.value,
+  scrollMs,
+  hasPlaybackSelection: () => hasPlaybackSelection.value,
+  playbackStartMs: () => playbackStartMs.value,
+  playbackEndMs: () => playbackEndMs.value,
+  loopEnabled: () => loopEnabled.value
+})
+
 watch(
   () => props.open,
   async (open) => {
@@ -386,9 +296,8 @@ watch(
       initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
       volumeEditMode.value = false
       loopEnabled.value = false
-      lastHiResRequestKey = ''
-      cropUndoStack.value = []
-      cropRedoStack.value = []
+      resetHiResRequestKey()
+      resetCropHistory()
       library.setEditorHiResPeaks(null)
       await nextTick()
       if (waveformEl.value) {
@@ -401,11 +310,10 @@ watch(
       clearPreviewWarpUpdateTimer()
       clearPreviewEnvelopeUpdateTimer()
       preview.unload()
-      lastPreviewLoadKey = ''
+      resetPreviewLoadKey()
       library.setEditorHiResPeaks(null)
-      lastHiResRequestKey = ''
-      cropUndoStack.value = []
-      cropRedoStack.value = []
+      resetHiResRequestKey()
+      resetCropHistory()
     }
   }
 )
@@ -417,13 +325,12 @@ watch(
     viewExpanded.value = false
     volumeEditMode.value = false
     resetZoom()
-    lastPreviewLoadKey = ''
+    resetPreviewLoadKey()
     initSelectionForItem()
     initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
     initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
-    lastHiResRequestKey = ''
-    cropUndoStack.value = []
-    cropRedoStack.value = []
+    resetHiResRequestKey()
+    resetCropHistory()
     library.setEditorHiResPeaks(null)
     drawWaveform()
     loadPreviewForView()
@@ -583,43 +490,6 @@ onMounted(() => {
   window.addEventListener('keydown', onWindowKeydownCapture, { capture: true })
 })
 
-// True when the keydown originated from a field the user is typing into
-// (text input, textarea, select, contenteditable). The dialog's transport
-// / zoom / undo shortcuts must NOT fire in that case, or they swallow
-// digits ("0" → resetZoom), spaces, and arrow keys mid-edit. Uses the
-// composed path so it stays correct regardless of focus drift.
-function isEditableTarget(e: Event): boolean {
-  const el = (e.composedPath?.()[0] as HTMLElement | null) ?? (e.target as HTMLElement | null)
-  if (!el) return false
-  if (el.isContentEditable) return true
-  return el.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') !== null
-}
-
-function onWindowKeydownCapture(e: KeyboardEvent): void {
-  if (!props.open) return
-  if (e.isComposing) return
-  if (isEditableTarget(e)) return
-  if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!e.repeat) onTogglePlay()
-    return
-  }
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return
-  const key = e.key.toLowerCase()
-  if (key === 'z' && !e.shiftKey) {
-    e.preventDefault()
-    e.stopPropagation()
-    undoCropLocal()
-    return
-  }
-  if ((key === 'y' && !e.shiftKey) || (key === 'z' && e.shiftKey)) {
-    e.preventDefault()
-    e.stopPropagation()
-    redoCropLocal()
-  }
-}
-
 watch(
   () => waveformEl.value,
   (el) => {
@@ -648,764 +518,72 @@ function initSelectionForItem(): void {
   viewport.initialiseForItem()
 }
 
-// The preview is always loaded for the full clip view (the source range for
-// audio-files; the cropped range for saved-clips). The selection is now a
-// passive marker indicating what would be saved/applied; the playhead is a
-// free cursor anywhere inside the view.
-function loadPreviewForView(): void {
-  const entry = editorItem.value
-  if (!entry) return
-  const src = sourceItem.value
-  if (!src) return
-  // Pass any warp defaults stored on the library item (saved-clips
-  // carry the user's preferred warp at the time the clip was saved)
-  // so the preview voice plays the clip the way the timeline will.
-  // Audio-file items don't carry warp metadata, so the spread is a
-  // no-op for them.
-  const previewSourceBpm = libraryItemSourceBpm(entry, library.byId)
-  const current = timelineClip.value ?? entry
-  const tempoRatio = isWarpActive({
-    warpEnabled: current.warpEnabled,
-    tempoRatio: current.tempoRatio,
-    sourceBpm: previewSourceBpm,
-    projectBpm: transport.bpm
-  })
-    ? effectiveTempoRatio({
-        tempoRatio: current.tempoRatio,
-        sourceBpm: previewSourceBpm,
-        projectBpm: transport.bpm
-      })
-    : current.tempoRatio
-  const warp = editsExistingClip.value
-    ? {
-        warpEnabled: draftProcessorEnabled.value,
-        warpMode: draftMode.value,
-        tempoRatio: previewTempoRatio(),
-        semitones: draftSemitones.value,
-        cents: draftCents.value
-      }
-    : {
-        warpEnabled: current.warpEnabled,
-        warpMode: current.warpMode,
-        tempoRatio,
-        semitones: current.semitones,
-        cents: current.cents
-      }
-  const loadKey = JSON.stringify({
-    sourceId: src.id,
-    inMs: viewInMs.value,
-    durationMs: viewDurationMs.value,
-    warp
-  })
-  if (loadKey === lastPreviewLoadKey) return
-  lastPreviewLoadKey = loadKey
-  preview.load(src.id, viewInMs.value, viewDurationMs.value, warp)
-}
 
-// On-demand high-resolution peaks for the Clip Editor. The default
-// peaks resolution (500 peaks/sec, shared with the timeline) starts
-// to look chunky past about 8× zoom; this requests a one-off
-// higher-resolution rebuild for the source file that only the editor
-// uses, cached on disk by `PeaksCache` so subsequent dialog opens
-// for the same source are instant.
-const EDITOR_HI_RES_PEAKS_PER_SECOND = 2000
+// On-demand high-resolution peaks + the canvas waveform renderer live in a
+// composable so this SFC stays focused on orchestration. The renderer writes
+// back the last-rendered stereo-lane layout into `waveformStereoLanes` (owned
+// here) because the canvas pointer hit-testing reads that layout.
+const { drawWaveform, ensureEditorHiResPeaks, resetHiResRequestKey } = useClipEditorWaveform({
+  getCanvas: () => waveformEl.value,
+  sourceItem: () => sourceItem.value,
+  sourceDurationMs: () => sourceDurationMs.value,
+  zoom: () => zoom.value,
+  visibleInMs: () => visibleInMs.value,
+  visibleDurationMs: () => visibleDurationMs.value,
+  visibleEndMs: () => visibleEndMs.value,
+  viewInMs: () => viewInMs.value,
+  viewEndMs: () => viewEndMs.value,
+  selectionInMs: () => selectionInMs.value,
+  selectionEndMs: () => selectionEndMs.value,
+  selectionDurationMs: () => selectionDurationMs.value,
+  editsExistingClip: () => editsExistingClip.value,
+  playheadAbsMs: () => playheadAbsMs.value,
+  volumeShapeAvailable: () => volumeShapeAvailable.value,
+  volumeEditActive: () => volumeEditActive.value,
+  volumeShapeDurationMs: () => volumeShapeDurationMs.value,
+  draftPoints: () => volumeShapeDraft.draftPoints.value,
+  draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
+  editorHiResPeaks: () => library.editorHiResPeaks,
+  channelPeaksByItemId: () => library.channelPeaksByItemId,
+  waveformDisplayMode: () => ui.waveformDisplayMode,
+  waveformStereoLanes
+})
 
-/** Minimum CSS-px height each stereo lane needs before the Clip Editor
- *  splits the waveform into stacked left / right lanes. Below twice
- *  this, it falls back to the single summary lane. */
-const EDITOR_MIN_STEREO_LANE_PX = 24
-const EDITOR_HI_RES_ZOOM_THRESHOLD = 4
-let lastHiResRequestKey = ''
-
-function ensureEditorHiResPeaks(): void {
-  const src = sourceItem.value
-  if (!src) return
-  if (zoom.value < EDITOR_HI_RES_ZOOM_THRESHOLD) return
-  const existing = library.editorHiResPeaks
-  if (existing && existing.libraryItemId === src.id &&
-      existing.peaksPerSecond >= EDITOR_HI_RES_PEAKS_PER_SECOND) {
-    return
-  }
-  const key = `${src.id}:${EDITOR_HI_RES_PEAKS_PER_SECOND}`
-  if (key === lastHiResRequestKey) return
-  lastHiResRequestKey = key
-  sendBridge('CLIP_EDITOR_PEAKS_REQUEST', {
-    libraryItemId: src.id,
-    peaksPerSecond: EDITOR_HI_RES_PEAKS_PER_SECOND
-  })
-}
-
-// Trigger a request whenever the user zooms in past the threshold.
+// Trigger a hi-res request whenever the user zooms in past the threshold.
 watch(zoom, () => ensureEditorHiResPeaks())
 
-function drawWaveform(): void {
-  const canvas = waveformEl.value
-  if (!canvas) return
-  const src = sourceItem.value
-  if (!src) return
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-  const dpr = window.devicePixelRatio || 1
-  const rect = canvas.getBoundingClientRect()
-  const w = Math.max(1, Math.floor(rect.width * dpr))
-  const h = Math.max(1, Math.floor(rect.height * dpr))
-  if (canvas.width !== w) canvas.width = w
-  if (canvas.height !== h) canvas.height = h
-
-  ctx.clearRect(0, 0, w, h)
-  ctx.fillStyle = '#0a0a0a'
-  ctx.fillRect(0, 0, w, h)
-
-  const sourceTotal = sourceDurationMs.value
-  const vIn = visibleInMs.value
-  const vDur = visibleDurationMs.value
-  const vEnd = visibleEndMs.value
-  if (vDur <= 0) return
-
-  // Map an ms value (in source coords) to canvas x.
-  const msToX = (ms: number): number => ((ms - vIn) / vDur) * w
-
-  // Layout: ruler band on top, waveform underneath.
-  const rulerH = Math.round(18 * dpr)
-  const waveTop = rulerH
-  const waveH = h - rulerH
-  const waveMid = waveTop + waveH / 2
-
-  // --- Ruler band -------------------------------------------------------
-  ctx.fillStyle = '#18181b'
-  ctx.fillRect(0, 0, w, rulerH)
-  ctx.strokeStyle = '#27272a'
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(0, rulerH - 0.5)
-  ctx.lineTo(w, rulerH - 0.5)
-  ctx.stroke()
-
-  // Adaptive tick spacing: aim for ~80px between major ticks.
-  const targetPx = 80 * dpr
-  const msPerPx = vDur / w
-  const niceSteps: number[] = [
-    50, 100, 200, 250, 500, 1000, 2000, 5000, 10_000, 15_000, 30_000, 60_000,
-    120_000, 300_000, 600_000
-  ]
-  const desiredStep = targetPx * msPerPx
-  let majorMs = niceSteps[niceSteps.length - 1] ?? 1000
-  for (const s of niceSteps) {
-    if (s >= desiredStep) {
-      majorMs = s
-      break
-    }
-  }
-  const minorMs = majorMs / 5
-  const firstMinor = Math.ceil(vIn / minorMs) * minorMs
-  ctx.strokeStyle = '#3f3f46'
-  ctx.fillStyle = '#a1a1aa'
-  ctx.font = `${Math.round(10 * dpr)}px ui-monospace, SFMono-Regular, Menlo, monospace`
-  ctx.textBaseline = 'top'
-  for (let t = firstMinor; t <= vEnd + 0.0001; t += minorMs) {
-    const x = Math.round(msToX(t)) + 0.5
-    const isMajor = Math.abs(t / majorMs - Math.round(t / majorMs)) < 1e-6
-    const tickH = isMajor ? Math.round(8 * dpr) : Math.round(4 * dpr)
-    ctx.beginPath()
-    ctx.moveTo(x, rulerH - tickH)
-    ctx.lineTo(x, rulerH)
-    ctx.stroke()
-    if (isMajor) {
-      // Label times relative to the visible clip start (viewInMs).
-      const label = formatRulerTime(t - viewInMs.value, majorMs)
-      ctx.fillText(label, x + 3 * dpr, 2 * dpr)
-    }
-  }
-
-  // --- Waveform centre baseline ----------------------------------------
-  ctx.strokeStyle = '#27272a'
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(0, waveMid)
-  ctx.lineTo(w, waveMid)
-  ctx.stroke()
-
-  // --- Waveform peaks --------------------------------------------------
-  // The editor has three potential peak sources, in order of preference:
-  //   1. editorHiResPeaks — backend-rebuilt 2000 ppS rendering requested
-  //      on demand when the user zooms in past EDITOR_HI_RES_ZOOM_THRESHOLD.
-  //   2. The library item's LOD pyramid — picked by current px/sec so
-  //      zoomed-out views walk a coarser level instead of millions of
-  //      base peaks per redraw.
-  //   3. The library item's base peaks (`src.peaks`) as a fallback.
-  // The picker uses the same hysteresis as the main timeline so zoom
-  // drags don't flicker between adjacent levels.
-  const hiRes = library.editorHiResPeaks
-  const usingHiRes = hiRes && hiRes.libraryItemId === src.id && hiRes.peaks.length >= 2
-  // Convert visible-ms-per-canvas-pixel into px-per-source-second so the
-  // LOD picker speaks the same units as the main timeline.
-  const canvasPxPerSourceSec = vDur > 0 ? (w / vDur) * 1000 : 0
-  let peaks: Float32Array
-  let peaksPerSec: number
-  if (usingHiRes) {
-    peaks = hiRes!.peaks
-    peaksPerSec = hiRes!.peaksPerSecond
-  } else if (src.peaksLod && src.peaksLod.length > 0 && canvasPxPerSourceSec > 0) {
-    const picked = pickPeaksLod(src.peaksLod, canvasPxPerSourceSec)
-    peaks = picked.peaks
-    peaksPerSec = picked.peaksPerSecond
-  } else {
-    peaks = src.peaks
-    peaksPerSec = src.peaksPerSecond ?? 0
-  }
-
-  // Draw a single waveform lane from `lanePeaks` centred on `laneMid`
-  // with a half-height of `laneHalfH`. Shared by the summary lane and
-  // the two stereo lanes so the column-mapping math stays identical.
-  const drawWaveLane = (
-    lanePeaks: Float32Array,
-    lanePps: number,
-    laneMid: number,
-    laneHalfH: number
-  ): void => {
-    if (!(lanePeaks.length >= 2) || sourceTotal <= 0) return
-    const pairs = Math.floor(lanePeaks.length / 2)
-    // Map each canvas column to a peak index. When the LOD's actual
-    // ppS is known, use it for a sample-accurate mapping (so transients
-    // do not drift against the ruler/beat grid). Otherwise fall back
-    // to the legacy proportional mapping over `sourceTotal`.
-    const useRate = lanePps > 0
-    const peakStart = useRate ? (vIn / 1000) * lanePps : (vIn / sourceTotal) * pairs
-    const peakSpan = useRate ? (vDur / 1000) * lanePps : (vDur / sourceTotal) * pairs
-    for (let x = 0; x < w; x++) {
-      const i = Math.floor(peakStart + (x / w) * peakSpan)
-      if (i < 0 || i >= pairs) continue
-      const lo = lanePeaks[i * 2] || 0
-      const hi = lanePeaks[i * 2 + 1] || 0
-      const y0 = laneMid - hi * laneHalfH
-      const y1 = laneMid - lo * laneHalfH
-      ctx.fillRect(x, Math.min(y0, y1), 1, Math.max(1, Math.abs(y1 - y0)))
-    }
-  }
-
-  // Stereo display: when the user has opted in AND this clip's source
-  // has 2-channel peaks AND the wave band is tall enough, stack separate
-  // L/R lanes; otherwise draw the single summary lane (the default).
-  const channelSourceId =
-    src.kind === 'saved-clip' ? src.derivedFrom?.sourceItemId : src.id
-  const hiResChannels =
-    usingHiRes && hiRes!.channels.length === 2 ? hiRes!.channels : undefined
-  const channelEntry = channelSourceId ? library.channelPeaksByItemId[channelSourceId] : undefined
-  const stereoAvailable = !!hiResChannels || (!!channelEntry && channelEntry.channels.length === 2)
-  const wantStereo =
-    ui.waveformDisplayMode === 'stereo' && stereoAvailable && waveH >= EDITOR_MIN_STEREO_LANE_PX * 2 * dpr
-  waveformStereoLanes.value = wantStereo
-
-  ctx.fillStyle = '#3b82f6'
-  if (wantStereo) {
-    const laneH = waveH / 2
-    const laneHalfH = laneH / 2
-    for (let ch = 0; ch < 2; ch++) {
-      let lanePeaks: Float32Array
-      let lanePps: number
-      if (hiResChannels) {
-        lanePeaks = hiResChannels[ch]!
-        lanePps = hiRes!.peaksPerSecond
-      } else {
-        lanePeaks = channelEntry!.channels[ch]!
-        lanePps = channelEntry!.peaksPerSecond
-        const clod = channelEntry!.lod[ch]
-        if (clod && clod.length > 0 && canvasPxPerSourceSec > 0) {
-          const picked = pickPeaksLod(clod, canvasPxPerSourceSec)
-          lanePeaks = picked.peaks
-          lanePps = picked.peaksPerSecond
-        }
-      }
-      drawWaveLane(lanePeaks, lanePps, waveTop + laneH * ch + laneH / 2, laneHalfH)
-    }
-  } else if (peaks && peaks.length >= 2 && sourceTotal > 0) {
-    drawWaveLane(peaks, peaksPerSec, waveMid, waveH / 2)
-  }
-
-  // --- Beat lines (extrapolated uniformly across the full source so the
-  // whole track has beats, not just the detected window). Uses BPM +
-  // beatAnchorSec the same way the main timeline does. ----------------
-  const sourceBpm = src.bpm
-  const anchorSec = src.beatAnchorSec ?? src.beats?.[0]
-  if (sourceBpm && sourceBpm > 0 && anchorSec !== undefined) {
-    const beatSpacingMs = (60 / sourceBpm) * 1000
-    const anchorMs = anchorSec * 1000
-    if (beatSpacingMs > 0) {
-      // Step the grid through the *visible* window only — we still iterate
-      // beats across the whole source conceptually, but only draw those
-      // that fall inside [vIn, vEnd].
-      let firstBeatMs =
-        anchorMs + Math.ceil((vIn - anchorMs) / beatSpacingMs) * beatSpacingMs
-      while (firstBeatMs < vIn) firstBeatMs += beatSpacingMs
-      ctx.strokeStyle = 'rgba(250, 204, 21, 0.55)'
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      const minPxSpacing = 4 * dpr
-      let lastX = Number.NEGATIVE_INFINITY
-      for (let beatMs = firstBeatMs; beatMs <= vEnd + 0.5; beatMs += beatSpacingMs) {
-        const x = Math.round(msToX(beatMs)) + 0.5
-        if (x - lastX < minPxSpacing) continue
-        ctx.moveTo(x, waveTop)
-        ctx.lineTo(x, h)
-        lastX = x
-      }
-      ctx.stroke()
-    }
-  }
-
-  // --- Selection overlay -----------------------------------------------
-  // Source-file editing always shows handles; existing clips show handles only after
-  // the user has narrowed the selection inside the cropped view.
-  const fullVIn = viewInMs.value
-  const fullVEnd = viewEndMs.value
-  const isSubSelection =
-    selectionInMs.value > fullVIn + 0.5 || selectionEndMs.value < fullVEnd - 0.5
-  const showHandles = !editsExistingClip.value || isSubSelection
-  if (selectionDurationMs.value > 0 && showHandles) {
-    const sx = msToX(selectionInMs.value)
-    const ex = msToX(selectionEndMs.value)
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.18)'
-    ctx.fillRect(sx, waveTop, ex - sx, waveH)
-    ctx.fillStyle = '#3b82f6'
-    ctx.fillRect(sx - 1, 0, 2, h)
-    ctx.fillRect(ex - 1, 0, 2, h)
-    // Triangle grab handles at the top and bottom of each edge line.
-    // Pointing inward toward the selection so the visual reads as
-    // "here's where the selection edge is — grab to fine-tune". Hit
-    // detection on these lives in `onCanvasMouseDown` (HANDLE_PX
-    // around the edge x) so the user can also click the line itself.
-    const handleW = 10 * dpr
-    const handleH = 8 * dpr
-    // Start edge — triangles point right (into the selection).
-    ctx.beginPath()
-    ctx.moveTo(sx, 0)
-    ctx.lineTo(sx + handleW, 0)
-    ctx.lineTo(sx, handleH)
-    ctx.closePath()
-    ctx.fill()
-    ctx.beginPath()
-    ctx.moveTo(sx, h)
-    ctx.lineTo(sx + handleW, h)
-    ctx.lineTo(sx, h - handleH)
-    ctx.closePath()
-    ctx.fill()
-    // End edge — triangles point left (into the selection).
-    ctx.beginPath()
-    ctx.moveTo(ex, 0)
-    ctx.lineTo(ex - handleW, 0)
-    ctx.lineTo(ex, handleH)
-    ctx.closePath()
-    ctx.fill()
-    ctx.beginPath()
-    ctx.moveTo(ex, h)
-    ctx.lineTo(ex - handleW, h)
-    ctx.lineTo(ex, h - handleH)
-    ctx.closePath()
-    ctx.fill()
-  }
-
-  // --- Playhead --------------------------------------------------------
-  const px = msToX(playheadAbsMs.value)
-  if (px >= 0 && px <= w) {
-    ctx.strokeStyle = '#f97316'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.moveTo(px, 0)
-    ctx.lineTo(px, h)
-    ctx.stroke()
-  }
-
-  // --- Volume Shape (gain envelope) overlay ----------------------------
-  // Drawn directly over the waveform so it's obvious which part of the clip
-  // each breakpoint affects. Editable in place when Volume mode is on (see
-  // `volumeEditActive`); otherwise rendered faint as read-only context.
-  // Only shown in the cropped Clip view, where the breakpoint time axis
-  // (clip-local post-warp ms) spans the whole clip from its source start.
-  if (volumeShapeAvailable.value) {
-    const points = volumeShapeDraft.draftPoints.value
-    const editing = volumeEditActive.value
-    // The volume line is always visible as context; the Volume toggle only
-    // controls whether it's editable (brighter line + grabbable handles).
-    if (points.length >= 2) {
-      const ratio = warpDraft.draftEffectiveRatio.value > 0 ? warpDraft.draftEffectiveRatio.value : 1
-      const clipStartSourceMs = viewInMs.value
-      const durMs = volumeShapeDurationMs.value
-      const envX = (timelineMs: number): number =>
-        msToX(volumeTimeToSourceMs(timelineMs, clipStartSourceMs, ratio))
-      const xStart = envX(0)
-      const xEnd = envX(durMs)
-      const steps = Math.max(16, Math.round((xEnd - xStart) / (3 * dpr)))
-      const r = (editing ? 4 : 2.5) * dpr
-
-      // In stereo view the one shared envelope is mirrored into both the
-      // left (upper) and right (lower) channel lanes so it reads against
-      // each channel; in summary view it spans the full waveform height.
-      const lanes = volumeOverlayLanes(waveTop, waveH, waveformStereoLanes.value)
-      for (const lane of lanes) {
-        const envY = (gain: number): number => overlayGainToY(gain, lane.top, lane.height)
-
-        // Unity (0 dB) reference line across the clip span.
-        ctx.strokeStyle = 'rgba(63, 63, 70, 0.9)'
-        ctx.lineWidth = 1
-        ctx.setLineDash([3 * dpr, 3 * dpr])
-        ctx.beginPath()
-        const uy = envY(1)
-        ctx.moveTo(xStart, uy)
-        ctx.lineTo(xEnd, uy)
-        ctx.stroke()
-        ctx.setLineDash([])
-
-        // Sampled curve (linear-in-dB segments are curved in linear gain).
-        ctx.strokeStyle = editing ? 'rgba(167, 139, 250, 0.95)' : 'rgba(167, 139, 250, 0.5)'
-        ctx.lineWidth = editing ? 2 * dpr : 1.5 * dpr
-        ctx.beginPath()
-        for (let i = 0; i <= steps; i++) {
-          const t = (i / steps) * durMs
-          const x = envX(t)
-          const y = envY(envelopeGainAtMs(points, t))
-          if (i === 0) ctx.moveTo(x, y)
-          else ctx.lineTo(x, y)
-        }
-        ctx.stroke()
-
-        // Breakpoint handles. Brighter and larger when editing.
-        for (let i = 0; i < points.length; i++) {
-          const p = points[i]
-          if (!p) continue
-          const x = envX(p.timeMs)
-          const y = envY(p.gain)
-          const isEndpoint = i === 0 || i === points.length - 1
-          ctx.fillStyle = editing
-            ? isEndpoint
-              ? '#8b5cf6'
-              : '#c4b5fd'
-            : 'rgba(196, 181, 253, 0.6)'
-          ctx.beginPath()
-          ctx.arc(x, y, r, 0, Math.PI * 2)
-          ctx.fill()
-          if (editing) {
-            ctx.strokeStyle = '#2e1065'
-            ctx.lineWidth = 1 * dpr
-            ctx.stroke()
-          }
-        }
-      }
-    }
-  }
-}
-
-function formatRulerTime(ms: number, stepMs: number): string {
-  const totalSec = ms / 1000
-  if (stepMs < 1000) {
-    // Show fractional seconds when ticks are sub-second.
-    const decimals = stepMs < 100 ? 2 : 1
-    return totalSec.toFixed(decimals) + 's'
-  }
-  const sign = totalSec < 0 ? '-' : ''
-  const t = Math.abs(totalSec)
-  const m = Math.floor(t / 60)
-  const s = Math.floor(t % 60)
-  return `${sign}${m}:${s.toString().padStart(2, '0')}`
-}
-
-function onCanvasMouseDown(e: MouseEvent): void {
-  const canvas = waveformEl.value
-  if (!canvas) return
-  const rect = canvas.getBoundingClientRect()
-  const vIn = visibleInMs.value
-  const vDur = visibleDurationMs.value
-  // Drag/click still clamps to the full clip bounds, not the visible window —
-  // a user can drag past the canvas edge to keep extending the selection.
-  const fullIn = viewInMs.value
-  const fullEnd = viewEndMs.value
-  if (vDur <= 0) return
-
-  // Volume edit mode hijacks the canvas pointer to edit the gain envelope
-  // instead of the selection. Handled first so none of the selection logic
-  // below runs while shaping volume.
-  if (volumeEditActive.value) {
-    onCanvasEnvelopePointerDown(e, rect, vIn, vDur)
-    return
-  }
-
-  const xToMs = (clientX: number): number =>
-    Math.max(fullIn, Math.min(fullEnd, vIn + ((clientX - rect.left) / rect.width) * vDur))
-  const startSx = ((selectionInMs.value - vIn) / vDur) * rect.width
-  const endSx = ((selectionEndMs.value - vIn) / vDur) * rect.width
-  const localX = e.clientX - rect.left
-  const startX = e.clientX
-  const HANDLE_PX = 12
-
-  // Handle grabs only count when there's actually a visible sub-selection.
-  // The hit zone is intentionally wider than the 1-px edge line so the
-  // triangle grab markers drawn at the top/bottom of each edge fall
-  // inside the grabbable area.
-  const hasSubSel = selectionInMs.value > fullIn + 0.5 || selectionEndMs.value < fullEnd - 0.5
-  let mode: 'start' | 'end' | 'select' | 'click' = 'click'
-  if (hasSubSel && Math.abs(localX - startSx) <= HANDLE_PX) mode = 'start'
-  else if (hasSubSel && Math.abs(localX - endSx) <= HANDLE_PX) mode = 'end'
-
-  const anchorMs = xToMs(e.clientX)
-
-  const onMove = (ev: MouseEvent): void => {
-    const ms = xToMs(ev.clientX)
-    if (mode === 'click') {
-      // Promote to a drag-select only once the user actually moves the mouse.
-      if (Math.abs(ev.clientX - startX) > 3) mode = 'select'
-      else return
-    }
-    if (mode === 'start') {
-      const next = Math.min(ms, selectionEndMs.value - 50)
-      const delta = next - selectionInMs.value
-      selectionInMs.value = Math.max(fullIn, next)
-      selectionDurationMs.value = Math.max(50, selectionDurationMs.value - delta)
-    } else if (mode === 'end') {
-      const next = Math.min(fullEnd, Math.max(ms, selectionInMs.value + 50))
-      selectionDurationMs.value = Math.max(50, next - selectionInMs.value)
-    } else if (mode === 'select') {
-      const lo = Math.max(fullIn, Math.min(anchorMs, ms))
-      const hi = Math.min(fullEnd, Math.max(anchorMs, ms))
-      selectionInMs.value = lo
-      selectionDurationMs.value = Math.max(50, hi - lo)
-    }
-  }
-  const onUp = (ev: MouseEvent): void => {
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-    if (mode === 'click') {
-      const ms = xToMs(ev.clientX)
-      // Click outside the current narrowing selection clears it AND
-      // moves the playhead. Click inside the selection just moves the
-      // playhead (so the user can scrub within their selection).
-      if (
-        hasPlaybackSelection.value &&
-        (ms < selectionInMs.value || ms > selectionEndMs.value)
-      ) {
-        clearSelection()
-      }
-      seekPlayheadToSourceMs(ms)
-    }
-    // Selection changes don't reload the preview — preview window is the
-    // whole clip view, so the playhead stays valid as the selection moves.
-  }
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
-}
-
-// Envelope editing on the waveform canvas. Mirrors the SVG editor's gestures
-// (drag a handle to move it, click the curve to add a breakpoint then drag,
-// Alt-click / right-click a handle to remove it) but in the canvas's own
-// pixel space. All coordinates here are CSS pixels (getBoundingClientRect),
-// whereas `drawWaveform` works in device pixels — both map gain/time the
-// same way via the shared `volumeOverlay` helpers, just with a different
-// height/ruler scale.
-function onCanvasEnvelopePointerDown(
-  e: MouseEvent,
-  rect: DOMRect,
-  vIn: number,
-  vDur: number
-): void {
-  const ratio = warpDraft.draftEffectiveRatio.value > 0 ? warpDraft.draftEffectiveRatio.value : 1
-  const clipStartSourceMs = viewInMs.value
-  const durMs = volumeShapeDurationMs.value
-  const rulerCss = 18
-  const waveTopCss = rulerCss
-  const waveHCss = Math.max(1, rect.height - rulerCss)
-
-  const timeToXCss = (timelineMs: number): number => {
-    const sourceMs = volumeTimeToSourceMs(timelineMs, clipStartSourceMs, ratio)
-    return ((sourceMs - vIn) / vDur) * rect.width
-  }
-  const xToTime = (clientX: number): number => {
-    const sourceMs = vIn + ((clientX - rect.left) / rect.width) * vDur
-    return Math.max(0, Math.min(durMs, sourceMsToVolumeTime(sourceMs, clipStartSourceMs, ratio)))
-  }
-  // In stereo view the one shared envelope is mirrored into two channel
-  // lanes. Interaction is lane-local: the lane under the pointer is chosen
-  // first, then both hit-testing and the gain mapping happen only within
-  // that lane. This keeps exactly one handle per breakpoint in play (so a
-  // click can never grab the duplicated handle from the other lane) and
-  // pins the whole drag to one lane's gain scale. In summary view there is
-  // a single full-height lane, so this is identical to the original mapping.
-  const lanes = volumeOverlayLanes(waveTopCss, waveHCss, waveformStereoLanes.value)
-  const lx = e.clientX - rect.left
-  const ly = e.clientY - rect.top
-  const activeLane = lanes[overlayLaneIndexForY(ly, lanes)] ?? lanes[lanes.length - 1]!
-  const yToGain = (clientY: number): number =>
-    overlayYToGain(clientY - rect.top, activeLane.top, activeLane.height)
-
-  const points = volumeShapeDraft.draftPoints.value
-  // Hit-test handles only in the active lane; the index maps straight to the
-  // breakpoint (each point is drawn once per lane).
-  const positions = points.map((p) => ({
-    x: timeToXCss(p.timeMs),
-    y: overlayGainToY(p.gain, activeLane.top, activeLane.height)
-  }))
-  const hit = hitTestHandle(positions, lx, ly, 12)
-
-  // Alt-click or right-click on a handle removes it (endpoints are pinned
-  // and protected inside `removePoint`).
-  if (hit !== null && (e.altKey || e.button === 2)) {
-    volumeShapeDraft.removePoint(hit)
-    return
-  }
-  // Right-click on empty space does nothing (the context menu is suppressed).
-  if (e.button === 2) return
-
-  let dragIndex = hit
-  if (dragIndex === null) {
-    dragIndex = volumeShapeDraft.addPoint(xToTime(e.clientX), yToGain(e.clientY))
-  }
-  e.preventDefault()
-
-  const onMove = (ev: MouseEvent): void => {
-    if (dragIndex === null) return
-    volumeShapeDraft.movePoint(dragIndex, xToTime(ev.clientX), yToGain(ev.clientY))
-  }
-  const onUp = (): void => {
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-  }
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
-}
-
-// Suppress the browser context menu over the canvas while shaping volume so
-// right-click can delete a breakpoint instead.
-function onCanvasContextMenu(e: MouseEvent): void {
-  if (volumeEditActive.value) e.preventDefault()
-}
-
-function seekPlayheadToSourceMs(sourceMs: number): void {
-  const fullIn = viewInMs.value
-  const fullDur = viewDurationMs.value
-  if (fullDur <= 0) return
-  const rel = Math.max(0, Math.min(fullDur, sourceMs - fullIn))
-  preview.seek(rel)
-}
-
-const SMALLEST_NUDGE_MS = 1
-
-// Step forward or backward from a given source-ms position. When
-// `snapToBeats` is true, jumps to the next/prev beat on the extrapolated
-// grid (BPM + anchor). Otherwise nudges by 1 ms. Result is clamped to
-// the clip view bounds.
-function stepMsFrom(fromMs: number, direction: -1 | 1, snapToBeats: boolean): number {
-  const fullIn = viewInMs.value
-  const fullEnd = viewEndMs.value
-  if (!snapToBeats) {
-    return Math.max(fullIn, Math.min(fullEnd, fromMs + direction * SMALLEST_NUDGE_MS))
-  }
-  const src = sourceItem.value
-  const sourceBpm = src?.bpm
-  const anchorSec = src?.beatAnchorSec ?? src?.beats?.[0]
-  if (!sourceBpm || sourceBpm <= 0 || anchorSec === undefined) {
-    return Math.max(fullIn, Math.min(fullEnd, fromMs + direction * SMALLEST_NUDGE_MS))
-  }
-  const beatSpacingMs = (60 / sourceBpm) * 1000
-  const anchorMs = anchorSec * 1000
-  const epsilon = 1
-  const beatsFromAnchor = (fromMs - anchorMs) / beatSpacingMs
-  const nextIdx =
-    direction > 0
-      ? Math.floor(beatsFromAnchor + epsilon / beatSpacingMs) + 1
-      : Math.ceil(beatsFromAnchor - epsilon / beatSpacingMs) - 1
-  const targetAbs = anchorMs + nextIdx * beatSpacingMs
-  return Math.max(fullIn, Math.min(fullEnd, targetAbs))
-}
-
-function nudgePlayhead(direction: -1 | 1, snapToBeats: boolean): void {
-  const fullDur = viewDurationMs.value
-  if (fullDur <= 0) return
-  seekPlayheadToSourceMs(stepMsFrom(playheadAbsMs.value, direction, snapToBeats))
-}
-
-// Shift+Arrow extends the selection from the playhead position. With
-// Alt held, extension is in 1-ms increments; otherwise it snaps to
-// beats. Works for both audio-file (start a new selection) and
-// saved-clip (narrow the existing window).
-function extendSelection(direction: -1 | 1, snapToBeats: boolean): void {
-  const fullDur = viewDurationMs.value
-  if (fullDur <= 0) return
-  const ph = playheadAbsMs.value
-  const hasSel = hasPlaybackSelection.value
-  let newEdge: number
-  if (!hasSel) {
-    // Anchor the new selection at the playhead.
-    if (direction > 0) {
-      const end = stepMsFrom(ph, 1, snapToBeats)
-      selectionInMs.value = ph
-      selectionDurationMs.value = Math.max(SMALLEST_NUDGE_MS, end - ph)
-      newEdge = end
-    } else {
-      const start = stepMsFrom(ph, -1, snapToBeats)
-      selectionInMs.value = start
-      selectionDurationMs.value = Math.max(SMALLEST_NUDGE_MS, ph - start)
-      newEdge = start
-    }
-  } else if (direction > 0) {
-    newEdge = stepMsFrom(selectionEndMs.value, 1, snapToBeats)
-    selectionDurationMs.value = Math.max(SMALLEST_NUDGE_MS, newEdge - selectionInMs.value)
-  } else {
-    newEdge = stepMsFrom(selectionInMs.value, -1, snapToBeats)
-    const delta = newEdge - selectionInMs.value
-    selectionInMs.value = newEdge
-    selectionDurationMs.value = Math.max(SMALLEST_NUDGE_MS, selectionDurationMs.value - delta)
-  }
-  // Move the playhead to the new edge so the user sees the change.
-  seekPlayheadToSourceMs(newEdge)
-}
-
-function onCanvasWheel(e: WheelEvent): void {
-  const canvas = waveformEl.value
-  if (!canvas) return
-  const rect = canvas.getBoundingClientRect()
-  const vIn = visibleInMs.value
-  const vDur = visibleDurationMs.value
-  if (vDur <= 0) return
-  // Shift+wheel or any horizontal wheel delta → pan; otherwise → zoom anchored at cursor.
-  const pan = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)
-  e.preventDefault()
-  if (pan) {
-    const dx = (e.shiftKey ? e.deltaY : e.deltaX) || e.deltaY
-    const msPerPx = vDur / rect.width
-    const next = scrollMs.value + dx * msPerPx
-    scrollMs.value = Math.max(0, Math.min(maxScrollMs.value, next))
-  } else {
-    const pointerMs = vIn + ((e.clientX - rect.left) / rect.width) * vDur
-    const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2
-    setZoomAnchored(zoom.value * factor, pointerMs)
-  }
-}
-
-function onScrollbarMouseDown(e: MouseEvent): void {
-  const target = e.currentTarget as HTMLElement
-  const rect = target.getBoundingClientRect()
-  const vDur = viewDurationMs.value
-  if (vDur <= 0) return
-  const visDur = visibleDurationMs.value
-  const thumbWidth = (visDur / vDur) * rect.width
-  // If user clicks on the thumb start it as a drag, else jump-to-here then drag.
-  const initialThumbLeft = (scrollMs.value / vDur) * rect.width
-  const clickInThumb =
-    e.clientX - rect.left >= initialThumbLeft &&
-    e.clientX - rect.left <= initialThumbLeft + thumbWidth
-  if (!clickInThumb) {
-    const targetLeft = e.clientX - rect.left - thumbWidth / 2
-    scrollMs.value = Math.max(0, Math.min(maxScrollMs.value, (targetLeft / rect.width) * vDur))
-  }
-  const grabOffsetMs = (e.clientX - rect.left) / rect.width * vDur - scrollMs.value
-  const onMove = (ev: MouseEvent): void => {
-    const ms = (ev.clientX - rect.left) / rect.width * vDur - grabOffsetMs
-    scrollMs.value = Math.max(0, Math.min(maxScrollMs.value, ms))
-  }
-  const onUp = (): void => {
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-  }
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
-}
+const {
+  onCanvasMouseDown,
+  onCanvasContextMenu,
+  onCanvasWheel,
+  onScrollbarMouseDown,
+  nudgePlayhead,
+  extendSelection,
+  clearSelection
+} = useClipEditorCanvasInteraction({
+  getCanvas: () => waveformEl.value,
+  preview,
+  volumeShapeDraft,
+  selectionInMs,
+  selectionDurationMs,
+  scrollMs,
+  waveformStereoLanes,
+  viewInMs: () => viewInMs.value,
+  viewEndMs: () => viewEndMs.value,
+  viewDurationMs: () => viewDurationMs.value,
+  visibleInMs: () => visibleInMs.value,
+  visibleDurationMs: () => visibleDurationMs.value,
+  selectionEndMs: () => selectionEndMs.value,
+  maxScrollMs: () => maxScrollMs.value,
+  playheadAbsMs: () => playheadAbsMs.value,
+  hasPlaybackSelection: () => hasPlaybackSelection.value,
+  volumeEditActive: () => volumeEditActive.value,
+  volumeShapeDurationMs: () => volumeShapeDurationMs.value,
+  draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
+  sourceItem: () => sourceItem.value,
+  zoom: () => zoom.value,
+  setZoomAnchored
+})
 
 function onTogglePlay(): void {
   if (!preview.isLoaded) return
@@ -1453,275 +631,67 @@ function onToggleLoop(): void {
   loopEnabled.value = !loopEnabled.value
 }
 
-// Clear the user-narrowing selection so playback (and Save-as-new /
-// Apply-trim gating) revert to whole-view semantics.
-function clearSelection(): void {
-  selectionInMs.value = viewInMs.value
-  selectionDurationMs.value = viewDurationMs.value
-}
 
-function onKeydown(e: KeyboardEvent): void {
-  if (e.isComposing) return
-  const editable = isEditableTarget(e)
-  if (e.key === 'Escape') {
-    // While typing in a field, Esc cancels the field focus rather than
-    // closing the whole dialog (and never traps the user).
-    if (editable) {
-      ;(e.target as HTMLElement | null)?.blur()
-      return
-    }
-    // Esc with an active selection clears the selection first; a
-    // second Esc closes the dialog. Matches how text-editor and DAW
-    // selections behave.
-    if (hasPlaybackSelection.value) {
-      e.preventDefault()
-      clearSelection()
-      return
-    }
-    emit('close')
-    return
-  }
-  // No other transport / zoom / undo shortcut should fire while the
-  // user is typing into an input — otherwise digits ("0"), spaces and
-  // arrow keys get hijacked mid-edit.
-  if (editable) return
-  if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D') && !e.shiftKey && !e.altKey) {
-    e.preventDefault()
-    clearSelection()
-    return
-  }
-  // Dialog-local Undo / Redo: only covers the Crop button's
-  // working-view changes. The global undo handler defers to the
-  // dialog while `ui.clipEditorOpen` is true, so these shortcuts
-  // never leak through to the project-wide undo stack.
-  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
-    const key = e.key.toLowerCase()
-    if (key === 'z' && !e.shiftKey) {
-      e.preventDefault()
-      undoCropLocal()
-      return
-    }
-    if ((key === 'y' && !e.shiftKey) || (key === 'z' && e.shiftKey)) {
-      e.preventDefault()
-      redoCropLocal()
-      return
-    }
-  }
-  if (e.key === ' ' || e.code === 'Space') {
-    e.preventDefault()
-    e.stopPropagation()
-    onTogglePlay()
-    return
-  }
-  if (e.key === 'ArrowLeft') {
-    e.preventDefault()
-    if (e.shiftKey) extendSelection(-1, !e.altKey)
-    else nudgePlayhead(-1, !e.altKey)
-    return
-  }
-  if (e.key === 'ArrowRight') {
-    e.preventDefault()
-    if (e.shiftKey) extendSelection(1, !e.altKey)
-    else nudgePlayhead(1, !e.altKey)
-    return
-  }
-  if (e.key === '+' || e.key === '=') {
-    e.preventDefault()
-    zoomIn()
-    return
-  }
-  if (e.key === '-' || e.key === '_') {
-    e.preventDefault()
-    zoomOut()
-    return
-  }
-  if (e.key === '0') {
-    e.preventDefault()
-    resetZoom()
-    return
-  }
-  if (e.key === 'l' || e.key === 'L') {
-    e.preventDefault()
-    onToggleLoop()
-  }
-}
-
-// Dialog-local undo stack for Crop operations. Crop is purely
-// non-destructive (it just narrows the working view); committing the
-// final result via Apply trim goes through the project-wide
-// UndoManager and gets its own undo step there. We keep this stack
-// scoped to the dialog so closing it discards any uncommitted crops
-// — the library entry hasn't been touched.
-const cropUndoStack = ref<CropSnapshot[]>([])
-const cropRedoStack = ref<CropSnapshot[]>([])
-
-function captureCropSnapshot(): CropSnapshot {
-  return viewport.captureCropSnapshot()
-}
-
-function restoreCropSnapshot(snap: CropSnapshot): void {
-  viewport.restoreCropSnapshot(snap)
-  drawWaveform()
-  loadPreviewForView()
-}
-
-function onApplyCrop(): void {
-  if (!canApplyCrop.value) return
-  cropUndoStack.value.push(captureCropSnapshot())
-  cropRedoStack.value = []
-  cropViewInMs.value = Math.max(0, selectionInMs.value)
-  cropViewDurationMs.value = Math.max(0, selectionDurationMs.value)
-  resetZoom()
-  drawWaveform()
-  loadPreviewForView()
-}
-
-function undoCropLocal(): void {
-  const snap = cropUndoStack.value.pop()
-  if (!snap) return
-  cropRedoStack.value.push(captureCropSnapshot())
-  restoreCropSnapshot(snap)
-}
-
-function redoCropLocal(): void {
-  const snap = cropRedoStack.value.pop()
-  if (!snap) return
-  cropUndoStack.value.push(captureCropSnapshot())
-  restoreCropSnapshot(snap)
-}
-
-function savedClipWarpPatch(): {
-  warpEnabled: boolean
-  warpMode: ClipWarpMode
-  tempoRatio: number | null
-  semitones: number
-  cents: number
-} {
-  const nextSemitones = clampNumber(draftSemitones.value, -12, 12)
-  const nextCents = clampNumber(draftCents.value, -100, 100)
-  const pitchActive = pitchNeedsProcessor(nextSemitones, nextCents)
-  // When the tempo is pinned but the source BPM is unknown, the draft can't
-  // re-derive a ratio from the pinned BPM (`tempoRatioFromPinnedBpm` returns
-  // undefined). Fall back to the clip's existing pinned ratio so reconstructing
-  // this patch on save preserves the warp instead of clearing it to null —
-  // otherwise a volume- or trim-only save would silently drop the warp.
-  const current = timelineClip.value ?? editorItem.value
-  const existingPinnedRatio =
-    typeof current?.tempoRatio === 'number' && current.tempoRatio > 0 && current.tempoRatio !== 1
-      ? current.tempoRatio
-      : null
-  return {
-    warpEnabled: draftTempoEnabled.value || pitchActive,
-    warpMode: draftMode.value,
-    tempoRatio: draftTempoEnabled.value
-      ? (draftTempoPinned.value ? tempoRatioFromPinnedBpm() ?? existingPinnedRatio : null)
-      : (pitchActive ? 1 : null),
-    semitones: nextSemitones,
-    cents: nextCents
-  }
-}
-
-function draftTargetWindow(): { inMs: number; durationMs: number } {
-  return {
-    inMs:
-      canApplyCrop.value || selectionDurationMs.value > 0
-        ? selectionInMs.value
-        : cropViewInMs.value,
-    durationMs:
-      canApplyCrop.value || selectionDurationMs.value > 0
-        ? selectionDurationMs.value
-        : cropViewDurationMs.value
-  }
-}
-
-function conflictingTrackNameForTimelineClip(clip: Clip, nextDurationMs: number, tempoRatio: number | null): string | null {
-  const track = project.tracks.find((candidate) => candidate.id === clip.trackId)
-  if (!track) return null
-  const effectiveMs = effectiveDurationMs(nextDurationMs, {
-    warpEnabled: draftTempoEnabled.value,
-    tempoRatio: tempoRatio ?? undefined,
-    sourceBpm: sourceBpm.value,
-    projectBpm: transport.bpm
+// Dialog-local Crop undo/redo history lives in a composable. Crop is purely
+// non-destructive (it narrows the working view); Apply trim commits through the
+// project-wide UndoManager. The stack is scoped to the dialog so closing it
+// discards any uncommitted crops.
+const { onApplyCrop, undoCropLocal, redoCropLocal, resetCropHistory } =
+  useClipEditorCropHistory({
+    canApplyCrop: () => canApplyCrop.value,
+    captureCropSnapshot: () => viewport.captureCropSnapshot(),
+    restoreCropSnapshot: (snap) => viewport.restoreCropSnapshot(snap),
+    cropViewInMs,
+    cropViewDurationMs,
+    selectionInMs: () => selectionInMs.value,
+    selectionDurationMs: () => selectionDurationMs.value,
+    resetZoom,
+    redraw: () => drawWaveform(),
+    reloadPreview: () => loadPreviewForView()
   })
-  const nextStart = clip.startMs
-  const nextEnd = nextStart + effectiveMs
-  for (const otherId of track.clipIds) {
-    if (otherId === clip.id) continue
-    const other = project.clips[otherId]
-    if (!other) continue
-    const otherEnd = other.startMs + effectiveClipDurationMs(other)
-    if (nextStart < otherEnd && nextEnd > other.startMs) return track.name
-  }
-  return null
-}
+const { onSaveChanges, onSaveAsNew } = useClipEditorSave({
+  project,
+  library,
+  notifications,
+  close: () => emit('close'),
+  editorItem: () => editorItem.value,
+  timelineClip: () => timelineClip.value,
+  sourceItem: () => sourceItem.value,
+  titleText: () => titleText.value,
+  editsSingleTimelineClip: () => editsSingleTimelineClip.value,
+  editsSavedClipLibrary: () => editsSavedClipLibrary.value,
+  hasWarpPitchChanged: () => hasWarpPitchChanged.value,
+  sourceBpm: () => sourceBpm.value,
+  projectBpm: () => transport.bpm,
+  canApplyCrop: () => canApplyCrop.value,
+  selectionInMs: () => selectionInMs.value,
+  selectionDurationMs: () => selectionDurationMs.value,
+  cropViewInMs: () => cropViewInMs.value,
+  cropViewDurationMs: () => cropViewDurationMs.value,
+  draftSemitones: () => draftSemitones.value,
+  draftCents: () => draftCents.value,
+  draftTempoEnabled: () => draftTempoEnabled.value,
+  draftMode: () => draftMode.value,
+  draftTempoPinned: () => draftTempoPinned.value,
+  tempoRatioFromPinnedBpm: () => tempoRatioFromPinnedBpm(),
+  volumeShapeCommittedPoints: () => volumeShapeCommittedPoints()
+})
 
-function onSaveChanges(): void {
-  const entry = editorItem.value
-  if (!entry) return
-  // Save commits the whole Clip Editor draft atomically. Until this
-  // point, trim/crop/warp/pitch only affect the local view and preview
-  // voice; timeline clips and library items remain untouched.
-  const { inMs: targetIn, durationMs: targetDur } = draftTargetWindow()
-  const warpPatch = savedClipWarpPatch()
-  if (editsSingleTimelineClip.value) {
-    const clip = timelineClip.value
-    if (!clip) {
-      notifications.pushError('Cannot save changes — clip is no longer available.')
-      return
-    }
-    const conflictTrack = conflictingTrackNameForTimelineClip(clip, targetDur, warpPatch.tempoRatio)
-    if (conflictTrack) {
-      notifications.pushError(`Cannot save changes — they would overlap clips on ${conflictTrack}.`)
-      return
-    }
-    project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
-    // Only re-apply warp when the user actually changed it. `savedClipWarpPatch`
-    // reconstructs the patch from the draft, which is lossy for follow-project
-    // clips (it emits `tempoRatio: null`); re-applying it on a volume-only save
-    // would clear an existing warp on the backend, leaving the clip flagged as
-    // warped but playing at its original tempo. `trimClip` self-guards and
-    // `setClipEnvelope` round-trips, so only warp needs gating here.
-    if (hasWarpPitchChanged.value) {
-      project.setClipWarp(clip.id, warpPatch)
-    }
-    // Volume shape is stored in clip-local timeline-ms basis; a flat unity
-    // draft commits as an empty array, clearing it.
-    project.setClipEnvelope(clip.id, volumeShapeCommittedPoints())
-    notifications.pushInfo(`Saved changes for "${titleText.value}".`)
-    emit('close')
-    return
-  }
-  if (!editsSavedClipLibrary.value) return
-  const result = library.updateSavedClipEdit(entry.id, {
-    inMs: targetIn,
-    durationMs: targetDur,
-    ...warpPatch
-  })
-  if (result.ok) {
-    notifications.pushInfo(`Saved changes for "${titleText.value}".`)
-    emit('close')
-  } else if (result.conflictingTrackNames && result.conflictingTrackNames.length > 0) {
-    notifications.pushError(
-      `Cannot save changes — they would overlap clips on ${result.conflictingTrackNames.join(', ')}.`
-    )
-  } else {
-    notifications.pushError('Cannot save changes — invalid edit.')
-  }
-}
-
-function onSaveAsNew(): void {
-  const src = sourceItem.value
-  if (!src) return
-  const id = library.addSavedClipFromSelection(
-    src.id,
-    selectionInMs.value,
-    selectionDurationMs.value
-  )
-  if (id) {
-    notifications.pushInfo(`Saved selection as new clip.`)
-    emit('close')
-  }
-}
+const { onKeydown, onWindowKeydownCapture } = useClipEditorKeyboard({
+  isOpen: () => props.open,
+  hasPlaybackSelection: () => hasPlaybackSelection.value,
+  close: () => emit('close'),
+  clearSelection,
+  extendSelection,
+  nudgePlayhead,
+  togglePlay: onTogglePlay,
+  toggleLoop: onToggleLoop,
+  zoomIn,
+  zoomOut,
+  resetZoom,
+  undoCropLocal,
+  redoCropLocal
+})
 
 window.addEventListener('resize', drawWaveform)
 onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
@@ -2096,3 +1066,5 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
   background: #3f3f46;
 }
 </style>
+
+

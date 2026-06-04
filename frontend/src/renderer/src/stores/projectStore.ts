@@ -7,6 +7,12 @@
 import { defineStore } from 'pinia'
 import { decodeAudioToPeaks, PEAKS_PER_SECOND } from '@/lib/audio'
 import { MAX_TRACK_GAIN_LINEAR } from '@/lib/audio/db'
+import {
+  effectiveClipDurationMs,
+  effectiveClipTempoRatio,
+  isClipTempoWarpActive,
+  findClipSlot
+} from '@/lib/clip/clipTiming'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { sanitizeEnvelopePoints, envelopesEqual } from '@/lib/envelope'
 import {
@@ -27,6 +33,12 @@ import type {
   TransitionRecipe
 } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
+
+// Facade re-export: these pure clip-timing helpers now live in
+// `@/lib/clip/clipTiming` but are widely imported from this store
+// (useTimelineDrawing, useDragHandlers, useTimelineContextMenu,
+// lib/transitions). Re-export keeps that import surface stable.
+export { effectiveClipDurationMs, effectiveClipTempoRatio, isClipTempoWarpActive }
 
 export interface Clip {
   readonly id: string
@@ -623,37 +635,6 @@ const pendingAutosaveResolvers = new Map<
   (result: { ok: boolean; error?: string }) => void
 >()
 
-export function effectiveClipDurationMs(clip: { durationMs: number; effectiveDurationMs?: number }): number {
-  return typeof clip.effectiveDurationMs === 'number' && clip.effectiveDurationMs > 0
-    ? clip.effectiveDurationMs
-    : clip.durationMs
-}
-
-export function effectiveClipTempoRatio(clip: { effectiveTempoRatio?: number }): number {
-  return typeof clip.effectiveTempoRatio === 'number' && clip.effectiveTempoRatio > 0
-    ? clip.effectiveTempoRatio
-    : 1
-}
-
-export function isClipTempoWarpActive(clip: { effectiveWarpActive?: boolean }): boolean {
-  return clip.effectiveWarpActive === true
-}
-
-/**
- * Return the position closest to `desiredStartMs` on `trackId` where a
- * clip of `durationMs` fits without overlapping any existing clip
- * (excluding the one identified by `excludeClipId`, which is the
- * dragged clip itself). The track timeline is decomposed into free
- * gaps; for each gap that can hold the clip we compute the closest
- * valid `startMs` and keep the best one overall.
- *
- * Picks the gap whose closest-valid position is nearest the desired
- * one — this yields "bump against the neighbour" behaviour during
- * drag (the clip slides up against the wall and stays there as long
- * as the cursor pushes that way), while still letting the user move
- * the clip to a different gap by dragging the cursor decisively past
- * the obstruction. Returns `null` if no gap is big enough.
- */
 /**
  * Map the wire-format transitions on a track snapshot to the store shape.
  * Returns undefined for an absent / empty list so a transition-free track
@@ -670,53 +651,6 @@ function hydrateTransitions(
     rightClipId: tr.rightClipId,
     recipe: tr.recipe
   }))
-}
-
-function findClipSlot(
-  state: { tracks: Track[]; clips: Record<string, Clip> },
-  trackId: string,
-  excludeClipId: string,
-  desiredStartMs: number,
-  durationMs: number,
-  resolveDurationMs?: (clip: Clip) => number
-): number | null {
-  const track = state.tracks.find((t) => t.id === trackId)
-  if (!track) return null
-  // Collect occupied intervals (excluding the dragged clip).
-  const intervals: { start: number; end: number }[] = []
-  for (const id of track.clipIds) {
-    if (id === excludeClipId) continue
-    const c = state.clips[id]
-    if (!c) continue
-    const effectiveDurationMs = resolveDurationMs ? resolveDurationMs(c) : c.durationMs
-    intervals.push({ start: c.startMs, end: c.startMs + effectiveDurationMs })
-  }
-  intervals.sort((a, b) => a.start - b.start)
-  // Build complementary "free gaps".
-  const gaps: { start: number; end: number }[] = []
-  let cursor = 0
-  for (const iv of intervals) {
-    if (iv.start > cursor) gaps.push({ start: cursor, end: iv.start })
-    cursor = Math.max(cursor, iv.end)
-  }
-  gaps.push({ start: cursor, end: Number.POSITIVE_INFINITY })
-
-  const desired = Math.max(0, desiredStartMs)
-  let best: number | null = null
-  let bestDist = Number.POSITIVE_INFINITY
-  for (const g of gaps) {
-    const gapLen = g.end - g.start
-    if (gapLen < durationMs) continue
-    const lo = g.start
-    const hi = g.end === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : g.end - durationMs
-    const candidate = Math.min(Math.max(desired, lo), hi)
-    const dist = Math.abs(candidate - desired)
-    if (dist < bestDist) {
-      bestDist = dist
-      best = candidate
-    }
-  }
-  return best
 }
 
 export const useProjectStore = defineStore('project', {
@@ -930,14 +864,13 @@ export const useProjectStore = defineStore('project', {
       if (!destTrack) return
 
       // Bump-clamp into the gap nearest the desired position.
-      const resolveDurationMs = (c: Clip): number => effectiveClipDurationMs(c)
       const target = findClipSlot(
         this,
         destTrack.id,
         clipId,
         startMs,
-        resolveDurationMs(clip),
-        resolveDurationMs
+        effectiveClipDurationMs(clip),
+        effectiveClipDurationMs
       )
       if (target === null) return // no gap big enough — keep current position
 

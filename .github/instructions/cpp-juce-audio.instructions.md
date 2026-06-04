@@ -148,3 +148,20 @@ or compact code.
 - Avoid comments that restate the code.
 - Update project documentation or instruction files only when the change
   affects developer workflow, architecture, or packaging behavior.
+
+## File Size and Single Responsibility
+
+- A translation unit / header should be one coherent unit of thought. If you
+  can't describe it in one short sentence, split it.
+- Soft ceilings (scrutinise above): `.cpp` ~500 lines, `.h` ~250
+  (declarations only). **Any file > 800 lines must be seriously considered for
+  splitting unless there is a very good, explicitly-stated reason.** Line count
+  is a symptom, not the goal.
+- Legitimate reasons to stay large: a genuinely cohesive real-time DSP chain
+  (e.g. one `processBlock` path) — never fragment a real-time audio path purely
+  to chase a line count, that is worse than keeping it together.
+- Prefer extracting cohesive free-function command groups into their own TU
+  (mirror `TransitionCommands.cpp`) over growing `Main.cpp` / `ProjectState.cpp`.
+  Move via pure mechanical extraction (no behaviour change), keeping the build
+  and `ctest` green at each step. Watch for ODR, static-init-order, and
+  threading hazards when moving file-local statics across TUs.

@@ -187,6 +187,27 @@ export interface ImportEntry {
   libraryItemId?: string
 }
 
+/** Session-scoped high-resolution peaks for the Clip Editor (one entry at a
+ *  time — each array can be multi-MB and only one editor is on screen). */
+export interface EditorHiResPeaks {
+  libraryItemId: string
+  peaksPerSecond: number
+  sampleRate: number
+  peaks: Float32Array
+  /** Per-channel high-res peaks `[left, right]` for stereo sources; empty for
+   *  mono. Used by the Clip Editor's stereo display mode. */
+  channels: Float32Array[]
+}
+
+/** Per-library-item stereo peak data: raw per-channel peaks plus a per-channel
+ *  LOD pyramid so the timeline can pick a level near one peak per pixel per
+ *  lane. Only populated for 2-channel sources. */
+export interface ItemChannelPeaks {
+  channels: Float32Array[]
+  lod: import('@/lib/peaksLod').PeaksLodLayer[][]
+  peaksPerSecond: number
+}
+
 interface LibraryState {
   items: LibraryItem[]
   nextItemIndex: number
@@ -213,31 +234,14 @@ interface LibraryState {
    *  default-resolution peaks can resolve. We hold a single entry
    *  here (one per dialog open / item switch) because each array can
    *  be multi-MB and there's only one Clip Editor on screen at a time. */
-  editorHiResPeaks: {
-    libraryItemId: string
-    peaksPerSecond: number
-    sampleRate: number
-    peaks: Float32Array
-    /** Per-channel high-res peaks `[left, right]` for stereo sources;
-     *  empty for mono. Used by the Clip Editor's stereo display mode. */
-    channels: Float32Array[]
-  } | null
+  editorHiResPeaks: EditorHiResPeaks | null
   /**
    * Per-library-item stereo peak data, keyed by item id. Held in a
    * separate map (rather than threaded through the `LibraryItem`
    * constructors) so the summary-mode path stays untouched and the
-   * blast radius of the stereo feature is bounded. Each entry carries
-   * the raw per-channel peaks plus a per-channel LOD pyramid so the
-   * timeline can pick a level near one peak per pixel per lane. Only
-   * populated for 2-channel sources; cleared in `removeItem`. */
-  channelPeaksByItemId: Record<
-    string,
-    {
-      channels: Float32Array[]
-      lod: import('@/lib/peaksLod').PeaksLodLayer[][]
-      peaksPerSecond: number
-    }
-  >
+   * blast radius of the stereo feature is bounded. Only populated for
+   * 2-channel sources; cleared in `removeItem`. */
+  channelPeaksByItemId: Record<string, ItemChannelPeaks>
 }
 
 function touchTimelineClipsForLibraryItem(itemId: string): number {

@@ -41,6 +41,14 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 - Adhere to the single responsibility principle for components
 - Use PascalCase for component names and kebab-case for file names
 - Keep components small and focused on one concern
+- A single-file component should be one coherent unit of thought. Soft ceiling
+  ~250 lines; **any SFC > 800 lines must be seriously considered for splitting
+  unless there is a very good, explicitly-stated reason.** Line count is a
+  symptom, not the goal — the real signal is multiple concerns in one file.
+- When an SFC is over budget, extract child components for distinct UI regions
+  and move logic into `useXxx` composables, keeping `<template>` thin. Preserve
+  emitted events, props, and watcher timing exactly — extraction must not change
+  behaviour; keep `pnpm typecheck` / `lint` / `test` green at each step.
 - Use `<script setup>` syntax for brevity and performance
 - Validate props with TypeScript; use runtime checks only when necessary
 - Favor slots and scoped slots for flexible composition

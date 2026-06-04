@@ -23,12 +23,30 @@ as blocking-class review findings, not stylistic suggestions.
 
 ## Maintainability rules (enforce strongly)
 
-- **Keep files small and single-purpose.** Flag oversized files and **propose a
-  concrete split** (by responsibility / feature / adapter). Heuristics, not
-  dogma: Vue SFC > ~250 lines, TS module > ~350 lines, C++ translation unit
-  > ~500 lines, any function > ~50 lines or deeply nested → scrutinise.
-  **Resist adding new code to already-oversized files** (e.g. `Main.cpp`) —
-  extract into a focused unit instead of growing the god file.
+- **Keep files small and single-purpose.** A file should represent **one
+  coherent unit of thought** — a class, a module, a component, a domain concept.
+  If you can't describe what a file does in one short sentence, it's doing too
+  much. Line count is a *symptom, not the goal*: a 1,000-line pure data/schema
+  table can be fine, while a 300-line file with 8 responsibilities is a mess.
+  Real signals a file is too long: more than one primary class/concept, an
+  enormous import block, you scroll past unrelated code to find things, it's a
+  frequent merge-conflict hot-spot. Soft ceilings (scrutinise above these):
+  - **Vue SFC** ~250 lines · **TS module** ~350 · **TS type/schema-only** longer
+    is OK · **C++ header** ~250 (declarations only) · **C++ `.cpp`** ~500
+    (≥800 warrants serious scrutiny) · any **function** > ~50 lines or deeply
+    nested.
+  - **Hard review trigger: ANY file > 800 lines must be seriously considered for
+    splitting unless there is a very good, explicitly-stated reason** (e.g. a
+    genuinely cohesive real-time DSP `processBlock` chain, or a pure
+    generated/data table). Don't split a cohesive real-time audio path purely to
+    chase a line count — that's worse than leaving it together.
+  - When a file is over budget, **propose a concrete split** (by responsibility /
+    feature / adapter), preferring a stable barrel/facade re-export so importers
+    don't churn, and **extract via pure mechanical moves** (no behaviour change)
+    with build + tests green at each step.
+  **Resist adding new code to an already-oversized file** (e.g. `Main.cpp`,
+  `projectStore.ts`) — extract into a focused unit instead of growing the god
+  file, even for a small addition.
 - **No duplication.** Duplicated logic, dispatch branches, payload shapes, regex,
   or magic constants are defects. Require a single source of truth and a dedupe
   strategy (shared helper / composable / base type / enum). Reuse before

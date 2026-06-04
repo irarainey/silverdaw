@@ -28,6 +28,25 @@ applyTo: "**/*.ts"
 - Keep tests, types, and helpers near their implementation when it aids discovery.
 - Reuse or extend shared utilities before adding new ones.
 
+## File Size and Single Responsibility
+
+- A module should be one coherent unit of thought; if you can't describe it in
+  one short sentence, split it. Line count is a *symptom, not the goal*.
+- Soft ceilings (scrutinise above): TS module ~350 lines; Pinia store actions /
+  large composables, extract pure helpers and sub-modules early. Pure
+  type/schema-only files may run longer. **Any file > 800 lines must be
+  seriously considered for splitting unless there is a very good,
+  explicitly-stated reason.**
+- **Resist growing an already-oversized file** (e.g. `projectStore.ts`,
+  `bridge-protocol.ts`, `libraryStore.ts`) — extract a focused module instead,
+  even for a small addition.
+- Prefer a stable **barrel / facade re-export** so existing importers don't
+  churn when you split a module. Extract via pure mechanical moves (no behaviour
+  change) and keep `pnpm typecheck` / `lint` / `test` green at each step.
+- For the bridge schema, split by domain into `shared/protocol/*` re-exported
+  from the existing `bridge-protocol.ts` facade — it stays the single source of
+  truth; never fork a parallel hand-written type.
+
 ## Naming & Style
 
 - Use PascalCase for classes, interfaces, enums, and type aliases; camelCase for everything else.
