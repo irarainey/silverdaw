@@ -365,7 +365,7 @@ const dropIndicatorTopPx = computed<number>(() => {
             'opacity-50': track.muted || (project.anySoloed && !track.soloed),
             'ring-1 ring-inset ring-cyan-500/60': track.soloed,
             'opacity-30': reorderingTrackId === track.id,
-            '!border-sky-400 bg-zinc-800/40': project.selectedTrackId === track.id
+            'border-sky-400! bg-zinc-800/40': project.selectedTrackId === track.id
           }"
           :style="{
             top: ((rowLayout[i]?.top ?? 0) - RULER_HEIGHT) + 'px',

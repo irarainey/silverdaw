@@ -149,7 +149,7 @@ function onSave(): void {
         </div>
 
         <!-- Body: sidebar tab list + content pane -->
-        <div class="flex max-h-[70vh] min-h-[360px] overflow-hidden">
+        <div class="flex max-h-[70vh] min-h-90 overflow-hidden">
           <!-- Sidebar tab list -->
           <nav
             class="flex w-40 shrink-0 flex-col gap-0.5 border-r border-zinc-800 bg-zinc-950/40 py-3 text-xs"

@@ -413,7 +413,7 @@ function onResizePointerUp(): void {
           <div
             v-for="source in sourceItems"
             :key="source.id"
-            class="library-group flex w-[240px] max-w-full shrink-0 flex-col overflow-hidden rounded-md border"
+            class="library-group flex w-60 max-w-full shrink-0 flex-col overflow-hidden rounded-md border"
             :class="
               childItems(source).length > 0
                 ? 'border-zinc-800 bg-zinc-950/50'
@@ -431,7 +431,7 @@ function onResizePointerUp(): void {
               <!-- Cover art thumbnail (or fallback) on the left edge. -->
               <div
                 v-if="ui.showLibraryTileImages"
-                class="flex aspect-square w-[75px] shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
+                class="flex aspect-square w-18.75 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
               >
                 <img
                   v-if="source.coverArtUrl"
@@ -616,7 +616,7 @@ function onResizePointerUp(): void {
           <!-- Orphan saved clips: source file was removed from the library. -->
           <div
             v-if="orphanSavedClipItems.length > 0"
-            class="library-group flex w-[240px] max-w-full shrink-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/50"
+            class="library-group flex w-60 max-w-full shrink-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/50"
           >
             <div class="px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
               Saved clips (source missing)
