@@ -10,7 +10,7 @@
 //     position / project-length fields.
 //
 // Pure functions on purpose: no Pinia / Vue imports so they're trivial to
-// unit-test in isolation (see `musicTime.spec.ts`).
+// unit-test in isolation (see `musicTime.test.ts`).
 
 /** Sub-beats per beat used everywhere in the timeline (1/16 of a 4/4 bar). */
 export const DEFAULT_SUBS_PER_BEAT = 4

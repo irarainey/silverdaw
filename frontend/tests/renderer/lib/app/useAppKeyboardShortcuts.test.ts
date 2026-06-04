@@ -1,0 +1,255 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { useAppKeyboardShortcuts, type AppKeyboardShortcutsDeps } from '@/lib/app/useAppKeyboardShortcuts'
+
+// The handler's editable-target guard uses `instanceof HTMLElement`, a browser
+// global absent under the node test env. Stub it so plain-object targets read
+// as non-editable (the desired state for these dispatch tests).
+vi.stubGlobal('HTMLElement', class HTMLElement {})
+
+const sendBridge = vi.fn()
+vi.mock('@/lib/bridgeService', () => ({
+  send: (...args: unknown[]) => sendBridge(...args)
+}))
+vi.mock('@/lib/log', () => ({
+  log: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }
+}))
+
+interface FakeStores {
+  transport: {
+    bridgeReady: boolean
+    engineRecovery: string
+    isPlaying: boolean
+    positionMs: number
+    bpm: number
+    setPlaybackState: ReturnType<typeof vi.fn>
+    setPosition: ReturnType<typeof vi.fn>
+  }
+  project: {
+    durationMs: number
+    selectedClipId: string | null
+    clips: Record<string, { locked: boolean }>
+    tracks: { clipIds: string[] }[]
+    markers: { positionMs: number }[]
+    viewPxPerSecond: number
+    setClipLocked: ReturnType<typeof vi.fn>
+    toggleMarkerAt: ReturnType<typeof vi.fn>
+  }
+  ui: {
+    requestTimelineZoom: ReturnType<typeof vi.fn>
+    requestTimelineScroll: ReturnType<typeof vi.fn>
+    requestTimelineScrollToPosition: ReturnType<typeof vi.fn>
+  }
+}
+
+function makeDeps(overrides: { modalOpen?: boolean } = {}): {
+  deps: AppKeyboardShortcutsDeps
+  stores: FakeStores
+  openExportMixdown: ReturnType<typeof vi.fn>
+} {
+  const stores: FakeStores = {
+    transport: {
+      bridgeReady: true,
+      engineRecovery: 'ok',
+      isPlaying: false,
+      positionMs: 0,
+      bpm: 120,
+      setPlaybackState: vi.fn(),
+      setPosition: vi.fn()
+    },
+    project: {
+      durationMs: 10_000,
+      selectedClipId: null,
+      clips: {},
+      tracks: [],
+      markers: [],
+      viewPxPerSecond: 100,
+      setClipLocked: vi.fn(),
+      toggleMarkerAt: vi.fn()
+    },
+    ui: {
+      requestTimelineZoom: vi.fn(),
+      requestTimelineScroll: vi.fn(),
+      requestTimelineScrollToPosition: vi.fn()
+    }
+  }
+  const openExportMixdown = vi.fn()
+  const deps: AppKeyboardShortcutsDeps = {
+    transport: stores.transport as unknown as AppKeyboardShortcutsDeps['transport'],
+    project: stores.project as unknown as AppKeyboardShortcutsDeps['project'],
+    ui: stores.ui as unknown as AppKeyboardShortcutsDeps['ui'],
+    isModalOpen: () => overrides.modalOpen === true,
+    openExportMixdown
+  }
+  return { deps, stores, openExportMixdown }
+}
+
+interface KeyOpts {
+  key?: string
+  code?: string
+  ctrlKey?: boolean
+  metaKey?: boolean
+  shiftKey?: boolean
+  altKey?: boolean
+  repeat?: boolean
+}
+
+function makeKey(opts: KeyOpts = {}): {
+  e: KeyboardEvent
+  preventDefault: ReturnType<typeof vi.fn>
+} {
+  const preventDefault = vi.fn()
+  const e = {
+    key: opts.key ?? '',
+    code: opts.code ?? '',
+    ctrlKey: opts.ctrlKey ?? false,
+    metaKey: opts.metaKey ?? false,
+    shiftKey: opts.shiftKey ?? false,
+    altKey: opts.altKey ?? false,
+    repeat: opts.repeat ?? false,
+    preventDefault,
+    stopPropagation: vi.fn(),
+    // Plain object target is not an HTMLElement instance -> treated as
+    // non-editable, which is what we want for these dispatch tests.
+    target: {}
+  } as unknown as KeyboardEvent
+  return { e, preventDefault }
+}
+
+describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
+  let h: ReturnType<typeof makeDeps>
+  let kb: ReturnType<typeof useAppKeyboardShortcuts>
+
+  beforeEach(() => {
+    sendBridge.mockClear()
+    h = makeDeps()
+    kb = useAppKeyboardShortcuts(h.deps)
+  })
+
+  it('Space starts playback from a stopped transport', () => {
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(h.stores.transport.setPlaybackState).toHaveBeenCalledWith(true)
+  })
+
+  it('Space pauses when playing', () => {
+    h.stores.transport.isPlaying = true
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_PAUSE')
+    expect(h.stores.transport.setPlaybackState).toHaveBeenCalledWith(false)
+  })
+
+  it('Space at end-of-project is a no-op', () => {
+    h.stores.transport.positionMs = 10_000
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).not.toHaveBeenCalled()
+  })
+
+  it('suppresses shortcuts while a modal is open', () => {
+    h = makeDeps({ modalOpen: true })
+    kb = useAppKeyboardShortcuts(h.deps)
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).not.toHaveBeenCalled()
+  })
+
+  it('suppresses shortcuts before the bridge is ready', () => {
+    h.stores.transport.bridgeReady = false
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).not.toHaveBeenCalled()
+  })
+
+  it('suppresses shortcuts during engine recovery', () => {
+    h.stores.transport.engineRecovery = 'recovering'
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).not.toHaveBeenCalled()
+  })
+
+  it('Ctrl+M opens the export dialog when clips exist', () => {
+    h.stores.project.tracks = [{ clipIds: ['c1'] }]
+    const { e } = makeKey({ key: 'm', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.openExportMixdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl+M is a no-op with no clips', () => {
+    const { e } = makeKey({ key: 'm', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.openExportMixdown).not.toHaveBeenCalled()
+  })
+
+  it('Ctrl+L toggles lock on the selected clip', () => {
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.clips = { c1: { locked: false } }
+    const { e } = makeKey({ key: 'l', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.setClipLocked).toHaveBeenCalledWith('c1', true)
+  })
+
+  it('Ctrl+L with no selection is a no-op', () => {
+    const { e } = makeKey({ key: 'l', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.setClipLocked).not.toHaveBeenCalled()
+  })
+
+  it('bare M toggles a marker at the snapped playhead', () => {
+    h.stores.transport.positionMs = 500
+    const { e } = makeKey({ key: 'm' })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.toggleMarkerAt).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl++ requests a zoom-in', () => {
+    const { e } = makeKey({ key: '+', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoom).toHaveBeenCalledWith('in')
+  })
+
+  it('Ctrl+0 requests a zoom reset', () => {
+    const { e } = makeKey({ code: 'Digit0', key: '0', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoom).toHaveBeenCalledWith('reset')
+  })
+
+  it('Ctrl+Shift+ArrowLeft skips to start', () => {
+    const { e } = makeKey({ key: 'ArrowLeft', ctrlKey: true, shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineScroll).toHaveBeenCalledWith('start')
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 0 })
+  })
+
+  it('Ctrl+Shift+ArrowRight skips to end', () => {
+    const { e } = makeKey({ key: 'ArrowRight', ctrlKey: true, shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineScroll).toHaveBeenCalledWith('end')
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 10_000 })
+  })
+
+  it('Ctrl+ArrowRight seeks to the next marker', () => {
+    h.stores.project.markers = [{ positionMs: 2000 }, { positionMs: 4000 }]
+    h.stores.transport.positionMs = 1000
+    const { e } = makeKey({ key: 'ArrowRight', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2000 })
+  })
+
+  it('bare ArrowRight steps forward to the next sub-beat grid line', () => {
+    // 120 bpm -> 500 ms/beat -> 125 ms/sub-beat.
+    h.stores.transport.positionMs = 0
+    const { e } = makeKey({ key: 'ArrowRight' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 125 })
+  })
+
+  it('Alt+ArrowRight steps forward by one pixel of time', () => {
+    // 100 px/s -> 10 ms/px.
+    h.stores.transport.positionMs = 0
+    const { e } = makeKey({ key: 'ArrowRight', altKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 10 })
+  })
+})

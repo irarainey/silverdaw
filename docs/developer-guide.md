@@ -1584,10 +1584,15 @@ pnpm dist:dir    # win-unpacked only, no NSIS step
   target that runs the backend unit tests and writes reports under the
   build directory's `coverage/` folder. MSVC builds still run the tests,
   but do not provide native coverage reports through this CMake target.
-- **TypeScript / Vue**: `pnpm typecheck` (`vue-tsc --noEmit -p tsconfig.web.json --composite false`),
+- **TypeScript / Vue**: `pnpm typecheck` (`vue-tsc --noEmit -p tsconfig.web.json`
+  for the renderer/shared sources and tests, then `tsc --noEmit -p tsconfig.node.json`
+  for the Electron main/preload sources and the main-process tests),
   `pnpm lint` (ESLint flat config with `eslint-plugin-vue` and `@typescript-eslint`).
 - **Tests**: `pnpm test` runs Vitest over the shared bridge-protocol guards,
-  music-time helpers and Pinia stores. `pnpm test:coverage` runs the same
+  music-time helpers and Pinia stores. Test files live under `frontend/tests/`,
+  mirroring the `src/` layout (`tests/renderer`, `tests/main`, `tests/shared`),
+  are named `*.test.ts`, and reference the code under test through the `@`,
+  `@shared` and `@main` path aliases. `pnpm test:coverage` runs the same
   suite with V8 coverage and writes text, HTML, lcov and JSON-summary reports
   under `frontend/coverage/`.
 

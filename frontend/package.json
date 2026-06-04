@@ -15,7 +15,7 @@
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "lint": "eslint . --ext .ts,.vue",
-    "typecheck": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.web.json --composite false && tsc --noEmit -p tsconfig.node.json --composite false",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",

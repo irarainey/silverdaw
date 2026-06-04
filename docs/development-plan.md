@@ -1387,7 +1387,7 @@ playable at every point — no broken-build day):
   the coalesce-key map in `Main.cpp` with stable target keys
   (`clipId`, `trackId`, `"project"`) and the new
   `(messageType, targetId, gestureId)` coalesce key (§7.11). Add
-  runtime-guard tests in `bridge-protocol.spec.ts`. **No on-disk
+  runtime-guard tests in `bridge-protocol.test.ts`. **No on-disk
   schema-version bump** — Phase 5 only adds optional fields with
   defaults; bump `schemaVersion` only when a genuinely incompatible
   field is added.
