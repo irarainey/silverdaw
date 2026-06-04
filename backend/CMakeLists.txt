@@ -222,6 +222,8 @@ add_library(silverdaw_backend_core STATIC
     src/PeaksCache.cpp
     src/ProjectFile.cpp
     src/ProjectState.cpp
+    src/ProjectTransitions.cpp
+    src/TransitionCommands.cpp
     src/ValueTreeJson.cpp
     src/WarpProcessor.cpp
     src/Waveform.cpp)

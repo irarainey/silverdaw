@@ -1871,23 +1871,25 @@ Implementation increments (foundations first; each keeps build + tests green):
 - [x] **B1 — Edge-fade DSP primitive.** `EdgeFadeSnapshot` (RT-safe, immutable,
   equal-power, timeline-sample space) + custom-harness tests (endpoints,
   constant-power law, sandwiching, degenerate-span rejection).
-- [ ] **B2 — Audio wiring.** Publish the edge fade into each clip's `OffsetSource`
+- [x] **B2 — Audio wiring.** Publish the edge fade into each clip's `OffsetSource`
   (atomic pointer + retire queue, mirroring the envelope discipline); apply it
   multiplied with the volume envelope on the audio thread; mirror in
   `MixdownEngine` for live/offline parity.
-- [ ] **B3 — Persistence + derivation + reconciliation.** Store transitions in the
+- [x] **B3 — Persistence + derivation + reconciliation.** Store transitions in the
   ProjectState ValueTree (default-suppressed); derive each clip's edge-fade from
   the transition geometry; reconcile/auto-delete on clip remove/move/trim/warp.
   Round-trip + lifecycle tests.
-- [ ] **B4 — Transition handlers + undo.** `TRANSITION_*` handlers in a NEW
+- [x] **B4 — Transition handlers + undo.** `TRANSITION_*` handlers in a NEW
   translation unit (not `Main.cpp`), each a single undoable transaction mutating
   both partner clips atomically.
-- [ ] **C — Frontend store + collision.** Transitions in the project store;
+- [x] **C — Frontend store + collision.** Transitions in the project store;
   transition-aware `wouldClipOverlap` / `findClipSlot` so partners stay editable;
   reconciliation mirror on `PROJECT_STATE`.
-- [ ] **D — Creation gesture + rendering + recipe UI.** Edge-drag-into-neighbour
+- [x] **D — Creation gesture + rendering + recipe UI.** Edge-drag-into-neighbour
   creates a transition (single-adjacent-neighbour only); PixiJS crossfade-region
-  rendering from transition state; recipe selection UI; Vitest.
+  rendering from transition state; remove-crossfade context-menu actions; Vitest.
+  (Recipe *selection* UI is a no-op while `smooth` is the only recipe — it lands
+  with the second recipe; the store action `setTransitionRecipe` is already wired.)
 - [ ] **"Vocal Focus" ducking** — one action derives a ducking volume-shape on
   music clips/tracks under a selected vocal clip. Offline/precomputed, editable
   and undoable; **not** sidechain routing (that stays Phase 8).

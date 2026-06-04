@@ -613,6 +613,21 @@ watch(
   () => redraw()
 )
 
+// Transition (crossfade) create / delete / reconcile changes the overlay
+// set without necessarily moving a clip, so watch a cheap signature of
+// every track's transitions to repaint when they change (§12.1).
+watch(
+  () =>
+    project.tracks
+      .map((t) =>
+        (t.transitions ?? [])
+          .map((tr) => `${tr.id}:${tr.leftClipId}>${tr.rightClipId}:${tr.recipe.kind}`)
+          .join(',')
+      )
+      .join('|'),
+  () => redraw()
+)
+
 // Project length changed → re-clamp scroll. Translation only; no redraw
 // needed because clip content didn't change.
 watch([maxScrollX, maxScrollY], () => {

@@ -683,6 +683,10 @@ struct OfflineClip
      *  threaded so no retire discipline is needed here — the snapshot
      *  simply outlives the clip's source chain. */
     std::unique_ptr<EnvelopeSnapshot> envelopeSnapshot;
+    /** Owns the transition edge-fade snapshot for the offline render
+     *  (§12.1). Non-owning pointer held by the `OffsetSource`; single-
+     *  threaded render means no retire discipline is needed. */
+    std::unique_ptr<EdgeFadeSnapshot> edgeFadeSnapshot;
     std::unique_ptr<juce::AudioTransportSource> transport;
     /** Wraps `transport` for attachment to `BusGraph::TrackRuntime`
      *  (Phase 5 step 1d). Declared LAST so it destructs FIRST — the
@@ -748,6 +752,24 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
     if (out->envelopeSnapshot != nullptr && !out->envelopeSnapshot->isEmpty())
     {
         out->offsetSource->setEnvelopeSnapshot(out->envelopeSnapshot.get());
+    }
+
+    // §12.1 transition edge-fade — applied inside the SAME OffsetSource stage
+    // as live (post-warp, pre-transport-resample), so the export crossfades
+    // identically. Master-timeline ms convert to source-rate frames with the
+    // same factor as the offset/in/duration above. No transition => no shape.
+    if (clip.edgeFadeIn || clip.edgeFadeOut)
+    {
+        const auto toSrc = [&](double ms) {
+            return static_cast<juce::int64>(juce::jmax(0.0, ms) * out->sourceRate / 1000.0);
+        };
+        out->edgeFadeSnapshot = EdgeFadeSnapshot::create(
+            clip.edgeFadeIn, toSrc(clip.edgeFadeInStartMs), toSrc(clip.edgeFadeInEndMs),
+            clip.edgeFadeOut, toSrc(clip.edgeFadeOutStartMs), toSrc(clip.edgeFadeOutEndMs));
+        if (out->edgeFadeSnapshot != nullptr && !out->edgeFadeSnapshot->isEmpty())
+        {
+            out->offsetSource->setEdgeFadeSnapshot(out->edgeFadeSnapshot.get());
+        }
     }
 
     if (clip.warpEnabled)
@@ -1053,6 +1075,17 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             // the offline render applies the exact same shape the live
             // engine received through `setClipEnvelope`.
             clip.envelopePoints = project.getClipEnvelope(clip.id);
+
+            // §12.1 — derived transition edge-fade geometry (master-timeline
+            // ms). Carried so the offline OffsetSource applies the identical
+            // crossfade the live engine does.
+            const auto edge = project.getClipEdgeFade(clip.id);
+            clip.edgeFadeIn = edge.hasFadeIn;
+            clip.edgeFadeInStartMs = edge.fadeInStartMs;
+            clip.edgeFadeInEndMs = edge.fadeInEndMs;
+            clip.edgeFadeOut = edge.hasFadeOut;
+            clip.edgeFadeOutStartMs = edge.fadeOutStartMs;
+            clip.edgeFadeOutEndMs = edge.fadeOutEndMs;
 
             // Pull the source's native rate from the library item — useful
             // for diagnostics; the renderer reads the authoritative rate

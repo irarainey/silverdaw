@@ -757,8 +757,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     onClipMoved()
   }
 
-  function onTrimPointerUp(_e: PointerEvent): void {
+  function onTrimPointerUp(e: PointerEvent): void {
     if (trimClipId === null) return
+    const finishedClipId = trimClipId
+    const finishedEdge = trimEdge
     const clip = project.clips[trimClipId]
     log.info(
       'drag',
@@ -769,6 +771,14 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointermove', onTrimPointerMove)
     window.removeEventListener('pointerup', onTrimPointerUp)
     window.removeEventListener('pointercancel', onTrimPointerUp)
+    // §12.1 — a completed (not cancelled) edge drag that now overlaps a
+    // same-track neighbour creates a crossfade. Skip on pointercancel so an
+    // aborted drag never spawns a transition. The final CLIP_TRIM was already
+    // sent during the drag (FIFO socket), so the backend's geometry is up to
+    // date before this TRANSITION_CREATE arrives.
+    if (e.type === 'pointerup' && finishedEdge !== null) {
+      project.maybeCreateTransitionAfterTrim(finishedClipId, finishedEdge)
+    }
   }
 
   /** Track cursor hover state so the host can show `ew-resize` over

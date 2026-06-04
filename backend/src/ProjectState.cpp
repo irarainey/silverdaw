@@ -2383,6 +2383,13 @@ juce::var ProjectState::tracksAsJson() const
             clipsArray.add(juce::var(clipObj));
         }
         trackObj->setProperty("clips", clipsArray);
+        // §12.1 — per-track clip transitions. Emitted only when present so
+        // legacy projects and transition-free tracks stay byte-clean.
+        const auto transitions = buildTransitionsJson(track);
+        if (auto* arr = transitions.getArray(); arr != nullptr && arr->size() > 0)
+        {
+            trackObj->setProperty("transitions", transitions);
+        }
         tracksArray.add(juce::var(trackObj));
     }
 

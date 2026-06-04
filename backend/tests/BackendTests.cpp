@@ -118,6 +118,116 @@ juce::var objectWithToken(const juce::String& token)
     return juce::var(obj);
 }
 
+// A trivial positionable source that fills every requested sample with a
+// constant value on all channels. Driving an OffsetSource with it exposes
+// exactly the gain its envelope + edge-fade layers applied to the block.
+class ConstantSource : public juce::PositionableAudioSource
+{
+  public:
+    explicit ConstantSource(float v) : value(v) {}
+    void prepareToPlay(int, double) override {}
+    void releaseResources() override {}
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+    {
+        for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
+        {
+            auto* d = info.buffer->getWritePointer(ch, info.startSample);
+            for (int i = 0; i < info.numSamples; ++i) d[i] = value;
+        }
+        pos += info.numSamples;
+    }
+    void setNextReadPosition(juce::int64 p) override { pos = p; }
+    juce::int64 getNextReadPosition() const override { return pos; }
+    juce::int64 getTotalLength() const override { return std::numeric_limits<juce::int64>::max(); }
+    bool isLooping() const override { return false; }
+
+  private:
+    float value;
+    juce::int64 pos = 0;
+};
+
+// B2 audio wiring: the per-clip transition edge-fade is a gain layer applied
+// in OffsetSource::applyClipGain. It must shape the rendered block in timeline
+// samples, MULTIPLY with the user's volume envelope (never clobber it), and
+// vanish (bit-identical passthrough) once cleared.
+void testOffsetSourceComposesEdgeFadeWithEnvelope()
+{
+    using silverdaw::EdgeFadeSnapshot;
+    using silverdaw::EnvelopeSnapshot;
+    using silverdaw::OffsetSource;
+
+    ConstantSource child(1.0F);
+    OffsetSource os(&child);
+    const int blockSize = 512;
+    os.prepareToPlay(blockSize, 48000.0);
+    os.setOffsetSamples(0);
+    os.setInSourceSamples(0);
+    os.setClipDurationSamples(0); // play to end of source
+
+    // Fade-in over [0,100) and fade-out over [400,500) in timeline samples.
+    auto fade = EdgeFadeSnapshot::create(true, 0, 100, true, 400, 500);
+    os.setEdgeFadeSnapshot(fade.get());
+
+    const int n = 500;
+    juce::AudioBuffer<float> buf(2, blockSize);
+
+    const auto renderBlock = [&]() {
+        buf.clear();
+        juce::AudioSourceChannelInfo info(&buf, 0, n);
+        os.setNextReadPosition(0);
+        os.getNextAudioBlock(info);
+    };
+
+    renderBlock();
+    for (int i = 0; i < n; ++i)
+    {
+        requireNear(buf.getSample(0, i), fade->gainAtSample(i), 1.0e-5,
+                    "edge fade alone shapes the rendered block in timeline samples");
+        requireNear(buf.getSample(1, i), fade->gainAtSample(i), 1.0e-5,
+                    "edge fade applies to every channel");
+    }
+
+    // Compose with a flat 0.5 volume envelope: output == 0.5 * edge-fade gain.
+    const auto mk = [](double t, double g) {
+        auto* o = new juce::DynamicObject();
+        o->setProperty("timeMs", t);
+        o->setProperty("gain", g);
+        return juce::var(o);
+    };
+    juce::Array<juce::var> pts;
+    pts.add(mk(0.0, 0.5));
+    pts.add(mk(10000.0, 0.5));
+    auto env = EnvelopeSnapshot::fromVarArray(pts);
+    require(!env->isEmpty(), "flat 0.5 envelope compiles to a usable snapshot");
+    os.setEnvelopeSnapshot(env.get());
+
+    renderBlock();
+    for (int i = 0; i < n; ++i)
+    {
+        requireNear(buf.getSample(0, i), 0.5F * fade->gainAtSample(i), 1.0e-5,
+                    "edge fade multiplies with the volume envelope, never clobbers it");
+    }
+
+    // Clearing the edge fade restores the envelope-only path (still 0.5).
+    os.setEdgeFadeSnapshot(nullptr);
+    renderBlock();
+    for (int i = 0; i < n; ++i)
+    {
+        requireNear(buf.getSample(0, i), 0.5F, 1.0e-5,
+                    "cleared edge fade leaves only the volume envelope");
+    }
+
+    // Clearing both layers is bit-identical passthrough of the source.
+    os.setEnvelopeSnapshot(nullptr);
+    renderBlock();
+    for (int i = 0; i < n; ++i)
+    {
+        requireNear(buf.getSample(0, i), 1.0F, 1.0e-9,
+                    "no envelope and no edge fade is a transparent passthrough");
+    }
+}
+
+
 juce::ValueTree makeProjectTree()
 {
     juce::ValueTree project(juce::Identifier{"PROJECT"});
@@ -1695,6 +1805,93 @@ void testTracksAsJsonCarriesClipEnvelope()
             "un-shaped clip must omit envelopePoints to keep PROJECT_STATE tidy");
 }
 
+// §12.1 — transition persistence, edge-fade derivation, creation invariants,
+// and geometry-driven reconcile. Exercises the ProjectState API the
+// TRANSITION_* handlers and the load/geometry reconcile paths all funnel
+// through.
+void testProjectStateClipTransitions()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "addTrack should succeed");
+    require(state.addLibraryItem("lib1", "C:\\audio\\a.wav", "a.wav", 8000.0, 48000, 2),
+            "addLibraryItem should succeed");
+    // Left clip spans [0,1000); right clip spans [800,1800) — a proper
+    // tail/head overlap of [800,1000).
+    require(state.addClip("t1", "c1", "lib1", 0.0, 1000.0), "addClip c1 should succeed");
+    require(state.addClip("t1", "c2", "lib1", 800.0, 1000.0), "addClip c2 should succeed");
+
+    auto* recipeObj = new juce::DynamicObject();
+    recipeObj->setProperty("kind", "smooth");
+    const juce::var smoothRecipe(recipeObj);
+
+    // ── Creation invariants ──────────────────────────────────────────────
+    require(!state.addTransition("t1", "trX", "c1", "c1", smoothRecipe),
+            "a clip cannot transition with itself");
+    require(!state.addTransition("nope", "trX", "c1", "c2", smoothRecipe),
+            "addTransition should reject an unknown track");
+
+    require(state.addTransition("t1", "tr1", "c1", "c2", smoothRecipe),
+            "valid tail/head overlap should be accepted");
+    require(!state.addTransition("t1", "tr1", "c1", "c2", smoothRecipe),
+            "duplicate transition id should be rejected");
+    require(!state.addTransition("t1", "tr2", "c1", "c2", smoothRecipe),
+            "reusing the left clip's tail in another transition should be rejected");
+
+    // ── Edge-fade derivation ─────────────────────────────────────────────
+    const auto leftFade = state.getClipEdgeFade("c1");
+    require(leftFade.hasFadeOut && !leftFade.hasFadeIn, "left partner fades OUT only");
+    requireNear(leftFade.fadeOutStartMs, 800.0, 1e-6, "left fade-out starts at overlap start");
+    requireNear(leftFade.fadeOutEndMs, 1000.0, 1e-6, "left fade-out ends at overlap end");
+
+    const auto rightFade = state.getClipEdgeFade("c2");
+    require(rightFade.hasFadeIn && !rightFade.hasFadeOut, "right partner fades IN only");
+    requireNear(rightFade.fadeInStartMs, 800.0, 1e-6, "right fade-in starts at overlap start");
+    requireNear(rightFade.fadeInEndMs, 1000.0, 1e-6, "right fade-in ends at overlap end");
+
+    // ── Serialisation ────────────────────────────────────────────────────
+    {
+        const auto tracks = state.tracksAsJson();
+        auto* arr = tracks.getArray();
+        require(arr != nullptr && arr->size() == 1, "tracksAsJson should yield one track");
+        auto* trackObj = (*arr)[0].getDynamicObject();
+        require(trackObj->hasProperty("transitions"), "track with a transition must emit transitions");
+        auto* trs = trackObj->getProperty("transitions").getArray();
+        require(trs != nullptr && trs->size() == 1, "exactly one transition should serialise");
+        auto* trObj = (*trs)[0].getDynamicObject();
+        require(trObj->getProperty("leftClipId").toString() == "c1", "leftClipId should round-trip");
+        require(trObj->getProperty("rightClipId").toString() == "c2", "rightClipId should round-trip");
+        auto* recipe = trObj->getProperty("recipe").getDynamicObject();
+        require(recipe != nullptr && recipe->getProperty("kind").toString() == "smooth",
+                "recipe kind should serialise as smooth");
+    }
+
+    // ── Containment is rejected ──────────────────────────────────────────
+    // c3 sits fully inside c1 ([200,400) ⊂ [0,1000)) — not a tail/head shape.
+    require(state.addClip("t1", "c3", "lib1", 200.0, 200.0), "addClip c3 should succeed");
+    require(!state.addTransition("t1", "trC", "c1", "c3", smoothRecipe),
+            "a contained clip is not a valid tail/head transition");
+    require(state.removeClip("c3"), "cleanup c3");
+
+    // ── Third-clip intrusion is rejected ─────────────────────────────────
+    require(state.addClip("t1", "c4", "lib1", 850.0, 50.0), "addClip c4 should succeed");
+    require(!state.addTransition("t1", "trI", "c1", "c2", smoothRecipe),
+            "a third clip intruding the overlap blocks (a new) transition");
+    // The pre-existing tr1 now has an intruder too → reconcile must drop it.
+    require(state.reconcileTransitions(false), "reconcile should remove the intruded transition");
+    require(!state.getClipEdgeFade("c1").any(), "left partner fade cleared after reconcile");
+    require(state.removeClip("c4"), "cleanup c4");
+
+    // ── Reconcile on geometry change ─────────────────────────────────────
+    require(state.addTransition("t1", "tr3", "c1", "c2", smoothRecipe),
+            "transition should be re-addable once the intruder is gone");
+    // Move c2 fully past c1 ([1200,2200)) so the overlap vanishes.
+    require(state.setClipTrim("c2", 1200.0, 0.0, 1000.0), "relocate c2 beyond c1");
+    require(state.reconcileTransitions(true), "reconcile should drop the now-non-overlapping transition");
+    require(!state.getClipEdgeFade("c1").any() && !state.getClipEdgeFade("c2").any(),
+            "both partner fades cleared once the transition is gone");
+    require(!state.hasAnyTransition(), "no transitions should remain");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -2239,6 +2436,10 @@ int main()
          testTracksAsJsonCarriesClipEnvelope},
         {"EdgeFadeSnapshot equal-power crossfade, endpoints, and sandwiching",
          testEdgeFadeSnapshotEqualPower},
+        {"OffsetSource composes edge fade with volume envelope (B2 audio wiring)",
+         testOffsetSourceComposesEdgeFadeWithEnvelope},
+        {"ProjectState clip transitions: derive, serialise, invariants, reconcile",
+         testProjectStateClipTransitions},
     };
 
     int failed = 0;

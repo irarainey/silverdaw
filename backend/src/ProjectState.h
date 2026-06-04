@@ -215,6 +215,69 @@ class ProjectState : public juce::ValueTree::Listener
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
     juce::Array<juce::var> getClipEnvelope(const juce::String& clipId) const;
 
+    // ─── Transitions (§12.1 clip crossfades) ───────────────────────────
+    //
+    // A transition is the single source of truth for a clip-to-clip
+    // crossfade. It is stored as a `TRANSITION` child node of the host
+    // `TRACK` (sibling of the `CLIP` nodes) carrying the partner clip ids
+    // (`leftClipId` = earlier / fade-out, `rightClipId` = later / fade-in)
+    // and a recipe. The overlap REGION is never stored — it is derived from
+    // the two clips' live timeline geometry so it can never drift.
+
+    /** Geometry of a clip's derived edge fade(s), in master-timeline ms.
+     *  A clip that is the RIGHT partner of a transition carries a head
+     *  fade-in; the LEFT partner carries a tail fade-out; a clip sandwiched
+     *  between two transitions carries both. Ready to hand to
+     *  `AudioEngine::setClipEdgeFade`. */
+    struct ClipEdgeFade
+    {
+        bool hasFadeIn = false;
+        double fadeInStartMs = 0.0;
+        double fadeInEndMs = 0.0;
+        bool hasFadeOut = false;
+        double fadeOutStartMs = 0.0;
+        double fadeOutEndMs = 0.0;
+        bool any() const noexcept { return hasFadeIn || hasFadeOut; }
+    };
+
+    /** Create a transition between two clips on `trackId`. Validates (both
+     *  clips are children of the track, `left` strictly earlier than
+     *  `right`, a proper tail/head overlap `leftStart < rightStart <
+     *  leftEnd <= rightEnd`, neither edge already in another transition, no
+     *  third clip intruding into the overlap). Rejects (returns false)
+     *  otherwise. `recipe` is the discriminated-union object (only
+     *  `{kind:"smooth"}` for now; an empty/invalid recipe defaults to
+     *  smooth). Mutates through the undo manager. */
+    bool addTransition(const juce::String& trackId, const juce::String& transitionId,
+                       const juce::String& leftClipId, const juce::String& rightClipId,
+                       const juce::var& recipe);
+
+    /** Remove a transition by id from `trackId`. Returns true if it existed. */
+    bool removeTransition(const juce::String& trackId, const juce::String& transitionId);
+
+    /** Replace a transition's recipe. Returns true if it existed and changed. */
+    bool setTransitionRecipe(const juce::String& trackId, const juce::String& transitionId,
+                             const juce::var& recipe);
+
+    /** Derive the edge-fade geometry for a clip from the transitions it
+     *  participates in plus the live clip geometry. Empty when the clip is
+     *  in no transition. */
+    ClipEdgeFade getClipEdgeFade(const juce::String& clipId) const;
+
+    /** Drop every transition whose invariants no longer hold (partner
+     *  removed / re-parented, clips moved apart, trimmed so they no longer
+     *  overlap with a proper tail/head shape, or a third clip intruding the
+     *  overlap). When `useUndo` is true the removals join the current undo
+     *  transaction (so undoing the geometry edit that broke them brings them
+     *  back); at load time pass false so cleanup doesn't pollute the undo
+     *  history. Returns true if anything was removed. */
+    bool reconcileTransitions(bool useUndo);
+
+    /** True when any track carries at least one transition. Cheap guard so
+     *  the geometry-edit reconcile/sync path stays on a zero-cost fast lane
+     *  while a project has no transitions (the dormant default). */
+    bool hasAnyTransition() const;
+
     /** Project-shared Reverb bus parameters. All four scalars are
      *  `[0, 1]`-clamped linear values; defaults are all zero and the
      *  properties are suppressed when at default. Returns `true` iff
@@ -252,6 +315,9 @@ class ProjectState : public juce::ValueTree::Listener
 
     /** Ordered ids of all clips on `trackId` (empty if the track is missing). */
     juce::StringArray getTrackClipIds(const juce::String& trackId) const;
+
+    /** Ids of every clip in the project, across all tracks. */
+    juce::StringArray getAllClipIds() const;
 
     // ─── Clips ─────────────────────────────────────────────────────────
 
@@ -697,6 +763,25 @@ class ProjectState : public juce::ValueTree::Listener
     juce::ValueTree findTrack(const juce::String& trackId) const;
     juce::ValueTree findClip(const juce::String& clipId) const;
 
+    /** Build the per-track `transitions` JSON array (empty when the track
+     *  has none). Defined in ProjectTransitions.cpp; called from
+     *  `tracksAsJson`. */
+    juce::var buildTransitionsJson(const juce::ValueTree& track) const;
+
+    /** Timeline footprint `[startMs, endMs)` of a clip using its effective
+     *  (warp-scaled) duration. False when the clip is unknown or
+     *  zero-length. Defined in ProjectTransitions.cpp. */
+    bool clipTimelineSpanMs(const juce::String& clipId, double& startMs, double& endMs) const;
+
+    /** Shared transition validity predicate: true iff `left`/`right` are
+     *  both clips of `track`, form a proper tail/head overlap
+     *  (`leftStart < rightStart < leftEnd <= rightEnd`), and no third clip
+     *  on the track intrudes into the overlap. On success returns the
+     *  derived overlap region. Defined in ProjectTransitions.cpp. */
+    bool transitionOverlapMs(const juce::ValueTree& track,
+                             const juce::String& leftClipId, const juce::String& rightClipId,
+                             double& overlapStartMs, double& overlapEndMs) const;
+
     void valueTreePropertyChanged(juce::ValueTree& /*tree*/,
                                   const juce::Identifier& /*property*/) override;
     void valueTreeChildAdded(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/) override;
@@ -863,6 +948,14 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kEnvelopeTimeMs;
     static const juce::Identifier kEnvelopeGain;
 
+    // §12.1 — clip-to-clip transition (crossfade). A `TRANSITION` child of
+    // the host `TRACK` node. The overlap region is derived, never stored.
+    static const juce::Identifier kTransition;
+    static const juce::Identifier kLeftClipId;
+    static const juce::Identifier kRightClipId;
+    static const juce::Identifier kRecipe;
+    static const juce::Identifier kRecipeKind;
+
     // Phase 5 — project-shared Reverb bus. Scalars are 0..1 linear.
     static const juce::Identifier kReverbSize;
     static const juce::Identifier kReverbDecay;
@@ -876,5 +969,14 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kDelayTone;
     static const juce::Identifier kDelayMix;
 };
+
+class AudioEngine;
+
+/** Re-derive every clip's transition edge-fade from the current project
+ *  state and publish it to the live engine (clears clips with no
+ *  transition, keeping them on the null fast path). Call after load and
+ *  after any transition / clip-geometry mutation. Defined in
+ *  ProjectTransitions.cpp. */
+void syncClipEdgeFades(AudioEngine& engine, const ProjectState& project);
 
 } // namespace silverdaw

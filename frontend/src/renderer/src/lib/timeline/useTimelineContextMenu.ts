@@ -147,6 +147,30 @@ export function useTimelineContextMenu(
     }
     items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true })
     items.push({ command: 'clip.pitch', label: 'Pitch' })
+    // §12.1 — crossfade removal. A clip can fade out into its following
+    // neighbour (it is the LEFT partner) and/or fade in from its preceding
+    // neighbour (the RIGHT partner), so a sandwiched clip can show both
+    // rows. The transition id is carried in the command token.
+    if (clip) {
+      const track = project.tracks.find((t) => t.id === clip.trackId)
+      const clipTransitions = track?.transitions ?? []
+      const asLeft = clipTransitions.find((tr) => tr.leftClipId === clip.id)
+      const asRight = clipTransitions.find((tr) => tr.rightClipId === clip.id)
+      if (asLeft) {
+        items.push({
+          command: `clip.removeTransition:${asLeft.id}`,
+          label: 'Remove Crossfade to Next Clip',
+          separatorAbove: true
+        })
+      }
+      if (asRight) {
+        items.push({
+          command: `clip.removeTransition:${asRight.id}`,
+          label: 'Remove Crossfade from Previous Clip',
+          separatorAbove: !asLeft
+        })
+      }
+    }
     items.push({
       command: 'clip.saveToLibrary',
       label: 'Save Clip to Library',
@@ -230,6 +254,9 @@ export function useTimelineContextMenu(
     } else if (command.startsWith('clip.color:')) {
       const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
       if (Number.isFinite(idx)) project.setClipColor(clipId, idx)
+    } else if (command.startsWith('clip.removeTransition:')) {
+      const transitionId = command.slice('clip.removeTransition:'.length)
+      if (clip && transitionId) project.deleteTransition(clip.trackId, transitionId)
     } else if (command === 'clip.relink') {
       if (clip) {
         const slash = Math.max(clip.filePath.lastIndexOf('\\'), clip.filePath.lastIndexOf('/'))

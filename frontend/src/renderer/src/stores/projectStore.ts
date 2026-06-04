@@ -9,6 +9,10 @@ import { decodeAudioToPeaks, PEAKS_PER_SECOND } from '@/lib/audio'
 import { MAX_TRACK_GAIN_LINEAR } from '@/lib/audio/db'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { sanitizeEnvelopePoints, envelopesEqual } from '@/lib/envelope'
+import {
+  findTransitionCandidate,
+  type ClipGeometry
+} from '@/lib/transitions/transitionCandidates'
 import { log } from '@/lib/log'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore, libraryItemIsSample } from '@/stores/libraryStore'
@@ -18,7 +22,9 @@ import type {
   ClipEnvelopePoint,
   ClipWarpMode,
   DelayNoteValue,
-  ProjectStatePayload
+  ProjectStatePayload,
+  ProjectStateTransition,
+  TransitionRecipe
 } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
 
@@ -120,6 +126,21 @@ export interface Marker {
   positionMs: number
 }
 
+/**
+ * A sanctioned clip-to-clip crossfade on a single track (§12.1).
+ * Backend-authoritative: created / removed via the `TRANSITION_*` bridge
+ * messages and auto-reconciled when partner-clip geometry changes. The
+ * `recipe` is a discriminated union (only the equal-power `smooth`
+ * crossfade for now). `leftClipId` is the earlier (fade-out) clip;
+ * `rightClipId` the later (fade-in) clip.
+ */
+export interface Transition {
+  readonly id: string
+  leftClipId: string
+  rightClipId: string
+  recipe: TransitionRecipe
+}
+
 export interface Track {
   readonly id: string
   name: string
@@ -187,6 +208,12 @@ export interface Track {
    * property `levelerAmount`.
    */
   levelerAmount?: number
+  /**
+   * Sanctioned clip-to-clip crossfades on this track (§12.1). Backend-
+   * authoritative; hydrated from each `PROJECT_STATE`. Absent / empty when
+   * the track has no transitions (the dormant default).
+   */
+  transitions?: Transition[]
 }
 
 /**
@@ -627,6 +654,24 @@ export function isClipTempoWarpActive(clip: { effectiveWarpActive?: boolean }): 
  * the clip to a different gap by dragging the cursor decisively past
  * the obstruction. Returns `null` if no gap is big enough.
  */
+/**
+ * Map the wire-format transitions on a track snapshot to the store shape.
+ * Returns undefined for an absent / empty list so a transition-free track
+ * stays on the suppressed-default fast path (matching the backend, which
+ * omits the field entirely).
+ */
+function hydrateTransitions(
+  raw: readonly ProjectStateTransition[] | undefined
+): Transition[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  return raw.map((tr) => ({
+    id: tr.id,
+    leftClipId: tr.leftClipId,
+    rightClipId: tr.rightClipId,
+    recipe: tr.recipe
+  }))
+}
+
 function findClipSlot(
   state: { tracks: Track[]; clips: Record<string, Clip> },
   trackId: string,
@@ -944,6 +989,94 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
+     * Request creation of a clip-to-clip crossfade between two adjacent
+     * clips on the same track (§12.1). Fire-and-forget: the backend mints
+     * the transition id, validates the overlap geometry, and rebroadcasts
+     * `PROJECT_STATE` (the snapshot is the ack) — so we deliberately do NOT
+     * mutate local state here. `leftClipId` is the earlier (fade-out) clip.
+     */
+    createTransition(
+      trackId: string,
+      leftClipId: string,
+      rightClipId: string,
+      recipe?: TransitionRecipe
+    ): void {
+      sendBridge('TRANSITION_CREATE', {
+        trackId,
+        leftClipId,
+        rightClipId,
+        ...(recipe ? { recipe } : {})
+      })
+      log.debug(
+        'project',
+        `createTransition track=${trackId} left=${leftClipId} right=${rightClipId}`
+      )
+    },
+
+    /**
+     * Request removal of an existing transition. Fire-and-forget; the
+     * backend rebroadcasts `PROJECT_STATE` which re-hydrates the track's
+     * `transitions` list.
+     */
+    deleteTransition(trackId: string, transitionId: string): void {
+      sendBridge('TRANSITION_DELETE', { trackId, transitionId })
+      log.debug('project', `deleteTransition track=${trackId} id=${transitionId}`)
+    },
+
+    /**
+     * Request a recipe change on an existing transition. Fire-and-forget;
+     * the backend rebroadcasts `PROJECT_STATE`.
+     */
+    setTransitionRecipe(
+      trackId: string,
+      transitionId: string,
+      recipe: TransitionRecipe
+    ): void {
+      sendBridge('TRANSITION_SET_RECIPE', { trackId, transitionId, recipe })
+      log.debug(
+        'project',
+        `setTransitionRecipe track=${trackId} id=${transitionId} kind=${recipe.kind}`
+      )
+    },
+
+    /**
+     * After an edge trim settles, check whether the trimmed clip now
+     * overlaps a same-track neighbour cleanly enough to form a sanctioned
+     * crossfade and, if so, request its creation (§12.1). Fire-and-forget:
+     * the backend re-validates the overlap and rebroadcasts `PROJECT_STATE`.
+     *
+     * `edge` is the dragged edge — `'right'` makes the trimmed clip the
+     * earlier (fade-out) partner, `'left'` the later (fade-in) partner.
+     */
+    maybeCreateTransitionAfterTrim(clipId: string, edge: 'left' | 'right'): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const track = this.tracks.find((t) => t.id === clip.trackId)
+      if (!track) return
+
+      const toGeometry = (c: Clip): ClipGeometry => ({
+        id: c.id,
+        startMs: c.startMs,
+        endMs: c.startMs + effectiveClipDurationMs(c)
+      })
+      const others: ClipGeometry[] = []
+      for (const id of track.clipIds) {
+        if (id === clipId) continue
+        const c = this.clips[id]
+        if (c) others.push(toGeometry(c))
+      }
+
+      const candidate = findTransitionCandidate(
+        toGeometry(clip),
+        edge,
+        others,
+        track.transitions ?? []
+      )
+      if (!candidate) return
+      this.createTransition(track.id, candidate.leftClipId, candidate.rightClipId)
+    },
+
+    /**
      * Trim a clip non-destructively. Updates `startMs`, `inMs`, and
      * `durationMs` together — the three fields form an inseparable
      * window into the underlying source file, so we send them in one
@@ -967,6 +1100,17 @@ export const useProjectStore = defineStore('project', {
       clip.startMs = safeStart
       clip.inMs = safeIn
       clip.durationMs = safeDur
+      // Keep the warp-scaled timeline footprint (`effectiveDurationMs`) in
+      // sync with the new source window so the timeline block WIDTH tracks
+      // the trim live. CLIP_TRIM is a coalesced drag stream the backend does
+      // NOT echo back, and the drawn block width comes from
+      // `effectiveClipDurationMs` (which prefers `effectiveDurationMs`).
+      // Without this the waveform — drawn straight from inMs/durationMs —
+      // updates immediately while the block keeps its pre-trim width, so a
+      // trim looks like it only "scrubs" the clip. The relationship mirrors
+      // the backend's getClipEffectiveTiming: timeline = source / tempoRatio.
+      const trimRatio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
+      clip.effectiveDurationMs = trimRatio > 0 ? safeDur / trimRatio : safeDur
 
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (track) {
@@ -2964,6 +3108,12 @@ export const useProjectStore = defineStore('project', {
               ? t.levelerAmount
               : undefined
         }
+        // §12.1 — backend-authoritative transitions for this track. Set on
+        // both the freshly-reconstructed and the updated branch so a
+        // create / delete / reconcile (which all rebroadcast PROJECT_STATE)
+        // is reflected, and so clearing the last transition resets to
+        // undefined.
+        track.transitions = hydrateTransitions(t.transitions)
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)
           // Resolve the clip's source via its library item id (the

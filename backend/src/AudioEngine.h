@@ -2,6 +2,7 @@
 
 #include "BusGraph.h"
 #include "AudioConstants.h"
+#include "EdgeFadeSnapshot.h"
 #include "EnvelopeSnapshot.h"
 #include "Log.h"
 #include "OutputKeepAlive.h"
@@ -247,6 +248,20 @@ class OffsetSource : public juce::PositionableAudioSource
         return envelope.load(std::memory_order_acquire);
     }
 
+    /** Install (or clear with nullptr) the per-clip transition edge-fade.
+     *  Non-owning — the owning `Track::edgeFadeSnapshot` unique_ptr manages
+     *  lifetime and retires replaced instances. Published/loaded with the
+     *  same release/acquire discipline as the volume envelope; the two are
+     *  independent gain layers that multiply in `applyClipGain`. */
+    void setEdgeFadeSnapshot(const EdgeFadeSnapshot* snapshot) noexcept
+    {
+        edgeFade.store(snapshot, std::memory_order_release);
+    }
+    const EdgeFadeSnapshot* getEdgeFadeSnapshot() const noexcept
+    {
+        return edgeFade.load(std::memory_order_acquire);
+    }
+
     static juce::int64 timelineSamplesForSourceSamples(juce::int64 sourceSamples, WarpProcessor* w) noexcept
     {
         if (sourceSamples <= 0) return sourceSamples;
@@ -386,11 +401,11 @@ class OffsetSource : public juce::PositionableAudioSource
             }
 
             // Phase 5 — apply the per-clip volume shape (breakpoint
-            // envelope) using clip-local coordinates. Skipped entirely
-            // when no envelope is installed.
-            applyEnvelopeGain(*audible.buffer,
-                              audible.startSample, audibleSamples,
-                              audibleStart, clipStart);
+            // envelope) and the transition edge-fade. Both are gain layers
+            // that multiply; skipped entirely when neither is installed.
+            applyClipGain(*audible.buffer,
+                          audible.startSample, audibleSamples,
+                          audibleStart, clipStart);
         }
         else
         {
@@ -486,30 +501,46 @@ class OffsetSource : public juce::PositionableAudioSource
     }
 
   private:
-    /** Multiply samples in `[startSample, startSample+count)` by the
-     *  per-clip volume-envelope gain. `audibleStart` is the master-
-     *  timeline position of `buffer[startSample]` and `clipStart` is the
-     *  timeline position of the clip's first sample. Bails immediately when
-     *  no envelope is installed so the no-shape common path pays nothing per
-     *  block. */
-    void applyEnvelopeGain(juce::AudioBuffer<float>& buffer,
-                           int startSample, int count,
-                           juce::int64 audibleStart, juce::int64 clipStart) noexcept
+    /** Multiply samples in `[startSample, startSample+count)` by the per-clip
+     *  volume-envelope gain AND the transition edge-fade gain (two independent
+     *  layers that compose by multiplication). `audibleStart` is the timeline
+     *  position of `buffer[startSample]` and `clipStart` is the timeline
+     *  position of the clip's first sample. Bails immediately when neither
+     *  layer is installed so the common no-shape path pays nothing per block.
+     *
+     *  The envelope works in clip-local ms (needs the sample rate); the edge
+     *  fade works directly in timeline samples (`audibleStart + i`) and is
+     *  therefore warp/tempo-independent and needs no sample rate. */
+    void applyClipGain(juce::AudioBuffer<float>& buffer,
+                       int startSample, int count,
+                       juce::int64 audibleStart, juce::int64 clipStart) noexcept
     {
         if (count <= 0) return;
-        const EnvelopeSnapshot* snapshot = envelope.load(std::memory_order_acquire);
-        if (snapshot == nullptr || snapshot->isEmpty()) return;
+        const EnvelopeSnapshot* env = envelope.load(std::memory_order_acquire);
+        const EdgeFadeSnapshot* fade = edgeFade.load(std::memory_order_acquire);
+        const bool haveFade = fade != nullptr && !fade->isEmpty();
         const double sr = cachedSampleRate.load(std::memory_order_relaxed);
-        if (sr <= 0.0) return;
+        // The envelope needs a valid sample rate for its ms conversion; the
+        // edge fade does not, so a fade-only clip still applies when sr is 0.
+        const bool haveEnv = env != nullptr && !env->isEmpty() && sr > 0.0;
+        if (!haveEnv && !haveFade) return;
 
-        const double msPerSample = 1000.0 / sr;
+        const double msPerSample = sr > 0.0 ? 1000.0 / sr : 0.0;
         const int numCh = buffer.getNumChannels();
         std::size_t seg = 0;
         for (int i = 0; i < count; ++i)
         {
-            const juce::int64 distFromStart = (audibleStart + i) - clipStart;
-            const double ms = static_cast<double>(distFromStart) * msPerSample;
-            const float gain = snapshot->gainAtMs(ms, seg);
+            const juce::int64 timelineSample = audibleStart + i;
+            float gain = 1.0F;
+            if (haveEnv)
+            {
+                const double ms = static_cast<double>(timelineSample - clipStart) * msPerSample;
+                gain *= env->gainAtMs(ms, seg);
+            }
+            if (haveFade)
+            {
+                gain *= fade->gainAtSample(timelineSample);
+            }
             if (gain == 1.0F) continue;
             for (int ch = 0; ch < numCh; ++ch)
             {
@@ -544,6 +575,10 @@ class OffsetSource : public juce::PositionableAudioSource
     /** Non-owning per-clip volume envelope. nullptr means "no shape" —
      *  the fast path. Lifetime is owned by `Track::envelopeSnapshot`. */
     std::atomic<const EnvelopeSnapshot*> envelope{nullptr};
+    /** Non-owning per-clip transition edge-fade. nullptr means "no
+     *  transition" — the fast path. Lifetime is owned by
+     *  `Track::edgeFadeSnapshot`. */
+    std::atomic<const EdgeFadeSnapshot*> edgeFade{nullptr};
     /** Non-owning warp pointer. nullptr means "no warp" — the normal
      *  fast path. Lifetime is managed by the owning `Track::warp`
      *  unique_ptr in AudioEngine. */
@@ -1167,6 +1202,22 @@ class AudioEngine
      *  multiplier. Returns true if the clip existed. */
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
 
+    /** Install (or clear) the per-clip transition edge-fade for `clipId`.
+     *  The fade legs are given as master-timeline millisecond spans (the
+     *  sanctioned overlap region with each neighbour). They are converted to
+     *  the clip's source-sample clock with the SAME `track->sampleRate`
+     *  factor used for `setOffsetSamples`, so the fade bounds land on the
+     *  exact timeline samples the audio thread renders — warp/tempo
+     *  independent. A leg with a non-positive span (or `has* == false`) is
+     *  dropped; when neither leg survives the edge-fade is cleared. Compiles
+     *  an immutable `EdgeFadeSnapshot` off the audio thread, publishes it via
+     *  an atomic release store, and retires the previous snapshot into a
+     *  deferred free-list (mirrors `setClipEnvelope`). Returns true if the
+     *  clip existed. */
+    bool setClipEdgeFade(const juce::String& clipId,
+                         bool hasFadeIn, double fadeInStartMs, double fadeInEndMs,
+                         bool hasFadeOut, double fadeOutStartMs, double fadeOutEndMs);
+
     /** True if any track is currently playing. */
     bool isPlaying() const;
 
@@ -1445,6 +1496,15 @@ class AudioEngine
          *  pointer just before a swap. Drained on transport pause/stop,
          *  exactly like `retiredWarps`. */
         std::vector<std::unique_ptr<EnvelopeSnapshot>> retiredEnvelopes;
+        /** Owns the live per-clip transition edge-fade (nullptr = no
+         *  transition). The `OffsetSource` holds a non-owning atomic pointer
+         *  to it. Derived from transition geometry; multiplies with the
+         *  volume envelope, never clobbers it. */
+        std::unique_ptr<EdgeFadeSnapshot> edgeFadeSnapshot;
+        /** Replaced edge-fade snapshots awaiting a quiescent window before
+         *  being freed — same deferred-retire discipline as
+         *  `retiredEnvelopes`. */
+        std::vector<std::unique_ptr<EdgeFadeSnapshot>> retiredEdgeFades;
         double sampleRate = 44100.0;
         int numChannels = 2;
         /**

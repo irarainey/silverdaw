@@ -903,6 +903,7 @@ void AudioEngine::pause()
     {
         track->retiredWarps.clear();
         track->retiredEnvelopes.clear();
+        track->retiredEdgeFades.clear();
     }
     silverdaw::log::info("engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
 }
@@ -925,6 +926,7 @@ void AudioEngine::stop()
         // Transport is stopped — safe to drain (see pause()).
         track->retiredWarps.clear();
         track->retiredEnvelopes.clear();
+        track->retiredEdgeFades.clear();
     }
     silverdaw::log::info("engine", "stop");
 }
@@ -1187,6 +1189,47 @@ bool AudioEngine::setClipEnvelope(const juce::String& clipId, const juce::Array<
         track->retiredEnvelopes.push_back(std::move(track->envelopeSnapshot));
     }
     track->envelopeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
+    return true;
+}
+
+bool AudioEngine::setClipEdgeFade(const juce::String& clipId,
+                                  bool hasFadeIn, double fadeInStartMs, double fadeInEndMs,
+                                  bool hasFadeOut, double fadeOutStartMs, double fadeOutEndMs)
+{
+    auto it = tracks.find(clipId);
+    if (it == tracks.end())
+    {
+        return false;
+    }
+    auto& track = it->second;
+    if (track->offsetSource == nullptr)
+    {
+        return false;
+    }
+
+    // Convert the master-timeline ms spans to the clip's source-sample clock
+    // with the SAME factor `addClip`/`setClipTrim` use for the offset, so the
+    // fade bounds align exactly with the samples the audio thread renders.
+    const double sr = track->sampleRate > 0.0 ? track->sampleRate : 44100.0;
+    const auto toSamples = [sr](double ms) {
+        return static_cast<juce::int64>(juce::jmax(0.0, ms) * sr / 1000.0);
+    };
+
+    auto snapshot = EdgeFadeSnapshot::create(
+        hasFadeIn, toSamples(fadeInStartMs), toSamples(fadeInEndMs),
+        hasFadeOut, toSamples(fadeOutStartMs), toSamples(fadeOutEndMs));
+    const EdgeFadeSnapshot* published =
+        (snapshot != nullptr && !snapshot->isEmpty()) ? snapshot.get() : nullptr;
+
+    // Publish (release) BEFORE retiring the old object so the audio thread
+    // sees either the new pointer or the still-alive previous one (held in
+    // `retiredEdgeFades` until a quiescent drain), never a freed pointer.
+    track->offsetSource->setEdgeFadeSnapshot(published);
+    if (track->edgeFadeSnapshot != nullptr)
+    {
+        track->retiredEdgeFades.push_back(std::move(track->edgeFadeSnapshot));
+    }
+    track->edgeFadeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
     return true;
 }
 

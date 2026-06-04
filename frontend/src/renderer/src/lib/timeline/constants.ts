@@ -65,3 +65,13 @@ export const GRID_SUB = 0x3f3f46 // zinc-700
 
 export const PLAYHEAD = 0xef4444 // red-500
 export const MARKER = 0x10b981 // emerald-500
+
+// ─── Transition (crossfade) overlay ─────────────────────────────────────────
+// The X-fade marker drawn over the sanctioned overlap of two clips (§12.1).
+// A faint sky-blue fill reads as "blended region" without obscuring the
+// underlying waveforms; the crossing diagonals echo the equal-power
+// cos/sin crossfade the engine applies.
+export const TRANSITION_FILL = 0x38bdf8 // sky-400
+export const TRANSITION_FILL_ALPHA = 0.18
+export const TRANSITION_LINE = 0x7dd3fc // sky-300
+export const TRANSITION_LINE_ALPHA = 0.9

@@ -216,6 +216,27 @@ describe('useTimelineContextMenu — items builder', () => {
     })
     expect(findItem(overridden, 'clip.color')?.selectedSwatch).toBe(9)
   })
+
+  it('shows remove-crossfade rows for a clip participating in transitions', () => {
+    const menu = setupMenu({ clip: makeClip({ id: 'c1' }), item: makeAudioFileItem() })
+    const project = useProjectStore()
+    project.tracks[0]!.transitions = [
+      { id: 'tr-next', leftClipId: 'c1', rightClipId: 'c2', recipe: { kind: 'smooth' } },
+      { id: 'tr-prev', leftClipId: 'c0', rightClipId: 'c1', recipe: { kind: 'smooth' } }
+    ] as never
+    const cmds = commandsOf(menu)
+    expect(cmds).toContain('clip.removeTransition:tr-next')
+    expect(cmds).toContain('clip.removeTransition:tr-prev')
+
+    const del = vi.spyOn(project, 'deleteTransition')
+    menu.onContextMenuCommand('clip.removeTransition:tr-next')
+    expect(del).toHaveBeenCalledWith('track-1', 'tr-next')
+  })
+
+  it('omits remove-crossfade rows when the clip has no transitions', () => {
+    const menu = setupMenu({ clip: makeClip({ id: 'c1' }), item: makeAudioFileItem() })
+    expect(commandsOf(menu).some((c) => c.startsWith('clip.removeTransition:'))).toBe(false)
+  })
 })
 
 describe('useTimelineContextMenu — command dispatch', () => {

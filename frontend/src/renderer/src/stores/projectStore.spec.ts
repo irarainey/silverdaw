@@ -736,4 +736,223 @@ describe('projectStore', () => {
     expect(track?.reverbSend).toBeUndefined()
     expect(track?.delaySend).toBeUndefined()
   })
+
+  it('keeps effectiveDurationMs in sync when trimming so the block width tracks the drag', () => {
+    const project = useProjectStore()
+
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\trim.silverdaw',
+      name: 'Trim',
+      reset: true,
+      bpm: 120,
+      library: [
+        {
+          id: 'l1',
+          kind: 'audio-file',
+          filePath: 'C:\\audio\\loop.wav',
+          fileName: 'loop.wav',
+          durationMs: 8_000,
+          sampleRate: 44_100,
+          channelCount: 2
+        }
+      ],
+      tracks: [
+        {
+          id: 't1',
+          name: 'T1',
+          gain: 1,
+          clips: [
+            // Warp-active clip: source 1000 ms plays back over 500 ms of
+            // timeline (ratio 2). effectiveDurationMs is the timeline footprint.
+            {
+              id: 'c1',
+              libraryItemId: 'l1',
+              offsetMs: 0,
+              inMs: 0,
+              durationMs: 1_000,
+              effectiveDurationMs: 500,
+              effectiveTempoRatio: 2,
+              effectiveWarpActive: true
+            },
+            // Un-warped clip: timeline footprint equals the source duration.
+            {
+              id: 'c2',
+              libraryItemId: 'l1',
+              offsetMs: 2_000,
+              inMs: 0,
+              durationMs: 1_000,
+              effectiveDurationMs: 1_000
+            }
+          ]
+        }
+      ]
+    })
+
+    // Right-edge trim on the warped clip: source 1000 → 800 ms. The timeline
+    // footprint must follow (800 / ratio 2 = 400) so the drawn block shrinks.
+    project.trimClip('c1', 0, 0, 800)
+    expect(project.clips.c1?.durationMs).toBe(800)
+    expect(project.clips.c1?.effectiveDurationMs).toBe(400)
+
+    // Un-warped clip: effectiveDurationMs tracks durationMs 1:1.
+    project.trimClip('c2', 2_000, 0, 600)
+    expect(project.clips.c2?.durationMs).toBe(600)
+    expect(project.clips.c2?.effectiveDurationMs).toBe(600)
+  })
+
+  it('hydrates per-track transitions from a snapshot and clears them when absent', () => {
+    const project = useProjectStore()
+
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\xfade.silverdaw',
+      name: 'Xfade',
+      reset: true,
+      bpm: 120,
+      tracks: [
+        {
+          id: 't1',
+          name: 'T1',
+          gain: 1,
+          clips: [],
+          transitions: [
+            {
+              id: 'tr1',
+              leftClipId: 'c1',
+              rightClipId: 'c2',
+              recipe: { kind: 'smooth' }
+            }
+          ]
+        }
+      ]
+    })
+
+    const track = project.tracks.find((t) => t.id === 't1')
+    expect(track?.transitions).toEqual([
+      { id: 'tr1', leftClipId: 'c1', rightClipId: 'c2', recipe: { kind: 'smooth' } }
+    ])
+
+    // A later snapshot with no transitions resets to the suppressed default.
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\xfade.silverdaw',
+      name: 'Xfade',
+      reset: true,
+      bpm: 120,
+      tracks: [{ id: 't1', name: 'T1', gain: 1, clips: [] }]
+    })
+
+    const cleared = project.tracks.find((t) => t.id === 't1')
+    expect(cleared?.transitions).toBeUndefined()
+  })
+
+  it('sends fire-and-forget TRANSITION_* envelopes without mutating local state', () => {
+    const project = useProjectStore()
+    sendMock.mockClear()
+
+    project.createTransition('t1', 'c1', 'c2')
+    expect(sendMock).toHaveBeenCalledWith('TRANSITION_CREATE', {
+      trackId: 't1',
+      leftClipId: 'c1',
+      rightClipId: 'c2'
+    })
+
+    project.createTransition('t1', 'c3', 'c4', { kind: 'smooth' })
+    expect(sendMock).toHaveBeenCalledWith('TRANSITION_CREATE', {
+      trackId: 't1',
+      leftClipId: 'c3',
+      rightClipId: 'c4',
+      recipe: { kind: 'smooth' }
+    })
+
+    project.deleteTransition('t1', 'tr1')
+    expect(sendMock).toHaveBeenCalledWith('TRANSITION_DELETE', {
+      trackId: 't1',
+      transitionId: 'tr1'
+    })
+
+    project.setTransitionRecipe('t1', 'tr1', { kind: 'smooth' })
+    expect(sendMock).toHaveBeenCalledWith('TRANSITION_SET_RECIPE', {
+      trackId: 't1',
+      transitionId: 'tr1',
+      recipe: { kind: 'smooth' }
+    })
+  })
+
+  it('emits TRANSITION_CREATE after a right-edge trim overlaps a following clip', () => {
+    const project = useProjectStore()
+
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\xfade.silverdaw',
+      name: 'Xfade',
+      reset: true,
+      bpm: 120,
+      library: [
+        {
+          id: 'l1',
+          kind: 'audio-file',
+          filePath: 'C:\\audio\\loop.wav',
+          fileName: 'loop.wav',
+          durationMs: 8_000,
+          sampleRate: 44_100,
+          channelCount: 2
+        }
+      ],
+      tracks: [
+        {
+          id: 't1',
+          name: 'T1',
+          gain: 1,
+          clips: [
+            { id: 'c1', libraryItemId: 'l1', offsetMs: 0, inMs: 0, durationMs: 1_000 },
+            { id: 'c2', libraryItemId: 'l1', offsetMs: 800, inMs: 0, durationMs: 1_000 }
+          ]
+        }
+      ]
+    })
+    sendMock.mockClear()
+
+    // c1's tail (ends 1000) overlaps c2's head (starts 800) by 200 ms.
+    project.maybeCreateTransitionAfterTrim('c1', 'right')
+    expect(sendMock).toHaveBeenCalledWith('TRANSITION_CREATE', {
+      trackId: 't1',
+      leftClipId: 'c1',
+      rightClipId: 'c2'
+    })
+  })
+
+  it('does not emit TRANSITION_CREATE when clips do not overlap', () => {
+    const project = useProjectStore()
+
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\xfade.silverdaw',
+      name: 'Xfade',
+      reset: true,
+      bpm: 120,
+      library: [
+        {
+          id: 'l1',
+          kind: 'audio-file',
+          filePath: 'C:\\audio\\loop.wav',
+          fileName: 'loop.wav',
+          durationMs: 8_000,
+          sampleRate: 44_100,
+          channelCount: 2
+        }
+      ],
+      tracks: [
+        {
+          id: 't1',
+          name: 'T1',
+          gain: 1,
+          clips: [
+            { id: 'c1', libraryItemId: 'l1', offsetMs: 0, inMs: 0, durationMs: 1_000 },
+            { id: 'c2', libraryItemId: 'l1', offsetMs: 1_500, inMs: 0, durationMs: 1_000 }
+          ]
+        }
+      ]
+    })
+    sendMock.mockClear()
+
+    project.maybeCreateTransitionAfterTrim('c1', 'right')
+    expect(sendMock).not.toHaveBeenCalledWith('TRANSITION_CREATE', expect.anything())
+  })
 })

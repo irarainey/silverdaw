@@ -47,7 +47,11 @@ import {
   TIME_SIG_NUM,
   TRACK_BG,
   TRACK_GAP,
-  TRACK_HEADER_BG
+  TRACK_HEADER_BG,
+  TRANSITION_FILL,
+  TRANSITION_FILL_ALPHA,
+  TRANSITION_LINE,
+  TRANSITION_LINE_ALPHA
 } from './constants'
 import { trackHeightOf, buildTrackRowLayout } from './trackLayout'
 import { isWarpPending } from '@/lib/warp'
@@ -531,6 +535,9 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         drawClip(clip, worldY, rowHeight, palette, worldLeft, worldRight, track.pan ?? 0)
         ++visibleClipCount
       }
+      // Pass 3: crossfade (transition) overlays, drawn on top of the clip
+      // blocks so the X-fade marker sits over the overlap of both partners.
+      drawTrackTransitions(track, worldY, rowHeight, worldLeft, worldRight)
     }
     lastRedrawStats = { ...lastRedrawStats, rows: visibleRows.length, clips: visibleClipCount }
   }
@@ -856,6 +863,66 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     }
 
     drawClipHeader(clip, absX, innerY, w, palette, libItem, markerSourceBpm)
+  }
+
+  /**
+   * Draw the crossfade overlays for a track's sanctioned transitions
+   * (§12.1). Each transition's overlap region is DERIVED from the two
+   * partner clips' live timeline geometry (never stored), so we resolve
+   * the clips and recompute the region every paint — matching the backend,
+   * which does the same. The marker is an equal-power "X" (two crossing
+   * diagonals) over a faint fill, mirroring the `cos`/`sin` crossfade the
+   * engine applies.
+   */
+  function drawTrackTransitions(
+    track: (typeof project.tracks)[number],
+    rowWorldY: number,
+    rowHeight: number,
+    worldLeft: number,
+    worldRight: number
+  ): void {
+    const transitions = track.transitions
+    if (!transitions || transitions.length === 0) return
+    const tracksL = tracksLayer.value
+    const G = GraphicsCtor.value
+    if (!tracksL || !G) return
+
+    const padding = 4
+    const innerY = rowWorldY + padding
+    const innerH = rowHeight - padding * 2
+    if (innerH <= 0) return
+
+    for (const transition of transitions) {
+      const left = project.clips[transition.leftClipId]
+      const right = project.clips[transition.rightClipId]
+      if (!left || !right) continue
+
+      // Overlap region = [right.start, left.end] in timeline ms, using the
+      // warp-scaled footprint (never the raw source duration).
+      const overlapStartMs = right.startMs
+      const overlapEndMs = left.startMs + effectiveClipDurationMs(left)
+      if (overlapEndMs - overlapStartMs <= 0) continue
+
+      const x0 = headerWidth() + (overlapStartMs / 1000) * pxPerSecond.value
+      const x1 = headerWidth() + (overlapEndMs / 1000) * pxPerSecond.value
+      const w = x1 - x0
+      if (w <= 0) continue
+      // Cull anything entirely outside the viewport (+ margin).
+      if (x1 < worldLeft || x0 > worldRight) continue
+
+      const overlay = new G()
+      overlay
+        .roundRect(x0, innerY, w, innerH, 3)
+        .fill({ color: TRANSITION_FILL, alpha: TRANSITION_FILL_ALPHA })
+      // Equal-power "X": two crossing diagonals spanning the overlap.
+      overlay
+        .moveTo(x0, innerY + innerH)
+        .lineTo(x1, innerY)
+        .moveTo(x0, innerY)
+        .lineTo(x1, innerY + innerH)
+        .stroke({ color: TRANSITION_LINE, width: 1.5, alpha: TRANSITION_LINE_ALPHA })
+      tracksL.addChild(overlay)
+    }
   }
 
   function drawClipHeader(

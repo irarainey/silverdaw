@@ -53,6 +53,16 @@ struct MixdownSnapshot
          *  the offline `OffsetSource` exactly as the live engine does so
          *  the export carries the same volume shape the user hears. */
         juce::Array<juce::var> envelopePoints;
+        /** §12.1 derived transition edge-fade in master-timeline ms. Built
+         *  from the project's transition geometry so the offline render
+         *  crossfades exactly as the live engine. `has*==false` = no
+         *  transition on that edge. */
+        bool edgeFadeIn{false};
+        double edgeFadeInStartMs{0.0};
+        double edgeFadeInEndMs{0.0};
+        bool edgeFadeOut{false};
+        double edgeFadeOutStartMs{0.0};
+        double edgeFadeOutEndMs{0.0};
         bool warpEnabled{false};
         juce::String warpMode; // "rhythmic" / "tonal" / "complex"
         double tempoRatio{1.0};
