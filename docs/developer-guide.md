@@ -11,6 +11,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Project layout](#project-layout)
 - [Current status and roadmap](#current-status-and-roadmap)
 - [Bridge protocol](#bridge-protocol)
+- [Engine resilience and recovery](#engine-resilience-and-recovery)
 - [Project state model](#project-state-model)
 - [Audio formats](#audio-formats)
   - [Internal signal format and bit depth](#internal-signal-format-and-bit-depth)
@@ -64,7 +65,10 @@ Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engi
 
 Main picks a free port in `[8765, 8784]` at startup so leftover Silverdaw processes can't lock
 new instances out, then hands the value to both the backend (via `--port`) and the renderer
-(via a `bridge:getPort` IPC).
+(via a `bridge:getPort` IPC). A supervisor in the main process then keeps the engine alive for
+the rest of the session: if the backend exits unexpectedly it is respawned on the **same** port
+and AUTH token, so the renderer's WebSocket reconnects transparently (see
+[Engine resilience and recovery](#engine-resilience-and-recovery)).
 
 Threading invariants:
 
@@ -321,7 +325,10 @@ decoded-WAV cache) at the time it loads the clip's audio source.
 - After AUTH succeeds the backend sends `PROJECT_STATE` exactly once (full snapshot: tracks,
   clips, library, markers, file path and project name). The renderer treats it as the canonical
   truth; on a load (`reset=true`) it wipes optimistic local state first, on the connect path it
-  merges additively.
+  merges additively. After a mid-session backend respawn the reconnect lands on a fresh, **empty**
+  engine — a reconnected socket is not yet a recovered session, so the renderer re-loads the
+  user's project and waits for its `reset=true` snapshot before treating the session as restored
+  (see [Engine resilience and recovery](#engine-resilience-and-recovery)).
 
 **Bulk data goes via disk, never via the socket.** When the backend has fresh waveform peaks
 ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate, laneCount }`
@@ -349,6 +356,86 @@ backend are extracted through the strict
 (`tryGetString` / `tryGetRequiredString` / `tryGetNumber`) which reject
 malformed values up front instead of silently coercing them via
 `juce::var::toString()`.
+
+A few envelopes exist purely for liveness and fault reporting rather than
+project edits: `PING` (renderer → backend) and `PONG` (backend → renderer) form
+a liveness probe — the backend answers `PONG` **on the JUCE message thread**, so
+a completed round-trip proves the command thread itself is responsive, not merely
+that the socket is open — and `ENGINE_ERROR` (backend → renderer) reports a
+handler-level fault that the engine **caught and survived**. Their behaviour and
+the recovery UX they drive are described under
+[Engine resilience and recovery](#engine-resilience-and-recovery).
+
+## Engine resilience and recovery
+
+The audio engine runs as a separate process, so Silverdaw treats "the engine
+went away" as a normal, recoverable event rather than a crash the user has to
+manage. Four cooperating mechanisms keep a session alive across an engine crash,
+hang, or OS sleep/resume fault — none of which expose the front-end/back-end
+split to the user.
+
+### Process supervisor (main)
+
+[`backendSupervisor.ts`](../frontend/src/main/backendSupervisor.ts) owns the
+backend's lifecycle for the whole session. It spawns the engine once and, on any
+*unexpected* exit, respawns it on the **same** loopback port and AUTH token (so
+the renderer's socket reconnects transparently) after a short backoff. Respawns
+are bounded: after `MAX_CONSECUTIVE_FAILURES` (8) consecutive failed restarts it
+gives up into a terminal `failed` state instead of fork-bombing. A respawn that
+stays alive past a stability window (~10 s) is treated as healthy and resets the
+failure budget, so unrelated crashes spread across a long session each get a full
+set of retries. The supervisor pushes coarse process status — `restarting`,
+`recovered`, `failed` — to the renderer, and an intentional app shutdown marks
+the next exit as expected so it is not respawned. Covered by Vitest specs.
+
+### Liveness watchdog (renderer)
+
+The backend only pushes data while playing, so an idle session has no inbound
+traffic to prove the engine's message thread is still alive.
+[`bridgeService.ts`](../frontend/src/renderer/src/lib/bridgeService.ts) runs a
+watchdog that, after a quiet spell (`WATCHDOG_IDLE_MS`, 3 s), sends a `PING` and
+expects a `PONG` answered on the JUCE message thread. `WATCHDOG_MAX_MISSED` (3)
+consecutive missed replies (each timed out after `WATCHDOG_PONG_TIMEOUT_MS`, 2 s)
+declare the engine hung and trigger a supervised restart via `restartBackend`.
+The probe is suppressed when the engine is legitimately busy — during playback
+(`PLAYHEAD_UPDATE` already proves liveness) and during known-heavy work such as
+library import or BPM analysis — to avoid false restarts. A large positive clock
+drift (`WATCHDOG_DRIFT_MS`, 4 s) is read as an OS sleep/resume and resets the
+watchdog rather than counting the gap as missed pongs. In practice this surfaces
+a wedged engine within roughly 7–11 s.
+
+### Recovery coordinator (renderer)
+
+A respawned engine is **empty**: reconnecting the socket is not the same as
+recovering the session.
+[`engineRecovery.ts`](../frontend/src/renderer/src/lib/engineRecovery.ts) bridges
+that gap. At the instant of loss it captures what the user had open (project id,
+file path, dirty flag), then re-loads it into the fresh engine — preferring the
+matching autosave bucket, falling back to the last saved file, and doing nothing
+for an untitled, never-saved project (the empty engine already matches it). It
+exposes a small state machine — `engineRecovery ∈ { ok, recovering, restoring,
+unavailable }` — that
+[`EngineRecoveryOverlay.vue`](../frontend/src/renderer/src/components/EngineRecoveryOverlay.vue)
+uses to gate the UI while a recovery is in flight. Every cycle is tagged with a
+monotonic generation so a stale async continuation from a superseded attempt
+can't corrupt a fresh one, and per-phase deadlines (`RECONNECT_TIMEOUT_MS` 15 s,
+`RESTORE_TIMEOUT_MS` 20 s) turn a stuck recovery into a terminal `unavailable`
+state that offers **Try again** / **Quit** rather than spinning forever.
+Completion is confirmed only by the re-load's own `reset=true` `PROJECT_STATE`
+snapshot — never by process status alone — after which a friendly toast notes
+that the last few seconds of changes may need redoing.
+
+### In-handler guardrail (backend)
+
+Every inbound envelope is dispatched on the JUCE message thread inside a `try` /
+`catch`. An exception escaping a single handler would otherwise unwind out of the
+dispatch loop and take the whole engine down, so the catch keeps the process
+alive, logs the fault, and surfaces it to the renderer as a **non-fatal**
+`ENGINE_ERROR { message, context }` — which the UI shows as a brief "the engine
+hit a problem but kept running" notice. A top-level `try` / `catch` in `main()`
+is the last resort for anything that still escapes. The trade-off is explicit: a
+handler that threw part-way may leave an edit partially applied, but a
+possibly-imperfect edit is preferred over a dead engine.
 
 ## Project state model
 
@@ -593,11 +680,19 @@ mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 
 To stop sleep-prone audio devices (notably some USB DACs) from soft-muting and
-clipping the first instants of playback, `MasterClockSource` keeps an inaudible
-**keep-alive floor** flowing to the device whenever audio could be needed —
-always while playing, and while stopped only once a project's clips are loaded.
-When the engine is genuinely idle (running but with no project content) the
-output is left truly silent, so there is no audible hiss before a project opens.
+clipping the first instants of playback, an inaudible **keep-alive floor** (TPDF
+dither at `kKeepAliveDitherAmplitude`, ≈0.004) can be mixed into the output.
+[`OutputKeepAlive`](../backend/src/OutputKeepAlive.h) owns the gate, and the
+floor is injected by the metering stage **after** the master-gain ramp, so a low
+master volume can't attenuate it below the level that keeps the endpoint awake.
+The floor runs only when audio is genuinely imminent: while playing, and during a
+short **wake pre-roll** (`kWakePrerollMs`, ≈250 ms) issued before a cold-start
+play or preview — that is, only when the output endpoint has been idle long
+enough (`kEndpointWarmWindowMs`, ≈1.5 s) to risk soft-muting. When the engine is
+idle or paused the output is left **truly silent**, so a loaded-but-stopped
+project produces no audible hiss. `MasterClockSource` still gates the transport
+and clears the buffer when not playing; the keep-alive injection lives downstream
+in the metering stage.
 
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
 export writer** in [`MixdownEngine`](../backend/src/MixdownEngine.cpp). (The
@@ -1227,11 +1322,15 @@ past the last marker. The `Ctrl + ←/→` and `Ctrl + Shift + ←/→` keyboard
 shortcuts keep their fixed marker / project-end behaviour regardless of this
 setting.
 
-The status bar shows the current zoom level (e.g. `🔍 150%`) next to the backend connection
-indicator (plug-and-socket icon + green/grey dot). The **Pos**, **Bar**, **Length**, and
-**BPM** readouts in the transport bar are greyed out until the project has at least one
-track — empty-project edits to those fields would have no visible effect, so we hide
-the affordance until it's meaningful.
+The status bar shows the current zoom level (e.g. `🔍 150%`). It deliberately does
+**not** show backend / audio-engine connection status: the front-end/back-end
+split is an implementation detail the user shouldn't have to reason about, so
+engine availability is handled invisibly by automatic recovery (see
+[Engine resilience and recovery](#engine-resilience-and-recovery)) and only
+surfaces as a focused overlay when the user actually needs to act. The **Pos**,
+**Bar**, **Length**, and **BPM** readouts in the transport bar are greyed out
+until the project has at least one track — empty-project edits to those fields
+would have no visible effect, so we hide the affordance until it's meaningful.
 
 The same zoom commands are reachable from the **View** menu — **Zoom In** (`Ctrl +`),
 **Zoom Out** (`Ctrl -`), **Reset Zoom** (`Ctrl 0`), and a **Zoom Presets** submenu of
