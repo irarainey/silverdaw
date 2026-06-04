@@ -1837,16 +1837,60 @@ Three independent design critiques converged on the following constraints.
 
 ### 12.1 Transitions & blending — *part of the Phase 5 core-effects work (see near-term sequence)*
 
-- [ ] **Transition Zones between adjacent clips** — drag one
-  clip's edge over its neighbour to create a bounded transition object. Built-in
-  recipes only at first: **Smooth blend**, **Bass swap**, **Filter fade**,
-  **Delay out**, **Fade out/in**. Built on the existing per-clip Volume Shape +
-  per-track Tone EQ + shared Delay. Custom curves are a later disclosure; a user-saved
-  **preset browser is explicitly deferred** until the recipe set proves stable.
-- [ ] **"Vocal Focus" ducking** — one action derives a
-  ducking volume-shape on music clips/tracks under a selected vocal clip.
-  Offline/precomputed, editable and undoable; **not** sidechain routing
-  (that stays Phase 8).
+**Transition Zones** let the user drag one clip's edge over its neighbour to
+create a bounded transition object that blends the two clips across their
+overlap. Built-in recipes only at first: **Smooth blend**, **Bass swap**,
+**Filter fade**, **Delay out**, **Fade out/in**, built on the existing per-clip
+Volume Shape + per-track Tone EQ + shared Delay. Custom curves are a later
+disclosure; a user-saved **preset browser is explicitly deferred** until the
+recipe set proves stable.
+
+**Architecture (validated across opus-4.8 + gpt-5.5 + gpt-5.3-codex).** A
+transition is the single source of truth; its overlap REGION is derived from the
+two clips' timeline geometry (never stored) so it cannot drift. The crossfade is
+a **dedicated per-clip edge-fade gain stage** that *multiplies* with the user's
+volume `EnvelopeSnapshot` — it never clobbers a user-drawn volume shape, and a
+clip sandwiched between two transitions composes naturally (head fade-in × tail
+fade-out). The edge fade works in **master-timeline samples** (no warp/tempo
+conversion) and the "Smooth blend" recipe is an **equal-power** crossfade
+(`cos`/`sin`, exact endpoints, no `-100 dB` floor artefact). The **backend owns
+derivation**: transition mutations are discrete, single undoable transactions
+that update both partner clips atomically and re-publish `PROJECT_STATE` (which
+is also how backend-side reconciliation reaches the renderer). Collision logic
+treats a sanctioned transition overlap as legal across move/drop/paste/trim while
+still rejecting a third intruding clip; a reconciliation pass auto-deletes a
+transition the moment its invariants break (partner removed / moved apart /
+trimmed shorter than the overlap / a third clip intrudes).
+
+Implementation increments (foundations first; each keeps build + tests green):
+
+- [x] **A — Bridge contract.** `transitions` array (identity + discriminated-union
+  recipe) on the track schema; `TRANSITION_CREATE / _DELETE / _SET_RECIPE`
+  outbound messages; `PROJECT_STATE` carries reconciled state (no bespoke ack).
+  Zod-guard round-trip tests.
+- [x] **B1 — Edge-fade DSP primitive.** `EdgeFadeSnapshot` (RT-safe, immutable,
+  equal-power, timeline-sample space) + custom-harness tests (endpoints,
+  constant-power law, sandwiching, degenerate-span rejection).
+- [ ] **B2 — Audio wiring.** Publish the edge fade into each clip's `OffsetSource`
+  (atomic pointer + retire queue, mirroring the envelope discipline); apply it
+  multiplied with the volume envelope on the audio thread; mirror in
+  `MixdownEngine` for live/offline parity.
+- [ ] **B3 — Persistence + derivation + reconciliation.** Store transitions in the
+  ProjectState ValueTree (default-suppressed); derive each clip's edge-fade from
+  the transition geometry; reconcile/auto-delete on clip remove/move/trim/warp.
+  Round-trip + lifecycle tests.
+- [ ] **B4 — Transition handlers + undo.** `TRANSITION_*` handlers in a NEW
+  translation unit (not `Main.cpp`), each a single undoable transaction mutating
+  both partner clips atomically.
+- [ ] **C — Frontend store + collision.** Transitions in the project store;
+  transition-aware `wouldClipOverlap` / `findClipSlot` so partners stay editable;
+  reconciliation mirror on `PROJECT_STATE`.
+- [ ] **D — Creation gesture + rendering + recipe UI.** Edge-drag-into-neighbour
+  creates a transition (single-adjacent-neighbour only); PixiJS crossfade-region
+  rendering from transition state; recipe selection UI; Vitest.
+- [ ] **"Vocal Focus" ducking** — one action derives a ducking volume-shape on
+  music clips/tracks under a selected vocal clip. Offline/precomputed, editable
+  and undoable; **not** sidechain routing (that stays Phase 8).
 
 ### 12.2 Stem-driven mashup moves — *extends Phase 6*
 

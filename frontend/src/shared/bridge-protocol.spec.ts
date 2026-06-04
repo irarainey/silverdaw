@@ -333,6 +333,43 @@ describe('isProjectStatePayload', () => {
     expect(isProjectStatePayload({ ...base, markers: [{ id: 'm1' }], tracks: [] })).toBe(false)
     expect(isProjectStatePayload({ ...base, markers: [{ id: 'm1', positionMs: '1000' }], tracks: [] })).toBe(false)
   })
+
+  it('accepts a track carrying a smooth transition', () => {
+    expect(
+      isProjectStatePayload({
+        ...base,
+        tracks: [
+          {
+            id: 't1',
+            gain: 1.0,
+            clips: [
+              { id: 'c1', libraryItemId: 'l1', offsetMs: 0, durationMs: 1000 },
+              { id: 'c2', libraryItemId: 'l1', offsetMs: 800, durationMs: 1000 }
+            ],
+            transitions: [
+              { id: 'x1', leftClipId: 'c1', rightClipId: 'c2', recipe: { kind: 'smooth' } }
+            ]
+          }
+        ]
+      })
+    ).toBe(true)
+  })
+
+  it('rejects a transition with an unknown recipe kind or missing fields', () => {
+    const track = (transitions: unknown): unknown => ({
+      ...base,
+      tracks: [{ id: 't1', gain: 1.0, clips: [], transitions }]
+    })
+    expect(
+      isProjectStatePayload(track([{ id: 'x1', leftClipId: 'c1', rightClipId: 'c2', recipe: { kind: 'warp' } }]))
+    ).toBe(false)
+    expect(
+      isProjectStatePayload(track([{ id: 'x1', leftClipId: 'c1', rightClipId: 'c2' }]))
+    ).toBe(false)
+    expect(
+      isProjectStatePayload(track([{ id: 'x1', leftClipId: 'c1', recipe: { kind: 'smooth' } }]))
+    ).toBe(false)
+  })
 })
 
 describe('isProjectSavedPayload', () => {

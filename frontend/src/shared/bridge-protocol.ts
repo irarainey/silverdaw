@@ -427,6 +427,44 @@ export interface ClipSetEnvelopePayload extends GestureHints {
   points: ClipEnvelopePoint[]
 }
 
+// ─── Clip transitions (§12.1) ───────────────────────────────────────────────
+//
+// Transition mutations are discrete user actions (not 60 Hz drag streams), so
+// each one is a single undoable backend transaction that mutates BOTH partner
+// clips' derived edge-fade atomically and re-publishes the authoritative
+// `PROJECT_STATE`. That re-publish is also how backend-side reconciliation
+// (auto-deleting invalidated transitions) reaches the renderer — there is no
+// bespoke `*_APPLIED` ack. `TransitionRecipe` is imported from the
+// project-state block above so the wire payload can never drift from the guard.
+
+/**
+ * Create a transition over the sanctioned overlap of two adjacent clips on
+ * `trackId`. `leftClipId` is the earlier (fade-out) clip, `rightClipId` the
+ * later (fade-in) clip. The backend validates adjacency / single-neighbour
+ * overlap and rejects the request (no state change) if the invariants don't
+ * hold. `recipe` defaults to the equal-power `smooth` crossfade when omitted.
+ */
+export interface TransitionCreatePayload {
+  trackId: string
+  leftClipId: string
+  rightClipId: string
+  recipe?: TransitionRecipe
+}
+
+/** Delete a transition by id. The partner clips keep their independent
+ *  volume envelopes — only the derived edge-fade is removed. */
+export interface TransitionDeletePayload {
+  trackId: string
+  transitionId: string
+}
+
+/** Swap the recipe on an existing transition in place. */
+export interface TransitionSetRecipePayload {
+  trackId: string
+  transitionId: string
+  recipe: TransitionRecipe
+}
+
 /**
  * Project-shared Reverb bus parameters. All scalars are `[0, 1]`
  * linear; every field is optional so the renderer can drive one knob
@@ -514,6 +552,9 @@ export interface BridgeOutboundMap {
   TRACK_SET_LEVELER: TrackSetLevelerPayload
   TRACK_SET_PAN: TrackSetPanPayload
   CLIP_SET_ENVELOPE: ClipSetEnvelopePayload
+  TRANSITION_CREATE: TransitionCreatePayload
+  TRANSITION_DELETE: TransitionDeletePayload
+  TRANSITION_SET_RECIPE: TransitionSetRecipePayload
   PROJECT_SET_REVERB: ProjectSetReverbPayload
   PROJECT_SET_DELAY: ProjectSetDelayPayload
   TRANSPORT_PLAY: undefined
@@ -1183,6 +1224,36 @@ export const ProjectStateClipSchema = z.object({
 })
 export type ProjectStateClip = z.infer<typeof ProjectStateClipSchema>
 
+/**
+ * Clip-transition recipe — the DSP behaviour applied across the overlap
+ * between two adjacent clips. Modelled as a discriminated union on `kind`
+ * from day one so future recipes (bass swap, filter fade, delay out, vocal
+ * focus) add a variant without breaking the wire contract. v1 ships only
+ * the equal-power `smooth` crossfade.
+ */
+export const TransitionRecipeSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('smooth') })
+])
+export type TransitionRecipe = z.infer<typeof TransitionRecipeSchema>
+
+/**
+ * A sanctioned overlap between two adjacent clips on the same track. The
+ * transition is the single source of truth for the crossfade; the overlap
+ * REGION is derived from the two clips' timeline geometry (never stored)
+ * so it can never drift. The backend owns derivation of the per-clip
+ * edge-fade gain and auto-deletes the transition when its invariants break
+ * (clip removed / moved apart / trimmed shorter than the overlap / a third
+ * clip intrudes). `leftClipId` is the earlier clip (fades out); `rightClipId`
+ * the later clip (fades in).
+ */
+export const ProjectStateTransitionSchema = z.object({
+  id: z.string(),
+  leftClipId: z.string(),
+  rightClipId: z.string(),
+  recipe: TransitionRecipeSchema
+})
+export type ProjectStateTransition = z.infer<typeof ProjectStateTransitionSchema>
+
 export const ProjectStateTrackSchema = z.object({
   id: z.string(),
   /** Persisted user-facing track name. Optional for projects saved before this field existed. */
@@ -1217,7 +1288,10 @@ export const ProjectStateTrackSchema = z.object({
   levelerAmount: z.number().optional(),
   /** Per-track equal-power pan, signed `[-1, 1]` (0 = centre). */
   pan: z.number().optional(),
-  clips: z.array(ProjectStateClipSchema)
+  clips: z.array(ProjectStateClipSchema),
+  /** Sanctioned clip-to-clip transitions on this track. Suppressed when
+   *  empty so legacy projects round-trip unchanged. */
+  transitions: z.array(ProjectStateTransitionSchema).optional()
 })
 export type ProjectStateTrack = z.infer<typeof ProjectStateTrackSchema>
 

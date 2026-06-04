@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "AudioConstants.h"
 #include "BridgeAuth.h"
+#include "EdgeFadeSnapshot.h"
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
 #include "MixdownEngine.h"
@@ -1962,6 +1963,52 @@ int main()
         }
     };
 
+    auto testEdgeFadeSnapshotEqualPower = []() {
+        using silverdaw::EdgeFadeSnapshot;
+
+        // Empty descriptor → unity everywhere, reported empty.
+        auto empty = EdgeFadeSnapshot::create(false, 0, 0, false, 0, 0);
+        require(empty->isEmpty(), "no-leg edge fade is empty");
+        requireNear(empty->gainAtSample(500), 1.0, 1.0e-9, "empty edge fade is unity");
+
+        // Degenerate spans (end <= start) are dropped.
+        auto degenerate = EdgeFadeSnapshot::create(true, 1000, 1000, true, 2000, 1500);
+        require(degenerate->isEmpty(), "degenerate-span legs are dropped");
+
+        // Fade-in over [1000, 2000): equal-power sin ramp, true silence→unity.
+        auto fadeIn = EdgeFadeSnapshot::create(true, 1000, 2000, false, 0, 0);
+        requireNear(fadeIn->gainAtSample(1000), 0.0, 1.0e-6, "fade-in starts at true silence");
+        requireNear(fadeIn->gainAtSample(2000), 1.0, 1.0e-6, "fade-in reaches true unity");
+        requireNear(fadeIn->gainAtSample(1500), std::sin(0.5 * 1.57079632679489661923),
+                    1.0e-6, "fade-in midpoint is sin(pi/4)");
+        requireNear(fadeIn->gainAtSample(50), 0.0, 1.0e-9, "before fade-in region is silent");
+        requireNear(fadeIn->gainAtSample(9000), 1.0, 1.0e-9, "after fade-in region is unity");
+
+        // Fade-out over [1000, 2000): equal-power cos ramp, unity→true silence.
+        auto fadeOut = EdgeFadeSnapshot::create(false, 0, 0, true, 1000, 2000);
+        requireNear(fadeOut->gainAtSample(1000), 1.0, 1.0e-6, "fade-out starts at unity");
+        requireNear(fadeOut->gainAtSample(2000), 0.0, 1.0e-6, "fade-out reaches true silence");
+        requireNear(fadeOut->gainAtSample(9000), 0.0, 1.0e-9, "after fade-out region is silent");
+
+        // Equal-power law: an out leg and an in leg over the SAME overlap keep
+        // constant power (out^2 + in^2 == 1) across the whole sweep — this is
+        // the acoustic guarantee that defines the "smooth" crossfade.
+        for (juce::int64 s = 1000; s <= 2000; s += 50)
+        {
+            const double out = fadeOut->gainAtSample(s);
+            const double in = fadeIn->gainAtSample(s);
+            requireNear(out * out + in * in, 1.0, 1.0e-5,
+                        "equal-power crossfade preserves constant power");
+        }
+
+        // Sandwiched clip: head fade-in [0,1000) and tail fade-out [4000,5000)
+        // compose by multiplication and leave the middle untouched.
+        auto sandwich = EdgeFadeSnapshot::create(true, 0, 1000, true, 4000, 5000);
+        requireNear(sandwich->gainAtSample(2500), 1.0, 1.0e-9, "sandwich middle is unity");
+        requireNear(sandwich->gainAtSample(0), 0.0, 1.0e-6, "sandwich head starts silent");
+        requireNear(sandwich->gainAtSample(5000), 0.0, 1.0e-6, "sandwich tail ends silent");
+    };
+
     const std::vector<TestCase> tests{
         {"ProjectState tracks, clips, and dirty tracking", testProjectStateTracksClipsAndDirty},
         {"ProjectState view, library, markers, and replaceTree", testProjectStateViewLibraryMarkersAndReplace},
@@ -2025,6 +2072,8 @@ int main()
          testMixdownSnapshotCarriesClipEnvelope},
         {"tracksAsJson carries per-clip volume envelope into PROJECT_STATE",
          testTracksAsJsonCarriesClipEnvelope},
+        {"EdgeFadeSnapshot equal-power crossfade, endpoints, and sandwiching",
+         testEdgeFadeSnapshotEqualPower},
     };
 
     int failed = 0;
