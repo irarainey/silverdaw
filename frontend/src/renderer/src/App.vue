@@ -23,6 +23,7 @@ import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import RelinkDialog from '@/components/RelinkDialog.vue'
 import RecoveryDialog, { type RecoverableEntry } from '@/components/RecoveryDialog.vue'
 import StartupScreen from '@/components/StartupScreen.vue'
+import EngineRecoveryOverlay from '@/components/EngineRecoveryOverlay.vue'
 import { effectiveClipDurationMs, useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -34,6 +35,7 @@ import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
+import { onBackendStatus as onEngineBackendStatus } from '@/lib/engineRecovery'
 import { isZoomPresetAction, parseZoomPresetAction } from '@/lib/timeline/zoomPresets'
 import { useAppStore } from '@/stores/appStore'
 
@@ -84,6 +86,7 @@ let pendingAfterDiscard: (() => void) | null = null
 
 let unsubscribeMenu: (() => void) | null = null
 let unsubscribeOpenFromPath: (() => void) | null = null
+let unsubscribeBackendStatus: (() => void) | null = null
 let unregisterShortcuts: (() => void) | null = null
 let cleanViewStateSave: Promise<void> | null = null
 
@@ -157,6 +160,9 @@ onMounted(() => {
   unsubscribeOpenFromPath = window.silverdaw.onOpenProjectFromPath((filePath) => {
     void openProjectByPath(filePath)
   })
+  // Process-level backend supervisor status (restarting / recovered /
+  // failed) drives the mid-session engine-recovery overlay.
+  unsubscribeBackendStatus = window.silverdaw.onBackendStatus(onEngineBackendStatus)
   unregisterShortcuts = registerMenuShortcuts({ devToolsEnabled: appStore.devToolsEnabled })
   window.addEventListener('keydown', onGlobalShortcutKey, { capture: true })
   connectBridge()
@@ -234,6 +240,9 @@ function onGlobalShortcutKey(e: KeyboardEvent): void {
   if (isEditableTarget(e.target)) return
   if (isShortcutModalOpen()) return
   if (!transport.bridgeReady) return
+  // Mid-session engine recovery gates all transport/zoom shortcuts behind
+  // the overlay until the engine is healthy again.
+  if (transport.engineRecovery !== 'ok') return
 
   if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
     e.preventDefault()
@@ -678,6 +687,8 @@ onBeforeUnmount(() => {
   unsubscribeMenu = null
   unsubscribeOpenFromPath?.()
   unsubscribeOpenFromPath = null
+  unsubscribeBackendStatus?.()
+  unsubscribeBackendStatus = null
   unregisterShortcuts?.()
   unregisterShortcuts = null
   window.removeEventListener('keydown', onGlobalShortcutKey, { capture: true })
@@ -1093,6 +1104,11 @@ function onUnsavedPromptCancel(): void {
       @open-project="onStartScreenOpen"
       @open-recent="onStartScreenRecent"
     />
+
+    <!-- Mid-session audio-engine recovery gate. Sits above everything
+         (including the StartupScreen) so it owns the screen whenever the
+         engine drops after a healthy start. -->
+    <EngineRecoveryOverlay />
   </div>
 </template>
 

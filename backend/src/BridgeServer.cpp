@@ -128,6 +128,8 @@ void BridgeServer::stop()
 
 void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::string& raw)
 {
+  try
+  {
     silverdaw::log::debug("bridge", "incoming bytes=" + juce::String(static_cast<int>(raw.size())));
     // Parse JSON on the I/O thread, then either consume the envelope here
     // (AUTH handshake) or dispatch the typed message onto the JUCE message
@@ -238,6 +240,18 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
                 clientReadyHandler(std::move(sendToClient));
             });
     }
+  }
+  catch (const std::exception& e)
+  {
+    // I/O-thread crash firewall. IXWebSocket invokes this callback on its
+    // own thread; an exception escaping here would call std::terminate and
+    // take the whole engine down. Log and drop the offending frame instead.
+    silverdaw::log::error("bridge", juce::String("onIncoming threw: ") + e.what() + " — frame dropped");
+  }
+  catch (...)
+  {
+    silverdaw::log::error("bridge", "onIncoming threw unknown exception — frame dropped");
+  }
 }
 
 bool BridgeServer::checkAuthToken(const juce::var& payload) const

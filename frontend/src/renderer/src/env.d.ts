@@ -6,6 +6,7 @@ import type {
   OpenedAudioFile as SharedOpenedAudioFile,
   UiPreferences as SharedUiPreferences
 } from '@shared/types'
+import type { BackendStatus } from '@shared/ipc-channels'
 
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
@@ -40,6 +41,8 @@ declare global {
       setUiPreferences(partial: Partial<UiPreferences>): void
       getBridgePort(): Promise<number>
       getBridgeToken(): Promise<string>
+      restartBackend(reason: string): Promise<void>
+      onBackendStatus(handler: (status: BackendStatus) => void): () => void
       writeTempWav(args: {
         sourcePath: string
         channels: Float32Array[]

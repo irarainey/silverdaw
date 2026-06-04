@@ -4,8 +4,10 @@ import {
   isClipWarpAppliedPayload,
   isBridgeInboundType,
   isClipAckPayload,
+  isEngineErrorPayload,
   isLibraryItemAnalysisPayload,
   isPlayheadUpdatePayload,
+  isPongPayload,
   isPreviewEndedPayload,
   isPreviewPositionPayload,
   isPreviewStatePayload,
@@ -67,7 +69,9 @@ const INBOUND_TYPES = {
   TRACK_PAN_APPLIED: true,
   CLIP_ENVELOPE_APPLIED: true,
   PROJECT_REVERB_APPLIED: true,
-  PROJECT_DELAY_APPLIED: true
+  PROJECT_DELAY_APPLIED: true,
+  PONG: true,
+  ENGINE_ERROR: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {
@@ -96,6 +100,32 @@ describe('isReadyPayload', () => {
   it('rejects missing or wrong-typed version', () => {
     expect(isReadyPayload({})).toBe(false)
     expect(isReadyPayload({ version: 1 })).toBe(false)
+  })
+})
+
+describe('isPongPayload', () => {
+  it('accepts a numeric nonce id', () => {
+    expect(isPongPayload({ id: 0 })).toBe(true)
+    expect(isPongPayload({ id: 1234 })).toBe(true)
+  })
+
+  it('rejects missing or wrong-typed id', () => {
+    expect(isPongPayload({})).toBe(false)
+    expect(isPongPayload({ id: '1' })).toBe(false)
+    expect(isPongPayload(null)).toBe(false)
+  })
+})
+
+describe('isEngineErrorPayload', () => {
+  it('accepts a message with optional context', () => {
+    expect(isEngineErrorPayload({ message: 'boom' })).toBe(true)
+    expect(isEngineErrorPayload({ message: 'boom', context: 'CLIP_ADD' })).toBe(true)
+  })
+
+  it('rejects missing or wrong-typed fields', () => {
+    expect(isEngineErrorPayload({})).toBe(false)
+    expect(isEngineErrorPayload({ message: 42 })).toBe(false)
+    expect(isEngineErrorPayload({ message: 'ok', context: 7 })).toBe(false)
   })
 })
 

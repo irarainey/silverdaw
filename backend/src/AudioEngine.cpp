@@ -82,12 +82,21 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
     rebuildDevicesSnapshot(/*rescan*/ false);
     devicesSnapshot.fellBackToDefault = didFallBack;
 
+    // The output device is now open and streaming; treat that as the endpoint
+    // last being active so a play shortly after launch isn't needlessly delayed
+    // by a wake pre-roll. A genuinely idle gap before the first play still
+    // ages past kEndpointWarmWindowMs and triggers the pre-roll.
+    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
+
     return {};
 }
 
 void AudioEngine::shutdown()
 {
     rebuildTimer.stopTimer();
+    prerollTimer.stopTimer();
+    prerollAction = nullptr;
+    outputKeepAlive.setWakePreroll(false);
     stop();
     unloadPreview();
     deviceManager.removeChangeListener(&deviceChangeListener);
@@ -503,8 +512,9 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
         master.setPlaying(true);
     }
 
-    // A project now has audio content — let the master keep the device awake
-    // through pauses so the first play after a pause is instant.
+    // Track whether a project has audio content. This now feeds diagnostics
+    // only — the keep-alive floor is gated on playback + wake pre-roll, not on
+    // a project being loaded, so a loaded-but-stopped project stays silent.
     master.setContentLoaded(! tracks.empty());
 
     return true;
@@ -527,8 +537,8 @@ bool AudioEngine::removeClip(const juce::String& clipId)
     busGraph.detachClip(clipId, it->second->transportSource.get());
     it->second->transportSource->setSource(nullptr);
     tracks.erase(it);
-    // Drop the keep-alive floor once the last clip is gone so an emptied or
-    // closed project leaves the device in true silence rather than idle hiss.
+    // Diagnostic content flag (no longer gates the floor — idle output is
+    // always true silence regardless of whether a project is loaded).
     master.setContentLoaded(! tracks.empty());
     silverdaw::log::info("engine", "removeClip id=" + clipId);
     return true;
@@ -623,11 +633,105 @@ void AudioEngine::flushDirtyRebuilds()
             }
         }
     }
+
+    // The rebuild has fully settled. After a paused seek, deep block-prime the
+    // read-ahead at the new playhead so the first play lands on a buffer hit
+    // rather than the cold-cache underrun that otherwise swallows the first
+    // ~two plays (cold MP3 decode + warp across tracks sharing one read-ahead
+    // thread). This mirrors the load-time prewarm and reuses the same routine.
+    // Scoped to seeks (pendingSeekPrewarm) so paused clip edits never pay it,
+    // and skipped while playing — audio already flows and the message thread
+    // must never stall mid-playback. Bounded by kLoadPrimeBudgetMs so a cold
+    // seek can never wedge the thread; the warm case returns in well under a
+    // millisecond. This is a latency optimisation only: play() stays the
+    // fail-closed correctness gate and re-primes regardless of this result.
+    if (pendingSeekPrewarm && ! master.isPlaying())
+    {
+        pendingSeekPrewarm = false;
+        const auto prewarmStart = juce::Time::getMillisecondCounterHiRes();
+        const bool warm = primeTracksForPlayback(kLoadPrimeBudgetMs);
+        silverdaw::log::info("engine",
+                             "prewarm prefetch after seek settle (pos=" +
+                                 juce::String(master.getPositionSamples()) + " warm=" +
+                                 (warm ? "1" : "0") + " elapsedMs=" +
+                                 juce::String(juce::Time::getMillisecondCounterHiRes() - prewarmStart, 1) +
+                                 ")");
+    }
+}
+
+void AudioEngine::startWithWakePreroll(std::function<void()> startFn)
+{
+    // If output is already flowing — the project transport is playing, a preview
+    // is playing, or a wake pre-roll is already waking the endpoint — then the
+    // endpoint is warm by definition, so start immediately.
+    const bool previewPlaying =
+        preview.transportSource != nullptr && preview.transportSource->isPlaying();
+    if (master.isPlaying() || previewPlaying)
+    {
+        startFn();
+        return;
+    }
+
+    // A pre-roll is already waking the endpoint: supersede its deferred action
+    // with this one (last start wins, exactly one thing ends up playing) rather
+    // than starting a second now and leaving the first armed to fire later.
+    if (outputKeepAlive.isWakePreroll())
+    {
+        prerollAction = std::move(startFn);
+        return;
+    }
+
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const bool cold = (now - lastOutputActiveMs) >= static_cast<double>(kEndpointWarmWindowMs);
+
+    // A pre-roll only does anything if the device is actually open (otherwise
+    // there is no callback to emit the floor) — fall back to an immediate start
+    // when warm or when there is no device.
+    if (! cold || master.getSampleRate() <= 0.0)
+    {
+        startFn();
+        return;
+    }
+
+    // Cold endpoint: hold content closed, run the floor for the pre-roll window
+    // so the wake-up fade lands on the floor, then fire the real start.
+    prerollAction = std::move(startFn);
+    outputKeepAlive.setWakePreroll(true);
+    prerollTimer.startTimer(kWakePrerollMs);
+    silverdaw::log::info("engine",
+                         "wake pre-roll armed (" + juce::String(kWakePrerollMs) +
+                             "ms) — endpoint cold after " +
+                             juce::String(now - lastOutputActiveMs, 0) + "ms idle");
+}
+
+void AudioEngine::cancelWakePreroll()
+{
+    if (! prerollTimer.isTimerRunning() && ! outputKeepAlive.isWakePreroll())
+        return;
+    prerollTimer.stopTimer();
+    prerollAction = nullptr;
+    outputKeepAlive.setWakePreroll(false);
+    silverdaw::log::info("engine", "wake pre-roll cancelled before completion");
+}
+
+void AudioEngine::completeWakePreroll()
+{
+    prerollTimer.stopTimer();
+    outputKeepAlive.setWakePreroll(false);
+    auto action = std::move(prerollAction);
+    prerollAction = nullptr;
+    silverdaw::log::info("engine", "wake pre-roll complete — opening content");
+    if (action)
+        action();
 }
 
 void AudioEngine::play()
 {
     rebuildTimer.stopTimer();
+    // play() does its own fail-closed prime below, so any pending seek prewarm
+    // is now redundant — drop it so a later unrelated rebuild settle can't fire
+    // a stray block-prime.
+    pendingSeekPrewarm = false;
     flushAllDirtyRebuildsSync();
     // Block-prime every track's read-ahead buffer at the current playhead
     // before opening the master gate, so the very first audio block is a
@@ -654,9 +758,14 @@ void AudioEngine::play()
                                  ") — gate kept closed to avoid a silent first play");
         return;
     }
-    master.setPlaying(true);
-    silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
-                                       " pos=" + juce::String(master.getPositionSamples()) + ")");
+    // Open the master gate now if the endpoint is warm, or after a short wake
+    // pre-roll if it may have slept — so a cold endpoint's wake-up fade is spent
+    // on the keep-alive floor instead of swallowing the first musical attack.
+    startWithWakePreroll([this]() {
+        master.setPlaying(true);
+        silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
+                                           " pos=" + juce::String(master.getPositionSamples()) + ")");
+    });
 }
 
 bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
@@ -779,6 +888,10 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
 
 void AudioEngine::pause()
 {
+    // Output is about to go silent — record that the endpoint was active until
+    // now (warmth window) and abandon any in-flight wake pre-roll.
+    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
+    cancelWakePreroll();
     master.setPlaying(false);
     // The transport is paused — the audio thread is guaranteed not
     // to be inside any track's processing chain. Drain any retired
@@ -796,6 +909,10 @@ void AudioEngine::pause()
 
 void AudioEngine::stop()
 {
+    // Output is about to go silent — record that the endpoint was active until
+    // now (warmth window) and abandon any in-flight wake pre-roll.
+    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
+    cancelWakePreroll();
     master.setPlaying(false);
     master.setPositionSamples(0);
     busGraph.resetSharedFx();
@@ -921,6 +1038,15 @@ void AudioEngine::setPositionMs(double ms)
     // tick); while paused the existing debounce gives drag-seeks a
     // chance to coalesce.
     rebuildTimer.startTimer(master.isPlaying() ? 1 : kRebuildDebounceMs);
+    // On a paused seek, arm a one-shot prewarm so the rebuild settle deep-fills
+    // the read-ahead at the new playhead — the first play after a seek is then
+    // a buffer hit, not a cold-cache underrun. Coalesced by the debounce so
+    // scrubbing only primes once the user settles. Not armed while playing
+    // (audio already flows; never stall the message thread mid-playback).
+    if (! master.isPlaying())
+    {
+        pendingSeekPrewarm = true;
+    }
     silverdaw::log::info("engine", "setPositionMs " + juce::String(clampedMs));
 }
 
@@ -1214,6 +1340,11 @@ bool AudioEngine::isPlaying() const
     return master.isPlaying();
 }
 
+bool AudioEngine::isContentLoaded() const
+{
+    return master.isContentLoaded();
+}
+
 double AudioEngine::getPositionMs() const
 {
     const double sr = master.getSampleRate();
@@ -1338,6 +1469,11 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
 
 void AudioEngine::unloadPreview()
 {
+    // Abandon any in-flight wake pre-roll first: its deferred start would
+    // otherwise fire against a torn-down or replaced preview transport (e.g.
+    // loadPreview() unloads the old clip mid-pre-roll), starting a clip the
+    // user never asked to play.
+    cancelWakePreroll();
     if (preview.transportSource == nullptr) return;
     preview.transportSource->stop();
     topMixer.removeInputSource(preview.transportSource.get());
@@ -1432,18 +1568,27 @@ void AudioEngine::playPreview()
     {
         preview.transportSource->setPosition(0.0);
     }
-    preview.transportSource->start();
+    // Start now if the endpoint is warm, or after a short wake pre-roll if it
+    // may have slept, so a cold preview's first attack isn't swallowed.
+    startWithWakePreroll([this]() {
+        if (preview.transportSource != nullptr)
+            preview.transportSource->start();
+    });
 }
 
 void AudioEngine::pausePreview()
 {
     if (preview.transportSource == nullptr) return;
+    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
+    cancelWakePreroll();
     preview.transportSource->stop();
 }
 
 void AudioEngine::stopPreview()
 {
     if (preview.transportSource == nullptr) return;
+    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
+    cancelWakePreroll();
     preview.transportSource->stop();
     preview.transportSource->setPosition(0.0);
 }

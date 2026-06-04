@@ -480,6 +480,42 @@ class PlayheadEmitter : public juce::Timer
             lastMasterLevelHadSignal = hasSignal;
         }
 
+        // Diagnostic: record the final post-master-gain output peak — the
+        // signal actually handed to the device. Fires both while PLAYING (was
+        // the first play silent at the engine, or did real audio reach the
+        // device?). A peak at the keep-alive floor (~0.004) is dither only; a
+        // music-level peak (≳ 0.1) is real audio; a flat 0 while playing means
+        // the output never reached the device. We accumulate the running max
+        // across every drained tick so a throttled sample can't miss a
+        // transient, then emit it on the message thread (free of any
+        // audio-thread cost) and reset. Only accumulate while playing so the
+        // brief wake-pre-roll floor can't contaminate the first post-resume
+        // sample.
+        if (playing)
+        {
+            masterPeakLogMaxL = juce::jmax(masterPeakLogMaxL, peakL);
+            masterPeakLogMaxR = juce::jmax(masterPeakLogMaxR, peakR);
+        }
+        else
+        {
+            masterPeakLogMaxL = 0.0F;
+            masterPeakLogMaxR = 0.0F;
+        }
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        // Only log during active playback — idle/paused output is now true
+        // silence, so logging it would just spam zeros every interval.
+        if (playing && (nowMs - lastMasterPeakLogMs) >= kMasterPeakLogIntervalMs)
+        {
+            silverdaw::log::debug("perf.master",
+                                  "playing=" + juce::String(playing ? 1 : 0) +
+                                      " peakL=" + juce::String(masterPeakLogMaxL, 5) +
+                                      " peakR=" + juce::String(masterPeakLogMaxR, 5) +
+                                      " posMs=" + juce::String(rawPosMs, 1));
+            lastMasterPeakLogMs = nowMs;
+            masterPeakLogMaxL = 0.0F;
+            masterPeakLogMaxR = 0.0F;
+        }
+
         // Per-track peak meters. Same gating rules as the master
         // meter (only broadcast on activity; emit one trailing zero
         // on the active→silent transition so the renderer's
@@ -529,6 +565,11 @@ class PlayheadEmitter : public juce::Timer
     juce::DynamicObject::Ptr masterLevelObject{new juce::DynamicObject()};
     juce::var masterLevelPayload{masterLevelObject.get()};
     bool lastMasterLevelHadSignal = false;
+    // Wall-clock throttle for the perf.master output-peak diagnostic.
+    static constexpr double kMasterPeakLogIntervalMs = 250.0;
+    double lastMasterPeakLogMs = 0.0;
+    float masterPeakLogMaxL = 0.0F;
+    float masterPeakLogMaxR = 0.0F;
     juce::DynamicObject::Ptr trackLevelsObject{new juce::DynamicObject()};
     juce::var trackLevelsPayload{trackLevelsObject.get()};
     bool lastTrackLevelsHadSignal = false;
@@ -3027,6 +3068,18 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                            juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
                            const silverdaw::DecodedCache& decodedCache, ProjectSession& session)
 {
+    // Liveness fast-path. PING is answered on the message thread so a
+    // round-trip proves the engine command thread itself is responsive,
+    // not merely that the socket is open. It mutates nothing, so it
+    // bypasses the undo prologue/epilogue entirely.
+    if (type == "PING")
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("id", payload.getProperty("id", 0));
+        bridge.broadcast("PONG", juce::var(p));
+        return;
+    }
+
     // Undo-transaction prologue. Each project-mutating envelope is wrapped
     // in its own UndoManager transaction so Ctrl+Z reverts one logical
     // edit. Drag streams (CLIP_MOVE / CLIP_TRIM / TRACK_GAIN) coalesce
@@ -4381,8 +4434,42 @@ int runBackend(int argc, char* argv[])
         bridgeToken,
         [&engine, &projectState, &peakPool, &peaksCache, &decodedCache, &session](
             silverdaw::BridgeServer& self, const juce::String& type, const juce::var& payload)
-        { dispatchBridgeMessage(type, payload, engine, projectState, self, peakPool, peaksCache, decodedCache,
-                                session); },
+        {
+            // Crash firewall. This lambda runs on the JUCE message thread via
+            // `callAsync`; without this guard any exception escaping a single
+            // handler would unwind out of `runDispatchLoop()` → `main()` and
+            // terminate the whole engine. Catch-and-continue keeps the process
+            // alive and surfaces the failure as a non-fatal `ENGINE_ERROR`.
+            //
+            // Trade-off: a handler that threw part-way may leave an UndoManager
+            // transaction open or a partially-applied edit. Full transactional
+            // rollback is out of scope; the next mutating envelope opens a fresh
+            // transaction, and the renderer can reload to a clean state. We
+            // accept a possibly-imperfect edit over a dead engine.
+            try
+            {
+                dispatchBridgeMessage(type, payload, engine, projectState, self, peakPool, peaksCache,
+                                      decodedCache, session);
+            }
+            catch (const std::exception& e)
+            {
+                silverdaw::log::error("bridge", "handler threw for type=" + type + ": " +
+                                                    juce::String(e.what()) + " — engine kept alive");
+                auto* p = new juce::DynamicObject();
+                p->setProperty("message", juce::String(e.what()));
+                p->setProperty("context", type);
+                self.broadcast("ENGINE_ERROR", juce::var(p));
+            }
+            catch (...)
+            {
+                silverdaw::log::error("bridge",
+                                      "handler threw unknown exception for type=" + type + " — engine kept alive");
+                auto* p = new juce::DynamicObject();
+                p->setProperty("message", juce::String("Unknown engine error"));
+                p->setProperty("context", type);
+                self.broadcast("ENGINE_ERROR", juce::var(p));
+            }
+        },
         [&projectState, &session](const silverdaw::BridgeServer::SendToClient& sendToClient)
         {
             // PROJECT_STATE is sent only to the newly-authenticated client,

@@ -2,7 +2,7 @@
 // Expose only what the renderer needs via `contextBridge`.
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences } from '../shared/types'
-import { IPC } from '../shared/ipc-channels'
+import { IPC, type BackendStatus } from '../shared/ipc-channels'
 
 export type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences }
 
@@ -125,6 +125,22 @@ const api = {
    * of argv and out of the HTML.
    */
   getBridgeToken: (): Promise<string> => ipcRenderer.invoke(IPC.bridge.getToken),
+  /**
+   * Ask main to force-restart the backend process. Called by the
+   * renderer's liveness watchdog when the engine looks hung (the socket
+   * is open but ping/pong stops). The supervisor respawns on the same
+   * port + token so the bridge reconnects transparently.
+   */
+  restartBackend: (reason: string): Promise<void> => ipcRenderer.invoke(IPC.backend.restart, reason),
+  /**
+   * Subscribe to process-level backend status pushes
+   * (`restarting` / `recovered` / `failed`). Returns an unsubscribe fn.
+   */
+  onBackendStatus: (handler: (status: BackendStatus) => void): (() => void) => {
+    const listener = (_evt: IpcRendererEvent, status: BackendStatus): void => handler(status)
+    ipcRenderer.on(IPC.backend.status, listener)
+    return () => ipcRenderer.removeListener(IPC.backend.status, listener)
+  },
   /**
    * Transcode decoded PCM into a temp WAV the JUCE backend can read.
    * Used for formats the backend can't decode natively (e.g. AAC/M4A on

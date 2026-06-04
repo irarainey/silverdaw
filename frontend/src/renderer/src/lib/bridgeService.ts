@@ -31,6 +31,7 @@ import { clearMasterLevels, setMasterLevels } from '@/lib/audio/masterLevelChann
 import { clearTrackLevels, setTrackLevels } from '@/lib/audio/trackLevelsChannel'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
+import * as engineRecovery from '@/lib/engineRecovery'
 import { log } from '@/lib/log'
 import {
   isAudioDeviceChangedPayload,
@@ -49,6 +50,8 @@ import {
   isMasterLevelPayload,
   isTrackLevelsPayload,
   isPlayheadUpdatePayload,
+  isPongPayload,
+  isEngineErrorPayload,
   isPreviewEndedPayload,
   isPreviewPositionPayload,
   isPreviewStatePayload,
@@ -89,6 +92,23 @@ const DEFAULT_BRIDGE_PORT = 8765
 const RECONNECT_DELAY_MS = 1000
 const MAX_RECONNECT_DELAY_MS = 5000
 
+// ─── Liveness watchdog tuning ───────────────────────────────────────────────
+// The backend only pushes data (PLAYHEAD_UPDATE) during playback, so when
+// the session is idle there is no inbound traffic to prove the engine's
+// message thread is still alive. The watchdog fills that gap: after a quiet
+// spell it sends a PING and expects a PONG handled ON the engine's message
+// thread. Missing several in a row means the engine is wedged → force a
+// supervised restart. Tuned for ~7–11 s detection without false positives.
+const WATCHDOG_INTERVAL_MS = 1000
+/** Quiet period (no inbound) before we start actively pinging. */
+const WATCHDOG_IDLE_MS = 3000
+/** How long to wait for a PONG before counting it as missed. */
+const WATCHDOG_PONG_TIMEOUT_MS = 2000
+/** Consecutive missed PONGs that declare the engine hung. */
+const WATCHDOG_MAX_MISSED = 3
+/** Tick gap beyond this implies the machine slept — treat as resume. */
+const WATCHDOG_DRIFT_MS = 4000
+
 /** Raw `{type, payload}` envelope as it arrives off the wire (pre-validation). */
 interface RawBridgeEnvelope {
   type?: unknown
@@ -103,6 +123,11 @@ let socketHeartbeat: ReturnType<typeof setInterval> | null = null
 let outboundCount = 0
 let inboundCount = 0
 let lastInboundAt = 0
+// Watchdog state.
+let pingNonce = 0
+let pendingPing: { id: number; sentAt: number } | null = null
+let missedPongs = 0
+let lastWatchdogTickAt = 0
 
 function readyStateName(s: number): string {
   switch (s) {
@@ -121,16 +146,90 @@ function readyStateName(s: number): string {
 
 function startSocketHeartbeat(): void {
   if (socketHeartbeat) return
-  socketHeartbeat = setInterval(() => {
-    if (!socket) return
-    const now = performance.now()
-    const lastInboundAgeMs = lastInboundAt > 0 ? now - lastInboundAt : -1
-    log.debug(
-      'perf.bridge',
-      `heartbeat readyState=${readyStateName(socket.readyState)} bufferedAmount=${socket.bufferedAmount} ` +
-        `out=${outboundCount} in=${inboundCount} lastInboundAgeMs=${lastInboundAgeMs.toFixed(0)}`
-    )
-  }, 2000)
+  lastWatchdogTickAt = performance.now()
+  socketHeartbeat = setInterval(runWatchdogTick, WATCHDOG_INTERVAL_MS)
+}
+
+/**
+ * One watchdog tick. Logs perf telemetry, then — when the session is idle
+ * and the engine isn't legitimately busy — probes liveness with PING/PONG
+ * and escalates to a supervised restart after repeated misses.
+ */
+function runWatchdogTick(): void {
+  if (!socket) return
+  const now = performance.now()
+  const driftMs = lastWatchdogTickAt > 0 ? now - lastWatchdogTickAt - WATCHDOG_INTERVAL_MS : 0
+  lastWatchdogTickAt = now
+
+  const lastInboundAgeMs = lastInboundAt > 0 ? now - lastInboundAt : -1
+  log.debug(
+    'perf.bridge',
+    `heartbeat readyState=${readyStateName(socket.readyState)} bufferedAmount=${socket.bufferedAmount} ` +
+      `out=${outboundCount} in=${inboundCount} lastInboundAgeMs=${lastInboundAgeMs.toFixed(0)} ` +
+      `missedPongs=${missedPongs}`
+  )
+
+  // Large positive drift means the OS suspended us (sleep / hibernate).
+  // Any "missed" PONG across that gap is a false positive — reset and let
+  // the next clean interval re-evaluate.
+  if (driftMs > WATCHDOG_DRIFT_MS) {
+    log.info('perf.bridge', `clock drift ${driftMs.toFixed(0)}ms (likely resume) — resetting watchdog`)
+    pendingPing = null
+    missedPongs = 0
+    return
+  }
+
+  if (socket.readyState !== WebSocket.OPEN) return
+
+  const transport = useTransportStore()
+  // Not ready yet, or already recovering — don't probe or escalate; the
+  // reconnect/recovery machinery owns those states.
+  if (!transport.bridgeReady || transport.engineRecovery !== 'ok') return
+  // During playback PLAYHEAD_UPDATE already proves message-thread liveness.
+  if (transport.isPlaying) {
+    pendingPing = null
+    missedPongs = 0
+    return
+  }
+  // A mixdown render can legitimately occupy the message thread; don't
+  // mistake that for a hang.
+  if (snapshotMixdownState()) {
+    pendingPing = null
+    missedPongs = 0
+    return
+  }
+  // Library import / tempo + beat analysis is CPU-heavy work on the engine's
+  // message thread that can legitimately stall PONG replies for several
+  // seconds. Treat it like playback/mixdown: a known-busy engine is not a
+  // hung engine, so suppress the probe rather than risk a false restart that
+  // could interrupt the import.
+  if (useLibraryStore().isImporting) {
+    pendingPing = null
+    missedPongs = 0
+    return
+  }
+
+  // Resolve any outstanding ping first.
+  if (pendingPing) {
+    if (now - pendingPing.sentAt > WATCHDOG_PONG_TIMEOUT_MS) {
+      missedPongs += 1
+      pendingPing = null
+      log.warn('perf.bridge', `PONG timeout (${missedPongs}/${WATCHDOG_MAX_MISSED})`)
+      if (missedPongs >= WATCHDOG_MAX_MISSED) {
+        missedPongs = 0
+        engineRecovery.onEngineUnresponsive(`no PONG after ${WATCHDOG_MAX_MISSED} probes`)
+      }
+    }
+    return
+  }
+
+  // Idle long enough? Send a fresh probe.
+  const idleMs = lastInboundAt > 0 ? now - lastInboundAt : Number.POSITIVE_INFINITY
+  if (idleMs >= WATCHDOG_IDLE_MS) {
+    const id = ++pingNonce
+    pendingPing = { id, sentAt: now }
+    send('PING', { id })
+  }
 }
 
 function stopSocketHeartbeat(): void {
@@ -138,6 +237,8 @@ function stopSocketHeartbeat(): void {
     clearInterval(socketHeartbeat)
     socketHeartbeat = null
   }
+  pendingPing = null
+  missedPongs = 0
 }
 
 /**
@@ -209,6 +310,11 @@ function openSocket(conn: BridgeConnection): void {
 
   ws.addEventListener('open', () => {
     reconnectDelay = RECONNECT_DELAY_MS
+    // Fresh socket — clear any stale liveness-probe state from the previous
+    // connection so the watchdog starts from a clean slate.
+    pendingPing = null
+    missedPongs = 0
+    lastInboundAt = performance.now()
     try {
       ws.send(JSON.stringify({ type: 'AUTH', payload: { token } }))
     } catch (err) {
@@ -226,7 +332,13 @@ function openSocket(conn: BridgeConnection): void {
     clearMasterLevels()
     clearTrackLevels()
     log.warn('bridge', 'socket closed')
-    if (!stopped) scheduleReconnect()
+    // An unexpected close mid-session means the engine dropped — kick off
+    // the recovery flow (no-op until the engine has been ready once, and
+    // skipped for the deliberate `disconnect()` teardown via `stopped`).
+    if (!stopped) {
+      engineRecovery.onConnectionLost()
+      scheduleReconnect()
+    }
   })
 
   ws.addEventListener('error', () => {
@@ -418,6 +530,10 @@ function dispatch(msg: BridgeInboundMessage): void {
       // quick-switch render immediately rather than after the user
       // opens them.
       useAudioDeviceStore().requestInitialList()
+      // Drive mid-session recovery: if we're mid-recovery this snapshot is
+      // either the empty reconnect snapshot (→ kick re-load) or the
+      // re-load's own reset snapshot (→ recovery complete).
+      engineRecovery.onProjectStateApplied(msg.payload)
       break
     }
 
@@ -866,6 +982,27 @@ function dispatch(msg: BridgeInboundMessage): void {
       break
     }
 
+    case 'PONG': {
+      // Liveness reply. Clear the matching outstanding probe and reset the
+      // miss counter — the engine's message thread is alive.
+      if (pendingPing && pendingPing.id === msg.payload.id) {
+        pendingPing = null
+      }
+      missedPongs = 0
+      break
+    }
+
+    case 'ENGINE_ERROR': {
+      // The backend caught (and survived) an exception in a handler. Surface
+      // it honestly but non-fatally — the engine is still running.
+      log.error('bridge', `ENGINE_ERROR: ${msg.payload.message}`)
+      useNotificationsStore().pushError(
+        'The audio engine hit a problem but kept running. If something looks off, try the action again.',
+        8000
+      )
+      break
+    }
+
     default:
       assertNever(msg)
   }
@@ -1155,6 +1292,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectReverbAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_DELAY_APPLIED':
       return isProjectDelayAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PONG':
+      return isPongPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'ENGINE_ERROR':
+      return isEngineErrorPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

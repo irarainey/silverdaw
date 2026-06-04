@@ -18,6 +18,7 @@
 import { buildMenus } from '@/menu'
 import type { BuildMenusOptions } from '@/menu'
 import { useUiStore } from '@/stores/uiStore'
+import { useTransportStore } from '@/stores/transportStore'
 
 interface ParsedAccelerator {
   /** Lower-case `e.key` to match. Single-char keys are letters (e.g. `'s'`);
@@ -156,6 +157,15 @@ export function registerMenuShortcuts(opts: { devToolsEnabled: boolean }): () =>
   const bindings = collectShortcutBindings(opts)
 
   function onKeyDown(e: KeyboardEvent): void {
+    // While the audio engine is being recovered the UI is gated behind a
+    // modal overlay — swallow every menu accelerator so a stray Ctrl+S,
+    // Delete, Split, etc. can't race the empty/respawning engine or the
+    // in-flight restore. The overlay's own buttons are plain clicks.
+    if (useTransportStore().engineRecovery !== 'ok') {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     // Modal dialogs that own their own keyboard interactions (e.g.
     // the Clip Editor's local undo / redo stack) need the accelerator
     // to reach their bubble-phase handler. Bailing here lets the

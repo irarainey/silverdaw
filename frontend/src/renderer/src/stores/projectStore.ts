@@ -420,6 +420,14 @@ interface ProjectState {
    */
   previousProjectId: string | null
   /**
+   * True while a mid-session engine recovery is in flight. Suppresses
+   * autosave writes AND the `previousProjectId` bucket-cleanup so the
+   * empty reconnect snapshot can't delete the autosave we're about to
+   * restore from. Cleared by `engineRecovery` once the project has been
+   * re-loaded into the respawned engine (or recovery is abandoned).
+   */
+  recoveryInFlight: boolean
+  /**
    * Horizontal zoom (pixels per second) persisted with the project.
    * Mirrors `viewPxPerSecond` from PROJECT_STATE; the timeline writes
    * back here when the user wheel-zooms (debounced) so the value
@@ -678,6 +686,7 @@ export const useProjectStore = defineStore('project', {
     projectId: null,
     pendingRecoveredProjectId: null,
     previousProjectId: null,
+    recoveryInFlight: false,
     viewPxPerSecond: null,
     viewScrollX: null,
     fxPanelOpen: false,

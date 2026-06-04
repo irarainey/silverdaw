@@ -595,6 +595,18 @@ export interface BridgeOutboundMap {
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   EDIT_UNDO: undefined
   EDIT_REDO: undefined
+  PING: PingPayload
+}
+
+/**
+ * Liveness probe sent by the renderer's idle watchdog. The backend
+ * answers with a matching `PONG { id }` ON the JUCE message thread, so a
+ * round-trip proves the engine command thread itself is responsive — not
+ * merely that the socket is open. `id` is an opaque monotonically-rising
+ * nonce the renderer uses to ignore stale replies.
+ */
+export interface PingPayload {
+  id: number
 }
 
 export interface WaveformRequestPayload {
@@ -968,6 +980,28 @@ export const PlayheadUpdatePayloadSchema = z.object({
   isPlaying: z.boolean()
 })
 export type PlayheadUpdatePayload = z.infer<typeof PlayheadUpdatePayloadSchema>
+
+/**
+ * Reply to a renderer `PING { id }`. Emitted from the JUCE message thread
+ * so its arrival proves the engine command thread is alive. `id` echoes
+ * the probe nonce so the renderer can discard stale / out-of-order pongs.
+ */
+export const PongPayloadSchema = z.object({
+  id: z.number()
+})
+export type PongPayload = z.infer<typeof PongPayloadSchema>
+
+/**
+ * Non-fatal engine error. Broadcast when a single message handler throws:
+ * the backend catches it, keeps the process alive, and surfaces this so
+ * the renderer can log / toast the failure instead of silently losing the
+ * command. `context` carries the offending envelope type for diagnostics.
+ */
+export const EngineErrorPayloadSchema = z.object({
+  message: z.string(),
+  context: z.string().optional()
+})
+export type EngineErrorPayload = z.infer<typeof EngineErrorPayloadSchema>
 
 export const ClipAckPayloadSchema = z.object({
   trackId: z.string(),
@@ -1906,6 +1940,8 @@ export interface BridgeInboundMap {
   MIXDOWN_FAILED: MixdownFailedPayload
   MASTER_LEVEL: MasterLevelPayload
   TRACK_LEVELS: TrackLevelsPayload
+  PONG: PongPayload
+  ENGINE_ERROR: EngineErrorPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -1971,7 +2007,9 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'MIXDOWN_DONE',
   'MIXDOWN_FAILED',
   'MASTER_LEVEL',
-  'TRACK_LEVELS'
+  'TRACK_LEVELS',
+  'PONG',
+  'ENGINE_ERROR'
 ])
 
 /** Narrow an unknown string to the inbound type union. */
@@ -1991,6 +2029,16 @@ export function isReadyPayload(value: unknown): value is ReadyPayload {
 /** Guard for `PlayheadUpdatePayload`. */
 export function isPlayheadUpdatePayload(value: unknown): value is PlayheadUpdatePayload {
   return PlayheadUpdatePayloadSchema.safeParse(value).success
+}
+
+/** Guard for `PongPayload`. */
+export function isPongPayload(value: unknown): value is PongPayload {
+  return PongPayloadSchema.safeParse(value).success
+}
+
+/** Guard for `EngineErrorPayload`. */
+export function isEngineErrorPayload(value: unknown): value is EngineErrorPayload {
+  return EngineErrorPayloadSchema.safeParse(value).success
 }
 
 /** Guard for `ClipAckPayload`. */

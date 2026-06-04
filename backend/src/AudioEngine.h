@@ -4,6 +4,7 @@
 #include "AudioConstants.h"
 #include "EnvelopeSnapshot.h"
 #include "Log.h"
+#include "OutputKeepAlive.h"
 #include "TrackChain.h"
 #include "WarpProcessor.h"
 
@@ -42,11 +43,18 @@ namespace silverdaw
  * `AudioSourcePlayer::setGain` stays at its default 1.0 so we don't
  * double-attenuate. Callers route master-volume changes through
  * `setTargetGain(...)` instead.
+ *
+ * This is also the FINAL output stage, so it owns the output keep-alive
+ * floor (see `OutputKeepAlive`): after the master gain is applied and the
+ * UI meter peak is captured, a low dither floor is injected into otherwise
+ * (near-)silent blocks. Injecting it here — post master gain — keeps the
+ * delivered floor independent of the user's master volume, which is exactly
+ * the level a sleep-prone output endpoint needs to stay awake.
  */
 class MeteringSource : public juce::AudioSource
 {
   public:
-    explicit MeteringSource(juce::AudioSource& s) : source(s) {}
+    MeteringSource(juce::AudioSource& s, OutputKeepAlive& keepAlive) : source(s), keepAlive(keepAlive) {}
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
     {
@@ -61,9 +69,23 @@ class MeteringSource : public juce::AudioSource
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
     {
+        // Denormals would otherwise leak into the gain/floor math here — this
+        // is the final stage, downstream of MasterClockSource's own scope.
+        const juce::ScopedNoDenormals scopedNoDenormals;
         source.getNextAudioBlock(info);
         if (info.buffer == nullptr || info.numSamples <= 0)
             return;
+
+        const int n = info.numSamples;
+        const int numCh = info.buffer->getNumChannels();
+
+        // Pre-gain program peak — measured on the program audio BEFORE the
+        // master gain so a low master volume can't make real content look
+        // silent to the keep-alive silence test (which would then wrongly
+        // colour it with the dither floor).
+        float programPeak = 0.0F;
+        for (int ch = 0; ch < numCh; ++ch)
+            programPeak = juce::jmax(programPeak, info.buffer->getMagnitude(ch, info.startSample, n));
 
         // Pull the latest target written from the message thread and
         // advance the smoother across this block. Snapshot start +
@@ -71,13 +93,11 @@ class MeteringSource : public juce::AudioSource
         // linear interpolation, the same primitive JUCE uses
         // internally in `AudioSourcePlayer::audioDeviceIOCallback`).
         smoothedGain.setTargetValue(targetGain.load(std::memory_order_relaxed));
-        const int n = info.numSamples;
         const float startGain = smoothedGain.getNextValue();
         if (n > 1)
             smoothedGain.skip(n - 1);
         const float endGain = smoothedGain.getCurrentValue();
 
-        const int numCh = info.buffer->getNumChannels();
         const bool unity = std::abs(startGain - 1.0F) < 1.0e-6F &&
                            std::abs(endGain - 1.0F) < 1.0e-6F;
         if (! unity)
@@ -86,13 +106,23 @@ class MeteringSource : public juce::AudioSource
                 info.buffer->applyGainRamp(ch, info.startSample, n, startGain, endGain);
         }
 
-        // Per-channel peak (post-gain) merged into the atomic store.
+        // Per-channel peak (post-gain) merged into the atomic store. Captured
+        // BEFORE the keep-alive floor is injected so the UI meter reflects only
+        // program audio and never the dither floor.
         if (numCh > 0)
             atomicMaxFloat(peakL_, info.buffer->getMagnitude(0, info.startSample, n));
         if (numCh > 1)
             atomicMaxFloat(peakR_, info.buffer->getMagnitude(1, info.startSample, n));
         else if (numCh > 0)
             atomicMaxFloat(peakR_, info.buffer->getMagnitude(0, info.startSample, n));
+
+        // Output keep-alive floor — applied at the FINAL stage (post master
+        // gain) so the delivered floor is independent of the user's master
+        // volume. The silence test uses the PRE-gain program peak so real
+        // content is never coloured; the floor only ever fills true gaps, and
+        // only when the transport gate is open (playing, or paused with a
+        // project loaded).
+        keepAlive.maybeApplyFloor(*info.buffer, info.startSample, n, programPeak);
     }
 
     /** Message-thread setter. Clamped to [0,1] — boost is per-track. */
@@ -119,6 +149,7 @@ class MeteringSource : public juce::AudioSource
     }
 
     juce::AudioSource& source;
+    OutputKeepAlive& keepAlive;
     juce::LinearSmoothedValue<float> smoothedGain;
     std::atomic<float> targetGain{1.0F};
     std::atomic<float> peakL_{0.0F};
@@ -747,7 +778,8 @@ class OffsetSource : public juce::PositionableAudioSource
 class MasterClockSource : public juce::AudioSource
 {
   public:
-    explicit MasterClockSource(juce::AudioSource& child) : child(child) {}
+    MasterClockSource(juce::AudioSource& child, OutputKeepAlive& keepAlive)
+        : child(child), keepAlive(keepAlive) {}
 
     void prepareToPlay(int blockSize, double newSampleRate) override
     {
@@ -782,44 +814,29 @@ class MasterClockSource : public juce::AudioSource
         const juce::ScopedNoDenormals scopedNoDenormals;
         const auto startTicks = juce::Time::getHighResolutionTicks();
         const auto count = callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (!playing.load(std::memory_order_acquire))
+        if (! keepAlive.isPlaying())
         {
+            // Closed transport gate: emit clean silence here. The output
+            // keep-alive floor (which keeps a sleep-prone endpoint awake across
+            // a pause) is injected downstream at the final output stage, in
+            // MeteringSource, so it stays independent of the master volume.
             info.clearActiveBufferRegion();
-            // Keep the output device awake through a PAUSE only when a
-            // project has audio content loaded, so a paused→play transition
-            // on a sleep-prone endpoint (notably USB DACs) stays instant.
-            // While the app sits idle with nothing loaded there is nothing to
-            // play, so we leave true digital silence and never emit the
-            // keep-alive floor — otherwise the ~-48 dBFS dither is audible as
-            // a constant hiss on every output device.
-            if (contentLoaded.load(std::memory_order_acquire))
-                applyKeepAlive(info);
             maybeLogAudioPerf(count, startTicks, info.numSamples);
             return;
         }
 
         child.getNextAudioBlock(info);
         positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
-        // Keep the output device awake while PLAYING into silence — leading
-        // silence before the first clip, or a gap with no active clip. Some
-        // endpoints (notably USB DACs) silence-detect and soft-mute on a
-        // sustained run of silence, then fade back in on the next audible
-        // block, swallowing the attack of the first audio after the gap.
-        // applyKeepAlive injects a low dither floor only when the produced
-        // block is (near-)silent, so true gaps keep the device awake while
-        // real content is never coloured. (The paused/idle case is handled in
-        // the not-playing branch above, gated on `contentLoaded`.)
-        applyKeepAlive(info);
         maybeLogAudioPerf(count, startTicks, info.numSamples);
     }
 
     void setPlaying(bool p) noexcept
     {
-        playing.store(p, std::memory_order_release);
+        keepAlive.setPlaying(p);
     }
     bool isPlaying() const noexcept
     {
-        return playing.load(std::memory_order_acquire);
+        return keepAlive.isPlaying();
     }
 
     /** Message-thread setter: true once a project has audio content (clips)
@@ -828,7 +845,11 @@ class MasterClockSource : public juce::AudioSource
      *  digital silence when no project is open. */
     void setContentLoaded(bool loaded) noexcept
     {
-        contentLoaded.store(loaded, std::memory_order_release);
+        keepAlive.setContentLoaded(loaded);
+    }
+    bool isContentLoaded() const noexcept
+    {
+        return keepAlive.isContentLoaded();
     }
 
     void setPositionSamples(juce::int64 p) noexcept
@@ -846,60 +867,6 @@ class MasterClockSource : public juce::AudioSource
     }
 
   private:
-    // Silence-gated output "keep-alive". Real-time safe: no allocation, no
-    // locks, no exceptions, bounded work. If the produced block is (near-)
-    // silent (peak below kKeepAliveSilenceThreshold) it injects a low TPDF
-    // dither floor driven by a cheap xorshift PRNG so the output device never
-    // sees a sustained run of silence and its silence-mute never engages.
-    // Callers gate WHEN this runs: always while playing (gaps / leading
-    // silence), but while stopped only when `contentLoaded` is set — an idle
-    // app with no project stays truly silent rather than hissing. If the block
-    // already carries real audio it is left untouched — the floor only ever
-    // fills true gaps, so playback content is never coloured.
-    void applyKeepAlive(const juce::AudioSourceChannelInfo& info) noexcept
-    {
-        auto* const buffer = info.buffer;
-        if (buffer == nullptr) return;
-        const int numChannels = buffer->getNumChannels();
-        const int numSamples = info.numSamples;
-
-        float peak = 0.0F;
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            const float* const src = buffer->getReadPointer(ch, info.startSample);
-            for (int i = 0; i < numSamples; ++i)
-            {
-                const float s = src[i];
-                const float a = s < 0.0F ? -s : s;
-                if (a > peak) peak = a;
-            }
-        }
-        if (peak > silverdaw::kKeepAliveSilenceThreshold) return;
-
-        constexpr float int32Scale = 1.0F / 2147483648.0F; // int32 → ~[-1, 1)
-        constexpr float ditherScale = silverdaw::kKeepAliveDitherAmplitude * 0.5F;
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            float* const dest = buffer->getWritePointer(ch, info.startSample);
-            for (int i = 0; i < numSamples; ++i)
-            {
-                const float u1 = static_cast<float>(static_cast<juce::int32>(nextRandom())) * int32Scale;
-                const float u2 = static_cast<float>(static_cast<juce::int32>(nextRandom())) * int32Scale;
-                dest[i] += (u1 + u2) * ditherScale;
-            }
-        }
-    }
-
-    juce::uint32 nextRandom() noexcept
-    {
-        juce::uint32 x = rngState;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        rngState = x;
-        return x;
-    }
-
     void maybeLogAudioPerf(std::uint64_t count, juce::int64 startTicks, int numSamples) const
     {
         // Diagnostic heartbeat: ~1 s at 48 kHz / 512 buffer. Logged only
@@ -913,7 +880,7 @@ class MasterClockSource : public juce::AudioSource
         const double pct = budgetMs > 0.0 ? (elapsedMs / budgetMs) * 100.0 : 0.0;
         silverdaw::log::debug("perf.audio",
                               "cb#" + juce::String(static_cast<juce::int64>(count)) +
-                                  " playing=" + juce::String(playing.load(std::memory_order_acquire) ? 1 : 0) +
+                                  " playing=" + juce::String(keepAlive.isPlaying() ? 1 : 0) +
                                   " pos=" + juce::String(positionSamples.load(std::memory_order_relaxed)) +
                                   " elapsedMs=" + juce::String(elapsedMs, 3) +
                                   " budgetMs=" + juce::String(budgetMs, 3) +
@@ -921,24 +888,14 @@ class MasterClockSource : public juce::AudioSource
     }
 
     juce::AudioSource& child;
+    OutputKeepAlive& keepAlive;
     std::atomic<juce::int64> positionSamples{0};
-    std::atomic<bool> playing{false};
-    // True while a project has audio content (clips) loaded. Gates the
-    // paused keep-alive floor: with nothing loaded the idle output stays
-    // truly silent instead of emitting an audible dither hiss. Written from
-    // the message thread, read on the audio thread.
-    std::atomic<bool> contentLoaded{false};
     // Device sample rate. Updated only from `prepareToPlay`, read from
     // message-thread accessors that convert samples↔ms. The audio
     // callback path itself doesn't read it.
     std::atomic<double> sampleRate{0.0};
     // Diagnostic counter for the audio-callback heartbeat log.
     std::atomic<std::uint64_t> callbackCount{0};
-    // xorshift PRNG state for the keep-alive dither. Touched only on the audio
-    // thread inside getNextAudioBlock, so a plain (non-atomic) word is
-    // sufficient. Seeded to a non-zero constant (xorshift requires a non-zero
-    // state).
-    juce::uint32 rngState{0x9E3779B9u};
 
     static_assert(std::atomic<juce::int64>::is_always_lock_free,
                   "MasterClockSource requires a lock-free 64-bit atomic counter on the audio thread");
@@ -1212,6 +1169,10 @@ class AudioEngine
 
     /** True if any track is currently playing. */
     bool isPlaying() const;
+
+    /** True once a project has audio content (clips) loaded — mirrors the
+     *  gate on the paused keep-alive floor. Diagnostic/triage use. */
+    bool isContentLoaded() const;
 
     /** Master playhead position in milliseconds (uses the first track as clock). */
     double getPositionMs() const;
@@ -1556,6 +1517,53 @@ class AudioEngine
     RebuildTimer rebuildTimer{*this};
     static constexpr int kRebuildDebounceMs = 150;
 
+    /**
+     * Cold-start output wake pre-roll.
+     *
+     * Before opening the transport gate (or starting a preview) when the output
+     * endpoint may have gone to sleep, the engine runs the OutputKeepAlive floor
+     * for `kWakePrerollMs` with content still held closed, so a sleep-prone
+     * endpoint completes its wake-up fade on the floor instead of swallowing the
+     * first musical attack. The deferred "really start now" action is captured
+     * in `prerollAction` and fired by this one-shot timer, all on the message
+     * thread (same thread that mutates transport state — no extra sync needed).
+     */
+    class PrerollTimer : public juce::Timer
+    {
+      public:
+        explicit PrerollTimer(AudioEngine& e) : engine(e) {}
+        void timerCallback() override { engine.completeWakePreroll(); }
+
+      private:
+        AudioEngine& engine;
+    };
+    PrerollTimer prerollTimer{*this};
+    std::function<void()> prerollAction;
+
+    // High-res ms timestamp of when output was last active (device opened, or
+    // playback/preview running). A start that follows more than
+    // kEndpointWarmWindowMs of silence is treated as a cold endpoint and gets
+    // the wake pre-roll; a quick replay stays instant. Message-thread only.
+    double lastOutputActiveMs = 0.0;
+
+    /** Run `startFn` immediately when the endpoint is warm, otherwise arm the
+     *  wake pre-roll (floor on, content held) and defer `startFn` until it
+     *  elapses. Message-thread only. */
+    void startWithWakePreroll(std::function<void()> startFn);
+    /** Cancel any in-flight wake pre-roll WITHOUT firing its deferred start and
+     *  drop the floor. Called when playback/preview is stopped or paused before
+     *  the pre-roll completes. Message-thread only. */
+    void cancelWakePreroll();
+    /** Fired by `prerollTimer`: drop the floor and run the deferred start. */
+    void completeWakePreroll();
+
+    // Set by setPositionMs on a paused seek; consumed once by
+    // flushDirtyRebuilds when the rebuild settles, to block-prime the
+    // read-ahead at the new playhead so the first play after a seek is warm
+    // (mirrors the load-time prewarm). Scoped to seeks — not clip edits — so
+    // paused editing never pays a repeated cold prime stall.
+    bool pendingSeekPrewarm = false;
+
     juce::AudioDeviceManager deviceManager;
     juce::AudioSourcePlayer sourcePlayer;
     /** Project root pull-source. Replaces the old
@@ -1612,10 +1620,14 @@ class AudioEngine
     // smoothed ramp) and tap per-channel peaks for the UI meter. The
     // device callback pulls `masterMeter`; `topMixer` is no longer the
     // direct AudioSourcePlayer source.
-    // Construction order: busGraph → master → topMixer → masterMeter.
-    MasterClockSource master{busGraph};
+    // Construction order: outputKeepAlive → busGraph → master → topMixer → masterMeter.
+    // `outputKeepAlive` is the single source of truth for the transport-gate
+    // flags (playing / contentLoaded) and owns the output keep-alive floor;
+    // `master` reads the gate, `masterMeter` injects the floor post master gain.
+    OutputKeepAlive outputKeepAlive;
+    MasterClockSource master{busGraph, outputKeepAlive};
     juce::MixerAudioSource topMixer;
-    MeteringSource masterMeter{topMixer};
+    MeteringSource masterMeter{topMixer, outputKeepAlive};
     juce::AudioFormatManager formatManager;
 
     // Background thread used by each track's read-ahead buffer so file I/O

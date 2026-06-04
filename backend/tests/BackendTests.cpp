@@ -1030,6 +1030,161 @@ void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
     dir.deleteRecursively();
 }
 
+// ─── Output keep-alive floor: gating + post-gain delivery ─────────────────
+//
+// Locks in the contract of OutputKeepAlive and the bug fix that moved the
+// floor downstream of the master gain (MeteringSource), so a low master
+// volume can no longer attenuate the floor below the level a sleep-prone
+// output endpoint needs to stay awake.
+//
+// Direct-unit checks on OutputKeepAlive:
+//   - gate closed (idle, paused) → no floor, true silence
+//   - contentLoaded does NOT open the gate (idle output stays silent)
+//   - gate open via wake pre-roll → floor on silence
+//   - gate open via playing → floor on silence
+//   - real content (peak above threshold) is never coloured
+// Integration check on MeteringSource (the fix):
+//   - at a low master gain (0.25) a silent block still receives the FULL
+//     floor (~kKeepAliveDitherAmplitude), NOT the gain-attenuated ~0.001 the
+//     old upstream injection produced.
+//   - real content is passed through at gain and the floor stays off; the UI
+//     meter peak reflects the program audio, not the floor.
+void testOutputKeepAliveFloorIsPostGainAndGated()
+{
+    const float threshold = static_cast<float>(silverdaw::kKeepAliveSilenceThreshold);
+    const float amplitude = static_cast<float>(silverdaw::kKeepAliveDitherAmplitude);
+
+    auto blockPeak = [](const juce::AudioBuffer<float>& buf) {
+        float p = 0.0F;
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            p = juce::jmax(p, buf.getMagnitude(ch, 0, buf.getNumSamples()));
+        return p;
+    };
+
+    // ── Direct OutputKeepAlive checks ──
+    {
+        silverdaw::OutputKeepAlive ka;
+        require(! ka.shouldRun(), "default gate must be closed (idle, paused)");
+
+        juce::AudioBuffer<float> buf(2, 1024);
+        buf.clear();
+        require(! ka.maybeApplyFloor(buf, 0, buf.getNumSamples(), 0.0F),
+                "gate closed must not inject a floor");
+        require(blockPeak(buf) == 0.0F, "gate closed must leave true digital silence");
+
+        // contentLoaded must NOT open the gate — a loaded-but-stopped project
+        // stays truly silent (the regression we're fixing was idle hiss).
+        ka.setContentLoaded(true);
+        require(! ka.shouldRun(), "contentLoaded must not open the gate (idle stays silent)");
+        buf.clear();
+        require(! ka.maybeApplyFloor(buf, 0, buf.getNumSamples(), 0.0F),
+                "a loaded-but-stopped project must emit true silence, not a floor");
+        require(blockPeak(buf) == 0.0F, "idle-with-content must leave true digital silence");
+
+        // The wake pre-roll opens the gate.
+        ka.setWakePreroll(true);
+        require(ka.shouldRun(), "wake pre-roll must open the gate while paused");
+        buf.clear();
+        require(ka.maybeApplyFloor(buf, 0, buf.getNumSamples(), 0.0F),
+                "gate open + silent block must inject the floor");
+        const float floorPeak = blockPeak(buf);
+        require(floorPeak > threshold, "injected floor must clear the silence threshold");
+        require(floorPeak <= amplitude * 1.2F, "injected floor must stay bounded near the dither amplitude");
+
+        // Real content (program peak above threshold) is never coloured.
+        buf.clear();
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            buf.setSample(ch, 0, 0.5F);
+        require(! ka.maybeApplyFloor(buf, 0, buf.getNumSamples(), 0.5F),
+                "a block carrying real content must not be coloured");
+
+        // Playing opens the gate independently of the pre-roll.
+        ka.setWakePreroll(false);
+        ka.setPlaying(true);
+        require(ka.shouldRun(), "playing must open the gate regardless of wake pre-roll");
+        buf.clear();
+        require(ka.maybeApplyFloor(buf, 0, buf.getNumSamples(), 0.0F),
+                "playing + silent block must inject the floor");
+
+        // Stopped + no pre-roll → true silence again.
+        ka.setPlaying(false);
+        require(! ka.shouldRun(), "stopped with no pre-roll must close the gate");
+        buf.clear();
+        require(! ka.maybeApplyFloor(buf, 0, buf.getNumSamples(), 0.0F),
+                "closed gate must not inject a floor");
+        require(blockPeak(buf) == 0.0F, "closed gate must leave true digital silence");
+    }
+
+    // ── MeteringSource integration: the floor survives a low master gain ──
+    struct ConstantSource : juce::AudioSource
+    {
+        explicit ConstantSource(float v) : value(v) {}
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
+                juce::FloatVectorOperations::fill(
+                    info.buffer->getWritePointer(ch, info.startSample), value, info.numSamples);
+        }
+        float value;
+    };
+
+    constexpr float lowGain = 0.25F;
+    {
+        // Silent program + wake pre-roll active + low master gain. The old
+        // upstream injection would deliver ~amplitude * lowGain (~0.001 here);
+        // the post-gain injection must deliver the FULL floor.
+        silverdaw::OutputKeepAlive ka;
+        ka.setWakePreroll(true);
+        ConstantSource silentSource(0.0F);
+        silverdaw::MeteringSource meter(silentSource, ka);
+        meter.setTargetGain(lowGain);
+        meter.prepareToPlay(1024, 48000.0);
+
+        juce::AudioBuffer<float> buf(2, 1024);
+        juce::AudioSourceChannelInfo info(&buf, 0, buf.getNumSamples());
+        meter.getNextAudioBlock(info);
+
+        const float peak = blockPeak(buf);
+        require(peak > amplitude * lowGain * 2.0F,
+                "post-gain floor must NOT be attenuated by a low master gain (regression guard)");
+        require(peak > threshold, "delivered floor must clear the silence threshold");
+        require(peak <= amplitude * 1.2F, "delivered floor must stay bounded near the dither amplitude");
+
+        float ml = 0.0F;
+        float mr = 0.0F;
+        meter.consumePeaks(ml, mr);
+        require(juce::jmax(ml, mr) <= threshold,
+                "UI meter must exclude the keep-alive floor (silent program reads ~silent)");
+    }
+
+    {
+        // Real program at a low master gain: content passes through at gain,
+        // the floor stays off, and the meter reflects the post-gain program.
+        silverdaw::OutputKeepAlive ka;
+        ka.setPlaying(true);
+        ConstantSource toneSource(0.5F);
+        silverdaw::MeteringSource meter(toneSource, ka);
+        meter.setTargetGain(lowGain);
+        meter.prepareToPlay(1024, 48000.0);
+
+        juce::AudioBuffer<float> buf(2, 1024);
+        juce::AudioSourceChannelInfo info(&buf, 0, buf.getNumSamples());
+        meter.getNextAudioBlock(info);
+
+        const float expected = 0.5F * lowGain; // 0.125
+        requireNear(blockPeak(buf), expected, 1.0e-4,
+                    "real content must pass through at the master gain, uncoloured by the floor");
+
+        float ml = 0.0F;
+        float mr = 0.0F;
+        meter.consumePeaks(ml, mr);
+        requireNear(juce::jmax(ml, mr), expected, 1.0e-4,
+                    "UI meter must reflect the post-gain program peak");
+    }
+}
+
 // ─── ToneEq low-cut direction + shelf range ───────────────────────────────
 //
 // Regression guard for the per-track Tone EQ. Two defects this locks out:
@@ -2039,6 +2194,8 @@ int main()
          testAudioEngineSetPreviewWarpUnderRapidCalls},
         {"AudioEngine primeTracksForPlayback is safe and bounded",
          testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded},
+        {"OutputKeepAlive floor is post-gain and transport-gated",
+         testOutputKeepAliveFloorIsPostGainAndGated},
         {"ToneEq low-cut is a high-pass and shelves have ±15 dB range",
          testToneEqLowCutDirectionAndShelfRange},
         {"Leveler is bit-exact at Amount 0 and compresses a hot signal at Amount 1",

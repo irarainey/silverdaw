@@ -78,7 +78,26 @@ export const IPC = {
   peaks: {
     readCacheFile: 'peaks:readCacheFile'
   },
+  backend: {
+    status: 'backend:status',
+    restart: 'backend:restart'
+  },
   log: {
     appendBatch: 'log:append-batch'
   }
 } as const
+
+/**
+ * Process-level health of the audio engine, pushed from main to the
+ * renderer over `IPC.backend.status`. This is about the OS *process*
+ * lifecycle only — actual engine readiness is determined by the renderer
+ * from the WebSocket bridge (reconnect + `PROJECT_STATE`).
+ *
+ * - `restarting` — the backend exited unexpectedly (crash / OS sleep
+ *   fault) or a restart was requested; main is respawning it.
+ * - `recovered`  — a respawned backend has stayed up long enough to be
+ *   considered stable again.
+ * - `failed`     — main exhausted its respawn attempts and gave up; the
+ *   renderer should stop waiting and surface a terminal recovery UI.
+ */
+export type BackendStatus = 'restarting' | 'recovered' | 'failed'

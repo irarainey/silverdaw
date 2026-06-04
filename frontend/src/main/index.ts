@@ -1,5 +1,4 @@
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
-import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { readFile, writeFile, mkdir, readdir, stat, rm } from 'node:fs/promises'
@@ -10,7 +9,8 @@ import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
 import type { AudioMetadata, DebugPreferences, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
-import { IPC } from '../shared/ipc-channels'
+import { IPC, type BackendStatus } from '../shared/ipc-channels'
+import { BackendSupervisor } from './backendSupervisor'
 
 // ─── Audio metadata ─────────────────────────────────────────────────────────
 // `AudioMetadata` lives in `src/shared/types.ts` and is shared with preload +
@@ -150,7 +150,7 @@ function isAllowedAudioPath(filePath: unknown): filePath is string {
   return issuedAudioPaths.has(canonicalisePath(filePath))
 }
 
-let backendProcess: ChildProcess | null = null
+let backendSupervisor: BackendSupervisor | null = null
 let mainWindow: BrowserWindow | null = null
 /**
  * Set to true once the renderer has confirmed (after running its
@@ -789,7 +789,8 @@ function captureWindowState(): void {
   schedulePrefsSave()
 }
 
-function startBackend(): void {
+/** Resolve the backend executable path for the current run mode. */
+function resolveBackendExePath(): string {
   const exeName = process.platform === 'win32' ? 'SilverdawBackend.exe' : 'SilverdawBackend'
 
   // Two layouts to handle:
@@ -803,71 +804,57 @@ function startBackend(): void {
   //    (declared as `extraResources` in `electron-builder.yml`) into
   //    `process.resourcesPath/backend/`. `app.isPackaged` is the canonical
   //    way to distinguish the two modes.
-  let exePath: string
   if (app.isPackaged) {
-    exePath = join(process.resourcesPath, 'backend', exeName)
-  } else {
-    const buildConfig = process.env['SILVERDAW_BACKEND_CONFIG'] ?? 'Debug'
-    exePath = join(
-      __dirname,
-      '..',
-      '..',
-      '..',
-      'backend',
-      'build',
-      'SilverdawBackend_artefacts',
-      buildConfig,
-      exeName
-    )
+    return join(process.resourcesPath, 'backend', exeName)
   }
+  const buildConfig = process.env['SILVERDAW_BACKEND_CONFIG'] ?? 'Debug'
+  return join(__dirname, '..', '..', '..', 'backend', 'build', 'SilverdawBackend_artefacts', buildConfig, exeName)
+}
 
-  backendProcess = spawn(exePath, ['--port', String(bridgePort)], {
-    stdio: 'inherit',
-    // Suppress the console window Windows would otherwise create for
-    // any console-subsystem child (`juce_add_console_app` produces one).
-    // In dev (`pnpm dev`) the backend's stdio still flows into the
-    // parent terminal because it inherits the pipes; in a packaged
-    // install the parent has no console, so there's nothing to lose.
-    windowsHide: true,
+/** Build the spawn environment for the backend (token, device prefs, logs). */
+function buildBackendEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
     // Forward `SILVERDAW_BRIDGE_TOKEN` via the spawn env (NOT via argv —
     // command-line arguments are visible in the OS process table). The
     // backend's `resolveBridgeToken()` reads the same env var and
     // requires every WebSocket client to AUTH with this exact value.
+    SILVERDAW_BRIDGE_TOKEN: bridgeToken,
+    // Pass the persisted audio-output device preference so the backend can
+    // try to honour it during `AudioDeviceManager` init. If the saved
+    // device is no longer present (USB unplugged, etc.) the backend
+    // silently falls back to default and tells the renderer via the
+    // `fellBackToDefault` flag on `AUDIO_DEVICES_LIST`.
+    ...(prefs.audioOutput.typeName && prefs.audioOutput.deviceName
+      ? {
+          SILVERDAW_OUTPUT_DEVICE_TYPE: prefs.audioOutput.typeName,
+          SILVERDAW_OUTPUT_DEVICE_NAME: prefs.audioOutput.deviceName
+        }
+      : {}),
     // `SILVERDAW_LOG_DIR` is exported so the C++ logger writes its
     // `backend.log` into the same per-session folder as `main.log` and
     // `renderer.log`. Only exported when debug logging is on; an empty
     // env var would cause the backend to silently skip logger init.
-    env: {
-      ...process.env,
-      SILVERDAW_BRIDGE_TOKEN: bridgeToken,
-      // Pass the persisted audio-output device preference so the
-      // backend can try to honour it during `AudioDeviceManager`
-      // init. If the saved device is no longer present (USB
-      // unplugged, etc.) the backend silently falls back to default
-      // and tells the renderer via the `fellBackToDefault` flag on
-      // `AUDIO_DEVICES_LIST`. The preference itself stays in
-      // `preferences.json` so re-plugging the device next launch
-      // just works.
-      ...(prefs.audioOutput.typeName && prefs.audioOutput.deviceName
-        ? {
-            SILVERDAW_OUTPUT_DEVICE_TYPE: prefs.audioOutput.typeName,
-            SILVERDAW_OUTPUT_DEVICE_NAME: prefs.audioOutput.deviceName
-          }
-        : {}),
-      ...(startupLoggingEnabled ? { SILVERDAW_LOG_DIR: getSessionDir() } : {})
-    }
-  })
+    ...(startupLoggingEnabled ? { SILVERDAW_LOG_DIR: getSessionDir() } : {})
+  }
+}
 
-  backendProcess.on('exit', (code) => {
-    logMain('INFO ', 'backend', `exited with code ${String(code)}`)
-    console.log(`[backend] exited with code ${code}`)
-    backendProcess = null
-  })
+/** Push a process-level backend status to the renderer, if a window exists. */
+function sendBackendStatus(status: BackendStatus): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC.backend.status, status)
+  }
+}
 
-  backendProcess.on('error', (err) => {
-    logMain('ERROR', 'backend', `failed to start: ${err.message}`)
-    console.error('[backend] failed to start:', err)
+function startBackend(): void {
+  backendSupervisor = new BackendSupervisor({
+    resolveExePath: resolveBackendExePath,
+    buildEnv: buildBackendEnv,
+    getPort: () => bridgePort,
+    log: (level, scope, message) => logMain(level as LogLevel, scope, message),
+    sendStatus: sendBackendStatus
   })
+  backendSupervisor.start()
 }
 
 function createWindow(): void {
@@ -1350,6 +1337,13 @@ app.whenReady().then(async () => {
   // appears in argv or in the renderer's HTML — only the trusted preload
   // bridge can fetch it.
   ipcMain.handle(IPC.bridge.getToken, () => bridgeToken)
+
+  // Force-restart the backend. The renderer's liveness watchdog calls this
+  // when the engine looks hung (socket open but the message thread is
+  // wedged) so the supervisor kills + respawns it on the same port/token.
+  ipcMain.handle(IPC.backend.restart, (_evt, reason: unknown) => {
+    backendSupervisor?.requestRestart(typeof reason === 'string' ? reason : 'renderer request')
+  })
 
   // Static app / runtime info for the in-app About dialog. Resolved once at
   // start; never changes for the lifetime of the process.
@@ -2269,18 +2263,14 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  if (backendProcess) {
-    backendProcess.kill()
-    backendProcess = null
-  }
+  backendSupervisor?.kill()
+  backendSupervisor = null
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
-  if (backendProcess) {
-    backendProcess.kill()
-    backendProcess = null
-  }
+  backendSupervisor?.kill()
+  backendSupervisor = null
   // Make sure any pending debounced write hits disk before we exit.
   flushPrefsSaveSync()
   logMain('INFO ', 'main', 'before-quit')

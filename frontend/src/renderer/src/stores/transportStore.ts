@@ -32,6 +32,21 @@ interface TransportState {
    * incompatible protocol; quitting and relaunching is the right move.
    */
   bridgeFailureMessage: string | null
+  /**
+   * Mid-session audio-engine health, distinct from the startup-only
+   * `bridgeFailureMessage`. Drives the `EngineRecoveryOverlay`:
+   * - `ok`          — engine connected and the project is coherent.
+   * - `recovering`  — engine dropped / hung; main is respawning it and
+   *                   we're waiting to reconnect.
+   * - `restoring`   — reconnected to a fresh engine; we're re-loading the
+   *                   user's project into it.
+   * - `unavailable` — recovery exhausted; the user must retry or quit.
+   * Only ever leaves `ok` AFTER the engine has been ready at least once
+   * (`hasBeenReady`), so a cold-start failure stays on the startup path.
+   */
+  engineRecovery: 'ok' | 'recovering' | 'restoring' | 'unavailable'
+  /** True once the bridge has been ready at least once this session. */
+  hasBeenReady: boolean
 }
 
 export const useTransportStore = defineStore('transport', {
@@ -41,7 +56,9 @@ export const useTransportStore = defineStore('transport', {
     bpm: 100,
     connected: false,
     bridgeReady: false,
-    bridgeFailureMessage: null
+    bridgeFailureMessage: null,
+    engineRecovery: 'ok',
+    hasBeenReady: false
   }),
 
   actions: {
@@ -79,10 +96,18 @@ export const useTransportStore = defineStore('transport', {
     /** Called by the bridge service when PROJECT_STATE arrives. */
     setBridgeReady(ready: boolean): void {
       this.bridgeReady = ready
+      if (ready) this.hasBeenReady = true
     },
     /** Set a terminal bridge-startup failure message (shown in the overlay). */
     setBridgeFailure(message: string | null): void {
       this.bridgeFailureMessage = message
+    },
+    /** Update the mid-session engine recovery phase. */
+    setEngineRecovery(phase: TransportState['engineRecovery']): void {
+      if (this.engineRecovery !== phase) {
+        log.info('transport', `engineRecovery -> ${phase}`)
+      }
+      this.engineRecovery = phase
     }
   }
 })

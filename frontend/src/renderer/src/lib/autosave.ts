@@ -45,6 +45,14 @@ function clearTimer(): void {
 async function performTick(): Promise<void> {
   if (!pinia) return
   const project = useProjectStore(pinia)
+  // Never autosave while a mid-session engine recovery is in flight —
+  // the renderer's identity (projectId / currentFilePath / dirty) is
+  // transiently inconsistent with the engine, so a write here could
+  // clobber the very autosave we're restoring from.
+  if (project.recoveryInFlight) {
+    log.debug('autosave', 'tick skipped — engine recovery in flight')
+    return
+  }
   if (!project.isDirty) return
   const projectId = project.projectId
   if (!projectId) return
@@ -153,6 +161,14 @@ export function startAutosaveManager(piniaInstance: Pinia): void {
       (oldId) => {
         if (!oldId) return
         if (oldId === project.projectId) return
+        // During recovery we deliberately preserve every bucket — the
+        // empty reconnect snapshot rotates the id, and deleting here would
+        // destroy the autosave we're about to restore. Just clear the
+        // marker; a normal transition later will clean up safely.
+        if (project.recoveryInFlight) {
+          project.previousProjectId = null
+          return
+        }
         void window.silverdaw.clearAutosave(oldId).then((ok) => {
           if (ok) log.debug('autosave', `cleared previous bucket ${oldId}`)
         })
