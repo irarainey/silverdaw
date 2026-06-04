@@ -1011,8 +1011,16 @@ void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
     // Jump-to-start then play-immediately path: seek, prime, play, stop. The
     // chain must survive all of it without crashing.
     engine.setPositionMs(0.0);
-    engine.primeTracksForPlayback(silverdaw::kPlayPrimeBudgetMs);
+    const bool ready = engine.primeTracksForPlayback(silverdaw::kPlayPrimeBudgetMs);
     engine.play();  // play() primes internally before opening the gate
+    // Fail-closed contract: the master gate opens only when priming reports
+    // every track ready. With a device open the local test WAVs fill instantly
+    // (ready == true → playing); with no device priming returns false and the
+    // gate stays closed (ready == false → not playing) rather than advancing
+    // through a cold buffer and swallowing the clip as silence. Either way the
+    // two must agree.
+    require(engine.isPlaying() == ready,
+            "play() must open the gate iff priming reports ready (fail-closed)");
     engine.stop();
 
     require(engine.removeClip("c1"), "removeClip c1 should succeed");

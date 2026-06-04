@@ -1031,18 +1031,33 @@ class AudioEngine
     /**
      * Block-fill every track's read-ahead buffer at the current master
      * position, bounded by `totalBudgetMs` of wall-clock time overall and
-     * `kPrimePerTrackTimeoutMs` per track. After this returns the next audio
-     * block each track produces is a buffer hit rather than a cache miss, so
-     * opening the master gate (or a subsequent `play()`) starts instantly
-     * from any playhead — including straight after a project load or a seek.
+     * `kPrimePerTrackTimeoutMs` per per-track wait slice. After every track is
+     * ready the next audio block each produces is a buffer hit rather than a
+     * cache miss, so opening the master gate (or a subsequent `play()`) starts
+     * instantly from any playhead — including straight after a project load or
+     * a seek.
      *
-     * Message-thread only. No-ops when no audio device is open (the buffering
-     * sources can never fill, so waiting would just burn the budget). `play()`
-     * calls this internally with a tight budget; `Main.cpp` also calls it at
-     * the end of a project load/recovery with a more generous budget so the
-     * first play after a load is already warm.
+     * Multi-pass: a track that does not fill within one `kPrimePerTrackTimeoutMs`
+     * slice is retried on the next pass until it is ready or the overall budget
+     * expires, so a single cold track on the shared read-ahead thread gets the
+     * whole remaining budget rather than just one slice. Returns early the moment
+     * every track is ready, so the common warm case (buffers already filled at
+     * load/seek) costs only a quick readiness check.
+     *
+     * @returns true only when every track is ready (its read-ahead cushion is
+     *          filled, or the playhead is outside the clip's audible window so it
+     *          produces instant silence with no file I/O). `play()` uses this to
+     *          stay fail-closed: it opens the master gate only when this is true,
+     *          so it never advances through a cold buffer and swallows the audio
+     *          as silence (JUCE's BufferingAudioSource drops, not delays, on a
+     *          cache miss). Returns false when no audio device is open
+     *          (`getSampleRate() <= 0`) — the buffering sources can never fill.
+     *
+     * Message-thread only. `play()` calls this internally before opening the
+     * gate; `Main.cpp` also calls it (result unused) at the end of a project
+     * load/recovery to pre-warm the buffers so the first play is already hot.
      */
-    void primeTracksForPlayback(int totalBudgetMs);
+    bool primeTracksForPlayback(int totalBudgetMs);
 
     /** Pause playback (positions retained). */
     void pause();

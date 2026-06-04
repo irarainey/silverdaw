@@ -42,18 +42,26 @@ inline constexpr int kTransportReadAheadSamples = 8192;
  *    cold file cache) permanently swallows the start of the audio. A small
  *    low-latency output buffer plus many resampled/warped tracks is exactly
  *    when that bites, so we prime most of the read-ahead buffer up front.
- *  - kPrimePerTrackTimeoutMs: ceiling on the wait for any single track.
- *  - kPlayPrimeBudgetMs: total wall-clock ceiling when priming from play().
- *    Biased towards correctness (always start from the very first millisecond)
- *    over a few ms of start latency — in the common case the buffers are
- *    already warm from the load/seek prime and this returns near-instantly.
- *  - kLoadPrimeBudgetMs: total ceiling when priming at project-load time,
+ *  - kPrimePerTrackTimeoutMs: ceiling on a single per-track wait slice. A
+ *    track that is not ready after a slice is retried on the next pass (see
+ *    AudioEngine::primeTracksForPlayback) so a single cold track gets the whole
+ *    remaining budget across passes, not just one slice.
+ *  - kPlayPrimeBudgetMs: overall wall-clock ceiling when priming from play().
+ *    play() is fail-closed — it opens the master gate only once every track is
+ *    ready, so this budget must be generous enough to absorb a cold-start fill
+ *    (first play after launch + project open, when the OS file cache is cold and
+ *    several tracks share one read-ahead thread). It is an early-exit ceiling,
+ *    not a fixed cost: the common warm case returns in well under a millisecond,
+ *    and the message thread only ever waits this long on a genuinely cold first
+ *    play. Biased hard towards correctness (start from the very first sample,
+ *    never a silent first play that "works on retry") over start latency.
+ *  - kLoadPrimeBudgetMs: total ceiling when pre-warming at project-load time,
  *    off the interactive hot path, so the first play after a load is already
  *    fully warm. */
 inline constexpr int kPrimeProbeSamples = 4096;
 inline constexpr int kPrimeReadyTargetSamples = (kTransportReadAheadSamples * 7) / 8;
 inline constexpr int kPrimePerTrackTimeoutMs = 250;
-inline constexpr int kPlayPrimeBudgetMs = 1200;
+inline constexpr int kPlayPrimeBudgetMs = 3000;
 inline constexpr int kLoadPrimeBudgetMs = 1500;
 
 /** Output "keep-alive" dither peak amplitude (linear, full scale = 1.0),
