@@ -45,6 +45,12 @@ Instructions for building high-quality VueJS 3 applications with the Composition
   ~250 lines; **any SFC > 800 lines must be seriously considered for splitting
   unless there is a very good, explicitly-stated reason.** Line count is a
   symptom, not the goal — the real signal is multiple concerns in one file.
+- **A split must genuinely improve maintainability, not just move lines.** If the
+  only way under the ceiling is a contrived extraction — e.g. a composable that
+  needs a large cross-cutting "dependency bag", or splitting one coherent unit of
+  reactive orchestration — prefer keeping the file and recording a short, explicit
+  justification. An over-budget file with a sound reason is an acceptable
+  exception; a contrived split that hurts readability is not progress.
 - When an SFC is over budget, extract child components for distinct UI regions
   and move logic into `useXxx` composables, keeping `<template>` thin. Preserve
   emitted events, props, and watcher timing exactly — extraction must not change

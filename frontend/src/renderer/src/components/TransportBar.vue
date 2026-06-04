@@ -19,6 +19,8 @@ import {
   taperPositionToLinear
 } from '@/lib/audio/db'
 import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
+import { useAudioQuickSwitch } from '@/lib/transport/useAudioQuickSwitch'
+import { useTransportSkip } from '@/lib/transport/useTransportSkip'
 import MasterMeter from '@/components/MasterMeter.vue'
 
 const project = useProjectStore()
@@ -29,129 +31,24 @@ const audioDevices = useAudioDeviceStore()
 const notifications = useNotificationsStore()
 
 // ─── Audio output device quick-switch ────────────────────────────────────
-//
-// Compact chip on the left of the transport bar showing the current
-// output device. Clicking opens a popover with every device grouped
-// by type (mirrors the Preferences > Audio tab) plus a "System
-// default" entry on top. Picking a device routes through the same
-// `audioDeviceStore.selectDevice` action as the Preferences tab —
-// the renderer optimistic-updates the label, the backend acks via
-// `AUDIO_DEVICE_CHANGED`, and main persists the choice only on
-// `ok: true`.
-const audioMenuOpen = ref(false)
-const audioMenuRoot = ref<HTMLElement | null>(null)
+// Compact chip on the left of the transport bar; popover state + device
+// picking live in a focused composable. The SFC keeps the document listeners
+// that close the popover on outside-click / Escape.
+const {
+  audioMenuOpen,
+  audioMenuRoot,
+  audioMenuLabel,
+  audioLatencyCaption,
+  quickSwitchDevices,
+  toggleAudioMenu,
+  pickDevice,
+  pickUniqueDevice,
+  isCurrentDevice,
+  isCurrentUniqueDevice,
+  onAudioMenuDocClick,
+  onAudioMenuKey
+} = useAudioQuickSwitch()
 
-const audioMenuLabel = computed(() => {
-  // Show the *target* device name immediately on click rather than a
-  // verbose "Switching to X…" string. Optimistic update — when the
-  // backend acks (the round-trip is ~50–300 ms on Windows depending
-  // on driver), the `pendingSelection` clears and we fall through to
-  // the live `currentDeviceName` which is the same string. If the
-  // switch fails, `audioDevices.lastError` flips and the chip border
-  // goes amber, but the label still reads the device the user picked
-  // so the failure is obvious in context rather than via a label flip.
-  const pending = audioDevices.pendingSelection
-  if (pending) {
-    if (!pending.typeName && !pending.deviceName) return 'System default'
-    return pending.deviceName || 'System default'
-  }
-  if (audioDevices.onSystemDefault) return 'System default'
-  return audioDevices.currentDeviceName || 'System default'
-})
-
-/** Latency caption shown under the device name in the chip when the
- *  active device has a meaningful end-to-end delay (>30 ms). Stays
- *  hidden for low-latency wired / ASIO devices so the chip doesn't
- *  feel busy in the common case. */
-const audioLatencyCaption = computed<string | null>(() => {
-  const ms = audioDevices.outputLatencyMs
-  if (ms === null || ms < 30) return null
-  const rounded = Math.round(ms)
-  return audioDevices.isBluetoothHeuristic ? `~${rounded} ms · BT` : `${rounded} ms`
-})
-
-/** Unique-device list for the quick-switch popover. Identical
- *  dedupe rule to the one in `PreferencesDialog.vue` — same physical
- *  device exposed by multiple Windows backends collapses into one
- *  row, so the user picks "Speakers" once, not three times. */
-interface QuickSwitchDevice {
-  name: string
-  backends: string[]
-}
-const quickSwitchDevices = computed<QuickSwitchDevice[]>(() => {
-  const map = new Map<string, QuickSwitchDevice>()
-  for (const type of audioDevices.types) {
-    for (const dev of type.devices) {
-      const key = dev.toLowerCase()
-      const existing = map.get(key)
-      if (existing) {
-        if (!existing.backends.includes(type.name)) existing.backends.push(type.name)
-      } else {
-        map.set(key, { name: dev, backends: [type.name] })
-      }
-    }
-  }
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
-})
-
-/** Same backend-preference ordering as the Preferences dialog. */
-const QUICK_SWITCH_BACKEND_PRIORITY = [
-  'Windows Audio',
-  'CoreAudio',
-  'ALSA',
-  'DirectSound',
-  'Windows Audio (Exclusive Mode)',
-  'JACK',
-  'ASIO'
-]
-
-function preferredBackendForQuickSwitch(device: QuickSwitchDevice): string {
-  for (const b of QUICK_SWITCH_BACKEND_PRIORITY) {
-    if (device.backends.includes(b)) return b
-  }
-  return device.backends[0] ?? ''
-}
-
-function toggleAudioMenu(): void {
-  audioMenuOpen.value = !audioMenuOpen.value
-}
-
-function pickDevice(typeName: string | null, deviceName: string | null): void {
-  audioDevices.selectDevice(typeName, deviceName)
-  // Pin the choice to the open project so it travels with the file and
-  // marks the project dirty (but isn't auto-saved). Picking "System
-  // default" (both null) clears the pin, so a previously-saved device
-  // that's missing on this machine won't be re-requested next launch.
-  project.setProjectAudioOutput(typeName, deviceName)
-  audioMenuOpen.value = false
-}
-
-function pickUniqueDevice(device: QuickSwitchDevice): void {
-  // Auto-pick the most-friendly backend for the chosen device. The
-  // transport-bar popover deliberately doesn't expose the backend
-  // distinction — advanced users who want ASIO use Preferences →
-  // Audio → Audio driver instead.
-  pickDevice(preferredBackendForQuickSwitch(device), device.name)
-}
-
-function isCurrentDevice(typeName: string | null, deviceName: string | null): boolean {
-  const activeType = audioDevices.pendingSelection?.typeName ?? audioDevices.currentTypeName
-  const activeDevice = audioDevices.pendingSelection?.deviceName ?? audioDevices.currentDeviceName
-  return activeType === typeName && activeDevice === deviceName
-}
-
-function isCurrentUniqueDevice(device: QuickSwitchDevice): boolean {
-  const activeDevice = audioDevices.pendingSelection?.deviceName ?? audioDevices.currentDeviceName
-  return !!activeDevice && activeDevice.toLowerCase() === device.name.toLowerCase()
-}
-
-function onAudioMenuDocClick(e: MouseEvent): void {
-  if (!audioMenuRoot.value) return
-  if (!audioMenuRoot.value.contains(e.target as Node)) audioMenuOpen.value = false
-}
-function onAudioMenuKey(e: KeyboardEvent): void {
-  if (e.key === 'Escape') audioMenuOpen.value = false
-}
 onMounted(() => {
   document.addEventListener('mousedown', onAudioMenuDocClick)
   document.addEventListener('keydown', onAudioMenuKey)
@@ -392,108 +289,9 @@ function bumpBpm(delta: number): void {
   bpmInput.value = transport.bpm.toFixed(2)
 }
 
-function onSkipBack(): void {
-  // Skip-back never changes the playback state — if playback was running,
-  // it just carries on from the new position.
-  if (ui.skipButtonTarget === 'markers') {
-    const target = previousMarkerMs()
-    log.info('transport', `click skip-back -> prev marker ${target}ms`)
-    seekToSkipTarget(target)
-    return
-  }
-  // Default: rewind to the start of the timeline and scroll the view there.
-  log.info('transport', 'click skip-back')
-  project.viewScrollX = 0
-  sendBridge('PROJECT_SET_VIEW', { scrollX: 0 })
-  transport.setPosition(0)
-  sendBridge('TRANSPORT_SEEK', { positionMs: 0 })
-}
-
-function onPlay(): void {
-  // Optimistically flip the UI state; the backend's PLAYHEAD_UPDATE will
-  // overwrite this within ~16 ms either way.
-  if (transport.isPlaying) {
-    log.info('transport', 'click pause')
-    sendBridge('TRANSPORT_PAUSE')
-    transport.setPlaybackState(false)
-  } else {
-    // Playhead parked at (or past) the end of the project — Play is a
-    // no-op. The button itself is disabled in this case (see
-    // `playDisabled`); this guard also catches the keyboard-shortcut
-    // path so Spacebar can't sneak past the UI.
-    const end = project.durationMs
-    if (end > 0 && transport.positionMs >= end) {
-      log.info('transport', 'click play ignored (at end of project)')
-      return
-    }
-    log.info('transport', 'click play')
-    sendBridge('TRANSPORT_PLAY')
-    transport.setPlaybackState(true)
-  }
-}
-
-function onSkipForward(): void {
-  // Seek to the end of the project — the union of every track's length
-  // and every clip's end time. Mirrors the existing back/stop semantics:
-  // we send the seek and let the backend's PLAYHEAD_UPDATE confirm.
-  if (ui.skipButtonTarget === 'markers') {
-    const target = nextMarkerMs()
-    if (target === null) return
-    log.info('transport', `click skip-forward -> next marker ${target}ms`)
-    seekToSkipTarget(target)
-    return
-  }
-  const end = project.durationMs
-  if (!Number.isFinite(end) || end <= 0) return
-  log.info('transport', `click skip-forward -> ${end}ms`)
-  sendBridge('TRANSPORT_SEEK', { positionMs: end })
-}
-
-// Markers sit on whole-millisecond positions but the playhead is a float,
-// so we exclude any marker within this slop of the current position to
-// stop a button press snapping back onto the marker we're parked on.
-const MARKER_SKIP_EPSILON_MS = 1
-
-/** Nearest marker strictly before the playhead, or 0 (project start) when
- *  there's none. */
-function previousMarkerMs(): number {
-  const pos = transport.positionMs
-  let target = 0
-  for (const marker of project.markers) {
-    if (marker.positionMs < pos - MARKER_SKIP_EPSILON_MS && marker.positionMs > target) {
-      target = marker.positionMs
-    }
-  }
-  return target
-}
-
-/** Nearest marker strictly after the playhead, falling back to the end of
- *  the project. Returns null when there's nowhere valid to seek. */
-function nextMarkerMs(): number | null {
-  const pos = transport.positionMs
-  let target = Number.POSITIVE_INFINITY
-  for (const marker of project.markers) {
-    if (marker.positionMs > pos + MARKER_SKIP_EPSILON_MS && marker.positionMs < target) {
-      target = marker.positionMs
-    }
-  }
-  if (Number.isFinite(target)) return target
-  const end = project.durationMs
-  return Number.isFinite(end) && end > pos + MARKER_SKIP_EPSILON_MS ? end : null
-}
-
-/** Seek to a marker-mode target: move the playhead and bring it into view
- *  without changing the playback state. */
-function seekToSkipTarget(positionMs: number): void {
-  transport.setPosition(positionMs)
-  sendBridge('TRANSPORT_SEEK', { positionMs })
-  if (positionMs <= 0) {
-    project.viewScrollX = 0
-    sendBridge('PROJECT_SET_VIEW', { scrollX: 0 })
-  } else {
-    ui.requestTimelineScrollToPosition(positionMs)
-  }
-}
+// ─── Transport navigation ────────────────────────────────────────────────
+// Play / pause + skip-back / skip-forward (honours the skip-target pref).
+const { onSkipBack, onPlay, onSkipForward } = useTransportSkip()
 
 function onToggleFollow(): void {
   ui.setFollowPlayback(!ui.followPlayback)

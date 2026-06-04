@@ -1,4 +1,18 @@
 <script setup lang="ts">
+// ClipEditorDialog — the non-destructive clip editor (waveform, selection,
+// crop, warp/pitch, volume-shape, preview transport).
+//
+// FILE-SIZE EXCEPTION (justified): this SFC is over the ~800-line ceiling.
+// Its logic has already been decomposed into focused composables —
+// useClipEditorTarget / Viewport / WarpDraft / VolumeShapeDraft / Waveform /
+// Preview / CropHistory / Save / CanvasInteraction / Keyboard / Transport.
+// What remains is irreducible orchestration: store + composable wiring,
+// derived computeds, and the reactive watcher/lifecycle block that sequences
+// those composables together. Extracting that residual would require passing a
+// large cross-cutting dependency bag into a "lifecycle" composable, which harms
+// readability more than the line count helps (see the TS/Vue instructions on
+// contrived splits). Kept whole deliberately; prefer extracting any genuinely
+// new, cohesive concern rather than growing the orchestration further.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
@@ -24,6 +38,7 @@ import { useClipEditorCropHistory } from '@/lib/clipEditor/useClipEditorCropHist
 import { useClipEditorSave } from '@/lib/clipEditor/useClipEditorSave'
 import { useClipEditorCanvasInteraction } from '@/lib/clipEditor/useClipEditorCanvasInteraction'
 import { useClipEditorKeyboard } from '@/lib/clipEditor/useClipEditorKeyboard'
+import { useClipEditorTransport } from '@/lib/clipEditor/useClipEditorTransport'
 import ClipEditorWarpPanel from '@/components/ClipEditorWarpPanel.vue'
 import ClipEditorPitchPanel from '@/components/ClipEditorPitchPanel.vue'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
@@ -585,51 +600,18 @@ const {
   setZoomAnchored
 })
 
-function onTogglePlay(): void {
-  if (!preview.isLoaded) return
-  if (preview.isPlaying) {
-    preview.pause()
-    return
-  }
-  const hasSel = hasPlaybackSelection.value
-  // Bound playback by the selection if narrowed, or by the full clip
-  // when looping a saved clip with no selection.
-  const bounded = hasSel || (editsExistingClip.value && loopEnabled.value)
-  if (bounded) {
-    const startRel = playbackStartMs.value - viewInMs.value
-    const endRel = playbackEndMs.value - viewInMs.value
-    const pos = preview.positionMs
-    if (pos < startRel - 0.5 || pos >= endRel - 0.5) {
-      preview.seek(Math.max(0, startRel))
-    }
-  }
-  preview.play()
-}
-
-function onSkipToStart(): void {
-  const rel = Math.max(0, playbackStartMs.value - viewInMs.value)
-  preview.seek(rel)
-  // Scroll the canvas so the playhead's new position is visible.
-  // Auto-follow only ever scrolls forward, so without this the
-  // playhead would land off-screen to the left when scrolled in.
-  if (rel < scrollMs.value) {
-    scrollMs.value = rel
-  }
-}
-
-function onSkipToEnd(): void {
-  const end = Math.max(0, playbackEndMs.value - viewInMs.value - 1)
-  preview.seek(end)
-  // Ensure the end position is on-screen.
-  const visDur = visibleDurationMs.value
-  if (end > scrollMs.value + visDur) {
-    scrollMs.value = Math.max(0, Math.min(maxScrollMs.value, end - visDur / 2))
-  }
-}
-
-function onToggleLoop(): void {
-  loopEnabled.value = !loopEnabled.value
-}
+const { onTogglePlay, onSkipToStart, onSkipToEnd, onToggleLoop } = useClipEditorTransport({
+  preview,
+  loopEnabled,
+  scrollMs,
+  hasPlaybackSelection: () => hasPlaybackSelection.value,
+  editsExistingClip: () => editsExistingClip.value,
+  playbackStartMs: () => playbackStartMs.value,
+  playbackEndMs: () => playbackEndMs.value,
+  viewInMs: () => viewInMs.value,
+  visibleDurationMs: () => visibleDurationMs.value,
+  maxScrollMs: () => maxScrollMs.value
+})
 
 
 // Dialog-local Crop undo/redo history lives in a composable. Crop is purely

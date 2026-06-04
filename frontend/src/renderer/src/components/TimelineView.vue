@@ -16,28 +16,21 @@
 // template wiring. Drawing logic lives in `useTimelineDrawing`; scrollbar
 // pointer handling lives in `useScrollbarDrag`.
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { effectiveClipDurationMs, isClipTempoWarpActive, useProjectStore } from '@/stores/projectStore'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
-import type { TimelineZoomRequest } from '@/stores/uiStore'
 import { isWarpPending } from '@/lib/warp'
 import TrackHeaderPanel from '@/components/TrackHeaderPanel.vue'
 import ClipContextMenu from '@/components/ClipContextMenu.vue'
 import ClipWarpDialog from '@/components/ClipWarpDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
-import {
-  DEFAULT_PX_PER_SECOND,
-  RULER_HEIGHT,
-  SCROLLBAR_HEIGHT,
-  SCROLLBAR_WIDTH,
-  ZOOM_STEP_PX_PER_SECOND
-} from '@/lib/timeline/constants'
+import { SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from '@/lib/timeline/constants'
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
 import { useTimelineScroll } from '@/lib/timeline/useTimelineScroll'
-import { tracksContentHeight as tracksContentHeight_, trackTopWorldYAt } from '@/lib/timeline/trackLayout'
+import { tracksContentHeight as tracksContentHeight_ } from '@/lib/timeline/trackLayout'
 import { usePixiApp } from '@/lib/timeline/usePixiApp'
 import { useDragHandlers, type ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import { useDropZone } from '@/lib/timeline/useDropZone'
@@ -46,6 +39,9 @@ import { useScrollbarDrag } from '@/lib/timeline/useScrollbarDrag'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { useClipDialogs } from '@/lib/timeline/useClipDialogs'
 import { useTimelineContextMenu } from '@/lib/timeline/useTimelineContextMenu'
+import { useClipRename } from '@/lib/timeline/useClipRename'
+import { useTimelineRulerInteraction } from '@/lib/timeline/useTimelineRulerInteraction'
+import { useTimelineZoom } from '@/lib/timeline/useTimelineZoom'
 
 const project = useProjectStore()
 const library = useLibraryStore()
@@ -210,215 +206,25 @@ const {
   onContextMenuClose
 } = contextMenu
 
-function markerAtPointer(e: MouseEvent): string | null {
-  if (!host.value) return null
-  const a = pixi.app.value
-  if (!a) return null
-  const rect = host.value.getBoundingClientRect()
-  const x = e.clientX - rect.left
-  const y = e.clientY - rect.top
-  const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
-  if (y < 0 || y > RULER_HEIGHT || x < headerWidth() || x > rightEdge) return null
-  const worldX = x + scrollX.value
-  const hitHalfWidth = 7
-  for (let i = project.markers.length - 1; i >= 0; i--) {
-    const marker = project.markers[i]
-    if (!marker) continue
-    const markerX = headerWidth() + (marker.positionMs / 1000) * pxPerSecond.value
-    if (Math.abs(worldX - markerX) <= hitHalfWidth) return marker.id
-  }
-  return null
-}
-
-function pointerToSnappedRulerMs(e: MouseEvent): number | null {
-  if (!host.value) return null
-  const a = pixi.app.value
-  if (!a) return null
-  const rect = host.value.getBoundingClientRect()
-  const x = e.clientX - rect.left
-  const y = e.clientY - rect.top
-  const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
-  if (y < 0 || y > RULER_HEIGHT || x < headerWidth() || x > rightEdge) return null
-  const rawMs = ((scrollX.value + x - headerWidth()) / pxPerSecond.value) * 1000
-  const snap = geometry.msPerSubBeat()
-  return Math.max(0, Math.round(rawMs / snap) * snap)
-}
-
-function onDoubleClick(e: MouseEvent): void {
-  if (e.button !== 0) return
-
-  // First: did the user double-click a clip's title header?
-  // If so, open the inline rename overlay. This takes priority over the
-  // marker / ruler handling below so the rename gesture is reachable
-  // anywhere the title strip is visible.
-  if (host.value) {
-    const rect = host.value.getBoundingClientRect()
-    const worldX = (e.clientX - rect.left) + scrollX.value
-    const worldY = (e.clientY - rect.top) + scrollY.value
-    for (let i = clipHitRegions.length - 1; i >= 0; i--) {
-      const r = clipHitRegions[i]
-      if (!r) continue
-      if (
-        worldX >= r.x &&
-        worldX <= r.x + r.w &&
-        worldY >= r.y &&
-        worldY <= r.y + CLIP_HEADER_H
-      ) {
-        e.preventDefault()
-        startClipRename(r.clipId)
-        return
-      }
-    }
-    for (let i = clipHitRegions.length - 1; i >= 0; i--) {
-      const r = clipHitRegions[i]
-      if (!r) continue
-      if (
-        worldX >= r.x &&
-        worldX <= r.x + r.w &&
-        worldY >= r.y &&
-        worldY <= r.y + r.h
-      ) {
-        const clip = project.clips[r.clipId]
-        const hasLibraryItem = clip ? library.items.some((candidate) => candidate.id === clip.libraryItemId) : false
-        if (clip && !clip.unresolved && hasLibraryItem) {
-          e.preventDefault()
-          dialogs.openEditor(r.clipId)
-        }
-        return
-      }
-    }
-  }
-
-  const markerId = markerAtPointer(e)
-  if (markerId) {
-    e.preventDefault()
-    project.removeMarker(markerId)
-    return
-  }
-
-  const snappedMs = pointerToSnappedRulerMs(e)
-  if (snappedMs === null) return
-  e.preventDefault()
-  project.toggleMarkerAt(snappedMs)
-}
-
 // ─── Inline clip-name rename ──────────────────────────────────────────────
-// Double-click on a clip's title strip opens an HTML <input> floating
-// over the strip. Enter (or click-outside) commits via `project.renameClip`;
-// Escape cancels. The input position is computed reactively from the
-// clip's startMs/durationMs and the current scroll/zoom so it follows
-// the clip if the user scrolls during the edit.
-
-/** Must mirror the HEADER_H used inside `useTimelineDrawing.drawClipHeader`. */
-const CLIP_HEADER_H = 18
-const CLIP_HEADER_PAD_X = 4
-const CLIP_HEADER_APPROX_CHAR_W = 6
-const CLIP_HEADER_LINK_BADGE_W = 18
-const CLIP_HEADER_WARP_PENDING_BADGE_W = 18
-const CLIP_HEADER_WARP_ACTIVE_BADGE_W = 42
-
-const renamingClipId = ref<string | null>(null)
-const renameValue = ref('')
-const renameInputRef = ref<HTMLInputElement | null>(null)
-
-const renameOverlayStyle = computed<Record<string, string> | null>(() => {
-  const id = renamingClipId.value
-  if (!id) return null
-  const clip = project.clips[id]
-  if (!clip) return null
-  const trackIndex = project.tracks.findIndex((t) => t.id === clip.trackId)
-  if (trackIndex < 0) return null
-
-  // World coords mirror `useTimelineDrawing` so the input lands exactly
-  // on top of the drawn header strip.
-  const absX = headerWidth() + (clip.startMs / 1000) * pxPerSecond.value
-  const rowWorldY = trackTopWorldYAt(project.tracks, trackIndex)
-  const padding = 4
-  const innerY = rowWorldY + padding
-  const libItem = library.byId[clip.libraryItemId]
-  const effectiveDurMs = effectiveClipDurationMs(clip)
-  const clipWidthPx = (effectiveDurMs / 1000) * pxPerSecond.value
-  const displayName = clip.name?.trim()
-    ? clip.name
-    : libItem ? libraryItemDisplayName(libItem) : clip.fileName
-  const isLinked = libItem?.kind === 'saved-clip'
-  const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
-  const warpPending = isWarpPending({
-    warpEnabled: clip.warpEnabled,
-    tempoRatio: clip.tempoRatio,
-    pendingAutoWarp: clip.pendingAutoWarp,
-    sourceBpm,
-    projectBpm: transport.bpm
-  })
-  const warpActive = !warpPending && isClipTempoWarpActive(clip)
-  const badgeWidth =
-    (isLinked ? CLIP_HEADER_LINK_BADGE_W : 0) +
-    (warpPending ? CLIP_HEADER_WARP_PENDING_BADGE_W : warpActive ? CLIP_HEADER_WARP_ACTIVE_BADGE_W : 0)
-  const naturalHeaderWidth =
-    displayName.length * CLIP_HEADER_APPROX_CHAR_W + CLIP_HEADER_PAD_X * 2 + badgeWidth
-  const widthPx = Math.max(120, Math.min(clipWidthPx, naturalHeaderWidth))
-
-  // Convert to viewport pixels (relative to host).
-  const left = absX - scrollX.value
-  const top = innerY - scrollY.value
-
-  return {
-    position: 'absolute',
-    left: `${left}px`,
-    top: `${top}px`,
-    width: `${widthPx}px`,
-    height: `${CLIP_HEADER_H}px`
-  }
+// Double-click a clip's title strip to float an HTML <input> over it. The
+// feature (state, overlay geometry, commit/cancel, document key/pointer
+// handlers) lives in `useClipRename`; the SFC keeps the watch below that
+// toggles the capture-phase document listeners.
+const {
+  renamingClipId,
+  renameValue,
+  renameInputRef,
+  renameOverlayStyle,
+  startClipRename,
+  onRenameDocumentKeyDown,
+  onRenameDocumentPointerDown
+} = useClipRename({
+  headerWidth,
+  pxPerSecond: () => pxPerSecond.value,
+  scrollX: () => scrollX.value,
+  scrollY: () => scrollY.value
 })
-
-function startClipRename(clipId: string): void {
-  const clip = project.clips[clipId]
-  if (!clip) return
-  const libItem = library.items.find((i) => i.filePath === clip.filePath)
-  const initial = clip.name?.trim()
-    ? clip.name
-    : libItem
-      ? libraryItemDisplayName(libItem)
-      : clip.fileName
-  renamingClipId.value = clipId
-  renameValue.value = initial
-  void nextTick(() => {
-    renameInputRef.value?.focus()
-    renameInputRef.value?.select()
-  })
-}
-
-function commitClipRename(): void {
-  const id = renamingClipId.value
-  if (!id) return
-  project.renameClip(id, renameValue.value)
-  renamingClipId.value = null
-}
-
-function cancelClipRename(): void {
-  renamingClipId.value = null
-}
-
-function onRenameDocumentKeyDown(e: KeyboardEvent): void {
-  if (!renamingClipId.value) return
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    e.stopPropagation()
-    commitClipRename()
-  } else if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    cancelClipRename()
-  }
-}
-
-function onRenameDocumentPointerDown(e: PointerEvent): void {
-  if (!renamingClipId.value) return
-  const inputEl = renameInputRef.value
-  if (!inputEl) return
-  if (e.target instanceof Node && inputEl.contains(e.target)) return
-  commitClipRename()
-}
 
 watch(renamingClipId, (id) => {
   if (id) {
@@ -430,45 +236,41 @@ watch(renamingClipId, (id) => {
   }
 })
 
-/**
- * Apply a zoom request (global keyboard shortcut or a View-menu preset).
- * `step` requests nudge by the fixed increment or reset to default;
- * `absolute` requests jump straight to a target px/sec. Either way the
- * geometry clamps the result. Anchors on the current playhead position
- * when on-screen, otherwise on the viewport centre.
- */
-function applyZoomRequest(request: TimelineZoomRequest): void {
-  const prev = pxPerSecond.value
-  const target =
-    request.kind === 'absolute'
-      ? request.pxPerSecond
-      : request.action === 'reset'
-        ? DEFAULT_PX_PER_SECOND
-        : prev + (request.action === 'in' ? ZOOM_STEP_PX_PER_SECOND : -ZOOM_STEP_PX_PER_SECOND)
-  const next = geometry.setPxPerSecond(target)
-  if (next === prev) return
+// ─── Ruler / clip double-click interaction ────────────────────────────────
+// Marker hit-test, ruler snap, and the double-click router (rename / open
+// editor / add-or-remove marker) live in `useTimelineRulerInteraction`.
+const { onDoubleClick } = useTimelineRulerInteraction({
+  getHostRect: () => host.value?.getBoundingClientRect() ?? null,
+  getScreenWidth: () => pixi.app.value?.renderer.screen.width ?? null,
+  headerWidth,
+  pxPerSecond: () => pxPerSecond.value,
+  scrollX: () => scrollX.value,
+  scrollY: () => scrollY.value,
+  msPerSubBeat: () => geometry.msPerSubBeat(),
+  getClipHitRegions: () => clipHitRegions,
+  startClipRename,
+  openClipEditor: (clipId) => dialogs.openEditor(clipId)
+})
 
-  // Anchor on the playhead position (in viewport pixels) when visible,
-  // otherwise on the viewport centre. Same re-pin math as the wheel
-  // handler: solve for scrollX so the anchor world-time stays at the
-  // same on-screen pixel after the zoom.
-  const a = pixi.app.value
-  if (!a) return
-  const width = a.renderer.screen.width - SCROLLBAR_WIDTH
-  const absPlayheadX = headerWidth() + (transport.positionMs / 1000) * prev
-  const viewportPlayheadX = absPlayheadX - scrollX.value
-  const anchorX =
-    viewportPlayheadX >= headerWidth() && viewportPlayheadX <= width
-      ? viewportPlayheadX
-      : headerWidth() + (width - headerWidth()) / 2
-  const trackLocalX = anchorX - headerWidth()
-  const timeAtAnchorSec = (scrollX.value + trackLocalX) / prev
-  const newScroll = timeAtAnchorSec * next - trackLocalX
-  scrollX.value = Math.max(0, Math.min(maxScrollX.value, newScroll))
-
-  redraw()
-  updatePlayhead()
-}
+// ─── Zoom control (wheel + zoom requests) ─────────────────────────────────
+// `applyZoomRequest` (keyboard / View-menu) and `onWheel` (pointer wheel zoom
+// + horizontal pan) share their re-pin math inside `useTimelineZoom`. The
+// `ui.timelineZoomRequest` forwarding watch stays in the SFC below.
+const { applyZoomRequest, onWheel } = useTimelineZoom({
+  getScreenWidth: () => pixi.app.value?.renderer.screen.width ?? null,
+  getHostRect: () => host.value?.getBoundingClientRect() ?? null,
+  headerWidth,
+  pxPerSecond: () => pxPerSecond.value,
+  scrollX,
+  maxScrollX: () => maxScrollX.value,
+  trackAreaWidth: () => trackAreaWidth.value,
+  setPxPerSecond: (value) => geometry.setPxPerSecond(value),
+  getPlayheadPositionMs: () => transport.positionMs,
+  getTrackCount: () => project.tracks.length,
+  applyScroll,
+  redraw: () => redraw(),
+  updatePlayhead: () => updatePlayhead()
+})
 
 watch(
   () => ui.timelineZoomRequest,
@@ -777,70 +579,6 @@ watch(
   () => project.durationMs,
   () => redraw()
 )
-
-/**
- * Wheel handler — dispatches between two intents based on which axis
- * dominates:
- *
- *   - Horizontal scroll (|deltaX| > |deltaY|) → pan the timeline.
- *     Trackpads naturally emit deltaX on a two-finger horizontal swipe;
- *     mouse wheels usually don't, so vertical mouse-wheel still zooms.
- *   - Vertical scroll → exponential zoom anchored on the pointer's
- *     current time-position so the bar/clip under the cursor stays
- *     fixed on screen.
- *
- * Holding Shift while scrolling vertically also pans (matches the
- * convention used by every browser and most DAWs).
- */
-function onWheel(e: WheelEvent): void {
-  if (!host.value) return
-  e.preventDefault()
-  if (project.tracks.length === 0) return
-
-  // Treat as a horizontal pan when the dominant axis is horizontal OR
-  // the user is holding Shift. Both branches consume the event so the
-  // OS-level scroll bubbling doesn't move the page.
-  const absX = Math.abs(e.deltaX)
-  const absY = Math.abs(e.deltaY)
-  const wantsPan = absX > absY || (e.shiftKey && absY > 0)
-  if (wantsPan) {
-    // Use deltaX when it's non-zero (trackpad horizontal swipe); fall
-    // back to deltaY when Shift was the trigger on a vertical wheel.
-    const panBy = absX > 0 ? e.deltaX : e.deltaY
-    if (panBy === 0) return
-    const next = Math.max(0, Math.min(maxScrollX.value, scrollX.value + panBy))
-    if (next === scrollX.value) return
-    scrollX.value = next
-    applyScroll()
-    return
-  }
-
-  const delta = e.deltaY
-  if (delta === 0) return
-
-  const prev = pxPerSecond.value
-  const next = geometry.setPxPerSecond(
-    prev + (delta < 0 ? ZOOM_STEP_PX_PER_SECOND : -ZOOM_STEP_PX_PER_SECOND)
-  )
-  if (next === prev) return
-
-  // Determine the anchor (in track-area-local pixels) and the time it
-  // currently sits at, so we can re-pin the same time under the pointer
-  // after applying the new zoom.
-  const hostRect = host.value.getBoundingClientRect()
-  const pointerXInHost = e.clientX - hostRect.left
-  const trackLocalX = Math.max(0, Math.min(trackAreaWidth.value, pointerXInHost - headerWidth()))
-  const timeAtAnchorSec = (scrollX.value + trackLocalX) / prev
-
-  // Re-anchor: solve for scrollX so the same time sits at the same
-  // pointer-local x. `maxScrollX` is reactive on `pxPerSecond`, so by the
-  // time we read it here it reflects the new zoom.
-  const newScroll = timeAtAnchorSec * next - trackLocalX
-  scrollX.value = Math.max(0, Math.min(maxScrollX.value, newScroll))
-
-  redraw()
-  updatePlayhead()
-}
 
 // ─── Track-header column resize ────────────────────────────────────────────
 // The user can drag the vertical divider on the right edge of the track

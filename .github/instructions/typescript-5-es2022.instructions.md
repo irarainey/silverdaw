@@ -37,6 +37,11 @@ applyTo: "**/*.ts"
   type/schema-only files may run longer. **Any file > 800 lines must be
   seriously considered for splitting unless there is a very good,
   explicitly-stated reason.**
+- **A split must genuinely improve maintainability.** If the only way under the
+  ceiling is a contrived extraction — e.g. a composable taking a large
+  cross-cutting "dependency bag", or fragmenting one coherent unit of thought —
+  that harms readability more than the line count helps. In that case keep the
+  file and record a short, explicit justification (an exception, not the norm).
 - **Resist growing an already-oversized file** (e.g. `projectStore.ts`,
   `bridge-protocol.ts`, `libraryStore.ts`) — extract a focused module instead,
   even for a small addition.

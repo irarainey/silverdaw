@@ -24,7 +24,7 @@ import RelinkDialog from '@/components/RelinkDialog.vue'
 import RecoveryDialog, { type RecoverableEntry } from '@/components/RecoveryDialog.vue'
 import StartupScreen from '@/components/StartupScreen.vue'
 import EngineRecoveryOverlay from '@/components/EngineRecoveryOverlay.vue'
-import { effectiveClipDurationMs, useProjectStore } from '@/stores/projectStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
@@ -32,11 +32,12 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { startAutosaveManager, stopAutosaveManager, clearAutosaveBucket } from '@/lib/autosave'
 import { getActivePinia } from 'pinia'
-import { connect as connectBridge, disconnect as disconnectBridge, send as sendBridge } from '@/lib/bridgeService'
+import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
 import { onBackendStatus as onEngineBackendStatus } from '@/lib/engineRecovery'
-import { isZoomPresetAction, parseZoomPresetAction } from '@/lib/timeline/zoomPresets'
+import { useAppKeyboardShortcuts } from '@/lib/app/useAppKeyboardShortcuts'
+import { useAppMenuActions } from '@/lib/app/useAppMenuActions'
 import { useAppStore } from '@/stores/appStore'
 
 const project = useProjectStore()
@@ -180,43 +181,10 @@ onMounted(() => {
 })
 
 // ─── Global keyboard shortcuts ────────────────────────────────────────────
-// Arrow Left / Arrow Right step the playhead back / forward to the
-// adjacent grid line (sub-beat — 16th-note in 4/4, matching the
-// timeline's finest grid division). Skipped while focus is in any
-// editable field so arrows still move the text cursor in the rename
-// input, numeric BPM/length inputs, etc.
-//
-// Step size = 60 000 / bpm / SUBDIVISIONS_PER_BEAT, so a tempo change
-// automatically rescales the step. SUBDIVISIONS_PER_BEAT is duplicated
-// here from `@/lib/timeline/constants` because importing the whole
-// timeline module just for one constant would pull in the PixiJS-aware
-// drawing graph; the value (4) hasn't moved since project inception
-// and is the canonical 16th-note resolution.
-const SUB_BEATS_PER_BEAT = 4
-
-// Last position the arrow-step shortcut asked the backend to seek to.
-// Used as the basis for the NEXT arrow press when the backend's reported
-// position has rounded to slightly less than the floating-point target —
-// otherwise repeated presses get stuck oscillating between adjacent
-// grid lines because of sub-millisecond round-trip error.
-let lastArrowSeekMs: number | null = null
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  const tag = target.tagName
-  if (tag === 'TEXTAREA' || tag === 'SELECT') return true
-  if (tag === 'INPUT') {
-    // <input type="range"> sliders (master volume, future faders)
-    // should not swallow global shortcuts. Space does nothing on a
-    // range — arrows are the proper keyboard interaction — so the
-    // global Space=play handler should still fire when a slider
-    // happens to hold focus after a drag.
-    const type = (target as HTMLInputElement).type
-    return type !== 'range'
-  }
-  return target.isContentEditable
-}
-
+// The capture-phase keydown handler lives in `useAppKeyboardShortcuts`
+// (transport / zoom / marker / clip-lock / export shortcuts). The modal
+// guard below stays in the SFC because it reads this component's dialog
+// refs; it's passed into the composable as `isModalOpen`.
 function isShortcutModalOpen(): boolean {
   return (
     aboutOpen.value ||
@@ -234,198 +202,15 @@ function isShortcutModalOpen(): boolean {
   )
 }
 
-function onGlobalShortcutKey(e: KeyboardEvent): void {
-  // Don't fight text fields, and don't trigger before the bridge is up
-  // (no point sending TRANSPORT_SEEK that the backend would just drop).
-  if (isEditableTarget(e.target)) return
-  if (isShortcutModalOpen()) return
-  if (!transport.bridgeReady) return
-  // Mid-session engine recovery gates all transport/zoom shortcuts behind
-  // the overlay until the engine is healthy again.
-  if (transport.engineRecovery !== 'ok') return
-
-  if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.repeat) return
-    lastArrowSeekMs = null
-    if (transport.isPlaying) {
-      sendBridge('TRANSPORT_PAUSE')
-      transport.setPlaybackState(false)
-      log.info('transport', 'shortcut pause')
-    } else {
-      // Playhead parked at the end → Spacebar Play is a no-op.
-      // Mirrors `TransportBar.onPlay`'s guard so the keyboard
-      // shortcut can't bypass the disabled Play button.
-      const end = project.durationMs
-      if (end > 0 && transport.positionMs >= end) {
-        log.info('transport', 'shortcut play ignored (at end of project)')
-        return
-      }
-      sendBridge('TRANSPORT_PLAY')
-      transport.setPlaybackState(true)
-      log.info('transport', 'shortcut play')
-    }
-    return
-  }
-
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
-    // Toggle lock on the currently-selected clip. Per-clip — siblings
-    // of a saved-clip instance stay independent.
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.repeat) return
-    const id = project.selectedClipId
-    if (!id) {
-      log.info('project', 'shortcut Ctrl+L ignored — no clip selected')
-      return
-    }
-    const clip = project.clips[id]
-    if (!clip) return
-    project.setClipLocked(id, !clip.locked)
-    return
-  }
-
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
-    e.preventDefault()
-    e.stopPropagation()
-    const hasAnyClip = project.tracks.some((track) => track.clipIds.length > 0)
-    if (!hasAnyClip) {
-      log.info('mixdown', 'shortcut export ignored — no clips to render')
-      return
-    }
+const { onGlobalShortcutKey } = useAppKeyboardShortcuts({
+  transport,
+  project,
+  ui,
+  isModalOpen: isShortcutModalOpen,
+  openExportMixdown: () => {
     exportMixdownOpen.value = true
-    log.info('mixdown', 'shortcut open export dialog')
-    return
   }
-
-  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
-    let zoomAction: 'in' | 'out' | 'reset' | null = null
-    if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
-      zoomAction = 'in'
-    } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
-      zoomAction = 'out'
-    } else if (e.key === '0' || e.code === 'Numpad0' || e.code === 'Digit0') {
-      zoomAction = 'reset'
-    }
-    if (zoomAction) {
-      e.preventDefault()
-      e.stopPropagation()
-      ui.requestTimelineZoom(zoomAction)
-      return
-    }
-  }
-
-  if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
-    e.preventDefault()
-    e.stopPropagation()
-    const msPerSub = 60_000 / transport.bpm / SUB_BEATS_PER_BEAT
-    const snappedMs = Math.max(0, Math.round(transport.positionMs / msPerSub) * msPerSub)
-    project.toggleMarkerAt(snappedMs)
-    return
-  }
-
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-    e.preventDefault()
-    e.stopPropagation()
-    lastArrowSeekMs = null
-    if (e.key === 'ArrowLeft') {
-      // Skip-to-start: scroll the view + rewind the playhead. Never
-      // touches the playback state — playing carries on from 0.
-      ui.requestTimelineScroll('start')
-      transport.setPosition(0)
-      sendBridge('TRANSPORT_SEEK', { positionMs: 0 })
-      log.info('transport', 'shortcut skip-back')
-      return
-    }
-
-    const end = project.durationMs
-    if (!Number.isFinite(end) || end <= 0) return
-    ui.requestTimelineScroll('end')
-    transport.setPosition(end)
-    sendBridge('TRANSPORT_SEEK', { positionMs: end })
-    log.info('transport', `shortcut skip-forward -> ${end}ms`)
-    return
-  }
-
-  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-    e.preventDefault()
-    e.stopPropagation()
-    const direction = e.key === 'ArrowLeft' ? -1 : 1
-    if (project.markers.length === 0) return
-    const current = transport.positionMs
-    const targetMarker =
-      direction < 0
-        ? [...project.markers].reverse().find((marker) => marker.positionMs < current - 1)
-        : project.markers.find((marker) => marker.positionMs > current + 1)
-    if (!targetMarker) return
-    lastArrowSeekMs = targetMarker.positionMs
-    ui.requestTimelineScrollToPosition(targetMarker.positionMs)
-    transport.setPosition(targetMarker.positionMs)
-    sendBridge('TRANSPORT_SEEK', { positionMs: targetMarker.positionMs })
-    log.debug('transport', `marker-seek to ${targetMarker.positionMs}ms`)
-    return
-  }
-
-  if (e.ctrlKey || e.metaKey || e.shiftKey) return
-  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-
-  // Alt + Arrow: fine-grained step (one pixel's worth of time at the
-  // current zoom). Use this when placing the playhead exactly inside a
-  // clip waveform for a future split. At default zoom (100 px/s) that's
-  // ~16.7 ms; at max zoom (480 px/s) it's ~2 ms. Always at least 1 ms.
-  // Bare Arrow: grid step (sub-beat / 16th note).
-  const direction = e.key === 'ArrowLeft' ? -1 : 1
-  if (e.altKey) {
-    const pxPerSec = project.viewPxPerSecond ?? 60
-    const msPerPx = Math.max(1, 1000 / pxPerSec)
-    const reported = transport.positionMs
-    const base =
-      lastArrowSeekMs !== null && Math.abs(reported - lastArrowSeekMs) < 1
-        ? lastArrowSeekMs
-        : reported
-    const target = Math.max(0, base + direction * msPerPx)
-    if (target === reported) return
-    e.preventDefault()
-    e.stopPropagation()
-    lastArrowSeekMs = target
-    transport.setPosition(target)
-    ui.requestTimelineScrollToPosition(target)
-    sendBridge('TRANSPORT_SEEK', { positionMs: target })
-    log.debug('transport', `alt-arrow-seek to ${target.toFixed(2)}ms (${msPerPx.toFixed(2)}ms/px step)`)
-    return
-  }
-
-  const bpm = transport.bpm
-  if (!Number.isFinite(bpm) || bpm <= 0) return
-  const msPerSub = 60_000 / bpm / SUB_BEATS_PER_BEAT
-
-  // If our last arrow-seek target is still essentially the current
-  // position (the backend's ack will have rounded by a sub-millisecond
-  // at non-integer-rate BPMs), compute the next step from THAT exact
-  // value rather than the rounded one. Without this, repeated arrow
-  // presses can get pinned to the same grid line as floor() keeps
-  // rounding the reported position to the previous bucket index.
-  const reported = transport.positionMs
-  const base =
-    lastArrowSeekMs !== null && Math.abs(reported - lastArrowSeekMs) < 1
-      ? lastArrowSeekMs
-      : reported
-
-  const target =
-    direction < 0
-      ? Math.max(0, Math.floor((base - 1e-6) / msPerSub) * msPerSub)
-      : (Math.floor(base / msPerSub + 1e-6) + 1) * msPerSub
-  if (target === reported) return
-
-  e.preventDefault()
-  e.stopPropagation()
-  lastArrowSeekMs = target
-  transport.setPosition(target)
-  ui.requestTimelineScrollToPosition(target)
-  sendBridge('TRANSPORT_SEEK', { positionMs: target })
-  log.debug('transport', `arrow-seek to ${target}ms (msPerSub=${msPerSub.toFixed(2)})`)
-}
+})
 
 // ─── Per-project audio output reconciliation ──────────────────────────
 // When a project loads, its saved audio-output preference (if any)
@@ -704,227 +489,21 @@ onBeforeUnmount(() => {
   document.body.classList.remove('is-importing')
 })
 
-function handleMenuAction(action: string): void {
-  log.info('menu', `action ${action}`)
-  // The About dialog must remain reachable even before the bridge has
-  // delivered its first PROJECT_STATE — it doesn't touch project state
-  // and users may want to see version / licence info while diagnosing a
-  // backend-startup problem. Same reasoning applies to Preferences.
-  if (action === 'help.about') {
-    aboutOpen.value = true
-    return
-  }
-  if (action === 'edit.preferences') {
-    preferencesOpen.value = true
-    return
-  }
-  // Quitting / closing the window must work regardless of bridge
-  // state — the user has to be able to give up on a stuck startup.
-  // `project.isDirty` is reliably false until the bridge has
-  // delivered at least one PROJECT_STATE, so the guard is a no-op
-  // in that case anyway.
-  if (action === 'file.exit') {
-    guardAgainstUnsavedChanges(() => window.silverdaw.menuAction('file.exitConfirmed'))
-    return
-  }
-  if (action === 'app.requestClose') {
-    guardAgainstUnsavedChanges(() => window.silverdaw.menuAction('app.confirmClose'))
-    return
-  }
-  // Drop any menu action (incl. keyboard shortcut) that arrives before
-  // the bridge has delivered its initial PROJECT_STATE — the visible
-  // <StartupScreen> swallows mouse clicks but accelerators bypass
-  // it, and acting on stale local state before reconcile would lose
-  // the action (it'd race the snapshot apply pass).
-  if (!transport.bridgeReady) {
-    log.warn('menu', `dropped ${action} (bridge not ready)`)
-    return
-  }
-  // Timeline zoom — menu-click path only. The keyboard path is owned by
-  // `onGlobalShortcutKey` and never routes through here. Mirror that
-  // handler's modal guard so a menu click can't zoom the timeline behind
-  // an open dialog (clip editor, export, recovery, …).
-  if (
-    action === 'view.zoomIn' ||
-    action === 'view.zoomOut' ||
-    action === 'view.zoomReset' ||
-    isZoomPresetAction(action)
-  ) {
-    if (isShortcutModalOpen()) return
-    if (action === 'view.zoomIn') ui.requestTimelineZoom('in')
-    else if (action === 'view.zoomOut') ui.requestTimelineZoom('out')
-    else if (action === 'view.zoomReset') ui.requestTimelineZoom('reset')
-    else {
-      const px = parseZoomPresetAction(action)
-      if (px !== null) ui.requestTimelineZoomTo(px)
-    }
-    return
-  }
-  // Adding a track is now just "create an empty track". Importing a file
-  // into the track happens via the per-track Import button on the track
-  // header panel (see TrackHeaderPanel.vue).
-  if (action === 'file.addTrack') {
-    project.addTrack()
-    return
-  }
-  if (action === 'file.projectProperties') {
-    projectPropertiesOpen.value = true
-    return
-  }
-  if (action === 'file.exportMixdown') {
-    exportMixdownOpen.value = true
-    return
-  }
-  if (action === 'file.newProject') {
-    guardAgainstUnsavedChanges(() => {
-      project.requestNewProject()
-      appStore.dismissStartScreen()
-    })
-    return
-  }
-  if (action === 'file.openProject') {
-    guardAgainstUnsavedChanges(() => {
-      void window.silverdaw.chooseProjectOpen().then(async (filePath) => {
-        if (!filePath) return
-        // Same allow-list seeding as the auto-open path. The metadata
-        // refresh fired by `applyProjectStateSnapshot` runs as soon as
-        // the backend echoes PROJECT_STATE, so the paths must be on the
-        // whitelist by that point.
-        await window.silverdaw.prepareProjectOpen(filePath)
-        project.requestLoad(filePath)
-        // StartupScreen disappears once PROJECT_STATE arrives. Avoid
-        // a preemptive dismiss so the empty timeline never flashes.
-      })
-    })
-    return
-  }
-  // Recent Projects MRU click. The action ID encodes the visible-menu
-  // index; we look the path up out of the appStore mirror because the
-  // file menu only surfaces the top 5 (the full MRU lives in the
-  // start screen).
-  if (action.startsWith('file.openRecentByIndex:')) {
-    const indexStr = action.slice('file.openRecentByIndex:'.length)
-    const index = Number.parseInt(indexStr, 10)
-    if (!Number.isFinite(index) || index < 0) return
-    const filePath = appStore.recentProjects[index]
-    if (!filePath) return
-    openRecentPath(filePath)
-    return
-  }
-  if (action === 'file.clearRecentProjects') {
-    window.silverdaw.clearRecentProjects()
-    void appStore.refreshRecentProjects()
-    return
-  }
-  if (action === 'file.save') {
-    // No current path → fall through to Save As so the user gets the
-    // OS dialog rather than a confusing silent failure.
-    if (project.currentFilePath) {
-      void project.saveAndWait(project.currentFilePath, false).then((result) => {
-        if (
-          !result.ok &&
-          (result.error?.startsWith('Timed out') || result.error === 'The audio engine isn\'t connected')
-        ) {
-          notifications.pushError(`Save failed: ${result.error}.`)
-        }
-      })
-    } else {
-      handleMenuAction('file.saveAs')
-    }
-    return
-  }
-  if (action === 'file.saveAs') {
-    void window.silverdaw
-      .chooseProjectSaveAs(project.projectName || 'Untitled')
-      .then((filePath) => {
-        if (!filePath) return
-        void project.saveAndWait(filePath, true).then((result) => {
-          if (
-            !result.ok &&
-            (result.error?.startsWith('Timed out') || result.error === 'The audio engine isn\'t connected')
-          ) {
-            notifications.pushError(`Save failed: ${result.error}.`)
-          }
-        })
-      })
-    return
-  }
-  if (action === 'edit.undo') {
-    project.requestUndo()
-    return
-  }
-  if (action === 'edit.redo') {
-    project.requestRedo()
-    return
-  }
-  if (action === 'edit.splitAtPlayhead') {
-    const atMs = transport.positionMs
-    const selectedTrackId = project.selectedTrackId
-    if (!selectedTrackId) return
-    const track = project.tracks.find((candidate) => candidate.id === selectedTrackId)
-    if (!track) return
-    const splitClip = track.clipIds
-      .map((clipId) => project.clips[clipId])
-      .find((clip) => {
-        if (!clip) return false
-        const libItem = library.byId[clip.libraryItemId]
-        if (libItem?.kind === 'saved-clip') return false
-        const effDur = effectiveClipDurationMs(clip)
-        return atMs > clip.startMs && atMs < clip.startMs + effDur
-      })
-    if (splitClip) project.splitClipAt(splitClip.id, atMs)
-    return
-  }
-  if (action === 'edit.cut') {
-    project.cutSelectedClip()
-    return
-  }
-  if (action === 'edit.copy') {
-    project.copySelectedClip()
-    return
-  }
-  if (action === 'edit.paste') {
-    project.pasteClipAtPlayhead(transport.positionMs)
-    return
-  }
-  if (action === 'edit.duplicateClip') {
-    if (project.selectedClipId) {
-      project.duplicateClip(project.selectedClipId)
-    }
-    return
-  }
-  if (action === 'edit.deleteClip') {
-    if (project.selectedClipId) {
-      project.removeClip(project.selectedClipId)
-    }
-    return
-  }
-  if (action === 'edit.cropProjectToLastClip') {
-    // Crop the project length to the end of the latest clip on any
-    // track. No-op if there are no clips at all — collapsing an empty
-    // project to 0 ms would leave a 0-width ruler with no way back
-    // except a tempo / length edit. The setter clamps upward per-track
-    // to fit clips on that track, so passing the global max keeps the
-    // shorter tracks honest as well.
-    let maxEndMs = 0
-    for (const clip of Object.values(project.clips)) {
-      const effDur = effectiveClipDurationMs(clip)
-      const end = clip.startMs + effDur
-      if (end > maxEndMs) maxEndMs = end
-    }
-    if (maxEndMs <= 0) {
-      notifications.pushInfo('No clips on the timeline — nothing to trim.')
-      return
-    }
-    const before = project.durationMs
-    project.setProjectLengthMs(maxEndMs)
-    const after = project.durationMs
-    if (after !== before) {
-      sendBridge('PROJECT_SET_LENGTH', { lengthMs: after })
-    }
-    return
-  }
-}
+const { handleMenuAction } = useAppMenuActions({
+  project,
+  transport,
+  ui,
+  library,
+  notifications,
+  appStore,
+  aboutOpen,
+  preferencesOpen,
+  projectPropertiesOpen,
+  exportMixdownOpen,
+  guardAgainstUnsavedChanges,
+  isModalOpen: isShortcutModalOpen,
+  openRecentPath
+})
 
 /**
  * Run `proceed` only after the user has either saved or chosen to

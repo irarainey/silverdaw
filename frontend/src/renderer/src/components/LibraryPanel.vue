@@ -13,19 +13,22 @@
 // height is held by App.vue so the timeline can size itself off whatever
 // height is left over.
 
-import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useLibraryStore, libraryItemDisplayName, libraryItemIsSample, type LibraryItem } from '@/stores/libraryStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useProjectStore } from '@/stores/projectStore'
-import { importAudioIntoLibrary, preflightSampleRates, reanalyseLibraryItem } from '@/lib/importAudio'
+import { importAudioIntoLibrary, preflightSampleRates } from '@/lib/importAudio'
 import { log } from '@/lib/log'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { effectiveTempoRatio } from '@/lib/warp'
-import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
+import ClipContextMenu from '@/components/ClipContextMenu.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import TrackFxPanel from '@/components/TrackFxPanel.vue'
 import ProjectFxPanel from '@/components/ProjectFxPanel.vue'
+import { useLibraryDropZone } from '@/lib/library/useLibraryDropZone'
+import { useLibraryItemRename } from '@/lib/library/useLibraryItemRename'
+import { useLibraryItemActions } from '@/lib/library/useLibraryItemActions'
 
 const props = defineProps<{
     /** Current panel height in CSS pixels (excluding the resize handle). */
@@ -67,71 +70,17 @@ const activeTab = computed<'library' | 'trackfx' | 'projectfx'>({
   }
 })
 
-// True while an OS drag is hovering over the panel — used to highlight the
-// drop zone. We track depth to handle nested dragenter/dragleave correctly.
-const isDragOver = ref(false)
-const infoItemId = ref<string | null>(null)
-const editorItemId = ref<string | null>(null)
-const contextMenu = ref<{ itemId: string; x: number; y: number } | null>(null)
-let dragDepth = 0
+// Library-item actions (right-click menu + Info/Editor dialogs), inline rename,
+// and the OS drag-and-drop import zone each live in a focused composable.
+const { isDragOver, onPanelDragEnter, onPanelDragOver, onPanelDragLeave, onPanelDrop } =
+    useLibraryDropZone()
 
-// ─── Inline rename ────────────────────────────────────────────────────────
-const editingItemId = ref<string | null>(null)
-const editingValue = ref('')
-let nameInputEl: HTMLInputElement | null = null
+const { editingItemId, editingValue, setNameInputEl, startRename, onDocumentKeyDown, onDocumentPointerDown } =
+    useLibraryItemRename()
 
-function setNameInputEl(el: Element | ComponentPublicInstance | null): void {
-    nameInputEl = (el as HTMLInputElement | null) ?? null
-}
-
-async function startRename(item: LibraryItem): Promise<void> {
-    log.info('library', `startRename id=${item.id}`)
-    editingItemId.value = item.id
-    editingValue.value = libraryItemDisplayName(item)
-    await nextTick()
-    if (nameInputEl) {
-        nameInputEl.focus()
-        nameInputEl.select()
-    }
-}
-
-function commitRename(): void {
-    const id = editingItemId.value
-    if (!id) return
-    log.info('library', `commitRename ${id} -> "${editingValue.value}"`)
-    library.renameItem(id, editingValue.value)
-    editingItemId.value = null
-}
-
-function cancelRename(): void {
-    log.info('library', 'cancelRename')
-    editingItemId.value = null
-}
-
-// While a rename is in progress, listen at the document level for the
-// commit / cancel gestures. This is more robust than relying on the
-// input's own `keydown` / `blur` handlers, which can be blocked when the
-// input lives inside other interactive containers (draggable rows etc.).
-function onDocumentKeyDown(e: KeyboardEvent): void {
-    if (!editingItemId.value) return
-    if (e.key === 'Enter') {
-        e.preventDefault()
-        e.stopPropagation()
-        commitRename()
-    } else if (e.key === 'Escape') {
-        e.preventDefault()
-        e.stopPropagation()
-        cancelRename()
-    }
-}
-
-function onDocumentPointerDown(e: PointerEvent): void {
-    if (!editingItemId.value) return
-    if (!nameInputEl) return
-    if (e.target instanceof Node && nameInputEl.contains(e.target)) return
-    commitRename()
-}
-
+// While a rename is in progress, listen at the document level for the commit /
+// cancel gestures (more robust than the input's own keydown / blur, which can
+// be blocked when the input lives inside other interactive containers).
 watch(editingItemId, (id) => {
     if (id) {
         document.addEventListener('keydown', onDocumentKeyDown, { capture: true })
@@ -147,9 +96,20 @@ onBeforeUnmount(() => {
     document.removeEventListener('pointerdown', onDocumentPointerDown, { capture: true })
 })
 
+const {
+    contextMenu,
+    infoItem,
+    editorItem,
+    contextMenuItems,
+    closeItemInfo,
+    openItemEditor,
+    closeItemEditor,
+    openItemContextMenu,
+    closeItemContextMenu,
+    onContextMenuCommand
+} = useLibraryItemActions({ startRename })
+
 const itemCount = computed(() => library.items.length)
-const infoItem = computed(() => (infoItemId.value ? library.byId[infoItemId.value] ?? null : null))
-const editorItem = computed(() => (editorItemId.value ? library.byId[editorItemId.value] ?? null : null))
 
 const SAVED_CLIP_PILL_CLASS =
     'shrink-0 whitespace-nowrap rounded border px-1 py-0.5 text-[9px] leading-none shadow-sm'
@@ -157,9 +117,6 @@ const SAVED_CLIP_BPM_PILL_CLASS =
     `${SAVED_CLIP_PILL_CLASS} border-zinc-700 bg-zinc-800 text-zinc-300`
 const SAMPLE_PILL_CLASS =
     `${SAVED_CLIP_PILL_CLASS} border-indigo-800 bg-indigo-900/60 text-indigo-200`
-const contextMenuItem = computed(() =>
-    contextMenu.value ? library.byId[contextMenu.value?.itemId] ?? null : null
-)
 const sourceItems = computed(() => library.items.filter((item) => item.kind === 'audio-file'))
 const orphanSavedClipItems = computed(() =>
     library.items.filter(
@@ -168,68 +125,6 @@ const orphanSavedClipItems = computed(() =>
             !library.items.some((source) => source.id === item.derivedFrom?.sourceItemId)
     )
 )
-const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
-    const item = contextMenuItem.value
-    if (!item) return []
-    const inUse = library.isItemInUse(item.id)
-    const items: ClipContextMenuItem[] = [
-        { command: 'library.edit', label: 'Open in Editor' },
-        { command: 'library.info', label: 'Show Information' },
-        { command: 'library.rename', label: 'Rename', separatorAbove: true }
-    ]
-    if (item.kind === 'audio-file') {
-        items.push({ command: 'library.reanalyse', label: 'Reanalyse File' })
-    } else if (item.kind === 'saved-clip') {
-        items.push({
-            command: 'library.saveSample',
-            label: 'Save as Sample',
-            title:
-                'Bakes the saved clip\u2019s current trim, warp, and pitch into a new independent WAV file. ' +
-                'Re-running it always creates another fresh sample \u2014 baked samples are not linked back ' +
-                'to this clip, so future edits to the saved clip do not affect previously-baked samples.'
-        })
-    }
-    // Sample / music classification submenu. Audio-file items only —
-    // saved clips inherit from their source unless the source is
-    // missing (then they edit their own override here).
-    if (item.kind === 'audio-file') {
-        const auto = item.sampleMode === undefined
-        items.push({
-            command: 'library.classifyAuto',
-            label: auto
-                ? `Auto-classify (currently ${item.lowConfidence ? 'sample' : 'music'})`
-                : 'Auto-classify',
-            separatorAbove: true,
-            disabled: auto
-        })
-        items.push({
-            command: 'library.classifyMusic',
-            label: 'Treat as Music',
-            disabled: item.sampleMode === 'music'
-        })
-        items.push({
-            command: 'library.classifySample',
-            label: 'Treat as Sample',
-            title: 'Hide BPM / key / beat markers, and skip auto-warp on drop. Warp and pitch dialogs still work manually.',
-            disabled: item.sampleMode === 'sample'
-        })
-    }
-    // Saved clips can always be removed — doing so just unlinks any
-    // timeline clips that reference them (they keep their audio and
-    // become independent). Audio-file sources stay gated because
-    // removing them would orphan the actual sound data.
-    const isSavedClip = item.kind === 'saved-clip'
-    const blockRemove = inUse && !isSavedClip
-    items.push(
-        {
-            command: 'library.delete',
-            label: 'Remove',
-            disabled: blockRemove,
-            separatorAbove: true
-        }
-    )
-    return items
-})
 
 async function onImportClick(): Promise<void> {
     log.info('library', 'import-button click')
@@ -258,79 +153,6 @@ async function onImportClick(): Promise<void> {
     }
 }
 
-// ─── OS drag-and-drop into the library ─────────────────────────────────────
-
-function onPanelDragEnter(e: DragEvent): void {
-    if (!hasFiles(e)) return
-    dragDepth++
-    isDragOver.value = true
-    e.preventDefault()
-}
-
-function onPanelDragOver(e: DragEvent): void {
-    if (!hasFiles(e)) return
-    // Required to allow `drop` to fire.
-    e.preventDefault()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
-}
-
-function onPanelDragLeave(e: DragEvent): void {
-    if (!hasFiles(e)) return
-    dragDepth = Math.max(0, dragDepth - 1)
-    if (dragDepth === 0) isDragOver.value = false
-}
-
-async function onPanelDrop(e: DragEvent): Promise<void> {
-    if (!hasFiles(e)) return
-    e.preventDefault()
-    dragDepth = 0
-    isDragOver.value = false
-
-    const files = Array.from(e.dataTransfer?.files ?? [])
-    if (files.length === 0) return
-    // Resolve file paths first so the preflight probe has something to
-    // hand the backend. Drops that lack a path (rare; usually only
-    // in-browser drags) are filtered out before the preflight so they
-    // don't skew the rate buckets.
-    const pairs: { file: File; path: string }[] = []
-    for (const file of files) {
-        const path = window.silverdaw.getPathForFile(file)
-        if (!path) {
-            log.warn('library', `dropped file has no path: ${file.name}`)
-            continue
-        }
-        pairs.push({ file, path })
-    }
-    if (pairs.length === 0) return
-    const decision = await preflightSampleRates(pairs.map((p) => p.path))
-    if (decision === 'cancel') {
-        log.info('library', 'import (drag/drop) cancelled at sample-rate prompt')
-        return
-    }
-    // Count every dropped file towards the progress total, even ones that
-    // turn out to fail to read — we call `noteImportFinished()` for
-    // those too so the bar still completes.
-    library.beginImportBatch(pairs.length)
-    for (const { path } of pairs) {
-        const opened = await window.silverdaw.readAudioFile(path)
-        if (!opened) {
-            library.noteImportFinished()
-            continue
-        }
-        await importAudioIntoLibrary(opened)
-    }
-}
-
-/** True if the dragged payload includes filesystem files (vs an inner drag). */
-function hasFiles(e: DragEvent): boolean {
-    const types = e.dataTransfer?.types
-    if (!types) return false
-    for (let i = 0; i < types.length; i++) {
-        if (types[i] === 'Files') return true
-    }
-    return false
-}
-
 // ─── Library item → timeline drag ─────────────────────────────────────────
 
 function onItemDragStart(e: DragEvent, item: LibraryItem): void {
@@ -348,83 +170,6 @@ function onItemDragStart(e: DragEvent, item: LibraryItem): void {
 
 function onItemDragEnd(): void {
     library.setDragItem(null)
-}
-
-function openItemInfo(item: LibraryItem): void {
-    closeItemContextMenu()
-    infoItemId.value = item.id
-}
-
-function closeItemInfo(): void {
-    infoItemId.value = null
-}
-
-function openItemEditor(item: LibraryItem): void {
-    closeItemContextMenu()
-    editorItemId.value = item.id
-}
-
-function closeItemEditor(): void {
-    editorItemId.value = null
-}
-
-function openItemContextMenu(e: MouseEvent, item: LibraryItem): void {
-    contextMenu.value = {
-        itemId: item.id,
-        x: e.clientX,
-        y: e.clientY
-    }
-}
-
-function closeItemContextMenu(): void {
-    contextMenu.value = null
-}
-
-function onContextMenuCommand(command: string): void {
-    const item = contextMenuItem.value
-    if (!item) return
-    if (command === 'library.edit') {
-        openItemEditor(item)
-        return
-    }
-    if (command === 'library.info') {
-        openItemInfo(item)
-        return
-    }
-    if (command === 'library.rename') {
-        closeItemContextMenu()
-        void startRename(item)
-        return
-    }
-    if (command === 'library.reanalyse') {
-        closeItemContextMenu()
-        void reanalyseLibraryItem(item.id)
-        return
-    }
-    if (command === 'library.saveSample') {
-        closeItemContextMenu()
-        void library.saveLibraryItemAsSample(item.id)
-        return
-    }
-    if (command === 'library.classifyAuto') {
-        closeItemContextMenu()
-        library.setItemSampleMode(item.id, 'auto')
-        return
-    }
-    if (command === 'library.classifyMusic') {
-        closeItemContextMenu()
-        library.setItemSampleMode(item.id, 'music')
-        return
-    }
-    if (command === 'library.classifySample') {
-        closeItemContextMenu()
-        library.setItemSampleMode(item.id, 'sample')
-        return
-    }
-    if (command === 'library.delete') {
-        const removed = library.removeItem(item.id)
-        if (removed && infoItemId.value === item.id) closeItemInfo()
-    }
 }
 
 function formatDuration(ms: number): string {
