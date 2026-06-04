@@ -143,8 +143,11 @@ Silverdaw currently supports the core arrangement workflow:
   export so the rendered file matches what the user hears.
 - **Track & project effects.** The bottom panel has three tabs — **Library**,
   **Track FX**, and **Project FX**. Each track header also has an **Fx** button
-  (beside Mute / Solo) that opens **Track FX** for that track (pressing it again
-  collapses back to the Library). **Track FX** edits the selected track and hosts
+  (beside Mute / Solo) that opens **Track FX** for that track — expanding the
+  panel first if it is minimised — (pressing it again collapses back to the
+  Library). With no track selected the **Track FX** tab stays open and shows a
+  centred "select a track" hint rather than silently bouncing to the Library, so
+  the surface never feels broken. **Track FX** edits the selected track and hosts
   a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) plus **Low Cut** and
   **High Cut** filter toggles — a **Pan** control (equal-power, signed
   `[-1, 1]`, unity at centre), a **Leveler** (a single **Amount** knob `0..1`
@@ -160,6 +163,11 @@ Silverdaw currently supports the core arrangement workflow:
   after the pre-pan send tap) and the shared-FX engine on the backend. The open
   FX tab and the selected track are project **view state**, round-tripped through
   `PROJECT_SET_VIEW` and saved in the `.silverdaw` file alongside mute / solo.
+  The whole panel can also be **minimised to its tab strip** and expanded again
+  via the tab-strip toggle (clicking any tab while minimised also expands it); a
+  quick height-slide animates the change. That collapsed state
+  (`ui.libraryPanelCollapsed`) is a UI preference persisted in `preferences.json`,
+  so it survives relaunch without marking the project dirty.
 - **Per-clip Volume Shape.** The Clip Editor draws an editable volume envelope
   directly over the clip waveform: a faint line is always shown, and the
   **Volume** toolbar toggle makes it editable so the user can add / drag
@@ -584,6 +592,13 @@ seam shared by live playback and mixdown, running Tone → Leveler → gain →
 mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 
+To stop sleep-prone audio devices (notably some USB DACs) from soft-muting and
+clipping the first instants of playback, `MasterClockSource` keeps an inaudible
+**keep-alive floor** flowing to the device whenever audio could be needed —
+always while playing, and while stopped only once a project's clips are loaded.
+When the engine is genuinely idle (running but with no project content) the
+output is left truly silent, so there is no audible hiss before a project opens.
+
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
 export writer** in [`MixdownEngine`](../backend/src/MixdownEngine.cpp). (The
 renderer's throwaway transcode / preview WAV is itself 32-bit float, so it does
@@ -960,6 +975,10 @@ Persisted fields:
 
 - Window bounds + maximised state.
 - Panel sizes (track-header column width, library panel height).
+- **Bottom panel minimised state** — `ui.libraryPanelCollapsed`. When on, the
+  bottom tabbed panel is collapsed to its tab strip; expanding it (or clicking a
+  tab) restores the last height. Persisted independently of the project so it
+  survives relaunch without marking the project dirty.
 - **Follow playback** — continuous-follow auto-scroll. When on, the timeline scrolls so the
   playhead stays near the centre of the viewport during playback (default). Off pins the
   view in place. Toggleable in the transport bar (chevron-in-circle icon) and the

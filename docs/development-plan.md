@@ -500,10 +500,8 @@ which is what users expect.
   Mid peak, Treble high-shelf) plus one-button Low Cut and High Cut. Each band
   is `-15..+15 dB` with a 0 dB detent. No sweepable Q, no band count toggle.
 - **Leveler** — single "Amount" knob (0..100 %) driving a curated path
-  through `juce::dsp::Compressor` parameters, with a deterministic
-  static makeup-gain map (no live loudness analysis — see §7.10). An
-  Advanced disclosure exposes classic threshold / ratio / attack /
-  release / makeup gain for power users.
+  through a hand-rolled stereo-linked soft-knee compressor, with a
+  deterministic static makeup-gain map (no live loudness analysis — see §7.10).
 - **Reverb amount** — send into the one shared project reverb (0..100 %).
 - **Delay amount** — send into the one shared project delay (0..100 %).
 - **mute** / **solo** — surfaced on the track header.
@@ -646,17 +644,19 @@ DSP class in `code`.
   low-pass. Coefficient updates use smoothed parameter changes on the audio
   thread to avoid zipper noise.
 - **Leveler** — gentle dynamics control with one user-facing **Amount**
-  knob (0..100 %) that drives a curated path through
-  `juce::dsp::Compressor` (threshold / ratio / attack / release) plus
+  knob (0..100 %) that drives a curated path through a hand-rolled
+  stereo-linked soft-knee compressor (the engine carries no `juce_dsp`,
+  so the compressor is written by hand) plus
   a **deterministic static makeup gain map** keyed off Amount only (no
   live loudness analysis, no perceived-loudness promise — the map is
   tuned by ear so the perceived level stays roughly comparable across
   the knob range, but it is not measured-and-compensated at run time).
-  At 0 % the effect is bypassed entirely (the `dsp::Compressor` is not
-  pulled); at 100 % it is obviously squashed but remains clean. An
-  **Advanced** disclosure exposes the four classic knobs (threshold,
+  At 0 % the effect is bypassed entirely (a bit-exact passthrough); at
+  100 % it is obviously squashed but remains clean. A planned **Advanced**
+  disclosure would expose the four classic knobs (threshold,
   ratio, attack, release) plus an explicit makeup-gain field for users
-  who know what they want. Detector state lives on the `TrackRuntime`
+  who know what they want; the shipped control is Amount-only. Detector
+  state lives on the `TrackRuntime`
   (one per UI track), runs continuously during playback and resets only
   on transport stop — **never** at clip boundaries, which would cause
   audible thumps on adjacent clips on the same track. This is only
