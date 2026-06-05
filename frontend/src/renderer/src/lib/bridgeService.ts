@@ -20,6 +20,17 @@
 // WebSocket as a control plane only sidesteps the IXWebSocket I/O-loop
 // starvation issues we hit when bulk frames competed with control traffic
 // for the same single-threaded loop on Windows.
+//
+// **File-size note (documented exception).** This module is a connection
+// singleton: the watchdog/heartbeat, connect/reconnect lifecycle, audio-file
+// probe and the exhaustive inbound `dispatch()` switch all read and mutate the
+// same module-level socket + timer + counter state, so they cannot be split
+// into separate files without a contrived shared-state object that would hurt
+// readability more than the line count helps (see the TS instructions on
+// justified exceptions). The two genuinely independent concerns have been
+// extracted to sibling modules: `bridge/peaksCache` (binary peaks decoding) and
+// `bridge/inboundValidation` (envelope validation + narrowing). Prefer
+// extracting any further self-contained concern over growing `dispatch()`.
 
 import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
@@ -34,58 +45,14 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import * as engineRecovery from '@/lib/engineRecovery'
 import { log } from '@/lib/log'
 import {
-  isAudioDeviceChangedPayload,
-  isAudioDevicesListPayload,
-  isBridgeInboundType,
-  isClipAckPayload,
-  isClipEditorPeaksReadyPayload,
-  isClipWarpAppliedPayload,
-  isClipRemovedPayload,
-  isEditUndoStatePayload,
-  isAudioFileProbedPayload,
-  isMixdownDonePayload,
-  isMixdownFailedPayload,
-  isMixdownProgressPayload,
-  isLibraryItemAnalysisPayload,
-  isMasterLevelPayload,
-  isTrackLevelsPayload,
-  isPlayheadUpdatePayload,
-  isPongPayload,
-  isEngineErrorPayload,
-  isPreviewEndedPayload,
-  isPreviewPositionPayload,
-  isPreviewStatePayload,
-  isProjectBpmAppliedPayload,
-  isSampleSavedPayload,
-  isProjectAutosavedPayload,
-  isProjectDirtyPayload,
-  isProjectLoadFailedPayload,
-  isProjectRenamedPayload,
-  isProjectSavedPayload,
-  isProjectStatePayload,
-  isProjectViewStateSavedPayload,
-  isReadyPayload,
-  isTrackAddedPayload,
-  isTrackGainAppliedPayload,
-  isTrackMuteAppliedPayload,
-  isTrackSoloAppliedPayload,
-  isTrackSendsAppliedPayload,
-  isTrackToneAppliedPayload,
-  isTrackLevelerAppliedPayload,
-  isTrackPanAppliedPayload,
-  isClipEnvelopeAppliedPayload,
-  isProjectReverbAppliedPayload,
-  isProjectDelayAppliedPayload,
-  isTrackRemovedPayload,
-  isWaveformReadyPayload,
-  type BridgeInboundMessage,
-  type BridgeInboundType,
-  type BridgeOutboundArgs,
-  type BridgeOutboundType,
   type AudioFileProbedPayload,
-  type SampleSavedPayload,
-  type WaveformReadyPayload
+  type BridgeInboundMessage,
+  type BridgeOutboundArgs,
+  type BridgeOutboundType
 } from '@shared/bridge-protocol'
+
+import { applySampleSaved, loadEditorPeaksFromCache, loadPeaksFromCache } from '@/lib/bridge/peaksCache'
+import { assertNever, validateInbound } from '@/lib/bridge/inboundValidation'
 
 const BRIDGE_HOST = '127.0.0.1'
 const DEFAULT_BRIDGE_PORT = 8765
@@ -110,11 +77,6 @@ const WATCHDOG_MAX_MISSED = 3
 const WATCHDOG_DRIFT_MS = 4000
 
 /** Raw `{type, payload}` envelope as it arrives off the wire (pre-validation). */
-interface RawBridgeEnvelope {
-  type?: unknown
-  payload?: unknown
-}
-
 let socket: WebSocket | null = null
 let reconnectDelay = RECONNECT_DELAY_MS
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -1006,306 +968,4 @@ function dispatch(msg: BridgeInboundMessage): void {
     default:
       assertNever(msg)
   }
-}
-
-/**
- * Cache-file binary layout (mirrors `backend/src/PeaksCache.cpp`):
- *
- *   bytes  0..3   u32 LE magic       — 0x53445057 ('SDPW')
- *   bytes  4..7   u32 LE version     — 2
- *   bytes  8..11  u32 LE peaksPerSec
- *   bytes 12..15  u32 LE peakCount   — (min, max) pair count PER LANE
- *   bytes 16..19  u32 LE laneCount   — 1 (summary only) or 3 (summary + L/R)
- *   bytes 20..27  f64 LE sampleRate
- *   bytes 28..    laneCount * peakCount * 2 * f32 LE peak values, laid out
- *                 channel-major: lane 0 (mono summary) in full, then lane 1
- *                 (left) and lane 2 (right) for stereo files.
- */
-const PEAKS_FILE_MAGIC = 0x53445057
-const PEAKS_FILE_VERSION = 2
-const PEAKS_FILE_HEADER_SIZE = 28
-const PEAKS_MAX_LANES = 8
-
-interface ParsedPeaksCache {
-  /** Lane 0 — the mono summary. Existing draw/LOD code consumes this. */
-  readonly summary: Float32Array
-  /** Per-channel lanes for stereo (index 0 = left, 1 = right); empty for mono. */
-  readonly channels: Float32Array[]
-  readonly laneCount: number
-}
-
-/**
- * Parse + validate a `.peaks` cache buffer read from disk. Returns null
- * (with a warning) on any malformation so callers can simply bail. Each
- * returned `Float32Array` is freshly copied so it is NOT backed by the raw
- * IPC buffer (which the Pinia store would otherwise retain for the lifetime
- * of the clip — multi-MB live retention for every project).
- *
- * Shared by all three peaks-cache consumers (`WAVEFORM_READY`,
- * `SAMPLE_SAVED`, `CLIP_EDITOR_PEAKS_READY`) so the binary contract lives
- * in exactly one place.
- */
-function parsePeaksCacheBuffer(
-  buffer: ArrayBuffer | null,
-  expectedPeakCount: number,
-  label: string
-): ParsedPeaksCache | null {
-  if (!buffer) {
-    log.warn('bridge', `${label} no data`)
-    return null
-  }
-  if (buffer.byteLength < PEAKS_FILE_HEADER_SIZE) {
-    log.warn('bridge', `${label} short file bytes=${buffer.byteLength}`)
-    return null
-  }
-  const view = new DataView(buffer)
-  const magic = view.getUint32(0, /* littleEndian */ true)
-  if (magic !== PEAKS_FILE_MAGIC) {
-    log.warn('bridge', `${label} bad magic 0x${magic.toString(16)}`)
-    return null
-  }
-  const version = view.getUint32(4, true)
-  if (version !== PEAKS_FILE_VERSION) {
-    log.warn('bridge', `${label} unsupported version=${version}`)
-    return null
-  }
-  const headerPeakCount = view.getUint32(12, true)
-  const laneCount = view.getUint32(16, true)
-  if (laneCount < 1 || laneCount > PEAKS_MAX_LANES) {
-    log.warn('bridge', `${label} bad laneCount=${laneCount}`)
-    return null
-  }
-  // The header's per-lane peak count is authoritative for sizing; cross-check
-  // it against the envelope so a stale/corrupt file is rejected rather than
-  // mis-sliced. (Note: the header stores the integer peaks/sec request while
-  // the envelope carries the fractional effective rate, so those two are
-  // deliberately NOT compared.)
-  if (headerPeakCount !== expectedPeakCount) {
-    log.warn('bridge', `${label} peakCount mismatch header=${headerPeakCount} payload=${expectedPeakCount}`)
-    return null
-  }
-  const floatsPerLane = headerPeakCount * 2
-  const totalFloats = floatsPerLane * laneCount
-  const expectedBytes = PEAKS_FILE_HEADER_SIZE + totalFloats * Float32Array.BYTES_PER_ELEMENT
-  if (buffer.byteLength < expectedBytes) {
-    log.warn('bridge', `${label} size mismatch got=${buffer.byteLength} expected>=${expectedBytes}`)
-    return null
-  }
-  const all = new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, totalFloats)
-  const summary = new Float32Array(all.subarray(0, floatsPerLane))
-  const channels: Float32Array[] = []
-  // Only 3-lane (summary + L + R) files carry separable stereo channels.
-  if (laneCount === 3) {
-    channels.push(new Float32Array(all.subarray(floatsPerLane, floatsPerLane * 2)))
-    channels.push(new Float32Array(all.subarray(floatsPerLane * 2, floatsPerLane * 3)))
-  }
-  return { summary, channels, laneCount }
-}
-
-async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise<void> {
-  const { clipId, cachePath, peakCount, sampleRate, peaksPerSecond } = payload
-  let buffer: ArrayBuffer | null
-  try {
-    buffer = await window.silverdaw.readPeaksCacheFile(cachePath)
-  } catch (err) {
-    log.warn('bridge', `WAVEFORM_READY read failed clipId=${clipId}: ${String(err)}`)
-    return
-  }
-  const parsed = parsePeaksCacheBuffer(buffer, peakCount, `WAVEFORM_READY clipId=${clipId}`)
-  if (!parsed) return
-  useProjectStore().setClipPeaks(clipId, parsed.summary, sampleRate, peaksPerSecond, parsed.channels)
-  log.info(
-    'bridge',
-    `WAVEFORM_READY clipId=${clipId} peaks=${peakCount} lanes=${parsed.laneCount} ppS=${peaksPerSecond}`
-  )
-}
-
-async function applySampleSaved(payload: SampleSavedPayload): Promise<void> {
-  const notifications = useNotificationsStore()
-  if (!payload.ok) {
-    notifications.pushError(`Sample export failed: ${payload.error ?? 'unknown error'}`)
-    log.warn('bridge', `SAMPLE_SAVED failed source=${payload.clipId ?? payload.libraryItemId ?? '?'} error=${payload.error ?? 'unknown'}`)
-    return
-  }
-
-  const buffer = await window.silverdaw.readPeaksCacheFile(payload.cachePath).catch(() => null)
-  const parsed = parsePeaksCacheBuffer(buffer, payload.peakCount, `SAMPLE_SAVED itemId=${payload.itemId}`)
-  const peaks = parsed?.summary ?? new Float32Array()
-
-  const library = useLibraryStore()
-  library.addItem({
-    id: payload.itemId,
-    kind: 'audio-file',
-    name: payload.name,
-    filePath: payload.filePath,
-    fileName: payload.fileName,
-    durationMs: payload.durationMs,
-    sampleRate: payload.sampleRate,
-    channelCount: payload.channelCount,
-    peaks,
-    peaksPerSecond: payload.peaksPerSecond,
-    playbackFilePath: payload.filePath,
-    fromSnapshot: true
-  })
-  if (parsed && parsed.channels.length > 0) {
-    library.setItemChannelPeaks(payload.itemId, parsed.channels, payload.peaksPerSecond)
-  }
-  notifications.pushInfo(`Saved sample "${payload.name}".`)
-  log.info('bridge', `SAMPLE_SAVED itemId=${payload.itemId} file=${payload.fileName}`)
-}
-
-async function loadEditorPeaksFromCache(payload: {
-  libraryItemId: string
-  cachePath: string
-  peakCount: number
-  peaksPerSecond: number
-  sampleRate: number
-}): Promise<void> {
-  const { libraryItemId, cachePath, peakCount, peaksPerSecond, sampleRate } = payload
-  let buffer: ArrayBuffer | null
-  try {
-    buffer = await window.silverdaw.readPeaksCacheFile(cachePath)
-  } catch (err) {
-    log.warn('bridge', `CLIP_EDITOR_PEAKS_READY read failed libId=${libraryItemId}: ${String(err)}`)
-    return
-  }
-  const parsed = parsePeaksCacheBuffer(buffer, peakCount, `CLIP_EDITOR_PEAKS_READY libId=${libraryItemId}`)
-  if (!parsed) return
-  useLibraryStore().setEditorHiResPeaks({
-    libraryItemId,
-    peaksPerSecond,
-    sampleRate,
-    peaks: parsed.summary,
-    channels: parsed.channels
-  })
-  log.info(
-    'bridge',
-    `CLIP_EDITOR_PEAKS_READY libId=${libraryItemId} peaks=${peakCount} lanes=${parsed.laneCount} ppS=${peaksPerSecond}`
-  )
-}
-
-function assertNever(value: never): never {
-  throw new Error(`[bridge] unhandled inbound message: ${JSON.stringify(value)}`)
-}
-
-/**
- * Validate a raw parsed envelope against the inbound catalogue. Returns the
- * narrowed message on success, `null` on any structural mismatch (and logs
- * a warning so unexpected wire traffic is visible during development).
- */
-function validateInbound(raw: unknown): BridgeInboundMessage | null {
-  if (typeof raw !== 'object' || raw === null) {
-    log.warn('bridge', 'dropped non-object envelope')
-    return null
-  }
-  const env = raw as RawBridgeEnvelope
-  if (!isBridgeInboundType(env.type)) {
-    log.warn('bridge', `dropped unknown envelope type ${String(env.type)}`)
-    return null
-  }
-  return narrowPayload(env.type, env.payload)
-}
-
-/** Per-arm payload guard. Keeps the type narrowing tied to the discriminant. */
-function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInboundMessage | null {
-  switch (type) {
-    case 'READY':
-      return isReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_STATE':
-      return isProjectStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PLAYHEAD_UPDATE':
-      return isPlayheadUpdatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'CLIP_ADDED':
-    case 'CLIP_ADD_FAILED':
-      return isClipAckPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_ADDED':
-      return isTrackAddedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_REMOVED':
-      return isTrackRemovedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'CLIP_REMOVED':
-      return isClipRemovedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_GAIN_APPLIED':
-      return isTrackGainAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_MUTE_APPLIED':
-      return isTrackMuteAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_SOLO_APPLIED':
-      return isTrackSoloAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_SAVED':
-      return isProjectSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_VIEW_STATE_SAVED':
-      return isProjectViewStateSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_AUTOSAVED':
-      return isProjectAutosavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_LOAD_FAILED':
-      return isProjectLoadFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_RENAMED':
-      return isProjectRenamedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_DIRTY':
-      return isProjectDirtyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'WAVEFORM_READY':
-      return isWaveformReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'CLIP_EDITOR_PEAKS_READY':
-      return isClipEditorPeaksReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'SAMPLE_SAVED':
-      return isSampleSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'LIBRARY_ITEM_ANALYSIS':
-      return isLibraryItemAnalysisPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_BPM_APPLIED':
-      return isProjectBpmAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'CLIP_WARP_APPLIED':
-      return isClipWarpAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PREVIEW_STATE':
-      return isPreviewStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PREVIEW_POSITION':
-      return isPreviewPositionPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PREVIEW_ENDED':
-      return isPreviewEndedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'AUDIO_DEVICES_LIST':
-      return isAudioDevicesListPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'AUDIO_DEVICE_CHANGED':
-      return isAudioDeviceChangedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'EDIT_UNDO_STATE':
-      return isEditUndoStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'AUDIO_FILE_PROBED':
-      return isAudioFileProbedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'MIXDOWN_PROGRESS':
-      return isMixdownProgressPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'MIXDOWN_DONE':
-      return isMixdownDonePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'MIXDOWN_FAILED':
-      return isMixdownFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'MASTER_LEVEL':
-      return isMasterLevelPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_LEVELS':
-      return isTrackLevelsPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_SENDS_APPLIED':
-      return isTrackSendsAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_TONE_APPLIED':
-      return isTrackToneAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_LEVELER_APPLIED':
-      return isTrackLevelerAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'TRACK_PAN_APPLIED':
-      return isTrackPanAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'CLIP_ENVELOPE_APPLIED':
-      return isClipEnvelopeAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_REVERB_APPLIED':
-      return isProjectReverbAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PROJECT_DELAY_APPLIED':
-      return isProjectDelayAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'PONG':
-      return isPongPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    case 'ENGINE_ERROR':
-      return isEngineErrorPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
-    default:
-      return assertNeverType(type)
-  }
-}
-
-function payloadMismatch(type: BridgeInboundType, payload: unknown): null {
-  log.warn('bridge', `dropped envelope with malformed payload type=${type} payload=${JSON.stringify(payload)}`)
-  return null
-}
-
-function assertNeverType(value: never): never {
-  throw new Error(`[bridge] unhandled inbound envelope type: ${String(value)}`)
 }
