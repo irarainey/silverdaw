@@ -237,7 +237,8 @@ add_library(silverdaw_backend_core STATIC
     src/TransitionCommands.cpp
     src/ValueTreeJson.cpp
     src/WarpProcessor.cpp
-    src/Waveform.cpp)
+    src/Waveform.cpp
+    src/WaveformCommands.cpp)
 
 target_compile_definitions(silverdaw_backend_core PUBLIC
     JUCE_WEB_BROWSER=0
