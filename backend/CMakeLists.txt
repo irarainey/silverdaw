@@ -211,14 +211,17 @@ if(SILVERDAW_ENABLE_COVERAGE AND NOT SILVERDAW_BUILD_TESTS)
 endif()
 
 add_library(silverdaw_backend_core STATIC
+    src/AudioDeviceCommands.cpp
     src/AudioEngine.cpp
     src/BridgeAuth.cpp
     src/BpmDetector.cpp
     src/BridgeServer.cpp
+    src/ClipCommands.cpp
     src/CommandHelpers.cpp
     src/DecodedCache.cpp
     src/Log.cpp
     src/LoudnessAnalyzer.cpp
+    src/MarkerCommands.cpp
     src/MixdownEngine.cpp
     src/PeaksCache.cpp
     src/ProjectFile.cpp

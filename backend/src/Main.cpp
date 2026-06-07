@@ -1,11 +1,14 @@
 #include "AudioEngine.h"
 #include "AudioConstants.h"
+#include "AudioDeviceCommands.h"
 #include "BpmDetector.h"
 #include "BridgeServer.h"
+#include "ClipCommands.h"
 #include "CommandHelpers.h"
 #include "DecodedCache.h"
 #include "Log.h"
 #include "MixdownEngine.h"
+#include "MarkerCommands.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
@@ -1438,117 +1441,6 @@ void handleClipEditorPeaksRequest(const juce::var& payload, silverdaw::AudioEngi
         { produceAndBroadcastEditorPeaks(libraryItemId, file, peaksPerSecond, engine, cache, bridge); });
 }
 
-void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState)
-{
-    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
-    if (clipId.isEmpty())
-    {
-        return;
-    }
-    const auto positionMs = tryGetNumber(payload, "positionMs");
-    if (positionMs.has_value())
-    {
-        engine.setClipOffsetMs(clipId, *positionMs);
-        projectState.setClipOffsetMs(clipId, *positionMs);
-    }
-    if (static_cast<bool>(payload.getProperty("commit", false)))
-    {
-        engine.commitClipOffset(clipId);
-    }
-    // Optional cross-track re-parent. Each clip is its own playable source,
-    // so the move updates ProjectState and reapplies the destination track's
-    // effective gain to keep mute / solo audibility correct.
-    const juce::String newTrackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (newTrackId.isNotEmpty())
-    {
-        if (projectState.setClipTrack(clipId, newTrackId))
-        {
-            engine.setClipGain(clipId, projectState.getEffectiveTrackGain(newTrackId));
-        }
-    }
-}
-
-void handleClipTrim(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState)
-{
-    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
-    if (clipId.isEmpty())
-    {
-        return;
-    }
-    const auto startMs = tryGetNumber(payload, "startMs");
-    const auto inMs = tryGetNumber(payload, "inMs");
-    const auto durationMs = tryGetNumber(payload, "durationMs");
-    if (!startMs.has_value() || !inMs.has_value() || !durationMs.has_value())
-    {
-        return;
-    }
-    engine.setClipTrim(clipId, *startMs, *inMs, *durationMs);
-    projectState.setClipTrim(clipId, *startMs, *inMs, *durationMs);
-}
-
-void handleClipColor(const juce::var& payload, silverdaw::ProjectState& projectState)
-{
-    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
-    if (clipId.isEmpty())
-    {
-        return;
-    }
-    // colorIndex omitted or negative = clear the per-clip override.
-    const juce::var idxVar = payload.getProperty("colorIndex", juce::var());
-    const int colorIndex =
-        (idxVar.isInt() || idxVar.isInt64()) ? static_cast<int>(idxVar) : -1;
-    projectState.setClipColorIndex(clipId, colorIndex);
-}
-
-void handleClipRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
-                      silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
-{
-    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
-    if (clipId.isEmpty())
-    {
-        return;
-    }
-    // Drop the engine's audio source first so the next audio callback
-    // doesn't try to pull from a source that's about to leave the
-    // project tree. `removeClip` is idempotent so calling it for a
-    // clip the engine never had is harmless.
-    engine.removeClip(clipId);
-    const bool existed = projectState.removeClip(clipId);
-    auto* p = new juce::DynamicObject();
-    p->setProperty("clipId", clipId);
-    p->setProperty("ok", existed);
-    bridge.broadcast("CLIP_REMOVED", juce::var(p));
-}
-
-// Phase 5 — per-clip volume envelope. `points` is a `juce::var` array
-// of `{ timeMs, gain }` objects. An empty array clears the envelope
-// entirely.
-void handleClipSetEnvelope(const juce::var& payload, silverdaw::AudioEngine& engine,
-                           silverdaw::ProjectState& projectState,
-                           silverdaw::BridgeServer& bridge)
-{
-    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
-    if (clipId.isEmpty()) return;
-
-    juce::Array<juce::var> points;
-    const auto& pointsVar = payload.getProperty("points", juce::var());
-    if (pointsVar.isArray())
-    {
-        points = *pointsVar.getArray();
-    }
-
-    const bool changed = projectState.setClipEnvelope(clipId, points);
-    if (!changed) return;
-
-    // Push the normalised, persisted shape onto the audio engine so the
-    // change is audible on the next block, then ack with the stored form.
-    const auto stored = projectState.getClipEnvelope(clipId);
-    engine.setClipEnvelope(clipId, stored);
-
-    broadcastApplied(bridge, "CLIP_ENVELOPE_APPLIED",
-                     {{"clipId", clipId}, {"points", juce::var(stored)}});
-}
-
 // ─── Project-level state (save / load / new / rename) ────────────────────
 
 /**
@@ -2125,165 +2017,6 @@ void handleProjectRename(const juce::var& payload, silverdaw::ProjectState& proj
     bridge.broadcast("PROJECT_RENAMED", juce::var(p));
 }
 
-// ─── Audio output device control ──────────────────────────────────────
-//
-// Renderer-facing envelopes:
-//   AUDIO_DEVICES_REQUEST { refresh? }     → AUDIO_DEVICES_LIST
-//   AUDIO_DEVICE_SELECT   { typeName, deviceName }
-//                                          → AUDIO_DEVICE_CHANGED
-//                                          + AUDIO_DEVICES_LIST (on ok)
-//
-// The list payload is also broadcast spontaneously when JUCE's
-// `audioDeviceListChanged` fires (USB plug / unplug, Windows audio
-// reconfig) so the renderer never has to poll.
-
-juce::var buildAudioDevicesListEnvelope(const silverdaw::AudioEngine::AudioDevicesSnapshot& snap,
-                                        bool scanInProgress = false)
-{
-    auto* obj = new juce::DynamicObject();
-    juce::Array<juce::var> types;
-    for (const auto& t : snap.types)
-    {
-        auto* typeObj = new juce::DynamicObject();
-        typeObj->setProperty("name", t.typeName);
-        juce::Array<juce::var> devices;
-        for (const auto& d : t.deviceNames)
-        {
-            devices.add(d);
-        }
-        typeObj->setProperty("devices", juce::var(devices));
-        types.add(juce::var(typeObj));
-    }
-    obj->setProperty("types", juce::var(types));
-    obj->setProperty("currentTypeName", snap.currentTypeName.isEmpty() ? juce::var() : juce::var(snap.currentTypeName));
-    obj->setProperty("currentDeviceName",
-                     snap.currentDeviceName.isEmpty() ? juce::var() : juce::var(snap.currentDeviceName));
-    if (snap.currentSampleRate > 0.0)
-    {
-        obj->setProperty("currentSampleRate", snap.currentSampleRate);
-    }
-    if (snap.currentBufferSize > 0)
-    {
-        obj->setProperty("currentBufferSize", snap.currentBufferSize);
-    }
-    if (snap.outputLatencyMs > 0.0)
-    {
-        obj->setProperty("outputLatencyMs", snap.outputLatencyMs);
-    }
-    if (snap.heuristicExtraLatencyMs > 0.0)
-    {
-        obj->setProperty("heuristicExtraLatencyMs", snap.heuristicExtraLatencyMs);
-    }
-    if (snap.fellBackToDefault)
-    {
-        obj->setProperty("fellBackToDefault", true);
-    }
-    if (scanInProgress)
-    {
-        obj->setProperty("scanInProgress", true);
-    }
-    return juce::var(obj);
-}
-
-// AUDIO_DEVICES_LIST broadcasts come from two kinds of source:
-//   - Direct responses to AUDIO_DEVICES_REQUEST (and the deferred
-//     first-scan completion). Always sent: the renderer is waiting for
-//     an answer, including on reconnect.
-//   - Spontaneous `audioDeviceListChanged` notifications. Deduped against
-//     the last list we sent, so the change message that our own deferred
-//     startup scan triggers — JUCE dispatches it asynchronously, after
-//     the deferred response already shipped the identical list — doesn't
-//     reach the renderer a redundant second time.
-void broadcastAudioDevicesList(silverdaw::BridgeServer& bridge, const juce::var& envelope, bool dedupe)
-{
-    static juce::String lastSentJson;
-    const auto json = juce::JSON::toString(envelope, true);
-    if (dedupe && json == lastSentJson)
-    {
-        return;
-    }
-    lastSentJson = json;
-    bridge.broadcast("AUDIO_DEVICES_LIST", envelope);
-}
-
-void handleAudioDevicesRequest(const juce::var& payload, silverdaw::AudioEngine& engine,
-                               silverdaw::BridgeServer& bridge)
-{
-    const bool refresh = static_cast<bool>(payload.getProperty("refresh", false));
-    // The first scan after boot is the slow step (100–400 ms, dominated
-    // by ASIO/Bluetooth driver probing). Audio devices rarely change
-    // between launches, so we don't want to block the message thread
-    // for it during the renderer's startup window.
-    //
-    //   - Explicit "Rescan devices" (`refresh: true`): synchronous —
-    //     the user is waiting and expects the freshest list.
-    //   - Already scanned: just broadcast the cached snapshot.
-    //   - First request after boot, no explicit refresh: broadcast
-    //     whatever the engine already has (current device + its type,
-    //     populated by `initialise()`), then defer the full scan via
-    //     `MessageManager::callAsync`. The bridge ships the initial
-    //     response before the slow scan runs, and the UI updates a
-    //     beat later when the deferred scan broadcasts the full list.
-    if (refresh)
-    {
-        engine.refreshAudioDevices();
-        broadcastAudioDevicesList(bridge, buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()),
-                                  /*dedupe*/ false);
-        return;
-    }
-
-    const bool needsFirstScan = !engine.hasScannedAllDevices();
-    broadcastAudioDevicesList(bridge,
-                              buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot(),
-                                                            /*scanInProgress*/ needsFirstScan),
-                              /*dedupe*/ false);
-    // The fallback notice is one-shot: surface it on this first response,
-    // then clear it so the deferred scan below (and later hotplug
-    // broadcasts) don't re-warn about the same startup fallback.
-    engine.clearFellBackToDefault();
-
-    if (needsFirstScan)
-    {
-        juce::MessageManager::callAsync(
-            [enginePtr = &engine, bridgePtr = &bridge]()
-            {
-                enginePtr->refreshAudioDevices();
-                broadcastAudioDevicesList(
-                    *bridgePtr, buildAudioDevicesListEnvelope(enginePtr->getAudioDevicesSnapshot()),
-                    /*dedupe*/ false);
-            });
-    }
-}
-
-void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& engine,
-                             silverdaw::BridgeServer& bridge)
-{
-    // Nullable fields: both null = revert to system default.
-    const auto typeVar = payload.getProperty("typeName", juce::var());
-    const auto deviceVar = payload.getProperty("deviceName", juce::var());
-    const juce::String typeName = typeVar.isString() ? typeVar.toString() : juce::String();
-    const juce::String deviceName = deviceVar.isString() ? deviceVar.toString() : juce::String();
-
-    const auto err = engine.selectOutputDevice(typeName, deviceName);
-
-    auto* p = new juce::DynamicObject();
-    p->setProperty("typeName", typeName.isEmpty() ? juce::var() : juce::var(typeName));
-    p->setProperty("deviceName", deviceName.isEmpty() ? juce::var() : juce::var(deviceName));
-    p->setProperty("ok", err.isEmpty());
-    if (err.isNotEmpty()) p->setProperty("error", err);
-    bridge.broadcast("AUDIO_DEVICE_CHANGED", juce::var(p));
-
-    // No explicit `AUDIO_DEVICES_LIST` broadcast here: a successful
-    // `setAudioDeviceSetup` fires JUCE's `audioDeviceListChanged`
-    // callback, which the engine forwards to the renderer via
-    // `setDeviceListChangedCallback` (wired up in `runBackend`).
-    // Avoiding the duplicate keeps the round-trip lean on a switch.
-
-    silverdaw::log::info("audio",
-                         juce::String("device select type=") + typeName + " name=" + deviceName +
-                             (err.isEmpty() ? " ok" : " fail: " + err));
-}
-
 // Background autosave: serialise the current ValueTree to `filePath`
 // without touching `session.currentPath` or the dirty flag. Used by the
 // renderer's autosave manager — autosave is deliberately invisible to
@@ -2809,7 +2542,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::debug("bridge", "recv CLIP_MOVE clipId=" + payload.getProperty("clipId", "").toString() +
                                             " pos=" + payload.getProperty("positionMs", "").toString());
-        handleClipMove(payload, engine, projectState);
+        silverdaw::handleClipMove(payload, engine, projectState);
     }
     else if (type == "CLIP_TRIM")
     {
@@ -2817,13 +2550,13 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                             " start=" + payload.getProperty("startMs", "").toString() +
                                             " in=" + payload.getProperty("inMs", "").toString() +
                                             " dur=" + payload.getProperty("durationMs", "").toString());
-        handleClipTrim(payload, engine, projectState);
+        silverdaw::handleClipTrim(payload, engine, projectState);
     }
     else if (type == "CLIP_COLOR")
     {
         silverdaw::log::debug("bridge", "recv CLIP_COLOR clipId=" + payload.getProperty("clipId", "").toString() +
                                             " idx=" + payload.getProperty("colorIndex", "").toString());
-        handleClipColor(payload, projectState);
+        silverdaw::handleClipColor(payload, projectState);
     }
     else if (type == "CLIP_SET_LOCKED")
     {
@@ -2839,7 +2572,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "CLIP_REMOVE")
     {
         silverdaw::log::info("bridge", "recv CLIP_REMOVE clipId=" + payload.getProperty("clipId", "").toString());
-        handleClipRemove(payload, engine, projectState, bridge);
+        silverdaw::handleClipRemove(payload, engine, projectState, bridge);
     }
     else if (type == "LIBRARY_ITEM_RELINK")
     {
@@ -3416,7 +3149,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::log::debug("bridge", "recv CLIP_SET_ENVELOPE clipId=" +
                                             payload.getProperty("clipId", "").toString());
-        handleClipSetEnvelope(payload, engine, projectState, bridge);
+        silverdaw::handleClipSetEnvelope(payload, engine, projectState, bridge);
     }
     else if (type == "PROJECT_SET_REVERB")
     {
@@ -3641,50 +3374,28 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "PROJECT_MARKER_ADD")
     {
-        const auto markerId = tryGetRequiredString(payload, "markerId").value_or(juce::String{});
-        const auto posVar = payload.getProperty("positionMs", juce::var());
-        if (!markerId.isEmpty() && (posVar.isDouble() || posVar.isInt() || posVar.isInt64()))
-        {
-            const double positionMs = static_cast<double>(posVar);
-            if (positionMs >= 0.0)
-            {
-                projectState.addMarker(markerId, positionMs);
-            }
-        }
+        silverdaw::applyMarkerAdd(payload, projectState);
     }
     else if (type == "PROJECT_MARKER_MOVE")
     {
-        const auto markerId = tryGetRequiredString(payload, "markerId").value_or(juce::String{});
-        const auto posVar = payload.getProperty("positionMs", juce::var());
-        if (!markerId.isEmpty() && (posVar.isDouble() || posVar.isInt() || posVar.isInt64()))
-        {
-            const double positionMs = static_cast<double>(posVar);
-            if (positionMs >= 0.0)
-            {
-                projectState.moveMarker(markerId, positionMs);
-            }
-        }
+        silverdaw::applyMarkerMove(payload, projectState);
     }
     else if (type == "PROJECT_MARKER_REMOVE")
     {
-        const auto markerId = tryGetRequiredString(payload, "markerId").value_or(juce::String{});
-        if (markerId.isNotEmpty())
-        {
-            projectState.removeMarker(markerId);
-        }
+        silverdaw::applyMarkerRemove(payload, projectState);
     }
     else if (type == "AUDIO_DEVICES_REQUEST")
     {
         silverdaw::log::debug("bridge", "recv AUDIO_DEVICES_REQUEST refresh=" +
                                             payload.getProperty("refresh", "false").toString());
-        handleAudioDevicesRequest(payload, engine, bridge);
+        silverdaw::handleAudioDevicesRequest(payload, engine, bridge);
     }
     else if (type == "AUDIO_DEVICE_SELECT")
     {
         silverdaw::log::info("bridge", "recv AUDIO_DEVICE_SELECT type=" +
                                            payload.getProperty("typeName", "").toString() + " name=" +
                                            payload.getProperty("deviceName", "").toString());
-        handleAudioDeviceSelect(payload, engine, bridge);
+        silverdaw::handleAudioDeviceSelect(payload, engine, bridge);
     }
     else if (type == "AUDIO_FILE_PROBE")
     {
@@ -4256,8 +3967,8 @@ int runBackend(int argc, char* argv[])
     engine.setDeviceListChangedCallback(
         [&bridge, &engine]()
         {
-            broadcastAudioDevicesList(bridge,
-                                      buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()),
+            silverdaw::broadcastAudioDevicesList(bridge,
+                                      silverdaw::buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()),
                                       /*dedupe*/ true);
         });
 
