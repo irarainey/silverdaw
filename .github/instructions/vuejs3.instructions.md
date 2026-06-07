@@ -173,7 +173,10 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 - Use ESLint (with `plugin:vue/vue3-recommended`) and Prettier for code consistency
 - Write meaningful commit messages and maintain clean git history
 - Keep dependencies up to date and audit for vulnerabilities
-- Document complex logic with JSDoc/TSDoc
+- Keep comments short and minimal — one line wherever possible. Default to no
+  comment; comment the *why*, never the *what*, and avoid verbose blocks.
+  Prioritise documentation over comments for substantial information, and
+  condense existing comments rather than letting them grow.
 - Use Vue DevTools for debugging and profiling
 
 ## Common Patterns

@@ -143,9 +143,15 @@ or compact code.
 
 ## Comments and Documentation
 
-- Comment real-time constraints, thread ownership, ratio direction, and
-  non-obvious JUCE lifecycle behavior.
-- Avoid comments that restate the code.
+- Keep comments short and minimal — one line wherever possible. Default to no
+  comment; add one only when the code's intent is genuinely non-obvious.
+- Comment the *why*, never the *what*. Reserve comments for real-time
+  constraints, thread ownership, ratio direction, and non-obvious JUCE
+  lifecycle behaviour.
+- Never restate the code, and avoid verbose or multi-paragraph comment blocks.
+- Prioritise documentation over comments: substantial rationale, architecture,
+  or workflow detail belongs in `docs/`, not in long inline comments.
+- When editing existing comments, condense them — do not let them grow.
 - Update project documentation or instruction files only when the change
   affects developer workflow, architecture, or packaging behavior.
 

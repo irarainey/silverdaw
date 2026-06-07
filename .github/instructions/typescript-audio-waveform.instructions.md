@@ -127,8 +127,14 @@ and what the timeline visually promises.
 
 ## Comments and Documentation
 
-- Comment non-obvious unit conversions, timing-domain changes, and performance
-  constraints.
-- Do not comment obvious assignments or UI wiring.
+- Keep comments short and minimal — one line wherever possible. Default to no
+  comment; add one only when the code's intent is genuinely non-obvious.
+- Comment the *why*, never the *what*. Reserve comments for non-obvious unit
+  conversions, timing-domain changes, and performance constraints.
+- Do not comment obvious assignments or UI wiring, and avoid verbose or
+  multi-paragraph comment blocks.
+- Prioritise documentation over comments: substantial rationale or workflow
+  detail belongs in `docs/`, not in long inline comments.
+- When editing existing comments, condense them — do not let them grow.
 - Update documentation when behavior changes the import, preview, warp, or
   timeline workflow.

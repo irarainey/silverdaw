@@ -133,6 +133,14 @@ applyTo: "**/*.ts"
 
 ## Documentation & Comments
 
-- Add JSDoc to public APIs; include `@remarks` or `@example` when helpful.
-- Write comments that capture intent, and remove stale notes during refactors.
+- Keep comments short and minimal — one line wherever possible. Default to no
+  comment; add one only when the code's intent is genuinely non-obvious.
+- Comment the *why*, never the *what*; never restate the code, and avoid
+  verbose or multi-paragraph comment blocks.
+- Prioritise documentation over comments: put substantial rationale, design,
+  or API detail in `docs/` rather than long inline comments or sprawling JSDoc.
+- Add JSDoc to public APIs, but keep it concise; reserve `@remarks`/`@example`
+  for genuinely non-obvious cases.
+- When editing existing comments, condense them and remove stale notes during
+  refactors — do not let comments grow.
 - Update architecture or design docs when introducing significant patterns.
