@@ -9,6 +9,33 @@ export interface SavedClipSource {
   durationMs: number
 }
 
+/** Input to `libraryStore.addItem`; shared so domain action modules can call it via `this`. */
+export interface AddLibraryItemInput {
+  kind?: LibraryItemKind
+  name?: string
+  filePath: string
+  fileName: string
+  durationMs: number
+  sampleRate: number
+  channelCount: number
+  peaks: Float32Array
+  peaksPerSecond?: number
+  playbackFilePath?: string
+  key?: string
+  /** Snapshot rebuilds must not echo `LIBRARY_ADD` back to the backend. */
+  fromSnapshot?: boolean
+  id?: string
+  derivedFrom?: SavedClipSource
+  collapsed?: boolean
+  /** Saved-clip warp defaults copied onto new timeline placements. */
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number
+  semitones?: number
+  cents?: number
+  unresolved?: boolean
+}
+
 export interface LibraryItem {
   readonly id: string
   readonly kind: LibraryItemKind
@@ -90,4 +117,20 @@ export interface ItemChannelPeaks {
   channels: Float32Array[]
   lod: import('@/lib/peaksLod').PeaksLodLayer[][]
   peaksPerSecond: number
+}
+
+/** Library store state. Lives here (neutral module) so domain action modules can
+ *  type their `this` against it without importing the store value. */
+export interface LibraryState {
+  items: LibraryItem[]
+  nextItemIndex: number
+  importTotal: number
+  importDone: number
+  imports: ImportEntry[]
+  /** HTML5 dragover cannot read non-text `dataTransfer`; store the id here. */
+  currentDragItemId: string | null
+  /** One multi-MB high-resolution peaks payload for the Clip Editor. */
+  editorHiResPeaks: EditorHiResPeaks | null
+  /** Stereo peak data kept outside `LibraryItem` so summary paths stay untouched. */
+  channelPeaksByItemId: Record<string, ItemChannelPeaks>
 }

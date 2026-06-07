@@ -1,22 +1,27 @@
 // FILE-SIZE EXCEPTION (justified): Electron main entry. Self-contained IPC groups
 // and leaf concerns are extracted — audio dialogs/reads/transcode (ipc/audioHandlers),
-// autosave filesystem IPCs (ipc/autosaveHandlers), plus audioMetadata, audioPaths,
-// preferences, autosaveStore. The residual is the stateful singleton core —
-// window/backend lifecycle plus the prefs/window/project IPC handlers that all read
-// and mutate shared singletons (the live `prefs` object, mainWindow, schedule/flush
-// save timers). Threading those into a per-handler context bag would shift coupling
-// rather than reduce it, so they stay together until a dedicated preferences service
-// owns that state.
+// autosave filesystem IPCs (ipc/autosaveHandlers), bridge-port resolution (bridgePort),
+// plus audioMetadata, audioPaths, preferences, autosaveStore. The residual is the
+// stateful singleton core — window/backend lifecycle plus the prefs/window/project IPC
+// handlers that all read and mutate shared singletons (the live `prefs` object,
+// mainWindow, schedule/flush save timers). Threading those into a per-handler context
+// bag would shift coupling rather than reduce it, so they stay together until a
+// dedicated preferences service owns that state.
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { readFile, mkdir } from 'node:fs/promises'
-import { createServer as createNetServer } from 'node:net'
 import { basename, dirname, extname, isAbsolute, join, resolve as pathResolve } from 'node:path'
 import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogLevel } from './log'
 import { tmpdir } from 'node:os'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 import { BackendSupervisor } from './backendSupervisor'
+import {
+  DEFAULT_BRIDGE_PORT,
+  findFreeBridgePort,
+  isBridgePortEnvOverridden,
+  resolveBridgePort
+} from './bridgePort'
 import { registerAudioHandlers } from './ipc/audioHandlers'
 import { registerAutosaveHandlers } from './ipc/autosaveHandlers'
 import { registerIssuedPath } from './audioPaths'
@@ -48,55 +53,8 @@ let userConfirmedClose = false
 
 // ─── Backend bridge port ────────────────────────────────────────────────────
 // Main owns the dynamic loopback port and passes it to backend/renderer.
-const DEFAULT_BRIDGE_PORT = 8765
-const MIN_BRIDGE_PORT = 1024
-const MAX_BRIDGE_PORT = 65535
-
-function resolveBridgePort(): number {
-  const raw = process.env['SILVERDAW_BRIDGE_PORT']
-  if (raw === undefined || raw === '') return DEFAULT_BRIDGE_PORT
-  const parsed = Number.parseInt(raw, 10)
-  if (
-    !Number.isFinite(parsed) ||
-    !Number.isInteger(parsed) ||
-    parsed < MIN_BRIDGE_PORT ||
-    parsed > MAX_BRIDGE_PORT
-  ) {
-    console.warn(
-      `[main] SILVERDAW_BRIDGE_PORT=${raw} is not a valid port in [${MIN_BRIDGE_PORT}, ${MAX_BRIDGE_PORT}]; using default ${DEFAULT_BRIDGE_PORT}`
-    )
-    return DEFAULT_BRIDGE_PORT
-  }
-  return parsed
-}
-
 let bridgePort = resolveBridgePort()
-const bridgePortEnvOverridden =
-  typeof process.env['SILVERDAW_BRIDGE_PORT'] === 'string' &&
-  process.env['SILVERDAW_BRIDGE_PORT']!.length > 0
-
-// Probe with a short-lived listener for locale-independent port checks.
-async function isPortFree(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const server = createNetServer()
-    server.once('error', () => {
-      resolve(false)
-    })
-    server.once('listening', () => {
-      server.close(() => resolve(true))
-    })
-    server.listen(port, '127.0.0.1')
-  })
-}
-
-async function findFreeBridgePort(start: number, count: number): Promise<number | null> {
-  for (let i = 0; i < count; i++) {
-    const candidate = start + i
-    if (candidate > MAX_BRIDGE_PORT) break
-    if (await isPortFree(candidate)) return candidate
-  }
-  return null
-}
+const bridgePortEnvOverridden = isBridgePortEnvOverridden()
 
 // ─── Backend bridge AUTH token ──────────────────────────────────────────────
 // Loopback is not a trust boundary; keep the token out of argv/HTML.
