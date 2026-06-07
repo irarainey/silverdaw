@@ -213,6 +213,9 @@ endif()
 add_library(silverdaw_backend_core STATIC
     src/AudioDeviceCommands.cpp
     src/AudioEngine.cpp
+    src/AudioEngineClipEdit.cpp
+    src/AudioEngineClips.cpp
+    src/AudioEnginePreview.cpp
     src/BridgeAuth.cpp
     src/BpmDetector.cpp
     src/BridgeDispatch.cpp
