@@ -1,0 +1,99 @@
+// Pure library-item helpers.
+//
+// Stateless functions over `LibraryItem` shapes: user-facing display name,
+// source-BPM and sample/music resolution (saved-clip aware), saved-clip name
+// building, and cover-art URL revocation. Extracted from `libraryStore` so this
+// reusable logic lives apart from the Pinia store; the store imports what it
+// needs and re-exports the public helpers for existing `@/stores/libraryStore`
+// consumers.
+
+import type { LibraryItem, SavedClipSource } from './library.types'
+
+/**
+ * Resolve a library item to the label that should be used wherever it's
+ * shown to the user as a single line (clip name on the timeline, drag
+ * ghost text, etc.). Prefers the tag title; falls back to the file name
+ * if there's no title or the title is just whitespace.
+ */
+export function libraryItemDisplayName(item: {
+  name?: string
+  fileName: string
+  metadata?: AudioMetadata | null
+}): string {
+  const name = item.name?.trim()
+  if (name && name.length > 0) return name
+  const title = item.metadata?.title?.trim()
+  return title && title.length > 0 ? title : item.fileName
+}
+
+export function libraryItemSourceBpm(
+  item: { bpm?: number; derivedFrom?: SavedClipSource },
+  byId: Readonly<Record<string, LibraryItem>>
+): number | undefined {
+  if (typeof item.bpm === 'number' && item.bpm > 0) return item.bpm
+  const sourceId = item.derivedFrom?.sourceItemId
+  if (!sourceId) return undefined
+  const source = byId[sourceId]
+  return typeof source?.bpm === 'number' && source.bpm > 0 ? source.bpm : undefined
+}
+
+/**
+ * Effective sample-vs-music classification for a library item.
+ * Resolution order (saved-clip-aware):
+ *   1. item's own `sampleMode` override, if set
+ *   2. item's own `lowConfidence` auto-flag, if set
+ *   3. for saved clips, fall back to the SOURCE item's classification
+ *      (so cutting a one-shot out of a musical track inherits music
+ *      unless explicitly overridden on the saved clip)
+ *   4. default to `false` (music)
+ *
+ * Used to gate beat-marker rendering, library tile BPM/key badges,
+ * auto-warp on drop, and the project-BPM seed. Does NOT gate the
+ * Warp / Pitch dialogs — those remain available so the user can
+ * speed up / slow down / pitch shift any clip including samples.
+ */
+export function libraryItemIsSample(
+  item: { sampleMode?: 'sample' | 'music'; lowConfidence?: boolean; derivedFrom?: SavedClipSource },
+  byId: Readonly<Record<string, LibraryItem>>
+): boolean {
+  if (item.sampleMode === 'sample') return true
+  if (item.sampleMode === 'music') return false
+  if (item.lowConfidence === true) return true
+  const sourceId = item.derivedFrom?.sourceItemId
+  if (sourceId) {
+    const source = byId[sourceId]
+    if (source) {
+      if (source.sampleMode === 'sample') return true
+      if (source.sampleMode === 'music') return false
+      if (source.lowConfidence === true) return true
+    }
+  }
+  return false
+}
+
+export function buildSavedClipName(
+  source: { name?: string; fileName: string; metadata?: AudioMetadata | null },
+  inMs: number,
+  durationMs: number
+): string {
+  void durationMs
+  const sourceName = libraryItemDisplayName(source).replace(/\.[^.]+$/, '')
+  return `${sourceName} @ ${formatTimeForName(inMs)}`
+}
+
+function formatTimeForName(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+/**
+ * Revoke the cover-art object URL on `item` if one has been issued.
+ * Safe to call when no URL is set. Does NOT clear `item.coverArtUrl` —
+ * callers either delete the item outright (no further references) or
+ * overwrite the property immediately afterwards.
+ */
+export function revokeItemCoverArt(item: LibraryItem | undefined): void {
+  if (item?.coverArtUrl) URL.revokeObjectURL(item.coverArtUrl)
+}
