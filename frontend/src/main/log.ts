@@ -1,22 +1,10 @@
 // Cross-layer dev logger for the Electron main process.
 //
 // Aligns with the JUCE backend's `silverdaw::log` and the renderer's
-// `lib/log.ts`: each silverdaw session writes a single directory under
-// `<log-parent>/<ISO-stamp>/` containing
-//
-//   - main.log       — events from this process (this file)
-//   - backend.log    — JUCE backend events (env var `SILVERDAW_LOG_DIR`
-//                      is exported on spawn so the C++ logger writes
-//                      into the same directory)
-//   - renderer.log   — Vue / renderer-process events delivered here over
-//                      the `log:append-batch` IPC and persisted via this
-//                      module
-//
-// All lines share the format
-//
-//   <ISO timestamp ms>Z LEVEL [tag] message
-//
-// so the three logs can be merged and sorted by timestamp post-mortem.
+// `lib/log.ts`: each session writes one directory `<log-parent>/<ISO-stamp>/`
+// with main.log (this process), backend.log (JUCE, via `SILVERDAW_LOG_DIR` on
+// spawn) and renderer.log (Vue events over `log:append-batch`). All lines share
+// `<ISO timestamp ms>Z LEVEL [tag] message` so the three merge by timestamp.
 
 import { createWriteStream, type WriteStream } from 'node:fs'
 import { mkdirSync } from 'node:fs'

@@ -4,15 +4,10 @@ import { log } from '@/lib/log'
 import type { ClipWarpMode, ClipEnvelopePoint } from '@shared/bridge-protocol'
 
 /**
- * State of the Clip Editor's preview voice — an independent backend
- * playback path that plays a single library item (optionally windowed
- * to a [inMs, inMs + durationMs] selection of the source). Mirrors what
- * the backend reports via `PREVIEW_STATE` and `PREVIEW_POSITION`.
- *
- * The store gates incoming envelopes on a monotonic `generation`
- * counter the backend bumps on every load/unload, so a stale state
- * broadcast targeting a preview the user has already closed is
- * silently dropped.
+ * State of the Clip Editor's preview voice — an independent backend playback
+ * path for a single library item (optionally windowed to a selection). Mirrors
+ * `PREVIEW_STATE` / `PREVIEW_POSITION`, gating incoming envelopes on a monotonic
+ * `generation` counter so stale broadcasts for a closed preview are dropped.
  */
 export const usePreviewStore = defineStore('preview', {
   state: () => ({

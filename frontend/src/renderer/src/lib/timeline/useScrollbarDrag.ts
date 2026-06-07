@@ -1,15 +1,8 @@
-// Pointer-event-driven scrollbar thumb + track drag handlers for the
-// timeline's horizontal and vertical custom scrollbars.
-//
-// We can't lean on browser-native scrollbars or `<input type="range">`
-// here — the timeline needs pixel-precise thumb size + position (driven
-// by `useTimelineScroll`'s computed geometry) and a visual style that
-// matches the rest of the dark chrome. PointerEvents give us a single
-// code path for mouse, trackpad and (future) touch.
-//
-// Extracted from `TimelineView.vue` so the component stays focused on
-// scene orchestration; the scrollbar logic is mechanical and shares
-// nothing with the canvas drawing code.
+// Pointer-event-driven thumb + track drag handlers for the timeline's custom
+// horizontal and vertical scrollbars. Native scrollbars can't give the
+// pixel-precise thumb geometry (from `useTimelineScroll`) and dark-chrome
+// styling needed here; PointerEvents give one path for mouse/trackpad/touch.
+// Extracted from TimelineView.vue, which it shares nothing with.
 
 import type { ComputedRef, Ref } from 'vue'
 

@@ -1,12 +1,8 @@
-// Latest per-track output peaks delivered by the backend's
-// `TRACK_LEVELS` envelope (~60 Hz while audio is active). Same design
-// rationale as `masterLevelChannel`: deliberately kept out of Pinia
-// so the per-track meter components can poll their level on a single
-// shared RAF tick without triggering Vue reactivity on every update.
-//
-// Values are linear sample magnitudes (post per-track chain). They
-// can exceed 1.0 when summed clips run hot — the meter is responsible
-// for the dB conversion and any over-zero clip indicator.
+// Latest per-track output peaks from the backend's `TRACK_LEVELS` envelope
+// (~60 Hz). Like `masterLevelChannel`, kept out of Pinia so meter components
+// poll on a shared RAF tick without per-update reactivity. Values are linear
+// magnitudes (post per-track chain) and can exceed 1.0; the meter handles dB
+// and the clip indicator.
 
 interface TrackLevel {
   peakL: number
@@ -18,14 +14,10 @@ interface TrackLevel {
 const levels: Record<string, TrackLevel> = Object.create(null)
 let lastBroadcastAtMs = 0
 
-/** Called by `bridgeService` on every inbound `TRACK_LEVELS` envelope.
- *  Tracks absent from `entries` are NOT cleared — the backend gates
- *  emission on signal, so a track that just went quiet still appears
- *  with peakL=peakR=0 on the trailing zero-emission broadcast; if it
- *  drops out entirely (e.g. last clip removed) we want its stored
- *  value to decay naturally via `readTrackLevels` returning the last
- *  known value rather than snapping to 0. `clearTrackLevels()` on
- *  bridge disconnect handles the lifecycle reset. */
+/** Called by `bridgeService` on every inbound `TRACK_LEVELS` envelope. Tracks
+ *  absent from `entries` are NOT cleared so a track that went quiet decays from
+ *  its last value rather than snapping to 0; `clearTrackLevels()` on bridge
+ *  disconnect resets the lifecycle. */
 export function setTrackLevels(
   entries: ReadonlyArray<{ id: string; peakL: number; peakR: number }>
 ): void {

@@ -1,15 +1,8 @@
 <script setup lang="ts">
-// A single "rack module" in the Clip Editor's effects rack. Every effect
-// (warp, pitch, fades, and the future EQ / compressor / reverb / delay) is
-// wrapped in one of these so they share the same plugin-style chrome and
-// snap to the rack's modular cell grid.
-//
-// Sizing is modular: `cols` / `rows` are the module's size measured in
-// base cells. The parent rack defines the base cell's fixed pixel size
-// (so the aspect ratio stays consistent however the resizable dialog is
-// sized), and each module spans an integer number of those cells via
-// CSS grid `span`. Bigger / more complex effects (e.g. an 8–10 band EQ)
-// simply declare a larger span.
+// A single rack module in the Clip Editor's effects rack. Each effect (warp,
+// pitch, fades, future EQ/dynamics) is wrapped here to share plugin-style chrome
+// and snap to the rack's cell grid. `cols`/`rows` size the module in base cells
+// (fixed pixel size set by the parent rack) via CSS grid `span`.
 import { computed, useId } from 'vue'
 
 const props = withDefaults(

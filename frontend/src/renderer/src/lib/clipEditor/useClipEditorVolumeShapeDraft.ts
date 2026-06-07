@@ -1,22 +1,11 @@
 // Draft volume-shape (per-clip gain envelope) state for the Clip Editor.
 //
-// Mirrors the transactional draft contract used elsewhere in the Clip
-// Editor: every
-// breakpoint edit lives here until the user clicks **Save**, at which point
-// `committedPoints()` is persisted via `project.setClipEnvelope`. Cancel
-// simply discards the draft.
-//
-// Units: breakpoint `timeMs` is clip-local **post-warp / timeline ms** —
-// the same basis the backend `OffsetSource::applyEnvelopeGain` consumes and
-// `setClipEnvelope` persists. `gain` is a
-// linear multiplier in `[0, ENVELOPE_MAX_GAIN]`.
-//
-// A freshly-opened editor seeds a flat unity two-point shape so the user has
-// anchor handles to bend. Because a flat unity shape is semantically "no
-// shape" (see `isFlatUnityEnvelope`), `hasChanged` treats it as equivalent
-// to a clip with no envelope and `committedPoints()` returns an empty array
-// so the backend clears the property — the project stays clean until a real
-// bend is made.
+// Transactional draft: breakpoint edits live here until Save, when
+// `committedPoints()` is persisted via `project.setClipEnvelope`; Cancel
+// discards. `timeMs` is clip-local post-warp/timeline ms (the basis the
+// backend consumes); `gain` is linear in `[0, ENVELOPE_MAX_GAIN]`. A fresh
+// editor seeds a flat unity two-point shape, which counts as "no shape", so
+// `committedPoints()` returns empty and the project stays clean until a real bend.
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { ClipEnvelopePoint } from '@shared/bridge-protocol'

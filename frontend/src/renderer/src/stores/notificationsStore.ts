@@ -1,13 +1,6 @@
-// Transient toast notifications.
-//
-// Used for low-priority, time-limited feedback that doesn't belong in a
-// modal but shouldn't be a silent console log either — currently:
-//
-//   - Backend rejection of a `CLIP_ADD` (file not decodable, missing, …)
-//   - Future: bridge reconnect / disconnect, save failures, …
-//
-// The store is intentionally tiny: an append-only ring with auto-dismiss.
-// `<NotificationToasts>` reads `items` and renders one card per entry.
+// Transient toast notifications: low-priority, time-limited feedback that
+// doesn't warrant a modal (e.g. backend `CLIP_ADD` rejection). A tiny
+// append-only ring with auto-dismiss; `<NotificationToasts>` renders `items`.
 
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
@@ -34,13 +27,9 @@ export const useNotificationsStore = defineStore('notifications', {
 
   actions: {
     /**
-     * Push a new toast and schedule its auto-dismiss. `ttlMs` of `0` (or
-     * negative) keeps the toast on screen until `dismiss()` is called
-     * explicitly — only useful for fatal errors, which we don't have yet.
-     *
-     * When the user has disabled toasts in Preferences the item is NOT
-     * appended to the visible list, but the event is still written to
-     * the renderer log so debugging information isn't lost.
+     * Push a toast and schedule auto-dismiss. `ttlMs <= 0` keeps it until an
+     * explicit `dismiss()`. When toasts are disabled in Preferences the item is
+     * not appended but the event is still logged so debug info isn't lost.
      */
     push(kind: NotificationKind, message: string, ttlMs: number = DEFAULT_TTL_MS): number {
       const id = this.nextId++

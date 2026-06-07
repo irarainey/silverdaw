@@ -1,14 +1,10 @@
 // Per-drag gesture-id machinery shared by every FX control in the Track FX
-// panel (Tone bands, per-track Reverb / Delay amounts, project Reverb,
-// project Delay). A continuous
-// slider drag must collapse into a single undo step, so the renderer mints
-// one stable `gestureId` at the first `input` and re-uses it for every
-// coalesced sample until the gesture ends. Each gesture is scoped to a
-// single control `key`: minting a fresh id whenever the active key changes
-// (or after a gesture ends) stops one control's drag from being coalesced
-// into another's. Callers must `endGesture()` on every exit path — gesture
-// end, selection change, and component unmount — so a drag interrupted
-// mid-stream can never leak a stale id into the next gesture.
+// panel. A continuous slider drag must collapse into one undo step, so a stable
+// `gestureId` is minted on the first `input` and reused for coalesced samples
+// until the gesture ends. Each gesture is scoped to one control `key` (a key
+// change or gesture end mints a fresh id) so drags don't coalesce across
+// controls. Callers must `endGesture()` on every exit path to avoid leaking a
+// stale id.
 
 export interface FxGesture {
   /** Returns the gesture id for `key`, minting a fresh one if the active

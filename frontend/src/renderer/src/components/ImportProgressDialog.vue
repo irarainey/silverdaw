@@ -1,21 +1,9 @@
 <script setup lang="ts">
-// Floating audio-work progress panel.
-//
-// Sits in the bottom-right corner whenever there are in-flight imports or
-// reanalysis jobs. Replaces the old status-bar progress bar for surfacing status
-// — that bar only ticked on renderer-side decode finish and stayed
-// silent during the (potentially slow) backend BPM-detection stage,
-// which left the user wondering whether anything was still happening.
-//
-// One row per file: spinner + filename + stage label. Rows are added
-// when `library.beginImport` is called and removed shortly after
-// `library.finishImport`. Stages are:
-//
-//   - decoding   — renderer is decoding the file's audio bytes
-//   - detecting  — file is in the library; backend is running BPM
-//                  detection on a worker thread
-//   - done       — completed successfully (flashes briefly, then removed)
-//   - failed     — completed in error (flashes briefly, then removed)
+// Floating audio-work progress panel (bottom-right) for in-flight imports and
+// reanalysis jobs. One row per file (spinner + name + stage), added on
+// `library.beginImport` and removed shortly after `library.finishImport`.
+// Stages: decoding, detecting (backend BPM), done, failed (done/failed flash
+// briefly then clear). Surfaces the slow backend stage the old bar hid.
 
 import { computed } from 'vue'
 import { useLibraryStore, type ImportStage } from '@/stores/libraryStore'

@@ -1,20 +1,9 @@
 <script setup lang="ts">
-// Crash-recovery dialog. Shown by App.vue's startup coordinator after
-// the bridge becomes ready iff `autosave:listRecoverable` returns one
-// or more entries. Each entry corresponds to a project whose autosave
-// file is newer than its backing file (or whose backing file is
-// missing) — i.e. a session that ended without an explicit save.
-//
-// Per-row actions:
-//   - Restore: send PROJECT_LOAD_RECOVERY for that entry, then close.
-//   - Discard: delete the autosave bucket for that entry (no restore).
-//
-// Overall action:
-//   - Skip: close without touching anything. The entries stay on disk
-//     so the user can decide again next launch.
-//
-// At most one Restore can be in flight at a time; after Restore the
-// dialog closes immediately and lets App.vue finish the startup flow.
+// Crash-recovery dialog, shown after the bridge is ready when
+// `autosave:listRecoverable` returns entries (autosave newer than backing
+// file, or backing file missing). Per row: Restore (PROJECT_LOAD_RECOVERY) or
+// Discard (delete the autosave bucket); Skip closes without touching anything.
+// At most one Restore in flight; Restore closes and lets App.vue finish startup.
 
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'

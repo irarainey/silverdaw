@@ -1,14 +1,8 @@
-// Latest master output peaks delivered by the backend's `MASTER_LEVEL`
-// envelope (~60 Hz while audio is active). Stored as plain module
-// state — deliberately NOT a Pinia store — because the meter is the
-// only consumer and its rendering is driven by a `requestAnimationFrame`
-// loop rather than Vue reactivity. Putting these on a reactive store
-// would trigger re-renders on every tick for every subscriber across
-// the app, which is wasteful when the meter is the sole reader.
-//
-// Values are linear sample magnitudes (post master gain). They can
-// exceed 1.0 when tracks sum hot — the meter is responsible for
-// converting to dB and rendering any over-zero "clip" indicator.
+// Latest master output peaks from the backend's `MASTER_LEVEL` envelope
+// (~60 Hz). Plain module state, NOT a Pinia store: the meter is the only
+// consumer and renders via requestAnimationFrame, so reactivity would only add
+// wasteful per-tick re-renders. Values are linear magnitudes (post master gain)
+// and can exceed 1.0; the meter converts to dB and shows any clip indicator.
 
 let peakL = 0
 let peakR = 0

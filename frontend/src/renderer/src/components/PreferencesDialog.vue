@@ -1,12 +1,8 @@
 <script setup lang="ts">
-// Preferences dialog. Transactional: changes are held locally until the
-// user clicks Save. Cancel (and Esc) discard pending edits.
-//
-// Sections:
-//   - Interface  → toast notification visibility (applied immediately on Save).
-//   - Paths      → default project / clip directories used by the OS
-//                  open / save dialogs (applied immediately on Save).
-//   - Developer  → diagnostic logs, log folder, and DevTools (next launch).
+// Preferences dialog. Transactional: edits are held locally until Save; Cancel
+// and Esc discard. Sections: Interface (toast visibility), Paths (default
+// project/clip directories) and Developer (diagnostic logs, log folder,
+// DevTools — applied next launch).
 
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { describeBackend } from '@/lib/audio/audioOutputPicker'

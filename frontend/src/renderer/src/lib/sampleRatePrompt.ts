@@ -1,14 +1,8 @@
-// Module-singleton bridge between any import path that needs to ask
-// the user about a sample-rate mismatch, and the
-// `SampleRateMismatchDialog` mounted in App.vue. The import flow
-// calls `promptSampleRateMismatch(...)` and awaits the user's
-// choice; App.vue's watcher renders the dialog and resolves the
-// pending promise on each button.
-//
-// Singleton because every dialog is application-modal: we only ever
-// have one in flight at a time. A second `promptSampleRateMismatch`
-// call while one is open will reject — the import paths should
-// serialise their prompts.
+// Module-singleton bridge between an import path needing a sample-rate decision
+// and the `SampleRateMismatchDialog` in App.vue: `promptSampleRateMismatch`
+// awaits the user's choice, App.vue's watcher renders the dialog and resolves
+// the pending promise. Application-modal, so only one prompt is in flight; a
+// concurrent call rejects (import paths must serialise their prompts).
 
 import { ref, type Ref } from 'vue'
 import type {

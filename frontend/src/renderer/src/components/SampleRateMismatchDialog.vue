@@ -1,22 +1,9 @@
 <script setup lang="ts">
-// Sample-rate mismatch prompt. Shown by the import flow when a source
-// file's true sample rate differs from the project's current
-// `targetSampleRate`. Three exit paths:
-//
-//   - "Use {sourceRate} Hz" — switch the project's target rate to the
-//     source's rate. Only offered when the source rate is one of the
-//     supported project rates (44 100 / 48 000). The import then
-//     proceeds with no conversion.
-//   - "Convert to project rate" — keep the project rate; the import
-//     proceeds (the file's true rate is stored on the library item;
-//     the engine's per-track ResamplingAudioSource handles the
-//     conversion on playback today, with a proper on-disk cache
-//     landing in a follow-up).
-//   - "Cancel" — abort the batch import.
-//
-// For batched imports, the dialog summarises by rate bucket rather
-// than by file count so the user can resolve the policy once for the
-// whole batch.
+// Sample-rate mismatch prompt, shown by the import flow when a source file's
+// rate differs from the project's `targetSampleRate`. Exit paths: switch the
+// project to the source rate (only when it is a supported 44100/48000),
+// convert on playback (keeping the project rate), or cancel the batch.
+// Batched imports are summarised by rate bucket so the policy is set once.
 
 import { computed, ref, watch } from 'vue'
 import { useUiStore } from '@/stores/uiStore'

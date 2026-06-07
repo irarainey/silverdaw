@@ -1,11 +1,8 @@
 <script setup lang="ts">
-// "Audio device unavailable" warning dialog. Shown when a loaded
-// project's saved audio-output preference does not match any device
-// currently exposed by the OS. Purely informational: the live
-// `juce::AudioDeviceManager` has already opened the system default
-// (or the user-scope `preferences.json` fallback). The project's
-// stored preference is left intact so the project remains portable
-// to a machine that does have the device.
+// "Audio device unavailable" warning, shown when a loaded project's saved
+// output preference matches no current OS device. Informational only: the
+// engine already opened the system default, and the stored preference is kept
+// so the project stays portable to a machine that has the device.
 
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useUiStore } from '@/stores/uiStore'

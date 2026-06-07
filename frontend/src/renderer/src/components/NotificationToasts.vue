@@ -1,13 +1,8 @@
 <script setup lang="ts">
-// Bottom-right toast stack. Reads from `notificationsStore` and renders
-// one card per active notification, newest on top of the visible stack.
-// Each card auto-dismisses on a timer set up by the store; clicking the
-// X button dismisses early.
-//
-// Pinned to the viewport with `fixed` so it overlays everything (timeline,
-// library panel, etc.) without affecting layout. Bottom-right keeps the
-// stack clear of the title bar's window-controls overlay (min/max/close)
-// on the top-right edge.
+// Bottom-right toast stack. Reads `notificationsStore` and renders one card per
+// active notification (newest on top), each auto-dismissing on a store timer or
+// via its X button. `fixed` so it overlays without affecting layout; bottom-right
+// keeps it clear of the title bar's window-controls overlay.
 
 import { useNotificationsStore } from '@/stores/notificationsStore'
 

@@ -1,19 +1,8 @@
 <script setup lang="ts">
-// Per-clip warp/pitch settings dialog. Opens from the timeline clip context menu.
-//
-// Surface:
-//
-//   ┌───────────────────────────────────────┐
-//   │ Warp — <clip name>                    │
-//   │  [✔] Warp enabled                     │
-//   │   Mode    ( rhythmic / tonal /        │
-//   │             complex )                 │
-//   │   Tempo   ( ◯ follow project BPM      │
-//   │              ◯ pin to ___ BPM )       │
-//   └───────────────────────────────────────┘
-//
-// Edits are held locally until Save. Cancel / Escape / backdrop close discard
-// the draft so the dialog behaves like the rest of the app's modal editors.
+// Per-clip warp/pitch settings dialog, opened from the timeline clip context
+// menu. Controls: enable toggle, mode (rhythmic/tonal/complex), and tempo
+// (follow project BPM or pin to a value). Edits are held locally until Save;
+// Cancel/Escape/backdrop discard the draft like the app's other modal editors.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'

@@ -1,13 +1,8 @@
 <script setup lang="ts">
-// Export Mixdown dialog.
-//
-// Renders the file save location, format, sample rate, length policy
-// and the file-level metadata fields. Submitting builds a
-// `MIXDOWN_START` envelope and hands the dialog over to the
-// `MixdownProgressDialog` mounted at App level. The transactional form
-// model (drafts, validation, persistence, submit) lives in
-// `useExportMixdownForm`; this component owns presentation, keyboard,
-// focus and lifecycle only.
+// Export Mixdown dialog: save location, format, sample rate, length policy and
+// metadata fields. Submit builds a `MIXDOWN_START` envelope and hands over to
+// the app-level `MixdownProgressDialog`. The form model (drafts, validation,
+// persistence, submit) lives in `useExportMixdownForm`; this owns presentation.
 
 import { ref, watch } from 'vue'
 import { formatTime } from '@/lib/musicTime'

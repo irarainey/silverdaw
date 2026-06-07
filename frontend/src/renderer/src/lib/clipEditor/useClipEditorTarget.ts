@@ -1,14 +1,9 @@
-// Pure-logic composable that resolves the Clip Editor's editing target
-// from the renderer's `(item, clipId)` open-arguments into an explicit
-// `EditorMode` discriminant plus the source / clip / item refs every
-// other layer of the editor depends on.
-//
-// Splitting this out of `ClipEditorDialog.vue` keeps the
-// `kind === 'saved-clip'` check in exactly one place: the original
-// dialog had ~20 ad-hoc kind checks that drifted out of sync twice
-// during recent refactors. Every consumer now goes through the
-// `editsExistingClip` / `editsSavedClipLibrary` / `editsSingleTimelineClip`
-// derived booleans, which are exhaustive over `EditorMode`.
+// Pure-logic composable resolving the Clip Editor's editing target from the
+// `(item, clipId)` open-arguments into an explicit `EditorMode` discriminant
+// plus the source/clip/item refs the editor depends on. Centralises the
+// `kind === 'saved-clip'` decision behind exhaustive `editsExistingClip` /
+// `editsSavedClipLibrary` / `editsSingleTimelineClip` booleans, replacing the
+// dialog's previously scattered, drift-prone kind checks.
 
 import { computed, type ComputedRef, type Ref } from 'vue'
 import {

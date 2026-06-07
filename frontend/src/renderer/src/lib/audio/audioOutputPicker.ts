@@ -1,15 +1,8 @@
-// Shared audio-output picker helpers used by both the Preferences
-// dialog and the Project Properties dialog so the two surfaces stay
-// consistent: same device list, same backend preference order, same
-// "device first, driver second" picker order.
-//
-// `uniqueDevices` deduplicates the per-backend device lists from
-// `audioDeviceStore.types` into one row per physical device. Two
-// backends are considered the same device when their device names
-// match case-insensitively — true for the Windows Audio /
-// DirectSound pair (both describe the same MMDevice) and gives ASIO
-// devices their own row because vendor ASIO drivers usually report
-// distinct names.
+// Shared audio-output picker helpers for the Preferences and Project Properties
+// dialogs, keeping their device list and "device first, driver second" order
+// consistent. `uniqueDevices` deduplicates per-backend lists to one row per
+// physical device, matching device names case-insensitively (so the Windows
+// Audio/DirectSound pair collapses while distinctly-named ASIO drivers stay split).
 
 import { computed, type ComputedRef } from 'vue'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'

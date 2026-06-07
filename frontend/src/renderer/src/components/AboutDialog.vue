@@ -1,11 +1,7 @@
 <script setup lang="ts">
-// In-app "About Silverdaw" dialog. Opened from the Help > About menu item
-// (the main process forwards `help.about` as a regular menu action; the
-// renderer toggles `open` on this component).
-//
-// Dark themed to match the rest of the app, shows the 256-px brand mark,
-// runtime version info, and the legal notices required for AGPL-3.0
-// compliance plus the JUCE GPL "Made with JUCE" acknowledgement.
+// In-app "About Silverdaw" dialog, opened from Help > About (main forwards
+// `help.about`; the renderer toggles `open`). Shows the brand mark, runtime
+// version, and the AGPL-3.0 + "Made with JUCE" legal notices.
 
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import logoUrl from '@resources/icons/256x256.png'

@@ -1,22 +1,13 @@
 <script setup lang="ts">
 // Mid-session audio-engine recovery overlay.
 //
-// The audio engine runs as a separate process. If it crashes, hangs, or is
-// killed by an OS sleep/resume fault, Electron's main supervisor respawns it
-// and `engineRecovery` re-loads the user's project into the fresh engine.
-// While that happens the app must not accept edits or transport commands —
-// the engine is empty or mid-restore, so any action would race the recovery
-// or hit a project that isn't there yet.
-//
-// This overlay is the visible + interactive gate for that window. It covers
-// the whole viewport (blocking pointer input) and is paired with keyboard
-// gating in `menuShortcuts.ts` + `App.vue` so accelerators are swallowed too.
-// It only appears once the engine has been healthy at least once, so a
-// cold-start failure stays on the StartupScreen path instead.
-//
-//   • recovering / restoring → indeterminate "reconnecting" state, no actions.
-//   • unavailable            → terminal: Try Again (force another respawn) or
-//                              Quit. Recovery exhausted its automatic budget.
+// While the supervisor respawns a crashed/hung engine and `engineRecovery`
+// reloads the project, edits and transport must be blocked. This full-viewport
+// gate (paired with keyboard gating in menuShortcuts.ts + App.vue) provides
+// that. It only appears once the engine has been healthy, so cold-start
+// failures stay on the StartupScreen path.
+//   recovering/restoring → indeterminate "reconnecting", no actions.
+//   unavailable          → terminal: Try Again (force respawn) or Quit.
 
 import { computed, nextTick, ref, watch } from 'vue'
 import { useTransportStore } from '@/stores/transportStore'

@@ -1,15 +1,8 @@
 <script setup lang="ts">
-// Master-bus stereo peak meter. Thin wrapper over `PeakMeter` that
-// (a) sources its levels from `masterLevelChannel` (fed by the
-// backend's `MASTER_LEVEL` envelope), (b) renders horizontally next
-// to the master fader so the level reads naturally left-to-right at
-// a glance, and (c) formats the tooltip in master-bus terms.
-//
-// Sizing rationale: the master meter is the primary at-a-glance
-// loudness indicator for the whole project, so it's deliberately
-// larger than the per-track meters (which exist for relative balance
-// rather than overall headroom). Width tuned to fit the transport
-// bar without crowding the fader / dB readout.
+// Master-bus stereo peak meter. Thin wrapper over `PeakMeter` sourcing levels
+// from `masterLevelChannel` (backend `MASTER_LEVEL`), rendered horizontally
+// beside the master fader. Deliberately larger than per-track meters as the
+// primary at-a-glance loudness indicator; width tuned to fit the transport bar.
 
 import { linearToDb, MIN_DISPLAY_DB } from '@/lib/audio/db'
 import { readMasterLevels } from '@/lib/audio/masterLevelChannel'

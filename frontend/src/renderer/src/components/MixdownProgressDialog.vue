@@ -1,14 +1,8 @@
 <script setup lang="ts">
-// Modal progress dialog shown while a mixdown render is in flight.
-// Driven entirely by the singleton `mixdownState` ref — mounts on the
-// first MIXDOWN_PROGRESS / beginMixdown() and dismisses when the
-// terminal envelope (DONE / FAILED) clears the state.
-//
-// The dialog is purposely modal-with-backdrop so the user can't
-// interact with the rest of the timeline while a render is happening
-// (the backend additionally rejects TRANSPORT_PLAY while busy as a
-// belt-and-braces guard, but the visible block matches user
-// expectations).
+// Modal progress dialog shown while a mixdown render is in flight. Driven by
+// the singleton `mixdownState` ref: mounts on the first MIXDOWN_PROGRESS and
+// dismisses when the terminal envelope (DONE/FAILED) clears the state. Modal
+// with backdrop so the timeline can't be edited mid-render.
 
 import { computed } from 'vue'
 import { useMixdownState, type MixdownStage } from '@/lib/mixdownState'

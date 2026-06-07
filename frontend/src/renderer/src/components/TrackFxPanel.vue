@@ -1,21 +1,11 @@
 <script setup lang="ts">
-// Track FX surface, shown in the bottom panel beside the Library and
-// Project FX tabs. Hosts the per-track sound-shaping rack for the SELECTED
-// track (GarageBand-style: click a track header to select it):
+// Track FX surface in the bottom panel beside the Library and Project FX tabs.
+// Hosts the selected track's rack: Tone (3-band EQ + cuts), Pan, Leveler, and
+// Reverb/Delay send amounts into the project buses.
 //
-//   • Tone — 3-band EQ plus Low / High Cut.
-//   • Pan — equal-power placement of the track's dry signal.
-//   • Leveler — a single-knob soft-knee compressor that evens out the
-//     track's dynamics.
-//   • Reverb & Delay — how much this track feeds the project-wide Reverb
-//     and Delay buses (the buses themselves live on the Project FX tab).
-//
-// All modules are keyed by track id so switching selection remounts them:
-// the native range inputs are recreated with the new track's values rather
-// than relying on in-place reuse, and any open edit gesture is torn down
-// with the old instance. Each module owns its own live editing + undo
-// wiring; this panel just lays them out and shows a hint when no track is
-// selected.
+// Modules are keyed by track id so changing selection remounts them (fresh
+// inputs, torn-down gestures). Each module owns its live editing + undo wiring;
+// this panel only lays them out and shows the no-selection hint.
 
 import { computed } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'

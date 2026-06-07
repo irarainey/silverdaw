@@ -1,14 +1,7 @@
-// Per-timeline clip-dialog open state.
-//
-// Three dialogs surface from the timeline: the Clip Editor, the
-// Library Item Info dialog, and the Warp / Pitch dialog. Each is
-// keyed by a `clipId` ref that the template binds to. Resolving the
-// `LibraryItem` for the open clip lives here so the template stays
-// dumb (`:item="dialogs.editorItem"`).
-//
-// The composable exposes intentful actions (`openEditor`,
-// `openInfo`, `openWarp`, `closeXxx`) so consumers don't reach in
-// and mutate the refs directly.
+// Per-timeline clip-dialog open state for the Clip Editor, Library Item Info and
+// Warp/Pitch dialogs. Each is keyed by a `clipId` ref and resolves its
+// `LibraryItem` here so the template stays dumb. Exposes intentful actions
+// (`openEditor`/`openInfo`/`openWarp`/`closeXxx`) rather than raw refs.
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'

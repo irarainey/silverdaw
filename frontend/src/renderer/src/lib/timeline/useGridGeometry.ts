@@ -1,13 +1,7 @@
-// Reactive grid + zoom geometry for the timeline.
-//
-// Owns the horizontal zoom level (`pxPerSecond`) and exposes every derived
-// quantity the renderer / drag handlers / drop zone need to convert
-// between pixels, milliseconds, beats and sub-beats. Also re-exports the
-// snap unit (one quarter-beat at 4/4) so drag handlers don't need to
-// know about BPM directly.
-//
-// Inputs (read via Pinia): project duration, transport BPM, ui header
-// column width. Everything else is local reactive state.
+// Reactive grid + zoom geometry for the timeline. Owns horizontal zoom
+// (`pxPerSecond`) and derived pixel/ms/beat/sub-beat conversions for the
+// renderer, drag handlers and drop zone, plus the snap unit (a quarter-beat at
+// 4/4). Reads project duration, transport BPM and header width via Pinia.
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'

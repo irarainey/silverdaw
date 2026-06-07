@@ -1,14 +1,8 @@
-// Renderer-side mixdown render state.
-//
-// Tracks the currently-active mixdown render (if any) so the
-// `MixdownProgressDialog` can mount/dismiss off a single reactive
-// source of truth and listeners outside Vue (e.g. the bridge dispatch
-// in `bridgeService.ts`) can push updates into it without importing
-// the dialog directly.
-//
-// The model is intentionally simple — at most one mixdown can be in
-// flight at a time (the backend's `MixdownEngine` is a single-slot
-// state machine). A `null` value means "no render in progress".
+// Renderer-side mixdown render state: a single reactive source of truth for the
+// active render so `MixdownProgressDialog` mounts/dismisses off it and non-Vue
+// listeners (bridge dispatch) can push updates without importing the dialog.
+// At most one render is in flight (backend `MixdownEngine` is single-slot);
+// `null` means no render in progress.
 
 import { ref, readonly, type Ref } from 'vue'
 import type { MixdownFailedPayload, MixdownProgressPayload } from '@shared/bridge-protocol'

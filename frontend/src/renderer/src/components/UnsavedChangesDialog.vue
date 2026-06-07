@@ -1,15 +1,8 @@
 <script setup lang="ts">
-// Modal shown when the user is about to discard unsaved work
-// (File > New, File > Open, app close). Three outcomes:
-//
-//   - "Save"        — caller saves first, THEN proceeds.
-//   - "Don't save"  — caller proceeds immediately, discarding changes.
-//   - "Cancel"      — caller bails.
-//
-// The dialog itself is presentational. The caller passes the project
-// name (shown in the prompt) and a callback per outcome; the modal
-// only fires the matching callback, leaving the actual save / open /
-// close orchestration in `App.vue` where the IPC context lives.
+// Modal shown before discarding unsaved work (File > New / Open, app close).
+// Presentational only: outcomes Save (caller saves then proceeds), Don't save
+// (proceed, discarding) and Cancel (bail) each fire a caller-supplied callback,
+// leaving save/open/close orchestration in App.vue where the IPC context lives.
 
 const props = defineProps<{
   open: boolean
