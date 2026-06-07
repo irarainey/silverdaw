@@ -229,6 +229,9 @@ add_library(silverdaw_backend_core STATIC
     src/MarkerCommands.cpp
     src/MixdownCommands.cpp
     src/MixdownEngine.cpp
+    src/MixdownExport.cpp
+    src/MixdownGraph.cpp
+    src/MixdownSnapshot.cpp
     src/PeaksCache.cpp
     src/PlayheadEmitter.cpp
     src/ProjectFile.cpp
