@@ -238,6 +238,7 @@ add_library(silverdaw_backend_core STATIC
     src/ProjectTransitions.cpp
     src/SampleExport.cpp
     src/TrackCommands.cpp
+    src/UndoCommands.cpp
     src/TransportCommands.cpp
     src/TransitionCommands.cpp
     src/ValueTreeJson.cpp
