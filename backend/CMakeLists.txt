@@ -230,7 +230,11 @@ add_library(silverdaw_backend_core STATIC
     src/MixdownCommands.cpp
     src/MixdownEngine.cpp
     src/MixdownExport.cpp
+    src/MixdownBroadcast.cpp
     src/MixdownGraph.cpp
+    src/MixdownNormalize.cpp
+    src/MixdownRender.cpp
+    src/MixdownRenderPass1.cpp
     src/MixdownSnapshot.cpp
     src/PeaksCache.cpp
     src/PlayheadEmitter.cpp
@@ -342,7 +346,8 @@ if(SILVERDAW_BUILD_TESTS)
         tests/AudioEngineTests.cpp
         tests/FxDspTests.cpp
         tests/LoudnessTests.cpp
-        tests/EnvelopeFadeTests.cpp)
+        tests/EnvelopeFadeTests.cpp
+tests/MixdownRenderTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
 

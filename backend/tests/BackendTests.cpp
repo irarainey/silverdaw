@@ -25,8 +25,9 @@ int main()
     addFxDspTests(tests);
     addLoudnessTests(tests);
     addEnvelopeFadeTests(tests);
+    addMixdownRenderTests(tests);
 
-    require(tests.size() == 41, "backend test registry should contain 41 tests");
+    require(tests.size() == 44, "backend test registry should contain 44 tests");
 
     int failed = 0;
     for (const auto& test : tests)

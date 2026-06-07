@@ -2,9 +2,17 @@
 
 #include "MixdownEngine.h" // for silverdaw::ExportMetadata
 
+#include <memory>
 #include <unordered_map>
 
 #include <juce_core/juce_core.h>
+
+namespace juce
+{
+class AudioFormatWriter;
+class AudioFormatWriterOptions;
+class OutputStream;
+} // namespace juce
 
 namespace silverdaw::mixdown_export
 {
@@ -38,5 +46,18 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
 
 /** Atomic "<file>.tmp" → "<file>" finalize (MoveFileEx on Windows). */
 bool atomicReplace(const juce::File& tmp, const juce::File& target);
+
+/** Create the final-format writer for the user's chosen container, applying
+ *  WAV/MP3 metadata (FLAC/AIFF tags are post-processed after encode). MP3 forces
+ *  16-bit integral + the CBR quality option. `baseOptions` must already carry
+ *  sample rate / channels / bit depth / sample format. On failure returns
+ *  nullptr WITHOUT consuming `stream`, so the caller cleans up the stream. */
+std::unique_ptr<juce::AudioFormatWriter> createOutputWriter(
+    MixdownOptions::Format format,
+    const juce::AudioFormatWriterOptions& baseOptions,
+    const juce::File& lameApp,
+    const ExportMetadata& metadata,
+    int bitrateKbps,
+    std::unique_ptr<juce::OutputStream>& stream);
 
 } // namespace silverdaw::mixdown_export

@@ -417,4 +417,46 @@ bool atomicReplace(const juce::File& tmp, const juce::File& target)
 #endif
 }
 
+// Create the final-format writer (see header). The normalize-WAV-f32 pass-1
+// intermediate is a deliberate caller-side special case and is NOT routed here.
+std::unique_ptr<juce::AudioFormatWriter> createOutputWriter(
+    MixdownOptions::Format format,
+    const juce::AudioFormatWriterOptions& baseOptions,
+    const juce::File& lameApp,
+    const ExportMetadata& metadata,
+    int bitrateKbps,
+    std::unique_ptr<juce::OutputStream>& stream)
+{
+    if (format == MixdownOptions::Format::Wav)
+    {
+        juce::WavAudioFormat wav;
+        auto wavOpts = baseOptions.withMetadataValues(buildWavMetadataMap(metadata));
+        return wav.createWriterFor(stream, wavOpts);
+    }
+    if (format == MixdownOptions::Format::Flac)
+    {
+        // FLAC tags injected post-encode via writeFlacVorbisComment().
+        juce::FlacAudioFormat flac;
+        return flac.createWriterFor(stream, baseOptions);
+    }
+    if (format == MixdownOptions::Format::Aiff)
+    {
+        // AIFF tags injected post-encode via writeAiffTextChunks().
+        juce::AiffAudioFormat aiff;
+        return aiff.createWriterFor(stream, baseOptions);
+    }
+    if (format == MixdownOptions::Format::Mp3)
+    {
+        juce::LAMEEncoderAudioFormat lame(lameApp);
+        auto lameOpts = baseOptions
+                            .withBitsPerSample(16)
+                            .withSampleFormat(
+                                juce::AudioFormatWriterOptions::SampleFormat::integral)
+                            .withQualityOptionIndex(lameQualityIndexForCbr(bitrateKbps))
+                            .withMetadataValues(buildMp3MetadataMap(metadata));
+        return lame.createWriterFor(stream, lameOpts);
+    }
+    return nullptr;
+}
+
 } // namespace silverdaw::mixdown_export
