@@ -226,6 +226,7 @@ add_library(silverdaw_backend_core STATIC
     src/LibraryCommands.cpp
     src/LoudnessAnalyzer.cpp
     src/MarkerCommands.cpp
+    src/MixdownCommands.cpp
     src/MixdownEngine.cpp
     src/PeaksCache.cpp
     src/PlayheadEmitter.cpp
