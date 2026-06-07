@@ -1,13 +1,18 @@
 // Project state — source of truth for the timeline. Mirrors backend
 // ValueTree state via PROJECT_STATE / TRACK_ADDED / etc. bridge messages.
 //
-// FILE-SIZE EXCEPTION (justified): the domain model (projectTypes.ts) and pure
-// helpers (projectHelpers.ts) are extracted. The residual is one cohesive Pinia
-// options store whose ~80 actions share `this` state and call sibling actions;
-// splitting them into free functions would thread the store instance = contrived.
+// FILE-SIZE EXCEPTION (justified): the cleanly separable concerns are extracted —
+// domain model (projectTypes.ts), pure helpers (projectHelpers.ts), the large
+// PROJECT_STATE reconciliation (projectSnapshot.ts), and the save/load/autosave
+// persistence handshakes + resolver state (projectPersistence.ts). The residual is
+// the cohesive timeline-mutation core: clip/track/marker actions that densely call
+// each other (trim, transitions, gain, overlap queries, clipboard) over shared
+// `this` state. Extracting those into free functions would require threading a
+// broad slice of the store (many sibling actions + getters) into each one, which
+// shifts coupling rather than reducing it — so they stay together by design.
 
 import { defineStore } from 'pinia'
-import { decodeAudioToPeaks, PEAKS_PER_SECOND } from '@/lib/audio'
+import { PEAKS_PER_SECOND } from '@/lib/audio'
 import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
@@ -48,21 +53,17 @@ import {
 } from './projectTypes'
 import type {
   Clip,
-  ClipboardEntry,
   Marker,
-  ProjectDelayState,
-  ProjectReverbState,
+  ProjectState,
   Track
 } from './projectTypes'
 import {
-  deriveProjectIdFromPath,
   fileStem,
-  filePathToBasename,
   filePathToDisplayName,
-  freshUntitledProjectId,
-  hydrateTransitions,
   parentDir
 } from './projectHelpers'
+import { applyProjectStateSnapshot as applyProjectStateSnapshotImpl } from './projectSnapshot'
+import * as persistence from './projectPersistence'
 
 // Re-export domain types/constants so existing `@/stores/projectStore` imports stay stable.
 export type {
@@ -89,126 +90,6 @@ async function defaultSamplesDir(currentFilePath: string | null): Promise<string
   return base ? `${base}\\Samples` : 'Samples'
 }
 
-async function refreshLibraryItemMedia(itemId: string, filePath: string): Promise<void> {
-  const library = useLibraryStore()
-  try {
-    const metadata = await window.silverdaw.readAudioMetadata(filePath)
-    library.setItemMetadata(itemId, metadata)
-  } catch (err) {
-    log.warn('library', `readAudioMetadata failed for ${filePath}: ${String(err)}`)
-  }
-
-  const item = library.getItem(itemId)
-  if (!item || item.durationMs > 0) return
-
-  try {
-    const opened = await window.silverdaw.readAudioFile(filePath)
-    if (!opened) return
-    const decoded = await decodeAudioToPeaks(opened.data)
-    library.setItemAudioDetails(itemId, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
-    if (item.peaks.length === 0) {
-      library.setItemPeaks(itemId, decoded.peaks, decoded.sampleRate, decoded.peaksPerSecond)
-    }
-    // Populate the stereo display map from the renderer-side decode so the
-    // L/R lanes are available without waiting for a backend WAVEFORM_READY.
-    // Non-stereo decodes pass an empty array, which clears any prior entry.
-    if (decoded.peaksPerSecond > 0) {
-      library.setItemChannelPeaks(itemId, decoded.channelPeaks ?? [], decoded.peaksPerSecond)
-    }
-  } catch (err) {
-    log.warn('library', `readAudioFile/decode failed for ${filePath}: ${String(err)}`)
-  }
-}
-
-interface ProjectState {
-  tracks: Track[]
-  clips: Record<string, Clip>
-  markers: Marker[]
-  /** Bumped on any clip peaks change — a cheap reactive redraw signal (peaks mutate in place). */
-  peaksRevision: number
-
-  // ─── Project file identity ───────────────────────────────────────────────
-  /** Absolute path of the loaded `.silverdaw` file; null until first saved. */
-  currentFilePath: string | null
-  /** User-facing project name. `Untitled` for an unsaved project. */
-  projectName: string
-  /** Mutated since last load/save/new. Driven by PROJECT_DIRTY; reset on every PROJECT_STATE apply. */
-  isDirty: boolean
-  /** Stable id bucketing autosave artefacts. Derived from the file path (saved) or a
-   *  UUID (untitled); refreshed on PROJECT_STATE reset=true. Null until first snapshot. */
-  projectId: string | null
-  /** Project id from the recovery manifest while an untitled recovery load is in flight. */
-  pendingRecoveredProjectId: string | null
-  /** `projectId` before the last Load/New/Save As; lets autosave delete the old bucket safely. */
-  previousProjectId: string | null
-  /** Engine recovery in flight: suppresses autosave writes and bucket-cleanup so the
-   *  reconnect snapshot can't delete the autosave we're restoring from. */
-  recoveryInFlight: boolean
-  /** Persisted horizontal zoom (px/sec). Null = no preference yet (keep renderer default). */
-  viewPxPerSecond: number | null
-  /** Persisted horizontal scroll (px); same null semantics as `viewPxPerSecond`. */
-  viewScrollX: number | null
-
-  /** Bottom panel shows Track FX (vs Library). Persisted as non-dirty view state. */
-  fxPanelOpen: boolean
-
-  /** Which FX rack the bottom panel shows: per-track or project-wide. UI-only (not persisted). */
-  fxTab: 'track' | 'project'
-
-  /** Selected clip id (UI-only). Drives the selection outline and Cut/Copy target. */
-  selectedClipId: string | null
-
-  /** Selected track id — paste target and Track FX target. Persisted as non-dirty view state. */
-  selectedTrackId: string | null
-
-  /** Cut/copy buffer for `pasteClipAtPlayhead`. Renderer-only; cleared on load/new. */
-  clipboardClip: ClipboardEntry | null
-
-  /** Source clip id -> last duplicated clip id for repeated duplicate commands. */
-  duplicateTailBySource: Record<string, string>
-
-  /** Backend UndoManager availability; drives the Edit > Undo/Redo menu. From EDIT_UNDO_STATE. */
-  canUndo: boolean
-  canRedo: boolean
-  /** Next undo/redo transaction label; null when the matching `can…` flag is false. */
-  undoLabel: string | null
-  redoLabel: string | null
-
-  /** Per-project preferred output device. Null = no override. On load, bridgeService
-   *  switches to it if available, else warns and keeps the user-scope device. */
-  audioOutputTypeName: string | null
-  audioOutputDeviceName: string | null
-
-  /** Target sample rate (Hz) driving the playback-cache rebuild. Null = adopt user default. 44100/48000 only. */
-  targetSampleRate: number | null
-  /** Opaque renderer-owned JSON of last-used export-dialog settings; backend round-trips it verbatim. Null = defaults. */
-  exportSettingsJson: string | null
-  /** Master output volume (0..1 linear), applied to live mix and exports. Persisted. */
-  masterVolume: number
-  /** Project-shared Reverb; persisted. Defaults all-zero (inaudible). */
-  projectReverb: ProjectReverbState
-  /** Project-shared tempo-locked Delay. Defaults 1/8-note, zero feedback/tone/mix (inaudible). */
-  projectDelay: ProjectDelayState
-}
-
-/**
- * Single in-flight resolver for `saveAndWait` (saves are serialised by the modal).
- * Module-level because Promise resolvers aren't serialisable into Pinia's proxy.
- */
-let pendingSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
-let pendingViewStateSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
-let pendingSaveTimeout: ReturnType<typeof setTimeout> | null = null
-const PENDING_SAVE_TIMEOUT_MS = 10000
-let pendingRecoveryLoadResolver: ((result: { ok: boolean; error?: string }) => void) | null =
-  null
-let pendingRecoveryLoadTimeout: ReturnType<typeof setTimeout> | null = null
-const PENDING_LOAD_TIMEOUT_MS = 10000
-
-/** Outstanding autosave resolvers keyed by filePath so a project swap can't cross-resolve acks. */
-const pendingAutosaveResolvers = new Map<
-  string,
-  (result: { ok: boolean; error?: string }) => void
->()
 
 export const useProjectStore = defineStore('project', {
   state: (): ProjectState => ({
@@ -1704,452 +1585,8 @@ export const useProjectStore = defineStore('project', {
     },
 
     applyProjectStateSnapshot(snapshot: ProjectStatePayload): void {
-      log.info(
-        'project',
-        `applyProjectStateSnapshot tracks=${snapshot.tracks.length} clips=${snapshot.tracks.reduce((n, t) => n + t.clips.length, 0)} reset=${snapshot.reset === true} path=${snapshot.filePath ?? 'null'} name=${snapshot.name}`
-      )
-      // Apply after tracks exist because the setter writes each track length.
-      let pendingProjectLengthMs: number | null = null
-      // Undo/redo soft-replace swaps state wholesale without resetting view identity.
-      const isSoftReplace = snapshot.softReplace === true
-      // Adopt identity before other snapshot work so observers see post-load values.
-      const previousFilePath = this.currentFilePath
-      this.currentFilePath = snapshot.filePath
-      this.projectName = snapshot.name?.trim() ? snapshot.name : DEFAULT_PROJECT_NAME
-      if (!isSoftReplace) {
-        this.isDirty = false
-      }
-      // Rotate autosave buckets when load/new/save-as changes project identity.
-      const pathChanged = snapshot.filePath !== previousFilePath
-      const shouldRotateId = (snapshot.reset === true || pathChanged) && !isSoftReplace
-      if (shouldRotateId) {
-        this.previousProjectId = this.projectId
-        if (snapshot.filePath) {
-          // Async path hashing keeps autosave disabled until the id resolves.
-          const targetPath = snapshot.filePath
-          this.projectId = null
-          void deriveProjectIdFromPath(targetPath).then((id) => {
-            // A later load may race the hash result.
-            if (this.currentFilePath === targetPath) this.projectId = id
-          })
-        } else {
-          this.projectId = this.pendingRecoveredProjectId ?? freshUntitledProjectId()
-        }
-      }
-      this.pendingRecoveredProjectId = null
-      this.viewPxPerSecond =
-        typeof snapshot.viewPxPerSecond === 'number' && snapshot.viewPxPerSecond > 0
-          ? snapshot.viewPxPerSecond
-          : null
-      this.viewScrollX =
-        typeof snapshot.viewScrollX === 'number' && snapshot.viewScrollX >= 0
-          ? snapshot.viewScrollX
-          : null
-      // PROJECT_STATE restores transport and project dimensions across stores.
-      if (typeof snapshot.bpm === 'number' && snapshot.bpm > 0) {
-        useTransportStore().setBpm(snapshot.bpm)
-      }
-      if (typeof snapshot.playheadMs === 'number' && snapshot.playheadMs >= 0) {
-        useTransportStore().setPosition(snapshot.playheadMs)
-      }
-      if (typeof snapshot.projectLengthMs === 'number' && snapshot.projectLengthMs > 0) {
-        pendingProjectLengthMs = snapshot.projectLengthMs
-      } else {
-        pendingProjectLengthMs = null
-      }
-      // Normalise audio-output preference to all-set or null/null.
-      const nextAudioType = typeof snapshot.audioOutputTypeName === 'string' && snapshot.audioOutputTypeName.length > 0
-        ? snapshot.audioOutputTypeName
-        : null
-      const nextAudioDevice = typeof snapshot.audioOutputDeviceName === 'string' && snapshot.audioOutputDeviceName.length > 0
-        ? snapshot.audioOutputDeviceName
-        : null
-      if (nextAudioType !== null && nextAudioDevice !== null) {
-        this.audioOutputTypeName = nextAudioType
-        this.audioOutputDeviceName = nextAudioDevice
-      } else {
-        this.audioOutputTypeName = null
-        this.audioOutputDeviceName = null
-      }
-      // Only supported rates survive; absent/invalid means no project override.
-      const incomingRate = snapshot.targetSampleRate
-      this.targetSampleRate =
-        typeof incomingRate === 'number' && (incomingRate === 44100 || incomingRate === 48000)
-          ? incomingRate
-          : null
-      // The dialog parses this opaque JSON defensively on open.
-      const incomingExportSettings = snapshot.exportSettingsJson
-      this.exportSettingsJson =
-        typeof incomingExportSettings === 'string' && incomingExportSettings.length > 0
-          ? incomingExportSettings
-          : null
-      // Missing means unity; the backend omits default master volume.
-      const incomingMasterVolume = snapshot.masterVolume
-      this.masterVolume =
-        typeof incomingMasterVolume === 'number' && Number.isFinite(incomingMasterVolume)
-          ? Math.min(1, Math.max(0, incomingMasterVolume))
-          : 1.0
-      // Mutate FX objects in place so PROJECT_STATE refreshes do not end drags.
-      const unit = (v: unknown): number =>
-        typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0
-      this.projectReverb.size = unit(snapshot.reverbSize)
-      this.projectReverb.decay = unit(snapshot.reverbDecay)
-      this.projectReverb.tone = unit(snapshot.reverbTone)
-      this.projectReverb.mix = unit(snapshot.reverbMix)
-      this.projectDelay.noteValue = snapshot.delayNoteValue ?? '1/8'
-      this.projectDelay.feedback = unit(snapshot.delayFeedback)
-      this.projectDelay.tone = unit(snapshot.delayTone)
-      this.projectDelay.mix = unit(snapshot.delayMix)
-      const library = useLibraryStore()
-      // Reset/soft-replace wipe ValueTree-backed mirrors; undo/redo preserves view state.
-      if (snapshot.reset === true || isSoftReplace) {
-        this.tracks = []
-        this.clips = {}
-        this.markers = []
-        if (!isSoftReplace) {
-          this.selectedClipId = null
-          this.selectedTrackId = null
-          this.clipboardClip = null
-        }
-        this.duplicateTailBySource = {}
-        this.peaksRevision++
-        library.clear()
-      }
-
-      this.markers = Array.isArray(snapshot.markers)
-        ? snapshot.markers
-            .filter((marker) => marker.positionMs >= 0)
-            .map((marker) => ({ id: marker.id, positionMs: marker.positionMs }))
-            .sort((a, b) => a.positionMs - b.positionMs)
-        : []
-
-      // Hydrate library first and suppress echoing snapshot items back to the backend.
-      if (snapshot.library) {
-        for (const item of snapshot.library) {
-          const already = library.byId[item.id]
-          if (already) {
-            // Existing items still need relinked path/unresolved fields refreshed.
-            already.filePath = item.filePath
-            already.fileName = item.fileName?.trim()
-              ? item.fileName
-              : filePathToBasename(item.filePath)
-            already.playbackFilePath = item.filePath
-            already.unresolved = item.unresolved === true ? true : undefined
-            continue
-          }
-          const libId = library.addItem({
-            id: item.id,
-            kind: item.kind ?? 'audio-file',
-            name: item.name,
-            filePath: item.filePath,
-            fileName: item.fileName?.trim() ? item.fileName : filePathToBasename(item.filePath),
-            durationMs: Math.max(0, item.durationMs ?? 0),
-            sampleRate: Math.max(0, item.sampleRate ?? 0),
-            channelCount: Math.max(0, item.channelCount ?? 0),
-            peaks: new Float32Array(0),
-            key: item.key,
-            unresolved: item.unresolved === true,
-            // Keep CLIP_ADD keyed by source path; cached WAV paths are backend-internal.
-            playbackFilePath: item.filePath,
-            derivedFrom:
-              item.kind === 'saved-clip'
-                ? {
-                    sourceItemId: item.sourceItemId,
-                    sourceClipId: item.sourceClipId,
-                    inMs: Math.max(0, item.sourceInMs ?? 0),
-                    durationMs: Math.max(0, item.sourceDurationMs ?? item.durationMs ?? 0)
-                  }
-                : undefined,
-            collapsed: item.collapsed === true ? true : undefined,
-            warpEnabled: item.kind === 'saved-clip' && typeof item.warpEnabled === 'boolean'
-              ? item.warpEnabled
-              : undefined,
-            warpMode: item.kind === 'saved-clip' ? item.warpMode : undefined,
-            tempoRatio: item.kind === 'saved-clip' && typeof item.tempoRatio === 'number'
-              ? item.tempoRatio
-              : undefined,
-            semitones: item.kind === 'saved-clip' && typeof item.semitones === 'number'
-              ? item.semitones
-              : undefined,
-            cents: item.kind === 'saved-clip' && typeof item.cents === 'number'
-              ? item.cents
-              : undefined,
-            fromSnapshot: true
-          })
-          // Persisted analysis hydrates immediately; new imports use LIBRARY_ITEM_ANALYSIS.
-          if (typeof item.bpm === 'number' && item.bpm > 0) {
-            const persistedBeats = Array.isArray(item.beats) ? item.beats : []
-            const anchor =
-              typeof item.beatAnchorSec === 'number'
-                ? item.beatAnchorSec
-                : (persistedBeats[0] ?? 0)
-            library.setItemAnalysis(
-              libId,
-              item.bpm,
-              anchor,
-              persistedBeats,
-              item.variableTempo === true,
-              item.playbackFilePath,
-              item.lowConfidence === true
-            )
-          }
-          if (item.sampleMode === 'sample' || item.sampleMode === 'music') {
-            const target = library.items.find((i) => i.id === libId)
-            if (target) target.sampleMode = item.sampleMode
-          }
-          // Backfill metadata for older projects missing persisted duration.
-          if ((item.kind ?? 'audio-file') === 'audio-file') {
-            void refreshLibraryItemMedia(libId, item.filePath)
-          }
-        }
-        for (const item of library.items) {
-          if (item.kind !== 'saved-clip' || item.bpm !== undefined) continue
-          const sourceId = item.derivedFrom?.sourceItemId
-          if (!sourceId) continue
-          const source = library.byId[sourceId]
-          if (!source || typeof source.bpm !== 'number' || source.bpm <= 0) continue
-          library.setItemAnalysis(
-            item.id,
-            source.bpm,
-            source.beatAnchorSec ?? source.beats?.[0] ?? 0,
-            source.beats ?? [],
-            source.variableTempo === true,
-            source.decodedCacheFilePath,
-            source.lowConfidence === true
-          )
-        }
-      }
-
-      // Batch missing-peak requests after reconciliation.
-      const clipsNeedingPeaks: string[] = []
-      for (const t of snapshot.tracks) {
-        // Rebuild missing renderer tracks from the backend snapshot.
-        let track = this.tracks.find((x) => x.id === t.id)
-        if (!track) {
-          const index = this.tracks.length
-          const persistedName = t.name?.trim()
-          track = {
-            id: t.id,
-            name: persistedName && persistedName.length > 0 ? persistedName : `Track ${index + 1}`,
-            clipIds: [],
-            muted: t.muted === true,
-            soloed: t.soloed === true,
-            volume: Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain)),
-            colorIndex: index % TRACK_PALETTE.length,
-            lengthMs: DEFAULT_TRACK_LENGTH_MS,
-            heightPx: typeof t.heightPx === 'number' && t.heightPx > 0 ? t.heightPx : undefined,
-            toneBassDb: typeof t.toneBassDb === 'number' && t.toneBassDb !== 0 ? t.toneBassDb : undefined,
-            toneMidDb: typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined,
-            toneTrebleDb:
-              typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined,
-            toneLowCut: t.toneLowCut === true ? true : undefined,
-            toneHighCut: t.toneHighCut === true ? true : undefined,
-            reverbSend:
-              typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined,
-            delaySend:
-              typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined,
-            pan: typeof t.pan === 'number' && t.pan !== 0 ? t.pan : undefined,
-            levelerAmount:
-              typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
-                ? t.levelerAmount
-                : undefined
-          }
-          this.tracks.push(track)
-        } else {
-          const persistedName = t.name?.trim()
-          if (persistedName && persistedName.length > 0) {
-            track.name = persistedName
-          }
-          if (typeof t.heightPx === 'number' && t.heightPx > 0) {
-            track.heightPx = t.heightPx
-          }
-          // Mute/solo acks arrive as PROJECT_STATE refreshes.
-          track.muted = t.muted === true
-          track.soloed = t.soloed === true
-          track.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain))
-          track.toneBassDb =
-            typeof t.toneBassDb === 'number' && t.toneBassDb !== 0 ? t.toneBassDb : undefined
-          track.toneMidDb =
-            typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined
-          track.toneTrebleDb =
-            typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined
-          track.toneLowCut = t.toneLowCut === true ? true : undefined
-          track.toneHighCut = t.toneHighCut === true ? true : undefined
-          track.reverbSend =
-            typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined
-          track.delaySend =
-            typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined
-          track.pan = typeof t.pan === 'number' && t.pan !== 0 ? t.pan : undefined
-          track.levelerAmount =
-            typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
-              ? t.levelerAmount
-              : undefined
-        }
-        // Transitions are backend-authoritative and cleared by absent snapshot data.
-        track.transitions = hydrateTransitions(t.transitions)
-        for (const c of t.clips) {
-          const offset = Math.max(0, c.offsetMs)
-          // Library item id is the clip source of truth; skip unknown ids.
-          const libItem = library.byId[c.libraryItemId]
-          if (!libItem) {
-            log.warn(
-              'project',
-              `skip clip ${c.id} — unknown libraryItemId=${c.libraryItemId}`
-            )
-            continue
-          }
-          const clipFilePath = libItem.filePath
-          const existing = this.clips[c.id]
-          if (existing) {
-            existing.startMs = offset
-            existing.inMs = Math.max(0, c.inMs ?? 0)
-            existing.durationMs = Math.max(0, c.durationMs)
-            existing.unresolved = c.unresolved === true
-            // Relinked library items must refresh existing clip path/name caches.
-            existing.filePath = clipFilePath
-            existing.fileName = filePathToDisplayName(clipFilePath)
-            existing.playbackFilePath = libItem.playbackFilePath
-            existing.colorIndex = typeof c.colorIndex === 'number' ? c.colorIndex : undefined
-            existing.name = typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined
-            existing.warpEnabled = typeof c.warpEnabled === 'boolean' ? c.warpEnabled : undefined
-            existing.warpMode = c.warpMode
-            existing.tempoRatio = typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined
-            existing.semitones = typeof c.semitones === 'number' ? c.semitones : undefined
-            existing.cents = typeof c.cents === 'number' ? c.cents : undefined
-            existing.envelopePoints =
-              Array.isArray(c.envelopePoints) && c.envelopePoints.length >= 2
-                ? sanitizeEnvelopePoints(c.envelopePoints)
-                : undefined
-            existing.effectiveDurationMs =
-              typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined
-            existing.effectiveTempoRatio =
-              typeof c.effectiveTempoRatio === 'number' ? c.effectiveTempoRatio : undefined
-            existing.effectiveWarpActive =
-              typeof c.effectiveWarpActive === 'boolean' ? c.effectiveWarpActive : undefined
-            existing.pendingAutoWarp =
-              c.pendingAutoWarp === true && existing.warpEnabled !== true ? true : undefined
-            existing.locked = c.locked === true ? true : undefined
-            if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
-            continue
-          }
-          // Placeholder draws immediately; peaks are requested later.
-          const fileName = filePathToDisplayName(clipFilePath)
-          const placeholder: Clip = {
-            id: c.id,
-            trackId: t.id,
-            libraryItemId: c.libraryItemId,
-            filePath: clipFilePath,
-            playbackFilePath: libItem.playbackFilePath,
-            fileName,
-            startMs: offset,
-            inMs: Math.max(0, c.inMs ?? 0),
-            durationMs: Math.max(0, c.durationMs),
-            sampleRate: libItem.sampleRate,
-            channelCount: libItem.channelCount,
-            peaks: libItem.peaks.length > 0 ? libItem.peaks : new Float32Array(0),
-            unresolved: c.unresolved === true,
-            colorIndex: typeof c.colorIndex === 'number' ? c.colorIndex : undefined,
-            name: typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined,
-            warpEnabled: typeof c.warpEnabled === 'boolean' ? c.warpEnabled : undefined,
-            warpMode: c.warpMode,
-            tempoRatio: typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined,
-            semitones: typeof c.semitones === 'number' ? c.semitones : undefined,
-            cents: typeof c.cents === 'number' ? c.cents : undefined,
-            envelopePoints:
-              Array.isArray(c.envelopePoints) && c.envelopePoints.length >= 2
-                ? sanitizeEnvelopePoints(c.envelopePoints)
-                : undefined,
-            effectiveDurationMs:
-              typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined,
-            effectiveTempoRatio:
-              typeof c.effectiveTempoRatio === 'number' ? c.effectiveTempoRatio : undefined,
-            effectiveWarpActive:
-              typeof c.effectiveWarpActive === 'boolean' ? c.effectiveWarpActive : undefined,
-            pendingAutoWarp:
-              c.pendingAutoWarp === true && c.warpEnabled !== true ? true : undefined,
-            locked: c.locked === true ? true : undefined
-          }
-          this.clips[c.id] = placeholder
-          track.clipIds.push(c.id)
-          // Missing sources cannot produce peaks.
-          if (!placeholder.unresolved) clipsNeedingPeaks.push(c.id)
-          const clipEnd = placeholder.startMs + placeholder.durationMs
-          if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
-          if (track.clipIds.length === 1 && /^Track \d+$/.test(track.name)) {
-            track.name = fileName
-          }
-        }
-      }
-      // Backend order wins; optimistic local-only tracks stay appended.
-      if (snapshot.tracks.length > 0) {
-        const indexOf = new Map<string, number>()
-        for (let i = 0; i < snapshot.tracks.length; i++) {
-          const id = snapshot.tracks[i]?.id
-          if (id) indexOf.set(id, i)
-        }
-        const SENTINEL = Number.MAX_SAFE_INTEGER
-        this.tracks.sort((a, b) => {
-          const ai = indexOf.has(a.id) ? indexOf.get(a.id)! : SENTINEL
-          const bi = indexOf.has(b.id) ? indexOf.get(b.id)! : SENTINEL
-          return ai - bi
-        })
-      }
-      // Additive snapshots must not drop optimistic local tracks/clips.
-      // Missing peaks are requested after reconciliation and arrive as WAVEFORM_DATA.
-      for (const clipId of clipsNeedingPeaks) {
-        sendBridge('WAVEFORM_REQUEST', { clipId })
-      }
-
-      // Project length applies after tracks exist and clamps above clip ends.
-      if (pendingProjectLengthMs !== null && this.tracks.length > 0) {
-        this.setProjectLengthMs(pendingProjectLengthMs)
-      }
-
-      // Restore reset-only view state directly so it does not echo to the backend.
-      if (snapshot.reset === true) {
-        const savedSelected =
-          typeof snapshot.viewSelectedTrack === 'string' && snapshot.viewSelectedTrack.length > 0
-            ? snapshot.viewSelectedTrack
-            : null
-        this.selectedTrackId =
-          savedSelected !== null && this.tracks.some((t) => t.id === savedSelected)
-            ? savedSelected
-            : null
-        this.fxPanelOpen = snapshot.viewFxPanelOpen === true
-        this.fxTab = 'track'
-        this.peaksRevision++
-      }
-
-      // Migration: rebind pre-existing saved-clip windows to their saved item.
-      if (snapshot.reset === true || isSoftReplace) {
-        for (const clipId in this.clips) {
-          const clip = this.clips[clipId]
-          if (!clip) continue
-          const candidate = library.items.find(
-            (i) =>
-              i.kind === 'saved-clip' &&
-              i.derivedFrom?.sourceItemId === clip.libraryItemId &&
-              Math.abs((i.derivedFrom?.inMs ?? 0) - clip.inMs) < 0.5 &&
-              Math.abs((i.derivedFrom?.durationMs ?? 0) - clip.durationMs) < 0.5
-          )
-          if (candidate && candidate.id !== clip.libraryItemId) {
-            log.info(
-              'project',
-              `migrate clip ${clipId} libraryItemId=${clip.libraryItemId} -> ${candidate.id} (saved-clip window match)`
-            )
-            clip.libraryItemId = candidate.id
-            sendBridge('CLIP_REBIND', { clipId, libraryItemId: candidate.id })
-          }
-        }
-      }
-      if (pendingRecoveryLoadTimeout) {
-        clearTimeout(pendingRecoveryLoadTimeout)
-        pendingRecoveryLoadTimeout = null
-      }
-      if (pendingRecoveryLoadResolver) {
-        pendingRecoveryLoadResolver({ ok: true })
-        pendingRecoveryLoadResolver = null
-      }
+      applyProjectStateSnapshotImpl(this, snapshot)
+      persistence.resolvePendingRecoveryLoad()
     },
 
     // ─── Project file lifecycle ────────────────────────────────────────────
@@ -2240,139 +1677,41 @@ export const useProjectStore = defineStore('project', {
 
     /** Save current path; caller owns Save As dialog fallback. */
     requestSave(): boolean {
-      if (!this.currentFilePath) return false
-      log.info('project', `requestSave path=${this.currentFilePath}`)
-      const sent = sendBridge('PROJECT_SAVE', {
-        filePath: this.currentFilePath,
-        viewScrollX: this.viewScrollX ?? undefined
-      })
-      if (!sent) {
-        useNotificationsStore().pushError('Save failed: the audio engine isn\'t connected.')
-      }
-      return true
+      return persistence.requestSave(this)
     },
 
     requestSaveAs(filePath: string): void {
-      log.info('project', `requestSaveAs path=${filePath}`)
-      const sent = sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
-      if (!sent) {
-        useNotificationsStore().pushError('Save failed: the audio engine isn\'t connected.')
-      }
+      persistence.requestSaveAs(this, filePath)
     },
 
     /** Await PROJECT_SAVED so unsaved-change flows can continue deterministically. */
     saveAndWait(filePath: string, isSaveAs: boolean): Promise<{ ok: boolean; error?: string }> {
-      // Supersede stale waits so backend restarts cannot block the UI forever.
-      if (pendingSaveResolver) pendingSaveResolver({ ok: false, error: 'Superseded by a newer save' })
-      if (pendingSaveTimeout) {
-        clearTimeout(pendingSaveTimeout)
-        pendingSaveTimeout = null
-      }
-      const promise = new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        pendingSaveResolver = resolve
-        pendingSaveTimeout = setTimeout(() => {
-          pendingSaveTimeout = null
-          if (!pendingSaveResolver) return
-          pendingSaveResolver({ ok: false, error: 'Timed out waiting for the audio engine to save' })
-          pendingSaveResolver = null
-        }, PENDING_SAVE_TIMEOUT_MS)
-      })
-      const sent = isSaveAs
-        ? sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
-        : sendBridge('PROJECT_SAVE', { filePath, viewScrollX: this.viewScrollX ?? undefined })
-      if (!sent) {
-        if (pendingSaveTimeout) {
-          clearTimeout(pendingSaveTimeout)
-          pendingSaveTimeout = null
-        }
-        pendingSaveResolver?.({ ok: false, error: 'The audio engine isn\'t connected' })
-        pendingSaveResolver = null
-      }
-      return promise
+      return persistence.saveAndWait(this, filePath, isSaveAs)
     },
 
     /** Resolve any pending saveAndWait on PROJECT_SAVED. */
     notifySaveAck(ok: boolean, error?: string): void {
-      if (pendingSaveTimeout) {
-        clearTimeout(pendingSaveTimeout)
-        pendingSaveTimeout = null
-      }
-      if (pendingSaveResolver) {
-        pendingSaveResolver({ ok, error })
-        pendingSaveResolver = null
-      }
+      persistence.notifySaveAck(ok, error)
     },
 
     saveViewStateAndWait(): Promise<{ ok: boolean; error?: string }> {
-      if (!this.currentFilePath) return Promise.resolve({ ok: true })
-      if (pendingViewStateSaveResolver) {
-        pendingViewStateSaveResolver({ ok: false, error: 'Superseded by a newer view-state save' })
-      }
-      const promise = new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        pendingViewStateSaveResolver = resolve
-      })
-      sendBridge('PROJECT_SAVE_VIEW_STATE', {
-        filePath: this.currentFilePath,
-        viewScrollX: this.viewScrollX ?? 0
-      })
-      return promise
+      return persistence.saveViewStateAndWait(this)
     },
 
     notifyViewStateSaveAck(ok: boolean, error?: string): void {
-      if (pendingViewStateSaveResolver) {
-        pendingViewStateSaveResolver({ ok, error })
-        pendingViewStateSaveResolver = null
-      }
+      persistence.notifyViewStateSaveAck(ok, error)
     },
 
-    /** Autosave tick with timeout so manifest resolvers cannot leak. */
     autosaveAndWait(filePath: string): Promise<{ ok: boolean; error?: string }> {
-      // Supersede older ticks for this file so acks cannot resolve the wrong promise.
-      const existing = pendingAutosaveResolvers.get(filePath)
-      if (existing) {
-        existing({ ok: false, error: 'Superseded by a newer autosave' })
-        pendingAutosaveResolvers.delete(filePath)
-      }
-      const promise = new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        pendingAutosaveResolvers.set(filePath, resolve)
-      })
-      const sent = sendBridge('PROJECT_AUTOSAVE', {
-        filePath,
-        viewScrollX: this.viewScrollX ?? undefined
-      })
-      if (!sent) {
-        pendingAutosaveResolvers.delete(filePath)
-        return Promise.resolve({ ok: false, error: 'The audio engine isn\'t connected' })
-      }
-      // Dropped acks must not leak resolvers.
-      const timeoutId = setTimeout(() => {
-        const r = pendingAutosaveResolvers.get(filePath)
-        if (r) {
-          r({ ok: false, error: 'Autosave timed out' })
-          pendingAutosaveResolvers.delete(filePath)
-        }
-      }, PENDING_SAVE_TIMEOUT_MS)
-      // Bridge dispatch must clear the timeout before resolving.
-      const original = pendingAutosaveResolvers.get(filePath)!
-      const wrapped = (result: { ok: boolean; error?: string }): void => {
-        clearTimeout(timeoutId)
-        original(result)
-      }
-      pendingAutosaveResolvers.set(filePath, wrapped)
-      return promise
+      return persistence.autosaveAndWait(this, filePath)
     },
 
     notifyAutosaveAck(filePath: string, ok: boolean, error?: string): void {
-      const resolver = pendingAutosaveResolvers.get(filePath)
-      if (resolver) {
-        pendingAutosaveResolvers.delete(filePath)
-        resolver({ ok, error })
-      }
+      persistence.notifyAutosaveAck(filePath, ok, error)
     },
 
     requestLoad(filePath: string): void {
-      log.info('project', `requestLoad path=${filePath}`)
-      sendBridge('PROJECT_LOAD', { filePath })
+      persistence.requestLoad(filePath)
     },
 
     /** Recovery loads autosave content but keeps the original path dirty. */
@@ -2381,54 +1720,11 @@ export const useProjectStore = defineStore('project', {
       originalPath: string | null,
       projectId?: string
     ): Promise<{ ok: boolean; error?: string }> {
-      log.info(
-        'project',
-        `requestLoadRecovery autosavePath=${autosavePath} originalPath=${originalPath ?? 'null'} projectId=${projectId ?? 'null'}`
-      )
-      this.pendingRecoveredProjectId = projectId ?? null
-      if (pendingRecoveryLoadResolver) {
-        pendingRecoveryLoadResolver({ ok: false, error: 'Superseded by a newer recovery load' })
-      }
-      if (pendingRecoveryLoadTimeout) {
-        clearTimeout(pendingRecoveryLoadTimeout)
-        pendingRecoveryLoadTimeout = null
-      }
-      const promise = new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        pendingRecoveryLoadResolver = resolve
-        pendingRecoveryLoadTimeout = setTimeout(() => {
-          pendingRecoveryLoadTimeout = null
-          this.pendingRecoveredProjectId = null
-          if (!pendingRecoveryLoadResolver) return
-          pendingRecoveryLoadResolver({
-            ok: false,
-            error: 'Timed out waiting for the audio engine to load'
-          })
-          pendingRecoveryLoadResolver = null
-        }, PENDING_LOAD_TIMEOUT_MS)
-      })
-      const sent = sendBridge('PROJECT_LOAD_RECOVERY', { autosavePath, originalPath })
-      if (!sent) {
-        if (pendingRecoveryLoadTimeout) {
-          clearTimeout(pendingRecoveryLoadTimeout)
-          pendingRecoveryLoadTimeout = null
-        }
-        this.pendingRecoveredProjectId = null
-        pendingRecoveryLoadResolver?.({ ok: false, error: 'The audio engine isn\'t connected' })
-        pendingRecoveryLoadResolver = null
-      }
-      return promise
+      return persistence.requestLoadRecovery(this, autosavePath, originalPath, projectId)
     },
 
     notifyProjectLoadFailed(error?: string): void {
-      if (pendingRecoveryLoadTimeout) {
-        clearTimeout(pendingRecoveryLoadTimeout)
-        pendingRecoveryLoadTimeout = null
-      }
-      this.pendingRecoveredProjectId = null
-      if (pendingRecoveryLoadResolver) {
-        pendingRecoveryLoadResolver({ ok: false, error })
-        pendingRecoveryLoadResolver = null
-      }
+      persistence.notifyProjectLoadFailed(this, error)
     },
 
     requestRename(name: string): void {

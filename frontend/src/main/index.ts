@@ -1,27 +1,25 @@
-// FILE-SIZE EXCEPTION (justified): Electron main entry. Pure leaf concerns are
-// extracted (audioMetadata, audioPaths, preferences, autosaveStore); the residual
-// is the stateful singleton core — window/backend lifecycle plus ~50 ipcMain
-// handlers that close over shared mutable singletons (prefs, mainWindow, timers).
-// Splitting those would require threading a context bag = contrived, so it stays.
+// FILE-SIZE EXCEPTION (justified): Electron main entry. Self-contained IPC groups
+// and leaf concerns are extracted — audio dialogs/reads/transcode (ipc/audioHandlers),
+// autosave filesystem IPCs (ipc/autosaveHandlers), plus audioMetadata, audioPaths,
+// preferences, autosaveStore. The residual is the stateful singleton core —
+// window/backend lifecycle plus the prefs/window/project IPC handlers that all read
+// and mutate shared singletons (the live `prefs` object, mainWindow, schedule/flush
+// save timers). Threading those into a per-handler context bag would shift coupling
+// rather than reduce it, so they stay together until a dedicated preferences service
+// owns that state.
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { readFile, writeFile, mkdir, readdir, stat, rm } from 'node:fs/promises'
+import { readFile, mkdir } from 'node:fs/promises'
 import { createServer as createNetServer } from 'node:net'
 import { basename, dirname, extname, isAbsolute, join, resolve as pathResolve } from 'node:path'
 import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogLevel } from './log'
-import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { parseFile } from 'music-metadata'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 import { BackendSupervisor } from './backendSupervisor'
-import { normalizeMetadata } from './audioMetadata'
-import {
-  AUDIO_FILE_EXTENSIONS,
-  canonicalisePath,
-  isAllowedAudioPath,
-  registerIssuedPath
-} from './audioPaths'
+import { registerAudioHandlers } from './ipc/audioHandlers'
+import { registerAutosaveHandlers } from './ipc/autosaveHandlers'
+import { registerIssuedPath } from './audioPaths'
 import {
   AUTOSAVE_DEFAULT_SECONDS,
   MAX_RECENT_PROJECTS,
@@ -38,21 +36,10 @@ import {
   type ToastPrefs,
   type UiPrefs
 } from './preferences'
-import {
-  AUTOSAVE_FILENAME,
-  AUTOSAVE_ID_REGEX,
-  AUTOSAVE_MANIFEST_FILENAME,
-  getAutosaveRoot,
-  isAutosaveManifest,
-  resolveAutosaveDir,
-  type AutosaveManifest
-} from './autosaveStore'
 
 // ─── Theme / colours (kept in sync with the renderer Tailwind palette) ──────
 const COLOUR_BG = '#18181b' // zinc-900
 
-// Cache renderer-side transcodes by source path and decoded geometry.
-const TRANSCODE_CACHE_DIR = join(tmpdir(), 'silverdaw-transcode-cache')
 
 let backendSupervisor: BackendSupervisor | null = null
 let mainWindow: BrowserWindow | null = null
@@ -151,12 +138,6 @@ let startupDevToolsEnabled = false
 function getPrefsPath(): string {
   if (!prefsPath) prefsPath = join(app.getPath('userData'), 'preferences.json')
   return prefsPath
-}
-
-function rememberClipDir(pickedFile: string): void {
-  if (!pickedFile) return
-  const dir = dirname(pickedFile)
-  if (dir && dir !== currentClipDir) currentClipDir = dir
 }
 
 async function loadPreferences(): Promise<void> {
@@ -715,209 +696,12 @@ app.whenReady().then(async () => {
   })
 
 
-  ipcMain.handle(IPC.audio.open, async () => {
-    if (!mainWindow) return null
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Add Track from File',
-      defaultPath: currentClipDir || undefined,
-      filters: [{ name: 'Audio files', extensions: [...AUDIO_FILE_EXTENSIONS] }],
-      properties: ['openFile']
-    })
-    if (result.canceled || result.filePaths.length === 0) return null
-    const filePath = result.filePaths[0]
-    rememberClipDir(filePath)
-    const buf = await readFile(filePath)
-    const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
-    registerIssuedPath(filePath)
-    return { filePath, fileName: basename(filePath), data }
-  })
-
-  ipcMain.handle(IPC.audio.openMany, async () => {
-    if (!mainWindow) return []
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Import Audio into Library',
-      defaultPath: currentClipDir || undefined,
-      filters: [{ name: 'Audio files', extensions: [...AUDIO_FILE_EXTENSIONS] }],
-      properties: ['openFile', 'multiSelections']
-    })
-    if (result.canceled || result.filePaths.length === 0) return []
-    rememberClipDir(result.filePaths[0])
-    const out: { filePath: string; fileName: string; data: ArrayBuffer }[] = []
-    for (const filePath of result.filePaths) {
-      try {
-        const buf = await readFile(filePath)
-        const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
-        registerIssuedPath(filePath)
-        out.push({ filePath, fileName: basename(filePath), data })
-      } catch (err) {
-        console.error('[audio:openMany] read failed for', filePath, err)
-      }
+  registerAudioHandlers({
+    getMainWindow: () => mainWindow,
+    getCurrentClipDir: () => currentClipDir,
+    setCurrentClipDir: (dir) => {
+      currentClipDir = dir
     }
-    return out
-  })
-
-  // Relink returns a path only; backend reloads audio while metadata reads stay allowed.
-  ipcMain.handle(
-    IPC.audio.chooseFile,
-    async (_evt, args: unknown): Promise<string | null> => {
-      if (!mainWindow) return null
-      const a = (args ?? {}) as { title?: string; defaultPath?: string }
-      const result = await dialog.showOpenDialog(mainWindow, {
-        title: typeof a.title === 'string' ? a.title : 'Locate audio file',
-        defaultPath:
-          typeof a.defaultPath === 'string' && a.defaultPath.length > 0
-            ? a.defaultPath
-            : currentClipDir || undefined,
-        filters: [{ name: 'Audio files', extensions: [...AUDIO_FILE_EXTENSIONS] }],
-        properties: ['openFile']
-      })
-      if (result.canceled || result.filePaths.length === 0) return null
-      const picked = result.filePaths[0]
-      rememberClipDir(picked)
-      registerIssuedPath(picked)
-      return picked
-    }
-  )
-
-  // OS drag-drop paths are registered; actual reads still enforce extension allow-list.
-  ipcMain.on(IPC.audio.registerDroppedPath, (_evt, filePath: unknown) => {
-    if (typeof filePath !== 'string') return
-    registerIssuedPath(filePath)
-  })
-
-  ipcMain.handle(IPC.audio.readFile, async (_evt, filePath: unknown) => {
-    if (!isAllowedAudioPath(filePath)) {
-      console.warn('[audio:readFile] rejected path not on allow-list:', filePath)
-      return null
-    }
-    try {
-      const buf = await readFile(filePath)
-      const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
-      return { filePath, fileName: basename(filePath), data }
-    } catch (err) {
-      console.error('[audio:readFile] failed for', filePath, err)
-      return null
-    }
-  })
-
-  ipcMain.handle(IPC.audio.readMetadata, async (_evt, filePath: unknown) => {
-    if (!isAllowedAudioPath(filePath)) {
-      console.warn('[audio:readMetadata] rejected path not on allow-list:', filePath)
-      return null
-    }
-    try {
-      const meta = await parseFile(filePath, { duration: true, skipCovers: false })
-      return normalizeMetadata(meta)
-    } catch (err) {
-      console.warn('[audio:readMetadata] failed for', filePath, err)
-      return null
-    }
-  })
-
-  // Transcode renderer-decoded PCM for formats the backend cannot decode natively.
-  ipcMain.handle(IPC.audio.writeTempWav, async (_evt, payload: unknown) => {
-    if (!payload || typeof payload !== 'object') return null
-    const p = payload as {
-      sourcePath?: unknown
-      channels?: unknown
-      sampleRate?: unknown
-    }
-    if (typeof p.sourcePath !== 'string' || !isAllowedAudioPath(p.sourcePath)) {
-      console.warn('[audio:writeTempWav] rejected source not on allow-list:', p.sourcePath)
-      return null
-    }
-    if (typeof p.sampleRate !== 'number' || !Number.isFinite(p.sampleRate) || p.sampleRate <= 0) {
-      return null
-    }
-    if (!Array.isArray(p.channels) || p.channels.length === 0 || p.channels.length > 8) {
-      return null
-    }
-    const chans: Float32Array[] = []
-    let frameCount = -1
-    for (const c of p.channels) {
-      let arr: Float32Array
-      if (c instanceof Float32Array) {
-        arr = c
-      } else if (c instanceof ArrayBuffer) {
-        arr = new Float32Array(c)
-      } else if (ArrayBuffer.isView(c)) {
-        const view = c as ArrayBufferView
-        arr = new Float32Array(view.buffer, view.byteOffset, view.byteLength / 4)
-      } else {
-        return null
-      }
-      if (frameCount < 0) frameCount = arr.length
-      else if (arr.length !== frameCount) return null
-      chans.push(arr)
-    }
-    if (frameCount <= 0) return null
-
-    try {
-      await mkdir(TRANSCODE_CACHE_DIR, { recursive: true })
-    } catch (err) {
-      console.error('[audio:writeTempWav] failed to create cache dir:', err)
-      return null
-    }
-
-    // Include decoded geometry so incompatible re-decodes do not collide.
-    const hash = createHash('sha1')
-      .update(canonicalisePath(p.sourcePath))
-      .update(`|sr=${p.sampleRate}|ch=${chans.length}|n=${frameCount}`)
-      .digest('hex')
-      .slice(0, 16)
-    const outPath = join(TRANSCODE_CACHE_DIR, `${hash}.wav`)
-
-    // Float WAV avoids quantising already-decoded samples.
-    const numChannels = chans.length
-    const bitsPerSample = 32
-    const byteRate = p.sampleRate * numChannels * 4
-    const blockAlign = numChannels * 4
-    const dataSize = frameCount * blockAlign
-    const headerSize = 44
-    const buf = Buffer.alloc(headerSize + dataSize)
-
-    let off = 0
-    buf.write('RIFF', off)
-    off += 4
-    buf.writeUInt32LE(headerSize + dataSize - 8, off)
-    off += 4
-    buf.write('WAVE', off)
-    off += 4
-    buf.write('fmt ', off)
-    off += 4
-    buf.writeUInt32LE(16, off)
-    off += 4
-    buf.writeUInt16LE(3 /* IEEE_FLOAT */, off)
-    off += 2
-    buf.writeUInt16LE(numChannels, off)
-    off += 2
-    buf.writeUInt32LE(p.sampleRate, off)
-    off += 4
-    buf.writeUInt32LE(byteRate, off)
-    off += 4
-    buf.writeUInt16LE(blockAlign, off)
-    off += 2
-    buf.writeUInt16LE(bitsPerSample, off)
-    off += 2
-    buf.write('data', off)
-    off += 4
-    buf.writeUInt32LE(dataSize, off)
-    off += 4
-    for (let f = 0; f < frameCount; f++) {
-      for (let c = 0; c < numChannels; c++) {
-        buf.writeFloatLE(chans[c]![f]!, off)
-        off += 4
-      }
-    }
-
-    try {
-      await writeFile(outPath, buf)
-    } catch (err) {
-      console.error('[audio:writeTempWav] failed to write WAV:', err)
-      return null
-    }
-    registerIssuedPath(outPath)
-    return outPath
   })
 
   ipcMain.handle(IPC.prefs.getUi, () => prefs.ui)
@@ -1267,138 +1051,7 @@ app.whenReady().then(async () => {
     schedulePrefsSave()
   })
 
-  // ─── Autosave folder + manifest IPCs ────────────────────────────────────
-  // Main confines autosave filesystem access to validated project buckets.
-
-  ipcMain.handle(
-    IPC.autosave.resolveDir,
-    async (_evt, projectId: unknown): Promise<{ dir: string; filePath: string } | null> => {
-      if (typeof projectId !== 'string') return null
-      try {
-        const dir = resolveAutosaveDir(projectId)
-        await mkdir(dir, { recursive: true })
-        return { dir, filePath: join(dir, AUTOSAVE_FILENAME) }
-      } catch (err) {
-        console.warn('[autosave:resolveDir]', err)
-        return null
-      }
-    }
-  )
-
-  ipcMain.handle(IPC.autosave.writeManifest, async (_evt, payload: unknown): Promise<boolean> => {
-    if (!payload || typeof payload !== 'object') return false
-    const p = payload as Partial<AutosaveManifest>
-    if (typeof p.projectId !== 'string' || !AUTOSAVE_ID_REGEX.test(p.projectId)) return false
-    const manifest: AutosaveManifest = {
-      projectId: p.projectId,
-      originalPath: typeof p.originalPath === 'string' && p.originalPath.length > 0 ? p.originalPath : null,
-      projectName: typeof p.projectName === 'string' ? p.projectName : 'Untitled',
-      savedAtIso: typeof p.savedAtIso === 'string' ? p.savedAtIso : new Date().toISOString(),
-      pending: typeof p.pending === 'boolean' ? p.pending : false,
-      appVersion: app.getVersion()
-    }
-    try {
-      const dir = resolveAutosaveDir(manifest.projectId)
-      await mkdir(dir, { recursive: true })
-      await writeFile(join(dir, AUTOSAVE_MANIFEST_FILENAME), JSON.stringify(manifest, null, 2), 'utf8')
-      return true
-    } catch (err) {
-      console.warn('[autosave:writeManifest]', err)
-      return false
-    }
-  })
-
-  ipcMain.handle(IPC.autosave.listRecoverable, async (): Promise<
-    Array<{
-      projectId: string
-      originalPath: string | null
-      projectName: string
-      autosavePath: string
-      savedAtIso: string
-      originalExists: boolean
-    }>
-  > => {
-    const root = getAutosaveRoot()
-    let entries: string[] = []
-    try {
-      entries = await readdir(root)
-    } catch {
-      return []
-    }
-    const out: Array<{
-      projectId: string
-      originalPath: string | null
-      projectName: string
-      autosavePath: string
-      savedAtIso: string
-      originalExists: boolean
-    }> = []
-    for (const projectId of entries) {
-      if (!AUTOSAVE_ID_REGEX.test(projectId)) continue
-      const dir = join(root, projectId)
-      const manifestPath = join(dir, AUTOSAVE_MANIFEST_FILENAME)
-      const autosavePath = join(dir, AUTOSAVE_FILENAME)
-      let manifest: AutosaveManifest | null = null
-      try {
-        const raw = await readFile(manifestPath, 'utf8')
-        const parsed = JSON.parse(raw) as unknown
-        if (isAutosaveManifest(parsed)) manifest = parsed
-      } catch {
-        manifest = null
-      }
-      if (!manifest) continue
-      if (manifest.pending) continue
-      let autosaveStat: Awaited<ReturnType<typeof stat>> | null = null
-      try {
-        autosaveStat = await stat(autosavePath)
-      } catch {
-        continue
-      }
-      // Recoverable iff autosave is newer or the backing file is missing.
-      let originalExists = false
-      let recoverable = manifest.originalPath === null
-      if (manifest.originalPath) {
-        try {
-          const origStat = await stat(manifest.originalPath)
-          originalExists = true
-          if (autosaveStat.mtimeMs > origStat.mtimeMs + 500) recoverable = true
-        } catch {
-          recoverable = true
-        }
-      }
-      if (!recoverable) continue
-      out.push({
-        projectId: manifest.projectId,
-        originalPath: manifest.originalPath,
-        projectName: manifest.projectName,
-        autosavePath,
-        savedAtIso: manifest.savedAtIso,
-        originalExists
-      })
-    }
-    out.sort((a, b) => (a.savedAtIso < b.savedAtIso ? 1 : -1))
-    return out
-  })
-
-  ipcMain.handle(IPC.autosave.clear, async (_evt, projectId: unknown): Promise<boolean> => {
-    if (typeof projectId !== 'string' || !AUTOSAVE_ID_REGEX.test(projectId)) return false
-    try {
-      const dir = resolveAutosaveDir(projectId)
-      // Paranoid root check in addition to projectId validation.
-      const root = getAutosaveRoot()
-      const canonical = pathResolve(dir)
-      const canonicalRoot = pathResolve(root)
-      if (!canonical.toLowerCase().startsWith(canonicalRoot.toLowerCase())) {
-        console.warn('[autosave:clear] refused traversal:', canonical)
-        return false
-      }
-      await rm(canonical, { recursive: true, force: true })
-      return true
-    } catch (err) {
-      console.warn('[autosave:clear]', err)
-      return false
-    }
-  })
+  registerAutosaveHandlers()
 
   // Peaks reads are confined to the backend-produced cache directory.
   const peaksCacheDir = pathResolve(app.getPath('appData'), 'Silverdaw', 'peaks')

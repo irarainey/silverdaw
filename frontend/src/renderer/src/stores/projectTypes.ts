@@ -186,3 +186,75 @@ export interface ClipboardEntry {
 
 /** Default name shown in the title bar before a project is named or loaded. */
 export const DEFAULT_PROJECT_NAME = 'Untitled'
+
+/** Reactive store state shape for the project store. */
+export interface ProjectState {
+  tracks: Track[]
+  clips: Record<string, Clip>
+  markers: Marker[]
+  /** Bumped on any clip peaks change — a cheap reactive redraw signal (peaks mutate in place). */
+  peaksRevision: number
+
+  // ─── Project file identity ───────────────────────────────────────────────
+  /** Absolute path of the loaded `.silverdaw` file; null until first saved. */
+  currentFilePath: string | null
+  /** User-facing project name. `Untitled` for an unsaved project. */
+  projectName: string
+  /** Mutated since last load/save/new. Driven by PROJECT_DIRTY; reset on every PROJECT_STATE apply. */
+  isDirty: boolean
+  /** Stable id bucketing autosave artefacts. Derived from the file path (saved) or a
+   *  UUID (untitled); refreshed on PROJECT_STATE reset=true. Null until first snapshot. */
+  projectId: string | null
+  /** Project id from the recovery manifest while an untitled recovery load is in flight. */
+  pendingRecoveredProjectId: string | null
+  /** `projectId` before the last Load/New/Save As; lets autosave delete the old bucket safely. */
+  previousProjectId: string | null
+  /** Engine recovery in flight: suppresses autosave writes and bucket-cleanup so the
+   *  reconnect snapshot can't delete the autosave we're restoring from. */
+  recoveryInFlight: boolean
+  /** Persisted horizontal zoom (px/sec). Null = no preference yet (keep renderer default). */
+  viewPxPerSecond: number | null
+  /** Persisted horizontal scroll (px); same null semantics as `viewPxPerSecond`. */
+  viewScrollX: number | null
+
+  /** Bottom panel shows Track FX (vs Library). Persisted as non-dirty view state. */
+  fxPanelOpen: boolean
+
+  /** Which FX rack the bottom panel shows: per-track or project-wide. UI-only (not persisted). */
+  fxTab: 'track' | 'project'
+
+  /** Selected clip id (UI-only). Drives the selection outline and Cut/Copy target. */
+  selectedClipId: string | null
+
+  /** Selected track id — paste target and Track FX target. Persisted as non-dirty view state. */
+  selectedTrackId: string | null
+
+  /** Cut/copy buffer for `pasteClipAtPlayhead`. Renderer-only; cleared on load/new. */
+  clipboardClip: ClipboardEntry | null
+
+  /** Source clip id -> last duplicated clip id for repeated duplicate commands. */
+  duplicateTailBySource: Record<string, string>
+
+  /** Backend UndoManager availability; drives the Edit > Undo/Redo menu. From EDIT_UNDO_STATE. */
+  canUndo: boolean
+  canRedo: boolean
+  /** Next undo/redo transaction label; null when the matching `can…` flag is false. */
+  undoLabel: string | null
+  redoLabel: string | null
+
+  /** Per-project preferred output device. Null = no override. On load, bridgeService
+   *  switches to it if available, else warns and keeps the user-scope device. */
+  audioOutputTypeName: string | null
+  audioOutputDeviceName: string | null
+
+  /** Target sample rate (Hz) driving the playback-cache rebuild. Null = adopt user default. 44100/48000 only. */
+  targetSampleRate: number | null
+  /** Opaque renderer-owned JSON of last-used export-dialog settings; backend round-trips it verbatim. Null = defaults. */
+  exportSettingsJson: string | null
+  /** Master output volume (0..1 linear), applied to live mix and exports. Persisted. */
+  masterVolume: number
+  /** Project-shared Reverb; persisted. Defaults all-zero (inaudible). */
+  projectReverb: ProjectReverbState
+  /** Project-shared tempo-locked Delay. Defaults 1/8-note, zero feedback/tone/mix (inaudible). */
+  projectDelay: ProjectDelayState
+}
