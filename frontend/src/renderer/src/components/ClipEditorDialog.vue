@@ -7,17 +7,11 @@ import { useUiStore } from '@/stores/uiStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { effectiveClipDurationMs, useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
-import { formatTime } from '@/lib/musicTime'
 import { isWarpActive } from '@/lib/warp'
 import { useClipEditorTarget } from '@/lib/clipEditor/useClipEditorTarget'
-import {
-  MAX_ZOOM,
-  useClipEditorViewport
-} from '@/lib/clipEditor/useClipEditorViewport'
-import {
-  currentHasTempoWarp,
-  useClipEditorWarpDraft
-} from '@/lib/clipEditor/useClipEditorWarpDraft'
+import { useClipEditorViewport } from '@/lib/clipEditor/useClipEditorViewport'
+import { useClipEditorWarpDraft } from '@/lib/clipEditor/useClipEditorWarpDraft'
+import { useClipEditorDirtyState } from '@/lib/clipEditor/useClipEditorDirtyState'
 import { useClipEditorVolumeShapeDraft } from '@/lib/clipEditor/useClipEditorVolumeShapeDraft'
 import { useClipEditorWaveform } from '@/lib/clipEditor/useClipEditorWaveform'
 import { useClipEditorPreview } from '@/lib/clipEditor/useClipEditorPreview'
@@ -28,6 +22,9 @@ import { useClipEditorKeyboard } from '@/lib/clipEditor/useClipEditorKeyboard'
 import { useClipEditorTransport } from '@/lib/clipEditor/useClipEditorTransport'
 import ClipEditorWarpPanel from '@/components/ClipEditorWarpPanel.vue'
 import ClipEditorPitchPanel from '@/components/ClipEditorPitchPanel.vue'
+import ClipEditorPlaybackControls from '@/components/ClipEditorPlaybackControls.vue'
+import ClipEditorSelectionInfo from '@/components/ClipEditorSelectionInfo.vue'
+import ClipEditorViewControls from '@/components/ClipEditorViewControls.vue'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 
 const props = defineProps<{
@@ -156,57 +153,32 @@ const {
 void _basePxPerMs
 
 
-// Dirty when either selection or cropped view differs from the persisted window.
-const hasSelectionChanged = computed(() => {
-  if (!editsExistingClip.value) return false
-  const clip = timelineClip.value
-  const entry = editorItem.value
-  if (!entry) return false
-  const origIn = clip?.inMs ?? entry.derivedFrom?.inMs ?? 0
-  const origDur = clip?.durationMs ?? entry.derivedFrom?.durationMs ?? entry.durationMs
-  if (selectionInMs.value !== origIn || selectionDurationMs.value !== origDur) return true
-  if (cropViewInMs.value !== origIn || cropViewDurationMs.value !== origDur) return true
-  return false
-})
-
-const hasWarpPitchChanged = computed(() => {
-  const current = timelineClip.value ?? editorItem.value
-  if (!current || !editsExistingClip.value) return false
-  const currentTempoEnabled = currentHasTempoWarp(current)
-  const currentTempoPinned = typeof current.tempoRatio === 'number' && current.tempoRatio > 0 && current.tempoRatio !== 1
-  const currentPinnedBpm =
-    currentTempoPinned && typeof sourceBpm.value === 'number' && sourceBpm.value > 0 && typeof current.tempoRatio === 'number'
-      ? Math.round(sourceBpm.value * current.tempoRatio * 100) / 100
-      : Math.round(transport.bpm * 100) / 100
-  return (
-    draftTempoEnabled.value !== currentTempoEnabled ||
-    draftMode.value !== (current.warpMode ?? 'rhythmic') ||
-    draftTempoPinned.value !== currentTempoPinned ||
-    Math.abs(draftPinnedBpm.value - currentPinnedBpm) > 0.005 ||
-    draftSemitones.value !== (current.semitones ?? 0) ||
-    draftCents.value !== (current.cents ?? 0)
-  )
-})
-
-const canSaveChanges = computed(() => {
-  if (!editsExistingClip.value) return false
-  // Shape-only edits cannot enable Save where shape persistence is unsupported.
-  const volumeShapeDirty = editsSingleTimelineClip.value && hasVolumeShapeChanged.value
-  return hasSelectionChanged.value || hasWarpPitchChanged.value || volumeShapeDirty
-})
-
-// Non-destructive crop is enabled only for a narrowing selection.
-const canApplyCrop = computed(() => {
-  if (!editorItem.value) return false
-  if (selectionDurationMs.value <= 0) return false
-  return (
-    selectionInMs.value > cropViewInMs.value + 0.5 ||
-    selectionEndMs.value < cropViewInMs.value + cropViewDurationMs.value - 0.5
-  )
-})
-
-const canSaveAsNew = computed(() => {
-  return !editsExistingClip.value && !!sourceItem.value && selectionDurationMs.value > 0
+// Dirty-state + save/crop affordances live in `useClipEditorDirtyState`.
+const {
+  hasWarpPitchChanged,
+  canSaveChanges,
+  canApplyCrop,
+  canSaveAsNew
+} = useClipEditorDirtyState({
+  editsExistingClip: () => editsExistingClip.value,
+  editsSingleTimelineClip: () => editsSingleTimelineClip.value,
+  timelineClip: () => timelineClip.value,
+  editorItem: () => editorItem.value,
+  sourceItem: () => sourceItem.value,
+  selectionInMs: () => selectionInMs.value,
+  selectionDurationMs: () => selectionDurationMs.value,
+  selectionEndMs: () => selectionEndMs.value,
+  cropViewInMs: () => cropViewInMs.value,
+  cropViewDurationMs: () => cropViewDurationMs.value,
+  draftTempoEnabled: () => draftTempoEnabled.value,
+  draftMode: () => draftMode.value,
+  draftTempoPinned: () => draftTempoPinned.value,
+  draftPinnedBpm: () => draftPinnedBpm.value,
+  draftSemitones: () => draftSemitones.value,
+  draftCents: () => draftCents.value,
+  hasVolumeShapeChanged: () => hasVolumeShapeChanged.value,
+  sourceBpm: () => sourceBpm.value,
+  projectBpm: () => transport.bpm
 })
 
 const playheadAbsMs = computed(() => viewInMs.value + preview.positionMs)
@@ -627,75 +599,15 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
               {{ sourceItem.fileName }}
             </p>
           </div>
-          <div class="flex items-center gap-1 justify-self-center">
-            <button
-              type="button"
-              data-borderless-button="true"
-              class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-              title="Skip to start"
-              @click="onSkipToStart"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                class="h-5 w-5"
-              ><path d="M6 5h2v14H6V5zm3 7l11-7v14L9 12z" /></svg>
-            </button>
-            <button
-              type="button"
-              data-borderless-button="true"
-              class="rounded p-2 hover:bg-blue-600 hover:text-white"
-              :class="preview.isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
-              :disabled="!preview.isLoaded"
-              :title="!preview.isLoaded ? 'Preparing preview…' : preview.isPlaying ? 'Pause (Space)' : 'Play (Space)'"
-              @click="onTogglePlay"
-            >
-              <svg
-                v-if="preview.isPlaying"
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                class="h-6 w-6"
-              ><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" /></svg>
-              <svg
-                v-else
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                class="h-6 w-6"
-              ><path d="M8 5v14l11-7L8 5z" /></svg>
-            </button>
-            <button
-              type="button"
-              data-borderless-button="true"
-              class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-              title="Skip to end"
-              @click="onSkipToEnd"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                class="h-5 w-5"
-              ><path d="M16 5h2v14h-2V5zM4 5l11 7-11 7V5z" /></svg>
-            </button>
-            <button
-              type="button"
-              data-borderless-button="true"
-              class="ml-1 rounded p-2 hover:bg-zinc-800"
-              :class="loopEnabled ? 'bg-blue-600 text-white hover:bg-blue-500' : 'text-zinc-300 hover:text-zinc-100'"
-              :title="loopEnabled ? 'Loop on (L)' : 'Loop off (L)'"
-              @click="onToggleLoop"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                class="h-5 w-5"
-              ><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>
-            </button>
-          </div>
+          <ClipEditorPlaybackControls
+            :is-playing="preview.isPlaying"
+            :is-loaded="preview.isLoaded"
+            :loop-enabled="loopEnabled"
+            @skip-to-start="onSkipToStart"
+            @toggle-play="onTogglePlay"
+            @skip-to-end="onSkipToEnd"
+            @toggle-loop="onToggleLoop"
+          />
           <div class="justify-self-end" />
         </header>
 
@@ -725,102 +637,26 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
               />
             </div>
             <div class="flex items-center justify-between gap-4 text-xs text-zinc-400">
-              <div class="flex min-w-0 items-center gap-6">
-                <div>
-                  <span class="text-zinc-500">Selection start:</span>
-                  <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionInMs - viewInMs) }}</span>
-                </div>
-                <div>
-                  <span class="text-zinc-500">Selection end:</span>
-                  <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionEndMs - viewInMs) }}</span>
-                </div>
-                <div>
-                  <span class="text-zinc-500">Length:</span>
-                  <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(selectionDurationMs) }}</span>
-                </div>
-                <div>
-                  <span class="text-zinc-500">Playhead:</span>
-                  <span class="ml-1 font-mono tabular-nums text-zinc-200">{{ formatTime(playheadAbsMs - viewInMs) }}</span>
-                </div>
-              </div>
-              <div class="flex shrink-0 items-center gap-1">
-                <!-- Volume Shape edit toggle. -->
-                <button
-                  v-if="editsSingleTimelineClip"
-                  type="button"
-                  class="rounded px-2 py-1 text-[11px] font-medium"
-                  :class="
-                    volumeEditMode && !viewExpanded
-                      ? 'bg-violet-600 text-white hover:bg-violet-500'
-                      : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40'
-                  "
-                  :disabled="viewExpanded"
-                  :title="
-                    viewExpanded
-                      ? 'Switch to the Clip view to shape volume'
-                      : volumeEditMode
-                        ? 'Volume shaping on — click the waveform to add or drag breakpoints'
-                        : 'Shape the clip volume over time on the waveform'
-                  "
-                  @click="volumeEditMode = !volumeEditMode"
-                >
-                  Volume
-                </button>
-                <!-- Non-destructive crop with dialog-local undo/redo. -->
-                <button
-                  type="button"
-                  class="rounded px-2 py-1 text-[11px] font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-                  :disabled="!canApplyCrop"
-                  title="Trim the working view to the selection (Ctrl+Z to undo)"
-                  @click="onApplyCrop"
-                >
-                  Trim
-                </button>
-                <button
-                  v-if="editsExistingClip"
-                  type="button"
-                  class="rounded px-2 py-1 text-[11px] font-medium"
-                  :class="
-                    viewExpanded
-                      ? 'bg-blue-600 text-white hover:bg-blue-500'
-                      : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
-                  "
-                  :title="
-                    viewExpanded
-                      ? 'Showing full source — click to crop back to the clip'
-                      : 'Show full source so you can extend the clip past its current bounds'
-                  "
-                  @click="viewExpanded = !viewExpanded"
-                >
-                  {{ viewExpanded ? 'Clip' : 'Source' }}
-                </button>
-                <button
-                  type="button"
-                  class="ml-1 flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-                  title="Zoom out (-)"
-                  :disabled="zoom <= 1.0001"
-                  @click="zoomOut"
-                >
-                  <span class="text-base leading-none">−</span>
-                </button>
-                <button
-                  type="button"
-                  class="rounded bg-zinc-800 px-2 py-1 font-mono text-[11px] tabular-nums text-zinc-200 hover:bg-zinc-700"
-                  title="Reset zoom (0)"
-                  @click="resetZoom"
-                >
-                  {{ zoomPercent }}%
-                </button>
-                <button
-                  type="button"
-                  class="flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-                  title="Zoom in (+)"
-                  :disabled="zoom >= MAX_ZOOM - 0.01"
-                  @click="zoomIn"
-                >
-                  <span class="text-base leading-none">+</span>
-                </button>
-              </div>
+              <ClipEditorSelectionInfo
+                :selection-in-ms="selectionInMs"
+                :selection-end-ms="selectionEndMs"
+                :selection-duration-ms="selectionDurationMs"
+                :playhead-abs-ms="playheadAbsMs"
+                :view-in-ms="viewInMs"
+              />
+              <ClipEditorViewControls
+                v-model:volume-edit-mode="volumeEditMode"
+                v-model:view-expanded="viewExpanded"
+                :edits-single-timeline-clip="editsSingleTimelineClip"
+                :edits-existing-clip="editsExistingClip"
+                :can-apply-crop="canApplyCrop"
+                :zoom="zoom"
+                :zoom-percent="zoomPercent"
+                @apply-crop="onApplyCrop"
+                @zoom-out="zoomOut"
+                @reset-zoom="resetZoom"
+                @zoom-in="zoomIn"
+              />
             </div>
           </div>
 
