@@ -45,6 +45,20 @@ Instructions for building high-quality VueJS 3 applications with the Composition
   that is the first and strongest seam to split along — extract a child
   component or a `useXxx` composable for the distinct domain. Keep presentation
   ↔ store ↔ preload ↔ main boundaries clean and cross-domain coupling explicit.
+- **Each domain of logic lives in its own file — always, by default.** This is a
+  standing rule, not an aspiration. A distinct feature/problem domain gets its
+  own component, composable, or store rather than being co-located with unrelated
+  domains: presentation concerns belong in the SFC, reusable domain behaviour in
+  a dedicated `useXxx` composable, and shared state in the store that owns that
+  domain. Start domains separated — do not bundle two of them into one SFC or
+  composable "for convenience", because they feel related, or because each is
+  currently small; "related" and "only a few lines" are never sufficient reasons.
+  The *only* grounds for keeping multiple domains together is an **exceptionally
+  good, explicitly documented** reason — e.g. they are genuinely one inseparable
+  unit, or splitting would force an unavoidable circular dependency. When you do,
+  record that reason in the file and re-evaluate it on every change; the moment
+  the justification weakens, split. This rule is independent of line count: a
+  small SFC mixing two domains is still wrong even well below any ceiling.
 - Adhere to the single responsibility principle for components
 - Use PascalCase for component names and kebab-case for file names
 - Keep components small and focused on one concern

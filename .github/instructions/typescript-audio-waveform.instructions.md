@@ -133,6 +133,20 @@ and what the timeline visually promises.
   logic goes into the module that owns its domain; when a file mixes domains,
   that is the first and strongest seam to split along. Keep unit-of-time
   conversions for one domain together so source-vs-timeline math stays local.
+- **Each domain of logic lives in its own file — always, by default.** This is a
+  standing rule, not an aspiration. A distinct feature/problem domain (peaks
+  decoding, warp/music-time conversion, beat snapping, a render pass, …) gets its
+  own module rather than being co-located with unrelated domains. Start domains
+  separated — do not bundle two of them into one file "for convenience", because
+  they feel related, or because each is currently small; "related" and "only a
+  few lines" are never sufficient reasons. The *only* grounds for keeping multiple
+  domains in one file is an **exceptionally good, explicitly documented** reason —
+  e.g. they are genuinely one inseparable unit, a tight per-sample/per-column hot
+  loop must stay together, or splitting would force an unavoidable circular
+  dependency. When you do, record that reason in the file and re-evaluate it on
+  every change; the moment the justification weakens, split. This rule is
+  independent of line count: a short file mixing two domains is still wrong even
+  far below any ceiling.
 - These rules build on the general TypeScript file-size guidance; the timeline,
   waveform, and warp-math surface tends to grow fast, so apply them aggressively.
 - A module should be one coherent unit of thought (e.g. peaks decoding, warp

@@ -38,6 +38,20 @@ applyTo: "**/*.ts"
   refactor — by asking "which domain owns this?" before "where is there room to
   put it?". Cross-domain coupling should be a small, explicit contract (a shared
   `this`/interface type, a narrow imported helper), never a tangle of reach-ins.
+- **Each domain of logic lives in its own file — always, by default.** This is a
+  standing rule, not an aspiration. A distinct feature/problem domain (a clip
+  concern, a track concern, a persistence concern, a transport concern, …) gets
+  its own dedicated module rather than being co-located with unrelated domains in
+  a shared file. Start domains separated — do not bundle two of them into one
+  file "for convenience", because they feel related, or because each is currently
+  small; "related" and "only a few lines" are never sufficient reasons. The
+  *only* grounds for keeping multiple domains in one file is an **exceptionally
+  good, explicitly documented** reason — e.g. they are genuinely one inseparable
+  unit, or splitting would force an unavoidable circular dependency that no shared
+  contract type can break. When you do keep them together, record that reason in
+  the file and re-evaluate it on every change; the moment the justification
+  weakens, split. This rule is independent of line count: a 120-line file mixing
+  two domains is still wrong even though it is far below any ceiling.
 - A module should be one coherent unit of thought; if you can't describe it in
   one short sentence, split it. Line count is a *symptom, not the goal*.
 - Soft ceilings (scrutinise above): TS module ~350 lines; Pinia store actions /

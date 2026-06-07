@@ -164,6 +164,20 @@ or compact code.
   and strongest seam to split along. Keep cross-domain coupling to a small,
   explicit surface, while honouring the audio-thread / message-thread / I/O
   separation the engine already enforces.
+- **Each domain of logic lives in its own translation unit — always, by
+  default.** This is a standing rule, not an aspiration. A distinct
+  feature/problem domain (transport, project state, a command group, a DSP
+  concern, …) gets its own `.cpp`/`.h` pair rather than being co-located with
+  unrelated domains in a shared TU. Start domains separated — do not bundle two
+  of them into one file "for convenience", because they feel related, or because
+  each is currently small; "related" and "only a few lines" are never sufficient
+  reasons. The *only* grounds for keeping multiple domains in one TU is an
+  **exceptionally good, explicitly documented** reason — e.g. they are genuinely
+  one inseparable unit, a real-time hot path must stay in a single TU for
+  inlining/locality, or splitting would force an unavoidable circular dependency.
+  When you do, record that reason in the file and re-evaluate it on every change;
+  the moment the justification weakens, split. This rule is independent of line
+  count: a short file mixing two domains is still wrong even far below any ceiling.
 - A translation unit / header should be one coherent unit of thought. If you
   can't describe it in one short sentence, split it.
 - Soft ceilings (scrutinise above): `.cpp` ~500 lines, `.h` ~250
