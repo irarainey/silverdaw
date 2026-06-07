@@ -1,11 +1,4 @@
-// Transactional form model for PreferencesDialog, extracted from the SFC.
-// Owns the working copies of every preference (edited freely by the dialog
-// controls), the snapshot of their values when the dialog opened, the
-// change-detection computed, and the load / persist logic. The dialog stays
-// purely presentational: it binds to these refs and calls `save()` on Save.
-//
-// Nothing here is persisted until `save()` runs; until then edits live only in
-// the working refs, so Cancel / Esc simply discards by re-loading next open.
+// Transactional form model for PreferencesDialog; nothing persists until `save()`.
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useAppStore } from '@/stores/appStore'
 import { useUiStore, type SkipButtonTarget, type WaveformDisplayMode } from '@/stores/uiStore'
@@ -59,9 +52,7 @@ export function usePreferencesForm(): PreferencesForm {
   const audioDevices = useAudioDeviceStore()
   const uniqueDevices = useUniqueAudioDevices()
 
-  // Pending audio-output selection — edited freely by the radio buttons;
-  // persisted (and applied to the engine) only when the user clicks Save.
-  // `null/null` means "use system default".
+  // Pending audio output; `null/null` means system default.
   const audioOutputTypeName = ref<string | null>(null)
   const audioOutputDeviceName = ref<string | null>(null)
   const initialAudioOutputTypeName = ref<string | null>(null)
@@ -75,10 +66,7 @@ export function usePreferencesForm(): PreferencesForm {
     return audioOutputDeviceName.value?.toLowerCase() === deviceName.toLowerCase()
   }
 
-  // Selecting a device row picks its preferred backend automatically. If the
-  // user already picked this device but with a different backend (via the
-  // advanced disclosure), keep their backend choice — we only auto-pick when
-  // switching to a different device.
+  // Auto-pick the preferred backend only when switching devices.
   function pickDevice(device: UniqueDevice): void {
     if (audioOutputDeviceName.value?.toLowerCase() === device.name.toLowerCase()) return
     audioOutputDeviceName.value = device.name
@@ -90,8 +78,6 @@ export function usePreferencesForm(): PreferencesForm {
     audioOutputTypeName.value = null
   }
 
-  // Backends available for the currently-selected device — drives the advanced
-  // disclosure. Empty when the user is on System default.
   const backendsForSelectedDevice = computed<string[]>(() => {
     const name = audioOutputDeviceName.value
     if (!name) return []
@@ -105,16 +91,13 @@ export function usePreferencesForm(): PreferencesForm {
       : []
   })
 
-  // Toggle controlling visibility of the audio-driver picker. Hidden by default
-  // so the typical user sees a simple list of devices and isn't bothered by
-  // Windows Audio / DirectSound / ASIO duplicates.
+  // Hidden by default to avoid exposing duplicate driver backends.
   const showAdvancedBackend = ref(false)
 
   function pickBackend(typeName: string): void {
     audioOutputTypeName.value = typeName
   }
 
-  // Working copies — edited freely; not persisted until Save.
   const loggingEnabled = ref(false)
   const devToolsEnabled = ref(false)
   const logDirectory = ref('')
@@ -130,9 +113,7 @@ export function usePreferencesForm(): PreferencesForm {
   const autosaveEnabled = ref(true)
   const autosaveIntervalSeconds = ref(30)
 
-  // Snapshot of the values when the dialog opened, used to:
-  //   1. Detect whether anything actually changed (Save no-ops if not).
-  //   2. Show the "Restart required" notice when debug differs.
+  // Opening snapshot for change detection and restart notices.
   const initialLoggingEnabled = ref(false)
   const initialDevToolsEnabled = ref(false)
   const initialLogDirectory = ref('')
@@ -184,12 +165,7 @@ export function usePreferencesForm(): PreferencesForm {
       defaultClipDir.value = qol.paths.defaultClipDir
       autosaveEnabled.value = autosave.enabled
       autosaveIntervalSeconds.value = autosave.intervalSeconds
-      // Audio: seed from the *saved preference*, not the live device.
-      // A fresh install with no explicit pick has both fields null,
-      // which the radio group renders as "System default" — even
-      // though the engine is technically driving a concrete device
-      // it chose itself. The user's actual choice is what's persisted,
-      // not what JUCE happened to open.
+      // Seed from the saved preference, not the live device JUCE chose.
       audioOutputTypeName.value = audioPref.typeName
       audioOutputDeviceName.value = audioPref.deviceName
     } catch {
@@ -204,9 +180,7 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputTypeName.value = null
       audioOutputDeviceName.value = null
     }
-    // `followPlayback` lives in the UI prefs sub-tree (alongside panel
-    // sizes) and is mirrored into the uiStore on startup — read it from
-    // there directly so we don't need a second IPC round-trip.
+    // UI prefs are already mirrored into uiStore at startup.
     followPlayback.value = ui.followPlayback
     showLibraryTileImages.value = ui.showLibraryTileImages
     matchProjectTempoOnDrop.value = ui.matchProjectTempoOnDrop
@@ -256,9 +230,7 @@ export function usePreferencesForm(): PreferencesForm {
   }
 
   function save(): void {
-    // Only push the deltas main needs to know about. The toast toggle is
-    // also mirrored into the appStore so the change is visible to
-    // `notificationsStore.push` without a re-hydrate.
+    // Push only deltas; mirror toast changes locally immediately.
     const qolPatch: {
       toasts?: { enabled: boolean }
       paths?: { defaultProjectDir?: string; defaultClipDir?: string }
@@ -292,8 +264,6 @@ export function usePreferencesForm(): PreferencesForm {
       })
     }
     if (followPlayback.value !== initialFollow.value) {
-      // Goes through the uiStore so the transport-bar toggle stays in
-      // sync and the new value is persisted via the usual UI prefs path.
       ui.setFollowPlayback(followPlayback.value)
     }
     if (showLibraryTileImages.value !== initialShowLibraryTileImages.value) {
@@ -311,9 +281,7 @@ export function usePreferencesForm(): PreferencesForm {
     if (defaultProjectSampleRate.value !== initialDefaultProjectSampleRate.value) {
       ui.setDefaultProjectSampleRate(defaultProjectSampleRate.value)
     }
-    // Autosave config is also mirrored in appStore so the autosave
-    // manager's reactive watcher picks up the change without waiting
-    // for a re-hydrate.
+    // Mirror autosave locally so its watcher reacts without re-hydrate.
     if (
       autosaveEnabled.value !== initialAutosaveEnabled.value ||
       autosaveIntervalSeconds.value !== initialAutosaveSeconds.value
@@ -325,12 +293,7 @@ export function usePreferencesForm(): PreferencesForm {
       window.silverdaw.setAutosaveConfig(next)
       appStore.setAutosaveConfig(next)
     }
-    // Audio output device: routes through the same
-    // `audioDeviceStore.selectDevice` path the transport-bar
-    // quick-switch uses. The store optimistic-updates locally, sends
-    // `AUDIO_DEVICE_SELECT` over the bridge, and persists via main IPC
-    // only after the backend acks `ok: true` — so an unreachable
-    // device picked here is never written to disk.
+    // Persist audio output only after the backend accepts the selection.
     if (
       audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
       audioOutputDeviceName.value !== initialAudioOutputDeviceName.value

@@ -1,19 +1,5 @@
-// Renderer-side keyboard-shortcut handler.
-//
-// The custom HTML menu bar (`AppTitleBar.vue`) displays the accelerator strings
-// next to each menu item, but Electron's native menu is suppressed
-// (`Menu.setApplicationMenu(null)` in main) so those accelerators are inert
-// out of the box. This module walks the same `menus` definition and registers
-// a single document-level `keydown` listener that translates matching key
-// events into the same `menuAction` IPC the click handler uses.
-//
-// Why renderer-side and not `globalShortcut` in main? Two reasons:
-//   1. `globalShortcut` registers system-wide and would steal Ctrl+S etc.
-//      from every other app while Silverdaw has the focus or not.
-//   2. We need to defer to browser-native behaviour when focus is in a
-//      text input — Ctrl+Z / X / C / V / A on the project-name rename
-//      field should edit the text, not invoke a (non-existent) project
-//      undo. A renderer listener can see the focus target; main cannot.
+// Renderer-side menu accelerators for the custom HTML menu bar.
+// Avoid `globalShortcut`: these bindings must be app-scoped and defer to editable targets.
 
 import { buildMenus } from '@/menu'
 import type { BuildMenusOptions } from '@/menu'
@@ -21,8 +7,6 @@ import { useUiStore } from '@/stores/uiStore'
 import { useTransportStore } from '@/stores/transportStore'
 
 interface ParsedAccelerator {
-  /** Lower-case `e.key` to match. Single-char keys are letters (e.g. `'s'`);
-   * function keys use the long form (`'f11'`, `'f12'`). */
   key: string
   ctrl: boolean
   shift: boolean
@@ -30,42 +14,21 @@ interface ParsedAccelerator {
   meta: boolean
 }
 
-/**
- * Actions that should NOT fire when focus is in a text input — let the
- * browser handle them natively (undo, copy, paste, …). The menu items
- * still call `wc.undo()` etc. when invoked via the menu UI, which is a
- * no-op outside a text field; that's fine.
- */
+/** Actions deferred to native editable-target behavior. */
 const TEXT_EDIT_ACTIONS: ReadonlySet<string> = new Set([
   'edit.undo',
   'edit.redo',
   'edit.cut',
   'edit.copy',
   'edit.paste',
-  // 'S' (no modifiers) opens Split-at-Playhead. Defer to native text
-  // input when the user is typing — they almost certainly mean the
-  // letter, not the global accelerator.
+  // Plain letters defer to text inputs.
   'edit.splitAtPlayhead',
-  // 'D' (no modifiers) duplicates the selected clip — same rationale.
   'edit.duplicateClip',
-  // Delete key — defer to native when a text input has focus so
-  // pressing Delete inside the project rename field removes the
-  // character under the cursor rather than the selected clip.
+  // Delete also belongs to the focused input.
   'edit.deleteClip'
 ])
 
-/**
- * Actions whose accelerators are DISPLAY-ONLY in the menu — a different,
- * purpose-built handler owns the key, so we must NOT also bind them here.
- *
- * Timeline zoom is driven by `App.vue`'s global `onGlobalShortcutKey`
- * handler. It supports `+` / `=` / numpad variants that the `+`-delimited
- * accelerator grammar in `parseAccelerator` can't express, and it applies
- * the modal / editable-target guards. Binding the menu accelerators here
- * too would double-fire: both this listener and the global one are on
- * `window` in the capture phase, and `stopPropagation()` does not stop the
- * other same-target listener (only `stopImmediatePropagation()` would).
- */
+/** Display-only accelerators owned by App.vue's global shortcut handler. */
 const GLOBAL_SHORTCUT_ACTIONS: ReadonlySet<string> = new Set([
   'view.zoomIn',
   'view.zoomOut',
@@ -91,10 +54,7 @@ function parseAccelerator(accel: string): ParsedAccelerator | null {
 }
 
 function eventKey(e: KeyboardEvent): string {
-  // `e.key` returns the printable character (case-sensitive — the
-  // user holding Shift gives an upper-case letter). Lower-case it
-  // so the comparison is shift-agnostic; the shift modifier itself
-  // is checked separately.
+  // Match printable keys case-insensitively; Shift is checked separately.
   return e.key.toLowerCase()
 }
 
@@ -119,15 +79,7 @@ export interface ShortcutBinding {
   action: string
 }
 
-/**
- * Flatten the menu definitions into the list of keyboard bindings to
- * register. Top-level items only — submenu entries (Recent Projects, Zoom
- * Presets) are click-only and carry no accelerators. Items without an
- * action/accelerator, disabled items, and accelerators owned by another
- * handler (`GLOBAL_SHORTCUT_ACTIONS`) are excluded.
- *
- * Exported so the exclusion rules can be unit-tested without a DOM.
- */
+/** Flatten enabled top-level menu accelerators; exported for DOM-free tests. */
 export function collectShortcutBindings(opts: BuildMenusOptions): ShortcutBinding[] {
   const bindings: ShortcutBinding[] = []
   for (const menu of buildMenus(opts)) {
@@ -141,43 +93,23 @@ export function collectShortcutBindings(opts: BuildMenusOptions): ShortcutBindin
   return bindings
 }
 
-/**
- * Wire every enabled menu item with an `accelerator` to a document-level
- * `keydown` listener that fires the same `menuAction` IPC the click
- * handler does. Returns a teardown function the caller should invoke
- * on `onBeforeUnmount`.
- *
- * `opts.devToolsEnabled` mirrors the same flag that drives Debug menu
- * visibility; the F12 / Toggle Developer Tools accelerator is only
- * bound when the menu it lives in is itself visible.
- */
+/** Register menu accelerators and return the teardown function. */
 export function registerMenuShortcuts(opts: { devToolsEnabled: boolean }): () => void {
-  // Pre-parse the menu definitions into a flat list. Disabled items
-  // are skipped — their accelerator is shown for documentation only.
   const bindings = collectShortcutBindings(opts)
 
   function onKeyDown(e: KeyboardEvent): void {
-    // While the audio engine is being recovered the UI is gated behind a
-    // modal overlay — swallow every menu accelerator so a stray Ctrl+S,
-    // Delete, Split, etc. can't race the empty/respawning engine or the
-    // in-flight restore. The overlay's own buttons are plain clicks.
+    // Recovery gates the UI; swallow accelerators until the engine is usable.
     if (useTransportStore().engineRecovery !== 'ok') {
       e.preventDefault()
       e.stopPropagation()
       return
     }
-    // Modal dialogs that own their own keyboard interactions (e.g.
-    // the Clip Editor's local undo / redo stack) need the accelerator
-    // to reach their bubble-phase handler. Bailing here lets the
-    // dialog's `@keydown` see the event without our `stopPropagation`
-    // pre-empting it.
+    // Modal dialogs own their local keyboard handlers.
     if (useUiStore().clipEditorOpen) return
     for (const b of bindings) {
       if (!matches(e, b.accel)) continue
       if (isEditableTarget(e.target) && TEXT_EDIT_ACTIONS.has(b.action)) {
-        // Let the browser handle undo/cut/copy/paste natively while
-        // the user is typing — much better UX than re-invoking the
-        // menu action through main.
+        // Let editable targets keep native text shortcuts.
         return
       }
       e.preventDefault()
@@ -187,9 +119,7 @@ export function registerMenuShortcuts(opts: { devToolsEnabled: boolean }): () =>
     }
   }
 
-  // Capture phase so we beat any deeper component listeners (e.g. the
-  // rename input committing on Enter — the accelerator binding for
-  // Ctrl+S still gets first crack at the event).
+  // Capture phase lets app accelerators run before component listeners.
   window.addEventListener('keydown', onKeyDown, { capture: true })
   return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
 }

@@ -1,51 +1,20 @@
-// Transport state — mirrors the backend's playhead and play/pause status.
-//
-// Updated by `bridgeService` on every `PLAYHEAD_UPDATE` message from the
-// JUCE backend; mutated locally as well so the UI feels instant before the
-// backend's first acknowledgement arrives.
+// Transport state mirrors backend playhead and playback status.
 
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
 
 interface TransportState {
   isPlaying: boolean
-  /** Current playhead position in ms (master clock). */
+  /** Master-clock playhead position in ms. */
   positionMs: number
-  /** Project tempo (display-only for now). */
   bpm: number
-  /** Whether the backend bridge socket is currently connected. */
   connected: boolean
-  /**
-   * True only after both the WebSocket is OPEN and the backend has
-   * delivered its initial `PROJECT_STATE` snapshot. This is the gate
-   * the UI uses to block input — until it's true the renderer doesn't
-   * know the authoritative project state and any user action would
-   * race the reconcile pass.
-   */
+  /** True after socket open and initial `PROJECT_STATE` reconcile. */
   bridgeReady: boolean
-  /**
-   * Set when the initial bridge connection has timed out (or otherwise
-   * failed terminally). When non-null the StartupScreen swaps from
-   * its spinner state to an error message with a "Quit" button. Once
-   * set this stays set — there's no useful recovery path mid-session
-   * because the backend either never started or is responding with an
-   * incompatible protocol; quitting and relaunching is the right move.
-   */
+  /** Terminal startup bridge failure shown by StartupScreen. */
   bridgeFailureMessage: string | null
-  /**
-   * Mid-session audio-engine health, distinct from the startup-only
-   * `bridgeFailureMessage`. Drives the `EngineRecoveryOverlay`:
-   * - `ok`          — engine connected and the project is coherent.
-   * - `recovering`  — engine dropped / hung; main is respawning it and
-   *                   we're waiting to reconnect.
-   * - `restoring`   — reconnected to a fresh engine; we're re-loading the
-   *                   user's project into it.
-   * - `unavailable` — recovery exhausted; the user must retry or quit.
-   * Only ever leaves `ok` AFTER the engine has been ready at least once
-   * (`hasBeenReady`), so a cold-start failure stays on the startup path.
-   */
+  /** Mid-session engine recovery phase; cold-start failures use `bridgeFailureMessage`. */
   engineRecovery: 'ok' | 'recovering' | 'restoring' | 'unavailable'
-  /** True once the bridge has been ready at least once this session. */
   hasBeenReady: boolean
 }
 
@@ -74,35 +43,23 @@ export const useTransportStore = defineStore('transport', {
       this.positionMs = positionMs
     },
     setBpm(bpm: number): void {
-      // Clamp to a musically sane range. The timeline grid + snap
-      // unit both derive from this, so a 0 or negative value would
-      // divide by zero in `MS_PER_SUB_BEAT`. We store the value at
-      // full precision — the UI displays 2 d.p. via `toFixed(2)`,
-      // but the grid math benefits from the extra digits when the
-      // BPM was seeded from a library item with a fractional
-      // tempo (e.g. 124.378). Rounding to 2 d.p. before storing
-      // introduced cumulative drift across long timelines.
+      // Clamp away invalid grid math, but keep full precision to avoid timeline drift.
       this.bpm = Math.min(300, Math.max(20, bpm))
     },
     setConnected(connected: boolean): void {
       this.connected = connected
       if (!connected) {
         this.isPlaying = false
-        // Drop the ready flag on disconnect so the UI re-blocks until
-        // we get a fresh PROJECT_STATE on reconnect.
         this.bridgeReady = false
       }
     },
-    /** Called by the bridge service when PROJECT_STATE arrives. */
     setBridgeReady(ready: boolean): void {
       this.bridgeReady = ready
       if (ready) this.hasBeenReady = true
     },
-    /** Set a terminal bridge-startup failure message (shown in the overlay). */
     setBridgeFailure(message: string | null): void {
       this.bridgeFailureMessage = message
     },
-    /** Update the mid-session engine recovery phase. */
     setEngineRecovery(phase: TransportState['engineRecovery']): void {
       if (this.engineRecovery !== phase) {
         log.info('transport', `engineRecovery -> ${phase}`)

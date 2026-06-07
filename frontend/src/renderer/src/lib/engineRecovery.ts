@@ -1,23 +1,6 @@
-// Mid-session audio-engine recovery coordinator.
-//
-// The audio engine runs as a separate process. When it dies (crash, OS
-// sleep/resume fault) or hangs, Electron's main supervisor respawns it on
-// the SAME bridge port + token, so the renderer's WebSocket reconnects
-// transparently. But a respawned engine is EMPTY: "reconnected" is not the
-// same as "recovered". This module drives the gap — capturing what the
-// user had open at the moment of loss, then re-loading it into the fresh
-// engine — and exposes a small state machine (`transportStore.engineRecovery`)
-// that gates the UI via `EngineRecoveryOverlay`.
-//
-// Threading model is single-threaded (renderer), but async reconnects +
-// rapid crash loops can interleave. Every cycle is tagged with a monotonic
-// `recoveryGeneration`; async continuations and timeouts check it and bail
-// if a newer cycle has superseded them. This prevents a stale autosave
-// lookup or load completion from corrupting a fresh recovery.
-//
-// `bridgeService` calls the `on*` hooks; this module never imports
-// `bridgeService` (it drives the engine through `projectStore` actions),
-// keeping the dependency one-directional.
+// Mid-session engine recovery: reconnect, reload the captured project, and gate the UI.
+// Each cycle carries a `recoveryGeneration` so stale async reconnects cannot win.
+// Called by `bridgeService`; engine commands flow through stores to keep dependencies one-way.
 
 import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
@@ -25,7 +8,6 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 
-/** What the user had open at the instant the engine was lost. */
 interface RecoveryTarget {
   projectId: string | null
   currentFilePath: string | null
@@ -34,25 +16,14 @@ interface RecoveryTarget {
   generation: number
 }
 
-/** Max time to wait for the re-load to land before declaring failure. */
 const RESTORE_TIMEOUT_MS = 20_000
-/**
- * Max time to wait for the respawned engine to reconnect and deliver its
- * first snapshot before declaring failure. Guards the 'recovering' phase so
- * a restart that never produces a reconnect (failed spawn, no socket close,
- * hung supervisor) can't leave the overlay spinning with no way out.
- */
+/** Max wait for a respawned engine to reconnect and send its first snapshot. */
 const RECONNECT_TIMEOUT_MS = 15_000
 
 let recoveryGeneration = 0
 let target: RecoveryTarget | null = null
 let restoreTimer: ReturnType<typeof setTimeout> | null = null
-/**
- * File path the in-flight restore is expected to land on. Used to correlate
- * the completing `reset=true` snapshot with THIS recovery, so an unrelated
- * reset snapshot can't prematurely mark recovery complete. `null` means the
- * restore target is an untitled project (no file).
- */
+// Expected restore path; `null` means the target is untitled.
 let expectedRestorePath: string | null = null
 
 function clearRestoreTimer(): void {
@@ -62,13 +33,7 @@ function clearRestoreTimer(): void {
   }
 }
 
-/**
- * Arm the recovery deadline for the current phase. A single timer covers
- * both the reconnect wait ('recovering') and the re-load wait ('restoring')
- * — whichever phase is active when it fires, an unfinished recovery becomes
- * terminal so the overlay always offers Try Again / Quit instead of
- * spinning forever.
- */
+/** Arm the current recovery phase deadline so the overlay cannot spin forever. */
 function armRecoveryDeadline(generation: number, ms: number): void {
   clearRestoreTimer()
   restoreTimer = setTimeout(() => {
@@ -82,7 +47,6 @@ function armRecoveryDeadline(generation: number, ms: number): void {
   }, ms)
 }
 
-/** Capture the current project as the recovery target and open a cycle. */
 function beginCycle(): void {
   const project = useProjectStore()
   const transport = useTransportStore()
@@ -104,13 +68,7 @@ function beginCycle(): void {
   )
 }
 
-/**
- * Re-arm an already-open cycle for a fresh reconnect attempt (e.g. the
- * engine crashed again mid-restore). Bumps the generation so any stale
- * async from the previous attempt is ignored, and resets to 'recovering'
- * so the next empty snapshot re-kicks the re-load. Keeps the original
- * captured target.
- */
+/** Re-arm an open cycle after another crash, keeping the original target. */
 function rearmCycle(): void {
   recoveryGeneration += 1
   if (target) target.generation = recoveryGeneration
@@ -120,11 +78,9 @@ function rearmCycle(): void {
   log.warn('recovery', `cycle re-armed as ${recoveryGeneration}`)
 }
 
-/** WebSocket dropped mid-session (only called for unexpected closes). */
 export function onConnectionLost(): void {
   const transport = useTransportStore()
-  // Cold-start connection failures are handled by the startup path, not
-  // here — only engage once the engine has been ready at least once.
+  // Cold-start failures belong to the startup path.
   if (!transport.hasBeenReady) return
   if (transport.engineRecovery === 'ok') {
     beginCycle()
@@ -133,12 +89,7 @@ export function onConnectionLost(): void {
   }
 }
 
-/**
- * The liveness watchdog declared the engine hung (socket open, no PONG).
- * Capture state while the engine still has the project, then ask main to
- * force-restart it; the ensuing socket close flows through the normal
- * reconnect path.
- */
+/** Watchdog found a hung engine; capture state, then force restart. */
 export function onEngineUnresponsive(reason: string): void {
   const transport = useTransportStore()
   if (!transport.hasBeenReady) return
@@ -149,18 +100,11 @@ export function onEngineUnresponsive(reason: string): void {
   void window.silverdaw.restartBackend(reason)
 }
 
-/**
- * Process-level status pushed from main's supervisor. `restarting` lets
- * us show the overlay even before the socket closes (the hang case);
- * `failed` is terminal; `recovered` is advisory only — actual restoration
- * is confirmed by the re-load's snapshot, never by process status alone.
- */
+/** Process status is advisory except `failed`; restoration completes on snapshots. */
 export function onBackendStatus(status: 'restarting' | 'recovered' | 'failed'): void {
   const transport = useTransportStore()
   if (status === 'failed') {
-    // Only own the terminal state for a MID-SESSION failure. A cold-start
-    // supervisor failure (engine never became ready) belongs to the
-    // StartupScreen path, not this overlay.
+    // Cold-start supervisor failures belong to the StartupScreen path.
     if (transport.hasBeenReady || transport.engineRecovery !== 'ok') {
       markUnavailable()
     }
@@ -171,26 +115,16 @@ export function onBackendStatus(status: 'restarting' | 'recovered' | 'failed'): 
     if (transport.engineRecovery === 'ok') beginCycle()
     return
   }
-  // 'recovered': advisory; completion is driven by the re-load snapshot.
+  // 'recovered' is advisory; completion is snapshot-driven.
 }
 
-/**
- * Called from the PROJECT_STATE dispatch arm after the snapshot has been
- * applied to the store. Decides whether this snapshot is the empty
- * reconnect snapshot (→ kick the re-load) or the re-load's own
- * `reset=true` snapshot (→ recovery complete).
- */
+/** Classify recovery PROJECT_STATE snapshots: empty reconnect or restored reset. */
 export function onProjectStateApplied(snapshot: ProjectStatePayload): void {
   const transport = useTransportStore()
   if (transport.engineRecovery === 'recovering') {
-    // First snapshot after reconnecting to the fresh, empty engine.
     void kickRestore(recoveryGeneration)
   } else if (transport.engineRecovery === 'restoring' && snapshot.reset === true) {
-    // Diagnostic only: the UI is fully input-gated during recovery, so the
-    // sole source of a reset snapshot here is our own re-load. If the path
-    // ever fails to line up with what we asked to restore, log it — but
-    // still complete, since stalling to the deadline would be worse than a
-    // benign path-normalisation difference.
+    // Path mismatch is diagnostic; completing beats stalling on benign normalisation.
     if (expectedRestorePath !== null && snapshot.filePath !== expectedRestorePath) {
       log.warn(
         'recovery',
@@ -202,12 +136,10 @@ export function onProjectStateApplied(snapshot: ProjectStatePayload): void {
   }
 }
 
-/** Re-load the captured project into the freshly respawned engine. */
 async function kickRestore(generation: number): Promise<void> {
   const transport = useTransportStore()
   const project = useProjectStore()
   transport.setEngineRecovery('restoring')
-  // Extend the deadline for the (potentially slower) re-load phase.
   armRecoveryDeadline(generation, RESTORE_TIMEOUT_MS)
 
   const captured = target
@@ -234,7 +166,6 @@ async function kickRestore(generation: number): Promise<void> {
       captured.projectId ?? undefined
     )
     if (generation !== recoveryGeneration) return
-    // Success completes via the reset=true snapshot in onProjectStateApplied.
     if (!res.ok) {
       log.error('recovery', `recovery load failed: ${res.error ?? 'unknown'}`)
       markUnavailable()
@@ -243,19 +174,15 @@ async function kickRestore(generation: number): Promise<void> {
   }
 
   if (captured.currentFilePath) {
-    // No autosave bucket — re-load the last saved file. Seed
-    // pendingRecoveredProjectId so the re-load adopts the SAME projectId
-    // and future autosaves keep writing to the original bucket.
+    // Preserve the original projectId so future autosaves use the same bucket.
     log.info('recovery', `no autosave; restoring from file ${captured.currentFilePath}`)
     expectedRestorePath = captured.currentFilePath
     if (captured.projectId) project.pendingRecoveredProjectId = captured.projectId
     project.requestLoad(captured.currentFilePath)
-    // Completion via the reset=true snapshot.
     return
   }
 
-  // Nothing to restore (untitled project, never autosaved). The empty
-  // engine already matches an empty project; finish without a toast.
+  // Untitled project with no autosave already matches the empty engine.
   log.info('recovery', 'nothing to restore (untitled, no autosave)')
   completeRecovery(false)
 }
@@ -280,19 +207,16 @@ function completeRecovery(restored: boolean): void {
 function markUnavailable(): void {
   clearRestoreTimer()
   useTransportStore().setEngineRecovery('unavailable')
-  // recoveryInFlight stays true: the engine isn't usable, and we must
-  // keep suppressing autosave until the user retries or quits.
+  // Keep autosave suppressed until retry or quit.
   log.error('recovery', 'engine unavailable — awaiting user action')
 }
 
-/** User clicked "Try again" on the terminal overlay. */
 export function retryRecovery(): void {
   log.info('recovery', 'user requested retry')
   rearmCycle()
   void window.silverdaw.restartBackend('user retry')
 }
 
-/** Reset module state (used by tests / teardown). */
 export function resetEngineRecovery(): void {
   clearRestoreTimer()
   recoveryGeneration = 0

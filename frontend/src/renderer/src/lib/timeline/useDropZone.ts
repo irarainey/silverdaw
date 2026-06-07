@@ -1,16 +1,5 @@
-// Drag-and-drop landing zone for library items → timeline.
-//
-// When a library card is dragged onto the timeline canvas we compute the
-// target track + start time on every `dragover`, expose a "drop preview"
-// (consumed by the component's `drawDropPreview` helper) and, on `drop`,
-// route the placement through `projectStore.addClipFromLibrary`.
-//
-// We rely on `library.currentDragItemId` parked by `LibraryPanel`'s
-// `dragstart` handler to identify the in-flight item — `DataTransfer`
-// goes into "protected mode" during `dragover` and hides custom MIME
-// types, which previously caused the drag to fail silently. The MIME
-// payload is still set on the drag for round-trip compatibility and is
-// the authoritative source on the final `drop` event.
+// Drag-and-drop landing zone for library items on the timeline.
+// `dragover` uses the store-tracked item id because DataTransfer hides custom MIME data until drop.
 
 import { onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Application } from 'pixi.js'
@@ -48,10 +37,7 @@ export interface DropZoneOptions {
   scrollY: Ref<number>
   showScrollbar: ComputedRef<boolean>
   geometry: GridGeometry
-  /**
-   * Fires whenever `dropPreview` changes (or after a drop completes) so
-   * the host component can repaint the playhead/ghost layer.
-   */
+  /** Fires when the ghost preview changes so the host can repaint. */
   onPreviewChanged: () => void
 }
 
@@ -69,13 +55,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     return library.currentDragItemId !== null
   }
 
-  /**
-   * Inspect the in-flight drag for the library item being dragged.
-   * `dataTransfer.getData(MIME)` returns `''` during `dragover` for
-   * security reasons, so we instead read the id parked by `LibraryPanel`.
-   * `getData` does work during the final `drop` event; the caller passes
-   * `viaGetData = true` there as the more authoritative fallback.
-   */
+  /** Resolve the dragged item from MIME on drop, otherwise from the live store id. */
   function resolveDragItem(e: DragEvent, viaGetData = false): LibraryItem | null {
     if (viaGetData) {
       const id = e.dataTransfer?.getData(MIME_LIBRARY_ITEM) ?? ''
@@ -88,16 +68,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     return liveId ? library.getItem(liveId) : null
   }
 
-  /**
-   * Convert a viewport-local pointer position into a target track index +
-   * snapped start time. If the library item has detected source beats, snap
-   * the first beat in the clip to the project grid rather than snapping the
-   * raw clip edge; this matches the behaviour used when moving clips after
-   * they are already on the timeline.
-   *
-   * Returns null if the pointer falls outside the scrollable track area, in
-   * the inter-track gap, or below the last track.
-   */
+  /** Map a pointer to a valid track and beat-aware snapped start time. */
   function pointerToTrackDrop(
     clientX: number,
     clientY: number,
@@ -144,19 +115,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     let firstBeatMs = universalAnchorMs + Math.ceil(-universalAnchorMs / beatSpacingMs) * beatSpacingMs
     while (firstBeatMs < 0) firstBeatMs += beatSpacingMs
     if (firstBeatMs > item.durationMs) return null
-    // Anticipate the warp ratio that will apply once the clip lands.
-    // Saved-clip tiles carry explicit warp defaults; audio-file tiles
-    // pick up auto-warp from project BPM / source BPM at drop time
-    // (assuming the source isn't variable-tempo). For both cases the
-    // beat-snap target needs to be in TIMELINE-time so the dropped
-    // clip's first beat lines up with a project sub-beat, not its
-    // source-time-shifted equivalent.
-    // pick up auto-warp from project BPM / source BPM at drop time
-    // (assuming the source isn't variable-tempo AND the user has the
-    // auto-warp pref enabled). For both cases the beat-snap target
-    // needs to be in TIMELINE-time so the dropped clip's first beat
-    // lines up with a project sub-beat, not its source-time-shifted
-    // equivalent.
+    // Project the first beat into timeline time using the warp that will apply on drop.
     const ui = useUiStore()
     const projectHasOtherClips = Object.keys(project.clips).length > 0
     const willWarpForSnap =
@@ -204,20 +163,10 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       return
     }
 
-    // Pre-compute the effective duration the dropped clip will land
-    // with. Auto-warp applies on drop for non-variable-tempo sources
-    // (see `applyDropTimeWarp` in projectStore), so the ghost should
-    // show the warped width — otherwise the user sees a wide preview
-    // that snaps to a different width once the drop lands. Saved
-    // clips with explicit warp defaults likewise scale. Mirrors the
-    // pref + first-clip check in `applyDropTimeWarp`: when auto-warp
-    // is off, or this would be the first clip on the project (BPM
-    // seeder), the ghost shows the native footprint.
+    // Mirror drop-time warp so the ghost width matches the landed clip.
     const ui = useUiStore()
     const projectHasOtherClips = Object.keys(project.clips).length > 0
-    // Samples skip auto-warp on drop (see `applyDropTimeWarp`); the
-    // preview must mirror that so the ghost width matches what the
-    // user gets after dropping.
+    // Samples skip auto-warp on drop, so the preview must too.
     const dropIsSample = libraryItemIsSample(item, library.byId)
     const willWarp =
       (item.warpEnabled === true) ||
@@ -245,8 +194,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     )
     e.dataTransfer.dropEffect = overlaps ? 'none' : 'copy'
 
-    // Only re-render the ghost when the resolved drop changes; dragover
-    // fires very frequently and `onPreviewChanged` repaints a Pixi layer.
+    // Avoid repainting the Pixi ghost on unchanged dragover events.
     const next: DropPreview = {
       trackIndex: target.trackIndex,
       startMs: target.startMs,
@@ -268,9 +216,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
 
   function onDragLeave(e: DragEvent): void {
     if (!isLibraryDrag()) return
-    // Only clear when the drag actually leaves the host (not when
-    // crossing between child elements). `relatedTarget === null` is the
-    // cross-window case; the `contains` check covers leaving host bounds.
+    // Ignore child-to-child dragleave; clear only when leaving the host.
     const related = e.relatedTarget as Node | null
     if (related && host.value && host.value.contains(related)) return
     clearPreview()
@@ -280,12 +226,10 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     if (!isLibraryDrag()) return
     e.preventDefault()
 
-    // Clear the ghost first so the timeline doesn't briefly show the old
-    // preview after the drop completes.
+    // Clear the ghost before the drop repaint.
     dropPreview.value = null
 
-    // Prefer the dataTransfer payload (authoritative on `drop`); fall
-    // back to the store-tracked id if the MIME data was somehow empty.
+    // On drop, prefer MIME data and fall back to the store id.
     const item = resolveDragItem(e, true)
     if (!item) {
       onPreviewChanged()
@@ -307,7 +251,6 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     onPreviewChanged()
   }
 
-  // Attach all four drag events once the host element is available.
   const stopHostWatch = watch(
     host,
     (el, prev) => {

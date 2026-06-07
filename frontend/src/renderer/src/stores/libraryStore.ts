@@ -1,22 +1,10 @@
-// Library — a project-wide pool of imported audio files that can be
-// dragged onto tracks. The renderer owns decoded peaks / metadata, while the
-// backend stores the durable catalogue fields needed to rebuild tiles after
-// save/load.
+// Library store for reusable audio files and saved clips.
+// Renderer owns decoded peaks/metadata; backend owns durable catalogue state.
+// Items are decoded once and reused by every placed clip.
 //
-// Items are decoded once on import and the resulting peaks / metadata are
-// reused for every clip dragged out, so dropping the same sample onto five
-// tracks doesn't re-decode the file five times.
-//
-// **File-size note (documented exception).** The cleanly separable parts have
-// been extracted: the domain types live in `./library.types` and the pure,
-// stateless item helpers in `./libraryItemHelpers` (both re-exported below so
-// `@/stores/libraryStore` import paths stay stable). What remains is a single
-// cohesive Pinia options store: its actions share the same `this` state
-// (`items`, `imports`, `channelPeaksByItemId`, …) and call one another
-// (`this.addItem`, `this.setItemCollapsed`, `this.finishImport`, …). Splitting
-// the action bag into free functions threaded with the store instance would be
-// contrived (a store-typing dependency on every call) and hurt readability more
-// than the line count helps — see the TS instructions on justified exceptions.
+// **File-size note (documented exception).** Types and pure helpers are already
+// extracted; the remaining Pinia actions share one cohesive `this` state. Further
+// splitting would add store-typing indirection without improving readability.
 
 import { defineStore } from 'pinia'
 import { effectiveClipDurationMs, effectiveClipTempoRatio, isClipTempoWarpActive, useProjectStore } from '@/stores/projectStore'
@@ -38,8 +26,7 @@ import type {
 } from './library.types'
 import { buildSavedClipName, libraryItemDisplayName, revokeItemCoverArt } from './libraryItemHelpers'
 
-// Re-exported so existing `@/stores/libraryStore` consumers keep working after
-// the type + pure-helper extraction.
+// Stable facade for existing `@/stores/libraryStore` imports.
 export type {
   EditorHiResPeaks,
   ImportEntry,
@@ -53,36 +40,14 @@ export { libraryItemDisplayName, libraryItemIsSample, libraryItemSourceBpm } fro
 interface LibraryState {
   items: LibraryItem[]
   nextItemIndex: number
-  /**
-   * Total number of files queued for import in the current batch. Resets to
-   * 0 once every queued file has finished (success OR failure). Used by
-   * `StatusBar` to drive the import-progress bar.
-   */
   importTotal: number
-  /** Number of files in the current batch that have finished. */
   importDone: number
-  /** Currently in-flight import entries, in order of arrival. The
-   *  `ImportProgressDialog` reads this and renders one row per entry. */
   imports: ImportEntry[]
-  /**
-   * Id of the library item currently being dragged out (set on `dragstart`,
-   * cleared on `dragend`). HTML5's `dataTransfer.getData(...)` returns an
-   * empty string during `dragover` for non-text payloads, so the timeline's
-   * drag-over handler reads the dragged item from here instead.
-   */
+  /** HTML5 dragover cannot read non-text `dataTransfer`; store the id here. */
   currentDragItemId: string | null
-  /** Session-scoped high-resolution peaks for the Clip Editor.
-   *  Computed on demand when the user zooms in past the detail the
-   *  default-resolution peaks can resolve. We hold a single entry
-   *  here (one per dialog open / item switch) because each array can
-   *  be multi-MB and there's only one Clip Editor on screen at a time. */
+  /** One multi-MB high-resolution peaks payload for the Clip Editor. */
   editorHiResPeaks: EditorHiResPeaks | null
-  /**
-   * Per-library-item stereo peak data, keyed by item id. Held in a
-   * separate map (rather than threaded through the `LibraryItem`
-   * constructors) so the summary-mode path stays untouched and the
-   * blast radius of the stereo feature is bounded. Only populated for
-   * 2-channel sources; cleared in `removeItem`. */
+  /** Stereo peak data kept outside `LibraryItem` so summary paths stay untouched. */
   channelPeaksByItemId: Record<string, ItemChannelPeaks>
 }
 
@@ -96,24 +61,7 @@ function touchTimelineClipsForLibraryItem(itemId: string): number {
   return count
 }
 
-/**
- * Discover every timeline clip that should be treated as a "linked
- * sibling" of a saved-clip library item, for trim/warp/pitch
- * propagation. Two pools are merged:
- *
- *  1. **Direct links** — timeline clips whose `libraryItemId` points
- *     straight at the saved-clip item. The canonical case after the
- *     saveClipToLibrary rebind landed.
- *  2. **Implicit links** — legacy projects (created before the rebind)
- *     have timeline clips that still point at the underlying
- *     audio-file source but happen to share the saved-clip's exact
- *     `derivedFrom` window. They are adopted as linked siblings on
- *     the next edit so the project file becomes structurally correct.
- *
- * Returns the merged array. Callers that need to write may also call
- * `CLIP_REBIND` for any clip whose `libraryItemId` doesn't already
- * equal `savedClipItem.id`.
- */
+/** Finds direct and legacy implicit saved-clip links for propagation/rebind. */
 function findLinkedTimelineClips(
   savedClipItem: LibraryItem
 ): Clip[] {
@@ -148,24 +96,16 @@ export const useLibraryStore = defineStore('library', {
   }),
 
   getters: {
-    /** Lookup map for quick `getItem(id)` by-id access. */
     byId(state): Record<string, LibraryItem> {
       const map: Record<string, LibraryItem> = {}
       for (const item of state.items) map[item.id] = item
       return map
     },
 
-    /** True while at least one import is queued or in flight — either
-     *  a renderer-side decoding stage or a backend BPM-detection stage.
-     *  Used to drive both the legacy status-bar progress bar and the
-     *  document-wide busy cursor. */
+    /** True while decoding or backend analysis is in flight. */
     isImporting(state): boolean {
       if (state.importTotal > 0) return true
-      // The per-file `imports` list outlives `importTotal` because BPM
-      // detection runs after the renderer's decode-and-add stage has
-      // already incremented `importDone`. Any entry still in
-      // `decoding` or `detecting` should keep the cursor in its busy
-      // state so the user knows work is in progress.
+      // `imports` outlives the batch counter while backend analysis runs.
       for (const entry of state.imports) {
         if (
           entry.stage === 'decoding' ||
@@ -178,7 +118,6 @@ export const useLibraryStore = defineStore('library', {
       return false
     },
 
-    /** Fraction in [0, 1] of the current import batch completed. */
     importFraction(state): number {
       if (state.importTotal <= 0) return 0
       return Math.min(1, state.importDone / state.importTotal)
@@ -186,14 +125,9 @@ export const useLibraryStore = defineStore('library', {
   },
 
   actions: {
-    /**
-     * Drop every library item. Called by `projectStore` when a
-     * PROJECT_STATE with `reset=true` arrives (PROJECT_LOAD /
-     * PROJECT_NEW) — the new project's library catalogue is rebuilt
-     * fresh as part of applying the snapshot.
-     */
+    /** Clears state before a reset PROJECT_STATE rebuilds the catalogue. */
     clear(): void {
-      // Revoke cover-art URLs so the underlying Blobs are GC-eligible.
+      // Revoke cover-art URLs so Blobs can be collected.
       for (const item of this.items) {
         if (item.coverArtUrl) {
           try {
@@ -210,12 +144,7 @@ export const useLibraryStore = defineStore('library', {
       log.info('library', 'cleared')
     },
 
-    /**
-     * Add a decoded audio file to the library. If a file with the same
-      * `filePath` is already present, returns the existing audio-file item's
-      * id rather than creating a duplicate. Saved clips are allowed to share a
-      * filePath with their source because their trim window makes them distinct.
-      */
+    /** Reuses audio-file items by `filePath`; saved clips are distinct by trim window. */
     addItem(audio: {
       kind?: LibraryItemKind
       name?: string
@@ -226,29 +155,19 @@ export const useLibraryStore = defineStore('library', {
       channelCount: number
       peaks: Float32Array
       peaksPerSecond?: number
-      /** Optional override; defaults to `filePath`. */
       playbackFilePath?: string
-      /** Detected or tagged musical key. */
       key?: string
-      /** When true, the item is being reconstructed from a
-       *  PROJECT_STATE snapshot and we must NOT echo a LIBRARY_ADD
-       *  back to the backend (we're applying the backend's truth,
-       *  not creating a new entry). */
+      /** Snapshot rebuilds must not echo `LIBRARY_ADD` back to the backend. */
       fromSnapshot?: boolean
-      /** Specific id to use (snapshot path). Auto-minted when omitted
-       *  on a user-driven import. */
       id?: string
       derivedFrom?: SavedClipSource
       collapsed?: boolean
-      /** Saved-clip default warp settings (only meaningful when
-       *  `kind === 'saved-clip'`). Copied onto a fresh timeline clip
-       *  when the tile is dragged in (copy-on-drop, not live link). */
+      /** Saved-clip warp defaults copied onto new timeline placements. */
       warpEnabled?: boolean
       warpMode?: ClipWarpMode
       tempoRatio?: number
       semitones?: number
       cents?: number
-      /** Backend's per-item missing-source flag from PROJECT_STATE. */
       unresolved?: boolean
     }): string {
       const kind = audio.kind ?? 'audio-file'
@@ -273,11 +192,7 @@ export const useLibraryStore = defineStore('library', {
         return existing.id
       }
 
-      // Snapshot path passes the persisted id so the renderer ↔
-      // backend id space stays in sync across reloads. User-driven
-      // adds auto-mint a fresh id; we still bump `nextItemIndex`
-      // past any explicit id we adopt so future auto-mints don't
-      // collide.
+      // Adopt snapshot ids and advance the auto-mint counter past them.
       let id: string
       if (typeof audio.id === 'string' && audio.id.length > 0) {
         id = audio.id
@@ -317,10 +232,7 @@ export const useLibraryStore = defineStore('library', {
         'library',
         `addItem id=${id} file=${audio.fileName} sr=${audio.sampleRate} ch=${audio.channelCount} ms=${audio.durationMs}`
       )
-      // Persist user-driven library additions to the project so the
-      // catalogue survives save/load. Snapshot-driven adds (called
-      // from `applyProjectStateSnapshot`) skip this — we're already
-      // mirroring the backend's truth, not creating new state.
+      // Snapshot-driven adds already mirror backend truth, so they do not echo.
       if (audio.fromSnapshot !== true) {
         sendBridge('LIBRARY_ADD', {
           itemId: id,
@@ -348,11 +260,8 @@ export const useLibraryStore = defineStore('library', {
       return id
     },
 
-    /** Save a timeline clip as a reusable library item related to its source file. */
     addSavedClipFromTimelineClip(clip: Clip): string | null {
-      // Resolve the source library item via the clip's libraryItemId
-      // (single source of truth). If the clip's library item is itself
-      // a saved-clip, walk up to its source audio-file.
+      // Walk saved clips back to their source audio-file.
       const direct = this.items.find((item) => item.id === clip.libraryItemId)
       const source =
         direct?.kind === 'audio-file'
@@ -374,10 +283,7 @@ export const useLibraryStore = defineStore('library', {
           item.derivedFrom?.inMs === inMs &&
           item.derivedFrom?.durationMs === durationMs
       )
-      // Prefer the clip's own custom name (set via inline rename on the
-       // timeline) so the saved-clip library item inherits whatever the
-       // user already chose to call it. Falls back to an auto-generated
-       // "<source> @ <position>" label otherwise.
+      // Preserve a user-renamed clip name when saving it to the library.
       const customName = clip.name?.trim()
       const name = customName && customName.length > 0
         ? customName
@@ -432,21 +338,14 @@ export const useLibraryStore = defineStore('library', {
           inMs,
           durationMs
         },
-        // Copy the originating clip's warp settings as the saved-clip
-        // defaults (copy-on-drop semantics: future placements of this
-        // saved clip start with these values, but later edits on
-        // either side do NOT propagate across — warp is per-instance).
+        // Copy-on-drop defaults; later timeline edits stay per-instance.
         warpEnabled: clip.warpEnabled,
         warpMode: clip.warpMode,
         tempoRatio: pinnedTempoRatio,
         semitones: clip.semitones,
         cents: clip.cents
       })
-      // Inherit the source's already-known analysis details so the info
-      // dialog opens with populated fields instead of "Not available
-      // yet". The saved clip points at the same underlying audio file,
-      // so its decoded WAV cache, BPM, beats and variable-tempo flag
-      // are guaranteed to match.
+      // Saved clips share source analysis details with their underlying audio file.
       if (itemId && source) {
         const item = this.items.find((i) => i.id === itemId)
         if (item) {
@@ -459,10 +358,7 @@ export const useLibraryStore = defineStore('library', {
           if (source.lowConfidence !== undefined) item.lowConfidence = source.lowConfidence
         }
       }
-      // Auto-expand the parent source group so the new saved clip is
-      // visible immediately. If the user had previously collapsed it
-      // this overrides that — adding a clip is an explicit gesture
-      // that should reveal its result.
+      // Reveal the newly saved clip even if its source group was collapsed.
       if (itemId && source && source.collapsed) {
         this.setItemCollapsed(source.id, false)
       }
@@ -493,11 +389,7 @@ export const useLibraryStore = defineStore('library', {
       useNotificationsStore().pushInfo('Saving sample…')
     },
 
-    /**
-     * Fill in decoded audio details for a library item reconstructed from
-     * saved project state. Older project files may only have clip duration,
-     * so this lets the reload path backfill the tile without re-importing.
-     */
+    /** Backfills decoded details for items reconstructed from saved project state. */
     setItemAudioDetails(
       itemId: string,
       durationMs: number,
@@ -511,7 +403,6 @@ export const useLibraryStore = defineStore('library', {
       if (channelCount > 0) item.channelCount = channelCount
     },
 
-    /** Replace or clear the detected musical key for a library item. */
     setItemKey(itemId: string, key: string | undefined): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
@@ -527,14 +418,7 @@ export const useLibraryStore = defineStore('library', {
       }
     },
 
-    /**
-     * Override the user-facing sample/music classification for a
-     * library item. Pass `'sample'` / `'music'` to force the mode,
-     * or `null` / `'auto'` to clear the override so the renderer
-     * falls back to the backend's `lowConfidence` flag. Bumps
-     * `peaksRevision` so any clip that referenced the item
-     * repaints (drop hides BPM/beats badges, beat-marker grid).
-     */
+    /** Overrides sample/music classification; `auto` falls back to `lowConfidence`. */
     setItemSampleMode(itemId: string, mode: 'sample' | 'music' | 'auto' | null): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
@@ -551,13 +435,7 @@ export const useLibraryStore = defineStore('library', {
       })
     },
 
-    /**
-     * Variant of `addSavedClipFromTimelineClip` that takes an explicit
-     * source library item id and selection window — used by the Clip
-     * Editor's "Save as new clip" action. Returns the new saved-clip
-     * id, or the id of an existing matching saved-clip if one already
-     * has the same source / inMs / durationMs.
-     */
+    /** Saves a Clip Editor selection, reusing an exact matching saved clip. */
     addSavedClipFromSelection(
       sourceItemId: string,
       inMs: number,
@@ -621,13 +499,7 @@ export const useLibraryStore = defineStore('library', {
       return itemId || null
     },
 
-    /**
-     * Update the trim window of an existing saved-clip library item.
-     * Refuses (returns false) if the saved-clip is currently referenced
-     * by any timeline clip — those clips own their own trim windows and
-     * silently rewriting the source-of-truth would corrupt them. The
-     * caller is expected to surface a "Save as new clip" hint instead.
-     */
+    /** Updates a saved-clip trim window, refusing linked timeline collisions. */
     updateSavedClipTrim(
       itemId: string,
       inMs: number,
@@ -640,12 +512,7 @@ export const useLibraryStore = defineStore('library', {
       const trimDur = Math.max(0, Math.floor(durationMs))
       if (trimDur <= 0) return { ok: false }
 
-      // Saved-clip trim edits propagate to every linked timeline clip
-      // (see `findLinkedTimelineClips`). Before applying the edit,
-      // verify the new duration won't make any linked sibling overlap
-      // a neighbour on its track. Refuse the whole edit if any sibling
-      // would collide — predictable and non-destructive, and the user
-      // can move the conflicting neighbour aside before retrying.
+      // Refuse the whole edit if any linked sibling would overlap a neighbour.
       const project = useProjectStore()
       const linkedClips = findLinkedTimelineClips(item)
       const conflictingTrackNames = new Set<string>()
@@ -697,21 +564,10 @@ export const useLibraryStore = defineStore('library', {
         sourceDurationMs: next.durationMs,
         collapsed: item.collapsed
       })
-      // Propagate the new trim to every linked timeline clip. The
-      // backend coalesces same-clip CLIP_TRIM envelopes within 500 ms
-      // into one undo step, but we also want the saved-clip's
-      // LIBRARY_ADD upsert and all of these CLIP_TRIMs to fold into
-      // the SAME undo step — that's the user's mental "apply trim"
-      // action. The dispatcher's coalescing keys CLIP_TRIM on clipId,
-      // so each sibling's edit starts its own transaction. For now
-      // they're separate undo steps; bundling them is a follow-up
-      // (the existing compound-op gap mentioned in the design plan).
+      // Propagated sibling trims currently become separate undo steps.
       for (const c of linkedClips) {
         if (!c) continue
-        // Adopt implicitly-linked clips (legacy projects) by rebinding
-        // their libraryItemId to this saved-clip before pushing the
-        // new window. Subsequent edits then find them via the direct
-        // libraryItemId === item.id path.
+        // Adopt legacy implicit links before pushing the new window.
         if (c.libraryItemId !== itemId) {
           c.libraryItemId = itemId
           sendBridge('CLIP_REBIND', { clipId: c.id, libraryItemId: itemId })
@@ -725,9 +581,7 @@ export const useLibraryStore = defineStore('library', {
           durationMs: trimDur
         })
       }
-      // Force the PixiJS timeline to repaint — the clip-block
-      // geometry depends on durationMs and the watch on
-      // `project.peaksRevision` is the cheapest redraw trigger.
+      // Duration changes need a timeline geometry repaint.
       if (linkedClips.length > 0) project.peaksRevision++
       log.info(
         'library',
@@ -933,12 +787,7 @@ export const useLibraryStore = defineStore('library', {
       return true
     },
 
-    /**
-     * Rename a library item. Blank names are coerced to undefined so the
-     * tile falls back to the source-file name. Persisted to the backend
-     * via a fresh `LIBRARY_ADD` envelope; the backend treats matching ids
-     * as an upsert and the new name round-trips through PROJECT_STATE.
-     */
+    /** Blank names clear the override; `LIBRARY_ADD` persists the upsert. */
     renameItem(itemId: string, name: string): boolean {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return false
@@ -947,12 +796,7 @@ export const useLibraryStore = defineStore('library', {
       if (item.name === nextName) return false
       const previousName = item.name
       item.name = nextName
-      // Saved-clip renames propagate to every linked timeline clip
-      // that's still displaying the saved-clip's previous name
-      // (i.e. the user hasn't given that clip its own per-instance
-      // name override via the title-strip double-click). Clips whose
-      // `clip.name` differs from `previousName` are treated as
-      // user-customised and left untouched.
+      // Propagate only to linked clips still using the saved-clip name.
       if (item.kind === 'saved-clip') {
         const project = useProjectStore()
         let propagated = 0
@@ -968,12 +812,7 @@ export const useLibraryStore = defineStore('library', {
         const touched = touchTimelineClipsForLibraryItem(itemId)
         log.debug('library', `renameItem linked redraw id=${itemId} touched=${touched} propagated=${propagated}`)
       }
-      // Omit `playbackFilePath` from rename/collapse upserts: the
-      // renderer's `item.playbackFilePath` is just the source filePath
-      // (the cached-WAV optimisation lives entirely backend-side), and
-      // sending it here would overwrite the backend's decoded-cache
-      // path with the original audio file — turning subsequent
-      // CLIP_ADDs into slow MP3 reads instead of cheap WAV reads.
+      // Omit `playbackFilePath` so backend decoded-cache paths stay intact.
       sendBridge('LIBRARY_ADD', {
         itemId: item.id,
         filePath: item.filePath,
@@ -994,21 +833,14 @@ export const useLibraryStore = defineStore('library', {
       return true
     },
 
-    /**
-     * Toggle the source-group disclosure for a library item. Only
-     * meaningful for `audio-file` items; saved-clip items don't have
-     * a child list. Persisted to the backend so the open/closed state
-     * survives save / load.
-     */
+    /** Persists source-group disclosure state. */
     setItemCollapsed(itemId: string, collapsed: boolean): boolean {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return false
       const next = collapsed ? true : undefined
       if ((item.collapsed ?? false) === (next ?? false)) return false
       item.collapsed = next
-      // Same `playbackFilePath` omission as `renameItem` — see comment
-      // there. Sending the renderer's value would clobber the
-      // backend-managed decoded-WAV cache path.
+      // Omit `playbackFilePath` so backend decoded-cache paths stay intact.
       sendBridge('LIBRARY_ADD', {
         itemId: item.id,
         filePath: item.filePath,
@@ -1041,35 +873,14 @@ export const useLibraryStore = defineStore('library', {
       useProjectStore().peaksRevision++
     },
 
-    /**
-     * Remove an item from the library. Returns true when the item was
-     * actually removed.
-     *
-     * - Saved-clip items: removable iff no timeline clip references
-     *   them. (A saved-clip has no children of its own.)
-     * - Audio-file source items: removable iff neither the source nor
-     *   any of its derived saved-clip children are referenced by a
-     *   timeline clip. The cascade is the important detail — a source
-     *   row is *not* held hostage by a saved-clip child that's itself
-     *   sitting unused in the library. Removing such a source deletes
-     *   every unused saved-clip descendant as well so the library
-     *   doesn't leak orphaned rows pointing at a now-gone parent.
-     *
-     * Cover-art object URLs are revoked on each removed row so the
-     * underlying Blob is eligible for GC.
-     */
+    /** Removes unused items; audio-file sources cascade-delete unused saved clips. */
     removeItem(itemId: string): boolean {
       const idx = this.items.findIndex((i) => i.id === itemId)
       if (idx < 0) return false
       const item = this.items[idx]
       if (!item) return false
 
-      // Audio-file sources remain blocked while anything depends on
-      // them — actual audio data lives behind the source path. Saved
-      // clips, on the other hand, are organisational references: we
-      // can always remove them by unlinking any linked timeline clips
-      // first (the clips keep their current window, just rebound to
-      // the saved-clip's underlying audio-file source).
+      // Source audio stays blocked while timeline clips depend on it.
       if (item.kind === 'audio-file' && this.isItemInUse(itemId)) {
         log.warn('library', `removeItem refused (audio-file in use) id=${itemId}`)
         return false
@@ -1086,11 +897,7 @@ export const useLibraryStore = defineStore('library', {
         }
       }
 
-      // Cascade: removing an audio-file source also removes every
-      // saved-clip derived from it. Each child is guaranteed to be
-      // unused at this point (the in-use check above would have
-      // refused otherwise), so the cascade is safe. Walk the array
-      // back-to-front so child splices don't invalidate later indexes.
+      // Walk back-to-front so cascading child splices don't invalidate indexes.
       if (item.kind === 'audio-file') {
         for (let i = this.items.length - 1; i >= 0; i--) {
           const child = this.items[i]
@@ -1102,10 +909,7 @@ export const useLibraryStore = defineStore('library', {
           log.info('library', `removeItem id=${child.id} (cascade)`)
         }
       }
-      // Re-locate the source row in case the cascade above shifted
-      // its index. Safe-guard against the possibility that the row
-      // itself got spliced (shouldn't happen — a source doesn't
-      // derive from itself — but cheaper to check than to debug).
+      // Re-locate the source row after cascade splices.
       const finalIdx = this.items.findIndex((i) => i.id === itemId)
       if (finalIdx < 0) return true
       revokeItemCoverArt(this.items[finalIdx])
@@ -1116,36 +920,15 @@ export const useLibraryStore = defineStore('library', {
       return true
     },
 
-    /**
-     * True iff this library item is still referenced somewhere the
-     * UI cares about — i.e. removing it would leave a dangling
-     * reference on the timeline.
-     *
-     * For audio-file source items the answer is "any timeline clip
-     * points at me, OR any timeline clip points at one of my
-     * derived saved-clips". The second clause stops `removeItem`
-     * from orphaning an in-use saved-clip when its parent is being
-     * deleted; saved-clips that exist in the library but aren't on
-     * any track are NOT counted, so a source with only-unused
-     * children is freely removable (and the children get cascade-
-     * deleted alongside it).
-     *
-     * For saved-clip items the answer is simply "any timeline clip
-     * references me". They have no children to consider.
-      */
+    /** True when removal would leave a timeline reference dangling. */
     isItemInUse(itemId: string): boolean {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return false
       const project = useProjectStore()
-      // Direct timeline reference?
       for (const id in project.clips) {
         if (project.clips[id]?.libraryItemId === itemId) return true
       }
-      // Audio-file source: also block removal if any *active*
-      // saved-clip descendant exists. An "active" descendant is one
-      // currently referenced by a timeline clip — a saved-clip just
-      // sitting in the library is fine, because the cascade in
-      // `removeItem` will tidy it up.
+      // Only active saved-clip descendants block source removal.
       if (item.kind === 'audio-file') {
         for (const child of this.items) {
           if (child.derivedFrom?.sourceItemId !== itemId) continue
@@ -1157,28 +940,15 @@ export const useLibraryStore = defineStore('library', {
       return false
     },
 
-    /** Lookup an item by id, or `null` if absent. */
     getItem(itemId: string): LibraryItem | null {
       return this.items.find((i) => i.id === itemId) ?? null
     },
 
-    /**
-     * Attach tag metadata (artist / title / cover art / bitrate / …) to an
-     * existing library item. Called by the import flow once the main
-     * process finishes parsing. `null` means “parsing finished but no
-     * usable tags were found” — distinct from `undefined` (“still loading”).
-     *
-     * If the metadata carries embedded cover art, the raw bytes are
-     * stripped out of the stored metadata object and turned into a
-     * `Blob` + `URL.createObjectURL`. The resulting URL is stashed on
-     * the item as `coverArtUrl`; the previous URL (if any) is revoked
-     * so re-importing a file with a different cover doesn't leak.
-     */
+    /** Stores parsed tags; cover-art bytes become a revocable object URL. */
     setItemMetadata(itemId: string, metadata: AudioMetadata | null): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
 
-      // Drop any previously-issued cover URL before we overwrite it.
       revokeItemCoverArt(item)
       item.coverArtUrl = undefined
 
@@ -1187,9 +957,7 @@ export const useLibraryStore = defineStore('library', {
         return
       }
 
-      // Pull the cover bytes off the metadata object so we don't store a
-      // multi-megabyte ArrayBuffer inside Vue's reactivity proxy. The
-      // wrapped Blob URL is the only handle the rest of the app sees.
+      // Keep cover bytes out of Vue reactivity; expose only the Blob URL.
       const { coverArt, ...rest } = metadata
       if (item.key && !rest.key) rest.key = item.key
       if (!item.key && rest.key) item.key = rest.key
@@ -1205,13 +973,7 @@ export const useLibraryStore = defineStore('library', {
         item.coverArtUrl = URL.createObjectURL(blob)
       }
 
-      // Backfill auto-named tracks. If a track is hosting exactly one
-      // clip whose file matches this library item, and the track's
-      // current name is the basename of that file (i.e. the
-      // auto-assigned fallback from `addClipToTrack` /
-      // `applyProjectStateSnapshot`), promote it to the freshly-loaded
-      // title. User-renamed tracks are skipped because their name no
-      // longer matches the basename pattern.
+      // Promote only untouched auto-named single-clip tracks to the parsed title.
       const title = rest.title?.trim()
       if (title && title.length > 0) {
         const project = useProjectStore()
@@ -1227,30 +989,18 @@ export const useLibraryStore = defineStore('library', {
       }
     },
 
-    /**
-     * Replace a library item's waveform peaks (and optionally its
-     * sample rate). Called by the project store when a `WAVEFORM_DATA`
-     * frame arrives for a clip whose source file maps to this item, so
-     * library cards rebuilt from PROJECT_STATE pick up their waveform
-     * once the backend serves the cached peaks. No-op for unknown ids.
-     */
+    /** Replaces peaks for PROJECT_STATE items once cached WAVEFORM_DATA arrives. */
     setItemPeaks(itemId: string, peaks: Float32Array, sampleRate: number, peaksPerSecond?: number): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
       item.peaks = peaks
       if (typeof peaksPerSecond === 'number' && peaksPerSecond > 0) item.peaksPerSecond = peaksPerSecond
       if (sampleRate > 0) item.sampleRate = sampleRate
-      // Build the LOD pyramid eagerly. Downsampling is O(N) per level
-      // and runs once per source-file peaks arrival; the pyramid is
-      // shared by every timeline clip that references this item.
-      // A queued microtask defers the work past the current frame so
-      // the watcher chain that fires on peaks arrival doesn't pay the
-      // cost in-line.
+      // Build shared LOD after the current frame so peak watchers stay cheap.
       const itemPps = item.peaksPerSecond
       if (peaks.length >= 4 && typeof itemPps === 'number' && itemPps > 0) {
         const buildLod = (): void => {
-          // The library item may have been removed while we were
-          // queued; bail out if so.
+          // Item may have been removed while queued.
           const live = this.items.find((i) => i.id === itemId)
           if (!live || live.peaks !== peaks) return
           live.peaksLod = buildPeaksLodPyramid(peaks, itemPps)
@@ -1263,22 +1013,14 @@ export const useLibraryStore = defineStore('library', {
       log.debug('library', `setItemPeaks id=${itemId} peaks=${peaks.length / 2} sr=${sampleRate} pps=${item.peaksPerSecond ?? 'undef'}`)
     },
 
-    /**
-     * Store per-channel stereo peaks for `itemId` and eagerly build a
-     * per-channel LOD pyramid. Only meaningful for 2-channel sources;
-     * an empty / non-stereo `channels` array clears any existing entry.
-     * Held outside the `LibraryItem` so the summary path is untouched.
-     */
+    /** Stores stereo peaks and per-channel LOD; non-stereo clears the entry. */
     setItemChannelPeaks(itemId: string, channels: Float32Array[], peaksPerSecond: number): void {
       if (!this.items.some((i) => i.id === itemId)) return
       if (channels.length !== 2 || !(peaksPerSecond > 0)) {
         delete this.channelPeaksByItemId[itemId]
         return
       }
-      // Skip the (synchronous) per-channel LOD rebuild when an identical entry
-      // already exists. Many clips can share one source file, so each
-      // WAVEFORM_READY would otherwise rebuild the same two pyramids and stall
-      // the UI. Reference + rate equality is a cheap, sufficient identity check.
+      // Avoid rebuilding identical shared LOD pyramids for every clip waveform event.
       const existing = this.channelPeaksByItemId[itemId]
       if (
         existing &&
@@ -1296,9 +1038,7 @@ export const useLibraryStore = defineStore('library', {
       )
     },
 
-    /** Set the session-scoped high-resolution peaks payload used by
-     *  the Clip Editor. Pass null to clear (called on dialog close /
-     *  item switch so the multi-MB Float32Array is GC-eligible). */
+    /** `null` clears the multi-MB Clip Editor peaks payload for GC. */
     setEditorHiResPeaks(
       payload: {
         libraryItemId: string
@@ -1311,14 +1051,7 @@ export const useLibraryStore = defineStore('library', {
       this.editorHiResPeaks = payload
     },
 
-    /**
-     * Record the complete BTrack analysis result for `itemId`: BPM,
-     * beat positions (in source-file seconds), and the variable-tempo
-     * flag. Called from the bridge when a `LIBRARY_ITEM_ANALYSIS`
-     * envelope arrives. Also closes any matching in-flight import
-     * progress entry — the BPM/beats arriving is the canonical
-     * "analysis is done" signal.
-     */
+    /** Records backend analysis and advances matching import progress. */
     setItemAnalysis(
       itemId: string,
       bpm: number,
@@ -1330,34 +1063,18 @@ export const useLibraryStore = defineStore('library', {
     ): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
-      // Store BPM at full precision. The 2-decimal rounding the
-      // library tile uses for display happens at format-time
-      // (`item.bpm.toFixed(2)`); using the rounded value in the
-      // math would introduce a fractional-BPM drift that compounds
-      // across many beat / loop boundaries.
+      // Keep full-precision BPM; display rounding would drift in beat math.
       item.bpm = bpm > 0 ? bpm : undefined
       item.beatAnchorSec = beats.length > 0 ? beatAnchorSec : undefined
       item.beats = beats.length > 0 ? beats.slice() : undefined
       item.variableTempo = variableTempo || undefined
-      // Auto-classification hint from the backend. Recomputed on every
-      // analysis pass (so re-analyse refreshes it), but the user's
-      // explicit `sampleMode` override always wins when set.
+      // Backend hint refreshes on reanalysis; explicit `sampleMode` still wins.
       item.lowConfidence = lowConfidence === true ? true : undefined
-      // Keep the backend's decoded-WAV cache path separate from
-      // `playbackFilePath`. The renderer still sends the source path
-      // for normal clip adds so the backend can do its library lookup,
-      // but the info dialog can show the actual WAV cache path.
+      // Keep backend decoded-WAV cache path separate from renderer clip-add paths.
       item.decodedCacheFilePath = playbackFilePath?.trim() ? playbackFilePath : undefined
-      // Bump the project's redraw counter so the timeline repaints
-      // with the freshly-arrived beat markers on the matching clips.
-      // Done unconditionally — the cost is a single repaint and
-      // checking for matching clips is cheaper to skip than to do.
+      // One unconditional repaint is cheaper than searching for matching clips.
       useProjectStore().peaksRevision++
-      // Surface beat detection as its own visible stage in the import
-      // progress panel before finishing the entry. The backend produces
-      // BPM and beats in a single pass, but the UX reads more clearly
-      // when the user sees two sequential stages ("Analysing tempo…"
-      // → "Analysing beats…" → optional "Applying warp…" → done).
+      // Split the single backend analysis pass into clearer visible stages.
       const entry = this.imports.find((e) => e.libraryItemId === itemId)
       if (entry && entry.stage !== 'done' && entry.stage !== 'failed') {
         const project = useProjectStore()
@@ -1377,23 +1094,14 @@ export const useLibraryStore = defineStore('library', {
       }
     },
 
-    /**
-     * Begin tracking a new import (renderer-side decoding stage). Returns
-     * a renderer-local id used to update the entry later. The progress
-     * panel shows the entry from this call until `finishImport` is
-     * called (or the entry expires from inactivity).
-     */
+    /** Begins renderer-local import progress tracking. */
     beginImport(fileName: string): string {
       const id = crypto.randomUUID()
       this.imports.push({ id, fileName, stage: 'decoding' })
       return id
     },
 
-    /**
-     * Mark a renderer-side decoding stage as complete; the entry now
-     * waits on the backend's BPM detection. Attach the library item
-     * id so the LIBRARY_ITEM_ANALYSIS-arrived handler can find this entry.
-     */
+    /** Moves an import from renderer decode to backend analysis. */
     markImportAnalyzing(id: string, libraryItemId: string): void {
       const entry = this.imports.find((e) => e.id === id)
       if (!entry) return
@@ -1421,39 +1129,25 @@ export const useLibraryStore = defineStore('library', {
       }
     },
 
-    /**
-     * Mark an entry as finished (done or failed) and schedule its
-     * removal a short delay later so the user gets a brief flash of
-     * "done" before the row disappears. Idempotent.
-     */
+    /** Finishes an import and briefly leaves the result visible. */
     finishImport(id: string, stage: 'done' | 'failed'): void {
       const entry = this.imports.find((e) => e.id === id)
       if (!entry || entry.stage === 'done' || entry.stage === 'failed') return
       entry.stage = stage
-      // Remove after a short delay so the user gets to see the
-      // "done" / "failed" transition. 1.2 s is long enough to read
-      // and short enough not to clutter the screen.
+      // Delay long enough to read, short enough not to clutter.
       setTimeout(() => {
         const idx = this.imports.findIndex((e) => e.id === id)
         if (idx >= 0) this.imports.splice(idx, 1)
       }, 1200)
     },
 
-    /**
-     * Add `count` files to the current import batch. Drives the
-     * progress bar in the status bar; pair every call with the same
-     * number of `noteImportFinished()` calls (one per file, regardless
-     * of success or failure).
-     */
+    /** Pair every queued file with one `noteImportFinished()` call. */
     beginImportBatch(count: number): void {
       if (count <= 0) return
       this.importTotal += count
     },
 
-    /**
-     * Mark one queued import as finished. When `importDone` catches up
-     * with `importTotal`, both reset to 0 so the progress bar disappears.
-     */
+    /** Resets the batch counters when all queued files finish. */
     noteImportFinished(): void {
       if (this.importTotal <= 0) return
       this.importDone++
@@ -1463,12 +1157,7 @@ export const useLibraryStore = defineStore('library', {
       }
     },
 
-    /**
-     * Record which library item is currently being dragged out. Set this
-     * on `dragstart` and clear it (with `null`) on `dragend` so the
-     * timeline can identify the dragged item during `dragover` events,
-     * where `dataTransfer.getData(...)` is intentionally empty.
-     */
+    /** Mirrors the dragged item id because `dragover` cannot read dataTransfer. */
     setDragItem(itemId: string | null): void {
       this.currentDragItemId = itemId
     }

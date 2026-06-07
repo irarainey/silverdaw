@@ -1,61 +1,30 @@
-// §12.1 — pure geometry for the clip-to-clip crossfade ("transition")
-// CREATION gesture. When the user drags a clip's edge over a same-track
-// neighbour, this decides whether the resulting overlap is a clean
-// candidate for a sanctioned transition.
-//
-// This is a UX PREFILTER, not the authority: the backend `addTransition`
-// re-validates the exact same invariant and is the sole judge (it simply
-// leaves state unchanged and rebroadcasts `PROJECT_STATE` on rejection).
-// We mirror only the candidate SHAPE here so we don't emit obviously-doomed
-// `TRANSITION_CREATE` envelopes — keeping the logic in one tested unit
-// rather than inline in the store keeps it from drifting.
+// Geometry prefilter for drag-created crossfade candidates; backend still validates.
 
-/** Timeline geometry of one clip, in master-timeline milliseconds.
- *  `endMs` is `startMs + effectiveDurationMs` (the warp-scaled footprint,
- *  never the raw source `durationMs`). */
+/** Timeline clip geometry; `endMs` is the warp-scaled footprint. */
 export interface ClipGeometry {
   readonly id: string
   readonly startMs: number
   readonly endMs: number
 }
 
-/** The clip-id pair of an existing transition on the same track. */
 export interface ExistingTransitionPair {
   readonly leftClipId: string
   readonly rightClipId: string
 }
 
-/** A clean (left, right) pair ready to be sent as `TRANSITION_CREATE`. */
 export interface TransitionCandidate {
   readonly leftClipId: string
   readonly rightClipId: string
 }
 
-/** Minimum overlap (ms) before a drag-created overlap is treated as an
- *  intentional crossfade. Grid snapping can leave a 1–2 ms overlap that the
- *  user never meant as a transition; the backend only rejects a strictly
- *  degenerate (zero-width) span, so this frontend gesture floor avoids
- *  surprise micro-transitions. */
+/** Gesture floor to avoid snap-induced micro-transitions. */
 export const MIN_AUTO_TRANSITION_OVERLAP_MS = 10
 
 const EPS = 1e-6
 
 /**
- * Find the same-track neighbour that the just-trimmed clip now forms a
- * valid tail/head crossfade with, or `null` if there is no clean candidate.
- *
- * `edge` is the edge the user dragged:
- *  - `'right'` → the trimmed clip extended its tail rightward, so it is the
- *    LEFT (fade-out) partner and we look for a following RIGHT partner.
- *  - `'left'`  → the trimmed clip extended its head leftward, so it is the
- *    RIGHT (fade-in) partner and we look for a preceding LEFT partner.
- *
- * Mirrors the backend invariant: a proper tail/head overlap
- * `leftStart < rightStart < leftEnd <= rightEnd`, at least
- * `minOverlapMs` wide, no THIRD clip intruding the overlap, and the
- * single-neighbour reuse rule (a clip may be the LEFT of at most one
- * transition and the RIGHT of at most one — so a "sandwiched" clip used as
- * the right of one transition can still become the left of another).
+ * Find a clean tail/head overlap matching backend transition invariants.
+ * Dragging `right` makes the trimmed clip the left partner; `left` makes it the right partner.
  */
 export function findTransitionCandidate(
   trimmed: ClipGeometry,
@@ -82,7 +51,7 @@ export function findTransitionCandidate(
     }
 
     const overlapStart = right.startMs
-    const overlapEnd = left.endMs // == min(left.endMs, right.endMs) given the shape
+    const overlapEnd = left.endMs
     if (overlapEnd - overlapStart < minOverlapMs) continue
 
     // Single-neighbour reuse: this left can't already fade out into another

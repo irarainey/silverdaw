@@ -1,12 +1,4 @@
-// Export Mixdown form model.
-//
-// Owns the entire transactional draft state for the Export Mixdown dialog:
-// the file location, format, sample rate, length policy, loudness /
-// normalization, file-level tags, plus the project-level persistence of
-// last-used settings and the submit (`MIXDOWN_START`) action. The owning
-// SFC keeps presentation, keyboard, focus and lifecycle; everything else
-// lives here so the dialog component stays small and the form logic is
-// unit-testable without mounting.
+// Transactional form model for the Export Mixdown dialog.
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -21,10 +13,7 @@ import { log } from '@/lib/log'
 
 export type ExportFormat = 'wav' | 'mp3' | 'flac' | 'aiff'
 
-/** Loudness preset. `off` is no analysis (default), four normalization
- *  presets cover the dominant delivery targets (Spotify / Apple / EBU
- *  R128). `analyze` measures only and writes byte-identical output to
- *  `off`. `custom` reveals the target + ceiling inputs. */
+/** Loudness mode: no-op, analyze-only, fixed normalization preset, or custom target. */
 export type LoudnessPreset =
   | 'off'
   | 'streaming-14'
@@ -58,7 +47,6 @@ interface PersistedExportSettings {
 }
 
 export interface ExportMixdownFormDeps {
-  /** Close the dialog (emit('close') in the owning SFC). */
   requestClose: () => void
 }
 
@@ -114,16 +102,14 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   const draftSampleRate = ref<44100 | 48000>(44100)
   const draftBitDepth = ref<16 | 24 | 32>(16)
   const draftDither = ref<boolean>(true)
-  /** Tail-seconds field as text so the user can edit naturally; parsed
-   *  to a number on submit. Empty / blank means "no tail". */
+  /** Tail as editable text; blank means no tail. */
   const draftTailSecondsText = ref('0')
   const draftBitrate = ref<128 | 192 | 320>(192)
   // ── Loudness / normalization ───────────────────────────────────────────
   const draftLoudnessPreset = ref<LoudnessPreset>('off')
   const draftCustomTargetText = ref('-14')
   const draftCustomCeilingText = ref('-1')
-  /** Loudness modes require a standard sample rate. Disable the controls
-   *  with a tooltip when the user has somehow ended up off-rate. */
+  /** Loudness modes require a standard sample rate. */
   const loudnessAvailable = computed<boolean>(
     () => draftSampleRate.value === 44100 || draftSampleRate.value === 48000
   )
@@ -142,8 +128,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     if (!customLoudnessActive.value) return true
     return customTargetValid.value && customCeilingValid.value
   })
-  /** Map preset → MIXDOWN_START loudness block. `off` → undefined so
-   *  the payload omits the field entirely (the backend defaults to off). */
+  /** Map preset to the optional MIXDOWN_START loudness block. */
   function buildLoudnessPayload():
     | {
         mode: 'off' | 'analyze' | 'normalize'
@@ -172,7 +157,6 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   }
   const draftLengthMode = ref<'trim-to-last-clip' | 'fixed-duration'>('fixed-duration')
   const draftDurationText = ref('')
-  // File-level tags — all optional, written to every format.
   const draftTitle = ref('')
   const draftArtist = ref('')
   const draftAlbum = ref('')
@@ -184,10 +168,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
 
   // ── Derived ────────────────────────────────────────────────────────────
 
-  /** Bit-depth choices that are valid for the currently-selected format.
-   *  - WAV supports 16 / 24 (PCM) and 32 (IEEE float).
-   *  - FLAC supports 16 / 24.
-   *  - MP3 ignores bit-depth (lossy psychoacoustic encoding). */
+  /** Bit-depth choices valid for the selected format. */
   const availableBitDepths = computed<readonly (16 | 24 | 32)[]>(() => {
     if (draftFormat.value === 'flac') return [16, 24] as const
     if (draftFormat.value === 'aiff') return [16, 24] as const
@@ -213,8 +194,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     return Number.isFinite(t) && t >= 0 && t <= 60
   })
 
-  /** Effective project sample rate, mirroring the fallback used elsewhere:
-   *  project-level value if set, otherwise the user-scope default. */
+  /** Project sample rate with user default fallback. */
   const effectiveProjectRate = computed<44100 | 48000>(() => {
     const projectRate = project.targetSampleRate
     if (projectRate === 44100 || projectRate === 48000) return projectRate
@@ -222,8 +202,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     return fallback === 48000 ? 48000 : 44100
   })
 
-  /** Timeline end (ms) of the latest-ending clip, accounting for warp.
-   *  Used by the "trim to last clip" option. */
+  /** Latest clip end in timeline ms, accounting for warp. */
   const lastClipEndMs = computed<number>(() => {
     let maxEnd = 0
     for (const clipId in project.clips) {
@@ -270,19 +249,8 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   )
 
   // ── Persisted export settings (project level) ─────────────────────────
-  //
-  // The export dialog stores its last-used settings + metadata as an
-  // opaque JSON blob on the project root (`exportSettingsJson`). The
-  // schema is owned here in the renderer — backend round-trips the
-  // string verbatim, including via `.silverdaw` save/load. On open we
-  // parse and apply with a per-field whitelist + clamp so a malformed
-  // or future-version blob can't crash the dialog.
-  //
-  // Notes:
-  //  • `outputPath` is intentionally NOT persisted — always re-derived
-  //    from the project file location so projects stay portable.
-  //  • Parse failure leaves the existing backend blob untouched (a
-  //    future build that understands a newer version can still read it).
+  // Whitelist the project JSON blob so malformed or newer settings cannot break the dialog.
+  // Parse failure leaves the backend blob untouched for future versions.
   function applyPersistedExportSettings(blob: string | null): boolean {
     if (!blob) return false
     let parsed: unknown
@@ -372,9 +340,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
 
   async function reseedOnOpen(): Promise<void> {
     submitting.value = false
-    // Step 1: base defaults. These apply when there is no persisted
-    // blob on the project (fresh project) and act as the fallback for
-    // any individual field a persisted blob omits.
+    // Base defaults also fill fields omitted by persisted settings.
     draftFormat.value = 'wav'
     draftSampleRate.value = effectiveProjectRate.value
     draftBitDepth.value = 16
@@ -384,7 +350,6 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     draftLoudnessPreset.value = 'off'
     draftCustomTargetText.value = '-14'
     draftCustomCeilingText.value = '-1'
-    // Default length = project duration (rubber-duck finding).
     draftLengthMode.value = 'fixed-duration'
     draftDurationText.value = formatTime(project.durationMs)
     draftTitle.value = project.projectName?.trim() ?? ''
@@ -394,15 +359,9 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     draftGenre.value = ''
     draftComment.value = ''
     draftOutputPath.value = ''
-    // Step 2: overlay any persisted per-project settings. Whitelist
-    // each field; a parse failure or unrecognised version leaves the
-    // base defaults in place AND leaves the bad blob untouched on the
-    // backend so a future build can still read it. This also
-    // restores `draftOutputPath` if a path was stored.
+    // Overlay whitelisted per-project settings.
     applyPersistedExportSettings(project.exportSettingsJson)
-    // Step 3: if no path was restored (fresh project, or persisted
-    // blob lacked `outputPath`), derive one from the project file
-    // location: <projectDir>/mixdown/<name>.<ext>.
+    // Derive a portable default path when none was restored.
     if (!draftOutputPath.value) {
       try {
         draftOutputPath.value = await window.silverdaw.resolveMixdownDefaultPath(
@@ -417,8 +376,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     }
   }
 
-  // Keep extension in sync with the format radio so a user who picked a
-  // path then switched format doesn't get a wav-with-.mp3-extension.
+  // Keep the path extension in sync with the selected format.
   watch(draftFormat, () => {
     const path = draftOutputPath.value
     if (!path) return
@@ -426,11 +384,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     draftOutputPath.value = `${replaced}.${expectedFileExtension.value}`
   })
 
-  // If the user picks a format that doesn't support the currently-
-  // selected bit-depth (e.g. they had 32-bit float WAV selected then
-  // switch to FLAC, which only supports 16/24), snap to the highest
-  // supported value rather than silently sending an invalid combo
-  // that the backend would reject.
+  // Snap unsupported bit-depths to the highest valid value for the format.
   watch(draftFormat, () => {
     const allowed = availableBitDepths.value
     if (allowed.length === 0) return
@@ -458,8 +412,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   async function doSave(): Promise<void> {
     submitting.value = true
     try {
-      // Normalise extension to match the format radio in case the user
-      // typed a different one.
+      // Normalise user-typed extensions to the selected format.
       let outputPath = draftOutputPath.value.trim()
       const expectedExt = `.${expectedFileExtension.value}`
       if (!outputPath.toLowerCase().endsWith(expectedExt)) {
@@ -472,24 +425,17 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
         return
       }
 
-      // Overwrite confirmation: prompt before dispatching when the
-      // target file already exists. The native Save As dialog handles
-      // this for Browse-picked paths, but a user who edited the path
-      // field directly bypasses that — this is the belt-and-braces
-      // check. Reflect any normalised extension back into the field
-      // so the user can see what they're being asked to overwrite.
+      // Confirm overwrites for manually edited paths and reflect any normalised extension.
       if (outputPath !== draftOutputPath.value.trim()) {
         draftOutputPath.value = outputPath
       }
       const overwrite = await window.silverdaw.confirmMixdownOverwrite(outputPath)
       if (overwrite === 'cancel') {
-        // Keep the dialog open so the user can edit the filename.
         log.info('mixdown', 'overwrite declined; staying on dialog')
         return
       }
 
-      // File-level tags apply to every format (mapped per-format by the
-      // backend to ID3v2 / RIFF INFO / VORBIS_COMMENT / AIFF text chunks).
+      // File-level tags are mapped per format by the backend.
       const md = {
         title: draftTitle.value.trim() || undefined,
         artist: draftArtist.value.trim() || undefined,
@@ -506,14 +452,11 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
           `sr=${draftSampleRate.value} lengthMode=${draftLengthMode.value} lengthMs=${lengthMs}`
       )
 
-      // Transport must be stopped before the render begins so audio
-      // doesn't play live during the mix. The backend rejects
-      // TRANSPORT_PLAY while busy, but pre-pausing keeps the UI honest.
+      // Pre-pause so live playback cannot continue during the render.
       if (transport.isPlaying) {
         sendBridge('TRANSPORT_PAUSE')
         transport.setPlaybackState(false)
       }
-      // Begin tracking the render so MixdownProgressDialog mounts.
       beginMixdown(outputPath, draftFormat.value)
       const payload: import('@shared/bridge-protocol').MixdownStartPayload = {
         outputPath,
@@ -532,11 +475,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
       if (hasAnyTag) payload.metadata = md
       const loudness = buildLoudnessPayload()
       if (loudness) payload.loudness = loudness
-      // Persist the current settings + metadata on the project so the
-      // next time this project is opened the dialog reopens to the same
-      // state. Dispatched immediately before MIXDOWN_START so a render
-      // that aborts on the backend still leaves the user's preferences
-      // saved. Not undoable.
+      // Persist just before rendering so aborts still keep the user's export preferences.
       project.setExportSettingsJson(JSON.stringify(snapshotExportSettings()))
       sendBridge('MIXDOWN_START', payload)
       deps.requestClose()

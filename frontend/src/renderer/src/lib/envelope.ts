@@ -1,19 +1,12 @@
 import type { ClipEnvelopePoint } from '@shared/bridge-protocol'
 
-/** Linear-gain bounds for a volume-shape breakpoint (≈ `-∞ .. +12 dB`). */
 export const ENVELOPE_MIN_GAIN = 0
 export const ENVELOPE_MAX_GAIN = 4
 
-// ≈ -100 dB. Mirrors `EnvelopeSnapshot::kGainFloor` on the backend so a
-// true-zero breakpoint interpolates as a smooth ramp toward silence
-// rather than an instantaneous drop.
+// ≈ -100 dB; matches backend interpolation toward true-zero breakpoints.
 const GAIN_FLOOR = 1e-5
 
-/**
- * Clamp, sort ascending by `timeMs`, and drop near-duplicate times.
- * Mirrors the backend `ProjectState` normalisation so the optimistic UI
- * state matches what will actually be stored.
- */
+/** Match backend envelope normalisation: finite, clamped, sorted, de-duped. */
 export function sanitizeEnvelopePoints(
   points: readonly ClipEnvelopePoint[]
 ): ClipEnvelopePoint[] {
@@ -34,8 +27,7 @@ export function sanitizeEnvelopePoints(
   return out
 }
 
-/** Value-equality for two (possibly absent) envelopes, within the same
- *  tolerances the backend uses for change detection. */
+/** Value-equality within backend change-detection tolerances. */
 export function envelopesEqual(
   a: readonly ClipEnvelopePoint[] | undefined,
   b: readonly ClipEnvelopePoint[] | undefined
@@ -53,12 +45,7 @@ export function envelopesEqual(
   return true
 }
 
-/**
- * Linear-in-dB gain at clip-local `ms`. Mirrors the backend
- * `EnvelopeSnapshot::gainAtMs` so the rendered shape matches what is
- * heard. Clamps to the endpoint gains outside the breakpoint range and
- * returns unity when there are fewer than two points.
- */
+/** Linear-in-dB gain at clip-local `ms`, matching backend playback. */
 export function envelopeGainAtMs(points: readonly ClipEnvelopePoint[], ms: number): number {
   const n = points.length
   const first = points[0]
@@ -87,22 +74,13 @@ export function envelopeGainAtMs(points: readonly ClipEnvelopePoint[], ms: numbe
   return Math.pow(10, (aDb + (bDb - aDb) * frac) / 20)
 }
 
-/**
- * True when an envelope carries no audible shape — fewer than two points,
- * or every breakpoint sits at unity gain. Such an envelope is semantically
- * "no shape" and is cleared rather than persisted, keeping a freshly-opened
- * (flat) editor from marking the project dirty.
- */
+/** True when an envelope has no audible shape and should not be persisted. */
 export function isFlatUnityEnvelope(points: readonly ClipEnvelopePoint[]): boolean {
   if (points.length < 2) return true
   return points.every((p) => Math.abs(p.gain - 1) <= 1e-4)
 }
 
-/**
- * Return a default two-point "flat unity" shape spanning the clip — the
- * starting canvas the user then bends. Endpoints are pinned to the clip
- * start (0) and end (`durationMs`).
- */
+/** Default two-point flat-unity shape spanning the clip. */
 export function defaultEnvelope(durationMs: number): ClipEnvelopePoint[] {
   const end = Math.max(1, durationMs)
   return [
@@ -111,13 +89,7 @@ export function defaultEnvelope(durationMs: number): ClipEnvelopePoint[] {
   ]
 }
 
-/**
- * Insert a breakpoint at (`timeMs`, `gain`), returning a fresh sorted
- * array. Interior insertions land between the bracketing endpoints; a
- * time coinciding (within 1 ms) with an existing point replaces that
- * point's gain instead of creating a duplicate. Returns the index of the
- * inserted / updated point alongside the new array.
- */
+/** Insert or replace a breakpoint, returning the sorted envelope and touched index. */
 export function insertEnvelopePoint(
   points: readonly ClipEnvelopePoint[],
   timeMs: number,
@@ -136,11 +108,7 @@ export function insertEnvelopePoint(
   return { points: next, index: next.findIndex((p) => Math.abs(p.timeMs - t) < 1e-3) }
 }
 
-/**
- * Remove the breakpoint at `index`. The two endpoints (first and last)
- * are pinned and cannot be removed — the original array is returned
- * unchanged in that case.
- */
+/** Remove an interior breakpoint; pinned endpoints are kept. */
 export function removeEnvelopePoint(
   points: readonly ClipEnvelopePoint[],
   index: number
@@ -149,12 +117,7 @@ export function removeEnvelopePoint(
   return points.filter((_, i) => i !== index).map((p) => ({ ...p }))
 }
 
-/**
- * Move the breakpoint at `index` to (`timeMs`, `gain`). Endpoints keep
- * their pinned time (only their gain moves); interior points are clamped
- * strictly between their immediate neighbours so the array stays sorted
- * and never produces duplicate times.
- */
+/** Move a breakpoint; endpoints keep time and interior points stay strictly sorted. */
 export function moveEnvelopePoint(
   points: readonly ClipEnvelopePoint[],
   index: number,

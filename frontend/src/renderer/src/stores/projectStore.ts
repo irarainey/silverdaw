@@ -1,8 +1,5 @@
-// Project state — the source-of-truth for what the timeline shows.
-//
-// Currently lives entirely in the renderer; once the JUCE backend's
-// `ValueTree` + WebSocket bridge land, this store becomes a mirror of
-// the backend state driven by `PROJECT_STATE` / `TRACK_ADDED` / etc.
+// Project state — source of truth for the timeline. Mirrors backend
+// ValueTree state via PROJECT_STATE / TRACK_ADDED / etc. bridge messages.
 
 import { defineStore } from 'pinia'
 import { decodeAudioToPeaks, PEAKS_PER_SECOND } from '@/lib/audio'
@@ -42,94 +39,50 @@ export { effectiveClipDurationMs, effectiveClipTempoRatio, isClipTempoWarpActive
 
 export interface Clip {
   readonly id: string
-  /** Host track id. Mutable because clips can be dragged between
-   *  tracks; updated in lockstep with the `CLIP_MOVE { trackId }`
-   *  envelope so the backend's ValueTree re-parents the clip node. */
+  /** Host track id. Mutable — updated with CLIP_MOVE so the backend re-parents the clip. */
   trackId: string
-  /** Source library item this clip plays from. The single source of
-   *  truth for the underlying audio file — clips never carry a
-   *  filesystem path. `filePath` / `fileName` / `peaks` below are
-   *  cached copies sourced from the library item at creation time
-   *  for cheap rendering lookups; PROJECT_STATE refreshes them when
-   *  the library item is relinked. */
+  /** Source library item. Single source of truth for the audio file; clips never
+   *  carry a path. filePath/fileName/peaks below are cached copies for rendering. */
   libraryItemId: string
-  /** Cached source-file path (== library item filePath). Mutable
-   *  because PROJECT_STATE refreshes it when the library item is
-   *  relinked; kept as a convenience for the drawing / drag / save
-   *  code paths that don't want a library lookup on every access. */
+  /** Cached source-file path (== library item filePath); refreshed on relink. */
   filePath: string
-  /**
-   * Cached backend-loadable path (== library item playbackFilePath).
-   * Used to match `CLIP_ADDED` / `CLIP_ADD_FAILED` acks back to the
-   * originating clip in the renderer. Refreshed on relink.
-   */
+  /** Cached backend-loadable path; matches CLIP_ADDED/CLIP_ADD_FAILED acks to the clip. */
   playbackFilePath?: string
   fileName: string
   /** Offset from the timeline origin (ms). Mutable so clips can be dragged. */
   startMs: number
-  /** Where inside the source file this clip begins reading (the
-   *  non-destructive trim window's left edge). Mutable because
-   *  left-edge trim shifts both `startMs` and `inMs` together. Defaults
-   *  to 0 for newly-imported clips that haven't been trimmed. */
+  /** Read offset into the source file (trim window's left edge). 0 = untrimmed. */
   inMs: number
-  /** How long this clip plays from `inMs` onward (ms). Mutable so
-   *  edge-drag trim can shrink it from either side. */
+  /** Play length from `inMs` onward (ms). */
   durationMs: number
   /** Backend-reported sample rate. May be 0 for placeholder clips until WAVEFORM_DATA arrives. */
   sampleRate: number
   readonly channelCount: number
-  /**
-   * Alternating min, max float pairs. `peaksPerSecond` records the actual
-   * bucket rate used to create them; it can differ slightly from the
-   * requested nominal rate when sample buckets must be integer-sized.
-   */
+  /** Alternating min/max pairs. `peaksPerSecond` is the actual bucket rate used. */
   peaks: Float32Array
   peaksPerSecond?: number
-  /** True when the library item's source file no longer exists on
-   *  disk. The drawing code renders the clip greyed-out and the
-   *  relink toast lists it. Mutable so a successful relink can
-   *  clear it on the next PROJECT_STATE. */
+  /** Source file missing on disk; rendered greyed-out and listed in the relink toast. */
   unresolved: boolean
-  /** Per-clip colour-palette override (0..15). When undefined the clip
-   *  inherits the host track's `colorIndex`. Set via right-click →
-   *  Colour. */
+  /** Colour-palette override (0..15); inherits the track's colorIndex when undefined. */
   colorIndex?: number
-  /** User-facing display name override. Set via double-click on the
-   *  clip header in the timeline. When set, this name is shown on the
-   *  clip and used as the default name when saving the clip to the
-   *  library. Undefined means fall back to the library item title /
-   *  filename. */
+  /** Display-name override; falls back to the library item title/filename when undefined. */
   name?: string
-  /** Per-clip warp + pitch-shift settings. All fields optional; an
-   *  un-warped clip carries none of them. See `ClipSetWarpPayload` in
-   *  the shared bridge protocol for the field semantics. `tempoRatio`
-   *  undefined means "derive from project.bpm / sourceBpm live"; a
-   *  finite value pins the ratio so subsequent project-BPM edits
-   *  don't move this clip. */
+  /** Warp + pitch-shift settings (see ClipSetWarpPayload). `tempoRatio` undefined =
+   *  derive from project.bpm/sourceBpm live; a finite value pins the ratio. */
   warpEnabled?: boolean
   warpMode?: ClipWarpMode
   tempoRatio?: number
   semitones?: number
   cents?: number
-  /** Per-clip volume-shape breakpoints (clip-local post-warp ms, linear
-   *  gain in `[0, 4]`, sorted ascending by `timeMs`). undefined / empty
-   *  means "no shape" — unity gain across the clip. Backend normalises
-   *  (sort, clamp, dedupe); the renderer mirrors the stored shape. */
+  /** Volume-shape breakpoints (post-warp ms, linear gain [0,4], sorted). Empty = unity. */
   envelopePoints?: ClipEnvelopePoint[]
-  /** Bookkeeping flag: clip was dropped before its library item's BPM
-   *  was detected. Cleared automatically by `LIBRARY_ITEM_ANALYSIS`
-   *  (auto-flip warp on) or by any manual warp edit (user opt-out). */
+  /** Clip dropped before its BPM was detected; cleared by LIBRARY_ITEM_ANALYSIS or a manual warp edit. */
   pendingAutoWarp?: boolean
-  /** Backend-authoritative effective timing. `durationMs` above remains
-   *  source-time; this is the rendered/audible timeline footprint. */
+  /** Backend-authoritative effective timing (rendered footprint); `durationMs` is source-time. */
   effectiveDurationMs?: number
   effectiveTempoRatio?: number
   effectiveWarpActive?: boolean
-  /** Per-clip lock flag. When true the timeline UI disables move and
-   *  edge-trim gestures (double-click to open in the editor still
-   *  works). Persisted with the project. Per-clip — locking one
-   *  instance of a saved-clip does NOT propagate to siblings.
-   *  Absent/false = unlocked. */
+  /** Locks move/edge-trim gestures (editor still opens). Per-clip; not shared across saved-clip siblings. */
   locked?: boolean
 }
 
@@ -139,12 +92,8 @@ export interface Marker {
 }
 
 /**
- * A sanctioned clip-to-clip crossfade on a single track (§12.1).
- * Backend-authoritative: created / removed via the `TRANSITION_*` bridge
- * messages and auto-reconciled when partner-clip geometry changes. The
- * `recipe` is a discriminated union (only the equal-power `smooth`
- * crossfade for now). `leftClipId` is the earlier (fade-out) clip;
- * `rightClipId` the later (fade-in) clip.
+ * Clip-to-clip crossfade on one track (§12.1). Backend-authoritative via
+ * TRANSITION_* messages. `leftClipId` = earlier (fade-out) clip, `rightClipId` = later (fade-in).
  */
 export interface Transition {
   readonly id: string
@@ -159,82 +108,32 @@ export interface Track {
   clipIds: string[]
   muted: boolean
   soloed: boolean
-  /** Per-track volume as a linear gain. 0.0 = silent, 1.0 = unity
-   *  (the slider's mid-point), 1.5 = +50% boost (the slider's
-   *  right-hand maximum). The TrackHeaderPanel fader maps its 0..1
-   *  visual position onto this domain piecewise so unity sits at the
-   *  middle of the bar, giving the user equal travel for cuts and
-   *  boosts. */
+  /** Linear gain: 0 = silent, 1 = unity. TrackHeaderPanel maps its 0..1 fader piecewise so unity sits mid-bar. */
   volume: number
   /** Index into `TRACK_PALETTE`. Selects the waveform / clip-block colours. */
   colorIndex: number
-  /**
-   * Visible length of the track in ms. New tracks default to
-   * `DEFAULT_TRACK_LENGTH_MS`; if a longer file is imported the track grows
-   * to fit it. This is what drives `durationMs` for the timeline ruler /
-   * scroll extent.
-   */
+  /** Visible track length (ms); grows to fit longer imports. Drives the ruler/scroll extent. */
   lengthMs: number
-  /**
-   * Per-track row height in CSS pixels. User-resizable via the drag
-   * handle on the bottom edge of each track header. Optional: tracks
-   * loaded from a project saved before this field existed (or freshly
-   * created without an explicit override) fall back to the default
-   * row height from the timeline constants module.
-   */
+  /** Row height (CSS px), user-resizable. Falls back to the default when absent. */
   heightPx?: number
-  /**
-   * Per-track Tone EQ — fixed 3-band shelving/peak tilt + a one-button
-   * low-cut and high-cut. dB fields are in `[-15, +15]`; 0 = flat. All
-   * optional and suppressed-when-default so a flat track carries no tone
-   * state (and a legacy project hydrates cleanly). Mirrors the backend
-   * ValueTree flat properties `toneBassDb` / `toneMidDb` / `toneTrebleDb`
-   * / `toneLowCut` / `toneHighCut`.
-   */
+  /** Tone EQ: 3-band tilt (dB [-15,+15], 0 = flat) + low/high-cut. Suppressed-when-default. */
   toneBassDb?: number
   toneMidDb?: number
   toneTrebleDb?: number
   toneLowCut?: boolean
   toneHighCut?: boolean
-  /**
-   * Per-track send amounts into the two project-shared FX buses — the
-   * Reverb and the Delay. Linear `[0, 1]`; 0 = no send.
-   * Both optional and suppressed-when-default so a dry track carries no
-   * send state and legacy projects hydrate cleanly. Mirrors the backend
-   * ValueTree flat properties `sendReverb` / `sendDelay`.
-   */
+  /** Send amounts into the shared Reverb/Delay buses (linear [0,1], 0 = no send). */
   reverbSend?: number
   delaySend?: number
-  /**
-   * Per-track equal-power pan, signed `[-1, 1]` (`-1` = hard left, `0` =
-   * centre, `+1` = hard right). Optional and suppressed-when-default
-   * (centre) so a centred track carries no pan state and legacy projects
-   * hydrate cleanly. Mirrors the backend ValueTree flat property `pan`.
-   */
+  /** Equal-power pan, signed [-1,1] (0 = centre). Suppressed-when-default. */
   pan?: number
-  /**
-   * Per-track Leveler (single-knob soft-knee compressor) amount, linear
-   * `[0, 1]` (`0` = off / bypassed, `1` = maximum levelling). Optional and
-   * suppressed-when-default (`0`) so an unlevelled track carries no state
-   * and legacy projects hydrate cleanly. Mirrors the backend ValueTree flat
-   * property `levelerAmount`.
-   */
+  /** Leveler (soft-knee compressor) amount, linear [0,1] (0 = off). Suppressed-when-default. */
   levelerAmount?: number
-  /**
-   * Sanctioned clip-to-clip crossfades on this track (§12.1). Backend-
-   * authoritative; hydrated from each `PROJECT_STATE`. Absent / empty when
-   * the track has no transitions (the dormant default).
-   */
+  /** Clip-to-clip crossfades on this track (§12.1); hydrated from PROJECT_STATE. */
   transitions?: Transition[]
 }
 
-/**
- * Project-shared **Reverb** parameters. One Reverb is shared by the
- * whole project — "the song's space". Every scalar is linear `[0, 1]`;
- * `mix` at 0 makes the Reverb inaudible (and export bit-identical to a
- * project with no reverb at all). Mirrors the backend `PROJECT` ValueTree
- * properties `reverbSize` / `reverbDecay` / `reverbTone` / `reverbMix`.
- */
+/** Project-shared Reverb. Scalars linear [0,1]; `mix` 0 = inaudible. */
 export interface ProjectReverbState {
   size: number
   decay: number
@@ -242,13 +141,7 @@ export interface ProjectReverbState {
   mix: number
 }
 
-/**
- * Project-shared **Delay** (tempo-locked) parameters. `noteValue`
- * is a beat division resolved against the project BPM on the backend;
- * `feedback` / `tone` / `mix` are linear `[0, 1]`. `mix` at 0 makes the
- * Delay inaudible. Mirrors the backend `PROJECT` ValueTree properties
- * `delayNoteValue` / `delayFeedback` / `delayTone` / `delayMix`.
- */
+/** Project-shared tempo-locked Delay. `noteValue` is a beat division; others linear [0,1]; `mix` 0 = inaudible. */
 export interface ProjectDelayState {
   noteValue: DelayNoteValue
   feedback: number
@@ -260,28 +153,15 @@ export interface ProjectDelayState {
 export const DEFAULT_TRACK_LENGTH_MS = 10 * 60 * 1000
 
 /**
- * Upper bound on a track's linear volume — set to the linear equivalent
- * of `MAX_TRACK_DB` (+6 dB ≈ 1.9953), matching the convention used by
- * Logic Pro / Ableton Live / GarageBand. The slider taper in
- * `TrackHeaderPanel.vue` puts 0 dB (unity) near the top of fader travel
- * so the bulk of the bar covers the audible attenuation range. The
- * backend's per-clip-transport clamp at 4.0× lets this through
- * unchanged. Saved projects clamp incoming `gain` values to this
- * domain on snapshot apply; older `.silverdaw` files with `gain <= 1.5`
- * still load identically — only the *cap* has moved up.
+ * Upper bound on a track's linear volume — the linear equivalent of MAX_TRACK_DB
+ * (+6 dB ≈ 1.9953). TrackHeaderPanel's taper puts unity near the top of fader
+ * travel. Saved projects clamp incoming `gain` to this domain; older files load identically.
  */
 export const MAX_TRACK_VOLUME = MAX_TRACK_GAIN_LINEAR
 
 /**
- * Derive a stable `projectId` from an absolute project file path. Used
- * to bucket autosave artefacts so the same file always lands in the
- * same `%APPDATA%/Silverdaw/autosave/<projectId>/` folder across
- * launches.
- *
- * Prefers `crypto.subtle.digest` (SHA-1, 8-byte prefix) and falls back
- * to a cheap deterministic string hash on environments that don't
- * expose Web Crypto (e.g. Vitest's happy-dom shim used by the store
- * specs).
+ * Stable `projectId` from an absolute path, used to bucket autosave artefacts.
+ * Prefers SHA-1 (8-byte prefix); falls back to a deterministic hash without Web Crypto.
  */
 async function deriveProjectIdFromPath(absolutePath: string): Promise<string> {
   const lower = absolutePath.trim().toLowerCase()
@@ -298,8 +178,7 @@ async function deriveProjectIdFromPath(absolutePath: string): Promise<string> {
   } catch {
     // Fall through to the synchronous fallback.
   }
-  // Deterministic 32-bit FNV-1a → 8 hex digits. Good enough for
-  // tests; the SHA-1 path covers real users.
+  // Deterministic FNV-1a fallback for environments without Web Crypto.
   let h = 0x811c9dc5
   for (let i = 0; i < lower.length; i++) {
     h ^= lower.charCodeAt(i)
@@ -308,14 +187,11 @@ async function deriveProjectIdFromPath(absolutePath: string): Promise<string> {
   return h.toString(16).padStart(8, '0')
 }
 
-/** Generate a fresh autosave id for an untitled project. Same character
- *  set as `deriveProjectIdFromPath` so main's allow-list (a strict
- *  `[A-Za-z0-9_-]{1,64}` regex) accepts both. */
+/** Fresh autosave id for an untitled project; matches main's [A-Za-z0-9_-]{1,64} allow-list. */
 function freshUntitledProjectId(): string {
   const c = globalThis.crypto as Crypto | undefined
   if (c?.randomUUID) return c.randomUUID().replace(/-/g, '').slice(0, 24)
-  // Test-environment fallback. Math.random() entropy is fine here —
-  // collisions inside one Vitest run don't matter.
+  // Test-environment fallback; Math.random() entropy is fine here.
   let out = ''
   for (let i = 0; i < 24; i++) {
     out += Math.floor(Math.random() * 16).toString(16)
@@ -413,178 +289,79 @@ interface ProjectState {
   tracks: Track[]
   clips: Record<string, Clip>
   markers: Marker[]
-  /**
-   * Incremented whenever any clip's peaks change. Provides a single
-   * shallow-reactive signal that consumers (e.g. the Pixi timeline
-   * draw watch) can subscribe to without paying the cost of a deep
-   * watch on every clip in the project. The clip peaks themselves are
-   * mutated in place by `setClipPeaks`; this counter is what tells
-   * the renderer to redraw.
-   */
+  /** Bumped on any clip peaks change — a cheap reactive redraw signal (peaks mutate in place). */
   peaksRevision: number
 
   // ─── Project file identity ───────────────────────────────────────────────
-  /**
-   * Absolute path of the currently-loaded `.silverdaw` file, or null if
-   * the project hasn't been saved yet (newly-created or fresh launch
-   * with no last project on disk).
-   */
+  /** Absolute path of the loaded `.silverdaw` file; null until first saved. */
   currentFilePath: string | null
   /** User-facing project name. `Untitled` for an unsaved project. */
   projectName: string
-  /**
-   * True when the backend's ValueTree has been mutated since the last
-   * load / save / new. Driven by `PROJECT_DIRTY { dirty }` envelopes
-   * and reset to false on every PROJECT_STATE apply (a fresh snapshot
-   * is by definition clean — see `applyProjectStateSnapshot`).
-   */
+  /** Mutated since last load/save/new. Driven by PROJECT_DIRTY; reset on every PROJECT_STATE apply. */
   isDirty: boolean
-  /**
-   * Stable identifier used to bucket autosave artefacts under
-   * `%APPDATA%/Silverdaw/autosave/<projectId>/`. Derived from the
-   * absolute file path for saved projects (so the same file always
-   * lands in the same folder across launches) and a random UUID for
-   * untitled / freshly-created projects. Refreshed on every
-   * PROJECT_STATE with reset=true so File > Save As switches buckets
-   * cleanly. `null` until the first snapshot has been applied.
-   */
+  /** Stable id bucketing autosave artefacts. Derived from the file path (saved) or a
+   *  UUID (untitled); refreshed on PROJECT_STATE reset=true. Null until first snapshot. */
   projectId: string | null
   /** Project id from the recovery manifest while an untitled recovery load is in flight. */
   pendingRecoveredProjectId: string | null
-  /**
-   * Snapshot of `projectId` before the most recent transition (Load,
-   * New, Save As). The autosave manager uses this to delete the old
-   * bucket after a successful explicit save / new without losing the
-   * file that's still under the new id.
-   */
+  /** `projectId` before the last Load/New/Save As; lets autosave delete the old bucket safely. */
   previousProjectId: string | null
-  /**
-   * True while a mid-session engine recovery is in flight. Suppresses
-   * autosave writes AND the `previousProjectId` bucket-cleanup so the
-   * empty reconnect snapshot can't delete the autosave we're about to
-   * restore from. Cleared by `engineRecovery` once the project has been
-   * re-loaded into the respawned engine (or recovery is abandoned).
-   */
+  /** Engine recovery in flight: suppresses autosave writes and bucket-cleanup so the
+   *  reconnect snapshot can't delete the autosave we're restoring from. */
   recoveryInFlight: boolean
-  /**
-   * Horizontal zoom (pixels per second) persisted with the project.
-   * Mirrors `viewPxPerSecond` from PROJECT_STATE; the timeline writes
-   * back here when the user wheel-zooms (debounced) so the value
-   * survives File > Save / Load. `null` means "no preference yet —
-   * keep the renderer's current default" (used for the initial connect
-   * snapshot before any zoom has been sent).
-   */
+  /** Persisted horizontal zoom (px/sec). Null = no preference yet (keep renderer default). */
   viewPxPerSecond: number | null
-  /** Persisted horizontal scroll position (px). Same `null` semantics
-   *  as `viewPxPerSecond`. */
+  /** Persisted horizontal scroll (px); same null semantics as `viewPxPerSecond`. */
   viewScrollX: number | null
 
-  /** Whether the bottom panel shows the Track FX view (vs the Library).
-   *  Persisted with the project as view state (non-dirty): the Fx button
-   *  on a track header and the bottom-panel tab strip both drive this
-   *  single source of truth, and it is restored on load. */
+  /** Bottom panel shows Track FX (vs Library). Persisted as non-dirty view state. */
   fxPanelOpen: boolean
 
-  /** Which effects surface the bottom panel shows when `fxPanelOpen` is
-   *  true: the per-track rack (`'track'` — Tone, Pan, and Reverb/Delay
-   *  amounts for the selected track) or the project-wide rack (`'project'`
-   *  — the shared Reverb + Delay buses). UI-only — not persisted and not
-   *  sent to the backend; reopening
-   *  the FX area after a reload defaults back to the track rack. A single
-   *  source of truth so the tab strip and a track header's Fx button agree
-   *  on which rack is showing. */
+  /** Which FX rack the bottom panel shows: per-track or project-wide. UI-only (not persisted). */
   fxTab: 'track' | 'project'
 
-  /** Currently selected clip id (UI-only — not persisted, not sent to
-   *  the backend). Used to render a thicker outline on the selected
-   *  clip and to identify the target of Cut / Copy. `null` when
-   *  nothing is selected. */
+  /** Selected clip id (UI-only). Drives the selection outline and Cut/Copy target. */
   selectedClipId: string | null
 
-  /** Currently selected track id. The selected track is the paste target
-   *  (`pasteClipAtPlayhead` places the new clip on this track at the
-   *  playhead) and the Track FX panel's target. Drawn with a highlighted
-   *  row border. Persisted with the project as view state (non-dirty) so
-   *  reopening restores the selection and the active Fx button. */
+  /** Selected track id — paste target and Track FX target. Persisted as non-dirty view state. */
   selectedTrackId: string | null
 
-  /** Local cut / copy buffer. Holds the minimum data needed to mint a
-   *  fresh clip via `pasteClipAtPlayhead`. Renderer-only — cleared on
-   *  project load / new. */
+  /** Cut/copy buffer for `pasteClipAtPlayhead`. Renderer-only; cleared on load/new. */
   clipboardClip: ClipboardEntry | null
 
   /** Source clip id -> last duplicated clip id for repeated duplicate commands. */
   duplicateTailBySource: Record<string, string>
 
-  /** Mirror of the backend `juce::UndoManager` head: whether an undo /
-   *  redo step is currently available. Drives the Edit > Undo / Redo
-   *  menu's enabled state. Updated by `EDIT_UNDO_STATE` envelopes. */
+  /** Backend UndoManager availability; drives the Edit > Undo/Redo menu. From EDIT_UNDO_STATE. */
   canUndo: boolean
   canRedo: boolean
-  /** Description of the next undo / redo transaction (e.g. "Move clip").
-   *  Reserved for future menu hints like "Undo Move clip"; the basic
-   *  Edit menu just uses the boolean fields. `null` when the
-   *  corresponding `can…` flag is false. */
+  /** Next undo/redo transaction label; null when the matching `can…` flag is false. */
   undoLabel: string | null
   redoLabel: string | null
 
-  /**
-   * Per-project preferred audio output device. Both fields default to
-   * `null` (no project-level override). When non-null, the renderer's
-   * load-time reconcile in `bridgeService` switches the live device to
-   * this pair if it's currently available; if not, it shows a warning
-   * dialog and leaves the live device on whatever the user-scope
-   * `preferences.json` selected at backend startup. The project's
-   * saved preference is preserved either way so the project stays
-   * portable.
-   */
+  /** Per-project preferred output device. Null = no override. On load, bridgeService
+   *  switches to it if available, else warns and keeps the user-scope device. */
   audioOutputTypeName: string | null
   audioOutputDeviceName: string | null
 
-  /**
-   * Per-project target sample rate (Hz). Drives the playback-cache
-   * rebuild so every clip's audio is at this rate on disk. `null`
-   * means "no project value yet — adopt the user-scope default on
-   * next interaction". Today only 44 100 and 48 000 are accepted.
-   */
+  /** Target sample rate (Hz) driving the playback-cache rebuild. Null = adopt user default. 44100/48000 only. */
   targetSampleRate: number | null
-  /**
-   * Opaque JSON blob persisting the last-used export-dialog settings
-   * (format, bit depth, tail seconds, loudness preset, file-level
-   * tags, …). `null` means "fresh project — dialog opens with base
-   * defaults". Schema is renderer-owned (`{ version: 1, … }`); the
-   * backend just round-trips the string verbatim.
-   */
+  /** Opaque renderer-owned JSON of last-used export-dialog settings; backend round-trips it verbatim. Null = defaults. */
   exportSettingsJson: string | null
-  /**
-   * Master output volume (0..1 linear). Applied to the live mix bus
-   * and to mixdown exports. Defaults to 1.0 (unity) for new projects.
-   * Persisted on the ValueTree, so reloading a project restores the
-   * slider position the user left it at.
-   */
+  /** Master output volume (0..1 linear), applied to live mix and exports. Persisted. */
   masterVolume: number
-  /**
-   * Project-shared Reverb parameters. One Reverb for the whole
-   * song; persisted on the PROJECT ValueTree. Defaults to all-zero
-   * (inaudible) so a fresh project sounds and exports exactly as it did
-   * before the shared FX existed.
-   */
+  /** Project-shared Reverb; persisted. Defaults all-zero (inaudible). */
   projectReverb: ProjectReverbState
-  /**
-   * Project-shared Delay (tempo-locked) parameters. Defaults to a
-   * 1/8-note time with zero feedback / tone / mix (inaudible).
-   */
+  /** Project-shared tempo-locked Delay. Defaults 1/8-note, zero feedback/tone/mix (inaudible). */
   projectDelay: ProjectDelayState
 }
 
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
 export interface ClipboardEntry {
   sourceTrackId: string
-  /** Original clip's `startMs` on the source track. Retained for
-   *  future paste variants and diagnostics; paste lands at playhead. */
+  /** Source clip's `startMs`; paste lands at the playhead. */
   sourceStartMs: number
-  /** Original clip's `durationMs` (separate from `durationMs` in case
-   *  we ever support trimmed pastes). Currently equal. */
+  /** Source clip's `durationMs`. */
   sourceDurationMs: number
   libraryItemId: string
   filePath: string
@@ -592,9 +369,7 @@ export interface ClipboardEntry {
   durationMs: number
   colorIndex?: number
   name?: string
-  /** Warp settings carried across copy/paste so a paste preserves
-   *  the source clip's tempo / pitch state. All optional — un-warped
-   *  clips leave these undefined. */
+  /** Warp settings carried across copy/paste to preserve tempo/pitch. */
   warpEnabled?: boolean
   warpMode?: ClipWarpMode
   tempoRatio?: number
@@ -609,10 +384,8 @@ export interface ClipboardEntry {
 export const DEFAULT_PROJECT_NAME = 'Untitled'
 
 /**
- * Single in-flight resolver for `saveAndWait`. Saves are serialised by
- * the unsaved-changes modal (which stays open until the ack arrives),
- * so one slot is enough. Module-level rather than store state because
- * Promise resolvers aren't serialisable into Pinia's reactivity proxy.
+ * Single in-flight resolver for `saveAndWait` (saves are serialised by the modal).
+ * Module-level because Promise resolvers aren't serialisable into Pinia's proxy.
  */
 let pendingSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
 let pendingViewStateSaveResolver: ((result: { ok: boolean; error?: string }) => void) | null = null
@@ -623,24 +396,13 @@ let pendingRecoveryLoadResolver: ((result: { ok: boolean; error?: string }) => v
 let pendingRecoveryLoadTimeout: ReturnType<typeof setTimeout> | null = null
 const PENDING_LOAD_TIMEOUT_MS = 10000
 
-/**
- * Outstanding autosave resolver keyed by autosave filePath. The
- * renderer's autosave manager can have at most one tick in flight at a
- * time, but keying on path keeps the resolver robust to a tick races
- * being raced by a project replacement (the new bucket's ack should
- * not resolve the previous bucket's promise).
- */
+/** Outstanding autosave resolvers keyed by filePath so a project swap can't cross-resolve acks. */
 const pendingAutosaveResolvers = new Map<
   string,
   (result: { ok: boolean; error?: string }) => void
 >()
 
-/**
- * Map the wire-format transitions on a track snapshot to the store shape.
- * Returns undefined for an absent / empty list so a transition-free track
- * stays on the suppressed-default fast path (matching the backend, which
- * omits the field entirely).
- */
+/** Map wire-format transitions to the store shape; undefined for an empty list (suppressed default). */
 function hydrateTransitions(
   raw: readonly ProjectStateTransition[] | undefined
 ): Transition[] | undefined {
@@ -688,15 +450,9 @@ export const useProjectStore = defineStore('project', {
   }),
 
   getters: {
-    /**
-     * Project duration in ms. The timeline always shows at least the longest
-     * track's `lengthMs`, plus whatever a clip at the end of a track might
-     * extend past that.
-     */
+    /** Project duration in ms, including clip tails past track lengths. */
     durationMs(state): number {
-      // Walk every clip and compute its backend-authoritative effective
-      // timeline end. Source-time duration stays on `durationMs`;
-      // `effectiveDurationMs` is the rendered/audible footprint.
+      // Compare clip ends in effective timeline time, not source duration.
       let max = 0
       for (const t of state.tracks) {
         if (t.lengthMs > max) max = t.lengthMs
@@ -711,11 +467,7 @@ export const useProjectStore = defineStore('project', {
       return max
     },
 
-    /**
-     * Minimum legal project length based only on timeline clips. Track
-     * display length may be longer, but user edits must never shrink the
-     * ruler under the audible/visible end of the latest clip.
-     */
+    /** Minimum legal project length: never below the latest effective clip end. */
     longestClipEndMs(state): number {
       let max = 0
       for (const id in state.clips) {
@@ -728,22 +480,14 @@ export const useProjectStore = defineStore('project', {
       return max
     },
 
-    /** True if any track is currently soloed. */
     anySoloed(state): boolean {
       return state.tracks.some((t) => t.soloed)
     }
   },
 
   actions: {
-    /**
-     * Add a new empty track. The track shows up immediately in the timeline
-     * with the default visible length; clips can be imported into it later
-     * via `addClipToTrack`. Returns the new track's id.
-     */
     addTrack(): string {
-      // UUID rather than a counter so the id is unique across renderer
-      // reloads, multiple windows, and future project save/load. The
-      // display name still uses the running count.
+      // UUIDs stay stable across renderer reloads and save/load cycles.
       const trackId = crypto.randomUUID()
       const track: Track = {
         id: trackId,
@@ -752,26 +496,16 @@ export const useProjectStore = defineStore('project', {
         muted: false,
         soloed: false,
         volume: 1.0,
-        // Rotate through the palette so consecutive new tracks get distinct
-        // colours. Users can override per-track via the colour picker.
         colorIndex: this.tracks.length % TRACK_PALETTE.length,
         lengthMs: DEFAULT_TRACK_LENGTH_MS
       }
       this.tracks.push(track)
-      // Inform the backend so it can record the structural track in its
-      // ValueTree. The renderer doesn't wait for the ack — `TRACK_ADDED`
-      // is purely diagnostic (the renderer already shows the track).
+      // Optimistic; TRACK_ADDED is diagnostic because the renderer already shows it.
       sendBridge('TRACK_ADD', { trackId, name: track.name })
       log.info('project', `addTrack id=${trackId}`)
       return trackId
     },
 
-    /**
-     * Add a decoded audio file as a clip on an existing track, starting at
-     * the given offset (default 0). Grows the track's `lengthMs` if the clip
-     * extends past the current end. Returns the new clip's id, or `null` if
-     * the track wasn't found.
-     */
     addClipToTrack(
       trackId: string,
       audio: {
@@ -783,9 +517,7 @@ export const useProjectStore = defineStore('project', {
         channelCount: number
         peaks: Float32Array
         peaksPerSecond?: number
-        /** Optional backend-loadable path; falls back to `filePath`. */
         playbackFilePath?: string
-        /** Optional source-file trim window for reusable saved clips. */
         inMs?: number
       },
       startMs = 0
@@ -813,12 +545,9 @@ export const useProjectStore = defineStore('project', {
       this.clips[clipId] = clip
       track.clipIds.push(clipId)
 
-      // Grow the visible track length if this clip extends past the end.
       const clipEnd = clip.startMs + effectiveClipDurationMs(clip)
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
 
-      // If the track was previously unnamed (default "Track N") and this is
-      // its first clip, take the file stem as a more helpful label.
       if (track.clipIds.length === 1 && /^Track \d+$/.test(track.name)) {
         track.name = audio.fileName.replace(/\.[^.]+$/, '')
       }
@@ -826,38 +555,11 @@ export const useProjectStore = defineStore('project', {
       return clipId
     },
 
-    /**
-     * Move an existing clip to a new timeline offset (ms). Grows the host
-     * track's `lengthMs` if the clip now extends past the previous end and
-     * notifies the backend so playback respects the new position.
-     */
-    /**
-     * Move an existing clip. Three behaviours are bundled:
-     *
-     *   1. Same-track move with collision prevention. Clips can't
-     *      overlap on a single track, so we find the largest gap
-     *      whose midpoint is closest to the desired position and
-     *      clamp the new `startMs` into that gap. The clip butts
-     *      flush against any neighbour it bumps into — exactly the
-     *      "magnetic edge snap" the user wanted so adjacent clips
-     *      play seamlessly.
-     *
-     *   2. Cross-track move. When `targetTrackId` differs from the
-     *      clip's current host track, we re-parent the clip in the
-     *      ValueTree (via the extended `CLIP_MOVE` envelope) and
-     *      apply the same gap-clamp on the destination track.
-     *
-     *   3. Backward compatibility. Calling without `targetTrackId`
-     *      keeps the existing behaviour from the drag handler.
-     */
+    /** Move a clip, gap-clamping in effective timeline time and optionally re-parenting tracks. */
     moveClip(clipId: string, startMs: number, targetTrackId?: string): void {
       const clip = this.clips[clipId]
       if (!clip) return
-      // Locked clips are inert against move — defensive guard at the
-      // store layer so any caller (drag, keyboard nudge, future
-      // arrangement helpers) shares the invariant; the drag-handler
-      // gate is for UX (no ghost / no cursor flicker), this is for
-      // correctness.
+      // Store-level lock guard keeps every mutation path inert.
       if (clip.locked) return
       const destTrackId = targetTrackId ?? clip.trackId
       const destTrack = this.tracks.find((t) => t.id === destTrackId)
@@ -879,7 +581,6 @@ export const useProjectStore = defineStore('project', {
       if (!trackChanged && !positionChanged) return
 
       if (trackChanged) {
-        // Remove from old track's clipIds, add to new.
         const oldTrack = this.tracks.find((t) => t.id === clip.trackId)
         if (oldTrack) {
           const idx = oldTrack.clipIds.indexOf(clipId)
@@ -890,13 +591,10 @@ export const useProjectStore = defineStore('project', {
       }
       clip.startMs = target
 
-      // Grow the destination track to fit the new clip end.
       const clipEnd = target + effectiveClipDurationMs(clip)
       if (clipEnd > destTrack.lengthMs) destTrack.lengthMs = clipEnd
 
-      // Single CLIP_MOVE envelope carries both the position and
-      // (optionally) the new trackId. Backend re-parents the
-      // ValueTree node in lockstep with the position update.
+      // One CLIP_MOVE keeps backend position and optional re-parenting atomic.
       sendBridge('CLIP_MOVE', {
         clipId: clip.id,
         positionMs: target,
@@ -921,13 +619,7 @@ export const useProjectStore = defineStore('project', {
       log.debug('project', `commitClipMove id=${clipId} at=${clip.startMs}ms`)
     },
 
-    /**
-     * Request creation of a clip-to-clip crossfade between two adjacent
-     * clips on the same track (§12.1). Fire-and-forget: the backend mints
-     * the transition id, validates the overlap geometry, and rebroadcasts
-     * `PROJECT_STATE` (the snapshot is the ack) — so we deliberately do NOT
-     * mutate local state here. `leftClipId` is the earlier (fade-out) clip.
-     */
+    /** Fire-and-forget transition create; PROJECT_STATE is the ack. */
     createTransition(
       trackId: string,
       leftClipId: string,
@@ -946,20 +638,11 @@ export const useProjectStore = defineStore('project', {
       )
     },
 
-    /**
-     * Request removal of an existing transition. Fire-and-forget; the
-     * backend rebroadcasts `PROJECT_STATE` which re-hydrates the track's
-     * `transitions` list.
-     */
     deleteTransition(trackId: string, transitionId: string): void {
       sendBridge('TRANSITION_DELETE', { trackId, transitionId })
       log.debug('project', `deleteTransition track=${trackId} id=${transitionId}`)
     },
 
-    /**
-     * Request a recipe change on an existing transition. Fire-and-forget;
-     * the backend rebroadcasts `PROJECT_STATE`.
-     */
     setTransitionRecipe(
       trackId: string,
       transitionId: string,
@@ -972,15 +655,7 @@ export const useProjectStore = defineStore('project', {
       )
     },
 
-    /**
-     * After an edge trim settles, check whether the trimmed clip now
-     * overlaps a same-track neighbour cleanly enough to form a sanctioned
-     * crossfade and, if so, request its creation (§12.1). Fire-and-forget:
-     * the backend re-validates the overlap and rebroadcasts `PROJECT_STATE`.
-     *
-     * `edge` is the dragged edge — `'right'` makes the trimmed clip the
-     * earlier (fade-out) partner, `'left'` the later (fade-in) partner.
-     */
+    /** Request a transition after a trim if the backend-valid overlap exists. */
     maybeCreateTransitionAfterTrim(clipId: string, edge: 'left' | 'right'): void {
       const clip = this.clips[clipId]
       if (!clip) return
@@ -1009,22 +684,11 @@ export const useProjectStore = defineStore('project', {
       this.createTransition(track.id, candidate.leftClipId, candidate.rightClipId)
     },
 
-    /**
-     * Trim a clip non-destructively. Updates `startMs`, `inMs`, and
-     * `durationMs` together — the three fields form an inseparable
-     * window into the underlying source file, so we send them in one
-     * `CLIP_TRIM` envelope (the backend applies all three atomically).
-     *
-     * Caller is responsible for clamping: `inMs >= 0`, `durationMs >=
-     * MIN_CLIP_MS`, `inMs + durationMs <= sourceDurationMs`. We re-clamp
-     * here defensively but trust the caller's math for the dragged-edge
-     * geometry.
-     */
+    /** Trim source-window fields atomically in one CLIP_TRIM envelope. */
     trimClip(clipId: string, startMs: number, inMs: number, durationMs: number): void {
       const clip = this.clips[clipId]
       if (!clip) return
-      // Mirror moveClip's lock guard: trim is just as destructive as
-      // move from the user's standpoint.
+      // Store-level lock guard keeps trim inert too.
       if (clip.locked) return
       const safeStart = Math.max(0, startMs)
       const safeIn = Math.max(0, inMs)
@@ -1033,15 +697,7 @@ export const useProjectStore = defineStore('project', {
       clip.startMs = safeStart
       clip.inMs = safeIn
       clip.durationMs = safeDur
-      // Keep the warp-scaled timeline footprint (`effectiveDurationMs`) in
-      // sync with the new source window so the timeline block WIDTH tracks
-      // the trim live. CLIP_TRIM is a coalesced drag stream the backend does
-      // NOT echo back, and the drawn block width comes from
-      // `effectiveClipDurationMs` (which prefers `effectiveDurationMs`).
-      // Without this the waveform — drawn straight from inMs/durationMs —
-      // updates immediately while the block keeps its pre-trim width, so a
-      // trim looks like it only "scrubs" the clip. The relationship mirrors
-      // the backend's getClipEffectiveTiming: timeline = source / tempoRatio.
+      // CLIP_TRIM is not echoed, so update the effective timeline footprint here.
       const trimRatio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
       clip.effectiveDurationMs = trimRatio > 0 ? safeDur / trimRatio : safeDur
 
@@ -1063,20 +719,11 @@ export const useProjectStore = defineStore('project', {
       )
     },
 
-    /**
-     * Split `clipId` at the given absolute timeline position `atMs`.
-     * The original clip is trimmed to end at `atMs`; a new clip is
-     * minted starting at `atMs` and runs to the original clip's
-     * previous end. Both halves share the same underlying source file
-     * (non-destructive — peaks are reused). Returns the new clip's id
-     * or `null` if the split point falls outside the clip.
-     */
+    /** Split a clip at timeline time while preserving source-time trim math. */
     splitClipAt(clipId: string, atMs: number): string | null {
       const clip = this.clips[clipId]
       if (!clip) return null
-      // Splitting a locked clip would either turn it into two unlocked
-      // halves (subverting the lock) or two locked halves (surprising
-      // since the user didn't lock the new clip). Refuse and notify.
+      // Refuse locked splits; minting a new half would make lock semantics ambiguous.
       if (clip.locked) {
         useNotificationsStore().pushError('Locked clips cannot be split. Unlock the clip first.')
         log.info('project', `splitClipAt rejected locked clip id=${clipId}`)
@@ -1089,18 +736,11 @@ export const useProjectStore = defineStore('project', {
         log.info('project', `splitClipAt rejected linked clip id=${clipId}`)
         return null
       }
-      // For warped clips the visible footprint is `nativeDur / ratio`,
-      // so the user-visible split position (timeline-time) maps to a
-      // source-time offset of `(atMs - clip.startMs) * ratio`. Compute
-      // both — `startMs` for the new right-half stays in timeline-time
-      // (the visible left edge of the new clip), while `inMs` /
-      // `durationMs` must be in source-time for the audio engine.
+      // Timeline split offsets map to source-time offsets via the tempo ratio.
       const ratio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
       const effectiveDurMs = clip.durationMs / ratio
       const clipEnd = clip.startMs + effectiveDurMs
-      // Need a strict-interior split: a split exactly at either edge
-      // would mint a zero-length sibling. 1 ms of slack matches the
-      // ms-precision we promised the user.
+      // Require a strict interior split to avoid zero-length siblings.
       if (atMs <= clip.startMs + 1 || atMs >= clipEnd - 1) return null
 
       const splitOffsetTimelineMs = atMs - clip.startMs
@@ -1109,15 +749,9 @@ export const useProjectStore = defineStore('project', {
       const newClipInMs = clip.inMs + splitOffsetSourceMs
       const newClipStartMs = atMs
 
-      // Shrink original first (atomic three-field write). Left-half
-      // source-time duration = `splitOffsetSourceMs`.
       this.trimClip(clipId, clip.startMs, clip.inMs, splitOffsetSourceMs)
 
-      // Mint the right-hand half as a new clip on the same track,
-      // sharing peaks + sampleRate + channelCount with the original
-      // (cheap — peaks is a shared Float32Array reference). Warp
-      // settings carry over so a split warped clip doesn't lose its
-      // tempo / pitch state — both halves continue to play in time.
+      // Reuse peaks and carry warp settings so both halves stay in time.
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (!track) return null
       const newId = crypto.randomUUID()
@@ -1168,10 +802,7 @@ export const useProjectStore = defineStore('project', {
       if (clip.name) {
         sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
       }
-      // Replay warp onto the new clip via the bridge so the backend
-      // builds a fresh WarpProcessor on the engine's right-half track.
-      // Skip the envelope when warp is off — there's nothing to
-      // configure and we'd burn an undo step for no audible effect.
+      // Replay active warp so the backend builds the right-half processor.
       if (clip.warpEnabled === true) {
         sendBridge('CLIP_SET_WARP', {
           clipId: newId,
@@ -1189,12 +820,7 @@ export const useProjectStore = defineStore('project', {
       return newId
     },
 
-    /**
-     * Duplicate `clipId` on its track. Repeated duplicate commands from
-     * the same source clip append after the last duplicate in that chain
-     * while leaving the original selected, so the user can build repeated
-     * loop patterns without manually selecting each new copy.
-     */
+    /** Duplicate appends after the last copy while leaving the source selected. */
     duplicateClip(clipId: string): string | null {
       const clip = this.clips[clipId]
       if (!clip) return null
@@ -1206,15 +832,11 @@ export const useProjectStore = defineStore('project', {
         trackedTail && trackedTail.trackId === clip.trackId && track.clipIds.includes(trackedTail.id)
           ? trackedTail
           : clip
-      // Use effective (post-warp) durations everywhere we reason about
-      // timeline placement and overlap. `tail.durationMs` is the
-      // source-time length; we want the visible footprint.
+      // Use effective duration for timeline placement and overlap.
       const tailEffDur = effectiveClipDurationMs(tail)
       const newStartMs = tail.startMs + tailEffDur
       const clipEffDur = effectiveClipDurationMs(clip)
-      // The duplicate must fit immediately after the current tail. We do
-      // not search other gaps because repeated Duplicate is an append
-      // gesture; if something blocks the chain, tell the user.
+      // Duplicate is an append gesture; reject instead of searching other gaps.
       for (const id of track.clipIds) {
         if (id === clipId || id === tail.id) continue
         const c = this.clips[id]
@@ -1275,10 +897,7 @@ export const useProjectStore = defineStore('project', {
       if (clip.name) {
         sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
       }
-      // Carry warp settings onto the duplicate via the bridge so the
-      // backend builds a fresh WarpProcessor on the new engine clip.
-      // Skip when warp is off to avoid burning an undo step on an
-      // inaudible no-op.
+      // Replay active warp so the backend builds the duplicate processor.
       if (clip.warpEnabled === true) {
         sendBridge('CLIP_SET_WARP', {
           clipId: newId,
@@ -1293,15 +912,7 @@ export const useProjectStore = defineStore('project', {
       return newId
     },
 
-    /**
-     * Remove a clip from its track. Optimistic — drops the clip from
-     * the renderer's mirror immediately and sends `CLIP_REMOVE` to the
-     * backend; the backend's `CLIP_REMOVED` ack is purely diagnostic.
-     * Track `lengthMs` is left alone so removing the last clip on a
-     * track doesn't collapse the project length out from under the
-     * user; they can edit it explicitly in the transport bar if they
-     * want to shrink.
-     */
+    /** Optimistically remove a clip; keep track length stable after deletion. */
     removeClip(clipId: string): void {
       const clip = this.clips[clipId]
       if (!clip) return
@@ -1315,35 +926,19 @@ export const useProjectStore = defineStore('project', {
       for (const [sourceId, tailId] of Object.entries(this.duplicateTailBySource)) {
         if (tailId === clipId) delete this.duplicateTailBySource[sourceId]
       }
-      // Removing the selected clip clears the selection — otherwise we'd
-      // be drawing a thicker outline around a non-existent rectangle.
       if (this.selectedClipId === clipId) this.selectedClipId = null
       this.peaksRevision++
       sendBridge('CLIP_REMOVE', { clipId })
       log.info('project', `removeClip id=${clipId}`)
     },
 
-    /**
-     * Set (or clear, with `null`) the selected clip. Selection is a
-     * pure UI concept: the timeline draws the chosen clip with a
-     * thicker outline, and Edit > Cut / Copy use it as the target.
-     * Bumps `peaksRevision` so the canvas repaints to reflect the new
-     * outline immediately.
-     */
     selectClip(clipId: string | null): void {
       if (this.selectedClipId === clipId) return
       this.selectedClipId = clipId
       this.peaksRevision++
     },
 
-    /**
-     * Set (or clear, with `null`) the selected track. Selection is the
-     * paste destination (`pasteClipAtPlayhead`) and the Track FX panel's
-     * target; the timeline draws a highlighted border around the row.
-     * Bumps `peaksRevision` so the highlight repaints immediately, and
-     * pushes the new selection to the backend as non-dirty view state so
-     * reopening the project restores it (mirrors `viewScrollX`).
-     */
+    /** Persist selected track as non-dirty view state. */
     selectTrack(trackId: string | null): void {
       if (this.selectedTrackId === trackId) return
       this.selectedTrackId = trackId
@@ -1351,30 +946,17 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_VIEW', { selectedTrackId: trackId })
     },
 
-    /**
-     * Show or hide the Track FX view in the bottom panel. Persisted with
-     * the project as non-dirty view state, so reopening restores which
-     * surface (Library vs Track FX) the user was on.
-     */
     setFxPanelOpen(open: boolean): void {
       if (this.fxPanelOpen === open) return
       this.fxPanelOpen = open
       sendBridge('PROJECT_SET_VIEW', { fxPanelOpen: open })
     },
 
-    /** Choose which effects rack the bottom FX panel shows (per-track Tone /
-     *  Pan / Reverb / Delay, or the project-wide Reverb / Delay). UI-only
-     *  state, so this never touches the bridge or the dirty flag. */
+    /** UI-only FX tab; never touches bridge or dirty state. */
     setFxTab(tab: 'track' | 'project'): void {
       this.fxTab = tab
     },
 
-    /**
-     * Copy the currently-selected clip to the local clipboard. Stores
-     * just enough metadata to mint a new clip on paste — same source
-     * file, same trim window, same colour. No-op when nothing is
-     * selected. Does NOT mutate the project.
-     */
     copySelectedClip(): boolean {
       const id = this.selectedClipId
       if (!id) return false
@@ -1403,11 +985,6 @@ export const useProjectStore = defineStore('project', {
       return true
     },
 
-    /**
-     * Cut the currently-selected clip — same as Copy, then remove the
-     * clip from its track. The selection moves to "none" because the
-     * source clip no longer exists.
-     */
     cutSelectedClip(): boolean {
       const id = this.selectedClipId
       if (!id) return false
@@ -1417,12 +994,7 @@ export const useProjectStore = defineStore('project', {
       return true
     },
 
-    /**
-     * Paste the clipboard clip onto the currently selected track at
-     * the playhead. The slot has to be free on the target track —
-     * we never overwrite or push another clip. If the slot is taken,
-     * the paste is rejected with a toast.
-     */
+    /** Paste only into a free slot; never overwrite or push clips. */
     pasteClipAtPlayhead(positionMs?: number): string | null {
       const cb = this.clipboardClip
       if (!cb) return null
@@ -1438,10 +1010,7 @@ export const useProjectStore = defineStore('project', {
         useNotificationsStore().pushError("Can't paste — target track has been removed.")
         return null
       }
-      // Effective duration of the clipboard clip — the visible
-      // footprint, which is what targetStartMs + overlap checks
-      // operate in. Source-time `durationMs` would over/under-count
-      // a warped clip's timeline length.
+      // Overlap checks use the clipboard clip's effective timeline footprint.
       const cbEffDur =
         typeof cb.effectiveDurationMs === 'number' && cb.effectiveDurationMs > 0
           ? cb.effectiveDurationMs
@@ -1517,8 +1086,7 @@ export const useProjectStore = defineStore('project', {
       if (cb.name) {
         sendBridge('CLIP_RENAME', { clipId: newId, name: cb.name })
       }
-      // Replay warp onto the pasted clip's engine voice — same as
-      // duplicate / split. Backend builds a fresh WarpProcessor.
+      // Replay active warp so the backend builds the pasted processor.
       if (cb.warpEnabled === true) {
         sendBridge('CLIP_SET_WARP', {
           clipId: newId,
@@ -1533,23 +1101,14 @@ export const useProjectStore = defineStore('project', {
       return newId
     },
 
-    /**
-     * Set or clear a clip's per-clip colour override. `colorIndex`
-     * must be in `0..TRACK_PALETTE.length-1`; pass `null` to clear
-     * the override so the clip re-inherits its host track's colour.
-     * Sent over the bridge as `CLIP_COLOR` so the choice persists with
-     * the project.
-     */
+    /** Set or clear a persisted per-clip colour override. */
     setClipColor(clipId: string, colorIndex: number | null): void {
       const clip = this.clips[clipId]
       if (!clip) return
       if (colorIndex === null) {
         if (clip.colorIndex === undefined) return
         clip.colorIndex = undefined
-        // Reuse the generic redraw counter so the timeline repaints the
-        // clip with its new (inherited) palette colour. The name is
-        // historical — it's now the "anything-non-positional changed"
-        // signal the canvas listens to.
+        // Historical redraw counter for non-positional visual changes.
         this.peaksRevision++
         sendBridge('CLIP_COLOR', { clipId, colorIndex: -1 })
         log.info('project', `setClipColor id=${clipId} -> inherit`)
@@ -1563,15 +1122,7 @@ export const useProjectStore = defineStore('project', {
       log.info('project', `setClipColor id=${clipId} -> ${clamped}`)
     },
 
-    /**
-     * Toggle a clip's lock flag. When locked, the timeline's drag
-     * handlers and the move/trim/split store actions refuse to mutate
-     * the clip; double-click to open in the Clip Editor still works
-     * because that path goes through the dialog opener, not the
-     * project mutation actions. Lock is per-clip — locking one
-     * instance of a saved-clip does NOT propagate to siblings.
-     * Persisted via the backend's `CLIP_SET_LOCKED` envelope.
-     */
+    /** Persist per-clip lock state; project mutation actions honor it locally. */
     setClipLocked(clipId: string, locked: boolean): void {
       const clip = this.clips[clipId]
       if (!clip) return
@@ -1579,28 +1130,18 @@ export const useProjectStore = defineStore('project', {
       const current = clip.locked === true
       if (next === current) return
       clip.locked = next ? true : undefined
-      // Force a header redraw so the padlock glyph appears / disappears
-      // without waiting for the next position/peak tick.
       this.peaksRevision++
       sendBridge('CLIP_SET_LOCKED', { clipId, locked: next })
       log.info('project', `setClipLocked id=${clipId} -> ${next ? 'locked' : 'unlocked'}`)
     },
 
-    /** Re-point an unresolved library item at a replacement source
-     *  file. Every clip that references the library item picks up the
-     *  new file automatically — the user relinks once per library
-     *  item, not once per clip. */
+    /** Relink once per library item; referenced clips follow that binding. */
     relinkLibraryItem(itemId: string, filePath: string): void {
       sendBridge('LIBRARY_ITEM_RELINK', { itemId, filePath })
       log.info('project', `relinkLibraryItem id=${itemId} -> ${filePath}`)
     },
 
-    /**
-     * Set or clear a clip's user-facing display name override. Blank
-     * input clears the override and the clip falls back to its library
-     * item title / filename. Sent over the bridge as `CLIP_RENAME` so
-     * the rename persists with the project.
-     */
+    /** Set or clear a persisted clip display-name override. */
     renameClip(clipId: string, name: string): boolean {
       const clip = this.clips[clipId]
       if (!clip) return false
@@ -1608,25 +1149,18 @@ export const useProjectStore = defineStore('project', {
       const nextName = trimmed.length > 0 ? trimmed : undefined
       if (clip.name === nextName) return false
       clip.name = nextName
-      // Bump the redraw counter so the timeline repaints the clip's
-      // header label without waiting for the next position/peak change.
       this.peaksRevision++
       sendBridge('CLIP_RENAME', { clipId, name: nextName ?? '' })
       log.info('project', `renameClip id=${clipId} -> ${nextName ?? '<cleared>'}`)
       return true
     },
 
-    /** Promote the selected timeline clip window into a reusable library saved clip. */
     saveClipToLibrary(clipId: string): string | null {
       const clip = this.clips[clipId]
       if (!clip) return null
       const itemId = useLibraryStore().addSavedClipFromTimelineClip(clip)
       if (itemId) {
-        // Rebind the originating timeline clip to the new saved-clip
-        // so the project file records the correct parent relationship.
-        // Without this the clip keeps pointing at the underlying
-        // audio-file source, and the saved-clip's "Used on" view
-        // would never see it.
+        // Rebind so saved-clip usage views see the originating timeline clip.
         if (clip.libraryItemId !== itemId) {
           clip.libraryItemId = itemId
           sendBridge('CLIP_REBIND', { clipId, libraryItemId: itemId })
@@ -1649,20 +1183,7 @@ export const useProjectStore = defineStore('project', {
       useNotificationsStore().pushInfo('Saving sample…')
     },
 
-    /**
-     * Break the bond between a timeline clip and its parent saved-clip,
-     * making the clip independent. The clip's current trim window is
-     * preserved exactly (we just rebind libraryItemId to the saved-clip's
-     * underlying audio-file source). No-op when the clip is already
-     * independent (libraryItemId points at an audio-file).
-     *
-     * Used by:
-     *   - Right-click → "Unlink from library" on a linked clip.
-     *   - The edge-drag trim path (auto-unlinks before the trim so
-     *     the edit doesn't propagate to linked siblings).
-     *   - Cascade from `libraryStore.removeItem` when a saved-clip is
-     *     deleted (each linked sibling is unlinked here first).
-     */
+    /** Rebind a saved-clip instance to its source item while preserving its trim window. */
     unlinkClipFromLibrary(clipId: string): boolean {
       const clip = this.clips[clipId]
       if (!clip) return false
@@ -1673,25 +1194,13 @@ export const useProjectStore = defineStore('project', {
       if (!fallbackParentId) return false
       clip.libraryItemId = fallbackParentId
       sendBridge('CLIP_REBIND', { clipId, libraryItemId: fallbackParentId })
-      // Bump the redraw revision so the timeline picks up the new
-      // library binding immediately — the chain-link badge depends on
-      // `clip.libraryItemId` resolved against the library, but the
-      // timeline's watchers key on track/clip counts and peaksRevision,
-      // not on per-clip libraryItemId. Without this nudge the unlinked
-      // clip still shows the linked-icon until the next unrelated redraw.
+      // Library binding changes need an explicit redraw for the link badge.
       this.peaksRevision++
       log.info('project', `unlinkClipFromLibrary clip=${clipId} -> source=${fallbackParentId}`)
       return true
     },
 
-    /**
-     * Mutate a clip's warp + pitch settings locally and push them to
-     * the backend. Every field is optional; only the fields supplied
-     * are applied. Pass `tempoRatio: null` (not `undefined`) to clear
-     * the pinned ratio so the clip reverts to following the project
-     * BPM live. The bridge envelope coalesces within 500 ms by
-     * (clipId, type) so dragging a slider commits a single undo step.
-     */
+    /** Patch warp/pitch settings; `tempoRatio: null` clears a pinned ratio. */
     setClipWarp(
       clipId: string,
       patch: {
@@ -1723,9 +1232,7 @@ export const useProjectStore = defineStore('project', {
       if (patch.effectiveDurationMs !== undefined) clip.effectiveDurationMs = patch.effectiveDurationMs
       if (patch.effectiveTempoRatio !== undefined) clip.effectiveTempoRatio = patch.effectiveTempoRatio
       if (patch.effectiveWarpActive !== undefined) clip.effectiveWarpActive = patch.effectiveWarpActive
-      // Any explicit warp-field edit clears the "waiting for analysis"
-      // flag so a late-arriving LIBRARY_ITEM_ANALYSIS can't override
-      // the latest state.
+      // Explicit warp edits block late analysis from overriding user intent.
       if (
         patch.warpEnabled !== undefined ||
         patch.warpMode !== undefined ||
@@ -1735,8 +1242,6 @@ export const useProjectStore = defineStore('project', {
       ) {
         clip.pendingAutoWarp = undefined
       }
-      // Force a timeline redraw so any clip-header badge or
-      // effective-duration UI catches up.
       this.peaksRevision++
       if (!opts?.localOnly && patch.warpEnabled === true) {
         useLibraryStore().markItemWarping(clip.libraryItemId)
@@ -1746,10 +1251,7 @@ export const useProjectStore = defineStore('project', {
           clipId,
           warpEnabled: patch.warpEnabled,
           warpMode: patch.warpMode,
-          // The wire protocol uses absence to mean "don't change" and an
-          // explicit `null` to mean "clear the override". The default
-          // payload guard inserts JSON `null` for `null` so the backend
-          // sees the clear signal.
+          // Omit to preserve; send null to clear the pinned override.
           tempoRatio: patch.tempoRatio === undefined ? undefined : patch.tempoRatio,
           semitones: patch.semitones,
           cents: patch.cents,
@@ -1758,15 +1260,7 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Replace a clip's volume-shape envelope with `points` (one atomic
-     * mutation per edit / drag). Points are sanitised locally (clamp,
-     * sort, dedupe) so the optimistic render matches the backend's
-     * normalisation; the backend re-normalises authoritatively. An empty
-     * (or sub-two-point) result clears the shape. `localOnly: true` skips
-     * the backend round-trip — used by the bridgeService inbound handler
-     * when echoing a server ack.
-     */
+    /** Replace a clip envelope; local sanitising mirrors backend normalisation. */
     setClipEnvelope(
       clipId: string,
       points: ClipEnvelopePoint[],
@@ -1775,8 +1269,7 @@ export const useProjectStore = defineStore('project', {
       const clip = this.clips[clipId]
       if (!clip) return
       const cleaned = sanitizeEnvelopePoints(points)
-      // A shape needs at least two breakpoints (start + end) to mean
-      // anything; anything less is "no shape" and clears the property.
+      // Fewer than two breakpoints means no shape.
       const next = cleaned.length >= 2 ? cleaned : undefined
       if (!envelopesEqual(clip.envelopePoints, next)) {
         clip.envelopePoints = next
@@ -1792,14 +1285,7 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Update a track's Tone EQ. Mirrors `setClipEnvelope`: applies the partial
-     * patch locally (default-suppressing 0 dB / off back to `undefined`)
-     * then forwards to the backend unless `opts.localOnly` (used by the
-     * `TRACK_TONE_APPLIED` ack to reconcile to canonical values without
-     * echoing the gesture back). `gestureId` / `gestureEnd` drive undo
-     * coalescing for slider drags.
-     */
+    /** Update Tone EQ; localOnly reconciles backend acks without echoing gestures. */
     setTrackTone(
       trackId: string,
       patch: { bassDb?: number; midDb?: number; trebleDb?: number; lowCut?: boolean; highCut?: boolean },
@@ -1841,16 +1327,7 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Update a track's send amounts into the project-shared Reverb / Delay
-     * buses. Mirrors `setTrackTone`: applies the partial patch locally
-     * (default-suppressing 0 back to `undefined`) then forwards to the
-     * backend unless `opts.localOnly` (used by the `TRACK_SENDS_APPLIED`
-     * ack to reconcile to the canonical clamped values). `gestureId` /
-     * `gestureEnd` drive undo coalescing for knob drags. The backend ack
-     * always echoes both sends, so an `undefined` field here means "send
-     * the track's current value" — we read it back off the track.
-     */
+    /** Update sends; undefined patch fields fall back to the current track value. */
     setTrackSends(
       trackId: string,
       patch: { reverbSend?: number; delaySend?: number },
@@ -1879,14 +1356,7 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Update a track's equal-power pan. Mirrors `setTrackSends`: applies
-     * the value locally (default-suppressing centre `0` back to
-     * `undefined`) then forwards to the backend unless `opts.localOnly`
-     * (used by the `TRACK_PAN_APPLIED` ack to reconcile to the canonical
-     * clamped value). `gestureId` / `gestureEnd` drive undo coalescing for
-     * the pan-slider drag.
-     */
+    /** Update pan; localOnly reconciles backend acks without echoing gestures. */
     setTrackPan(
       trackId: string,
       pan: number,
@@ -1906,14 +1376,7 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Update a track's Leveler amount. Mirrors `setTrackPan`: applies the
-     * value locally (default-suppressing `0` back to `undefined`) then
-     * forwards to the backend unless `opts.localOnly` (used by the
-     * `TRACK_LEVELER_APPLIED` ack to reconcile to the canonical clamped
-     * value). `gestureId` / `gestureEnd` drive undo coalescing for the
-     * knob drag.
-     */
+    /** Update Leveler amount; localOnly reconciles backend acks. */
     setTrackLeveler(
       trackId: string,
       amount: number,
@@ -1933,12 +1396,7 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Update the project-shared Reverb. Applies the partial patch
-     * locally then forwards to the backend unless `opts.localOnly` (used
-     * by the `PROJECT_REVERB_APPLIED` ack to reconcile to canonical
-     * clamped values). `gestureId` / `gestureEnd` drive undo coalescing.
-     */
+    /** Update project Reverb; localOnly reconciles backend acks. */
     setProjectReverb(
       patch: { size?: number; decay?: number; tone?: number; mix?: number },
       opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
@@ -1961,12 +1419,7 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Update the project-shared Delay (tempo-locked). Applies the
-     * partial patch locally then forwards to the backend unless
-     * `opts.localOnly` (used by the `PROJECT_DELAY_APPLIED` ack).
-     * `gestureId` / `gestureEnd` drive undo coalescing.
-     */
+    /** Update tempo-locked project Delay; localOnly reconciles backend acks. */
     setProjectDelay(
       patch: { noteValue?: DelayNoteValue; feedback?: number; tone?: number; mix?: number },
       opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
@@ -1989,20 +1442,7 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Returns true if a prospective clip placed at `startMs` spanning
-     * `durationMs` ms would overlap any existing clip on the track. Used
-     * by the timeline placement / library drag-drop flow to reject drops
-     * onto occupied space.
-     *
-     * `durationMs` is the **timeline footprint** of the prospective new
-     * clip — i.e. the effective (post-warp) length the caller expects
-     * to see on the ruler. Existing clips on the track are compared
-     * against their own effective durations so a warped clip's audible
-     * footprint is what collision-checks against. Un-warped clips
-     * fall through unchanged because `clipEffectiveDurationMs` is the
-     * native value in that case.
-     */
+    /** Check overlap in effective timeline time, not source duration. */
     wouldClipOverlap(trackId: string, startMs: number, durationMs: number): boolean {
       const track = this.tracks.find((t) => t.id === trackId)
       if (!track) return false
@@ -2013,21 +1453,13 @@ export const useProjectStore = defineStore('project', {
         if (!other) continue
         const otherEffDur = effectiveClipDurationMs(other)
         const otherEnd = other.startMs + otherEffDur
-        // Overlap if ranges intersect; touching edges (newEnd === other.startMs
-        // or newStart === otherEnd) are allowed.
+        // Touching edges are allowed.
         if (newStart < otherEnd && newEnd > other.startMs) return true
       }
       return false
     },
 
-    /**
-     * Place a clip from the library onto a track at `startMs`. Reuses the
-     * library item's already-decoded peaks (no re-decode). Sends the matching
-     * `CLIP_ADD` to the backend so the audio engine loads the file too.
-     *
-     * Returns the new clip's id, or `null` if the track is missing or the
-     * placement would overlap an existing clip on that track.
-     */
+    /** Drop a library item onto a track using its decoded peaks. */
     addClipFromLibrary(
       trackId: string,
       libraryItem: {
@@ -2039,18 +1471,15 @@ export const useProjectStore = defineStore('project', {
         channelCount: number
         peaks: Float32Array
         peaksPerSecond?: number
-        /** Optional backend-loadable path; falls back to `filePath`. */
         playbackFilePath?: string
         kind?: LibraryItem['kind']
         name?: string
         derivedFrom?: LibraryItem['derivedFrom']
-        /** Source BPM for auto-warp (audio-file items + variable-tempo
-         *  files surface their median here). */
+        /** Source BPM for auto-warp; variable-tempo files expose their median. */
         bpm?: number
-        /** True when the source's tempo wasn't stable enough for a
-         *  global ratio to be safe. Auto-warp skips these. */
+        /** Auto-warp skips unstable-tempo sources. */
         variableTempo?: boolean
-        /** Saved-clip default warp settings (copy-on-drop). */
+        /** Saved-clip warp defaults copy on drop. */
         warpEnabled?: boolean
         warpMode?: ClipWarpMode
         tempoRatio?: number
@@ -2068,15 +1497,7 @@ export const useProjectStore = defineStore('project', {
         libraryItem.kind === 'saved-clip'
           ? Math.max(0, libraryItem.derivedFrom?.durationMs ?? libraryItem.durationMs)
           : libraryItem.durationMs
-      // Effective timeline footprint of the prospective new clip. Auto-
-      // warp will engage post-drop for non-variable-tempo sources with
-      // known BPMs IF the user's auto-warp preference is on AND the
-      // project already has another clip — the first clip on a fresh
-      // project seeds the project BPM instead of warping (see
-      // `applyDropTimeWarp`). Saved clips carry explicit warp
-      // defaults regardless. Reflect that in the collision check so
-      // an auto-warped clip doesn't get rejected for an overlap that
-      // won't exist once warp lands.
+      // Predict post-drop effective duration so collision checks match auto-warp.
       const projectBpm = useTransportStore().bpm
       const autoWarpPref = useUiStore().matchProjectTempoOnDrop
       const projectHasOtherClips = Object.keys(this.clips).length > 0
@@ -2135,15 +1556,7 @@ export const useProjectStore = defineStore('project', {
         sendBridge('CLIP_RENAME', { clipId, name: inheritedName })
       }
 
-      // Warp on drop. Two-stage policy:
-      //   1. Saved-clip tile → copy the saved clip's warp settings as
-      //      the new clip's defaults (copy-on-drop, not live link).
-      //   2. Audio-file tile (or saved clip with no inherited warp) →
-      //      auto-warp to project BPM iff both BPMs are known and the
-      //      source isn't variable-tempo. If the source BPM hasn't been
-      //      analysed yet, leave warp off but mark `pendingAutoWarp`
-      //      so the backend's LIBRARY_ITEM_ANALYSIS handler can flip
-      //      it on once detection lands.
+      // Drop-time warp copies saved defaults or marks eligible audio for auto-warp.
       this.applyDropTimeWarp(clipId, libraryItem)
 
       this.pushTrackGain(track)
@@ -2151,12 +1564,7 @@ export const useProjectStore = defineStore('project', {
       return clipId
     },
 
-    /**
-     * Decide a new clip's warp settings at drop time and push them to
-     * the backend if any field is non-default. Split out of
-     * `addClipFromLibrary` so the policy lives in one place (and so a
-     * future paste / duplicate code path can reuse it).
-     */
+    /** Apply the single drop-time warp policy before notifying the backend. */
     applyDropTimeWarp(
       clipId: string,
       src: {
@@ -2182,11 +1590,7 @@ export const useProjectStore = defineStore('project', {
           `inheritedWarpEnabled=${src.warpEnabled ?? 'undef'} ` +
           `inheritedTempoRatio=${src.tempoRatio ?? 'undef'}`
       )
-      // Saved-clip inheritance wins — these are the user's deliberate
-      // defaults captured at save-to-library time. Always applied even
-      // when the auto-warp pref is off, because they're explicit
-      // choices the user made when saving the clip, not project-tempo
-      // auto-match.
+      // Saved-clip warp defaults are explicit user choices, not auto-match.
       if (src.kind === 'saved-clip' && (
         src.warpEnabled !== undefined ||
         src.warpMode !== undefined ||
@@ -2204,10 +1608,7 @@ export const useProjectStore = defineStore('project', {
         })
         return
       }
-      // Non-musical samples (rain, sound effects, vocal one-shots)
-      // shouldn't be auto-warped to project tempo — the source BPM
-      // is meaningless. Manual Warp / Pitch dialogs still work on
-      // the clip if the user wants to speed it up or slow it down.
+      // Sample-classified sources skip tempo auto-match; manual warp still works.
       const sampleClassified = libraryItemIsSample(
         {
           sampleMode: src.sampleMode,
@@ -2223,35 +1624,21 @@ export const useProjectStore = defineStore('project', {
         )
         return
       }
-      // Project-tempo auto-match is gated by the user preference. When
-      // off, the clip drops at native rate and the user can still
-      // engage warp manually via right-click -> Warp.
       const ui = useUiStore()
       if (!ui.matchProjectTempoOnDrop) {
         log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (matchProjectTempoOnDrop pref OFF)`)
         return
       }
-      // First clip on a fresh project: skip auto-warp entirely. The
-      // backend's `maybeSeedProjectBpmFor` will seed the project BPM
-      // to this clip's source BPM once analysis completes, so warping
-      // it to "match project BPM" would end up at ratio 1 anyway —
-      // and worse, in the analysis-known-at-drop-time case we'd warp
-      // to the default-100 BPM that's about to be overwritten by the
-      // seed. Saved clips with explicit warp defaults already
-      // returned above so they still drop with their saved warp.
+      // First audio clip seeds project BPM, so auto-warp would target a transient default.
       const otherClipExists = Object.values(this.clips).some((c) => c.id !== clipId)
       if (!otherClipExists) {
         log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (first clip on project)`)
         return
       }
-      // Need a stable source BPM (variable-tempo skipped — its median
-      // is misleading at most positions in the clip) and a project
-      // BPM to target.
+      // Need stable source BPM and project BPM to target.
       const projectBpm = useTransportStore().bpm
       if (src.variableTempo === true || typeof src.bpm !== 'number' || src.bpm <= 0) {
-        // Source BPM unknown today — mark the clip as waiting on
-        // analysis. The backend's analysis-done handler can flip warp
-        // on later if the user hasn't already opted out.
+        // Unknown source BPM: let later analysis opt in unless the user edits warp.
         if (src.kind !== 'saved-clip' && src.variableTempo !== true) {
           log.info(
             'warp',
@@ -2274,8 +1661,7 @@ export const useProjectStore = defineStore('project', {
         return
       }
       const ratio = projectBpm / src.bpm
-      // Skip when the ratio is effectively 1 — no audible difference
-      // and no point burning an undo step.
+      // Ratio ≈ 1 is inaudible and should not burn an undo step.
       if (Math.abs(ratio - 1) < 1e-3) {
         log.info(
           'warp',
@@ -2290,18 +1676,11 @@ export const useProjectStore = defineStore('project', {
       this.setClipWarp(clipId, {
         warpEnabled: true,
         warpMode: 'rhythmic',
-        // Leave `tempoRatio` undefined so the clip continues to follow
-        // project BPM changes — pinning is a user-driven choice via
-        // the Warp dialog.
+        // Undefined keeps the clip following project BPM; pinning is user-driven.
       })
     },
 
-    /**
-     * Set the project's visible timeline length (ms). Updates every track's
-     * `lengthMs`, but never below the end of that track's longest clip — so
-     * the user can shrink the project but never clip audio off-screen.
-     * No-op when there are no tracks.
-     */
+    /** Set visible project length, clamped to every track's latest clip end. */
     setProjectLengthMs(lengthMs: number): void {
       if (this.tracks.length === 0) return
       const target = Math.max(this.longestClipEndMs, Math.max(0, Math.floor(lengthMs)))
@@ -2310,10 +1689,7 @@ export const useProjectStore = defineStore('project', {
         for (const clipId of track.clipIds) {
           const clip = this.clips[clipId]
           if (!clip) continue
-          // Use the clip's effective (post-warp) timeline footprint so
-          // a shorter warped clip doesn't artificially keep the track
-          // longer than necessary, and a stretched warped clip can't
-          // be cropped under its audible end.
+          // Clamp against effective timeline footprint, not source duration.
           const effDur = effectiveClipDurationMs(clip)
           const end = clip.startMs + effDur
           if (end > minLength) minLength = end
@@ -2322,15 +1698,7 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Update the per-project preferred audio output device. Pass `null` /
-     * `null` to clear the preference (which then lets the user's global
-     * `preferences.json` device apply on next load). Both fields are
-     * stored atomically — either both are set or both are null. The
-     * live `juce::AudioDeviceManager` is NOT touched here; callers
-     * that want to switch the active device must additionally invoke
-     * `audioDevices.selectDevice(...)`.
-     */
+    /** Store project audio-output preference atomically; does not switch the live device. */
     setProjectAudioOutput(typeName: string | null, deviceName: string | null): void {
       const normType =
         typeof typeName === 'string' && typeName.length > 0 ? typeName : null
@@ -2349,12 +1717,7 @@ export const useProjectStore = defineStore('project', {
       })
     },
 
-    /**
-     * Update the per-project target sample rate. Accepts 44 100 or
-     * 48 000 only. Passing 0 / null clears the project value so the
-     * user-scope default applies on next load. Records an undo step
-     * via the backend's coalescing handler.
-     */
+    /** Persist 44.1/48 kHz only; other values clear the project override. */
     setTargetSampleRate(sampleRate: number | null): void {
       const next = sampleRate === 44100 || sampleRate === 48000 ? sampleRate : null
       if (next === this.targetSampleRate) return
@@ -2367,14 +1730,7 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_TARGET_SAMPLE_RATE', { sampleRate: next ?? 0 })
     },
 
-    /**
-     * Persist the last-used export-dialog settings on the project root.
-     * `json` is an opaque renderer-owned string (schema:
-     * `{ version: 1, … }`); pass an empty string or `null` to clear.
-     * Optimistically updates the local mirror and dispatches
-     * `PROJECT_SET_EXPORT_SETTINGS` to the backend. Not undoable —
-     * export preferences are not part of the edit history.
-     */
+    /** Persist opaque export-dialog settings; not part of edit history. */
     setExportSettingsJson(json: string | null): void {
       const next = typeof json === 'string' && json.length > 0 ? json : null
       if (next === this.exportSettingsJson) return
@@ -2382,14 +1738,7 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_EXPORT_SETTINGS', { json: next ?? '' })
     },
 
-    /**
-     * Set the master output volume (0..1 linear). Optimistically updates
-     * the local mirror so the slider tracks the user's finger without
-     * waiting for backend echo, and dispatches `PROJECT_SET_MASTER_VOLUME`.
-     * The backend coalesces drag streams into a single undo step via
-     * `beginNewTransaction` (same pattern as `TRACK_GAIN`), so high-rate
-     * dispatch during a slider drag is fine.
-     */
+    /** Set master volume; backend coalesces drag streams into one undo step. */
     setMasterVolume(gain: number): void {
       const next = Number.isFinite(gain) ? Math.min(1, Math.max(0, gain)) : 1
       if (next === this.masterVolume) return
@@ -2397,7 +1746,6 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_MASTER_VOLUME', { gain: next })
     },
 
-    /** Remove a track and all its clips, locally and on the backend. */
     removeTrack(trackId: string): void {
       const idx = this.tracks.findIndex((t) => t.id === trackId)
       if (idx < 0) return
@@ -2417,15 +1765,11 @@ export const useProjectStore = defineStore('project', {
 
       sendBridge('TRACK_REMOVE', { trackId })
 
-      // Removing a soloed track changes audibility for everyone else.
       if (track.soloed) this.pushAllGains()
       log.info('project', `removeTrack id=${trackId}`)
     },
 
-    /** Toggle the mute state for a track. The backend persists the
-     *  flag (round-trip through save/load) and derives the effective
-     *  audible gain itself, so the renderer doesn't need to compute
-     *  it locally. */
+    /** Toggle persisted mute; backend derives effective gain. */
     toggleMute(trackId: string): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
@@ -2434,9 +1778,7 @@ export const useProjectStore = defineStore('project', {
       sendBridge('TRACK_MUTE', { trackId, muted: t.muted })
     },
 
-    /** Toggle the solo state for a track. The backend re-pushes
-     *  effective gain to every track because solo affects audibility
-     *  of the whole project. */
+    /** Toggle solo; backend re-pushes project-wide effective gain. */
     toggleSolo(trackId: string): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
@@ -2445,39 +1787,19 @@ export const useProjectStore = defineStore('project', {
       sendBridge('TRACK_SOLO', { trackId, soloed: t.soloed })
     },
 
-    /** Re-push a track's user volume to the backend. Kept as a
-     *  thin wrapper for callers in clip-add / move / paste paths
-     *  that want to make sure the backend's per-clip gain reflects
-     *  the track's volume immediately. Effective audibility (mute /
-     *  solo) is computed backend-side, so this only needs to push
-     *  the volume itself. */
+    /** Re-push user volume; backend folds in mute/solo. */
     pushTrackGain(track: Track): void {
       sendBridge('TRACK_GAIN', { trackId: track.id, gain: track.volume })
     },
 
-    /** Re-push every track's volume to the backend. Kept for the
-     *  reconnect path so the backend's AudioEngine has a fresh copy
-     *  of every track's volume on a bridge handshake. Mute / solo
-     *  state round-trips on PROJECT_STATE so they don't need
-     *  explicit re-push here. */
+    /** Re-push all user volumes after reconnect; mute/solo ride PROJECT_STATE. */
     pushAllGains(): void {
       for (const t of this.tracks) {
         sendBridge('TRACK_GAIN', { trackId: t.id, gain: t.volume })
       }
     },
 
-    /**
-     * Set a track's user volume (linear gain, 0.0 .. ~1.9953 / +6 dB;
-     * 1.0 is unity) and push it to the backend. The backend stores
-     * this as the user volume and folds in the persisted muted /
-     * soloed flags itself when computing the effective gain the
-     * AudioEngine and MixdownEngine see.
-     *
-     * Use this for *commits* (e.g. the slider's `@change` event). For
-     * the live drag (every `@input`) use `setTrackVolumeLocal` so we
-     * don't flood the bridge with one envelope per pixel of slider
-     * movement.
-     */
+    /** Commit track volume; live drags use setTrackVolumeLocal to avoid bridge flood. */
     setTrackVolume(trackId: string, volume: number): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
@@ -2486,39 +1808,20 @@ export const useProjectStore = defineStore('project', {
       sendBridge('TRACK_GAIN', { trackId, gain: t.volume })
     },
 
-    /**
-     * Update a track's volume *locally only* — used by the slider's
-     * `@input` event so the UI feels immediate without pushing one
-     * `TRACK_GAIN` envelope per pixel of movement. The committed value
-     * goes out on `@change` via `setTrackVolume`.
-     */
     setTrackVolumeLocal(trackId: string, volume: number): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
       t.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, volume))
     },
 
-    /**
-     * Mutate a track's `heightPx` locally without pushing to the
-     * backend — used by the drag handle's `pointermove` so the row
-     * resizes smoothly under the cursor. The committed value is sent
-     * once on `pointerup` via `setTrackHeight` so the bridge isn't
-     * flooded with one envelope per frame and the undo manager
-     * captures a single coalesced edit per drag.
-     */
+    /** Local-only row resize preview; commit once on pointerup. */
     setTrackHeightLocal(trackId: string, heightPx: number): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
       t.heightPx = heightPx
     },
 
-    /**
-     * Commit a track's `heightPx` to the backend so it's persisted with
-     * the project file and joins the undo history. Sent on
-     * `pointerup` at the end of a resize drag; the backend acks via a
-     * fresh `PROJECT_STATE` so any clamp the engine applies surfaces
-     * back to the renderer.
-     */
+    /** Commit row height; PROJECT_STATE ack returns any backend clamp. */
     setTrackHeight(trackId: string, heightPx: number): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
@@ -2526,15 +1829,7 @@ export const useProjectStore = defineStore('project', {
       sendBridge('TRACK_SET_HEIGHT', { trackId, heightPx })
     },
 
-    /**
-     * Move `trackId` to a new 0-based position in the project's track
-     * order. Sent once on drop after the user drags a track header.
-     * The mutation is optimistic (the local array is reordered before
-     * the bridge ack) so the timeline repaints immediately; the
-     * backend stores the new order in its ValueTree with undo support
-     * and broadcasts a soft-replace PROJECT_STATE after EDIT_UNDO /
-     * EDIT_REDO so the renderer can re-sort to match.
-     */
+    /** Optimistically reorder tracks; soft-replace PROJECT_STATE restores undo/redo order. */
     reorderTrack(trackId: string, newIndex: number): void {
       const currentIndex = this.tracks.findIndex((t) => t.id === trackId)
       if (currentIndex < 0) return
@@ -2546,23 +1841,11 @@ export const useProjectStore = defineStore('project', {
       sendBridge('TRACK_REORDER', { trackId, newIndex: clamped })
     },
 
-    /**
-     * Reconcile a `CLIP_ADDED` / `CLIP_ADD_FAILED` ack from the backend
-     * against the optimistically-added clip in the renderer.
-     *
-     * - On success the clip stays put (the backend now has a matching
-     *   `Track`/`Clip` and will produce audio).
-     * - On failure we drop the clip and surface a toast so the user
-     *   sees *why* their drop-target file didn't make it (codec
-     *   unsupported, file missing, etc.). Matching is by `clipId` —
-     *   the bridge ack echoes back the id the renderer assigned at
-     *   send time.
-     */
+    /** Match CLIP_ADD acks by renderer-assigned clipId; failures roll back. */
     confirmClipAdd(trackId: string, clipId: string, ok: boolean, error?: string): void {
       const clip = this.clips[clipId]
       if (!clip) return
       if (ok) {
-        // No state change needed — the optimistic clip is now confirmed.
         return
       }
       const track = this.tracks.find((t) => t.id === trackId)
@@ -2576,7 +1859,6 @@ export const useProjectStore = defineStore('project', {
       useNotificationsStore().pushError(message)
     },
 
-    /** Set the palette index used to draw a track's waveform / clips. */
     setTrackColor(trackId: string, colorIndex: number): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
@@ -2585,11 +1867,6 @@ export const useProjectStore = defineStore('project', {
       log.info('project', `setTrackColor id=${trackId} colorIndex=${colorIndex}`)
     },
 
-    /**
-     * Rename a track. Whitespace is trimmed; empty names are rejected so
-     * the header column always has something to display. Does not touch
-     * any clip names — those keep their per-clip labels.
-     */
     setTrackName(trackId: string, name: string): void {
       const t = this.tracks.find((x) => x.id === trackId)
       if (!t) return
@@ -2601,36 +1878,7 @@ export const useProjectStore = defineStore('project', {
       log.info('project', `setTrackName id=${trackId} name="${trimmed}"`)
     },
 
-    /**
-     * Apply a backend-authoritative `PROJECT_STATE` snapshot. Called once
-     * per connection right after AUTH succeeds (see `bridgeService`).
-     *
-     * Semantics:
-     *   - For every clip the backend knows about that the renderer also
-     *     has (matched by `clipId`): update `startMs` to the backend
-     *     value so the timeline reflects backend truth.
-     *   - For every clip the renderer has that the backend does NOT
-     *     know about: drop it. The backend is the source of truth — a
-     *     renderer-side clip with no backend twin can't be played.
-     *   - For every clip the backend has that the renderer does NOT
-     *     know about: log a warning and skip. The renderer can't draw
-     *     it (no waveform peaks yet) — backend-supplied peaks land in
-     *     the Phase 1 `backend-waveform-data` todo, which is when this
-     *     branch becomes a "rehydrate from backend" reconnect-recovery
-     *     path.
-     *
-     * Track gains are not reconciled here (the renderer's mute/solo/
-     * volume model is the source of truth for audibility and will
-     * re-push gains via `pushAllGains` on reconnect if needed).
-     */
-    /**
-     * Replace a clip's waveform peaks. Called by the bridge service when
-     * a `WAVEFORM_DATA` binary frame arrives — either as a result of a
-     * just-added clip's auto-broadcast from the backend, or in response
-     * to a `WAVEFORM_REQUEST` the renderer sent during snapshot
-     * rehydrate. Silent no-op for unknown clipIds (the clip may have
-     * been removed between request and response).
-     */
+    /** Apply WAVEFORM_DATA peaks; unknown clips may have been removed. */
     setClipPeaks(
       clipId: string,
       peaks: Float32Array,
@@ -2643,15 +1891,9 @@ export const useProjectStore = defineStore('project', {
       clip.peaks = peaks
       if (typeof peaksPerSecond === 'number' && peaksPerSecond > 0) clip.peaksPerSecond = peaksPerSecond
       if (sampleRate > 0) clip.sampleRate = sampleRate
-      // Tick the global peaks revision so consumers redraw. A single
-      // counter is much cheaper than a `deep: true` watch on `clips`,
-      // and the redraw cost is amortised across however many clips
-      // get their peaks in one PROJECT_STATE rehydrate cycle.
+      // A revision counter avoids deep-watching clips for waveform redraws.
       this.peaksRevision++
-      // Also refresh the matching library item's peaks (and sample
-      // rate) so the library card shows the waveform after a reload.
-      // Prefer the whole-file source row because saved clips can share
-      // the same filePath with their parent.
+      // Prefer the whole-file library row; saved clips can share its filePath.
       const lib = useLibraryStore()
       const item =
         lib.items.find((i) => i.kind === 'audio-file' && i.filePath === clip.filePath) ??
@@ -2659,13 +1901,7 @@ export const useProjectStore = defineStore('project', {
       if (item && item.peaks.length === 0) {
         lib.setItemPeaks(item.id, peaks, sampleRate, peaksPerSecond)
       }
-      // Stereo per-channel peaks live in a separate library map keyed by
-      // item id (see libraryStore.channelPeaksByItemId). Publish them
-      // whenever the backend supplies them so the stereo display mode has
-      // data for this source, regardless of whether the summary above was
-      // (re)built. When the backend reports a summary-only source (mono file,
-      // legacy cache, or missing channel lanes) we pass an empty array so any
-      // prior stereo entry for this item is cleared rather than left stale.
+      // Empty channel lanes clear stale stereo peaks for summary-only sources.
       if (item && typeof peaksPerSecond === 'number' && peaksPerSecond > 0) {
         lib.setItemChannelPeaks(item.id, channels ?? [], peaksPerSecond)
       }
@@ -2677,49 +1913,28 @@ export const useProjectStore = defineStore('project', {
         'project',
         `applyProjectStateSnapshot tracks=${snapshot.tracks.length} clips=${snapshot.tracks.reduce((n, t) => n + t.clips.length, 0)} reset=${snapshot.reset === true} path=${snapshot.filePath ?? 'null'} name=${snapshot.name}`
       )
-      // Stashed length applied at the end, after tracks have been
-      // reconciled (the setter writes to each track's lengthMs).
+      // Apply after tracks exist because the setter writes each track length.
       let pendingProjectLengthMs: number | null = null
-      // Soft-replace is the authoritative-reconcile variant used by
-      // Undo / Redo: replace tracks/clips/library/markers wholesale
-      // (so things that disappeared actually disappear) WITHOUT
-      // marking clean, rotating projectId, or clearing the clipboard
-      // and selection. The backend explicitly resends PROJECT_DIRTY
-      // with the correct dirty state right after this envelope so the
-      // title-bar indicator stays accurate.
+      // Undo/redo soft-replace swaps state wholesale without resetting view identity.
       const isSoftReplace = snapshot.softReplace === true
-      // Adopt the project identity fields up front so any code that reads
-      // them during the snapshot apply (e.g. the title bar) sees the
-      // post-load values. A fresh snapshot is by definition clean — any
-      // mutation made AFTER it lands will flip dirty back to true via
-      // a follow-up PROJECT_DIRTY envelope.
+      // Adopt identity before other snapshot work so observers see post-load values.
       const previousFilePath = this.currentFilePath
       this.currentFilePath = snapshot.filePath
       this.projectName = snapshot.name?.trim() ? snapshot.name : DEFAULT_PROJECT_NAME
       if (!isSoftReplace) {
         this.isDirty = false
       }
-      // Bucket transition for autosave. We rotate the project id on
-      // any snapshot that *replaces* the project — Load / New (which
-      // carry `reset=true`) AND Save As (which broadcasts a follow-up
-      // `reset=false` PROJECT_STATE with a new `filePath`, because
-      // the in-memory ValueTree itself didn't change — only the
-      // backing file did). Bucket cleanup for the prior id is run
-      // by the `previousProjectId` watcher in `lib/autosave.ts`.
+      // Rotate autosave buckets when load/new/save-as changes project identity.
       const pathChanged = snapshot.filePath !== previousFilePath
       const shouldRotateId = (snapshot.reset === true || pathChanged) && !isSoftReplace
       if (shouldRotateId) {
         this.previousProjectId = this.projectId
         if (snapshot.filePath) {
-          // Derive a stable id from the absolute path. The derivation
-          // is async (subtle.digest); assign provisionally to null so
-          // the autosave manager's start-condition treats the project
-          // as "not yet ready" until the id resolves.
+          // Async path hashing keeps autosave disabled until the id resolves.
           const targetPath = snapshot.filePath
           this.projectId = null
           void deriveProjectIdFromPath(targetPath).then((id) => {
-            // Only adopt the id if the snapshot is still the current
-            // project — a follow-up Load could have raced this.
+            // A later load may race the hash result.
             if (this.currentFilePath === targetPath) this.projectId = id
           })
         } else {
@@ -2727,9 +1942,6 @@ export const useProjectStore = defineStore('project', {
         }
       }
       this.pendingRecoveredProjectId = null
-      // Adopt the persisted zoom level (if the backend supplied one) so
-      // the TimelineView watcher in the component can apply it via the
-      // grid-geometry composable.
       this.viewPxPerSecond =
         typeof snapshot.viewPxPerSecond === 'number' && snapshot.viewPxPerSecond > 0
           ? snapshot.viewPxPerSecond
@@ -2738,9 +1950,7 @@ export const useProjectStore = defineStore('project', {
         typeof snapshot.viewScrollX === 'number' && snapshot.viewScrollX >= 0
           ? snapshot.viewScrollX
           : null
-      // BPM, playhead, and project length live on other stores. Apply
-      // them here so a single PROJECT_STATE round-trip restores every
-      // persisted dimension of the project view in one go.
+      // PROJECT_STATE restores transport and project dimensions across stores.
       if (typeof snapshot.bpm === 'number' && snapshot.bpm > 0) {
         useTransportStore().setBpm(snapshot.bpm)
       }
@@ -2748,16 +1958,11 @@ export const useProjectStore = defineStore('project', {
         useTransportStore().setPosition(snapshot.playheadMs)
       }
       if (typeof snapshot.projectLengthMs === 'number' && snapshot.projectLengthMs > 0) {
-        // Defer to after track reconciliation below so `setProjectLengthMs`
-        // sees the tracks it needs to set the length on. Stash here.
         pendingProjectLengthMs = snapshot.projectLengthMs
       } else {
         pendingProjectLengthMs = null
       }
-      // Per-project preferred audio output device. Normalised to
-      // strict null/null when either field is missing or empty — the
-      // load-time reconcile in `bridgeService.ts` watches these
-      // fields and decides whether to switch the live device.
+      // Normalise audio-output preference to all-set or null/null.
       const nextAudioType = typeof snapshot.audioOutputTypeName === 'string' && snapshot.audioOutputTypeName.length > 0
         ? snapshot.audioOutputTypeName
         : null
@@ -2771,41 +1976,25 @@ export const useProjectStore = defineStore('project', {
         this.audioOutputTypeName = null
         this.audioOutputDeviceName = null
       }
-      // Per-project target sample rate. Accept only the supported
-      // whitelist; anything else (including absent) is treated as
-      // "no project value yet" and the renderer will fall back to
-      // the user-scope `defaultProjectSampleRate` preference at the
-      // first interaction that needs a concrete rate (import flow,
-      // project-properties dialog, etc.).
+      // Only supported rates survive; absent/invalid means no project override.
       const incomingRate = snapshot.targetSampleRate
       this.targetSampleRate =
         typeof incomingRate === 'number' && (incomingRate === 44100 || incomingRate === 48000)
           ? incomingRate
           : null
-      // Export-dialog settings persist at the project level. Empty
-      // string and absent both reset to "use base defaults"; the
-      // dialog parses the JSON itself on open with a per-field
-      // whitelist so a malformed blob can't crash the renderer.
+      // The dialog parses this opaque JSON defensively on open.
       const incomingExportSettings = snapshot.exportSettingsJson
       this.exportSettingsJson =
         typeof incomingExportSettings === 'string' && incomingExportSettings.length > 0
           ? incomingExportSettings
           : null
-      // Master output volume. Absent in the snapshot ⇒ unity (the
-      // backend omits it when at 1.0 to keep legacy projects clean).
+      // Missing means unity; the backend omits default master volume.
       const incomingMasterVolume = snapshot.masterVolume
       this.masterVolume =
         typeof incomingMasterVolume === 'number' && Number.isFinite(incomingMasterVolume)
           ? Math.min(1, Math.max(0, incomingMasterVolume))
           : 1.0
-      // Project-shared Reverb + Delay. Each scalar is
-      // absent-when-default on the wire, so a missing field reads back
-      // as the inaudible default — keeping legacy projects byte-clean
-      // and exporting bit-identical until the user dials a value in.
-      // Mutated in place (not reference-replaced) to mirror the per-track
-      // Tone / send reconcile below: an unrelated PROJECT_STATE refresh
-      // (e.g. one a TRACK_MUTE ack triggers) then can't force-end a Reverb /
-      // Delay drag by swapping the watched object reference.
+      // Mutate FX objects in place so PROJECT_STATE refreshes do not end drags.
       const unit = (v: unknown): number =>
         typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0
       this.projectReverb.size = unit(snapshot.reverbSize)
@@ -2817,15 +2006,7 @@ export const useProjectStore = defineStore('project', {
       this.projectDelay.tone = unit(snapshot.delayTone)
       this.projectDelay.mix = unit(snapshot.delayMix)
       const library = useLibraryStore()
-      // PROJECT_LOAD / PROJECT_NEW set `reset=true`. In that case the
-      // renderer's optimistic mirror must be wiped before re-applying so
-      // we don't carry stale tracks/clips/library items from the
-      // previous project. The connect-time path leaves `reset` falsy
-      // and the snapshot is treated as additive (see comment below).
-      //
-      // Undo / Redo sets `softReplace=true`: the same wholesale-replace
-      // semantics for tracks/clips/markers/library, but preserves the
-      // clipboard and selection (which aren't ValueTree state).
+      // Reset/soft-replace wipe ValueTree-backed mirrors; undo/redo preserves view state.
       if (snapshot.reset === true || isSoftReplace) {
         this.tracks = []
         this.clips = {}
@@ -2847,21 +2028,12 @@ export const useProjectStore = defineStore('project', {
             .sort((a, b) => a.positionMs - b.positionMs)
         : []
 
-      // Hydrate persisted library entries BEFORE the clip-driven path
-      // below runs — clips that point at the same filePath will then
-      // see the existing item and skip the duplicate-add branch. We
-      // pass `fromSnapshot: true` so the libraryStore doesn't echo
-      // these adds back as LIBRARY_ADD envelopes.
+      // Hydrate library first and suppress echoing snapshot items back to the backend.
       if (snapshot.library) {
         for (const item of snapshot.library) {
           const already = library.byId[item.id]
           if (already) {
-            // The item was hydrated on an earlier snapshot. Refresh the
-            // mutable source-binding fields so a relink (which re-points
-            // filePath and clears the missing-source flag) is reflected
-            // in the renderer — the hydrate path below only runs once per
-            // item id, so without this an existing item would keep its
-            // stale path / `unresolved` after relinking.
+            // Existing items still need relinked path/unresolved fields refreshed.
             already.filePath = item.filePath
             already.fileName = item.fileName?.trim()
               ? item.fileName
@@ -2882,14 +2054,7 @@ export const useProjectStore = defineStore('project', {
             peaks: new Float32Array(0),
             key: item.key,
             unresolved: item.unresolved === true,
-            // The decoded-WAV cache is a backend-internal
-            // optimisation. The renderer always sends the source
-            // `filePath` in CLIP_ADD; the backend swaps in its
-            // cached WAV on the engine side. So we deliberately do
-            // NOT hydrate `playbackFilePath` from the persisted
-            // cache path here — using it would make the renderer
-            // send the cache path in CLIP_ADD and break the
-            // backend's library-item lookup.
+            // Keep CLIP_ADD keyed by source path; cached WAV paths are backend-internal.
             playbackFilePath: item.filePath,
             derivedFrom:
               item.kind === 'saved-clip'
@@ -2916,10 +2081,7 @@ export const useProjectStore = defineStore('project', {
               : undefined,
             fromSnapshot: true
           })
-          // Hydrate persisted analysis results (if the backend has
-          // detected BPM + beats on a previous session). New imports
-          // get the full analysis via the LIBRARY_ITEM_ANALYSIS
-          // envelope when the worker finishes.
+          // Persisted analysis hydrates immediately; new imports use LIBRARY_ITEM_ANALYSIS.
           if (typeof item.bpm === 'number' && item.bpm > 0) {
             const persistedBeats = Array.isArray(item.beats) ? item.beats : []
             const anchor =
@@ -2936,15 +2098,11 @@ export const useProjectStore = defineStore('project', {
               item.lowConfidence === true
             )
           }
-          // Hydrate the user's sample/music override (independent
-          // from analysis — survives even if BPM wasn't detected).
           if (item.sampleMode === 'sample' || item.sampleMode === 'music') {
             const target = library.items.find((i) => i.id === libId)
             if (target) target.sampleMode = item.sampleMode
           }
-          // Fetch tags + technical duration asynchronously so older
-          // project files that predate persisted library duration still
-          // repaint their tiles with the real length after reload.
+          // Backfill metadata for older projects missing persisted duration.
           if ((item.kind ?? 'audio-file') === 'audio-file') {
             void refreshLibraryItemMedia(libId, item.filePath)
           }
@@ -2967,15 +2125,10 @@ export const useProjectStore = defineStore('project', {
         }
       }
 
-      // Collect ids of clips that still need peaks after reconciliation so
-      // we can fire WAVEFORM_REQUESTs at the end in one pass.
+      // Batch missing-peak requests after reconciliation.
       const clipsNeedingPeaks: string[] = []
       for (const t of snapshot.tracks) {
-        // Reconstruct any track the backend knows but the renderer doesn't
-        // (e.g. after a renderer reload). Audio is already live on the
-        // backend; this rebuilds the visual representation so the user
-        // sees what's playing. Display name + colour use the position in
-        // the snapshot so they're deterministic across reloads.
+        // Rebuild missing renderer tracks from the backend snapshot.
         let track = this.tracks.find((x) => x.id === t.id)
         if (!track) {
           const index = this.tracks.length
@@ -3015,14 +2168,10 @@ export const useProjectStore = defineStore('project', {
           if (typeof t.heightPx === 'number' && t.heightPx > 0) {
             track.heightPx = t.heightPx
           }
-          // Always update mute / solo from the snapshot so a TRACK_MUTE
-          // or TRACK_SOLO ack (which triggers a PROJECT_STATE refresh)
-          // is reflected in the UI.
+          // Mute/solo acks arrive as PROJECT_STATE refreshes.
           track.muted = t.muted === true
           track.soloed = t.soloed === true
-          // Volume too — backend is authoritative.
           track.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain))
-          // Tone — backend is authoritative; default-suppress to undefined.
           track.toneBassDb =
             typeof t.toneBassDb === 'number' && t.toneBassDb !== 0 ? t.toneBassDb : undefined
           track.toneMidDb =
@@ -3041,19 +2190,11 @@ export const useProjectStore = defineStore('project', {
               ? t.levelerAmount
               : undefined
         }
-        // §12.1 — backend-authoritative transitions for this track. Set on
-        // both the freshly-reconstructed and the updated branch so a
-        // create / delete / reconcile (which all rebroadcast PROJECT_STATE)
-        // is reflected, and so clearing the last transition resets to
-        // undefined.
+        // Transitions are backend-authoritative and cleared by absent snapshot data.
         track.transitions = hydrateTransitions(t.transitions)
         for (const c of t.clips) {
           const offset = Math.max(0, c.offsetMs)
-          // Resolve the clip's source via its library item id (the
-          // single source of truth). The library was hydrated earlier
-          // in this snapshot apply so the lookup should succeed; if a
-          // clip somehow points at an unknown library item we skip it
-          // rather than minting a phantom library entry.
+          // Library item id is the clip source of truth; skip unknown ids.
           const libItem = library.byId[c.libraryItemId]
           if (!libItem) {
             log.warn(
@@ -3069,12 +2210,7 @@ export const useProjectStore = defineStore('project', {
             existing.inMs = Math.max(0, c.inMs ?? 0)
             existing.durationMs = Math.max(0, c.durationMs)
             existing.unresolved = c.unresolved === true
-            // Keep the clip's cached source binding in sync with its
-            // library item. Relinking changes the library item's path,
-            // and the clip derives its path from there — without this,
-            // an already-drawn clip would keep the stale path/name after
-            // a relink (and any path-keyed UI, e.g. the Relink dialog,
-            // would group it under the wrong, missing path).
+            // Relinked library items must refresh existing clip path/name caches.
             existing.filePath = clipFilePath
             existing.fileName = filePathToDisplayName(clipFilePath)
             existing.playbackFilePath = libItem.playbackFilePath
@@ -3101,9 +2237,7 @@ export const useProjectStore = defineStore('project', {
             if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
             continue
           }
-          // Reconstruct a placeholder clip the renderer can draw at the
-          // correct timeline position and width. Waveform peaks are
-          // requested separately below.
+          // Placeholder draws immediately; peaks are requested later.
           const fileName = filePathToDisplayName(clipFilePath)
           const placeholder: Clip = {
             id: c.id,
@@ -3142,9 +2276,7 @@ export const useProjectStore = defineStore('project', {
           }
           this.clips[c.id] = placeholder
           track.clipIds.push(c.id)
-          // Unresolved clips can't produce peaks (the file is gone)
-          // so don't request them — saves a futile round-trip and a
-          // backend warn log per missing clip.
+          // Missing sources cannot produce peaks.
           if (!placeholder.unresolved) clipsNeedingPeaks.push(c.id)
           const clipEnd = placeholder.startMs + placeholder.durationMs
           if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
@@ -3153,13 +2285,7 @@ export const useProjectStore = defineStore('project', {
           }
         }
       }
-      // Reorder `this.tracks` to match the snapshot's track order.
-      // The backend is authoritative on track ordering; without this
-      // step a TRACK_REORDER undo (which arrives as a softReplace
-      // PROJECT_STATE) wouldn't actually re-shuffle the renderer's
-      // array. Locally-known tracks the snapshot doesn't mention stay
-      // appended at the end so an optimistic TRACK_ADD that hasn't
-      // round-tripped yet doesn't get lost.
+      // Backend order wins; optimistic local-only tracks stay appended.
       if (snapshot.tracks.length > 0) {
         const indexOf = new Map<string, number>()
         for (let i = 0; i < snapshot.tracks.length; i++) {
@@ -3173,45 +2299,18 @@ export const useProjectStore = defineStore('project', {
           return ai - bi
         })
       }
-      // PROJECT_STATE is *additive only*. We do NOT drop optimistic
-      // tracks/clips that aren't in the snapshot:
-      //
-      //   - Renderer creates `t1` (optimistic) and queues TRACK_ADD.
-      //   - Backend sends the post-AUTH PROJECT_STATE from the message
-      //     thread; that snapshot is taken BEFORE the queued TRACK_ADD
-      //     has been processed, so it doesn't include `t1`.
-      //   - Wiping `t1` here would be a data-loss bug — the user just
-      //     made it.
-      //
-      // The renderer's own action flow (`confirmClipAdd` for failed
-      // adds, `removeTrack` for user-driven removal) is responsible for
-      // dropping state. PROJECT_STATE only adds backend-known state the
-      // renderer doesn't already have.
-      //
-      // Request peaks for every clip that doesn't have any. The backend
-      // serves cached peaks instantly or kicks the worker pool; either
-      // way the response is a WAVEFORM_DATA binary frame that
-      // `setClipPeaks` consumes.
+      // Additive snapshots must not drop optimistic local tracks/clips.
+      // Missing peaks are requested after reconciliation and arrive as WAVEFORM_DATA.
       for (const clipId of clipsNeedingPeaks) {
         sendBridge('WAVEFORM_REQUEST', { clipId })
       }
 
-      // Apply the persisted project length AFTER track reconciliation —
-      // `setProjectLengthMs` writes to each track's `lengthMs`, so the
-      // tracks have to exist first. The setter clamps upward if a clip
-      // extends past the requested length, so passing a value that
-      // disagrees with the on-disk tracks degrades gracefully.
+      // Project length applies after tracks exist and clamps above clip ends.
       if (pendingProjectLengthMs !== null && this.tracks.length > 0) {
         this.setProjectLengthMs(pendingProjectLengthMs)
       }
 
-      // Restore persisted view state for the Track FX panel on a full
-      // load / new (reset). Selection was just cleared above, so adopt
-      // the saved selected track (only if it still exists) and the
-      // panel-open flag. Assigned directly — not via `selectTrack` /
-      // `setFxPanelOpen` — so restoring doesn't echo back to the backend.
-      // Skipped on additive connect snapshots and on undo/redo
-      // (soft-replace), which preserve the live selection.
+      // Restore reset-only view state directly so it does not echo to the backend.
       if (snapshot.reset === true) {
         const savedSelected =
           typeof snapshot.viewSelectedTrack === 'string' && snapshot.viewSelectedTrack.length > 0
@@ -3222,21 +2321,11 @@ export const useProjectStore = defineStore('project', {
             ? savedSelected
             : null
         this.fxPanelOpen = snapshot.viewFxPanelOpen === true
-        // `fxTab` is UI-only (not persisted), so a fresh load starts the
-        // effects area on the per-track rack rather than inheriting the
-        // previous project's choice.
         this.fxTab = 'track'
         this.peaksRevision++
       }
 
-      // Migration: rebind any timeline clip whose (libraryItemId,
-      // inMs, durationMs) is an exact audio-equivalent match to an
-      // existing saved-clip's (sourceItemId, inMs, durationMs). Fixes
-      // projects created before "Save clip to library" rebound the
-      // originating clip — without this, those clips stay linked to
-      // the source audio-file and the saved-clip's "Used on" view is
-      // empty. Saved-clip dedupe upstream guarantees at most one
-      // saved-clip per window so the match is unambiguous.
+      // Migration: rebind pre-existing saved-clip windows to their saved item.
       if (snapshot.reset === true || isSoftReplace) {
         for (const clipId in this.clips) {
           const clip = this.clips[clipId]
@@ -3268,17 +2357,14 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    // ─── Project file lifecycle (Phase 3) ──────────────────────────────────
+    // ─── Project file lifecycle ────────────────────────────────────────────
 
-    /** Send PROJECT_NEW; backend wipes its state and broadcasts a fresh reset snapshot. */
     requestNewProject(): void {
       log.info('project', 'requestNewProject')
       sendBridge('PROJECT_NEW')
     },
 
-    /** Apply an inbound `EDIT_UNDO_STATE` envelope. Mirrors the backend
-     *  `juce::UndoManager` head so the Edit menu's Undo / Redo items
-     *  reflect the current can-undo / can-redo state. */
+    /** Mirror backend undo head for menu enablement and labels. */
     applyEditUndoState(payload: { canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string }): void {
       this.canUndo = payload.canUndo
       this.canRedo = payload.canRedo
@@ -3286,16 +2372,11 @@ export const useProjectStore = defineStore('project', {
       this.redoLabel = payload.canRedo && payload.redoLabel ? payload.redoLabel : null
     },
 
-    /** Send EDIT_UNDO; backend reverts the most recent undoable
-     *  transaction and rebroadcasts the project state. No-op locally if
-     *  `canUndo` is false — the backend will also no-op. */
     requestUndo(): void {
       log.info('project', 'requestUndo')
       sendBridge('EDIT_UNDO')
     },
 
-    /** Send EDIT_REDO; backend re-applies the most recently-undone
-     *  transaction and rebroadcasts the project state. */
     requestRedo(): void {
       log.info('project', 'requestRedo')
       sendBridge('EDIT_REDO')
@@ -3362,11 +2443,7 @@ export const useProjectStore = defineStore('project', {
       return true
     },
 
-    /**
-     * Send PROJECT_SAVE if we have a current path, otherwise fall through
-     * to PROJECT_SAVE_AS via the OS dialog. The dialog flow runs in
-     * `App.vue::handleMenuAction` because it owns the IPC context.
-     */
+    /** Save current path; caller owns Save As dialog fallback. */
     requestSave(): boolean {
       if (!this.currentFilePath) return false
       log.info('project', `requestSave path=${this.currentFilePath}`)
@@ -3380,7 +2457,6 @@ export const useProjectStore = defineStore('project', {
       return true
     },
 
-    /** Send PROJECT_SAVE_AS with the path the user picked in the OS dialog. */
     requestSaveAs(filePath: string): void {
       log.info('project', `requestSaveAs path=${filePath}`)
       const sent = sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: this.viewScrollX ?? undefined })
@@ -3389,16 +2465,9 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Promise-returning save that resolves once the backend acks with
-     * `PROJECT_SAVED`. Used by the unsaved-changes prompt to chain
-     * "save → proceed with New/Open/Quit" deterministically. Failure
-     * results carry an error message; the caller surfaces it.
-     */
+    /** Await PROJECT_SAVED so unsaved-change flows can continue deterministically. */
     saveAndWait(filePath: string, isSaveAs: boolean): Promise<{ ok: boolean; error?: string }> {
-      // Resolve any previous outstanding wait (its envelope never came
-      // back — could happen on a backend restart). Bias toward unblocking
-      // the UI rather than waiting forever.
+      // Supersede stale waits so backend restarts cannot block the UI forever.
       if (pendingSaveResolver) pendingSaveResolver({ ok: false, error: 'Superseded by a newer save' })
       if (pendingSaveTimeout) {
         clearTimeout(pendingSaveTimeout)
@@ -3427,12 +2496,7 @@ export const useProjectStore = defineStore('project', {
       return promise
     },
 
-    /**
-     * Called by `bridgeService` on every PROJECT_SAVED. Resolves any
-     * outstanding `saveAndWait` so the unsaved-changes flow can
-     * proceed. No-op if no wait is pending (a fire-and-forget save
-     * fired by `requestSave` doesn't open a promise).
-     */
+    /** Resolve any pending saveAndWait on PROJECT_SAVED. */
     notifySaveAck(ok: boolean, error?: string): void {
       if (pendingSaveTimeout) {
         clearTimeout(pendingSaveTimeout)
@@ -3466,16 +2530,9 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Fire-and-forget autosave tick. Returns a promise the autosave
-     * manager awaits to know whether to update the manifest from
-     * `pending=true` to `pending=false`. Resolves with `{ ok: false }`
-     * after a short timeout if the backend never acks (so the manager
-     * doesn't leak resolvers forever).
-     */
+    /** Autosave tick with timeout so manifest resolvers cannot leak. */
     autosaveAndWait(filePath: string): Promise<{ ok: boolean; error?: string }> {
-      // If a prior tick for the same filePath is still pending, reject
-      // it so its resolver doesn't fire on the new tick's ack.
+      // Supersede older ticks for this file so acks cannot resolve the wrong promise.
       const existing = pendingAutosaveResolvers.get(filePath)
       if (existing) {
         existing({ ok: false, error: 'Superseded by a newer autosave' })
@@ -3492,8 +2549,7 @@ export const useProjectStore = defineStore('project', {
         pendingAutosaveResolvers.delete(filePath)
         return Promise.resolve({ ok: false, error: 'The audio engine isn\'t connected' })
       }
-      // Safety timeout: a backend that drops the ack must not leak a
-      // resolver. Mirrors the explicit-save timeout.
+      // Dropped acks must not leak resolvers.
       const timeoutId = setTimeout(() => {
         const r = pendingAutosaveResolvers.get(filePath)
         if (r) {
@@ -3501,9 +2557,7 @@ export const useProjectStore = defineStore('project', {
           pendingAutosaveResolvers.delete(filePath)
         }
       }, PENDING_SAVE_TIMEOUT_MS)
-      // Wrap the resolve so it always clears the timeout. Replace the
-      // map entry with the wrapped version so the bridge-side dispatch
-      // calls the wrapped one.
+      // Bridge dispatch must clear the timeout before resolving.
       const original = pendingAutosaveResolvers.get(filePath)!
       const wrapped = (result: { ok: boolean; error?: string }): void => {
         clearTimeout(timeoutId)
@@ -3513,7 +2567,6 @@ export const useProjectStore = defineStore('project', {
       return promise
     },
 
-    /** Called by `bridgeService` on every PROJECT_AUTOSAVED. */
     notifyAutosaveAck(filePath: string, ok: boolean, error?: string): void {
       const resolver = pendingAutosaveResolvers.get(filePath)
       if (resolver) {
@@ -3522,18 +2575,12 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /** Send PROJECT_LOAD with the path the user picked in the OS dialog. */
     requestLoad(filePath: string): void {
       log.info('project', `requestLoad path=${filePath}`)
       sendBridge('PROJECT_LOAD', { filePath })
     },
 
-    /**
-     * Crash-recovery load. The backend rebuilds the engine from
-     * `autosavePath` but seeds `session.currentPath` to `originalPath`
-     * (or empty when null) and flips the dirty flag to true so the
-     * user is steered to a deliberate File > Save.
-     */
+    /** Recovery loads autosave content but keeps the original path dirty. */
     requestLoadRecovery(
       autosavePath: string,
       originalPath: string | null,
@@ -3589,11 +2636,6 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
-    /**
-     * Rename the project. Updates the local name optimistically so the
-     * title bar reflects the new value immediately, then notifies the
-     * backend so the change is included in the next save.
-     */
     requestRename(name: string): void {
       const trimmed = name.trim()
       const finalName = trimmed.length > 0 ? trimmed : DEFAULT_PROJECT_NAME

@@ -1,31 +1,5 @@
-// Viewport / selection state for the Clip Editor.
-//
-// Centralises the view bounds, zoom, scroll, canvas measurement,
-// and selection refs along with all the derived geometry the canvas
-// draw + mouse handlers need. Owning this state in a composable
-// rather than in `ClipEditorDialog.vue` makes the math
-// unit-testable and stops the dialog `<script setup>` from being
-// the only source of truth.
-//
-// Design notes:
-//
-// - Raw refs (`zoom`, `scrollMs`, `selectionInMs`, …) are exposed
-//   directly because the dialog mutates them in many places
-//   (mouse handlers, keyboard nudges, crop apply/undo). Wrapping
-//   every mutation in a setter would balloon the contract without
-//   clear safety wins — instead we provide intentful helpers for
-//   the multi-field transitions (`initialiseForItem`,
-//   `snapCropViewToSelection`, `captureCropSnapshot`,
-//   `restoreCropSnapshot`, `resetZoomAndScroll`).
-//
-// - An internal watcher clamps `scrollMs` whenever any bound that
-//   affects `maxScrollMs` changes. This stops stale scroll values
-//   from surviving crop or zoom transitions and removes the need
-//   for every call site to remember to clamp.
-//
-// - DOM concerns (canvas element ref, ResizeObserver, draw, mouse
-//   handlers) live in the dialog. The composable only takes
-//   reactive *inputs* and returns refs + computeds.
+// Clip Editor viewport, selection, zoom, and scroll state.
+// Raw refs stay mutable for dialog gestures; helpers handle multi-field transitions.
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { LibraryItem } from '@/stores/libraryStore'
@@ -39,22 +13,15 @@ export interface CropSnapshot {
 }
 
 export interface UseClipEditorViewportInputs {
-  /** The library item currently being edited (timeline-clip's source,
-   *  saved-clip itself, or the main library entry). Drives the view
-   *  bounds when `editsExistingClip` is false (full-source view). */
+  /** Library item being edited. */
   editorItem: Ref<LibraryItem | null | undefined> | ComputedRef<LibraryItem | null | undefined>
-  /** True when the dialog is editing a persisted clip or a
-   *  saved-clip library entry. Toggles the cropped working view. */
+  /** True for persisted clip or saved-clip editing. */
   editsExistingClip: Ref<boolean> | ComputedRef<boolean>
-  /** The timeline clip being edited (when editing one). Used by
-   *  `initialiseForItem` to seed the persisted window. */
+  /** Timeline clip being edited, when present. */
   timelineClip: Ref<Clip | null | undefined> | ComputedRef<Clip | null | undefined>
   /** Full duration of the underlying source file. */
   sourceDurationMs: Ref<number> | ComputedRef<number>
-  /** The main-timeline's pixels-per-second setting. Used as the
-   *  base scale for the full-source view so zoom=1 matches the
-   *  timeline. Pass `toRef(ui, 'zoomPxPerSecond')` so the base
-   *  scale reactively tracks timeline zoom. */
+  /** Timeline px/s base scale so full-source zoom=1 matches the timeline. */
   uiZoomPxPerSecond: Ref<number> | ComputedRef<number>
 }
 
@@ -65,13 +32,11 @@ export interface ClipEditorViewport {
   // View toggle (cropped clip view vs full source).
   viewExpanded: Ref<boolean>
 
-  // Cropped working view (saved-clip mode). Snaps to the persisted
-  // `derivedFrom` on initialise, updated on `snapCropViewToSelection`,
-  // `setCropView`, and `restoreCropSnapshot`.
+  // Cropped working view for existing clips and saved clips.
   cropViewInMs: Ref<number>
   cropViewDurationMs: Ref<number>
 
-  // Selection inside the view. Lives in [viewInMs, viewEndMs].
+  // Selection inside [viewInMs, viewEndMs].
   selectionInMs: Ref<number>
   selectionDurationMs: Ref<number>
 
@@ -144,11 +109,10 @@ export function useClipEditorViewport(inputs: UseClipEditorViewportInputs): Clip
   const basePxPerMs = computed(() => {
     if (!editorItem.value) return 0
     if (!editsExistingClip.value) {
-      // Match the timeline's px/s. Fall back to 100 px/s (the default) if
-      // we haven't observed a live value yet.
+      // Match timeline px/s; fall back to its default before the live value arrives.
       return Math.max(0.001, (uiZoomPxPerSecond.value || 100) / 1000)
     }
-    // saved-clip: fit the cropped range exactly into the canvas.
+    // Saved clips fit the cropped range to the canvas.
     const w = canvasCssWidth.value
     const dur = viewDurationMs.value
     return w > 0 && dur > 0 ? w / dur : 0
@@ -184,11 +148,7 @@ export function useClipEditorViewport(inputs: UseClipEditorViewportInputs): Clip
     hasPlaybackSelection.value ? selectionEndMs.value : viewEndMs.value
   )
 
-  // Whenever the bounds shift, `scrollMs` may now exceed `maxScrollMs`
-  // (e.g. crop view shrinks, zoom drops). Clamp it back in-range so
-  // every caller doesn't have to remember. `flush: 'sync'` makes the
-  // clamp visible immediately to any synchronous reader (callers and
-  // tests that mutate bounds and then read scroll).
+  // Clamp scroll synchronously when view bounds or zoom shrink.
   watch(
     maxScrollMs,
     (next) => {

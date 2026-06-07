@@ -1,19 +1,5 @@
 <script setup lang="ts">
-// Vertical column of track headers sitting on top of the timeline canvas.
-//
-// Each header shows the track name + id, plus its primary controls:
-//
-//   M  — mute       (yellow when active, sends TRACK_GAIN=0)
-//   S  — solo       (cyan when active, mutes every non-soloed track)
-//   Fx — track FX   (sky when active, opens the Track FX panel for this track)
-//   ↓  — import     (opens an audio file and adds it as a clip on the track)
-//   X  — remove     (sends TRACK_REMOVE and drops the track locally)
-//
-// Layout is absolute-positioned so it stays in sync with the PixiJS-drawn
-// row backgrounds. RULER_HEIGHT / TRACK_HEIGHT / TRACK_GAP must match the
-// values in TimelineView.vue. The column WIDTH is user-resizable and lives
-// on `uiStore.trackHeaderWidth`; the drag handle is in TimelineView (it
-// straddles the seam between this column and the canvas).
+// Track-header overlay aligned to the PixiJS timeline rows.
 
 import { computed, ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -41,13 +27,7 @@ const ui = useUiStore()
 
 const headerWidth = computed(() => ui.trackHeaderWidth)
 
-/**
- * Map a linear gain (0 .. MAX_TRACK_VOLUME) onto the slider's 0..1
- * visual domain using a real-DAW tapered curve: 0 dB sits near the
- * top of fader travel (≈91% for the +6 dB ceiling) so the bulk of
- * the bar covers the audible attenuation range. See `lib/audio/db`
- * for the maths.
- */
+/** Tapered fader mapping keeps most travel in the audible attenuation range. */
 function volumeToSliderPosition(volume: number): number {
   return linearToTaperPosition(volume, MAX_TRACK_DB)
 }
@@ -63,8 +43,6 @@ function onImportClick(trackId: string): void {
 }
 
 // ─── Inline rename + gain editing ───────────────────────────────────────────
-// Clicking the track name (or gain readout) swaps it for a text input.
-// Enter / blur commits; Escape cancels. Owned by useTrackHeaderEditing.
 const {
   editingTrackId,
   editingValue,
@@ -82,22 +60,11 @@ const {
   onGainKeydown
 } = useTrackHeaderEditing()
 
-// Layout constants (RULER_HEIGHT / MIN/MAX_TRACK_HEIGHT / TRACK_GAP) are
-// imported above from `@/lib/timeline/constants` so the column stays
-// aligned with the PixiJS-drawn rows regardless of any future tweaks.
-
-// Cached per-track {top, height} so the v-for can do a single lookup per
-// row rather than each row re-computing its prefix-sum. `buildTrackRowLayout`
-// is pure and cheap, so a `computed` is the natural fit.
+// Cache per-track row layout for template lookups.
 const rowLayout = computed(() => buildTrackRowLayout(project.tracks))
 
 // ─── Resize-handle drag ───────────────────────────────────────────────────
-// Each track header carries a 5 px tall handle on its bottom edge. While
-// the user drags it we mutate the local `heightPx` every pointermove
-// (cheap; just a Pinia write + Pixi redraw via the project.tracks watcher
-// in TimelineView). On pointerup we commit the final value via
-// `setTrackHeight` so the backend captures one undo step per drag rather
-// than dozens of intermediate values.
+// Pointermove previews locally; pointerup commits one undoable backend change.
 const HANDLE_PX = 5
 
 interface ResizeDragState {
@@ -147,20 +114,12 @@ function onHandlePointerUp(): void {
   if (!drag || !drag.moved) return
   const t = project.tracks.find((x) => x.id === drag.trackId)
   if (!t) return
-  // Commit once on release — captures a single undo step covering the
-  // whole drag, not one per pixel of motion.
+  // Commit once per drag.
   project.setTrackHeight(drag.trackId, trackHeightOf(t))
 }
 
 // ─── Reorder drag ─────────────────────────────────────────────────────────
-// The grip icon at the top-left of each header carries a pointerdown
-// handler that promotes to a drag once the pointer has moved past a
-// small threshold. Below the threshold we treat the gesture as a stray
-// click and abort, so a misclick on the grip doesn't accidentally
-// trigger a reorder commit. During the drag we track the pointer's y
-// against the row layout to compute the target slot index; the
-// `dropIndicator` ref drives a thin green line rendered between rows so
-// the user sees exactly where the dropped track will land.
+// A movement threshold prevents accidental reorder commits from grip misclicks.
 const REORDER_THRESHOLD_PX = 4
 
 interface ReorderDragState {
@@ -174,9 +133,7 @@ const dropIndicatorIndex = ref<number | null>(null)
 const reorderingTrackId = ref<string | null>(null)
 
 function computeDropIndex(clientY: number, rowsHostRect: DOMRect): number {
-  // Convert the pointer into the rows-host content space (the same
-  // coordinate space the rowLayout entries use, modulo the
-  // RULER_HEIGHT subtraction the template applies for `top`).
+  // Convert pointer y into row-layout content space.
   const localY = clientY - rowsHostRect.top + RULER_HEIGHT
   const layout = rowLayout.value
   for (let i = 0; i < layout.length; i++) {
@@ -188,11 +145,7 @@ function computeDropIndex(clientY: number, rowsHostRect: DOMRect): number {
 }
 
 function onHeaderClick(track: { id: string }, ev: MouseEvent): void {
-  // GarageBand-style: clicking a track header selects it (the Track FX
-  // surface edits the selected track). Gate out clicks that land on the
-  // header's interactive controls (buttons, the name input, the volume
-  // slider, the grip / resize handles) so selection never steals a click
-  // meant for those.
+  // Ignore clicks on controls so selection never steals their gesture.
   const target = ev.target as HTMLElement | null
   if (
     target?.closest(
@@ -204,11 +157,7 @@ function onHeaderClick(track: { id: string }, ev: MouseEvent): void {
   project.selectTrack(track.id)
 }
 
-/**
- * Toggle the Track FX panel for this track. Selecting a different track
- * while the FX panel is open just retargets it; pressing Fx again on the
- * track it is already showing collapses back to the Library view.
- */
+/** Toggle this track's FX panel, retargeting or collapsing as needed. */
 function onToggleFx(track: { id: string }): void {
   if (isTrackFxShowing(track.id)) {
     project.setFxPanelOpen(false)
@@ -220,10 +169,7 @@ function onToggleFx(track: { id: string }): void {
   ui.setLibraryPanelCollapsed(false)
 }
 
-/** True when the bottom panel is showing the Track FX rack for this track —
- *  i.e. the FX area is open, on the per-track tab, this track is the
- *  selected one, and the panel isn't minimised. A minimised panel shows
- *  nothing, so its Fx buttons read as deselected. */
+/** True only when this track's FX rack is visibly open. */
 function isTrackFxShowing(trackId: string): boolean {
   return (
     project.fxPanelOpen &&
@@ -257,15 +203,11 @@ function onGripPointerMove(ev: PointerEvent): void {
   if (!reorderDrag.moved && Math.abs(dy) < REORDER_THRESHOLD_PX) return
   reorderDrag.moved = true
   reorderingTrackId.value = reorderDrag.trackId
-  // Find the rows host so we can compute drop index relative to it.
   const host = rowsHostEl.value
   if (!host) return
   const rect = host.getBoundingClientRect()
   let target = computeDropIndex(ev.clientY, rect)
-  // Translate "slot index in current array" to "would-be index after
-  // removing the dragged track". If the user drags within the same
-  // visual region as the original slot we don't want to flicker the
-  // drop indicator between two equivalent positions.
+  // Convert visual slot to post-removal target; hide no-op indicators.
   if (target > reorderDrag.startIndex) target -= 1
   dropIndicatorIndex.value = target === reorderDrag.startIndex ? null : target
 }
@@ -285,11 +227,7 @@ function onGripPointerUp(): void {
 
 const rowsHostEl = ref<HTMLDivElement | null>(null)
 
-// Top position of the drop-indicator line, in the rows-host content
-// space (i.e. matching the per-track `top` style). When the drop slot
-// is at index `i`, the line sits at the top edge of row `i` minus half
-// the inter-row gap; at the end of the list it sits below the last
-// row.
+// Drop-indicator top in rows-host content space.
 const dropIndicatorTopPx = computed<number>(() => {
   const idx = dropIndicatorIndex.value
   const layout = rowLayout.value
@@ -318,11 +256,7 @@ const dropIndicatorTopPx = computed<number>(() => {
     class="pointer-events-none absolute inset-y-0 left-0 select-none"
     :style="{ width: headerWidth + 'px' }"
   >
-    <!--
-          Add-track button sits in the strip above the first track, aligned
-          with the ruler row. Clicking it appends a new empty track via the
-          project store (matching the File ▸ Add Track menu action).
-        -->
+    <!-- Add-track strip aligned with the ruler row. -->
     <button
       type="button"
       data-borderless-button="true"
@@ -345,12 +279,7 @@ const dropIndicatorTopPx = computed<number>(() => {
       Add Track
     </button>
 
-    <!--
-          Rows container clipped to the area below the ruler so that vertical
-          scrolling of tracks doesn't reveal row headers on top of the ruler.
-          The inner div applies the actual translation, matching the PixiJS
-          tracks-layer scroll offset.
-        -->
+    <!-- Clip rows below the ruler; inner div mirrors Pixi scroll offset. -->
     <div
       ref="rowsHostEl"
       class="absolute left-0 right-0 overflow-hidden"
@@ -374,10 +303,7 @@ const dropIndicatorTopPx = computed<number>(() => {
           }"
           @click="onHeaderClick(track, $event)"
         >
-          <!-- Top row: grip + name. The grip is the dedicated drag
-                         handle for reordering tracks — dragging it
-                         vertically promotes to a reorder gesture with
-                         a drop indicator across the header column. -->
+          <!-- Top row: reorder grip + name. -->
           <div class="flex items-start gap-1">
             <div
               class="track-grip flex h-4 w-3 shrink-0 cursor-grab items-center justify-center text-zinc-500 hover:text-zinc-200 active:cursor-grabbing"
@@ -445,11 +371,7 @@ const dropIndicatorTopPx = computed<number>(() => {
             </div>
           </div>
 
-          <!-- Middle: volume slider stacked with a thin stereo peak
-                         meter so the visual association between fader
-                         and the resulting level is immediate. Meter
-                         sources from `trackLevelsChannel` keyed by
-                         track id (Phase 5 step 1c — see TrackMeter.vue). -->
+          <!-- Middle: volume slider + matching track meter. -->
           <div class="flex items-center gap-2">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -508,7 +430,6 @@ const dropIndicatorTopPx = computed<number>(() => {
             </button>
           </div>
 
-          <!-- Bottom row: remove / import / mute / solo / fx. -->
           <div class="flex items-center gap-1">
             <button
               type="button"
@@ -529,9 +450,7 @@ const dropIndicatorTopPx = computed<number>(() => {
               </svg>
             </button>
 
-            <!-- Import: opens an audio file and adds it as a clip
-                             on this track. Disabled once a clip already
-                             exists — multi-clip editing comes later. -->
+            <!-- Import is disabled once the track already has a clip. -->
             <button
               type="button"
               class="flex h-6 w-6 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
@@ -605,11 +524,7 @@ const dropIndicatorTopPx = computed<number>(() => {
           </div>
         </div>
 
-        <!-- Resize handles. Sit on each track's bottom edge, straddling
-             the inter-track gap so the user has a comfortable hit zone
-             without intruding on the track contents. Pointer-events
-             only fire on the handle itself; the cursor is `ns-resize`
-             so the affordance is unambiguous. -->
+        <!-- Resize handles straddle row gaps for a larger hit zone. -->
         <div
           v-for="(track, i) in project.tracks"
           :key="'rh-' + track.id"
@@ -623,10 +538,7 @@ const dropIndicatorTopPx = computed<number>(() => {
           @pointerdown="onHandlePointerDown(track, $event)"
         />
 
-        <!-- Drop indicator. A thin emerald line across the column at
-             the inter-track seam corresponding to the current drop
-             slot. Mounted only while a reorder drag is active and a
-             non-noop target has been computed. -->
+        <!-- Drop indicator for the current reorder slot. -->
         <div
           v-if="dropIndicatorIndex !== null"
           class="track-drop-indicator pointer-events-none absolute left-0"
@@ -641,9 +553,7 @@ const dropIndicatorTopPx = computed<number>(() => {
 </template>
 
 <style scoped>
-/* Compact range slider styled to match the dark zinc chrome. The default
-   browser thumb is too tall for our 1px track, so we shrink it and
-   colour it to match the track palette. */
+/* Compact range slider fitted to the dark zinc chrome. */
 .track-volume {
   outline: none;
 }
@@ -655,9 +565,7 @@ const dropIndicatorTopPx = computed<number>(() => {
   height: 12px;
   border-radius: 9999px;
   background: #e4e4e7;
-  /* zinc-200 */
   border: 1px solid #71717a;
-  /* zinc-500 */
   cursor: pointer;
   margin-top: -5px;
 }
@@ -675,7 +583,6 @@ const dropIndicatorTopPx = computed<number>(() => {
   height: 3px;
   border-radius: 9999px;
   background: #3f3f46;
-  /* zinc-700 */
 }
 
 .track-volume::-moz-range-track {
@@ -684,10 +591,7 @@ const dropIndicatorTopPx = computed<number>(() => {
   background: #3f3f46;
 }
 
-/* Bottom-edge drag affordance for resizing a track row. Default state is
-   invisible (so it doesn't draw a line on every row); hovering or
-   dragging surfaces a subtle accent so the user sees what they're
-   about to grab without ever wondering if the whole row is a button. */
+/* Invisible until hover/drag so row chrome stays clean. */
 .track-resize-handle {
   cursor: ns-resize;
   background: transparent;
@@ -700,10 +604,7 @@ const dropIndicatorTopPx = computed<number>(() => {
   background: rgba(244, 244, 245, 0.6); /* zinc-100 while dragging */
 }
 
-/* Drop indicator line for the reorder drag. Sits over the inter-track
-   gap pointing to the slot the dropped track would land in. 2 px tall
-   so it reads as a positive affordance without obscuring the row
-   below. */
+/* Drop indicator for the current reorder slot. */
 .track-drop-indicator {
   height: 2px;
   background: #10b981; /* emerald-500 */

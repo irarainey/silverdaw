@@ -1,29 +1,9 @@
-// Musical-time helpers — shared across the transport bar, the timeline
-// grid composable and the (upcoming) MIDI/automation views.
-//
-// Single source of truth for the conversions that used to live duplicated
-// inside `TransportBar.vue` and `useGridGeometry.ts`:
-//
-//   - `msPerSubBeat(bpm)` — milliseconds per sub-beat (snap unit).
-//   - `barPositionDisplay(ms, bpm)` — "Bar.Beat.Sub" readout.
-//   - `formatTime(ms)` / `parseTime(text)` — wall-clock readouts for the
-//     position / project-length fields.
-//
-// Pure functions on purpose: no Pinia / Vue imports so they're trivial to
-// unit-test in isolation (see `musicTime.test.ts`).
+// Pure musical-time helpers shared by transport, timeline grid and tests.
 
-/** Sub-beats per beat used everywhere in the timeline (1/16 of a 4/4 bar). */
 export const DEFAULT_SUBS_PER_BEAT = 4
-/** Beats per bar used everywhere in the timeline (4/4 only for now). */
 export const DEFAULT_BEATS_PER_BAR = 4
 
-/**
- * Milliseconds per sub-beat at the given tempo.
- *
- * `Math.max(1, bpm)` guards the division — a `0` BPM is nonsense but
- * shouldn't blow up to `Infinity` and propagate `NaN` through the rest of
- * the timeline geometry.
- */
+/** Milliseconds per sub-beat; clamps BPM to avoid infinite timeline geometry. */
 export function msPerSubBeat(bpm: number, subsPerBeat: number = DEFAULT_SUBS_PER_BEAT): number {
   return 60000 / (Math.max(1, bpm) * subsPerBeat)
 }
@@ -33,16 +13,7 @@ export interface BarPositionOptions {
   beatsPerBar?: number
 }
 
-/**
- * Format a playhead position as `Bar.Beat.Sub` (0-indexed) — the usual
- * DAW convention.
- *
- * Operates on *integer* sub-beat counts (rather than fractional beats) so
- * floating-point drift doesn't push exact bar boundaries down to the
- * previous bar (e.g. 3.9999… → bar 0 beat 3 sub 3 instead of bar 1).
- * The error otherwise compounds with position and shows up most clearly
- * far along the timeline.
- */
+/** Format as 0-indexed `Bar.Beat.Sub` using integer sub-beats to avoid drift. */
 export function barPositionDisplay(
   positionMs: number,
   bpm: number,
@@ -60,11 +31,7 @@ export function barPositionDisplay(
   return `${bar}.${beatInBar}.${subInBeat}`
 }
 
-/**
- * Format an absolute millisecond count as `mm:ss` (or `h:mm:ss` for clips
- * longer than an hour). Negative values clamp to zero so a transient
- * underflow during seek doesn't render as `NaN:NaN`.
- */
+/** Format milliseconds as `mm:ss` or `h:mm:ss`, clamping negatives to zero. */
 export function formatTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const h = Math.floor(total / 3600)
@@ -75,12 +42,7 @@ export function formatTime(ms: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 }
 
-/**
- * Parse a user-entered time string into milliseconds. Accepts `ss`,
- * `mm:ss` and `h:mm:ss` (fractional seconds allowed in the last
- * component). Returns `null` on a malformed input so the caller can fall
- * back to the previous value.
- */
+/** Parse `ss`, `mm:ss` or `h:mm:ss` into milliseconds; malformed input returns `null`. */
 export function parseTime(text: string): number | null {
   const trimmed = text.trim()
   if (!trimmed) return null

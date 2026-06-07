@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// Transport bar: play / pause / stop wired to the JUCE backend over the
-// WebSocket bridge. Playhead position is mirrored from the backend's
-// `PLAYHEAD_UPDATE` messages into `transportStore`.
+// Transport controls and project timing readouts.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -31,9 +29,7 @@ const audioDevices = useAudioDeviceStore()
 const notifications = useNotificationsStore()
 
 // ─── Audio output device quick-switch ────────────────────────────────────
-// Compact chip on the left of the transport bar; popover state + device
-// picking live in a focused composable. The SFC keeps the document listeners
-// that close the popover on outside-click / Escape.
+// The SFC only owns document listeners for outside-click / Escape.
 const {
   audioMenuOpen,
   audioMenuRoot,
@@ -58,13 +54,10 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onAudioMenuKey)
 })
 
-// Wrappers that mutate local state AND push the change to the backend
-// so it persists with the project. The wrapped underlying setters are
-// also called by `applyProjectStateSnapshot` (without sending) so the
-// load path round-trips cleanly.
+// User edits update local state and persist to the backend.
 function applyBpm(bpm: number): void {
   transport.setBpm(bpm)
-  // `transport.setBpm` clamps to [20, 300]; read back the clamped value.
+  // Send the clamped value.
   sendBridge('PROJECT_SET_BPM', { bpm: transport.bpm })
 }
 
@@ -78,29 +71,16 @@ function applyProjectLength(ms: number): void {
     )
   }
   project.setProjectLengthMs(nextMs)
-  // The setter may clamp upward to fit existing clips; send the final
-  // value so the backend and renderer stay aligned.
+  // Send the post-clamp length.
   sendBridge('PROJECT_SET_LENGTH', { lengthMs: project.durationMs })
 }
 
 const positionDisplay = computed(() => formatTime(transport.positionMs))
 
-/**
- * Playhead position as `Bar.Beat.Sub` (0-indexed). 4/4 with four
- * sub-beats per beat — same as the timeline grid. See `musicTime.ts`
- * for the integer-sub-beat rounding that avoids float drift at exact
- * bar boundaries.
- */
+/** Playhead as 0-indexed Bar.Beat.Sub using the timeline grid rounding. */
 const barPosition = computed(() => barPositionDisplay(transport.positionMs, transport.bpm))
 
-/**
- * Effective project sample rate label for the transport bar.
- * Reflects the same fallback chain used by `preflightSampleRates`:
- * project-level value if set, otherwise the user-scope default.
- * Bracketed "(default)" suffix surfaces that the project hasn't
- * opted in yet, so a 48 kHz default vs. an explicit 48 kHz choice
- * are visually distinguishable.
- */
+/** Project sample-rate label using the same fallback as import preflight. */
 const effectiveSampleRateLabel = computed(() => {
   const projectRate = project.targetSampleRate
   if (projectRate === 44100 || projectRate === 48000) {
@@ -110,14 +90,10 @@ const effectiveSampleRateLabel = computed(() => {
   return `${(fallback / 1000).toFixed(1)} kHz`
 })
 
-// Editable project-length field. Mirrors `project.durationMs` whenever the
-// user is not actively editing it; on commit (blur / Enter) we parse the
-// `mm:ss` / `h:mm:ss` text back to ms and push it through the store.
+// Length input mirrors the store while not focused, then parses on commit.
 const lengthInput = ref(formatTime(project.durationMs))
 const isEditingLength = ref(false)
 
-// Keep the displayed length in sync with the store while not editing —
-// importing a clip can grow the duration and that should appear here too.
 watch(
   () => project.durationMs,
   (ms) => {
@@ -125,14 +101,7 @@ watch(
   }
 )
 
-// Auto-stop at the end of the project. The audio engine streams
-// forever (it has no notion of `projectLengthMs`), so when the
-// playhead crosses the project ruler's end we send a TRANSPORT_PAUSE
-// from the renderer. We pause (not stop) so the playhead stays parked
-// at the end — matches the user's mental model of "playback finished
-// here", and a fresh Play picks up from start via the existing
-// auto-rewind in `onPlay`. Guard against a 0-length project so a
-// fresh / cropped-empty timeline doesn't get into a pause loop.
+// Renderer pauses at project end because the audio engine streams past it.
 watch(
   () => transport.positionMs,
   (ms) => {
@@ -141,14 +110,13 @@ watch(
     if (end <= 0) return
     if (ms < end) return
     sendBridge('TRANSPORT_PAUSE')
-    // Optimistic local stop so the play / pause button flips
-    // immediately rather than waiting for the backend ack.
+    // Flip the play button without waiting for backend ack.
     transport.setPlaybackState(false)
     transport.setPosition(end)
   }
 )
 
-// Editable BPM. Same pattern as length — mirror the store while not focused.
+// BPM mirrors the store while not focused.
 const bpmInput = ref(transport.bpm.toFixed(2))
 const isEditingBpm = ref(false)
 watch(
@@ -159,25 +127,14 @@ watch(
 )
 
 const lengthEditable = computed(() => project.tracks.length > 0)
-/**
- * Pos / Bar / BPM are only meaningful once the user has something
- * playable in the project. Until then we render them all greyed out
- * to match the disabled-length affordance — the user doesn't have to
- * wonder whether tweaking the BPM "did something" on an empty
- * canvas. Same gate as `lengthEditable` so the four readouts switch
- * together when the first track lands.
- */
+/** Timing readouts are disabled until the project has playable content. */
 const timingEditable = lengthEditable
 
 const projectClipCount = computed(() =>
   project.tracks.reduce((count, track) => count + track.clipIds.length, 0)
 )
 
-// Play is disabled when the playhead is parked at (or past) the end of
-// the project ruler. Pause is always reachable, so we only gate the
-// "start playing" path. Empty projects (durationMs===0) keep Play
-// enabled — the disabled-while-empty case is already covered by
-// `timingEditable` further down.
+// Disable starting playback from project end; Pause remains reachable.
 const playDisabled = computed(() => {
   if (transport.isPlaying) return false
   const end = project.durationMs
@@ -210,7 +167,7 @@ function onLengthCommit(): void {
   isEditingLength.value = false
   const ms = parseTime(lengthInput.value)
   if (ms === null) {
-    // Reject and snap back to the current store value.
+    // Reject and snap back.
     lengthInput.value = formatTime(project.durationMs)
     return
   }
@@ -234,12 +191,7 @@ function onLengthKeydown(e: KeyboardEvent): void {
   }
 }
 
-/**
- * Increment or decrement the project length by `deltaSeconds`. Used by the
- * up/down spinner buttons next to the Length field and by ArrowUp/Down on
- * the input itself. Operates on the in-edit text if the user is currently
- * editing, otherwise on the committed store value.
- */
+/** Bump length from in-edit text when focused, otherwise from the store. */
 function bumpLength(deltaSeconds: number): void {
   if (!lengthEditable.value) return
   const base = isEditingLength.value
@@ -277,11 +229,7 @@ function onBpmKeydown(e: KeyboardEvent): void {
   }
 }
 
-/**
- * Increment or decrement BPM by `delta` (whole BPM units — `setBpm` will
- * clamp to the [20, 300] range and round to one decimal). Used by the
- * spinner buttons next to the BPM field and by ArrowUp/Down on the input.
- */
+/** Bump BPM; `setBpm` clamps and rounds. */
 function bumpBpm(delta: number): void {
   const base = isEditingBpm.value ? Number(bpmInput.value) : transport.bpm
   const start = Number.isFinite(base) ? base : transport.bpm
@@ -290,7 +238,6 @@ function bumpBpm(delta: number): void {
 }
 
 // ─── Transport navigation ────────────────────────────────────────────────
-// Play / pause + skip-back / skip-forward (honours the skip-target pref).
 const { onSkipBack, onPlay, onSkipForward } = useTransportSkip()
 
 function onToggleFollow(): void {
@@ -299,15 +246,7 @@ function onToggleFollow(): void {
 }
 
 function onMasterVolumeInput(event: Event): void {
-  // Range input fires on every pixel of movement during drag. We
-  // dispatch each one straight through to the backend (mirrors the
-  // `TRACK_GAIN` drag stream). The backend's `beginNewTransaction`
-  // coalescing window (500 ms, keyed off `PROJECT_SET_MASTER_VOLUME:_`)
-  // bundles a continuous drag into a single undo step.
-  //
-  // The slider position uses the same dB-tapered mapping as the per-
-  // track fader (see `lib/audio/db`) — 0 dB sits at the very top of
-  // travel since the master doesn't allow boost.
+  // Send every drag tick; backend coalesces the stream into one undo step.
   const target = event.target as HTMLInputElement
   const pos = Number(target.value)
   if (!Number.isFinite(pos)) return
@@ -320,10 +259,7 @@ function onMasterVolumeInput(event: Event): void {
   <header
     class="flex h-16 w-full select-none items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 text-zinc-300"
   >
-    <!-- Left: audio output device quick-switch + master volume slider.
-         The wrapper takes flex-1 so the centre transport stays
-         centred relative to the right timing-box; the chip and
-         slider each take their natural width inside it. -->
+    <!-- Left: audio output quick-switch + master volume. -->
     <div class="flex flex-1 items-center gap-3">
       <div
         ref="audioMenuRoot"
@@ -424,13 +360,7 @@ function onMasterVolumeInput(event: Event): void {
         </div>
       </div>
 
-      <!-- Master volume: dB-tapered slider (GarageBand-style, no
-           numeric readout — the master peak meter shows level
-           instead). Drives both live playback (via the
-           AudioEngine's MeteringSource — 10 ms smoothed ramp,
-           click-free) and the mixdown export so the rendered file
-           matches what the user hears. Persisted at the project
-           level; new projects default to -2.5 dB (≈75%). -->
+      <!-- Master volume drives live playback and mixdown export. -->
       <div
         class="flex items-center gap-1.5"
         :title="`Master volume: ${formatLinearAsDb(project.masterVolume, { unit: true })}`"
@@ -536,8 +466,6 @@ function onMasterVolumeInput(event: Event): void {
         :title="ui.followPlayback ? 'Follow playback (on) — timeline scrolls with the playhead' : 'Follow playback (off) — timeline stays put during playback'"
         @click="onToggleFollow"
       >
-        <!-- Right-arrow chevron inside a circle: when on, the chevron is
-             active; when off, the icon is dimmed. -->
         <svg
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
@@ -558,7 +486,7 @@ function onMasterVolumeInput(event: Event): void {
       </button>
     </div>
 
-    <!-- Right: Timing box (position / bar / length / BPM). -->
+    <!-- Right: timing box. -->
     <div class="flex flex-1 justify-end">
       <div
         class="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950/40 py-1 pl-3 pr-2"

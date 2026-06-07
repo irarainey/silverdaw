@@ -1,9 +1,5 @@
-// Canvas pointer + wheel/scrollbar interaction and playhead/selection nudging
-// for the Clip Editor, extracted from ClipEditorDialog.vue. These handlers are
-// invoked from template events (and the keyboard composable) and operate in the
-// canvas's CSS-pixel space. Transient `mousemove`/`mouseup` listeners are
-// registered for the duration of a drag and torn down on mouseup — the exact
-// behaviour the dialog had inline.
+// Clip Editor canvas pointer, wheel, scrollbar, and keyboard-nudge handlers.
+// Pointer math uses CSS pixels; waveform drawing uses device pixels.
 import type { Ref } from 'vue'
 import {
   hitTestHandle,
@@ -74,15 +70,12 @@ export function useClipEditorCanvasInteraction(
     const rect = canvas.getBoundingClientRect()
     const vIn = deps.visibleInMs()
     const vDur = deps.visibleDurationMs()
-    // Drag/click still clamps to the full clip bounds, not the visible window —
-    // a user can drag past the canvas edge to keep extending the selection.
+    // Clamp to full clip bounds so edge-drag can extend past the visible window.
     const fullIn = deps.viewInMs()
     const fullEnd = deps.viewEndMs()
     if (vDur <= 0) return
 
-    // Volume edit mode hijacks the canvas pointer to edit the gain envelope
-    // instead of the selection. Handled first so none of the selection logic
-    // below runs while shaping volume.
+    // Volume edit mode owns the canvas pointer before selection logic.
     if (deps.volumeEditActive()) {
       onCanvasEnvelopePointerDown(e, rect, vIn, vDur)
       return
@@ -96,10 +89,7 @@ export function useClipEditorCanvasInteraction(
     const startX = e.clientX
     const HANDLE_PX = 12
 
-    // Handle grabs only count when there's actually a visible sub-selection.
-    // The hit zone is intentionally wider than the 1-px edge line so the
-    // triangle grab markers drawn at the top/bottom of each edge fall
-    // inside the grabbable area.
+    // Wider hit zone covers the edge line and triangle grab markers.
     const hasSubSel = selectionInMs.value > fullIn + 0.5 || deps.selectionEndMs() < fullEnd - 0.5
     let mode: 'start' | 'end' | 'select' | 'click' = 'click'
     if (hasSubSel && Math.abs(localX - startSx) <= HANDLE_PX) mode = 'start'
@@ -110,7 +100,7 @@ export function useClipEditorCanvasInteraction(
     const onMove = (ev: MouseEvent): void => {
       const ms = xToMs(ev.clientX)
       if (mode === 'click') {
-        // Promote to a drag-select only once the user actually moves the mouse.
+        // Promote click to drag-select only after real movement.
         if (Math.abs(ev.clientX - startX) > 3) mode = 'select'
         else return
       }
@@ -134,9 +124,7 @@ export function useClipEditorCanvasInteraction(
       window.removeEventListener('mouseup', onUp)
       if (mode === 'click') {
         const ms = xToMs(ev.clientX)
-        // Click outside the current narrowing selection clears it AND
-        // moves the playhead. Click inside the selection just moves the
-        // playhead (so the user can scrub within their selection).
+        // Outside clicks clear a narrowed selection; inside clicks just scrub.
         if (
           deps.hasPlaybackSelection() &&
           (ms < selectionInMs.value || ms > deps.selectionEndMs())
@@ -145,20 +133,12 @@ export function useClipEditorCanvasInteraction(
         }
         seekPlayheadToSourceMs(ms)
       }
-      // Selection changes don't reload the preview — preview window is the
-      // whole clip view, so the playhead stays valid as the selection moves.
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }
 
-  // Envelope editing on the waveform canvas. Mirrors the SVG editor's gestures
-  // (drag a handle to move it, click the curve to add a breakpoint then drag,
-  // Alt-click / right-click a handle to remove it) but in the canvas's own
-  // pixel space. All coordinates here are CSS pixels (getBoundingClientRect),
-  // whereas `drawWaveform` works in device pixels — both map gain/time the
-  // same way via the shared `volumeOverlay` helpers, just with a different
-  // height/ruler scale.
+  // Canvas volume editing mirrors SVG gestures, but in CSS-pixel space.
   function onCanvasEnvelopePointerDown(
     e: MouseEvent,
     rect: DOMRect,
@@ -180,13 +160,7 @@ export function useClipEditorCanvasInteraction(
       const sourceMs = vIn + ((clientX - rect.left) / rect.width) * vDur
       return Math.max(0, Math.min(durMs, sourceMsToVolumeTime(sourceMs, clipStartSourceMs, ratio)))
     }
-    // In stereo view the one shared envelope is mirrored into two channel
-    // lanes. Interaction is lane-local: the lane under the pointer is chosen
-    // first, then both hit-testing and the gain mapping happen only within
-    // that lane. This keeps exactly one handle per breakpoint in play (so a
-    // click can never grab the duplicated handle from the other lane) and
-    // pins the whole drag to one lane's gain scale. In summary view there is
-    // a single full-height lane, so this is identical to the original mapping.
+    // In stereo view, hit-test and drag within the pointer's lane only.
     const lanes = volumeOverlayLanes(waveTopCss, waveHCss, waveformStereoLanes.value)
     const lx = e.clientX - rect.left
     const ly = e.clientY - rect.top
@@ -195,21 +169,18 @@ export function useClipEditorCanvasInteraction(
       overlayYToGain(clientY - rect.top, activeLane.top, activeLane.height)
 
     const points = volumeShapeDraft.draftPoints.value
-    // Hit-test handles only in the active lane; the index maps straight to the
-    // breakpoint (each point is drawn once per lane).
+    // Active-lane handle index maps directly to the breakpoint.
     const positions = points.map((p) => ({
       x: timeToXCss(p.timeMs),
       y: overlayGainToY(p.gain, activeLane.top, activeLane.height)
     }))
     const hit = hitTestHandle(positions, lx, ly, 12)
 
-    // Alt-click or right-click on a handle removes it (endpoints are pinned
-    // and protected inside `removePoint`).
+    // Alt/right-click removes non-endpoint handles.
     if (hit !== null && (e.altKey || e.button === 2)) {
       volumeShapeDraft.removePoint(hit)
       return
     }
-    // Right-click on empty space does nothing (the context menu is suppressed).
     if (e.button === 2) return
 
     let dragIndex = hit
@@ -230,8 +201,7 @@ export function useClipEditorCanvasInteraction(
     window.addEventListener('mouseup', onUp)
   }
 
-  // Suppress the browser context menu over the canvas while shaping volume so
-  // right-click can delete a breakpoint instead.
+  // Let right-click delete breakpoints while shaping volume.
   function onCanvasContextMenu(e: MouseEvent): void {
     if (deps.volumeEditActive()) e.preventDefault()
   }
@@ -244,10 +214,7 @@ export function useClipEditorCanvasInteraction(
     preview.seek(rel)
   }
 
-  // Step forward or backward from a given source-ms position. When
-  // `snapToBeats` is true, jumps to the next/prev beat on the extrapolated
-  // grid (BPM + anchor). Otherwise nudges by 1 ms. Result is clamped to
-  // the clip view bounds.
+  // Step by one ms or to the adjacent BPM+anchor beat, clamped to the view.
   function stepMsFrom(fromMs: number, direction: -1 | 1, snapToBeats: boolean): number {
     const fullIn = deps.viewInMs()
     const fullEnd = deps.viewEndMs()
@@ -278,10 +245,7 @@ export function useClipEditorCanvasInteraction(
     seekPlayheadToSourceMs(stepMsFrom(deps.playheadAbsMs(), direction, snapToBeats))
   }
 
-  // Shift+Arrow extends the selection from the playhead position. With
-  // Alt held, extension is in 1-ms increments; otherwise it snaps to
-  // beats. Works for both audio-file (start a new selection) and
-  // saved-clip (narrow the existing window).
+  // Shift+Arrow extends selection from the playhead; Alt uses 1 ms steps.
   function extendSelection(direction: -1 | 1, snapToBeats: boolean): void {
     const fullDur = deps.viewDurationMs()
     if (fullDur <= 0) return
@@ -289,7 +253,6 @@ export function useClipEditorCanvasInteraction(
     const hasSel = deps.hasPlaybackSelection()
     let newEdge: number
     if (!hasSel) {
-      // Anchor the new selection at the playhead.
       if (direction > 0) {
         const end = stepMsFrom(ph, 1, snapToBeats)
         selectionInMs.value = ph
@@ -310,7 +273,6 @@ export function useClipEditorCanvasInteraction(
       selectionInMs.value = newEdge
       selectionDurationMs.value = Math.max(SMALLEST_NUDGE_MS, selectionDurationMs.value - delta)
     }
-    // Move the playhead to the new edge so the user sees the change.
     seekPlayheadToSourceMs(newEdge)
   }
 
@@ -321,7 +283,7 @@ export function useClipEditorCanvasInteraction(
     const vIn = deps.visibleInMs()
     const vDur = deps.visibleDurationMs()
     if (vDur <= 0) return
-    // Shift+wheel or any horizontal wheel delta → pan; otherwise → zoom anchored at cursor.
+    // Shift or horizontal wheel pans; vertical wheel zooms at cursor.
     const pan = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)
     e.preventDefault()
     if (pan) {
@@ -343,7 +305,7 @@ export function useClipEditorCanvasInteraction(
     if (vDur <= 0) return
     const visDur = deps.visibleDurationMs()
     const thumbWidth = (visDur / vDur) * rect.width
-    // If user clicks on the thumb start it as a drag, else jump-to-here then drag.
+    // Track clicks jump the thumb, then continue as a drag.
     const initialThumbLeft = (scrollMs.value / vDur) * rect.width
     const clickInThumb =
       e.clientX - rect.left >= initialThumbLeft &&
@@ -365,8 +327,7 @@ export function useClipEditorCanvasInteraction(
     window.addEventListener('mouseup', onUp)
   }
 
-  // Clear the user-narrowing selection so playback (and Save-as-new /
-  // Apply-trim gating) revert to whole-view semantics.
+  // Restore whole-view selection semantics.
   function clearSelection(): void {
     selectionInMs.value = deps.viewInMs()
     selectionDurationMs.value = deps.viewDurationMs()

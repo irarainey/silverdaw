@@ -1,20 +1,5 @@
 <script setup lang="ts">
-// Timeline canvas. Renders track rows with their clips' waveforms.
-//
-// Implementation is split across composables under `@/lib/timeline/`:
-//   - usePixiApp         — PixiJS Application lifecycle + scene-graph layers
-//   - useGridGeometry    — zoom (pxPerSecond), header width, BPM-derived units
-//   - useTimelineScroll  — scrollX/Y, scrollbar thumb geometry, clampScroll
-//   - useTimelineDrawing — every Pixi draw routine (ruler, grid, tracks,
-//                          clips, playhead, drop-preview ghost)
-//   - useScrollbarDrag   — pointer-driven horizontal + vertical scrollbar drag
-//   - useDragHandlers    — pointer-down → clip drag or playhead seek-drag
-//   - useDropZone        — library-item drag/drop landing zone + preview ghost
-//
-// The component itself owns wheel-zoom, the track-header-column resize
-// handle, the watches that trigger repaints, and the host element +
-// template wiring. Drawing logic lives in `useTimelineDrawing`; scrollbar
-// pointer handling lives in `useScrollbarDrag`.
+// Timeline canvas shell; Pixi drawing, drag/drop, scroll, and dialogs live in composables.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -49,11 +34,7 @@ const transport = useTransportStore()
 const ui = useUiStore()
 const host = ref<HTMLDivElement | null>(null)
 
-// `redraw` / `updatePlayhead` are populated once `useTimelineDrawing` has
-// been instantiated below. Declared as `let`-bindings up front so the
-// callbacks we pass to `usePixiApp`, `useDragHandlers` and `useDropZone`
-// (which fire long after wiring, on resize / pointer / drop events) can
-// dispatch to the real functions without a chicken-and-egg.
+// Late-bound so lifecycle callbacks can call drawing after composables wire up.
 let redraw: () => void = () => { }
 let updatePlayhead: () => void = () => { }
 
@@ -70,10 +51,7 @@ const {
   vThumbHeightPx, vThumbTopPx, clampScroll
 } = scroll
 
-// Viewport-space rectangles for every drawn clip; populated by
-// `useTimelineDrawing` on each redraw and consumed by `useDragHandlers`
-// for hit-testing. Shared as a stable array reference; the drag handlers
-// read the live contents via a getter so we never copy.
+// Stable hit-region array: drawing mutates it, drag handlers read it without copying.
 const clipHitRegions: ClipHitRegion[] = []
 
 const pixi = usePixiApp({
@@ -129,10 +107,7 @@ const hasPendingWarpClip = computed(() =>
   })
 )
 
-// Template refs for the two scrollbar lanes. Declared here (rather than
-// inside `useScrollbarDrag`) so the `ref="scrollbarTrack"` /
-// `ref="vScrollbarTrack"` template bindings are visible to the TS
-// language server in the component's own scope.
+// Template refs stay in component scope for Vue/TS tooling.
 const scrollbarTrack = ref<HTMLDivElement | null>(null)
 const vScrollbarTrack = ref<HTMLDivElement | null>(null)
 
@@ -142,15 +117,11 @@ const {
 } = useScrollbarDrag({
   scrollX, maxScrollX, trackAreaWidth, thumbWidthPx, showScrollbar, scrollbarTrack,
   scrollY, maxScrollY, vLaneHeight, vThumbHeightPx, vScrollbarTrack,
-  // Scrollbar drag is now O(1): just translate the world layers.
-  // `applyScroll` internally calls `updatePlayhead` so the head re-pins
-  // to the right viewport x.
+  // O(1) scroll: translate layers and re-pin the playhead.
   onScroll: () => { applyScroll() }
 })
 
-// Mouse-wheel zoom is attached directly to the host so we can
-// `preventDefault` (passive: false is only available via addEventListener).
-// The PixiJS init and all other pointer/drag handlers live in composables.
+// Wheel listener needs passive:false so zoom/pan can prevent page scrolling.
 onMounted(() => {
   host.value?.addEventListener('wheel', onWheel, { passive: false })
   host.value?.addEventListener('contextmenu', onContextMenu)
@@ -167,18 +138,7 @@ onBeforeUnmount(() => {
 })
 
 // ─── Clip context menu + dialogs ──────────────────────────────────────────
-// State + handlers live in two composables under `@/lib/timeline/`:
-//   - useClipDialogs        — open state + resolved LibraryItem for the
-//                             Clip Editor, Library Info, and Warp/Pitch
-//                             dialogs.
-//   - useTimelineContextMenu — right-click hit-test, dynamic item list,
-//                             and command dispatcher (delete, duplicate,
-//                             split, save-to-library, save-as-sample,
-//                             unlink, warp, pitch, openEditor, info,
-//                             relink, color). Calls into the dialog
-//                             composable for open/close. Hit-testing
-//                             uses the same world-space `clipHitRegions`
-//                             array `useDragHandlers` reads.
+// Dialog state and context-menu hit-testing live in timeline composables.
 const dialogs = useClipDialogs()
 const {
   editorClipId,
@@ -207,10 +167,7 @@ const {
 } = contextMenu
 
 // ─── Inline clip-name rename ──────────────────────────────────────────────
-// Double-click a clip's title strip to float an HTML <input> over it. The
-// feature (state, overlay geometry, commit/cancel, document key/pointer
-// handlers) lives in `useClipRename`; the SFC keeps the watch below that
-// toggles the capture-phase document listeners.
+// The SFC only toggles capture-phase document listeners.
 const {
   renamingClipId,
   renameValue,
@@ -237,8 +194,6 @@ watch(renamingClipId, (id) => {
 })
 
 // ─── Ruler / clip double-click interaction ────────────────────────────────
-// Marker hit-test, ruler snap, and the double-click router (rename / open
-// editor / add-or-remove marker) live in `useTimelineRulerInteraction`.
 const { onDoubleClick } = useTimelineRulerInteraction({
   getHostRect: () => host.value?.getBoundingClientRect() ?? null,
   getScreenWidth: () => pixi.app.value?.renderer.screen.width ?? null,
@@ -253,9 +208,6 @@ const { onDoubleClick } = useTimelineRulerInteraction({
 })
 
 // ─── Zoom control (wheel + zoom requests) ─────────────────────────────────
-// `applyZoomRequest` (keyboard / View-menu) and `onWheel` (pointer wheel zoom
-// + horizontal pan) share their re-pin math inside `useTimelineZoom`. The
-// `ui.timelineZoomRequest` forwarding watch stays in the SFC below.
 const { applyZoomRequest, onWheel } = useTimelineZoom({
   getScreenWidth: () => pixi.app.value?.renderer.screen.width ?? null,
   getHostRect: () => host.value?.getBoundingClientRect() ?? null,
@@ -281,21 +233,7 @@ watch(
 )
 
 // ─── Playhead paint loop (RAF) ────────────────────────────────────────────
-// We paint the playhead from `requestAnimationFrame` rather than from a
-// `watch(transport.positionMs)`:
-//   - It batches per-frame work to the display's vsync, avoiding wasted
-//     paints when several backend updates land in the same frame.
-//   - The cached playhead Graphics + O(1) `applyScroll` make the per-
-//     frame cost trivial, so running it every RAF tick is cheap.
-//
-// We do NOT extrapolate the position locally between backend updates.
-// Earlier attempts to do so introduced "playhead lies about where audio
-// is" bugs (jumping forward by the pause duration on Play after a seek,
-// or snapping backward when the first backend update arrived). The
-// playhead now strictly mirrors `transport.positionMs`, which itself
-// reflects the audio engine's authoritative position. A 60 Hz backend
-// cadence is well above the visual smoothness threshold for a DAW
-// timeline, so the trade-off is favourable.
+// Paint on RAF for vsync batching, but never extrapolate beyond backend position.
 let rafId: number | null = null
 let lastWarpSpinnerRedrawMs = 0
 
@@ -321,8 +259,6 @@ function stopPlayheadRaf(): void {
 }
 
 // ─── Watches that trigger repaints ────────────────────────────────────────
-
-// Track / clip count changed → full repaint (new row stack or waveform).
 watch(
   () => [project.tracks.length, Object.keys(project.clips).length] as const,
   () => {
@@ -372,11 +308,7 @@ watch(
   }
 )
 
-// Per-track height changes (drag-resize handle in TrackHeaderPanel)
-// shift every row below the resized track and grow / shrink the
-// tracksContentHeight used by the vertical scrollbar. Both the canvas
-// and the scrollbar geometry need to repaint; tracksContentHeightPx is
-// already reactive so a `redraw` here is enough.
+// Track-height changes affect row positions and vertical scrollbar geometry.
 watch(
   () => project.tracks.map((t) => t.heightPx ?? 0).join(','),
   () => {
@@ -386,25 +318,18 @@ watch(
   }
 )
 
-// Waveform peaks arrived asynchronously for one or more clips (e.g.
-// post-reload `WAVEFORM_REQUEST` round-trip). Counter ticks on every
-// `setClipPeaks`; cheaper than a deep watch on `project.clips`.
+// Peaks revision avoids a deep watch on clip waveform data.
 watch(
   () => project.peaksRevision,
   () => redraw()
 )
 
-// Switching the waveform display mode (summary ↔ stereo) changes how
-// every clip's waveform is drawn, so force a full repaint.
 watch(
   () => ui.waveformDisplayMode,
   () => redraw()
 )
 
-// Per-track pan changes how stereo waveform lanes are drawn (each
-// channel's height + opacity reflects its equal-power pan gain), so
-// repaint when any track's pan changes. Cheap string signature avoids a
-// deep watch on the track array.
+// Track pan affects stereo waveform lane height/opacity.
 watch(
   () => project.tracks.map((t) => t.pan ?? 0).join(','),
   () => redraw()
@@ -415,9 +340,7 @@ watch(
   () => redraw()
 )
 
-// Transition (crossfade) create / delete / reconcile changes the overlay
-// set without necessarily moving a clip, so watch a cheap signature of
-// every track's transitions to repaint when they change (§12.1).
+// Transition overlays can change without clip movement.
 watch(
   () =>
     project.tracks
@@ -430,8 +353,7 @@ watch(
   () => redraw()
 )
 
-// Project length changed → re-clamp scroll. Translation only; no redraw
-// needed because clip content didn't change.
+// Project length changes only need scroll re-clamping.
 watch([maxScrollX, maxScrollY], () => {
   if (pendingSavedScrollX !== null) {
     applySavedScrollX(pendingSavedScrollX)
@@ -440,35 +362,20 @@ watch([maxScrollX, maxScrollY], () => {
   if (clampScroll()) applyScroll()
 })
 
-// BPM is editable from the transport bar; the ruler ticks, grid lines and
-// snap unit all derive from it, so any change requires a full repaint.
+// BPM drives ruler ticks, grid lines, and snap units.
 watch(() => transport.bpm, () => {
   redraw()
   updatePlayhead()
 })
 
-// The track-header column is user-resizable via the divider drag handle.
-// Every cached pixel position (ruler ticks, header backgrounds, clip
-// x-coordinates) is computed off `headerWidth()`, so we just repaint on
-// each width change.
+// Header width participates in cached x positions.
 watch(headerWidthRef, () => {
   redraw()
   updatePlayhead()
 })
 
 // ─── Zoom + scroll persistence ─────────────────────────────────────────────
-// `project.viewPxPerSecond` and `project.viewScrollX` are the backend-
-// authoritative view state. We watch both directions:
-//
-//   1. backend → renderer:  on PROJECT_STATE the projectStore updates
-//      `viewPxPerSecond` / `viewScrollX`. Apply them locally so a
-//      freshly-loaded project opens at the zoom AND scroll position
-//      that were saved with it. Guards prevent the change bouncing
-//      back to the backend.
-//   2. renderer → backend:  any wheel zoom OR scroll change that
-//      survives a short debounce gets pushed via `PROJECT_SET_VIEW`.
-//      The backend stores both fields on the project root without
-//      flipping the dirty flag — view state isn't a meaningful edit.
+// Persist view state both directions without marking the project dirty.
 let suppressZoomEmit = false
 let suppressScrollEmit = false
 let zoomEmitTimer: ReturnType<typeof setTimeout> | null = null
@@ -539,9 +446,7 @@ watch(
 watch(
   pxPerSecond,
   (next) => {
-    // Mirror to the uiStore so the StatusBar (and any other consumer)
-    // can show the current zoom without reaching into the timeline
-    // composable.
+    // Mirror zoom for StatusBar and other consumers.
     ui.setZoomPxPerSecond(next)
     if (suppressZoomEmit) return
     if (zoomEmitTimer) clearTimeout(zoomEmitTimer)
@@ -551,9 +456,7 @@ watch(
       sendBridge('PROJECT_SET_VIEW', { pxPerSecond: next })
     }, 200)
   },
-  // `immediate` so the StatusBar gets the initial value at mount; the
-  // debounced send still waits 200 ms, and the guard below catches the
-  // "no change vs. backend" case so we don't spuriously emit.
+  // Seed StatusBar immediately; debounce still guards backend writes.
   { immediate: true }
 )
 
@@ -571,18 +474,13 @@ watch(
   { flush: 'sync' }
 )
 
-// Project length changes also affect grid extent — make sure the grid
-// covers the new duration. (Track / clip count changes already trigger
-// a redraw via the watcher below; this catches the "user edited Length
-// in the transport bar" case where neither count changes.)
+// Project length changes affect grid extent even when clip counts stay unchanged.
 watch(
   () => project.durationMs,
   () => redraw()
 )
 
 // ─── Track-header column resize ────────────────────────────────────────────
-// The user can drag the vertical divider on the right edge of the track
-// header column to grow / shrink it. Width is persisted via `uiStore`.
 
 let headerResizePointerId: number | null = null
 let headerResizeStartX = 0

@@ -1,15 +1,5 @@
 <script setup lang="ts">
-// Project properties dialog. Consolidated edit surface for the three
-// top-level project fields (name, tempo, duration) that are otherwise
-// scattered across the title bar (rename) and the transport bar (BPM +
-// length).
-//
-// Transactional: changes are held in local draft refs until Save. Cancel
-// (and Esc / backdrop click) discard pending edits. Save dispatches only
-// the bridge envelopes for the fields that actually changed; clamping
-// rules mirror the source-of-truth setters (`transport.setBpm` clamps
-// to 20..300, project length cannot drop below the longest clip's
-// effective end).
+// Transactional project settings dialog; local drafts commit only changed fields.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -40,17 +30,12 @@ const nameInputRef = ref<HTMLInputElement | null>(null)
 const BPM_MIN = 20
 const BPM_MAX = 300
 
-// Draft state — reseeded from the store every time the dialog opens.
-// Kept independent of the store so cancel really does cancel.
+// Drafts are reseeded on open so Cancel discards changes.
 const draftName = ref('')
 const draftBpm = ref(120)
 const draftDurationText = ref('')
 const draftSampleRate = ref<number>(44100)
-// Audio output draft. `null` for both fields = "no project override"
-// (the global preferences.json device applies on next load). When the
-// project's currently saved device is not in the live device list we
-// still surface it as a selectable entry so the user can keep / clear
-// the saved preference without losing it.
+// `null` pair means no project override; unavailable saved devices remain selectable.
 const draftAudioTypeName = ref<string | null>(null)
 const draftAudioDeviceName = ref<string | null>(null)
 
@@ -63,18 +48,11 @@ interface AudioListOption {
   /** Empty string represents "System default". */
   value: string
   label: string
-  /** True when the option is the project's saved value but the OS no
-   *  longer exposes it — kept selectable so the user can clear or
-   *  keep the saved preference. */
+  /** Saved value no longer exposed by the OS. */
   unavailable: boolean
 }
 
-// "Audio device" dropdown (the primary pick). Shows the same
-// deduplicated `uniqueDevices` list the Preferences > Audio panel
-// uses, so both surfaces agree on what devices exist (including
-// e.g. DirectSound's "Primary Sound Driver"). Top entry: System
-// default. Plus a tail "(not available)" entry when the project's
-// saved device isn't in the live list.
+// Device options mirror Preferences and include unavailable saved devices.
 const deviceOptions = computed<AudioListOption[]>(() => {
   const items: AudioListOption[] = [
     { value: '', label: 'System default', unavailable: false }
@@ -96,17 +74,12 @@ const deviceOptions = computed<AudioListOption[]>(() => {
   return items
 })
 
-// "Audio driver" (backend) dropdown — secondary pick that defaults
-// to the most-preferred backend for the chosen device. Only shows
-// backends that actually expose the picked device. Disabled when the
-// device is "System default". Includes a "(not available)" tail
-// entry when the project's saved driver is no longer on the
-// machine but the picked device matches the saved device.
+// Driver options are scoped to the selected device plus any unavailable saved driver.
 const driverOptions = computed<AudioListOption[]>(() => {
   const items: AudioListOption[] = []
   const deviceName = draftAudioDeviceName.value
   if (!deviceName) {
-    // Device = System default → only "System default" driver applies.
+    // System default device has no explicit driver.
     items.push({ value: '', label: 'System default', unavailable: false })
     return items
   }
@@ -135,10 +108,7 @@ const driverOptions = computed<AudioListOption[]>(() => {
   return items
 })
 
-// Convenience bindings for the two <select> v-models. Empty string =
-// System default. The device dropdown also auto-picks the preferred
-// backend when the user switches device, matching the Preferences
-// dialog's "click a device, get the right driver for free" UX.
+// Select bindings map empty string to System default and auto-pick a preferred driver.
 const draftAudioDeviceValue = computed<string>({
   get(): string {
     return draftAudioDeviceName.value ?? ''
@@ -151,17 +121,12 @@ const draftAudioDeviceValue = computed<string>({
       draftAudioTypeName.value = null
       return
     }
-    // Auto-pick the most-preferred backend that exposes the chosen
-    // device. Only override the existing driver pick when the
-    // current driver doesn't actually offer this device — that lets
-    // an advanced user keep their explicit backend choice across
-    // device switches when it still applies.
+    // Preserve explicit driver choice when it still exposes the chosen device.
     const dev = uniqueDevices.value.find(
       (d) => d.name.toLowerCase() === nextDevice.toLowerCase()
     )
     if (!dev) {
-      // "(not available)" tail entry — leave the driver untouched.
-      // Save will not try to open this pair.
+      // Unavailable tail entry: preserve driver; Save will not open it.
       return
     }
     const currentDriverStillValid =
@@ -181,9 +146,7 @@ const draftAudioTypeValue = computed<string>({
 })
 
 const audioPairInvalid = computed(() => {
-  // "System default" means both null. A pinned device requires a
-  // driver too; the dropdowns shouldn't produce a half-state but the
-  // guard lets Save refuse it.
+  // Refuse impossible half-states from the paired dropdowns.
   const t = draftAudioTypeName.value
   const d = draftAudioDeviceName.value
   if (t === null && d === null) return false
@@ -244,11 +207,7 @@ function initialiseDraft(): void {
   draftDurationText.value = formatTime(project.durationMs)
   draftAudioTypeName.value = project.audioOutputTypeName
   draftAudioDeviceName.value = project.audioOutputDeviceName
-  // Seed the sample-rate draft from the project's stored value or,
-  // when the project has none yet, fall back to the user-scope
-  // application default. The combined rule means a freshly-created
-  // project opens with the right initial pick without us having to
-  // immediately persist the default.
+  // Fall back to the user default without immediately persisting it.
   draftSampleRate.value = project.targetSampleRate ?? ui.defaultProjectSampleRate
 }
 
@@ -263,8 +222,7 @@ function onSave(): void {
   }
   if (hasBpmChange.value) {
     transport.setBpm(nextBpm)
-    // `transport.setBpm` clamps internally; resend the clamped value
-    // so the backend mirrors what the renderer settled on.
+    // Send the clamped renderer value.
     sendBridge('PROJECT_SET_BPM', { bpm: transport.bpm })
   }
   if (hasDurationChange.value && nextDurationMs !== null) {
@@ -274,17 +232,9 @@ function onSave(): void {
   if (hasAudioChange.value) {
     const nextType = draftAudioTypeName.value
     const nextDevice = draftAudioDeviceName.value
-    // Record the per-project preference (also joins the project undo
-    // stack via the backend's coalescing). Pass through nulls when
-    // clearing.
+    // Record the per-project preference, including nulls when clearing.
     project.setProjectAudioOutput(nextType, nextDevice)
-    // Apply the live device switch only when the chosen pair is
-    // actually available — i.e. either System default (both null)
-    // or a (type, device) where the device exists in `uniqueDevices`
-    // and the chosen driver is one of the backends that exposes it.
-    // A "(not available)" tail-entry pick records the project
-    // preference but does NOT try to open the missing device; the
-    // load-time reconcile will warn next time.
+    // Only open available pairs; unavailable picks are saved for load-time warning.
     let pairAvailable = false
     if (nextType === null && nextDevice === null) {
       pairAvailable = true
@@ -299,20 +249,12 @@ function onSave(): void {
       (audioDevices.currentTypeName !== nextType ||
         audioDevices.currentDeviceName !== nextDevice)
     if (shouldSwitchLive) {
-      // `persistUserPreference: false` keeps the user-scope
-      // `preferences.json` device untouched — only the project
-      // preference is the source of truth here.
+      // Project preference only; leave user-scope preferences untouched.
       audioDevices.selectDevice(nextType, nextDevice, { persistUserPreference: false })
     }
   }
   if (hasSampleRateChange.value) {
-    // Phase 1 of the per-project sample-rate feature only persists the
-    // chosen rate on the project; the on-disk playback-cache rebuild
-    // that actually downsamples existing clips lands in a follow-up.
-    // Audio still plays correctly because every per-track
-    // `AudioTransportSource` resamples to the device rate at the
-    // engine. The Info dialog and import prompts honour the new value
-    // immediately.
+    // Persist now; playback remains correct via per-track engine resampling.
     project.setTargetSampleRate(draftSampleRate.value)
   }
   notifications.pushInfo('Project properties saved.')
@@ -326,15 +268,11 @@ function onCancel(): void {
 watch(
   () => props.open,
   async (now) => {
-    // `clipEditorOpen` doubles as the suppression flag for the global
-    // Spacebar (play / pause) and the menu accelerators — repurposed
-    // for any modal dialog that hosts text input so typing 'p' / space
-    // doesn't trigger transport actions.
+    // Reuse modal text-input flag to suppress transport/menu shortcuts.
     ui.clipEditorOpen = now
     if (now) {
       initialiseDraft()
-      // Wait for the next tick so the input is in the DOM before we
-      // try to focus + select it.
+      // Wait for the input to mount before focusing.
       await Promise.resolve()
       nameInputRef.value?.focus()
       nameInputRef.value?.select()
@@ -386,7 +324,6 @@ function onKeydown(ev: KeyboardEvent): void {
         class="dialog-card w-[min(480px,92vw)]"
         @keydown="onKeydown"
       >
-        <!-- Header -->
         <div class="dialog-header">
           <h1
             id="project-properties-title"
@@ -396,9 +333,7 @@ function onKeydown(ev: KeyboardEvent): void {
           </h1>
         </div>
 
-        <!-- Body -->
         <div class="dialog-body flex flex-col gap-4">
-          <!-- Name -->
           <label class="flex flex-col gap-1.5">
             <span class="text-xs font-medium text-zinc-300">Project name</span>
             <input
@@ -416,7 +351,6 @@ function onKeydown(ev: KeyboardEvent): void {
             >{{ nameError }}</span>
           </label>
 
-          <!-- Tempo -->
           <label class="flex flex-col gap-1.5">
             <span class="text-xs font-medium text-zinc-300">Tempo (BPM)</span>
             <input
@@ -439,7 +373,6 @@ function onKeydown(ev: KeyboardEvent): void {
             >Range {{ BPM_MIN }} – {{ BPM_MAX }}. Affects warp + grid layout immediately.</span>
           </label>
 
-          <!-- Duration -->
           <label class="flex flex-col gap-1.5">
             <span class="text-xs font-medium text-zinc-300">Project duration</span>
             <input
@@ -461,11 +394,7 @@ function onKeydown(ev: KeyboardEvent): void {
             >Minimum {{ minDurationLabel }} (the end of the last clip).</span>
           </label>
 
-          <!-- Project sample rate. Drives the playback-cache rebuild
-               so every clip's audio is at this rate on disk (rebuild
-               itself lands in a follow-up; today the rate is recorded
-               and JUCE's per-track ResamplingAudioSource handles the
-               engine-side conversion). -->
+          <!-- Project sample rate; engine resampling covers playback today. -->
           <label class="flex flex-col gap-1.5">
             <span class="text-xs font-medium text-zinc-300">Sample rate</span>
             <select
@@ -480,13 +409,7 @@ function onKeydown(ev: KeyboardEvent): void {
             </span>
           </label>
 
-          <!-- Audio output: device + driver, in the same order as the
-               Preferences ▸ Audio panel. Device is the primary pick
-               and uses the shared deduplicated device list (so e.g.
-               DirectSound's "Primary Sound Driver" appears once here
-               too). Picking a device auto-selects the most-preferred
-               backend that exposes it; the driver dropdown lets
-               advanced users override that choice. -->
+          <!-- Audio output: device primary, driver override secondary. -->
           <label class="flex flex-col gap-1.5">
             <span class="text-xs font-medium text-zinc-300">Audio device</span>
             <select
@@ -524,7 +447,6 @@ function onKeydown(ev: KeyboardEvent): void {
           </label>
         </div>
 
-        <!-- Footer -->
         <div class="dialog-footer">
           <button
             type="button"
@@ -548,10 +470,7 @@ function onKeydown(ev: KeyboardEvent): void {
 </template>
 
 <style scoped>
-/* Hide the WebKit / Blink number-input spinners. Vue's `v-model.number`
- * still parses the typed value, but the up/down arrows clutter the
- * narrow BPM input and the user can already nudge the value from the
- * TransportBar's dedicated BPM control. */
+/* Hide native number spinners; TransportBar already provides nudges. */
 .no-spinner::-webkit-outer-spin-button,
 .no-spinner::-webkit-inner-spin-button {
   -webkit-appearance: none;

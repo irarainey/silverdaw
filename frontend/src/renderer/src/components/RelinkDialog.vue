@@ -1,20 +1,5 @@
 <script setup lang="ts">
-// Dialog shown when a project loads with one or more missing source
-// files. The list is derived from the **library** (items where
-// `unresolved === true`) — the durable record of every source path the
-// project file persists — then **deduplicated by file path**. Locating
-// the replacement file fans the relink out to every library item that
-// referenced the missing path (e.g. an audio-file source and any saved
-// clips derived from it), so a single dialog interaction fixes every
-// item — and every clip — that pointed at it.
-//
-// As clips are successfully relinked the backend re-broadcasts
-// PROJECT_STATE; the corresponding row disappears from the dialog.
-// When the list becomes empty the dialog auto-closes.
-//
-// The dialog is also reachable later (after closing without
-// relinking everything) via the "Relink" item on the right-click
-// clip context menu — so dismissing this dialog isn't a one-shot.
+// Missing-file relink dialog; rows are deduped by persisted library file path.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -28,30 +13,19 @@ const library = useLibraryStore()
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 
-/** One row per unique missing file path. `libraryItemIds` carries
- *  every library item id that points at that path — Locate fans the
- *  relink out to all of them in one user action. `fileName` is the
- *  display name (basename) from the first clip we saw with that path. */
+/** One row per missing path; Locate relinks every library item using it. */
 interface MissingFileRow {
   filePath: string
   fileName: string
   libraryItemIds: string[]
-  /** Number of timeline clips that reference this missing file.
-   *  Surfaced in the row so the user understands the impact of the
-   *  relink ("3 clips on the timeline use this file"). */
+  /** Number of timeline clips affected by this missing file. */
   clipCount: number
 }
 
 const missingFiles = computed<MissingFileRow[]>(() => {
   const byPath = new Map<string, MissingFileRow>()
   const rowByItemId = new Map<string, MissingFileRow>()
-  // Seed from unresolved LIBRARY ITEMS — the durable source of truth for
-  // the paths persisted in the project file. Grouping by exact filePath
-  // means every item that shares a missing source (e.g. an audio-file
-  // source AND any saved clips derived from it) is collected into one row
-  // and relinked together. Deriving the list from clips alone (as a prior
-  // version did) missed sibling library items that no timeline clip
-  // referenced, leaving their stale path in the saved project.
+  // Library items are the durable source of every persisted source path.
   for (const item of library.items) {
     if (!item.unresolved) continue
     const key = item.filePath
@@ -68,8 +42,7 @@ const missingFiles = computed<MissingFileRow[]>(() => {
     if (!row.libraryItemIds.includes(item.id)) row.libraryItemIds.push(item.id)
     rowByItemId.set(item.id, row)
   }
-  // Tally how many timeline clips each missing source affects, so the row
-  // can surface the impact ("Used by N clips").
+  // Tally timeline impact per missing source.
   for (const clip of Object.values(project.clips)) {
     if (!clip.unresolved) continue
     const row = rowByItemId.get(clip.libraryItemId)
@@ -78,7 +51,6 @@ const missingFiles = computed<MissingFileRow[]>(() => {
   return Array.from(byPath.values())
 })
 
-// Auto-close when the last unresolved file has been relinked.
 watch(missingFiles, (list) => {
   if (props.open && list.length === 0) emit('close')
 })
@@ -107,11 +79,7 @@ watch(
 )
 
 async function relinkOne(row: MissingFileRow): Promise<void> {
-  // Default the picker to the directory the missing file claimed to
-  // live in — the user has often just moved the project folder, so
-  // the OS dialog opens close to the correct location anyway. If that
-  // directory no longer exists the OS dialog quietly falls back to
-  // the user's last-used folder.
+  // Start near the missing path; OS falls back if that folder no longer exists.
   const slash = Math.max(row.filePath.lastIndexOf('\\'), row.filePath.lastIndexOf('/'))
   const defaultPath = slash > 0 ? row.filePath.slice(0, slash) : undefined
   const picked = await window.silverdaw.chooseAudioFile({
@@ -119,10 +87,7 @@ async function relinkOne(row: MissingFileRow): Promise<void> {
     defaultPath
   })
   if (!picked) return
-  // Fan the relink out to every library item that referenced the
-  // missing path. The backend processes each LIBRARY_ITEM_RELINK
-  // independently; the renderer's PROJECT_STATE update will clear
-  // the `unresolved` flag on every affected clip in one snapshot.
+  // Relink every library item that referenced this missing path.
   for (const itemId of row.libraryItemIds) {
     project.relinkLibraryItem(itemId, picked)
   }
@@ -150,7 +115,6 @@ async function relinkOne(row: MissingFileRow): Promise<void> {
         tabindex="-1"
         class="dialog-card w-[min(640px,92vw)]"
       >
-        <!-- Header -->
         <div class="dialog-header">
           <h1
             id="relink-title"
@@ -167,7 +131,6 @@ async function relinkOne(row: MissingFileRow): Promise<void> {
           </p>
         </div>
 
-        <!-- Body -->
         <div class="silverdaw-scroll max-h-[60vh] overflow-y-auto px-6 py-4">
           <ul
             v-if="missingFiles.length > 0"
@@ -205,7 +168,6 @@ async function relinkOne(row: MissingFileRow): Promise<void> {
           </p>
         </div>
 
-        <!-- Footer -->
         <div class="dialog-footer">
           <button
             type="button"

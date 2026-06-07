@@ -1,26 +1,6 @@
-// Renderer-side logger.
-//
-// Buffers structured log entries and flushes them over IPC to the main
-// process, which persists them to `debug/<session>/renderer.log` in the
-// same per-session directory as `main.log` and `backend.log`. All three
-// files share a single line format:
-//
-//   <ISO timestamp ms>Z LEVEL [tag] message
-//
-// so post-mortem analysis is a simple `cat *.log | sort` away.
-//
-// Batching policy:
-//   - Each `log.*(tag, message)` call enqueues an entry with the
-//     current wall-clock timestamp (Date.now()).
-//   - The first enqueue arms a 50 ms timer; subsequent calls just push.
-//   - On timer fire we ship the whole queue via `silverdaw.logBatch`.
-//
-// Why batch: high-frequency events (drag frames, mouse moves) would
-// otherwise saturate IPC. A 50 ms window collapses a drag into one or
-// two IPC round trips without losing temporal granularity in the log.
-//
-// On window unload we attempt a synchronous flush so the final actions
-// before close still make it to disk.
+// Renderer-side logger. Batches entries over IPC into per-session debug logs.
+// Format: <ISO timestamp ms>Z LEVEL [tag] message.
+// A 50 ms window keeps high-frequency UI events from saturating IPC.
 
 export type LogLevel = 'DEBUG' | 'INFO ' | 'WARN ' | 'ERROR'
 
@@ -31,23 +11,15 @@ interface LogEntry {
   timestamp: number
 }
 
-/**
- * Master gate for the renderer-side logger. False until `setLogEnabled`
- * is called with `true` — which `main.ts` does once before mount, only when
- * the startup-snapshot logging preference is on. While disabled, `enqueue` is a
- * fast no-op so production sessions don't pay the IPC / serialisation
- * cost for log lines that would never be written to disk anyway.
- */
+// Fast off-switch until startup enables renderer logging.
 let enabled = false
 
 const queue: LogEntry[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 
-/** Toggle the renderer logger on/off. Called once at app mount. */
 export function setLogEnabled(value: boolean): void {
   enabled = value
   if (!enabled) {
-    // Drop anything already queued — they'd never flush meaningfully.
     queue.length = 0
     if (flushTimer) {
       clearTimeout(flushTimer)
@@ -60,16 +32,11 @@ function flush(): void {
   flushTimer = null
   if (queue.length === 0) return
   const batch = queue.splice(0, queue.length)
-  // window.silverdaw is set up by preload before the renderer module
-  // graph evaluates, but log calls fire from constructors / setup blocks
-  // before that's guaranteed in every path. Guard so a too-early call
-  // is silently dropped rather than crashing the app.
+  // Drop too-early log calls before preload exposes the IPC API.
   const api = (globalThis as { silverdaw?: { logBatch?: (entries: LogEntry[]) => Promise<void> } }).silverdaw
   if (!api?.logBatch) return
   void api.logBatch(batch).catch((err) => {
-    // Suppressed: if IPC is unavailable (e.g. during teardown) there's
-    // nothing useful to do with the failure beyond keeping the renderer
-    // alive. The original messages are already gone.
+    // Keep teardown-time IPC failures from crashing the renderer.
     console.warn('[log] failed to flush batch', err)
   })
 }
@@ -80,14 +47,7 @@ function enqueue(level: LogLevel, tag: string, message: string): void {
   if (!flushTimer) flushTimer = setTimeout(flush, 50)
 }
 
-/**
- * Cross-layer logger. Use this instead of `console.log` for anything
- * worth correlating against backend / main events.
- *
- * Tags should be short subsystem names (`'bridge'`, `'project'`,
- * `'transport'`, `'timeline'`); keep them consistent across one file's
- * call sites so logs are easy to grep.
- */
+/** Cross-layer logger for events worth correlating with main/backend logs. */
 export const log = {
   debug: (tag: string, message: string): void => enqueue('DEBUG', tag, message),
   info: (tag: string, message: string): void => enqueue('INFO ', tag, message),
@@ -95,8 +55,7 @@ export const log = {
   error: (tag: string, message: string): void => enqueue('ERROR', tag, message)
 }
 
-// Best-effort final flush on page unload so the very last events make
-// it to disk. The IPC is async; we kick it but can't await.
+// Best-effort final flush; IPC is async and can't be awaited here.
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => flush())
 }

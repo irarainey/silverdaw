@@ -1,57 +1,25 @@
 /**
- * Level-of-detail (LOD) peak pyramids for waveform rendering.
- *
- * Peaks arrive from the backend (or the renderer's audio decoder) as
- * interleaved `min, max` float pairs at a fixed `peaksPerSecond` rate
- * — typically 500. Drawing a long clip at low zoom forces the timeline
- * to scan dozens of peaks per pixel column; drawing at very high zoom
- * spreads the same peak across many pixels (a stair-stepped look).
- *
- * Building a small mipmap-style pyramid of progressively coarser peak
- * arrays lets the renderer pick the LOD nearest to one peak per pixel
- * for the current zoom level. The inner draw loop then becomes
- * roughly O(visible pixels) instead of O(visible peaks).
- *
- * Each LOD is the min-of-mins / max-of-maxes downsample of the level
- * above it. Generation is one O(N) walk per level; total derived
- * storage is `~1.33 × base` so the memory cost is bounded.
+ * LOD peak pyramids let waveform drawing scan near one bucket per pixel.
+ * Each layer stores min-of-mins/max-of-maxes; derived storage is bounded.
  */
 
-/** How many source peaks each derived level summarises. 4 is a good
- *  balance: each step is one zoom octave, and at this ratio three
- *  derived levels span the practical zoom range from a 5-minute song
- *  at 10 px/s down to a beat at 4000 px/s. */
+/** Source buckets per derived level; 4 balances zoom span and memory. */
 export const PEAKS_LOD_STEP = 4
 
-/** Target ratio of peaks to pixels at the picked LOD. > 1 ensures each
- *  pixel column has at least one peak to read; values up to ~2 give a
- *  small safety margin without measurably increasing scan cost. */
+/** Target peaks per pixel at the picked LOD. */
 export const PEAKS_LOD_TARGET_PER_PIXEL = 1.5
 
-/** Hysteresis window around the LOD boundary so a continuous zoom drag
- *  doesn't ping-pong between two levels. We only switch up a level
- *  when the ratio exceeds the upper bound, and switch down when it
- *  falls below the lower bound. */
+/** LOD hysteresis window to avoid ping-pong during continuous zoom. */
 export const PEAKS_LOD_BOUNDARY_LOW = 0.9
 export const PEAKS_LOD_BOUNDARY_HIGH = 1.4
 
-/**
- * A single LOD layer in a pyramid. `peaks` is the same interleaved
- * `min, max` float layout used everywhere else; `peaksPerSecond` is
- * the actual rate (a level summarising 4 buckets of an 501.14 ppS
- * base will report 125.28 ppS, not 125).
- */
+/** A pyramid layer using the shared interleaved `min, max` peak layout. */
 export interface PeaksLodLayer {
   readonly peaks: Float32Array
   readonly peaksPerSecond: number
 }
 
-/**
- * Down-sample `src` by `step` (must be ≥ 2). Each output bucket is
- * the min of `step` source min values and the max of `step` source
- * max values. The output length is `ceil(srcLen / step)`. Returns the
- * source unchanged when there is no work to do.
- */
+/** Downsample by min-of-mins/max-of-maxes over `step` source buckets. */
 export function downsamplePeaks(src: Float32Array, step: number): Float32Array {
   if (step <= 1 || src.length < 4) return src
   const srcBuckets = src.length >>> 1
@@ -74,13 +42,7 @@ export function downsamplePeaks(src: Float32Array, step: number): Float32Array {
   return dst
 }
 
-/**
- * Build a LOD pyramid from a base peak array. Returned levels are
- * ordered fine → coarse: index 0 is `base`, subsequent entries are
- * progressively `PEAKS_LOD_STEP`-times coarser. Stops when a level
- * would contain fewer than `minBuckets` peaks (below that it's
- * cheaper for the draw loop to walk the level above).
- */
+/** Build fine→coarse LOD layers until a level would be too small to help. */
 export function buildPeaksLodPyramid(
   base: Float32Array,
   basePeaksPerSecond: number,
@@ -109,16 +71,7 @@ export function buildPeaksLodPyramid(
   return layers
 }
 
-/**
- * Pick the LOD layer best matched to the current draw scale.
- *
- * `pxPerSecond` is the timeline's current px-per-source-second
- * (already including warp, because `useTimelineDrawing` passes the
- * warped pixel width down). `currentPeaksPerSecond` (optional) is the
- * level last picked for this clip — passed in so we can apply
- * hysteresis on the boundary and avoid ping-ponging between two
- * levels during continuous zoom drags.
- */
+/** Pick the draw-scale-matched LOD, preserving the current level inside hysteresis. */
 export function pickPeaksLod(
   layers: ReadonlyArray<PeaksLodLayer>,
   pxPerSecond: number,
@@ -129,8 +82,7 @@ export function pickPeaksLod(
   }
   if (layers.length === 1 || pxPerSecond <= 0) return layers[0]!
   const desired = pxPerSecond * PEAKS_LOD_TARGET_PER_PIXEL
-  // If we already have a level picked and we're inside the hysteresis
-  // band, keep it.
+  // Keep the current level inside the hysteresis band.
   if (typeof currentPeaksPerSecond === 'number' && currentPeaksPerSecond > 0) {
     const currentLayer = layers.find((l) => Math.abs(l.peaksPerSecond - currentPeaksPerSecond) < 1e-3)
     if (currentLayer) {
@@ -140,9 +92,7 @@ export function pickPeaksLod(
       }
     }
   }
-  // Otherwise pick the smallest level whose ppS still meets the
-  // target. Layers are fine → coarse, so iterate from the coarsest
-  // upward and stop at the first level that's fine enough.
+  // Pick the coarsest level that still meets the target.
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = layers[i]!
     if (layer.peaksPerSecond >= desired) return layer

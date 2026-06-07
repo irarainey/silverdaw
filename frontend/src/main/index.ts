@@ -13,31 +13,19 @@ import { IPC, type BackendStatus } from '../shared/ipc-channels'
 import { BackendSupervisor } from './backendSupervisor'
 
 // ─── Audio metadata ─────────────────────────────────────────────────────────
-// `AudioMetadata` lives in `src/shared/types.ts` and is shared with preload +
-// renderer. The helpers below take a `music-metadata` parse result and emit
-// the normalised wire shape.
 
-/** Drop embedded pictures larger than this so we don't bloat the Pinia store. */
+// Avoid large cover-art blobs in renderer state.
 const MAX_COVER_ART_BYTES = 2 * 1024 * 1024
 
-/**
- * Pick the best cover-art picture (preferring an explicit front cover) and
- * return its raw bytes + MIME type. The renderer turns the buffer into a
- * `Blob` + `URL.createObjectURL`, so we ship binary across IPC rather than
- * base64-inflated data URLs.
- */
 function pickCoverArt(
   pictures: IPicture[] | undefined
 ): { data: ArrayBuffer; mimeType: string } | undefined {
   if (!pictures || pictures.length === 0) return undefined
-  // Prefer a front-cover-type picture if the tag distinguishes them; else first.
   const front = pictures.find((p) => (p.type ?? '').toLowerCase().includes('cover')) ?? pictures[0]
   if (!front.data || front.data.length === 0 || front.data.length > MAX_COVER_ART_BYTES) {
     return undefined
   }
-  // Copy into a fresh ArrayBuffer so we hand IPC an owned, transferable
-  // buffer rather than a view into the (potentially larger) parse-result
-  // arena `music-metadata` keeps internally.
+  // IPC should receive an owned buffer, not a parser arena view.
   const src = front.data
   const data = src.buffer.slice(src.byteOffset, src.byteOffset + src.byteLength) as ArrayBuffer
   const mimeType = front.format || 'image/jpeg'
@@ -84,45 +72,21 @@ function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
 // ─── Theme / colours (kept in sync with the renderer Tailwind palette) ──────
 const COLOUR_BG = '#18181b' // zinc-900
 
-// File extensions accepted by every audio open-dialog and (later) by the
-// path-validation guard on `audio:readFile` / `audio:readMetadata`. Keep in
-// sync with the JUCE backend's supported formats.
+// Keep accepted audio extensions aligned with backend decoder support.
 const AUDIO_FILE_EXTENSIONS = ['wav', 'mp3', 'flac', 'aiff', 'aif', 'm4a'] as const
 const AUDIO_FILE_EXTENSIONS_SET: ReadonlySet<string> = new Set<string>(AUDIO_FILE_EXTENSIONS)
 
-/**
- * Whitelist of absolute filesystem paths the renderer is allowed to read via
- * `audio:readFile` / `audio:readMetadata`. Populated when main hands a path
- * to the renderer (open-dialog result) or when the renderer reports a path
- * obtained from an OS drag-drop via `webUtils.getPathForFile` through the
- * `audio:registerDroppedPath` IPC.
- *
- * Without this guard a compromised renderer could read any file the main
- * process can — see FE-004 in the security review.
- */
+// Renderer may only read audio paths main previously surfaced through trusted UI.
 const issuedAudioPaths: Set<string> = new Set<string>()
 
-/**
- * Filesystem cache for renderer-side transcodes. The renderer decodes
- * lossy / non-native formats (e.g. .m4a) via the Web Audio API and asks
- * main to dump the PCM as a WAV; the backend then reads that WAV. Files
- * are keyed by a hash of the source path + decoded geometry so the same
- * import doesn't re-transcode on every clip placement.
- */
+// Cache renderer-side transcodes by source path and decoded geometry.
 const TRANSCODE_CACHE_DIR = join(tmpdir(), 'silverdaw-transcode-cache')
 
-/** Normalise to an absolute path so allow-list membership is canonical. */
 function canonicalisePath(p: string): string {
   return pathResolve(p)
 }
 
-/**
- * Add a path to the allow-list using its canonical absolute form. Rejects
- * anything that isn't an absolute path with an accepted audio extension,
- * so a future regression that leaks `ipcRenderer.send` to a compromised
- * renderer can't pollute the read allow-list with arbitrary filesystem
- * locations. (FE-004 in the security review.)
- */
+// Only canonical absolute audio paths can enter the renderer read allow-list.
 function registerIssuedPath(filePath: string): void {
   if (typeof filePath !== 'string' || filePath === '') return
   if (!isAbsolute(filePath)) {
@@ -137,12 +101,7 @@ function registerIssuedPath(filePath: string): void {
   issuedAudioPaths.add(canonicalisePath(filePath))
 }
 
-/**
- * True if `filePath` is on the allow-list AND has an accepted audio
- * extension. The extension check is belt-and-braces: every path that
- * makes it onto the allow-list has already passed the dialog filter or
- * a drag-drop from the OS, but defence-in-depth is cheap here.
- */
+// Re-check the audio extension at read time as defence in depth.
 function isAllowedAudioPath(filePath: unknown): filePath is string {
   if (typeof filePath !== 'string' || filePath === '') return false
   const ext = extname(filePath).replace(/^\./, '').toLowerCase()
@@ -152,22 +111,11 @@ function isAllowedAudioPath(filePath: unknown): filePath is string {
 
 let backendSupervisor: BackendSupervisor | null = null
 let mainWindow: BrowserWindow | null = null
-/**
- * Set to true once the renderer has confirmed (after running its
- * unsaved-changes guard) that the window can close. The `close` event
- * handler intercepts the first attempt and waits for this flag.
- */
+// Set after the renderer's unsaved-changes guard allows close.
 let userConfirmedClose = false
 
 // ─── Backend bridge port ────────────────────────────────────────────────────
-// The JUCE backend listens on `ws://127.0.0.1:<bridgePort>`. Main is the
-// single source of truth: it probes for a free loopback port (starting at
-// `DEFAULT_BRIDGE_PORT`, walking 20 ports to dodge a leftover Silverdaw),
-// passes the chosen value to every spawned backend via `--port`, and
-// exposes the same value to the renderer through `bridge:getPort`. The
-// `SILVERDAW_BRIDGE_PORT` env var bypasses the probe so a developer can
-// pin a specific port for stand-alone debugging; it has no effect on the
-// backend itself (the backend always reads `--port`).
+// Main owns the dynamic loopback port and passes it to backend/renderer.
 const DEFAULT_BRIDGE_PORT = 8765
 const MIN_BRIDGE_PORT = 1024
 const MAX_BRIDGE_PORT = 65535
@@ -195,18 +143,7 @@ const bridgePortEnvOverridden =
   typeof process.env['SILVERDAW_BRIDGE_PORT'] === 'string' &&
   process.env['SILVERDAW_BRIDGE_PORT']!.length > 0
 
-/**
- * Probe whether `port` on `127.0.0.1` is free for a fresh TCP listener.
- * Uses a short-lived `net.Server` rather than scraping `netstat` output
- * — it works regardless of platform locale and gives a definitive
- * answer (any error code from `listen()` means "not free").
- *
- * The server is closed immediately on success; there's a tiny race
- * window before the backend itself binds, but loopback ports on Windows
- * recycle fast enough that this is reliable in practice. Worst case
- * the backend's own bind fails and the renderer surfaces the bridge
- * timeout error.
- */
+// Probe with a short-lived listener for locale-independent port checks.
 async function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createNetServer()
@@ -220,12 +157,6 @@ async function isPortFree(port: number): Promise<boolean> {
   })
 }
 
-/**
- * Find the first free port in `[start, start + count)`. Stops as soon
- * as one binds. Returns `null` if every port in the range is taken —
- * which only realistically happens if there are many zombie Silverdaw
- * processes or another app is occupying the entire scan window.
- */
 async function findFreeBridgePort(start: number, count: number): Promise<number | null> {
   for (let i = 0; i < count; i++) {
     const candidate = start + i
@@ -236,19 +167,11 @@ async function findFreeBridgePort(start: number, count: number): Promise<number 
 }
 
 // ─── Backend bridge AUTH token ──────────────────────────────────────────────
-// Loopback alone is not a strong trust boundary — any other process running
-// as the same user can connect to the WebSocket. Each backend launch gets a
-// fresh 256-bit random token; main passes it to the backend via the
-// `SILVERDAW_BRIDGE_TOKEN` env var (NOT a CLI arg — argv is visible in the OS
-// process table) and exposes it to the renderer through `bridge:getToken`,
-// so the renderer can send it as the first WebSocket message. The backend
-// closes any socket that fails to AUTH on its first envelope.
+// Loopback is not a trust boundary; keep the token out of argv/HTML.
 const bridgeToken = randomBytes(32).toString('hex')
 
 // ─── Persisted preferences (window state + UI panel sizes) ──────────────────
-// Stored as JSON in `<userData>/preferences.json`. Writes are debounced so a
-// burst of resize/move events doesn't hammer the disk; an unconditional
-// flush runs on `before-quit` to make sure the final state is captured.
+// Debounced JSON writes avoid hammering disk during resize/move.
 
 interface WindowPrefs {
   x?: number
@@ -261,103 +184,37 @@ interface WindowPrefs {
 interface UiPrefs {
   trackHeaderWidth: number
   libraryPanelHeight: number
-  /** When true, the timeline scrolls during playback so the playhead
-   *  stays pinned near the centre of the viewport. When false, the
-   *  view stays still and the playhead can run off the right edge. */
   followPlayback: boolean
-  /** When true, library tiles include cover art or a fallback icon. */
   showLibraryTileImages: boolean
-  /** When true, dragging a clip from the library onto a track
-   *  automatically enables warp targeting the project BPM (provided
-   *  the source's BPM is known and the source isn't variable-tempo).
-   *  Off lets the user opt in per-clip via the Warp settings dialog. */
+  /** Auto-warp library drops to project BPM when source BPM is usable. */
   matchProjectTempoOnDrop: boolean
-  /**
-   * Application default for the per-project `targetSampleRate` (Hz).
-   * Only 44 100 and 48 000 are accepted today; the migration step in
-   * `loadPreferences` snaps anything else back to the closer of the
-   * two. Newly-created projects adopt this as their initial target
-   * rate; existing projects with their own stored value are
-   * unaffected.
-   */
+  /** Default `targetSampleRate` for new projects; only 44 100 and 48 000 are accepted. */
   defaultProjectSampleRate: number
-  /** What the transport previous / next buttons jump to: `timelineEnds`
-   *  seeks the project start / end (default), `markers` steps through
-   *  the timeline markers. Anything else snaps back to `timelineEnds`
-   *  on load. */
   skipButtonTarget: SkipButtonTarget
-  /** How source waveforms are drawn: `summary` (single mono lane,
-   *  default) or `stereo` (stacked L/R lanes for two-channel sources).
-   *  Anything else snaps back to `summary` on load. */
   waveformDisplayMode: WaveformDisplayMode
-  /** When true, the bottom tabbed panel is minimised to its tab strip.
-   *  Non-boolean values snap back to false (expanded) on load. */
   libraryPanelCollapsed: boolean
 }
 
 type DebugPrefs = DebugPreferences
 
-/** Toast-notification visibility. `enabled=false` silences every toast
- *  the renderer would otherwise pop — the underlying event is still
- *  written to the log when diagnostic logging is on, so nothing is lost. */
 interface ToastPrefs {
   enabled: boolean
 }
 
-/**
- * Persisted default directories for OS open / save dialogs.
- *
- *   - `defaultProjectDir` is the directory the project Open / Save As
- *     dialogs land in **every time**. The user explicitly asked for the
- *     pref to win over any per-session "last opened" tracking so files
- *     stay in one predictable place.
- *
- *   - `defaultClipDir` is the directory the audio-file open dialogs land
- *     in on the **first** open of each session. After the user picks a
- *     file, the in-memory `currentClipDir` slot is updated to that
- *     file's directory so subsequent opens follow the user's browse —
- *     but on next launch we reset back to this pref.
- *
- * Both paths are validated cheaply on use (`mkdir -p` for the project
- * dir; falls back to home dir if either string is empty). They never
- * affect the path-allow-list applied to `audio:readFile` etc. — that
- * remains driven solely by paths the user picked through a vetted
- * channel.
- */
+// Default dialog folders never grant audio read access; trusted picks still drive the allow-list.
 interface PathPrefs {
   defaultProjectDir: string
   defaultClipDir: string
 }
 
-/**
- * Background autosave configuration. While the project is dirty AND
- * `enabled` is true, the renderer runs a periodic timer that pushes a
- * `PROJECT_AUTOSAVE` to a project-scoped folder under
- * `%APPDATA%/Silverdaw/autosave/<projectId>/`. A clean shutdown — File >
- * Save, accepting "Discard" in the unsaved-changes dialog, or any other
- * path that resolves dirty — clears the bucket. The periodic save is
- * deliberately the only crash-recovery mechanism (a synchronous flush
- * during `before-quit` could race the IXWebSocket I/O loop and would
- * not be reliable enough to be worth implementing).
- */
+// Renderer owns autosave timing; main owns the project-scoped files.
 interface AutosavePrefs {
   enabled: boolean
-  /** Tick interval in seconds. Clamped 5..600 on read so a corrupted
-   *  preferences file can never DoS the bridge with sub-second saves. */
+  /** Clamped 5..600 so corrupt prefs cannot spam autosaves. */
   intervalSeconds: number
 }
 
-/**
- * Persisted audio output device selection. Both fields null = "use
- * system default". When non-null, main passes them to the backend via
- * `SILVERDAW_OUTPUT_DEVICE_TYPE` / `SILVERDAW_OUTPUT_DEVICE_NAME` env
- * vars at spawn time; if the device isn't available on this machine
- * (e.g. USB headphones unplugged before launch) the backend silently
- * falls back to default and tells the renderer via the
- * `fellBackToDefault` flag on `AUDIO_DEVICES_LIST` — the persisted
- * preference is kept intact, so re-plugging the device next launch
- * just works.
- */
+// Persisted output device is passed at backend spawn; unavailable devices fall back at runtime.
 interface AudioOutputPrefs {
   typeName: string | null
   deviceName: string | null
@@ -371,13 +228,7 @@ interface Preferences {
   paths: PathPrefs
   autosave: AutosavePrefs
   audioOutput: AudioOutputPrefs
-  /**
-   * Most-recently used `.silverdaw` paths, head = most recent. Capped
-   * at `MAX_RECENT_PROJECTS`; deduplicated case-insensitively on
-   * Windows. Populated by `project:setLastPath` on every successful
-   * save/load. The head of this list also acts as the "last
-   * project" the app would auto-reopen if that flow ever lands.
-   */
+  /** MRU `.silverdaw` paths, newest first, capped and case-insensitive. */
   recentProjects: string[]
 }
 
@@ -386,11 +237,7 @@ const AUTOSAVE_MIN_SECONDS = 5
 const AUTOSAVE_MAX_SECONDS = 600
 const AUTOSAVE_DEFAULT_SECONDS = 30
 
-/**
- * Build the default preferences object. The path defaults need
- * `app.getPath` (only available after `app.whenReady`) so we resolve
- * them lazily the first time we need them rather than at module load.
- */
+// `app.getPath` is only safe after `app.whenReady`, so defaults are lazy.
 function getApplicationDirectory(): string {
   return app.isPackaged ? dirname(app.getPath('exe')) : pathResolve(__dirname, '..', '..', '..')
 }
@@ -401,9 +248,7 @@ function getDefaultDebugLogDirectory(): string {
 
 function buildDefaultPrefs(): Preferences {
   const home = app.getPath('home')
-  // Default to <Music>/Silverdaw so projects live alongside the audio
-  // files most users will be importing from. Falls back to <home>/Silverdaw
-  // if the OS can't resolve a Music folder (e.g. headless / sandboxed env).
+  // Prefer Music/Silverdaw, falling back to home when Music is unavailable.
   let musicDir = ''
   try {
     musicDir = app.getPath('music')
@@ -411,9 +256,6 @@ function buildDefaultPrefs(): Preferences {
     musicDir = ''
   }
   const defaultProjectDir = musicDir ? join(musicDir, 'Silverdaw') : join(home, 'Silverdaw')
-  // Clip dialogs land in the OS Music folder by default; if that's not
-  // available we fall back to the project folder so a fresh install never
-  // points at a non-existent path.
   const defaultClipDir = musicDir || defaultProjectDir
   return {
     window: { width: 1400, height: 900, maximized: false },
@@ -464,21 +306,10 @@ let prefs: Preferences = {
 let prefsPath = ''
 let prefsSaveTimer: ReturnType<typeof setTimeout> | null = null
 
-/**
- * Working clip directory for the current session. Initialised from
- * `prefs.paths.defaultClipDir` once `app.whenReady` has resolved, then
- * updated to the directory of whichever clip the user most recently
- * picked. NOT persisted — each launch starts at the configured default.
- */
+// Session-only clip dialog folder; each launch starts from preferences.
 let currentClipDir = ''
 
-/**
- * Snapshots sampled once at startup, AFTER `loadPreferences()` runs.
- * Logging controls the cross-layer file logger and backend log env var;
- * DevTools controls the Debug menu and packaged DevTools shortcut gate.
- * Toggling Preferences updates the saved value and takes effect on the
- * next launch.
- */
+// Startup-only debug gates; preference changes apply next launch.
 let startupLoggingEnabled = false
 let startupDevToolsEnabled = false
 
@@ -487,9 +318,6 @@ function getPrefsPath(): string {
   return prefsPath
 }
 
-/** Update the in-memory `currentClipDir` to the parent folder of
- *  `pickedFile`. Called after every audio open-dialog success so the
- *  next dialog opens where the user just was. */
 function rememberClipDir(pickedFile: string): void {
   if (!pickedFile) return
   const dir = dirname(pickedFile)
@@ -523,18 +351,14 @@ async function loadPreferences(): Promise<void> {
   prefs = structuredClone(defaults)
   try {
     const raw = await readFile(getPrefsPath(), 'utf8')
-    // Empty file = no prefs yet (e.g. atomic-write was interrupted, or a
-    // brand-new install before the first save). Treat the same as ENOENT
-    // so we don't spam stderr with a SyntaxError on every startup.
+    // Treat an empty prefs file as first-run state.
     if (raw.trim().length === 0) {
       seedSessionPaths()
       await ensureProjectDirExists()
       return
     }
     const parsed = JSON.parse(raw) as Partial<Preferences>
-    // Merge over defaults so newly-added keys get sane values on first
-    // run after an upgrade. Path strings fall back to the computed
-    // defaults if the saved value is empty / non-string.
+    // Merge over defaults so new or invalid keys recover on upgrade.
     const savedPaths = (parsed.paths ?? {}) as Partial<PathPrefs>
     prefs = {
       window: { ...defaults.window, ...(parsed.window ?? {}) },
@@ -574,29 +398,21 @@ async function loadPreferences(): Promise<void> {
       },
       recentProjects: sanitiseRecentList(parsed.recentProjects)
     }
-    // Normalise the project sample-rate preference to the supported
-    // whitelist; a bad value in `preferences.json` (manual edit,
-    // older alpha build, etc.) snaps to the safer 44 100 default.
+    // Clamp persisted sample rate to the supported whitelist.
     if (prefs.ui.defaultProjectSampleRate !== 44100 && prefs.ui.defaultProjectSampleRate !== 48000) {
       prefs.ui.defaultProjectSampleRate = 44100
     }
-    // Snap an unrecognised skip-button target (manual edit / older build)
-    // back to the safe default.
     if (prefs.ui.skipButtonTarget !== 'timelineEnds' && prefs.ui.skipButtonTarget !== 'markers') {
       prefs.ui.skipButtonTarget = 'timelineEnds'
     }
-    // Snap an unrecognised waveform display mode back to the safe default.
     if (prefs.ui.waveformDisplayMode !== 'summary' && prefs.ui.waveformDisplayMode !== 'stereo') {
       prefs.ui.waveformDisplayMode = 'summary'
     }
-    // Coerce a non-boolean collapsed flag (manual edit / older build) to
-    // the expanded default.
     if (typeof prefs.ui.libraryPanelCollapsed !== 'boolean') {
       prefs.ui.libraryPanelCollapsed = false
     }
   } catch (err) {
-    // ENOENT on first run is expected; anything else is logged but we still
-    // fall back to defaults rather than blocking startup.
+    // Bad prefs should not block startup.
     const code = (err as { code?: string }).code
     if (code !== 'ENOENT') {
       console.warn('[prefs] load failed, using defaults:', err)
@@ -606,15 +422,11 @@ async function loadPreferences(): Promise<void> {
   await ensureProjectDirExists()
 }
 
-/** Initialise the in-memory `currentClipDir` from the persisted pref. */
 function seedSessionPaths(): void {
   currentClipDir = prefs.paths.defaultClipDir || prefs.paths.defaultProjectDir
 }
 
-/** Create `paths.defaultProjectDir` if it doesn't yet exist so the
- *  project Save / Open dialogs always have a real directory to land in.
- *  Silent on failure — the dialog will just fall back to the user's
- *  home directory if Electron can't open the configured path. */
+// Best-effort: dialogs fall back if the configured project dir cannot be created.
 async function ensureProjectDirExists(): Promise<void> {
   const dir = prefs.paths.defaultProjectDir
   if (!dir) return
@@ -654,9 +466,6 @@ function clampAutosaveSeconds(input: unknown): number {
   return Math.round(value)
 }
 
-/** Sanitise an arbitrary value parsed out of `preferences.json` into a
- *  recent-project string list: trim, dedupe (Windows case-insensitive),
- *  drop empties, cap at MAX_RECENT_PROJECTS. */
 function sanitiseRecentList(input: unknown): string[] {
   if (!Array.isArray(input)) return []
   const out: string[] = []
@@ -674,9 +483,6 @@ function sanitiseRecentList(input: unknown): string[] {
   return out
 }
 
-/** Insert `filePath` at the head of `prefs.recentProjects`, deduped
- *  case-insensitively, capped at MAX_RECENT_PROJECTS. Returns true when
- *  the list mutated so the caller can decide whether to write to disk. */
 function bumpRecentProject(filePath: string): boolean {
   if (typeof filePath !== 'string' || filePath.length === 0) return false
   const key = filePath.toLowerCase()
@@ -691,17 +497,7 @@ function bumpRecentProject(filePath: string): boolean {
 }
 
 // ─── Autosave folder layout ────────────────────────────────────────────
-//
-// All autosave artefacts live under `%APPDATA%/Silverdaw/autosave/`.
-// Each project (saved or untitled) gets its own subfolder keyed by a
-// renderer-supplied `projectId` containing `autosave.silverdaw` (the
-// serialised ValueTree) + `manifest.json`. Recovery on launch is just
-// a walk of these subfolders.
-//
-// The `projectId` is whitelisted to a strict character set before it
-// touches the filesystem so a malicious renderer can't break out of
-// the autosave folder via `../` segments or absolute paths. The same
-// rule applies to deletes / listings.
+// Project IDs are strictly whitelisted before touching the autosave filesystem.
 const AUTOSAVE_FILENAME = 'autosave.silverdaw'
 const AUTOSAVE_MANIFEST_FILENAME = 'manifest.json'
 const AUTOSAVE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/
@@ -721,14 +517,9 @@ interface AutosaveManifest {
   projectId: string
   originalPath: string | null
   projectName: string
-  /** ISO-8601 UTC timestamp of the most recent confirmed autosave write. */
   savedAtIso: string
-  /** True between the moment the renderer kicks off a tick and the
-   *  PROJECT_AUTOSAVED ack. Recovery skips pending entries because
-   *  the file may be partially written. */
+  /** Recovery skips pending entries because the file may be partial. */
   pending: boolean
-  /** App version that wrote the autosave — surfaced in the recovery
-   *  dialog for diagnostics. */
   appVersion: string
 }
 
@@ -746,11 +537,7 @@ function isAutosaveManifest(value: unknown): value is AutosaveManifest {
 }
 
 
-/**
- * Return a window bounds object clamped to fall inside one of the currently
- * connected displays. Prevents the window from opening off-screen after a
- * monitor is unplugged.
- */
+// Clamp saved bounds so unplugged monitors cannot strand the window off-screen.
 function resolveWindowBounds(): { x?: number; y?: number; width: number; height: number } {
   const w = prefs.window
   const width = Math.max(900, Math.min(8000, w.width))
@@ -758,8 +545,6 @@ function resolveWindowBounds(): { x?: number; y?: number; width: number; height:
   if (typeof w.x !== 'number' || typeof w.y !== 'number') {
     return { width, height }
   }
-  // Confirm the saved top-left is on a connected display; if not, drop the
-  // position and let Electron centre the window on the primary display.
   const displays = screen.getAllDisplays()
   const onScreen = displays.some((d) => {
     const { x, y, width: dw, height: dh } = d.workArea
@@ -770,16 +555,11 @@ function resolveWindowBounds(): { x?: number; y?: number; width: number; height:
 
 function captureWindowState(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
-  // Don't overwrite the saved x/y/width/height while the window is in a
-  // maximized state — we want to restore the *unmaximized* bounds next time.
+  // Preserve unmaximized bounds while maximized.
   const maximized = mainWindow.isMaximized()
   prefs.window.maximized = maximized
   if (!maximized) {
-    // `getNormalBounds()` is symmetric with `setBounds()` — round-tripping
-    // through it keeps the window from drifting bigger each session.
-    // `getBounds()` on Windows with `titleBarStyle: 'hidden'` returns
-    // values that, when fed back into the constructor or `setBounds`,
-    // produce a slightly larger window — a few px of growth per restart.
+    // `getNormalBounds()` avoids hidden-titlebar size drift on Windows.
     const b = mainWindow.getNormalBounds()
     prefs.window.x = b.x
     prefs.window.y = b.y
@@ -789,21 +569,10 @@ function captureWindowState(): void {
   schedulePrefsSave()
 }
 
-/** Resolve the backend executable path for the current run mode. */
 function resolveBackendExePath(): string {
   const exeName = process.platform === 'win32' ? 'SilverdawBackend.exe' : 'SilverdawBackend'
 
-  // Two layouts to handle:
-  //
-  // 1. Dev (`pnpm dev`): `__dirname` is `<repo>/frontend/out/main/`, and the
-  //    JUCE backend lives at
-  //    `<repo>/backend/build/SilverdawBackend_artefacts/<Config>/SilverdawBackend.exe`.
-  //    `SILVERDAW_BACKEND_CONFIG` lets you swap between Debug / Release.
-  //
-  // 2. Packaged installer: `electron-builder` copies the Release backend exe
-  //    (declared as `extraResources` in `electron-builder.yml`) into
-  //    `process.resourcesPath/backend/`. `app.isPackaged` is the canonical
-  //    way to distinguish the two modes.
+  // Dev uses the backend build tree; packaged builds use copied resources.
   if (app.isPackaged) {
     return join(process.resourcesPath, 'backend', exeName)
   }
@@ -811,35 +580,23 @@ function resolveBackendExePath(): string {
   return join(__dirname, '..', '..', '..', 'backend', 'build', 'SilverdawBackend_artefacts', buildConfig, exeName)
 }
 
-/** Build the spawn environment for the backend (token, device prefs, logs). */
 function buildBackendEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    // Forward `SILVERDAW_BRIDGE_TOKEN` via the spawn env (NOT via argv —
-    // command-line arguments are visible in the OS process table). The
-    // backend's `resolveBridgeToken()` reads the same env var and
-    // requires every WebSocket client to AUTH with this exact value.
+    // Keep AUTH token out of argv; the backend reads it from env.
     SILVERDAW_BRIDGE_TOKEN: bridgeToken,
-    // Pass the persisted audio-output device preference so the backend can
-    // try to honour it during `AudioDeviceManager` init. If the saved
-    // device is no longer present (USB unplugged, etc.) the backend
-    // silently falls back to default and tells the renderer via the
-    // `fellBackToDefault` flag on `AUDIO_DEVICES_LIST`.
+    // Backend may fall back if the saved device is unavailable.
     ...(prefs.audioOutput.typeName && prefs.audioOutput.deviceName
       ? {
           SILVERDAW_OUTPUT_DEVICE_TYPE: prefs.audioOutput.typeName,
           SILVERDAW_OUTPUT_DEVICE_NAME: prefs.audioOutput.deviceName
         }
       : {}),
-    // `SILVERDAW_LOG_DIR` is exported so the C++ logger writes its
-    // `backend.log` into the same per-session folder as `main.log` and
-    // `renderer.log`. Only exported when debug logging is on; an empty
-    // env var would cause the backend to silently skip logger init.
+    // Export only when logging is enabled; empty env disables backend logger init.
     ...(startupLoggingEnabled ? { SILVERDAW_LOG_DIR: getSessionDir() } : {})
   }
 }
 
-/** Push a process-level backend status to the renderer, if a window exists. */
 function sendBackendStatus(status: BackendStatus): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC.backend.status, status)
@@ -859,23 +616,14 @@ function startBackend(): void {
 
 function createWindow(): void {
   const bounds = resolveWindowBounds()
-  // Resolve the window icon from `<app>/resources/icons/icon.ico`. The
-  // file is optional — if the user hasn't dropped one in yet, Electron
-  // falls back to its default and the app still starts cleanly. See
-  // `resources/README.md` for the spec.
+  // Icon is optional; Electron falls back cleanly.
   const iconPath = join(app.getAppPath(), 'resources', 'icons', 'icon.ico')
   const icon = existsSync(iconPath) ? iconPath : undefined
   if (!icon) {
     logMain('INFO ', 'main', `no app icon at ${iconPath} — using Electron default`)
   }
   mainWindow = new BrowserWindow({
-    // Important: do NOT pass x/y/width/height in the constructor on Windows
-    // with `titleBarStyle: 'hidden'` + multi-monitor mixed DPI. The
-    // constructor interprets those values in a different coordinate space
-    // than `getBounds()` reports, causing the saved size to drift bigger
-    // on every restart. We hide the window, position+size it explicitly
-    // via `setBounds()` (which is symmetric with `getBounds`/`getNormalBounds`),
-    // then show it.
+    // Set bounds after construction to avoid Windows hidden-titlebar DPI drift.
     minWidth: 900,
     minHeight: 600,
     backgroundColor: COLOUR_BG,
@@ -885,31 +633,17 @@ function createWindow(): void {
     titleBarOverlay: undefined,
     trafficLightPosition: { x: 12, y: 11 },
     webPreferences: {
-      // electron-vite emits the preload bundle as `index.cjs` (CommonJS).
-      // Sandboxed renderers can only load CJS preload scripts.
+      // Sandboxed renderers require the electron-vite CJS preload bundle.
       preload: join(__dirname, '..', 'preload', 'index.cjs'),
       contextIsolation: true,
-      // Preload uses only contextBridge / ipcRenderer / webUtils, all of
-      // which remain available in a sandboxed preload. Keeping sandbox on
-      // restores Chromium's renderer-process isolation guarantees.
+      // Sandbox stays on because preload only needs safe Electron bridge APIs.
       sandbox: true,
       nodeIntegration: false,
       webSecurity: true
     }
   })
 
-  // Strip Chromium's built-in reload accelerators. A DAW project window
-  // has no user-facing reason to reload (it'd be equivalent to closing
-  // and reopening the app, except it leaves the backend's audio engine
-  // running on a now-orphaned project state — a re-AUTH then bombards
-  // the bridge with re-broadcast peaks frames). Dev iteration uses Vite
-  // HMR, not full reload; if a dev really needs a full reload they can
-  // close and relaunch the renderer.
-  //
-  // Ctrl+Shift+I / F12 (Chromium's default DevTools shortcuts) are also
-  // suppressed when the user has not enabled DevTools access in a PACKAGED
-  // install. In dev (`!app.isPackaged`) we always leave them available —
-  // diagnosing renderer issues without DevTools is unworkable.
+  // Block reloads because they orphan backend state; gate packaged DevTools shortcuts.
   const RELOAD_KEYS = new Set(['F5', 'F3'])
   const blockDevTools = app.isPackaged && !startupDevToolsEnabled
   mainWindow.webContents.on('before-input-event', (event, input) => {
@@ -931,49 +665,22 @@ function createWindow(): void {
     }
   })
 
-  // Block any in-page navigation. The renderer is a single-page app
-  // (only `index.html` is ever loaded) and we don't want Chromium's
-  // default Alt+Left / Alt+Right history bindings hijacking the
-  // playhead fine-step shortcut. `will-navigate` fires after the page
-  // keyboard handlers have already had a crack at the event, so the
-  // renderer's `onTransportKey` still sees Alt+Arrow normally; we
-  // just stop the page from actually navigating away.
+  // Block SPA navigation so browser history shortcuts do not steal transport keys.
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault()
   })
 
-  // Defence-in-depth: deny every `window.open` / `target="_blank"`
-  // request from the renderer. The renderer is a single-page app with
-  // no legitimate use for `window.open`; any call is either a bug or
-  // a compromised third-party resource. Without this handler Chromium
-  // would spawn a fresh `BrowserWindow` with default `webPreferences`
-  // — crucially, one that does NOT inherit the meta-CSP from
-  // `index.html`. We block the action up-front so the new window is
-  // never created.
+  // Deny new windows so untrusted content cannot escape our hardened BrowserWindow.
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
-  // In a dev session, auto-open DevTools when the user has explicitly
-  // enabled DevTools in Preferences. Packaged builds never auto-open —
-  // there's the Debug menu's "Toggle Developer Tools" for that — and an
-  // unpackaged session with debug off stays clean too (the user can
-  // always toggle the preference and relaunch).
+  // Auto-open DevTools only in dev when the startup debug gate allows it.
   if (!app.isPackaged && startupDevToolsEnabled) {
     mainWindow.webContents.once('did-finish-load', () => {
       mainWindow?.webContents.openDevTools({ mode: 'right' })
     })
   }
 
-  // Apply saved bounds. Use `setBounds` so we're symmetric with the
-  // `getBounds()` we save in `captureWindowState` — round-tripping is
-  // stable even on a secondary monitor with a different DPI scale.
-  //
-  // Windows mixed-DPI workaround: when the constructor-default display has
-  // a different scale factor than the target display (e.g. primary @ 125%,
-  // secondary @ 100%), the FIRST `setBounds` call applies the size using
-  // the previous display's scale, then the window moves to the new
-  // display and Electron reports back a size scaled by the ratio. Calling
-  // `setBounds` a second time — now that Electron knows which display the
-  // window lives on — applies the size at the correct scale.
+  // On Windows mixed-DPI setups, a second `setBounds` applies the target display scale.
   if (typeof bounds.x === 'number' && typeof bounds.y === 'number') {
     const rect = {
       x: bounds.x,
@@ -988,14 +695,9 @@ function createWindow(): void {
     mainWindow.center()
   }
 
-  // Restore maximized state without losing the unmaximized bounds: the
-  // `setBounds` above used the unmaximized size, so calling `maximize()`
-  // now gives us the right "double-click title bar → restore" target.
+  // Maximize after applying normal bounds so restore targets the saved size.
   if (prefs.window.maximized) mainWindow.maximize()
 
-  // Persist window position / size / maximized state. `resize` and `move`
-  // fire continuously while the user drags, so saves are debounced inside
-  // `captureWindowState`.
   mainWindow.on('resize', captureWindowState)
   mainWindow.on('move', captureWindowState)
   mainWindow.on('maximize', captureWindowState)
@@ -1003,22 +705,14 @@ function createWindow(): void {
   mainWindow.on('close', (event) => {
     captureWindowState()
     flushPrefsSaveSync()
-    // First close attempt: hand control to the renderer so it can
-    // prompt for unsaved changes. The renderer either calls
-    // `app.confirmClose` (we flip `userConfirmedClose` and re-trigger
-    // close, which this branch then lets through) or stays put.
+    // First close attempt runs the renderer's unsaved-changes guard.
     if (!userConfirmedClose) {
       event.preventDefault()
       mainWindow?.webContents.send(IPC.menu.action, 'app.requestClose')
     }
   })
 
-  // Hold the window invisible until index.html has been parsed and the
-  // first paint is ready. Otherwise `show()` reveals a blank zinc-900
-  // pane (the BrowserWindow.backgroundColor) for the few hundred ms
-  // it takes Vite's dev server to deliver index.html — by deferring
-  // until ready-to-show, the very first frame already contains the
-  // static splash inside <div id="app">.
+  // Avoid showing a blank window before the first renderer paint.
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
   })
@@ -1030,11 +724,6 @@ function createWindow(): void {
   }
 }
 
-/**
- * Menu actions invoked from the custom HTML menu bar via IPC.
- * Most of these are stubs that just log; they will be wired to backend
- * commands as features land.
- */
 function handleMenuAction(action: string): void {
   if (!mainWindow) return
   const wc = mainWindow.webContents
@@ -1057,31 +746,20 @@ function handleMenuAction(action: string): void {
       wc.send(IPC.menu.action, action)
       break
     case 'file.projectProperties':
-      // Opens the in-renderer Project Properties dialog (name, tempo,
-      // duration). Forwarded straight through — the dialog lives in
-      // the renderer so it can read the live transport/project stores
-      // and commit changes via the existing bridge envelopes.
       wc.send(IPC.menu.action, action)
       break
     case 'file.addTrack':
-      // Forwarded to the renderer (see below); the renderer drives the
-      // open-file flow so it can decode + render in one place.
       wc.send(IPC.menu.action, action)
       break
     case 'file.exportMixdown':
       wc.send(IPC.menu.action, action)
       break
     case 'file.exit':
-      // Run through the renderer's unsaved-changes guard. The renderer
-      // either fires `file.exitConfirmed` (proceed with quit) or stays
-      // on the current project.
       wc.send(IPC.menu.action, action)
       break
     case 'file.exitConfirmed':
     case 'app.confirmClose':
-      // Renderer has cleared the guard. Perform the actual quit /
-      // window close. We mark `userConfirmedClose` so the window's
-      // own close-event handler stops intercepting.
+      // Renderer has cleared the unsaved-changes guard.
       userConfirmedClose = true
       BrowserWindow.getAllWindows().forEach((w) => {
         if (!w.isDestroyed()) w.destroy()
@@ -1091,20 +769,14 @@ function handleMenuAction(action: string): void {
 
     // Edit
     case 'edit.undo':
-      // Project undo (forwarded to the renderer → `EDIT_UNDO` bridge
-      // envelope). Text-input native undo is still reachable via the
-      // keyboard shortcut, which `menuShortcuts` keeps out of this
-      // path while focus is in an editable target.
+      // Renderer handles project undo; native text undo stays on keyboard shortcuts.
       wc.send(IPC.menu.action, action)
       break
     case 'edit.redo':
       wc.send(IPC.menu.action, action)
       break
     case 'edit.cut':
-      // Forward to renderer so it can target the selected clip. The
-      // renderer falls back to `wc.cut()` if there's nothing to cut at
-      // the clip level — keeps native text-field cut working from the
-      // menu UI too.
+      // Renderer can target clips before falling back to native text cut.
       wc.send(IPC.menu.action, action)
       break
     case 'edit.copy':
@@ -1117,25 +789,15 @@ function handleMenuAction(action: string): void {
       wc.send(IPC.menu.action, action)
       break
     case 'edit.splitAtPlayhead':
-      // Forwarded to the renderer, which walks every clip whose
-      // timeline window straddles the current playhead and splits
-      // each at that position.
       wc.send(IPC.menu.action, action)
       break
     case 'edit.duplicateClip':
-      // Forwarded to the renderer, which duplicates the currently-
-      // selected clip immediately after the original on the same track.
       wc.send(IPC.menu.action, action)
       break
     case 'edit.deleteClip':
-      // Forwarded to the renderer, which removes the currently-selected
-      // clip from its track.
       wc.send(IPC.menu.action, action)
       break
     case 'edit.cropProjectToLastClip':
-      // Forwarded to the renderer, which collapses the project length
-      // to the end of the latest clip on any track and emits a single
-      // PROJECT_SET_LENGTH envelope so the backend ruler matches.
       wc.send(IPC.menu.action, action)
       break
 
@@ -1143,8 +805,6 @@ function handleMenuAction(action: string): void {
     case 'view.zoomIn':
     case 'view.zoomOut':
     case 'view.zoomReset':
-      // Timeline zoom is renderer-owned (TimelineView holds pxPerSecond).
-      // Forward so App.vue's menu-action handler can apply it.
       wc.send(IPC.menu.action, action)
       break
     case 'view.toggleDevTools':
@@ -1163,15 +823,10 @@ function handleMenuAction(action: string): void {
       void shell.openExternal('https://github.com/irarainey/silverdaw/issues/new')
       break
     case 'help.about':
-      // Forwarded to the renderer so the in-app About dialog can render in
-      // the same dark Vue UI rather than the native OS message box.
       wc.send(IPC.menu.action, action)
       break
 
     default:
-      // Recent Projects entries arrive as `file.openRecentByIndex:<i>`.
-      // They're purely renderer-side (the renderer owns the MRU mirror
-      // and the open-project flow) so we forward without parsing.
       if (action.startsWith('file.openRecentByIndex:')) {
         wc.send(IPC.menu.action, action)
         break
@@ -1180,8 +835,6 @@ function handleMenuAction(action: string): void {
         wc.send(IPC.menu.action, action)
         break
       }
-      // Zoom presets arrive as `view.zoomPreset:<pxPerSecond>` — renderer-
-      // owned like the other zoom actions, so forward without parsing.
       if (action.startsWith('view.zoomPreset:')) {
         wc.send(IPC.menu.action, action)
         break
@@ -1191,29 +844,8 @@ function handleMenuAction(action: string): void {
 }
 
 // ─── .silverdaw file association + single-instance lock ────────────────────
-//
-// When Windows hands us a `.silverdaw` file (double-click in Explorer, or a
-// drag onto the taskbar shortcut), the path arrives as a command-line
-// argument. We support two cases:
-//
-//   1. Cold launch  — first instance of Silverdaw. The path is in
-//      `process.argv`; we stash it on `pendingOpenPath` and the renderer
-//      consumes it once the bridge is ready.
-//   2. Warm launch  — a second invocation while the app is already
-//      running. Without a single-instance lock, Electron would spin up a
-//      second main process (and a second JUCE backend, fighting for the
-//      same port). With the lock, the second instance immediately exits
-//      and the `second-instance` event fires in the first process; we
-//      pull the path out of its argv, focus the window and forward it
-//      to the renderer over `project:openFromPath`.
-//
-// Path extraction is deliberately conservative: only absolute paths whose
-// extension is `.silverdaw` are accepted, so a malicious shortcut can't
-// smuggle in non-project arguments. The renderer still runs the same
-// allow-list seeding (`prepareProjectOpen`) before sending PROJECT_LOAD.
+// Accept only absolute `.silverdaw` argv paths; warm launches forward to the existing instance.
 
-/** Pull the first `.silverdaw` file path out of an argv array, if any.
- *  argv[0] is the executable; we skip it and ignore Electron CLI flags. */
 function extractProjectPathFromArgv(argv: readonly string[]): string | null {
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i]
@@ -1226,33 +858,21 @@ function extractProjectPathFromArgv(argv: readonly string[]): string | null {
   return null
 }
 
-/** Path the renderer should open once the bridge is ready. Captured from
- *  argv at startup or pushed in by a `second-instance` event. */
 let pendingOpenPath: string | null = extractProjectPathFromArgv(process.argv)
 
-/** Acquire the single-instance lock. If we don't get it, another Silverdaw
- *  is already running — it will handle our argv via `second-instance` and
- *  this process should quit immediately. */
 const gotInstanceLock = app.requestSingleInstanceLock()
 if (!gotInstanceLock) {
-  // `app.quit()` is async (it fires `before-quit` first). Calling
-  // `app.exit(0)` instead guarantees we're gone before whenReady has a
-  // chance to fire and double-spawn the backend.
+  // Exit synchronously before `whenReady` can double-spawn the backend.
   app.exit(0)
 }
 
 app.on('second-instance', (_event, argv) => {
   const filePath = extractProjectPathFromArgv(argv)
-  // Bring the existing window forward regardless of whether a file path
-  // was supplied — the user clicking the taskbar shortcut while the app
-  // is open should focus it.
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
   }
   if (filePath && mainWindow) {
-    // Push directly to the renderer; it runs the same unsaved-changes
-    // guard + prepareProjectOpen + requestLoad flow as File > Open.
     mainWindow.webContents.send(IPC.project.openFromPath, filePath)
   }
 })
@@ -1260,25 +880,17 @@ app.on('second-instance', (_event, argv) => {
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'dark'
 
-  // Windows: associate the running process with a stable AppUserModelID
-  // so the taskbar groups our windows under one icon and the start-menu
-  // pin (post-install, Phase 6) targets the right shortcut. Must be set
-  // BEFORE the first BrowserWindow is created.
+  // AppUserModelID must be set before the first BrowserWindow on Windows.
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.silverdaw.app')
   }
 
-  // Load persisted preferences (window bounds, UI panel sizes, developer
-  // options) BEFORE we decide whether to spin up the cross-layer logger
-  // or expose DevTools. These are startup snapshots read by later code.
+  // Preferences must load before startup-only logger and DevTools decisions.
   await loadPreferences()
   startupLoggingEnabled = prefs.debug.loggingEnabled === true
   startupDevToolsEnabled = prefs.debug.devToolsEnabled === true
 
-  // Initialise the cross-layer file logger only when the user has opted
-  // in via Preferences. When off, `logMain` / `logRendererLine` / the
-  // backend's `silverdaw::log::*` calls all become silent no-ops — so
-  // a normal-use session never writes a `debug/` directory.
+  // Only opted-in diagnostic sessions write cross-layer logs.
   if (startupLoggingEnabled) {
     const defaultLogDir = getDefaultDebugLogDirectory()
     const preferredLogDir = prefs.debug.logDirectory.trim()
@@ -1307,15 +919,11 @@ app.whenReady().then(async () => {
     console.log('[main] file logging disabled (Preferences > Developer > Write diagnostic logs is off)')
   }
 
-  // Hide the native application menu — we render our own in HTML.
   Menu.setApplicationMenu(null)
 
   ipcMain.on(IPC.menu.action, (_evt, action: string) => handleMenuAction(action))
 
-  // Renderer-side logger flushes batches of structured log entries here so
-  // they land in the same session directory as main / backend events.
-  // Each entry is { level, tag, message, timestamp }; the level is the
-  // same 5-char padded form used by the backend so columns align.
+  // Renderer logs are batched into the same session folder as main/backend logs.
   ipcMain.handle(
     IPC.log.appendBatch,
     (_evt, entries: Array<{ level: LogLevel; tag: string; message: string; timestamp: number }>) => {
@@ -1327,26 +935,17 @@ app.whenReady().then(async () => {
     }
   )
 
-  // Tell the renderer which port the JUCE bridge is listening on. Resolved
-  // once at main-process start (env var or default) and shared with the
-  // spawned backend via `--port`.
+  // Main-selected dynamic backend port.
   ipcMain.handle(IPC.bridge.getPort, () => bridgePort)
 
-  // Hand the renderer the per-session AUTH token so it can send the
-  // initial `{type:'AUTH',payload:{token}}` envelope. The token never
-  // appears in argv or in the renderer's HTML — only the trusted preload
-  // bridge can fetch it.
+  // AUTH token only crosses the trusted preload bridge.
   ipcMain.handle(IPC.bridge.getToken, () => bridgeToken)
 
-  // Force-restart the backend. The renderer's liveness watchdog calls this
-  // when the engine looks hung (socket open but the message thread is
-  // wedged) so the supervisor kills + respawns it on the same port/token.
+  // Watchdog restart keeps the same port/token for reconnect.
   ipcMain.handle(IPC.backend.restart, (_evt, reason: unknown) => {
     backendSupervisor?.requestRestart(typeof reason === 'string' ? reason : 'renderer request')
   })
 
-  // Static app / runtime info for the in-app About dialog. Resolved once at
-  // start; never changes for the lifetime of the process.
   ipcMain.handle(IPC.app.getInfo, () => ({
     appVersion: app.getVersion(),
     electron: process.versions.electron,
@@ -1354,8 +953,7 @@ app.whenReady().then(async () => {
     node: process.versions.node
   }))
 
-  // Open an external URL in the user's default browser. We only forward
-  // http/https — anything else (file:, data:, custom schemes) is dropped.
+  // Only http/https URLs may leave the app via the OS browser.
   ipcMain.on(IPC.app.openExternal, (_evt, url: unknown) => {
     if (typeof url !== 'string') return
     let parsed: URL
@@ -1369,8 +967,6 @@ app.whenReady().then(async () => {
   })
 
 
-  // Open an audio file via the OS dialog and stream its bytes back to the renderer.
-  // Returns null if the user cancels.
   ipcMain.handle(IPC.audio.open, async () => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -1383,16 +979,11 @@ app.whenReady().then(async () => {
     const filePath = result.filePaths[0]
     rememberClipDir(filePath)
     const buf = await readFile(filePath)
-    // Copy into a plain ArrayBuffer so it survives the IPC boundary cleanly.
     const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
-    // Whitelist this path so the renderer can re-read it later via
-    // `audio:readFile` (e.g. when the user re-imports the same file).
     registerIssuedPath(filePath)
     return { filePath, fileName: basename(filePath), data }
   })
 
-  // Multi-file variant used by the library panel's Import button.
-  // Returns an array of opened files (paths + bytes) or `[]` if cancelled.
   ipcMain.handle(IPC.audio.openMany, async () => {
     if (!mainWindow) return []
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -1417,13 +1008,7 @@ app.whenReady().then(async () => {
     return out
   })
 
-  // Show the OS audio-file picker but return only the chosen path —
-  // no bytes are read, no allow-list registration happens here. Used
-  // by the relink-missing-files flow where the bytes will be loaded
-  // by the BACKEND when it re-creates the clip's audio source, not by
-  // the renderer. The file's parent directory is added to the path
-  // allow-list so the subsequent `audio:readMetadata` for cover-art
-  // refresh works without a separate registerDroppedPath round-trip.
+  // Relink returns a path only; backend reloads audio while metadata reads stay allowed.
   ipcMain.handle(
     IPC.audio.chooseFile,
     async (_evt, args: unknown): Promise<string | null> => {
@@ -1446,21 +1031,12 @@ app.whenReady().then(async () => {
     }
   )
 
-  // Renderer reports a path it obtained from an OS drag-drop via
-  // `webUtils.getPathForFile`. The path is added to the allow-list so the
-  // follow-up `audio:readFile` / `audio:readMetadata` calls will pass the
-  // FE-004 guard. We intentionally do NO further validation here: only the
-  // OS shell can have populated this string (the renderer can't fabricate
-  // a `File` with an arbitrary path), and even if it could, the actual
-  // read still has to satisfy the extension allow-list below.
+  // OS drag-drop paths are registered; actual reads still enforce extension allow-list.
   ipcMain.on(IPC.audio.registerDroppedPath, (_evt, filePath: unknown) => {
     if (typeof filePath !== 'string') return
     registerIssuedPath(filePath)
   })
 
-  // Read an audio file by absolute path (e.g. one obtained from an OS
-  // drag-drop via `webUtils.getPathForFile`). Returns null on failure or
-  // when the path is not on the allow-list.
   ipcMain.handle(IPC.audio.readFile, async (_evt, filePath: unknown) => {
     if (!isAllowedAudioPath(filePath)) {
       console.warn('[audio:readFile] rejected path not on allow-list:', filePath)
@@ -1476,10 +1052,6 @@ app.whenReady().then(async () => {
     }
   })
 
-  // Extract ID3 / Vorbis / iTunes / BWF metadata from an audio file. Returns
-  // a normalized subset of fields the renderer can display in the library
-  // card and tooltip. Resolves to `null` if parsing fails (the import still
-  // succeeds with only the technical info from Web Audio).
   ipcMain.handle(IPC.audio.readMetadata, async (_evt, filePath: unknown) => {
     if (!isAllowedAudioPath(filePath)) {
       console.warn('[audio:readMetadata] rejected path not on allow-list:', filePath)
@@ -1494,16 +1066,7 @@ app.whenReady().then(async () => {
     }
   })
 
-  // Write decoded PCM (from the renderer's Web Audio decoder) to a temp
-  // WAV file the JUCE backend can read. Used for formats the backend's
-  // AudioFormatManager doesn't understand natively on this platform —
-  // notably AAC / M4A / MP4 on Windows, where JUCE's bundled formats only
-  // cover WAV/AIFF/FLAC + the Windows Media SDK (WMA family + MP3).
-  //
-  // Returns the absolute path to the written WAV, or `null` on failure.
-  // The path is added to the audio allow-list so the renderer may re-read
-  // it via `audio:readFile` if it ever needs to (the backend reads it via
-  // its own filesystem access, independently of the allow-list).
+  // Transcode renderer-decoded PCM for formats the backend cannot decode natively.
   ipcMain.handle(IPC.audio.writeTempWav, async (_evt, payload: unknown) => {
     if (!payload || typeof payload !== 'object') return null
     const p = payload as {
@@ -1548,8 +1111,7 @@ app.whenReady().then(async () => {
       return null
     }
 
-    // Cache key includes channel + frame + rate so a re-decode that
-    // produced different output (sample-rate change, etc.) won't collide.
+    // Include decoded geometry so incompatible re-decodes do not collide.
     const hash = createHash('sha1')
       .update(canonicalisePath(p.sourcePath))
       .update(`|sr=${p.sampleRate}|ch=${chans.length}|n=${frameCount}`)
@@ -1557,9 +1119,7 @@ app.whenReady().then(async () => {
       .slice(0, 16)
     const outPath = join(TRANSCODE_CACHE_DIR, `${hash}.wav`)
 
-    // 32-bit float WAV (WAVE_FORMAT_IEEE_FLOAT, code 0x0003). JUCE's WAV
-    // reader handles both float and integer PCM; float avoids quantising
-    // the renderer's already-decoded sample data.
+    // Float WAV avoids quantising already-decoded samples.
     const numChannels = chans.length
     const bitsPerSample = 32
     const byteRate = p.sampleRate * numChannels * 4
@@ -1595,7 +1155,6 @@ app.whenReady().then(async () => {
     off += 4
     buf.writeUInt32LE(dataSize, off)
     off += 4
-    // Interleave planar channels frame-by-frame.
     for (let f = 0; f < frameCount; f++) {
       for (let c = 0; c < numChannels; c++) {
         buf.writeFloatLE(chans[c]![f]!, off)
@@ -1613,8 +1172,6 @@ app.whenReady().then(async () => {
     return outPath
   })
 
-  // Hand the renderer its persisted preferences (UI panel sizes etc.) on
-  // request. Window bounds are applied by main so they aren't included.
   ipcMain.handle(IPC.prefs.getUi, () => prefs.ui)
 
   ipcMain.on(IPC.window.minimize, () => {
@@ -1631,9 +1188,7 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.send(IPC.menu.action, 'app.requestClose')
   })
 
-  // Update one or more UI preference keys. Explicit Preferences-dialog saves
-  // should be durable immediately; high-frequency window bounds still use the
-  // debounced writer in `captureWindowState`.
+  // Preferences-dialog saves should be durable immediately.
   ipcMain.on(IPC.prefs.setUi, (_evt, partial: Partial<UiPrefs>) => {
     prefs.ui = { ...prefs.ui, ...partial }
     flushPrefsSaveSync()
@@ -1641,8 +1196,6 @@ app.whenReady().then(async () => {
 
   // ─── Developer preferences ───────────────────────────────────────────────
   // Startup snapshots gate logger init, backend env, and DevTools access.
-  // Saved values may differ during this session; changes take effect on
-  // next launch.
 
   ipcMain.handle(IPC.debug.getStartupPrefs, () => ({
     loggingEnabled: startupLoggingEnabled,
@@ -1668,14 +1221,11 @@ app.whenReady().then(async () => {
       return
     }
     prefs.debug = next
-    // Developer prefs only take effect after a restart, so this must
-    // hit disk before the user immediately quits/relaunches.
+    // These prefs only apply after restart, so persist synchronously.
     flushPrefsSaveSync()
   })
 
   // ─── Quality-of-life preferences (toasts, default paths) ────────────────
-  // Used by the Preferences dialog. The renderer reads everything in one
-  // round-trip and writes back partial updates as the user changes them.
   ipcMain.handle(IPC.prefs.getQol, () => ({
     toasts: { ...prefs.toasts },
     paths: { ...prefs.paths }
@@ -1697,26 +1247,16 @@ app.whenReady().then(async () => {
       }
       if (typeof p.paths.defaultClipDir === 'string' && p.paths.defaultClipDir.length > 0) {
         nextPaths.defaultClipDir = p.paths.defaultClipDir
-        // Reset the in-memory session pointer too — the user's
-        // intuition is "I changed the default, now use it" rather than
-        // "use it on next launch".
+        // Apply the new default immediately for this session.
         currentClipDir = p.paths.defaultClipDir
       }
       prefs.paths = nextPaths
-      // Make sure the new project dir is on disk — same reasoning as
-      // the startup ensure call. Fire-and-forget; failures just leave
-      // the dialog to fall back to the home folder.
+      // Best-effort; failures fall back in the dialog.
       void ensureProjectDirExists()
     }
     flushPrefsSaveSync()
   })
 
-  /**
-   * Show an OS folder-picker dialog. `defaultPath` seeds the starting
-   * directory; both args are optional. Returns the chosen absolute
-   * path or `null` if the user cancelled. Used by the Preferences
-   * dialog's "Change…" buttons for the two default-paths fields.
-   */
   ipcMain.handle(
     IPC.prefs.chooseDirectory,
     async (_evt, args: unknown): Promise<string | null> => {
@@ -1733,17 +1273,10 @@ app.whenReady().then(async () => {
   )
 
   // ─── Project file lifecycle ─────────────────────────────────────────────
-  // Helpers used by the renderer to drive Save / Save As / Open menus. Main
-  // owns the native OS dialog plus the Recent Projects MRU so the app can
-  // surface it in the File menu and on the Start Screen. The MRU head
-  // doubles as the "last opened project" — there's no separate slot.
+  // Main owns native project dialogs and the Recent Projects MRU.
 
   ipcMain.on(IPC.project.setLastPath, (_evt, value: unknown) => {
     if (typeof value !== 'string' || value.length === 0) return
-    // A successful save / load bumps the Recent Projects MRU. Bridge
-    // service calls this IPC from both the PROJECT_SAVED arm and the
-    // `reset=true && filePath` PROJECT_STATE arm, so every
-    // user-visible "I just opened this file" event is captured.
     if (bumpRecentProject(value)) flushPrefsSaveSync()
   })
 
@@ -1775,9 +1308,6 @@ app.whenReady().then(async () => {
       if (!mainWindow) return null
       const suggested =
         typeof defaultName === 'string' && defaultName.length > 0 ? defaultName : 'Untitled'
-      // Seed the save dialog inside the configured project folder so the
-      // user lands in the right place by default, but keep the filename
-      // suggestion intact.
       const defaultPath = prefs.paths.defaultProjectDir
         ? join(prefs.paths.defaultProjectDir, `${suggested}.silverdaw`)
         : `${suggested}.silverdaw`
@@ -1791,15 +1321,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  /**
-   * Resolve the default output path for an Export Mixdown dialog.
-   * Rule: `<projectDir>/mixdown/<projectName>.<ext>` when the project
-   * has been saved; fall back to `<defaultProjectDir>/mixdown/<projectName>.<ext>`
-   * otherwise (so a freshly-created Untitled project still has a
-   * sensible default). The `mixdown/` subfolder is NOT created here —
-   * it's created by the backend right before the writer opens, so a
-   * cancel from the save dialog doesn't litter the filesystem.
-   */
+  // Default mixdowns under `mixdown/`; backend creates the folder only when writing.
   ipcMain.handle(
     IPC.mixdown.resolveDefaultPath,
     async (
@@ -1812,9 +1334,7 @@ app.whenReady().then(async () => {
         (typeof projectName === 'string' && projectName.trim().length > 0
           ? projectName.trim()
           : 'Untitled')
-          // Strip filesystem-unsafe characters so the suggestion is
-          // a valid Windows filename out of the box. The user can
-          // still type anything in the dialog.
+          // Make the suggested filename valid on Windows.
           .replace(/[\\/:*?"<>|]/g, '_')
       const ext =
         format === 'mp3'
@@ -1856,13 +1376,10 @@ app.whenReady().then(async () => {
             : ext === 'aiff'
               ? [{ name: 'AIFF audio', extensions: ['aiff', 'aif'] }]
               : [{ name: 'WAV audio', extensions: ['wav'] }]
-      // Ensure the parent dir exists so the dialog lands in the right
-      // place; ignore errors so a missing-volume case just falls back
-      // to the user's last cwd.
       try {
         await mkdir(dirname(suggestedDefaultPath), { recursive: true })
       } catch {
-        // best-effort
+        // Best-effort: missing volume falls back to the dialog's last cwd.
       }
       const result = await dialog.showSaveDialog(mainWindow, {
         title: 'Export Mixdown',
@@ -1874,20 +1391,7 @@ app.whenReady().then(async () => {
     }
   )
 
-  /**
-   * Confirm overwrite of an existing mixdown target. Resolves to
-   * `'overwrite'` when the user confirms, `'cancel'` when the user
-   * declines (so the dialog can stay open and let them edit the
-   * filename), or `'not-found'` when the file doesn't actually
-   * exist (no prompt needed — the renderer can proceed straight to
-   * `MIXDOWN_START`).
-   *
-   * The native Save As dialog already shows the OS overwrite prompt
-   * when the user picks a path through Browse…, but users who type
-   * directly into the path field bypass that. This handler is the
-   * belt-and-braces check the renderer always calls before
-   * dispatching the bridge envelope.
-   */
+  // Extra overwrite prompt for manually typed mixdown paths.
   ipcMain.handle(
     IPC.mixdown.confirmOverwrite,
     async (_evt, filePath: unknown): Promise<'overwrite' | 'cancel' | 'not-found'> => {
@@ -1907,36 +1411,13 @@ app.whenReady().then(async () => {
     }
   )
 
-  /**
-   * Pre-register every audio path referenced by `<filePath="...">`
-   * attributes inside the supplied `.silverdaw` XML file. Called by the
-   * renderer right before it fires `PROJECT_LOAD` (both for the
-   * user-driven File > Open flow and the auto-open-last-project on
-   * launch). Without this the renderer's post-load
-   * `audio:readMetadata` calls — fired to refresh cover art on the
-   * library cards — get rejected by the allow-list, leaving every
-   * library card with a generic icon.
-   *
-   * The path-validation rules inside `registerIssuedPath` still apply
-   * (absolute path + known audio extension), so a malicious file can't
-   * smuggle e.g. `C:\Windows\notepad.exe` onto the read whitelist.
-   *
-   * Returns true if the project file was readable; per-path
-   * registration failures are silent (the renderer will surface them
-   * later as missing-file toasts when the backend tries to load them).
-   */
+  // Pre-register project audio paths; `registerIssuedPath` still enforces the allow-list.
   ipcMain.handle(IPC.project.prepareOpen, async (_evt, filePath: unknown): Promise<boolean> => {
     if (typeof filePath !== 'string' || filePath.length === 0) return false
     if (extname(filePath).toLowerCase() !== '.silverdaw') return false
     try {
       const content = await readFile(filePath, 'utf8')
-      // `.silverdaw` files are JSON; the audio paths used by clips
-      // live in `filePath` properties anywhere inside the tree. We
-      // walk the parsed object recursively and register every value
-      // we find under that key. `registerIssuedPath` itself enforces
-      // the absolute-path + audio-extension allow-list, so even a
-      // tampered project file can't smuggle non-audio paths onto the
-      // read whitelist.
+      // Project JSON may contain `filePath` anywhere in the tree.
       let parsed: unknown
       try {
         parsed = JSON.parse(content)
@@ -1967,13 +1448,7 @@ app.whenReady().then(async () => {
     }
   })
 
-  /**
-   * Renderer-side bootstrap calls this once the bridge is ready, asking
-   * main "did the user launch us by double-clicking a .silverdaw file?".
-   * If so we hand back the path (clearing it so a later reload doesn't
-   * re-open the same project) and the renderer drives the normal load
-   * flow. Returns `null` when there's no pending path.
-   */
+  // Consume a pending launch path once so renderer reloads do not reopen it.
   ipcMain.handle(IPC.project.consumePendingOpenPath, (): string | null => {
     const p = pendingOpenPath
     pendingOpenPath = null
@@ -2022,13 +1497,7 @@ app.whenReady().then(async () => {
   })
 
   // ─── Audio output device preferences ────────────────────────────────────
-  //
-  // The renderer's `audioDeviceStore` is the source of truth at
-  // runtime; this IPC is just the persistence path. Renderer calls
-  // `setAudioOutput` only after the backend acks an
-  // `AUDIO_DEVICE_SELECT` with `ok: true`, so a saved device that
-  // failed to open never gets persisted (and won't repeatedly fail
-  // on subsequent launches).
+  // Persist only backend-acknowledged selections; runtime state stays in the renderer.
   ipcMain.handle(
     IPC.prefs.getAudioOutput,
     (): { typeName: string | null; deviceName: string | null } => ({ ...prefs.audioOutput })
@@ -2051,12 +1520,7 @@ app.whenReady().then(async () => {
   })
 
   // ─── Autosave folder + manifest IPCs ────────────────────────────────────
-  //
-  // The renderer's autosave manager drives writes. Main owns the
-  // filesystem side — folder creation, manifest write, recovery scan,
-  // and bucket cleanup — so the renderer never touches paths outside
-  // `%APPDATA%/Silverdaw/autosave/<projectId>/`. Every accepted
-  // `projectId` is validated against `AUTOSAVE_ID_REGEX` first.
+  // Main confines autosave filesystem access to validated project buckets.
 
   ipcMain.handle(
     IPC.autosave.resolveDir,
@@ -2140,11 +1604,9 @@ app.whenReady().then(async () => {
       try {
         autosaveStat = await stat(autosavePath)
       } catch {
-        // No autosave file on disk — manifest is orphaned. Skip.
         continue
       }
-      // Recoverable iff the autosave is newer than its backing file
-      // (or the backing file is missing / nonexistent / null).
+      // Recoverable iff autosave is newer or the backing file is missing.
       let originalExists = false
       let recoverable = manifest.originalPath === null
       if (manifest.originalPath) {
@@ -2153,7 +1615,6 @@ app.whenReady().then(async () => {
           originalExists = true
           if (autosaveStat.mtimeMs > origStat.mtimeMs + 500) recoverable = true
         } catch {
-          // Original gone — definitely recoverable.
           recoverable = true
         }
       }
@@ -2167,7 +1628,6 @@ app.whenReady().then(async () => {
         originalExists
       })
     }
-    // Most recent first.
     out.sort((a, b) => (a.savedAtIso < b.savedAtIso ? 1 : -1))
     return out
   })
@@ -2176,9 +1636,7 @@ app.whenReady().then(async () => {
     if (typeof projectId !== 'string' || !AUTOSAVE_ID_REGEX.test(projectId)) return false
     try {
       const dir = resolveAutosaveDir(projectId)
-      // Verify the dir is under the autosave root (paranoid double-check
-      // — `AUTOSAVE_ID_REGEX` already prevents traversal, but the cost
-      // is one extra `startsWith` so do it anyway).
+      // Paranoid root check in addition to projectId validation.
       const root = getAutosaveRoot()
       const canonical = pathResolve(dir)
       const canonicalRoot = pathResolve(root)
@@ -2194,17 +1652,7 @@ app.whenReady().then(async () => {
     }
   })
 
-  /**
-   * Read a peaks cache file from `%APPDATA%/Silverdaw/peaks/`. The
-   * backend writes peaks to that directory and sends the renderer a
-   * `WAVEFORM_READY { cachePath }` envelope; the renderer fetches the
-   * bytes via this IPC and parses the header + float32 payload locally.
-   *
-   * Path validation: must canonicalise into the peaks cache directory
-   * exactly (no symlinks, no traversal). Anything else is refused —
-   * even a compromised renderer can only read files this main process
-   * actively produced.
-   */
+  // Peaks reads are confined to the backend-produced cache directory.
   const peaksCacheDir = pathResolve(app.getPath('appData'), 'Silverdaw', 'peaks')
   ipcMain.handle(IPC.peaks.readCacheFile, async (_evt, value: unknown): Promise<ArrayBuffer | null> => {
     if (typeof value !== 'string' || value.length === 0) return null
@@ -2216,8 +1664,7 @@ app.whenReady().then(async () => {
     }
     try {
       const buf = await readFile(canonical)
-      // Return as a fresh ArrayBuffer so the structured-clone IPC hop
-      // delivers a clean, contiguous buffer to the renderer.
+      // Structured clone should receive a clean contiguous buffer.
       return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
     } catch (err) {
       console.warn('[peaks:readCacheFile] read failed:', canonical, err)
@@ -2225,12 +1672,7 @@ app.whenReady().then(async () => {
     }
   })
 
-  // Pick the WebSocket port the backend will listen on. When the dev
-  // env var is set we honour it as-is (developer intent); otherwise we
-  // probe a small range starting at the default port so a leftover
-  // Silverdaw process holding 8765 doesn't lock new instances out of
-  // launching. The renderer fetches whatever we settle on via
-  // `bridge:getPort` so all three processes agree.
+  // Honour explicit dev port; otherwise probe past leftover processes.
   if (!bridgePortEnvOverridden) {
     const free = await findFreeBridgePort(DEFAULT_BRIDGE_PORT, 20)
     if (free === null) {
@@ -2238,9 +1680,7 @@ app.whenReady().then(async () => {
         `Could not find a free TCP port for the audio engine in the range ` +
         `${DEFAULT_BRIDGE_PORT}–${DEFAULT_BRIDGE_PORT + 19}. ` +
         `Close any other running Silverdaw windows and try again.`
-      // Surface to the user via a native dialog because the renderer
-      // window doesn't exist yet; then exit so the broken launch
-      // doesn't leave an idle Electron in the taskbar.
+      // Renderer does not exist yet, so use a native error dialog.
       dialog.showErrorBox('Unable to start Silverdaw', msg)
       app.exit(1)
       return
@@ -2251,9 +1691,7 @@ app.whenReady().then(async () => {
     bridgePort = free
   }
 
-  // Create the window first so the user sees a frame immediately; defer
-  // backend-process spawn to the next tick so it doesn't contend with the
-  // renderer for CPU during initial paint.
+  // Defer backend spawn until after initial window creation to protect first paint.
   createWindow()
   setImmediate(startBackend)
 

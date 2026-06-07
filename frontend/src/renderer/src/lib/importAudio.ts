@@ -1,12 +1,4 @@
-// Shared "import an audio file into a track" flow.
-//
-// Bundles the three steps that always go together when bringing a file in:
-//   1. Show the native open-file dialog (via the preload bridge).
-//   2. Decode the file's PCM peaks in the renderer.
-//   3. Mutate the project store + tell the backend so it loads the file too.
-//
-// Used by `TrackHeaderPanel` (per-track Import button) and any future
-// "import multiple files" / drag-and-drop entry points.
+// Shared audio import flow: dialog, decode, project/library update, backend load.
 
 import { decodeAudioToPeaks, detectMusicalKey } from '@/lib/audio'
 import { send as sendBridge, probeAudioFile } from '@/lib/bridgeService'
@@ -18,16 +10,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { promptSampleRateMismatch, type RateBucket } from '@/lib/sampleRatePrompt'
 
-/**
- * File extensions the JUCE backend's `AudioFormatManager` can decode
- * natively on every supported platform. Anything outside this set is
- * round-tripped through the renderer's Web Audio decoder + a temp WAV
- * write so the backend still has a file it understands.
- *
- * Notably AAC / M4A / MP4 are NOT in this list: on Windows JUCE only
- * ships the legacy Windows Media Format SDK reader (WMA family + MP3),
- * not a Media Foundation reader, so those formats need transcoding.
- */
+/** Backend-native formats; AAC/M4A/MP4 need renderer decode + temp WAV on Windows. */
 const BACKEND_NATIVE_EXTS: ReadonlySet<string> = new Set([
   '.wav',
   '.aif',
@@ -57,13 +40,7 @@ function withRedetectedKey(metadata: AudioMetadata | null, detectedKey: string |
   return next
 }
 
-/**
- * Resolve the path the JUCE backend should load for a freshly-decoded
- * file. For natively-supported formats this is just the source path.
- * Otherwise we ask main to write the decoded PCM as a temp WAV and
- * return that path. Falls back to the source path on transcode failure
- * so the user still gets a useful error from the backend.
- */
+/** Use the source path when native; otherwise write decoded PCM to a temp WAV. */
 async function resolvePlaybackPath(
   sourcePath: string,
   decoded: { sampleRate: number; channels: Float32Array[] }
@@ -87,22 +64,7 @@ async function resolvePlaybackPath(
   return sourcePath
 }
 
-/**
- * Pre-flight a batched import: probe every file's true sample rate
- * (via the backend's `AUDIO_FILE_PROBE` envelope), detect any that
- * differ from the project's effective target rate, and prompt the
- * user with the per-rate bucket summary. Returns `'proceed'` when the
- * user resolved the prompt (either accepted convert-on-import OR
- * switched the project to a higher rate), `'cancel'` when they
- * cancelled the batch.
- *
- * Files whose probe failed are passed through silently — the
- * downstream import path falls back to Web Audio's reported rate and
- * surfaces any decode error itself.
- *
- * Idempotent for the no-mismatch case: returns `'proceed'` without
- * touching the prompt UI when every file matches the project rate.
- */
+/** Probe true sample rates before batched import; prompt only when buckets mismatch. */
 export async function preflightSampleRates(filePaths: readonly string[]): Promise<'proceed' | 'cancel'> {
   if (filePaths.length === 0) return 'proceed'
   const project = useProjectStore()
@@ -113,8 +75,7 @@ export async function preflightSampleRates(filePaths: readonly string[]): Promis
     `preflightSampleRates files=${filePaths.length} effectiveProjectRate=${effectiveProjectRate}Hz (project=${project.targetSampleRate ?? 'null'} default=${ui.defaultProjectSampleRate})`
   )
 
-  // Parallel probe; failures fall back to "rate unknown" and don't
-  // contribute to the mismatch summary.
+  // Failed probes don't contribute to the mismatch summary.
   const probes = await Promise.all(filePaths.map((p) => probeAudioFile(p)))
   const byRate = new Map<number, number>()
   for (const p of probes) {
@@ -138,11 +99,7 @@ export async function preflightSampleRates(filePaths: readonly string[]): Promis
     const choice = await promptSampleRateMismatch(buckets, effectiveProjectRate)
     if (choice === 'cancel') return 'cancel'
     if (choice === 'switch-project') {
-      // Pick the highest rate the user has files at, capped at 48 kHz
-      // (the project's hard cap). When the source rates are all below
-      // the cap and one of them matches a supported project rate
-      // (44 100 / 48 000), pin to that rate; otherwise pin to 48 000
-      // and the convert step in the import flow will handle the cap.
+      // Pin to a supported project rate, capped at 48 kHz.
       const MAX_SUPPORTED = 48000
       const rates = Array.from(byRate.keys())
       let target = Math.max(...rates)
@@ -158,15 +115,7 @@ export async function preflightSampleRates(filePaths: readonly string[]): Promis
   }
 }
 
-/**
- * Open the audio-file dialog and add the chosen file as a clip on the given
- * track. If `startMs` is omitted the clip is placed at the current playhead
- * position. The file is also added to the project library so it can be
- * dragged onto other tracks later; if the library already contains the
- * same `filePath`, the existing decoded peaks are reused (no re-decode).
- * Returns the new clip's id, or `null` if the user cancelled / decoding
- * failed / the track is missing.
- */
+/** Open one file and add it to the library, then place it on `trackId`. */
 export async function importAudioIntoTrack(
   trackId: string,
   startMs?: number
@@ -185,29 +134,19 @@ export async function importAudioIntoTrack(
     return null
   }
 
-  // Default to the current playhead position so importing while the cursor
-  // is parked at e.g. bar 4 drops the clip right where the user is looking.
+  // Default to the current playhead position.
   const resolvedStartMs = typeof startMs === 'number' ? startMs : transport.positionMs
 
-  // Self-batch this single-file import so the status-bar progress bar
-  // still shows for per-track imports (not just library batches).
+  // Self-batch so per-track imports still show progress.
   library.beginImportBatch(1)
 
-  // Delegate library registration to the exact same helper the
-  // library-panel Import button uses, so the two entry points share
-  // their decode + peaks + metadata + temp-WAV pipeline. Without
-  // this, a bug fix in one path would silently miss the other (and
-  // historically the per-track path forgot to call
-  // `applyDropTimeWarp` — see the auto-warp-on-import bug).
+  // Reuse the library import path so decode, peaks, metadata, temp WAV, and warp stay aligned.
   const itemId = await importAudioIntoLibrary(opened)
   if (!itemId) return null
   const audio = library.getItem(itemId)
   if (!audio) return null
 
-  // Place the new library item on the requested track. Reuses the
-  // drag-and-drop entry point so the warp / collision / saved-clip
-  // logic is identical. `addClipFromLibrary` already sends `CLIP_ADD`
-  // and runs `applyDropTimeWarp` for us.
+  // Reuse drag/drop placement so warp, collision, and saved-clip handling match.
   log.info(
     'import',
     `importAudioIntoTrack → addClipFromLibrary itemId=${audio.id} bpm=${audio.bpm ?? 'undef'} ` +
@@ -240,16 +179,7 @@ export async function importAudioIntoTrack(
   )
 }
 
-/**
- * Decode an already-opened audio file (bytes + path) and add it to the
- * project library. Items are de-duplicated by `filePath` so re-importing
- * the same file twice returns the existing item's id rather than decoding
- * again. Returns the library item's id, or `null` on decode failure.
- *
- * Always calls `library.noteImportFinished()` exactly once (success or
- * failure) so callers that called `beginImportBatch(N)` up-front see the
- * status-bar progress bar drain correctly.
- */
+/** Add an opened file to the library, de-duping by path and always draining import progress. */
 export async function importAudioIntoLibrary(opened: {
   filePath: string
   fileName: string
@@ -259,7 +189,6 @@ export async function importAudioIntoLibrary(opened: {
   const importEntryId = library.beginImport(opened.fileName)
 
   try {
-    // Skip the decode entirely if we already have this file in the library.
     const existing = library.items.find((i) => i.filePath === opened.filePath)
     if (existing) {
       library.finishImport(importEntryId, 'done')
@@ -270,11 +199,7 @@ export async function importAudioIntoLibrary(opened: {
       decodeAudioToPeaks(opened.data),
       window.silverdaw.readAudioMetadata(opened.filePath).catch(() => null)
     ])
-    // Web Audio's `decodeAudioData` silently resamples to the
-    // AudioContext rate (typically 48 kHz on Windows), so the rate on
-    // `decoded` may not match the source file. Ask the backend for
-    // the file's true rate via the format-header probe; fall back to
-    // the Web-Audio-reported rate if the probe fails.
+    // Web Audio may resample; ask the backend for the file's true rate.
     const probe = await probeAudioFile(opened.filePath, { timeoutMs: 5000 })
     const trueSampleRate = probe.ok ? probe.sampleRate : decoded.sampleRate
     const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
@@ -306,12 +231,7 @@ export async function importAudioIntoLibrary(opened: {
   }
 }
 
-/**
- * Force-refresh all derived analysis for an existing library item:
- * renderer-side decode/peaks/key metadata plus backend decoded-WAV cache
- * and BPM/beat detection. The source file stays the stable identity of the
- * library item; only derived fields are replaced.
- */
+/** Refresh derived analysis while preserving the source file identity. */
 export async function reanalyseLibraryItem(itemId: string): Promise<void> {
   const library = useLibraryStore()
   const notifications = useNotificationsStore()
@@ -341,9 +261,7 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
       decodeAudioToPeaks(opened.data),
       window.silverdaw.readAudioMetadata(item.filePath).catch(() => null)
     ])
-    // Same true-rate probe rationale as `importAudioIntoLibrary`: Web
-    // Audio's `decodeAudioData` resamples to the AudioContext rate
-    // and lies about the source rate on Windows.
+    // Same true-rate probe rationale as `importAudioIntoLibrary`.
     const probe = await probeAudioFile(item.filePath, { timeoutMs: 5000 })
     const trueSampleRate = probe.ok ? probe.sampleRate : decoded.sampleRate
     const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)

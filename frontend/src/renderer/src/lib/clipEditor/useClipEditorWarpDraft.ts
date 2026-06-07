@@ -1,18 +1,5 @@
-// Draft warp + pitch state for the Clip Editor.
-//
-// The dialog is transactional: every warp / pitch control change is held
-// in this draft until the user clicks **Save**. Save commits it to the
-// library item (and propagates to linked clips); Cancel discards the
-// draft entirely. The draft is also what the preview voice plays back
-// while editing, so changing a slider is audible immediately even
-// though nothing is persisted yet.
-//
-// `useClipEditorWarpDraft` extracts that state machinery from
-// `ClipEditorDialog.vue` so the dialog shell, the inline
-// warp/pitch panel, and the future test suite all read from one
-// place. The dialog still owns the lifecycle (call `initialise()`
-// every time the editor opens on a new target; the values are
-// passive otherwise).
+// Transactional Clip Editor warp and pitch draft state.
+// Preview uses this draft immediately; Save commits it and Cancel discards it.
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { LibraryItem } from '@/stores/libraryStore'
@@ -21,9 +8,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
-/** Returns true when the given warp settings include a non-trivial
- *  pitch shift (which requires the Rubber Band processor even when
- *  tempo warp is disabled). */
+/** True when pitch shift requires the processor even without tempo warp. */
 export function pitchNeedsProcessor(
   semitones: number | undefined,
   cents: number | undefined
@@ -31,10 +16,7 @@ export function pitchNeedsProcessor(
   return (semitones ?? 0) !== 0 || (cents ?? 0) !== 0
 }
 
-/** Determine whether a clip / library item has *audible tempo warp*
- *  applied — i.e. warp is enabled and the source isn't just being used
- *  as a pitch-only host (where `tempoRatio === 1` means "pitch shift,
- *  no tempo change"). */
+/** True when warp changes tempo, not just pitch with `tempoRatio === 1`. */
 export function currentHasTempoWarp(current: {
   warpEnabled?: boolean
   tempoRatio?: number
@@ -61,36 +43,25 @@ export interface ClipEditorWarpDraft {
   draftCents: Ref<number>
 
   // ─── Derived view ───
-  /** Effective tempo ratio if the current draft were committed. `1.0`
-   *  when warp is disabled or the tempo would resolve to 1×. */
+  /** Effective tempo ratio if committed; `1` when inactive. */
   draftEffectiveRatio: ComputedRef<number>
-  /** Effective BPM (source BPM × ratio) for the inspector's read-out.
-   *  `null` when no source BPM has been detected. */
+  /** Effective BPM for the inspector, or `null` without source BPM. */
   draftEffectiveBpm: ComputedRef<number | null>
-  /** True when warp is enabled AND the resulting ratio is audibly
-   *  different from 1.0. Drives the WARP pill in the editor header. */
+  /** True when tempo warp is audible. */
   draftTempoWarpActive: ComputedRef<boolean>
-  /** True when the Rubber Band processor must be installed — either
-   *  warp is on OR pitch is shifted (a pitch-only run still needs the
-   *  processor at tempoRatio 1). */
+  /** True when tempo or pitch processing is needed. */
   draftProcessorEnabled: ComputedRef<boolean>
   /** True when the "Follow project BPM" radio is selected. */
   tempoFollowsProject: ComputedRef<boolean>
 
   // ─── Helpers ───
-  /** Convert the pinned-BPM draft into a Rubber Band `tempoRatio`.
-   *  Returns `undefined` if the source has no detected BPM (so no ratio
-   *  can be derived). */
+  /** Convert pinned BPM to `tempoRatio`; undefined without source BPM. */
   tempoRatioFromPinnedBpm: () => number | undefined
-  /** The tempo ratio to push to the preview voice for the current
-   *  draft. Returns `undefined` when the processor should be bypassed
-   *  on the preview path, `1` when only pitch is active. */
+  /** Preview tempo ratio: undefined bypasses processing, `1` means pitch-only. */
   previewTempoRatio: () => number | undefined
 
   // ─── Lifecycle ───
-  /** Seed the draft from a clip / library item — usually called every
-   *  time the dialog opens on a fresh target. Resets to defaults when
-   *  the editor is opened on a `source-library` item. */
+  /** Seed the draft for the current editor target. */
   initialise: (current: Clip | LibraryItem | null, editsExistingClip: boolean) => void
   /** "Follow project BPM" radio handler. */
   followProjectBpm: () => void
@@ -223,7 +194,5 @@ export function useClipEditorWarpDraft(
   }
 }
 
-// Re-exported clamp helper so the dialog can apply the same rounding
-// to draft values it ships to the preview voice without duplicating
-// the rule.
+// Shared clamp rule for preview-bound draft values.
 export { clampNumber }

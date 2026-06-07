@@ -1,15 +1,5 @@
 <script setup lang="ts">
-// Reusable stereo peak meter. Drives its animation off the shared
-// `requestAnimationFrame` loop and the `source` callback the caller
-// provides — the meter never touches Vue reactivity per frame, so
-// dozens of these can sit on the page (one per project track plus
-// the master) at zero per-tick render cost beyond their own SVG
-// attribute updates.
-//
-// Originally inlined in `MasterMeter.vue` (Phase 4); extracted in
-// Phase 5 step 1c so the per-track meters in `TrackHeaderPanel`
-// share one well-tested implementation of the dB taper, attack /
-// release smoothing, and peak-hold-then-decay marker.
+// Reusable stereo peak meter; RAF updates SVG attrs without per-frame Vue renders.
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
@@ -21,23 +11,19 @@ import {
 
 const props = withDefaults(
   defineProps<{
-    /** Pulled once per frame on the meter's RAF tick. Must be cheap. */
+    /** Pulled once per RAF tick; must be cheap. */
     source: () => { peakL: number; peakR: number }
-    /** `horizontal` lays the two bars top-over-bottom and fills L→R.
-     *  `vertical` lays them side-by-side and fills bottom-up. */
+    /** `horizontal` fills L→R; `vertical` fills bottom-up. */
     orientation?: 'horizontal' | 'vertical'
     width?: number
     height?: number
-    /** Draws the 0 dB and -12 dB reference ticks. Off by default
-     *  on the small track meters where they'd dominate the visual. */
+    /** Draws the 0 dB and -12 dB reference ticks. */
     showReferenceTicks?: boolean
-    /** Builds the tooltip / aria-label. Receives the latest linear
-     *  peaks — usually formatted via `formatLinearAsDb`. */
+    /** Builds the tooltip / aria-label from latest linear peaks. */
     titleFormatter?: (peakL: number, peakR: number) => string
     /** Pixel gap between the two bars. */
     barGap?: number
-    /** Long-axis length of each LED segment, in px. Set to `0` to
-     *  disable the segmented overlay and draw a smooth bar. */
+    /** Long-axis LED segment size; `0` draws a smooth bar. */
     segmentSize?: number
     /** Gap between LED segments, in px. */
     segmentGap?: number
@@ -54,8 +40,7 @@ const props = withDefaults(
   }
 )
 
-// ─── Tunables (kept identical to the original MasterMeter so the
-//     existing meter look-and-feel is preserved bit-for-bit) ──────
+// ─── Tunables ────────────────────────────────────────────────────
 const PEAK_HOLD_MS = 1500
 const PEAK_DECAY_MS = 600
 const ATTACK_PER_FRAME = 1.0
@@ -120,16 +105,11 @@ onBeforeUnmount(() => {
 })
 
 // ─── Geometry (orientation-aware) ────────────────────────────────────
-// Each "bar" occupies half of the cross-axis (minus the gap). The
-// long axis is the value axis: width when horizontal, height when
-// vertical. Computed so the SVG geometry stays declarative in the
-// template — no per-frame layout work in JS beyond `barPos` reads.
+// Computed geometry keeps per-frame work to reading bar positions.
 
 const horizontal = computed(() => props.orientation === 'horizontal')
 
-// Cross-axis = the axis perpendicular to the bar fill direction.
 const crossSize = computed(() => (horizontal.value ? props.height : props.width))
-// Long axis = the axis the bar grows along.
 const longSize = computed(() => (horizontal.value ? props.width : props.height))
 const barCross = computed(() => Math.max(1, Math.floor((crossSize.value - props.barGap) / 2)))
 
@@ -137,7 +117,6 @@ function barCrossOffset(side: 'L' | 'R'): number {
   return side === 'L' ? 0 : barCross.value + props.barGap
 }
 
-// Lit-bar rect helpers. Pre-compute the 4 attrs at template time.
 function barX(side: 'L' | 'R', _pos: number): number {
   return horizontal.value ? 0 : barCrossOffset(side)
 }
@@ -152,7 +131,6 @@ function barH(_side: 'L' | 'R', pos: number): number {
   return horizontal.value ? barCross.value : longSize.value * pos
 }
 
-// Background trough rect (always full long-axis extent).
 function troughX(side: 'L' | 'R'): number {
   return horizontal.value ? 0 : barCrossOffset(side)
 }
@@ -166,13 +144,9 @@ function troughH(): number {
   return horizontal.value ? barCross.value : longSize.value
 }
 
-// Reference-tick (0 dB, -12 dB) coordinates — drawn across both bars
-// perpendicular to the fill direction.
 const zeroDbPos = computed(() => taperDbToPosition(0, MAX_MASTER_DB))
 const minus12Pos = computed(() => taperDbToPosition(-12, MAX_MASTER_DB))
 
-// Peak-hold tick line endpoints (perpendicular to fill direction,
-// spanning a single bar across its cross-axis).
 function holdLineX1(side: 'L' | 'R', pos: number): number {
   return horizontal.value ? longSize.value * pos : barCrossOffset(side)
 }
@@ -186,8 +160,6 @@ function holdLineY2(side: 'L' | 'R', pos: number): number {
   return horizontal.value ? barCrossOffset(side) + barCross.value : longSize.value * (1 - pos)
 }
 
-// Reference-tick line endpoints (span ALL bars across the meter's
-// cross-axis, so the line crosses both L and R together).
 function refLineX1(pos: number): number {
   return horizontal.value ? longSize.value * pos : 0
 }
@@ -201,24 +173,16 @@ function refLineY2(pos: number): number {
   return horizontal.value ? props.height : longSize.value * (1 - pos)
 }
 
-// Gradient direction: green at quiet end → red at hot end. For
-// vertical the quiet end is the bottom (y=height), for horizontal
-// the quiet end is the left (x=0). Encoded as SVG userSpaceOnUse
-// gradient coordinates per orientation.
+// Gradient coordinates orient quiet-to-hot per meter direction.
 const gradId = `peak-meter-grad-${Math.random().toString(36).slice(2, 8)}`
 
 // ─── LED segmentation overlay ─────────────────────────────────────
-// Rather than mask the bar, we leave the gradient-filled bar intact
-// and lay narrow trough-coloured "gap" stripes across it at a fixed
-// pitch on the long axis. Cheap, and works identically for both
-// orientations. The trough rect peeks through each gap → the lit
-// LEDs visually pop. Disabled when `segmentSize <= 0`.
+// Gap stripes are cheaper than masking and work in both orientations.
 const segmentPitch = computed(() => Math.max(1, props.segmentSize + props.segmentGap))
 const segmentGapOffsets = computed<number[]>(() => {
   if (props.segmentSize <= 0 || props.segmentGap <= 0) return []
   const offsets: number[] = []
-  // Gap stripes sit BEFORE each segment from index 1 onward, so the
-  // first segment sits flush against the trough's leading edge.
+  // First segment stays flush against the trough edge.
   for (let pos = props.segmentSize; pos < longSize.value; pos += segmentPitch.value) {
     offsets.push(pos)
   }

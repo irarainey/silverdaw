@@ -1,48 +1,18 @@
 <script setup lang="ts">
-// Unified startup landing page.
-//
-// Two distinct visual states, never on screen at the same time:
-//
-//   1. **Loading state** — centred logo + spinner + the current
-//      boot phase ("Waiting for the backend to start" → "Connecting
-//      to audio engine" → "Scanning audio devices" → "Checking for
-//      recovered projects"). No buttons. This continues the inline
-//      splash inside `index.html`; they share the same logo crop and
-//      backdrop so the hand-off is seamless.
-//
-//   2. **Ready state** — the project picker: logo + title + New
-//      Project / Open Project… / Recent Projects. Only mounts once
-//      the backend, the device scan, and the recovery flow have all
-//      resolved, so the buttons never render disabled. The user
-//      knows the app is ready the moment they see them.
-//
-// On terminal bridge failure the whole screen swaps to a focused
-// error view with a single Quit action; the loading + ready surfaces
-// are both hidden because they cannot recover the app.
-//
-// Visibility (from App.vue) only requires that the project is empty
-// and the user hasn't dismissed the screen — it mounts BEFORE the
-// bridge is up so there's no cross-fade between two splashes.
-// RecoveryDialog stacks above this overlay via z-index.
+// Startup landing page with loading, ready, and bridge-failure modes.
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useTransportStore } from '@/stores/transportStore'
-// 256-px source is large enough to render crisply at 128 px on 2x DPI
-// while staying small enough to inline as a hashed-URL static asset.
+// 256 px renders crisply at 128 px on 2x DPI.
 import logoUrl from '@resources/icons/256x256.png'
 
 const props = defineProps<{
   open: boolean
-  /** True iff the startup recovery flow has finished (recovery dialog
-   *  resolved + any cold-launch path has been kicked off). Project
-   *  actions stay disabled until this is true so a click can't race
-   *  the recovery / cold-launch hand-off. */
+  /** Recovery resolved and any cold-launch path has started. */
   startupFlowComplete: boolean
-  /** True while RecoveryDialog is open on top of this screen. We use
-   *  this only to suppress the "Checking for recovered projects…"
-   *  status line — the dialog itself communicates the state. */
+  /** Suppresses the recovery status while RecoveryDialog is visible. */
   recoveryOpen: boolean
 }>()
 
@@ -59,23 +29,15 @@ const audioDevices = useAudioDeviceStore()
 const MAX_STARTUP_RECENTS = 3
 const recents = computed(() => app.recentProjects.slice(0, MAX_STARTUP_RECENTS))
 
-// True when the bridge initial-connect timer expired and the backend
-// never showed up. The whole screen swaps to a focused error mode.
+// Initial-connect timeout swaps the screen to focused error mode.
 const bridgeFailed = computed(() => transport.bridgeFailureMessage !== null)
 
 function onClose(): void {
-  // Quit the entire app — same path as the title-bar × button.
-  // Goes through main's `window:close` IPC, which fans out an
-  // `app.requestClose` menu action; App.vue routes it through the
-  // unsaved-changes guard (a no-op on the startup screen, since by
-  // definition no project is loaded) and then exits cleanly.
+  // Same close path as the title-bar button.
   window.silverdaw.closeWindow()
 }
 
-// "All systems resolved" — every gate is green and the loading
-// screen could exit. We deliberately wait for the async device
-// scan AND a stable-display window (below) before treating this as
-// truly ready.
+// All startup gates resolved; phase dwell below still controls readiness.
 const allResolved = computed(
   () =>
     !bridgeFailed.value &&
@@ -95,15 +57,10 @@ const liveStatusText = computed(() => {
   return ''
 })
 
-// Minimum time each phase must remain on screen before the next is
-// allowed to overwrite it. Without this, on a fast machine the boot
-// resolves in <100 ms and the user sees only "Waiting…" before the
-// picker appears — they never get to see what actually happened.
+// Minimum phase dwell keeps fast startup transitions readable.
 const MIN_PHASE_MS = 500
 
-// Pump that displays each distinct phase for at least MIN_PHASE_MS,
-// queueing successive changes so a burst of phase transitions plays
-// out as a readable sequence rather than collapsing to the latest.
+// Queue phase changes so bursts remain readable.
 const statusText = ref('')
 const phaseQueue: string[] = []
 const phaseQueueLength = ref(0)
@@ -126,10 +83,7 @@ function showNextPhase(): void {
 watch(
   liveStatusText,
   (text) => {
-    // Skip the terminal empty status — once everything has resolved
-    // we want to switch to the picker as soon as the last real phase
-    // has had its display dwell, not hold an extra MIN_PHASE_MS on
-    // a blank message.
+    // Do not dwell on a blank terminal status.
     if (text === '') return
     const tail = phaseQueue.length > 0 ? phaseQueue[phaseQueue.length - 1] : statusText.value
     if (text === tail) return
@@ -140,8 +94,7 @@ watch(
   { immediate: true }
 )
 
-// "Ready" = all gates resolved AND the phase pump has finished
-// showing every queued message for its minimum dwell.
+// Ready only after all queued phases have completed their dwell.
 const ready = computed(
   () => allResolved.value && phaseQueueLength.value === 0 && !phaseTimerActive.value
 )
@@ -164,15 +117,11 @@ function openRecent(filePath: string): void {
 }
 
 function quit(): void {
-  // Same as File > Exit. The menu action funnels through main and
-  // destroys every window.
+  // Same path as File > Exit.
   window.silverdaw.menuAction('file.exit')
 }
 
-// Focus management. On bridge failure we move focus to the Quit
-// button so Enter / Space immediately quits. When the screen
-// becomes "ready", focus the New Project button so the user can
-// hit Enter to get going.
+// Focus the primary action for failure and ready states.
 const quitButtonEl = ref<HTMLButtonElement | null>(null)
 const newButtonEl = ref<HTMLButtonElement | null>(null)
 
@@ -185,9 +134,7 @@ watch(bridgeFailed, async (failed) => {
 watch(ready, async (now) => {
   if (!now) return
   await nextTick()
-  // Only steal focus if nothing inside the overlay is focused yet
-  // — preserves the user's keyboard nav if they had tabbed into the
-  // recents list.
+  // Preserve existing keyboard navigation inside the overlay.
   const active = document.activeElement
   if (!active || active === document.body) {
     newButtonEl.value?.focus()
@@ -219,13 +166,7 @@ onBeforeUnmount(() => {
       aria-labelledby="startup-title"
       :aria-busy="!ready && !bridgeFailed"
     >
-      <!-- System-close button. Quits the app entirely (same path as
-           the title bar's × — goes through the unsaved-changes guard
-           in App.vue, but the startup screen by definition only
-           shows when the project is empty, so the guard is a no-op).
-           Matches the title-bar close in size, icon and hover
-           treatment so the user gets the same affordance they'd
-           expect on the main window. Top-right of the viewport. -->
+      <!-- System-close button matching the title-bar affordance. -->
       <button
         type="button"
         data-borderless-button="true"
@@ -249,8 +190,6 @@ onBeforeUnmount(() => {
       </button>
 
       <!-- ─── Bridge-failure mode ───────────────────────────────── -->
-      <!-- Dominates the whole screen. Project actions are hidden
-           because they cannot recover the app. -->
       <div
         v-if="bridgeFailed"
         class="flex w-[min(520px,92vw)] flex-col items-center gap-5 rounded-lg border border-red-900/60 bg-zinc-900 px-8 py-7 text-center text-zinc-200 shadow-2xl"
@@ -284,17 +223,8 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- ─── Loading mode ──────────────────────────────────────── -->
-      <!-- Single boot surface: logo + spinner + the current loading
-           phase. No buttons here — the project picker only appears
-           once the backend, device scan and recovery flow have all
-           resolved. Matches the inline splash in `index.html` so the
-           hand-off between the static HTML splash and this Vue
-           component is invisible. -->
-      <!-- Every child has a locked height and the column has a fixed
-           total height so flex centring is byte-identical regardless
-           of the text content. Without this lockdown, font-metrics
-           reflow + the spinner's compositor layer can wobble the
-           text vertically by 1-2 px between status changes. -->
+      <!-- Single boot surface until backend, device scan, and recovery resolve. -->
+      <!-- Locked heights prevent 1-2 px spinner/text wobble between phases. -->
       <div
         v-else-if="!ready"
         class="flex h-[228px] flex-col items-center justify-between text-zinc-200"
@@ -320,9 +250,6 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- ─── Ready mode: project picker ────────────────────────── -->
-      <!-- Only mounted once everything is ready, so the buttons never
-           render in a disabled state. Closing happens by picking an
-           action (or the user opens a project from elsewhere). -->
       <div
         v-else
         class="flex w-[min(560px,92vw)] flex-col items-stretch gap-6 px-8 py-10"

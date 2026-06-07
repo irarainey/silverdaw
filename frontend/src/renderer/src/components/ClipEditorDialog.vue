@@ -1,18 +1,5 @@
 <script setup lang="ts">
-// ClipEditorDialog — the non-destructive clip editor (waveform, selection,
-// crop, warp/pitch, volume-shape, preview transport).
-//
-// FILE-SIZE EXCEPTION (justified): this SFC is over the ~800-line ceiling.
-// Its logic has already been decomposed into focused composables —
-// useClipEditorTarget / Viewport / WarpDraft / VolumeShapeDraft / Waveform /
-// Preview / CropHistory / Save / CanvasInteraction / Keyboard / Transport.
-// What remains is irreducible orchestration: store + composable wiring,
-// derived computeds, and the reactive watcher/lifecycle block that sequences
-// those composables together. Extracting that residual would require passing a
-// large cross-cutting dependency bag into a "lifecycle" composable, which harms
-// readability more than the line count helps (see the TS/Vue instructions on
-// contrived splits). Kept whole deliberately; prefer extracting any genuinely
-// new, cohesive concern rather than growing the orchestration further.
+// Non-destructive clip editor shell. File-size exception: remaining code is composable orchestration.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
@@ -60,9 +47,7 @@ const transport = useTransportStore()
 const dialogEl = ref<HTMLDivElement | null>(null)
 const waveformEl = ref<HTMLCanvasElement | null>(null)
 
-// Target-mode resolution (which kind of editing the dialog is doing
-// for the current `(item, clipId)` open arguments) lives in a
-// composable so the kind-check is exhaustive and single-sourced.
+// Target-mode resolution is exhaustive and single-sourced in the composable.
 const itemRef = toRef(props, 'item')
 const clipIdRef = toRef(props, 'clipId')
 const {
@@ -78,8 +63,7 @@ const {
   sourceKey
 } = useClipEditorTarget(itemRef, clipIdRef)
 
-// Draft warp + pitch state for the inline inspector. The dialog
-// reseeds it on every target switch via `initialiseWarpDraft()`.
+// Draft warp + pitch state reseeded on each target switch.
 const warpDraft = useClipEditorWarpDraft(sourceBpm)
 const {
   draftTempoEnabled,
@@ -95,9 +79,7 @@ const {
   initialise: initialiseWarpDraft
 } = warpDraft
 
-// Draft volume-shape (gain envelope) state. Same transactional pattern:
-// the dialog owns the hook, the panel binds to it, Save commits via
-// `setClipEnvelope`, Cancel discards.
+// Draft gain-envelope state; Save commits, Cancel discards.
 const volumeShapeDraft = useClipEditorVolumeShapeDraft()
 const {
   hasChanged: hasVolumeShapeChanged,
@@ -105,35 +87,22 @@ const {
   committedPoints: volumeShapeCommittedPoints
 } = volumeShapeDraft
 
-// "Volume" edit mode for the waveform: when on, the canvas pointer edits
-// the gain envelope (add / drag / delete breakpoints) instead of the
-// selection. Only meaningful in the cropped Clip view, where the envelope
-// spans the whole clip; toggled off automatically in Source view.
+// Volume mode edits the gain envelope instead of the selection in Clip view.
 const volumeEditMode = ref(false)
 
-// Whether the most recent `drawWaveform` rendered the waveform as two
-// stacked stereo lanes. The Volume Shape overlay mirrors its envelope
-// into each lane when true, and the canvas pointer handler reads this to
-// hit-test handles + map gain across both lanes. Kept as a ref (set by
-// `drawWaveform`) so the pointer geometry always matches what was drawn.
+// Last rendered lane layout; pointer hit-testing must match drawn geometry.
 const waveformStereoLanes = ref(false)
 
-// Effective (post-warp) audible duration of the clip being edited — the
-// horizontal span of the volume-shape editor and the basis its endpoints
-// are pinned to. Matches the ms basis the backend persists the envelope in.
+// Volume-shape span uses the same post-warp ms basis persisted by the backend.
 const volumeShapeDurationMs = computed(() => {
   const clip = timelineClip.value
   if (!clip) return 0
   return effectiveClipDurationMs(clip)
 })
 
-// The envelope overlay is a single-timeline-clip feature shown over the
-// cropped Clip view (where the breakpoint axis spans the whole clip).
 const volumeShapeAvailable = computed(
   () => editsSingleTimelineClip.value && !viewExpanded.value && volumeShapeDurationMs.value > 0
 )
-// Pointer edits the envelope (vs the selection) only while the Volume
-// toggle is on and the overlay is actually shown.
 const volumeEditActive = computed(() => volumeEditMode.value && volumeShapeAvailable.value)
 
 
@@ -149,10 +118,7 @@ const warpActive = computed(() => {
   })
 })
 
-// Viewport, zoom, scroll, and selection state for the canvas live in
-// a composable. The dialog still drives the canvas DOM and the mouse
-// handlers, but the math + bounds + multi-field transitions are
-// owned (and unit-tested) in `useClipEditorViewport`.
+// Viewport math and bounds live in `useClipEditorViewport`.
 const viewport = useClipEditorViewport({
   editorItem,
   editsExistingClip,
@@ -190,16 +156,7 @@ const {
 void _basePxPerMs
 
 
-// Selection / playback range computeds owned by `useClipEditorViewport`;
-// `selectionInMs` / `selectionDurationMs` / `selectionEndMs` /
-// `hasPlaybackSelection` / `playbackStartMs` / `playbackEndMs` are
-// destructured at the top of this <script setup>.
-
-// Has the user changed anything from the persisted saved-clip window?
-// True when EITHER the selection is narrower than the cropped view,
-// OR the cropped view itself differs from `derivedFrom` (because the
-// user clicked Crop one or more times). Apply trim is enabled in
-// either case — the act of Apply uses the current selection.
+// Dirty when either selection or cropped view differs from the persisted window.
 const hasSelectionChanged = computed(() => {
   if (!editsExistingClip.value) return false
   const clip = timelineClip.value
@@ -233,17 +190,12 @@ const hasWarpPitchChanged = computed(() => {
 
 const canSaveChanges = computed(() => {
   if (!editsExistingClip.value) return false
-  // The volume shape only persists on single-timeline-clip edits today
-  // (saved-clip library updates don't carry shape defaults). Don't let a
-  // shape-only edit enable Save in modes where it would be silently dropped.
+  // Shape-only edits cannot enable Save where shape persistence is unsupported.
   const volumeShapeDirty = editsSingleTimelineClip.value && hasVolumeShapeChanged.value
   return hasSelectionChanged.value || hasWarpPitchChanged.value || volumeShapeDirty
 })
 
-// Non-destructive crop: snap the cropped working view to the current
-// selection so the user can audition / fine-tune the new range
-// before committing it to the library. Enabled whenever there's a
-// narrowing selection (selection strictly inside the cropped view).
+// Non-destructive crop is enabled only for a narrowing selection.
 const canApplyCrop = computed(() => {
   if (!editorItem.value) return false
   if (selectionDurationMs.value <= 0) return false
@@ -261,9 +213,7 @@ const playheadAbsMs = computed(() => viewInMs.value + preview.positionMs)
 
 const loopEnabled = ref(false)
 
-// Preview-voice scheduling (debounced draft pushes, follow-playhead,
-// selection/loop bounds, de-duped load) lives in a composable; the SFC keeps
-// the watchers + lifecycle hooks and calls these.
+// Preview scheduling lives in a composable; the SFC keeps watcher timing.
 const {
   clearPreviewWarpUpdateTimer,
   scheduleDraftPreviewWarp,
@@ -359,9 +309,7 @@ watch(
   }
 )
 
-// Audition the volume-shape draft live. The hook reassigns the points
-// ref on every edit, so a shallow watch fires on each breakpoint change.
-// Also redraws so the on-waveform envelope overlay tracks the edit.
+// Draft point ref is reassigned per edit, so a shallow watch is enough.
 watch(
   () => volumeShapeDraft.draftPoints.value,
   () => {
@@ -370,17 +318,11 @@ watch(
   }
 )
 
-// Redraw when the Volume edit toggle flips so the overlay appears/disappears
-// immediately, even before any breakpoint has been edited.
 watch(volumeEditActive, () => {
   drawWaveform()
 })
 
-// PREVIEW_LOAD is async. If the user edits the volume shape between
-// sending the load and the backend signalling isLoaded=true, those
-// `setEnvelope` calls are no-ops (gated on isLoaded). Re-push the
-// current draft once the preview transitions to loaded so the voice
-// always matches the UI.
+// Re-push envelope after async PREVIEW_LOAD so preview matches latest draft.
 watch(
   () => preview.isLoaded,
   (loaded, prev) => {
@@ -390,42 +332,21 @@ watch(
   }
 )
 
-// Toggling view-expanded changes viewInMs/viewDurationMs which
-// affect every downstream computation. Reset zoom (so the new view
-// fits the canvas at 1x), redraw, and reload the preview voice
-// against the new bounds.
-//
-// On collapse (Source → Clip): the cropped-view bounds snap to the
-// current selection. The user often goes to Source view specifically
-// to mark a bigger range; switching back, we want the new range to
-// become the focused clip view so they can fine-tune inside it. The
-// selection then covers the full view (no narrowing), which gives
-// the user a clean canvas to drag the handles inward from.
-//
-// On expansion (Clip → Source): scroll so the selection (the current
-// clip window) sits inside the visible window — saves the user from
-// hunting for it on long sources.
+// Switching Source/Clip view resets bounds, zoom, preview, and keeps selection visible.
 watch(viewExpanded, async (expanded) => {
   if (expanded) {
-    // The envelope overlay spans the cropped clip; leaving Clip view
-    // exits Volume edit mode so the canvas returns to selection editing.
+    // Source view has no envelope-edit overlay.
     volumeEditMode.value = false
   }
   if (!expanded) {
-    // Snap the cropped view to the user's current selection so it
-    // becomes the new focused range. Fall back to keeping the
-    // existing crop when the selection has been cleared (the
-    // composable's helper is a no-op in that case).
+    // Snap cropped view to selection when one exists.
     viewport.snapCropViewToSelection()
   }
   resetZoom()
   scrollMs.value = 0
   await nextTick()
   if (expanded) {
-    // Centre the visible window on the selection midpoint when it's
-    // not already inside the visible window. resetZoom + scrollMs=0
-    // above already shows from the start; on long sources that may
-    // not include the selection.
+    // Centre long sources on the selection when reset zoom starts elsewhere.
     const selMid = (selectionInMs.value + selectionEndMs.value) / 2 - viewInMs.value
     const visLeft = scrollMs.value
     const visRight = visLeft + visibleDurationMs.value
@@ -465,10 +386,7 @@ watch(
   }
 )
 
-// Loop restart on natural end-of-window. The preview store resets
-// positionMs to 0 in applyEnded, so the position-watcher's
-// "playhead near end" check can't fire after a natural end. Watching
-// the endedCount counter gives us a reliable signal to restart.
+// endedCount is the reliable loop restart signal after natural preview end.
 watch(
   () => preview.endedCount,
   (n, prev) => {
@@ -484,8 +402,7 @@ watch(
 
 let resizeObserver: ResizeObserver | null = null
 onMounted(() => {
-  // Track canvas CSS width so basePxPerMs / visibleDurationMs react to
-  // dialog resizes (the canvas resizes with the window).
+  // Track canvas CSS width across dialog resizes.
   if (typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0]
@@ -496,12 +413,7 @@ onMounted(() => {
       }
     })
   }
-  // Window-level capture-phase listener for the dialog's local
-  // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z. Beats the menu-accelerator
-  // binding in `menuShortcuts.ts` to the punch and is independent
-  // of where focus lives inside the dialog (which can drift to any
-  // canvas / button / scrollbar element). The handler is a no-op
-  // when the dialog isn't open.
+  // Capture local undo/redo before menu accelerators, regardless of focus.
   window.addEventListener('keydown', onWindowKeydownCapture, { capture: true })
 })
 
@@ -534,10 +446,7 @@ function initSelectionForItem(): void {
 }
 
 
-// On-demand high-resolution peaks + the canvas waveform renderer live in a
-// composable so this SFC stays focused on orchestration. The renderer writes
-// back the last-rendered stereo-lane layout into `waveformStereoLanes` (owned
-// here) because the canvas pointer hit-testing reads that layout.
+// Waveform renderer writes lane layout back for pointer hit-testing.
 const { drawWaveform, ensureEditorHiResPeaks, resetHiResRequestKey } = useClipEditorWaveform({
   getCanvas: () => waveformEl.value,
   sourceItem: () => sourceItem.value,
@@ -564,7 +473,6 @@ const { drawWaveform, ensureEditorHiResPeaks, resetHiResRequestKey } = useClipEd
   waveformStereoLanes
 })
 
-// Trigger a hi-res request whenever the user zooms in past the threshold.
 watch(zoom, () => ensureEditorHiResPeaks())
 
 const {
@@ -614,10 +522,7 @@ const { onTogglePlay, onSkipToStart, onSkipToEnd, onToggleLoop } = useClipEditor
 })
 
 
-// Dialog-local Crop undo/redo history lives in a composable. Crop is purely
-// non-destructive (it narrows the working view); Apply trim commits through the
-// project-wide UndoManager. The stack is scoped to the dialog so closing it
-// discards any uncommitted crops.
+// Dialog-local crop history is non-destructive and discarded on close.
 const { onApplyCrop, undoCropLocal, redoCropLocal, resetCropHistory } =
   useClipEditorCropHistory({
     canApplyCrop: () => canApplyCrop.value,
@@ -839,10 +744,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                 </div>
               </div>
               <div class="flex shrink-0 items-center gap-1">
-                <!-- Volume Shape edit toggle: turns the waveform into a gain
-                     envelope editor. Single timeline clips only, and only in
-                     the cropped Clip view (the envelope axis spans the clip);
-                     disabled in Source view. -->
+                <!-- Volume Shape edit toggle. -->
                 <button
                   v-if="editsSingleTimelineClip"
                   type="button"
@@ -864,10 +766,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
                 >
                   Volume
                 </button>
-                <!-- Non-destructive crop: narrows the working view to the
-                     current selection so the user can audition/tweak before
-                     committing. Local Ctrl+Z / Ctrl+Y undo/redo while the
-                     dialog is open. Closing without Save discards every crop. -->
+                <!-- Non-destructive crop with dialog-local undo/redo. -->
                 <button
                   type="button"
                   class="rounded px-2 py-1 text-[11px] font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
@@ -929,11 +828,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
             v-if="editsExistingClip"
             class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded border border-zinc-800 bg-zinc-950/40"
           >
-            <!-- Effects rack: a modular grid of plugin-style modules. Each
-                 effect spans an integer number of fixed-size base cells, so
-                 every module shares one aspect-ratio grid and the rack reads
-                 as a tidy rack however the resizable dialog is sized. Scrolls
-                 both axes; horizontal scroll reveals further effects. -->
+            <!-- Effects rack: fixed-cell modular grid. -->
             <div
               class="clip-effects-rack silverdaw-scroll grid min-h-0 min-w-0 flex-1 gap-3 overflow-auto p-3"
               role="group"
@@ -1000,11 +895,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', drawWaveform))
 </template>
 
 <style scoped>
-/* Effects rack modular grid. Base cells are a FIXED size so every module
-   keeps a consistent aspect ratio regardless of how the resizable dialog
-   is sized; the rack scrolls (the parent supplies overflow) when modules
-   exceed the available space. Two cells tall by default; `column dense`
-   packs modules left-to-right and back-fills gaps. */
+/* Fixed-cell modular grid; column-dense packing back-fills gaps. */
 .clip-effects-rack {
   --cell-w: 17rem; /* 272px */
   --cell-h: 11.5rem; /* 184px */

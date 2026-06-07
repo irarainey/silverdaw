@@ -1,9 +1,4 @@
-// UI / layout preferences — sizes of resizable panels, persisted across
-// restarts via the main-process `preferences.json`.
-//
-// The store hydrates itself from disk on app startup (`hydrate()`), and any
-// subsequent setter call pushes the new value back to main (debounced) so
-// the on-disk copy stays in sync.
+// UI/layout preferences persisted via main-process `preferences.json`.
 
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
@@ -16,9 +11,7 @@ export type TimelineScrollRequest =
   | { edge: TimelineScrollEdge; id: number }
   | { positionMs: number; id: number }
 export type TimelineZoomAction = 'in' | 'out' | 'reset'
-/** A one-shot zoom request consumed by TimelineView. `step` nudges by the
- *  fixed zoom increment (or resets to default); `absolute` jumps straight to
- *  a target px/sec (used by the View ▸ Zoom Presets menu). */
+/** One-shot TimelineView zoom request; `absolute` is px/sec. */
 export type TimelineZoomRequest =
   | { kind: 'step'; action: TimelineZoomAction; id: number }
   | { kind: 'absolute'; pxPerSecond: number; id: number }
@@ -26,44 +19,20 @@ export type TimelineZoomRequest =
 interface UiState {
   trackHeaderWidth: number
   libraryPanelHeight: number
-  /** Continuous-follow auto-scroll during playback. When false the
-   *  viewport stays put and the playhead can run off the right edge. */
   followPlayback: boolean
-  /** Show cover art / fallback thumbnails on library tiles. */
   showLibraryTileImages: boolean
-  /** Auto-warp dropped clips to match project BPM. */
   matchProjectTempoOnDrop: boolean
-  /** Application default for new-project sample rate (Hz). Mirrors
-   *  `preferences.json.ui.defaultProjectSampleRate`. Surfaced in
-   *  Preferences ▸ Audio so the user can change the default applied
-   *  to freshly-created projects without touching existing ones. */
+  /** Application default for new projects; existing projects keep their stored rate. */
   defaultProjectSampleRate: number
-  /** What the transport previous / next buttons jump to. `timelineEnds`
-   *  seeks the project start / end; `markers` steps through the timeline
-   *  markers (falling back to start / end past the last marker). */
   skipButtonTarget: SkipButtonTarget
-  /** How source waveforms are drawn: `summary` (single mono lane) or
-   *  `stereo` (stacked L/R lanes for two-channel sources). */
   waveformDisplayMode: WaveformDisplayMode
-  /** When true, the bottom tabbed panel is minimised to its tab strip,
-   *  hiding the body to give the timeline more vertical room. */
   libraryPanelCollapsed: boolean
-  /** Live horizontal-zoom value (px per second). NOT persisted to
-   *  preferences.json — this just mirrors `geometry.pxPerSecond` from
-   *  the timeline so other components (e.g. StatusBar) can show the
-   *  current zoom without reaching into the timeline composable. The
-   *  per-project zoom is persisted separately via
-   *  `projectStore.viewPxPerSecond`. */
+  /** Live timeline zoom mirror (px/sec); per-project zoom is persisted elsewhere. */
   zoomPxPerSecond: number
-  /** One-shot request for TimelineView to jump its horizontal scroll. */
   timelineScrollRequest: TimelineScrollRequest | null
-  /** One-shot request for TimelineView to adjust zoom from a global shortcut. */
   timelineZoomRequest: TimelineZoomRequest | null
-  /** True while the Clip Editor preview dialog is open. Global keyboard
-   *  shortcuts (Space play/pause etc.) should defer to the dialog while
-   *  this is set. */
+  /** Global shortcuts defer while the Clip Editor preview dialog is open. */
   clipEditorOpen: boolean
-  /** True once `hydrate()` has read the saved values from main. */
   hydrated: boolean
 }
 
@@ -91,9 +60,7 @@ function sanitiseProjectSampleRate(n: unknown): number {
     : DEFAULTS.defaultProjectSampleRate
 }
 
-// Clamps mirror the resize-handle clamps in the components, but applied
-// defensively here too so a corrupt prefs file can't render an unreachable
-// panel.
+// Defensive clamps protect against corrupt persisted layout values.
 const MIN_TRACK_HEADER_WIDTH = 120
 const MAX_TRACK_HEADER_WIDTH = 480
 const MIN_LIBRARY_PANEL_HEIGHT = 80
@@ -133,11 +100,7 @@ interface UiPushPayload {
   libraryPanelCollapsed?: boolean
 }
 
-/**
- * Debounced push of UI preference changes back to main. Resize handles
- * fire continuously while dragged, so we coalesce ~150 ms of changes into
- * a single IPC + disk write.
- */
+/** Coalesces resize-driven preference writes into one IPC + disk write. */
 function schedulePush(partial: UiPushPayload): void {
   pendingPush = { ...pendingPush, ...partial }
   if (pushTimer) return
@@ -168,10 +131,6 @@ export const useUiStore = defineStore('ui', {
   }),
 
   actions: {
-    /**
-     * Pull the persisted UI prefs from main and apply them. Idempotent;
-     * safe to call multiple times (the second call is a no-op).
-     */
     async hydrate(): Promise<void> {
       if (this.hydrated) return
       try {
@@ -208,7 +167,6 @@ export const useUiStore = defineStore('ui', {
       }
     },
 
-    /** Update the track-header column width and persist. */
     setTrackHeaderWidth(value: number): void {
       const next = clampHeaderWidth(value)
       if (next === this.trackHeaderWidth) return
@@ -216,7 +174,6 @@ export const useUiStore = defineStore('ui', {
       if (this.hydrated) schedulePush({ trackHeaderWidth: next })
     },
 
-    /** Update the library panel's height and persist. */
     setLibraryPanelHeight(value: number): void {
       const next = clampLibraryHeight(value)
       if (next === this.libraryPanelHeight) return
@@ -224,59 +181,47 @@ export const useUiStore = defineStore('ui', {
       if (this.hydrated) schedulePush({ libraryPanelHeight: next })
     },
 
-    /** Collapse / expand the bottom tabbed panel and persist. Persists
-     *  immediately (a click, not a continuous drag). */
     setLibraryPanelCollapsed(value: boolean): void {
       if (this.libraryPanelCollapsed === value) return
       this.libraryPanelCollapsed = value
       if (this.hydrated) schedulePush({ libraryPanelCollapsed: value })
     },
 
-    /** Toggle the bottom tabbed panel's collapsed state. */
     toggleLibraryPanelCollapsed(): void {
       this.setLibraryPanelCollapsed(!this.libraryPanelCollapsed)
     },
 
-    /** Toggle follow-playback. Persists immediately (no debounce needed
-     *  since it's a click, not a continuous resize). */
     setFollowPlayback(value: boolean): void {
       if (this.followPlayback === value) return
       this.followPlayback = value
       if (this.hydrated) schedulePush({ followPlayback: value })
     },
 
-    /** Toggle cover art / fallback thumbnails on library tiles. */
     setShowLibraryTileImages(value: boolean): void {
       if (this.showLibraryTileImages === value) return
       this.showLibraryTileImages = value
       if (this.hydrated) schedulePush({ showLibraryTileImages: value })
     },
 
-    /** Toggle auto-warp-on-drop. */
     setMatchProjectTempoOnDrop(value: boolean): void {
       if (this.matchProjectTempoOnDrop === value) return
       this.matchProjectTempoOnDrop = value
       if (this.hydrated) schedulePush({ matchProjectTempoOnDrop: value })
     },
 
-    /** Choose what the transport previous / next buttons jump to. */
     setSkipButtonTarget(value: SkipButtonTarget): void {
       if (this.skipButtonTarget === value) return
       this.skipButtonTarget = value
       if (this.hydrated) schedulePush({ skipButtonTarget: value })
     },
 
-    /** Choose how source waveforms are drawn (summary vs stereo). */
     setWaveformDisplayMode(value: WaveformDisplayMode): void {
       if (this.waveformDisplayMode === value) return
       this.waveformDisplayMode = value
       if (this.hydrated) schedulePush({ waveformDisplayMode: value })
     },
 
-    /** Update the application default for new-project sample rate.
-     *  Snaps to the supported whitelist; out-of-set values are
-     *  rejected so a manual prefs-file edit can't park us on an
-     *  unsupported rate. Existing projects keep their stored rate. */
+    /** Rejects unsupported defaults; existing projects keep their stored rate. */
     setDefaultProjectSampleRate(value: number): void {
       if (!SUPPORTED_PROJECT_SAMPLE_RATES.has(value)) return
       if (this.defaultProjectSampleRate === value) return
@@ -284,8 +229,6 @@ export const useUiStore = defineStore('ui', {
       if (this.hydrated) schedulePush({ defaultProjectSampleRate: value })
     },
 
-    /** Update the live zoom mirror. Renderer-only — not persisted to
-     *  preferences (per-project zoom lives in `projectStore.viewPxPerSecond`). */
     setZoomPxPerSecond(value: number): void {
       if (!Number.isFinite(value) || value <= 0) return
       if (this.zoomPxPerSecond === value) return
@@ -315,8 +258,7 @@ export const useUiStore = defineStore('ui', {
       }
     },
 
-    /** Request an absolute zoom level (px per second), e.g. from a preset.
-     *  Out-of-range values are clamped downstream by the timeline geometry. */
+    /** Absolute zoom in px/sec; range is clamped by timeline geometry. */
     requestTimelineZoomTo(pxPerSecond: number): void {
       if (!Number.isFinite(pxPerSecond) || pxPerSecond <= 0) return
       this.timelineZoomRequest = {

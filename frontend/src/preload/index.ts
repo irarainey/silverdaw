@@ -1,5 +1,4 @@
-// Preload script - runs in an isolated context with access to Node APIs.
-// Expose only what the renderer needs via `contextBridge`.
+// Least-privilege preload API exposed through context isolation.
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences } from '../shared/types'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
@@ -7,7 +6,6 @@ import { IPC, type BackendStatus } from '../shared/ipc-channels'
 export type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences }
 
 const api = {
-  /** Send a menu action ID to the main process. */
   menuAction: (action: string): void => {
     ipcRenderer.send(IPC.menu.action, action)
   },
@@ -20,64 +18,25 @@ const api = {
   closeWindow: (): void => {
     ipcRenderer.send(IPC.window.close)
   },
-  /**
-   * Show an OS open dialog for an audio file and return its raw bytes.
-   * Resolves to `null` if the user cancels.
-   */
   openAudioFile: (): Promise<OpenedAudioFile | null> => ipcRenderer.invoke(IPC.audio.open),
-  /**
-   * Multi-file variant. Used by the library panel's Import button.
-   * Returns an array of opened files (empty if the user cancels).
-   */
   openAudioFiles: (): Promise<OpenedAudioFile[]> => ipcRenderer.invoke(IPC.audio.openMany),
-  /**
-   * Show an OS audio-file picker and return ONLY the chosen path
-   * (no bytes loaded). Used by the relink-missing-files flow: the
-   * backend re-creates the clip's source against the picked path, so
-   * the renderer never needs the bytes. Resolves to `null` if the
-   * user cancels.
-   */
+  /** Relink picker: returns a path only; the backend reloads the source. */
   chooseAudioFile: (args: {
     title?: string
     defaultPath?: string
   }): Promise<string | null> => ipcRenderer.invoke(IPC.audio.chooseFile, args),
-  /**
-   * Read an audio file by absolute filesystem path. Used after an OS
-   * drag-drop, where the path comes from `getPathForFile(file)`.
-   * Resolves to `null` if the read fails.
-   *
-   * Main rejects any path it has not previously surfaced to the renderer
-   * via an open-dialog result or via `getPathForFile` — see the path
-   * allow-list in `frontend/src/main/index.ts`.
-   */
+  /** Main only reads audio paths previously surfaced through trusted UI. */
   readAudioFile: (filePath: string): Promise<OpenedAudioFile | null> =>
     ipcRenderer.invoke(IPC.audio.readFile, filePath),
-  /**
-   * Read ID3 / Vorbis / iTunes / BWF metadata from an audio file. Returns
-   * a normalized subset of fields the renderer can display. Resolves to
-   * `null` if the file can't be parsed (the library entry still works
-   * with just the Web Audio technical info).
-   *
-   * Same allow-list rules as `readAudioFile` apply.
-   */
+  /** Same path allow-list as `readAudioFile`; returns display metadata or null. */
   readAudioMetadata: (filePath: string): Promise<AudioMetadata | null> =>
     ipcRenderer.invoke(IPC.audio.readMetadata, filePath),
-  /**
-   * Resolve an OS drag-dropped `File` to its absolute filesystem path.
-   * Wraps Electron's `webUtils.getPathForFile` so the renderer can pass
-   * the result to `readAudioFile`. Returns `''` if no path is available
-   * (e.g. the drag came from inside the app rather than from the OS).
-   *
-   * The path is also registered with the main process so subsequent
-   * `readAudioFile` / `readAudioMetadata` calls will accept it.
-   */
+  /** Resolve and register an OS drag-dropped file path for later allowed reads. */
   getPathForFile: (file: File): string => {
     try {
       const filePath = webUtils.getPathForFile(file)
       if (filePath !== '') {
-        // Fire-and-forget: main side-effects the allow-list. If main hasn't
-        // registered the path by the time the renderer calls `readAudioFile`
-        // the read simply fails — the user can re-drop.
+        // Fire-and-forget: a racing read simply fails and the user can re-drop.
         ipcRenderer.send(IPC.audio.registerDroppedPath, filePath)
       }
       return filePath
@@ -85,277 +44,135 @@ const api = {
       return ''
     }
   },
-  /**
-   * Subscribe to menu actions forwarded from the main process so the renderer
-   * can drive UI flows (e.g. "Add Track from File...").
-   * Returns an unsubscribe function.
-   */
   onMenuAction: (handler: (action: string) => void): (() => void) => {
     const listener = (_evt: IpcRendererEvent, action: string): void => handler(action)
     ipcRenderer.on(IPC.menu.action, listener)
     return () => ipcRenderer.removeListener(IPC.menu.action, listener)
   },
-  /**
-   * Fetch the persisted UI preferences (panel sizes etc.) from the main
-   * process. Window bounds are applied by main directly, so they're not
-   * part of the renderer-visible payload.
-   */
   getUiPreferences: (): Promise<UiPreferences> => ipcRenderer.invoke(IPC.prefs.getUi),
-  /**
-   * Update one or more UI preference keys. The renderer calls this
-   * (debounced) whenever the user resizes a panel; main persists the
-   * change to disk.
-   */
   setUiPreferences: (partial: Partial<UiPreferences>): void => {
     ipcRenderer.send(IPC.prefs.setUi, partial)
   },
-  /**
-   * Resolve the WebSocket port the JUCE backend is listening on. The
-   * value is chosen by main at startup (env override + default) and the
-   * backend is launched with `--port <N>`, so all three processes agree
-   * on a single source of truth.
-   */
+  /** Main-selected backend port; never hardcode it in renderer code. */
   getBridgePort: (): Promise<number> => ipcRenderer.invoke(IPC.bridge.getPort),
-  /**
-   * Resolve the per-session AUTH token the renderer must send as its
-   * first WebSocket message. Generated once by main at startup and
-   * passed to the spawned backend via the `SILVERDAW_BRIDGE_TOKEN` env
-   * var; the backend closes any socket that doesn't AUTH correctly.
-   * Returning the token over the trusted preload bridge keeps it out
-   * of argv and out of the HTML.
-   */
+  /** Per-session bridge AUTH token, exposed only through trusted preload IPC. */
   getBridgeToken: (): Promise<string> => ipcRenderer.invoke(IPC.bridge.getToken),
-  /**
-   * Ask main to force-restart the backend process. Called by the
-   * renderer's liveness watchdog when the engine looks hung (the socket
-   * is open but ping/pong stops). The supervisor respawns on the same
-   * port + token so the bridge reconnects transparently.
-   */
+  /** Watchdog restart; supervisor keeps the same port/token for reconnect. */
   restartBackend: (reason: string): Promise<void> => ipcRenderer.invoke(IPC.backend.restart, reason),
-  /**
-   * Subscribe to process-level backend status pushes
-   * (`restarting` / `recovered` / `failed`). Returns an unsubscribe fn.
-   */
   onBackendStatus: (handler: (status: BackendStatus) => void): (() => void) => {
     const listener = (_evt: IpcRendererEvent, status: BackendStatus): void => handler(status)
     ipcRenderer.on(IPC.backend.status, listener)
     return () => ipcRenderer.removeListener(IPC.backend.status, listener)
   },
-  /**
-   * Transcode decoded PCM into a temp WAV the JUCE backend can read.
-   * Used for formats the backend can't decode natively (e.g. AAC/M4A on
-   * Windows). `channels` is one Float32Array per channel, planar. The
-   * returned path is owned by the main-process temp cache and is safe
-   * to send to the backend via `CLIP_ADD`. Returns `null` on failure.
-   */
+  /** Write planar decoded PCM to a cached WAV path the backend can read. */
   writeTempWav: (args: {
     sourcePath: string
     channels: Float32Array[]
     sampleRate: number
   }): Promise<string | null> => ipcRenderer.invoke(IPC.audio.writeTempWav, args),
-  /**
-   * Flush a batch of renderer-side log entries to the main-process
-   * session log (`debug/<stamp>/renderer.log`). Renderer-side logging
-   * (`lib/log.ts`) buffers entries on a ~50 ms timer and calls this
-   * once per flush so we avoid per-message IPC overhead.
-   *
-   * Each entry's `timestamp` is the renderer's `Date.now()` at the
-   * point the log call was made — preserved across the IPC hop so the
-   * persisted line reflects when the event actually happened, not
-   * when it was flushed.
-   */
+  /** Batched renderer logs preserve original event timestamps across IPC. */
   logBatch: (
     entries: ReadonlyArray<{ level: string; tag: string; message: string; timestamp: number }>
   ): Promise<void> => ipcRenderer.invoke(IPC.log.appendBatch, entries),
-  /**
-   * Fetch static runtime info (app version, Electron / Chromium / Node
-   * versions) for the in-app About dialog. Resolved once by main.
-   */
   getAppInfo: (): Promise<{
     appVersion: string
     electron: string
     chromium: string
     node: string
   }> => ipcRenderer.invoke(IPC.app.getInfo),
-  /**
-   * Open a URL in the user's default browser. Main vets the scheme
-   * (only `https:` and `http:` are passed through) before handing it to
-   * `shell.openExternal`.
-   */
+  /** Main only opens http/https URLs externally. */
   openExternal: (url: string): void => {
     ipcRenderer.send(IPC.app.openExternal, url)
   },
   // ─── Project file lifecycle ──────────────────────────────────────────────
-  /**
-   * Record that `value` was just saved or loaded. Main writes it to the
-   * head of the Recent Projects MRU (deduped, capped) so the File menu
-   * and Start Screen surface it on subsequent launches.
-   */
   setLastProjectPath: (value: string): void => {
     ipcRenderer.send(IPC.project.setLastPath, value)
   },
-  /** Resolve to true iff `path` exists and is readable. */
   projectFileExists: (path: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.project.fileExists, path),
-  /** Show the OS open dialog; resolves to the chosen path or null on cancel. */
   chooseProjectOpen: (): Promise<string | null> => ipcRenderer.invoke(IPC.project.chooseOpen),
-  /** Show the OS save-as dialog; `defaultName` seeds the suggested filename. */
   chooseProjectSaveAs: (defaultName: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.project.chooseSaveAs, defaultName),
-  /**
-   * Show the OS save-as dialog for a mixdown export. `defaultPath` is
-   * the full proposed path (used to seed both the filename and the
-   * starting directory). `format` drives the file-type filter.
-   * Resolves to the chosen path or `null` on cancel.
-   */
   chooseMixdownSaveAs: (
     defaultPath: string,
     format: 'wav' | 'mp3' | 'flac' | 'aiff'
   ): Promise<string | null> => ipcRenderer.invoke(IPC.mixdown.chooseSaveAs, defaultPath, format),
-  /**
-   * Resolve a fully-qualified default mixdown output path. Main joins
-   * the project's directory (or the user-default project folder if
-   * the project hasn't been saved) with a `mixdown/` subdirectory
-   * plus the project name plus the extension. Returns the absolute
-   * path the dialog should pre-populate with.
-   */
+  /** Mixdown defaults live under a `mixdown/` subdirectory. */
   resolveMixdownDefaultPath: (
     projectFilePath: string | null,
     projectName: string,
     format: 'wav' | 'mp3' | 'flac' | 'aiff'
   ): Promise<string> =>
     ipcRenderer.invoke(IPC.mixdown.resolveDefaultPath, projectFilePath, projectName, format),
-  /**
-   * Belt-and-braces overwrite check before dispatching MIXDOWN_START.
-   * Resolves to `'overwrite'` if the user confirms (or the file
-   * doesn't exist), `'cancel'` if the user declines so the dialog
-   * can let them edit the filename.
-   */
+  /** Overwrite confirmation for manually typed mixdown paths. */
   confirmMixdownOverwrite: (filePath: string): Promise<'overwrite' | 'cancel' | 'not-found'> =>
     ipcRenderer.invoke(IPC.mixdown.confirmOverwrite, filePath),
-  /**
-   * Tell main that a `.silverdaw` file is about to be loaded. Main reads
-   * the project XML and pre-registers every referenced audio path in
-   * its `audio:readFile` / `audio:readMetadata` allow-list so the
-   * renderer can refresh cover art on the library cards after load
-   * without each path being rejected as untrusted.
-   */
+  /** Pre-register project audio paths for trusted post-load reads. */
   prepareProjectOpen: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.project.prepareOpen, filePath),
-  /**
-   * On startup, ask main whether the user launched Silverdaw by
-   * double-clicking a `.silverdaw` file in Explorer. Resolves to the
-   * absolute path, or `null` if the app was launched normally. Main
-   * clears the slot after returning so a renderer reload won't re-open
-   * the same project.
-   */
+  /** Consume a pending `.silverdaw` launch path exactly once. */
   consumePendingOpenPath: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC.project.consumePendingOpenPath),
-  /**
-   * Subscribe to "open this project" pushes from main, fired when a
-   * second `Silverdaw.exe <file.silverdaw>` invocation is collapsed
-   * into the running instance by the single-instance lock.
-   * Returns an unsubscribe function.
-   */
+  /** Subscribe to project-open pushes from a collapsed second instance. */
   onOpenProjectFromPath: (handler: (filePath: string) => void): (() => void) => {
     const listener = (_evt: IpcRendererEvent, filePath: string): void => handler(filePath)
     ipcRenderer.on(IPC.project.openFromPath, listener)
     return () => ipcRenderer.removeListener(IPC.project.openFromPath, listener)
   },
-  /**
-   * Read a peaks-cache file (`<APPDATA>/Silverdaw/peaks/<hash>.peaks`)
-   * by absolute path. Resolves to the raw bytes or null if the path is
-   * outside the cache directory or unreadable. Used by the renderer's
-   * `WAVEFORM_READY` handler — peaks bytes never cross the WebSocket.
-   */
+  /** Read backend-produced peaks bytes from the validated cache directory. */
   readPeaksCacheFile: (cachePath: string): Promise<ArrayBuffer | null> =>
     ipcRenderer.invoke(IPC.peaks.readCacheFile, cachePath),
   // ─── Developer options ─────────────────────────────────────────────────
-  /** Resolve developer preferences sampled at startup. These values gate
-   * file logging and DevTools visibility for the lifetime of this process. */
+  /** Startup-only debug gates for logging and DevTools. */
   getStartupDebugPreferences: (): Promise<DebugPreferences> => ipcRenderer.invoke(IPC.debug.getStartupPrefs),
-  /** Read the currently-saved developer prefs (may differ from the startup snapshot). */
   getDebugPreferences: (): Promise<DebugPreferences> => ipcRenderer.invoke(IPC.debug.getPrefs),
-  /** Persist developer prefs. Takes effect on the next launch. */
   setDebugPreferences: (partial: Partial<DebugPreferences>): void => {
     ipcRenderer.send(IPC.debug.setPrefs, partial)
   },
   // ─── Quality-of-life preferences ───────────────────────────────────────
-  /**
-   * Fetch the current QoL preferences (toast visibility + default
-   * project / clip directories). Returned shape mirrors the on-disk
-   * sub-trees: `{ toasts: { enabled }, paths: { defaultProjectDir, defaultClipDir } }`.
-   */
   getQolPrefs: (): Promise<{
     toasts: { enabled: boolean }
     paths: { defaultProjectDir: string; defaultClipDir: string }
   }> => ipcRenderer.invoke(IPC.prefs.getQol),
-  /**
-   * Persist one or more QoL preferences. Pass any subset of the keys
-   * shown above; absent keys are left unchanged. Changes are written
-   * back to `preferences.json` (debounced) and take effect immediately —
-   * unlike developer startup options, none of the QoL settings need a restart.
-   */
+  /** QoL preferences apply immediately, unlike startup debug gates. */
   setQolPrefs: (partial: {
     toasts?: { enabled?: boolean }
     paths?: { defaultProjectDir?: string; defaultClipDir?: string }
   }): void => {
     ipcRenderer.send(IPC.prefs.setQol, partial)
   },
-  /**
-   * Show an OS folder-picker dialog. Returns the absolute path the user
-   * picked, or `null` if they cancelled. Used by the Preferences dialog
-   * "Change…" buttons next to each path field.
-   */
   chooseDirectory: (args: {
     title?: string
     defaultPath?: string
   }): Promise<string | null> => ipcRenderer.invoke(IPC.prefs.chooseDirectory, args),
   // ─── Recent projects ────────────────────────────────────────────────────
-  /** Resolve the current Recent Projects MRU list (head = most recent). */
   getRecentProjects: (): Promise<string[]> => ipcRenderer.invoke(IPC.prefs.getRecentProjects),
-  /** Remove a single path from the MRU. No-op if not present. */
   removeRecentProject: (filePath: string): void => {
     ipcRenderer.send(IPC.prefs.removeRecentProject, filePath)
   },
-  /** Empty the MRU. Used by File > Clear Recent. */
   clearRecentProjects: (): void => {
     ipcRenderer.send(IPC.prefs.clearRecentProjects)
   },
   // ─── Autosave configuration ─────────────────────────────────────────────
-  /** Read the persisted autosave interval + enable flag. */
   getAutosaveConfig: (): Promise<{ enabled: boolean; intervalSeconds: number }> =>
     ipcRenderer.invoke(IPC.prefs.getAutosaveConfig),
-  /** Persist autosave settings. Clamped server-side to 5..600 seconds. */
+  /** Autosave interval is clamped server-side to 5..600 seconds. */
   setAutosaveConfig: (partial: { enabled?: boolean; intervalSeconds?: number }): void => {
     ipcRenderer.send(IPC.prefs.setAutosaveConfig, partial)
   },
   // ─── Audio output device preference ─────────────────────────────────────
-  /** Read the persisted audio output device (or `{ null, null }` for
-   *  "system default"). The runtime current selection lives in the
-   *  renderer's `audioDeviceStore`; this IPC is just persistence. */
   getAudioOutput: (): Promise<{ typeName: string | null; deviceName: string | null }> =>
     ipcRenderer.invoke(IPC.prefs.getAudioOutput),
-  /** Persist the audio output device selection. Renderer calls this
-   *  only after the backend acks the corresponding `AUDIO_DEVICE_SELECT`
-   *  with `ok: true`, so a saved device that failed to open never
-   *  ends up in the prefs file. */
+  /** Persist only backend-acknowledged audio device selections. */
   setAudioOutput: (partial: { typeName: string | null; deviceName: string | null }): void => {
     ipcRenderer.send(IPC.prefs.setAudioOutput, partial)
   },
   // ─── Autosave folder + manifest IPCs ────────────────────────────────────
-  /**
-   * Ensure the autosave bucket exists for `projectId` and resolve to the
-   * absolute path of `autosave.silverdaw` + its parent dir. Returns
-   * `null` if `projectId` fails main's allow-list (which restricts it to
-   * a strict character set so a hostile renderer can't break out of the
-   * autosave root).
-   */
+  /** Resolve an autosave bucket after strict `projectId` validation. */
   resolveAutosaveDir: (
     projectId: string
   ): Promise<{ dir: string; filePath: string } | null> =>
     ipcRenderer.invoke(IPC.autosave.resolveDir, projectId),
-  /** Write (or refresh) the autosave manifest. Returns true on success. */
   writeAutosaveManifest: (manifest: {
     projectId: string
     originalPath: string | null
@@ -363,12 +180,7 @@ const api = {
     savedAtIso: string
     pending: boolean
   }): Promise<boolean> => ipcRenderer.invoke(IPC.autosave.writeManifest, manifest),
-  /**
-   * Scan `%APPDATA%/Silverdaw/autosave/` and return all entries whose
-   * autosave file is newer than its backing file (or whose backing file
-   * is missing / null). Used by the renderer to drive the recovery
-   * dialog on startup.
-   */
+  /** List autosaves newer than or missing their backing project file. */
   listRecoverableAutosaves: (): Promise<
     Array<{
       projectId: string
@@ -379,7 +191,6 @@ const api = {
       originalExists: boolean
     }>
   > => ipcRenderer.invoke(IPC.autosave.listRecoverable),
-  /** Delete the autosave bucket for `projectId`. Refused on invalid ids. */
   clearAutosave: (projectId: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.autosave.clear, projectId)
 }as const

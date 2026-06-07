@@ -1,36 +1,10 @@
-// WebSocket bridge to the JUCE backend.
+// WebSocket bridge to the JUCE backend: dynamic port, AUTH-first JSON envelopes, reconnect.
+// The shared protocol constrains `send()` and inbound validation before stores see data.
+// Bulk payloads stay on disk; the socket is the control plane.
 //
-// - Connects to `ws://127.0.0.1:<port>` on `connect()`, where `<port>` is
-//   resolved from main via `window.silverdaw.getBridgePort()` so the renderer
-//   and the spawned backend always agree on a single port (chosen by main).
-// - Reconnects with backoff if the socket drops (backend restarts during dev).
-// - Dispatches incoming `{ type, payload }` envelopes to the appropriate
-//   Pinia store; provides a typed `send()` for outgoing commands.
-//
-// The wire protocol — every legal envelope `type` and its payload shape — is
-// catalogued in `@shared/bridge-protocol`. Outgoing `send()` is constrained
-// to that catalogue via the `BridgeOutboundArgs` tuple type, and incoming
-// messages are validated by `isBridgeInboundType` + the per-arm payload
-// guards before they reach the Pinia stores.
-//
-// **Text only.** Every envelope is a JSON `{ type, payload }` text frame.
-// Bulk data (peaks today, stems / previews later) is delivered via the
-// on-disk cache and a small "ready" envelope pointing at the cache path —
-// see `WAVEFORM_READY` and `loadPeaksFromCache` below. Treating the
-// WebSocket as a control plane only sidesteps the IXWebSocket I/O-loop
-// starvation issues we hit when bulk frames competed with control traffic
-// for the same single-threaded loop on Windows.
-//
-// **File-size note (documented exception).** This module is a connection
-// singleton: the watchdog/heartbeat, connect/reconnect lifecycle, audio-file
-// probe and the exhaustive inbound `dispatch()` switch all read and mutate the
-// same module-level socket + timer + counter state, so they cannot be split
-// into separate files without a contrived shared-state object that would hurt
-// readability more than the line count helps (see the TS instructions on
-// justified exceptions). The two genuinely independent concerns have been
-// extracted to sibling modules: `bridge/peaksCache` (binary peaks decoding) and
-// `bridge/inboundValidation` (envelope validation + narrowing). Prefer
-// extracting any further self-contained concern over growing `dispatch()`.
+// File-size exception: connection lifecycle, watchdog, probes, and exhaustive dispatch share
+// socket/timer/counter state. Independent peaks and validation concerns are already extracted;
+// split only future self-contained concerns instead of inventing a shared-state wrapper.
 
 import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
@@ -60,12 +34,7 @@ const RECONNECT_DELAY_MS = 1000
 const MAX_RECONNECT_DELAY_MS = 5000
 
 // ─── Liveness watchdog tuning ───────────────────────────────────────────────
-// The backend only pushes data (PLAYHEAD_UPDATE) during playback, so when
-// the session is idle there is no inbound traffic to prove the engine's
-// message thread is still alive. The watchdog fills that gap: after a quiet
-// spell it sends a PING and expects a PONG handled ON the engine's message
-// thread. Missing several in a row means the engine is wedged → force a
-// supervised restart. Tuned for ~7–11 s detection without false positives.
+// Idle sessions need PING/PONG to prove the engine message thread still responds.
 const WATCHDOG_INTERVAL_MS = 1000
 /** Quiet period (no inbound) before we start actively pinging. */
 const WATCHDOG_IDLE_MS = 3000
@@ -76,7 +45,6 @@ const WATCHDOG_MAX_MISSED = 3
 /** Tick gap beyond this implies the machine slept — treat as resume. */
 const WATCHDOG_DRIFT_MS = 4000
 
-/** Raw `{type, payload}` envelope as it arrives off the wire (pre-validation). */
 let socket: WebSocket | null = null
 let reconnectDelay = RECONNECT_DELAY_MS
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -85,7 +53,6 @@ let socketHeartbeat: ReturnType<typeof setInterval> | null = null
 let outboundCount = 0
 let inboundCount = 0
 let lastInboundAt = 0
-// Watchdog state.
 let pingNonce = 0
 let pendingPing: { id: number; sentAt: number } | null = null
 let missedPongs = 0
@@ -112,11 +79,7 @@ function startSocketHeartbeat(): void {
   socketHeartbeat = setInterval(runWatchdogTick, WATCHDOG_INTERVAL_MS)
 }
 
-/**
- * One watchdog tick. Logs perf telemetry, then — when the session is idle
- * and the engine isn't legitimately busy — probes liveness with PING/PONG
- * and escalates to a supervised restart after repeated misses.
- */
+/** Probe idle engine liveness and escalate after repeated missed PONGs. */
 function runWatchdogTick(): void {
   if (!socket) return
   const now = performance.now()
@@ -131,9 +94,7 @@ function runWatchdogTick(): void {
       `missedPongs=${missedPongs}`
   )
 
-  // Large positive drift means the OS suspended us (sleep / hibernate).
-  // Any "missed" PONG across that gap is a false positive — reset and let
-  // the next clean interval re-evaluate.
+  // Sleep/resume drift can create false PONG misses; reset and re-evaluate.
   if (driftMs > WATCHDOG_DRIFT_MS) {
     log.info('perf.bridge', `clock drift ${driftMs.toFixed(0)}ms (likely resume) — resetting watchdog`)
     pendingPing = null
@@ -144,34 +105,26 @@ function runWatchdogTick(): void {
   if (socket.readyState !== WebSocket.OPEN) return
 
   const transport = useTransportStore()
-  // Not ready yet, or already recovering — don't probe or escalate; the
-  // reconnect/recovery machinery owns those states.
+  // Reconnect/recovery owns non-ready states.
   if (!transport.bridgeReady || transport.engineRecovery !== 'ok') return
-  // During playback PLAYHEAD_UPDATE already proves message-thread liveness.
   if (transport.isPlaying) {
     pendingPing = null
     missedPongs = 0
     return
   }
-  // A mixdown render can legitimately occupy the message thread; don't
-  // mistake that for a hang.
+  // Mixdown can legitimately occupy the message thread.
   if (snapshotMixdownState()) {
     pendingPing = null
     missedPongs = 0
     return
   }
-  // Library import / tempo + beat analysis is CPU-heavy work on the engine's
-  // message thread that can legitimately stall PONG replies for several
-  // seconds. Treat it like playback/mixdown: a known-busy engine is not a
-  // hung engine, so suppress the probe rather than risk a false restart that
-  // could interrupt the import.
+  // Import/analysis can stall PONG replies without meaning the engine is hung.
   if (useLibraryStore().isImporting) {
     pendingPing = null
     missedPongs = 0
     return
   }
 
-  // Resolve any outstanding ping first.
   if (pendingPing) {
     if (now - pendingPing.sentAt > WATCHDOG_PONG_TIMEOUT_MS) {
       missedPongs += 1
@@ -185,7 +138,6 @@ function runWatchdogTick(): void {
     return
   }
 
-  // Idle long enough? Send a fresh probe.
   const idleMs = lastInboundAt > 0 ? now - lastInboundAt : Number.POSITIVE_INFINITY
   if (idleMs >= WATCHDOG_IDLE_MS) {
     const id = ++pingNonce
@@ -203,12 +155,7 @@ function stopSocketHeartbeat(): void {
   missedPongs = 0
 }
 
-/**
- * Resolved bridge connection parameters: the WebSocket URL plus the
- * per-session AUTH token the renderer must send as its first envelope.
- * Both come from main via preload IPC; we resolve them once per session
- * and share the same in-flight promise across concurrent `connect()` calls.
- */
+/** Resolved URL plus AUTH token; concurrent `connect()` calls share one promise. */
 interface BridgeConnection {
   url: string
   token: string
@@ -229,8 +176,7 @@ function resolveBridgeConnection(): Promise<BridgeConnection> {
   const tokenPromise: Promise<string> =
     api && typeof api.getBridgeToken === 'function'
       ? api.getBridgeToken().catch((err) => {
-          // An empty token disables AUTH on the backend — only ever true in
-          // stand-alone debug runs without `SILVERDAW_BRIDGE_TOKEN` set.
+          // Empty token is for stand-alone debug runs only.
           log.warn('bridge', `getBridgeToken failed; sending empty token: ${String(err)}`)
           return ''
         })
@@ -242,7 +188,6 @@ function resolveBridgeConnection(): Promise<BridgeConnection> {
   return bridgeConnectionPromise
 }
 
-/** Open the connection. Safe to call multiple times. */
 export function connect(): void {
   stopped = false
   if (
@@ -253,7 +198,6 @@ export function connect(): void {
   }
 
   void resolveBridgeConnection().then((conn) => {
-    // Bail if `disconnect()` ran between the resolve and the open.
     if (stopped) return
     if (
       socket &&
@@ -272,8 +216,7 @@ function openSocket(conn: BridgeConnection): void {
 
   ws.addEventListener('open', () => {
     reconnectDelay = RECONNECT_DELAY_MS
-    // Fresh socket — clear any stale liveness-probe state from the previous
-    // connection so the watchdog starts from a clean slate.
+    // Fresh socket: reset liveness state before AUTH.
     pendingPing = null
     missedPongs = 0
     lastInboundAt = performance.now()
@@ -294,9 +237,7 @@ function openSocket(conn: BridgeConnection): void {
     clearMasterLevels()
     clearTrackLevels()
     log.warn('bridge', 'socket closed')
-    // An unexpected close mid-session means the engine dropped — kick off
-    // the recovery flow (no-op until the engine has been ready once, and
-    // skipped for the deliberate `disconnect()` teardown via `stopped`).
+    // Unexpected close starts mid-session recovery, then reconnects.
     if (!stopped) {
       engineRecovery.onConnectionLost()
       scheduleReconnect()
@@ -308,8 +249,7 @@ function openSocket(conn: BridgeConnection): void {
   })
 
   ws.addEventListener('message', (e) => {
-    // Text-only protocol: see file header. Any binary frame here is a
-    // protocol violation and is logged + dropped.
+    // Binary frames violate the text-only protocol.
     if (typeof e.data !== 'string') {
       log.warn('bridge', 'unexpected non-text frame; dropping')
       return
@@ -326,7 +266,6 @@ function openSocket(conn: BridgeConnection): void {
   })
 }
 
-/** Close the connection and stop reconnecting. */
 export function disconnect(): void {
   stopped = true
   if (reconnectTimer) {
@@ -349,9 +288,7 @@ export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K
   }
   const env = payload === undefined ? { type } : { type, payload }
   outboundCount++
-  // PLAYHEAD_UPDATE-style chatter doesn't exist outbound, but TRACK_GAIN
-  // can fire per slider-pixel during a drag. Log everything except those
-  // would-be high-frequency edges; for now, log every outbound envelope.
+  // TRACK_GAIN can fire per slider pixel; keep it at debug.
   if (type !== 'TRACK_GAIN') {
     log.info('bridge', `send ${type}`)
   } else {
@@ -362,13 +299,7 @@ export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K
 }
 
 // ─── File-rate probe ────────────────────────────────────────────────────────
-// `probeAudioFile()` issues an `AUDIO_FILE_PROBE` envelope and resolves
-// when the backend responds with `AUDIO_FILE_PROBED`. Used by the
-// import flow to read a source file's true sample rate (the renderer's
-// Web Audio decode resamples to the AudioContext rate, which on
-// Windows can lie about the source rate). `requestId` is a renderer-
-// allocated string so concurrent probes from a batched import don't
-// collide.
+// True source rates come from backend probes because Web Audio may resample.
 
 export type AudioFileProbeResult =
   | { ok: true; filePath: string; sampleRate: number; channelCount: number; durationMs: number }
@@ -403,14 +334,7 @@ function resolveAudioFileProbe(payload: AudioFileProbedPayload): void {
   }
 }
 
-/**
- * Probe `filePath` and resolve with the file's true sample rate /
- * channel count / duration. Resolves to `{ ok: false, error }` when
- * the backend can't decode the file's header (missing, unsupported,
- * corrupt). Times out after 5 s if the backend never acks — the
- * resolved promise carries an error in that case rather than hanging
- * the import flow indefinitely.
- */
+/** Probe true file rate/channel/duration; timeout returns `{ ok: false }`. */
 export function probeAudioFile(
   filePath: string,
   opts: { timeoutMs?: number } = {}
@@ -449,11 +373,7 @@ function scheduleReconnect(): void {
 function dispatch(msg: BridgeInboundMessage): void {
   inboundCount++
   lastInboundAt = performance.now()
-  // Exhaustive on `BridgeInboundType`: adding a new arm to `BridgeInboundMap`
-  // without a matching case here is a TypeScript error via `assertNever`.
-  // Skip PLAYHEAD_UPDATE — it fires 60 Hz and would drown the log. Same
-  // for PREVIEW_POSITION while the editor dialog is open, and
-  // MASTER_LEVEL which streams at the same cadence while audio is active.
+  // Exhaustive via `assertNever`; suppress high-frequency inbound logs.
   if (
     msg.type !== 'PLAYHEAD_UPDATE' &&
     msg.type !== 'PREVIEW_POSITION' &&
@@ -464,61 +384,27 @@ function dispatch(msg: BridgeInboundMessage): void {
   }
   switch (msg.type) {
     case 'READY':
-      // Backend says hello; nothing to do yet.
       break
 
     case 'PROJECT_STATE': {
-      // Backend-authoritative snapshot sent once per connection right
-      // after AUTH. The renderer reconciles its optimistic state against
-      // it — see `projectStore.applyProjectStateSnapshot` for semantics.
+      // Authoritative snapshot after AUTH reconciles optimistic state.
       useProjectStore().applyProjectStateSnapshot(msg.payload)
       useTransportStore().setPlaybackState(false)
-      // Unblock the UI now that we have an authoritative snapshot and
-      // the renderer's optimistic state is reconciled.
       useTransportStore().setBridgeReady(true)
-      // Push to the Recent Projects MRU whenever a `reset=true` snapshot
-      // arrives with a concrete file path — i.e. a successful Load or
-      // Save As (the explicit-save path already runs through the
-      // PROJECT_SAVED handler below, but Load does not, so without this
-      // recently-opened-but-never-saved files never enter the MRU).
-      // The initial AUTH-connect snapshot (no reset flag) is excluded so
-      // we don't double-bump on every reconnect.
+      // Load/Save As reset snapshots update MRU; initial reconnect snapshots do not.
       if (msg.payload.reset === true && msg.payload.filePath) {
         window.silverdaw.setLastProjectPath(msg.payload.filePath)
         void useAppStore().refreshRecentProjects()
       }
-      // First PROJECT_STATE = bridge is up. Seed the audio-device
-      // mirror so the Preferences > Audio tab + the transport-bar
-      // quick-switch render immediately rather than after the user
-      // opens them.
+      // Seed audio devices as soon as the bridge is ready.
       useAudioDeviceStore().requestInitialList()
-      // Drive mid-session recovery: if we're mid-recovery this snapshot is
-      // either the empty reconnect snapshot (→ kick re-load) or the
-      // re-load's own reset snapshot (→ recovery complete).
+      // Recovery distinguishes empty reconnect snapshots from restored resets.
       engineRecovery.onProjectStateApplied(msg.payload)
       break
     }
 
     case 'PLAYHEAD_UPDATE': {
-      // Only mirror position — `isPlaying` is intentionally NOT taken
-      // from this envelope. The backend's `PlayheadEmitter` runs at
-      // 60 Hz and may have a tick in-flight when the user clicks
-      // pause; honouring that stale `isPlaying=true` would flip the
-      // optimistic local state back to "playing", desyncing the play
-      // button (the next click then sends TRANSPORT_PAUSE on an
-      // already-paused backend). Local intent is authoritative until
-      // we add a dedicated TRANSPORT_STATE event for backend-driven
-      // transitions (end-of-project auto-stop, error-pause, …).
-      //
-      // Squelch sample-rounding noise: when we optimistically set a
-      // seek position (click on ruler, ←/→ arrow), the backend rounds
-      // the ms to integer samples and reports back a value that's
-      // typically < 0.05 ms different. Accepting that ack would snap
-      // the visual playhead by a sub-pixel, which reads as flicker
-      // under repeated arrow presses. Anything within 2 ms of the
-      // local value is treated as "no new information" and dropped;
-      // genuine playback advances (backend ticks 60 Hz → ~16 ms steps)
-      // sail through this gate easily.
+      // Position only: local play intent wins, and <2 ms sample-rounding acks are ignored.
       const t = useTransportStore()
       if (Math.abs(msg.payload.positionMs - t.positionMs) < 2) break
       t.setPosition(msg.payload.positionMs)
@@ -527,9 +413,7 @@ function dispatch(msg: BridgeInboundMessage): void {
 
     case 'CLIP_ADDED':
     case 'CLIP_ADD_FAILED': {
-      // Reconcile the ack against the optimistically-added clip. On
-      // failure the project store removes the clip and surfaces a toast
-      // with the backend-supplied reason; on success it's a no-op.
+      // Reconcile optimistic clip add; failures remove and toast.
       const project = useProjectStore()
       project.confirmClipAdd(
         msg.payload.trackId,
@@ -541,9 +425,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'TRACK_ADDED': {
-      // The renderer optimistically created the track at request time;
-      // a negative ack means the backend rejected (rare — addTrack is
-      // idempotent on the backend). Diagnostic only.
+      // Diagnostic only: track was already created optimistically.
       if (!msg.payload.ok) {
         log.warn('bridge', `TRACK_ADDED ok=false for ${msg.payload.trackId}`)
       }
@@ -551,9 +433,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'TRACK_REMOVED': {
-      // The renderer optimistically removed the track at request time. The
-      // ack is purely diagnostic: a negative ack means our view drifted
-      // out of sync with the backend (unknown trackId on the engine side).
+      // Diagnostic only: track was already removed optimistically.
       if (!msg.payload.ok) {
         log.warn('bridge', `TRACK_REMOVED ok=false for ${msg.payload.trackId}`)
       }
@@ -561,9 +441,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'CLIP_REMOVED': {
-      // Optimistic clip removal already happened on the renderer when
-      // we sent CLIP_REMOVE; this ack just confirms the backend dropped
-      // it too. ok=false means the id was unknown — a diagnostic.
+      // Diagnostic only: clip was already removed optimistically.
       if (!msg.payload.ok) {
         log.warn('bridge', `CLIP_REMOVED ok=false for ${msg.payload.clipId}`)
       }
@@ -571,9 +449,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'TRACK_GAIN_APPLIED': {
-      // Same shape as TRACK_REMOVED: optimistic update already happened
-      // on commit; the ack just confirms the engine accepted it. A
-      // negative ack means the trackId was unknown on the backend.
+      // Diagnostic only: gain was already applied optimistically.
       if (!msg.payload.ok) {
         log.warn(
           'bridge',
@@ -602,24 +478,14 @@ function dispatch(msg: BridgeInboundMessage): void {
     case 'PROJECT_SAVED': {
       const notifications = useNotificationsStore()
       const project = useProjectStore()
-      // Resolve any outstanding saveAndWait Promise so the
-      // unsaved-changes flow in App.vue can proceed.
+      // Unblock any saveAndWait caller.
       project.notifySaveAck(msg.payload.ok, msg.payload.error)
       if (msg.payload.ok) {
         log.info('bridge', `PROJECT_SAVED path=${msg.payload.filePath}`)
-        // Persist the path as "last project" so the next launch reopens
-        // it. Main owns the preferences file and ignores empty values.
-        // `project:setLastPath` also bumps the Recent Projects MRU.
+        // Main persists last project path and updates the MRU.
         window.silverdaw.setLastProjectPath(msg.payload.filePath)
-        // The explicit save made the autosave bucket redundant — drop it
-        // so the next launch's recovery scan stays clean. Use the
-        // current project id (post-save the id may have rotated if this
-        // was a Save As; both old and new ids get cleared because the
-        // store's previousProjectId watcher in `autosave.ts` deletes the
-        // old bucket on the reset=true PROJECT_STATE that follows).
+        // Explicit save makes the current autosave bucket redundant.
         if (project.projectId) void window.silverdaw.clearAutosave(project.projectId)
-        // Refresh the in-store MRU mirror so the File menu picks up the
-        // new top entry without waiting for a re-launch.
         void useAppStore().refreshRecentProjects()
         notifications.pushInfo('Project saved')
       } else {
@@ -638,10 +504,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'PROJECT_AUTOSAVED': {
-      // Autosave is intentionally invisible at the user level — no
-      // toast, no PROJECT_STATE follow-up. The renderer's autosave
-      // manager listens for this ack to advance the manifest from
-      // "pending" to confirmed so crash recovery picks the entry up.
+      // Autosave acks confirm pending manifests without user-visible UI.
       useProjectStore().notifyAutosaveAck(msg.payload.filePath, msg.payload.ok, msg.payload.error)
       if (!msg.payload.ok) {
         log.warn('bridge', `PROJECT_AUTOSAVED failed: ${msg.payload.error ?? 'unknown'}`)
@@ -657,18 +520,11 @@ function dispatch(msg: BridgeInboundMessage): void {
       useNotificationsStore().pushError(
         `Could not open project: ${msg.payload.error || msg.payload.filePath}`
       )
-      // The MRU's `openRecentPath` helper already prunes missing /
-      // unreadable entries on click, so there's nothing else to do
-      // here — the user picked a file, the backend rejected it, the
-      // toast surfaces why.
       break
     }
 
     case 'PROJECT_RENAMED': {
-      // Renderer already updated `projectName` optimistically in
-      // `requestRename`; this ack just confirms the backend stored the
-      // value. Mirror back in case the backend canonicalised (e.g.
-      // trimmed whitespace) the input.
+      // Mirror backend-canonical name after optimistic rename.
       if (msg.payload.ok) {
         useProjectStore().projectName = msg.payload.name
       }
@@ -682,18 +538,13 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'WAVEFORM_READY': {
-      // Backend has finished writing the peaks cache file. Pull the
-      // bytes from disk via main's IPC and dequantise into the project
-      // store. Bulk data deliberately bypasses the WebSocket — see
-      // file header for the rationale.
+      // Bulk peaks stay on disk; main reads and dequantises them.
       void loadPeaksFromCache(msg.payload)
       break
     }
 
     case 'CLIP_EDITOR_PEAKS_READY': {
-      // High-resolution peaks for the Clip Editor — same wire model
-      // as WAVEFORM_READY but keyed on the library item id so all
-      // saved-clips that share the source can reuse one cache entry.
+      // Clip Editor peaks are keyed by library item for saved-clip reuse.
       void loadEditorPeaksFromCache(msg.payload)
       break
     }
@@ -716,18 +567,14 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'PROJECT_BPM_APPLIED': {
-      // Backend seeded the project BPM (typically from the first
-      // import). Mirror locally — transportStore.setBpm is local-only,
-      // so no echo back to the bridge.
+      // Mirror backend-seeded BPM locally without echoing to the bridge.
       useTransportStore().setBpm(msg.payload.bpm)
       log.info('bridge', `PROJECT_BPM_APPLIED bpm=${msg.payload.bpm.toFixed(2)}`)
       break
     }
 
     case 'CLIP_WARP_APPLIED': {
-      // Backend flipped or adjusted warp server-side (e.g. late
-      // auto-warp after LIBRARY_ITEM_ANALYSIS). Mirror locally without
-      // echoing CLIP_SET_WARP back to the backend.
+      // Mirror backend warp changes locally without echoing.
       const project = useProjectStore()
       project.setClipWarp(
         msg.payload.clipId,
@@ -786,10 +633,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'AUDIO_FILE_PROBED': {
-      // Resolve the pending `probeAudioFile()` promise keyed by
-      // `requestId`. Late acks for promises that have already been
-      // resolved (or whose initiator was cancelled) are dropped on
-      // the floor — there is no harm in a missing entry.
+      // Resolve by `requestId`; late or cancelled probe acks are harmless.
       resolveAudioFileProbe(msg.payload)
       break
     }
@@ -822,30 +666,19 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'MASTER_LEVEL': {
-      // Push the peaks into the non-reactive level channel — the
-      // `MasterMeter` component reads them on its RAF loop, so we
-      // intentionally avoid touching a Pinia store here (which would
-      // fan out a re-render to every subscriber 60x/s).
+      // Non-reactive meter channel avoids 60 Hz Pinia fan-out.
       setMasterLevels(msg.payload.peakL, msg.payload.peakR)
       break
     }
 
     case 'TRACK_LEVELS': {
-      // Same rationale as MASTER_LEVEL: peaks land in a non-reactive
-      // channel and per-track `TrackMeter` components poll on their
-      // shared RAF loop.
+      // Same non-reactive meter channel as MASTER_LEVEL.
       setTrackLevels(msg.payload.tracks)
       break
     }
 
-    // ─── Phase 5 FX deltas. The bridge layer just acknowledges the
-    //     envelope shape; the actual store mutations land per-feature
-    //     when the renderer-side UI for each effect ships. Until then
-    //     PROJECT_STATE refreshes (on save / load / undo) carry the
-    //     persisted values, so dropping the deltas here is harmless.
     case 'TRACK_TONE_APPLIED': {
-      // Reconcile to the backend-canonical (clamped / default-suppressed)
-      // Tone values without echoing the gesture back to the engine.
+      // Apply backend-canonical values without echoing.
       if (!msg.payload.ok) {
         log.warn('bridge', `TRACK_TONE_APPLIED ok=false for ${msg.payload.trackId}`)
         break
@@ -932,9 +765,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'CLIP_ENVELOPE_APPLIED': {
-      // Mirror the backend-normalised volume-shape breakpoints into the
-      // local clip so undo / redo / cross-renderer ACKs flow without
-      // waiting for a full PROJECT_STATE. An empty array clears the shape.
+      // Mirror backend-normalised envelope points without waiting for PROJECT_STATE.
       useProjectStore().setClipEnvelope(
         msg.payload.clipId,
         msg.payload.points ?? [],
@@ -945,8 +776,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'PONG': {
-      // Liveness reply. Clear the matching outstanding probe and reset the
-      // miss counter — the engine's message thread is alive.
+      // Liveness reply from the engine message thread.
       if (pendingPing && pendingPing.id === msg.payload.id) {
         pendingPing = null
       }
@@ -955,8 +785,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     }
 
     case 'ENGINE_ERROR': {
-      // The backend caught (and survived) an exception in a handler. Surface
-      // it honestly but non-fatally — the engine is still running.
+      // Backend survived a handler exception; surface it non-fatally.
       log.error('bridge', `ENGINE_ERROR: ${msg.payload.message}`)
       useNotificationsStore().pushError(
         'The audio engine hit a problem but kept running. If something looks off, try the action again.',

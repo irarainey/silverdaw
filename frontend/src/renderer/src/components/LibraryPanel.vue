@@ -1,17 +1,5 @@
 <script setup lang="ts">
-// LibraryPanel — bottom-of-window panel hosting imported audio files as
-// draggable items. Files can be added via the Import button or by dragging
-// them in from the OS file manager. Each item can then be dragged out onto
-// a track in the timeline; placement is handled by TimelineView's drop
-// listener which calls `projectStore.addClipFromLibrary`.
-//
-// Drag payload for "library item → timeline":
-//   dataTransfer.setData('application/x-silverdaw-library-item', itemId)
-//   dataTransfer.effectAllowed = 'copy'
-//
-// Resize: the user can drag the top edge to grow / shrink the panel. The
-// height is held by App.vue so the timeline can size itself off whatever
-// height is left over.
+// Bottom library/effects panel; library items drag to the timeline with a custom payload.
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useLibraryStore, libraryItemDisplayName, libraryItemIsSample, type LibraryItem } from '@/stores/libraryStore'
@@ -31,7 +19,7 @@ import { useLibraryItemRename } from '@/lib/library/useLibraryItemRename'
 import { useLibraryItemActions } from '@/lib/library/useLibraryItemActions'
 
 const props = defineProps<{
-    /** Current panel height in CSS pixels (excluding the resize handle). */
+    /** Panel height in CSS pixels, excluding the resize handle. */
     height: number
 }>()
 
@@ -43,23 +31,15 @@ const library = useLibraryStore()
 const ui = useUiStore()
 const project = useProjectStore()
 
-// Which bottom-panel tab is showing. `fxPanelOpen` (persisted project view
-// state) records whether an effects rack is showing instead of the Library,
-// so a track header's Fx button can open the rack from outside this
-// component and the open/closed choice survives File > Save / Load.
-// `fxTab` (UI-only) selects which rack — per-track (Track FX) or project-wide
-// (Project FX). The panel opens on the Library.
+// Tab state bridges persisted FX panel state with the local Library tab.
 const activeTab = computed<'library' | 'trackfx' | 'projectfx'>({
   get: () => {
     if (!project.fxPanelOpen) return 'library'
-    // The Track FX tab stays selectable even with no track selected: rather
-    // than silently bouncing to the Library (which made the tab feel broken),
-    // TrackFxPanel shows a "select a track" hint so the surface is clear.
+    // Track FX remains selectable so the panel can show its empty-state hint.
     return project.fxTab === 'project' ? 'projectfx' : 'trackfx'
   },
   set: (tab) => {
-    // Clicking any tab while minimised should reveal the panel — the user
-    // clicked it expecting to see that surface.
+    // Tab clicks reveal the minimised panel.
     ui.setLibraryPanelCollapsed(false)
     if (tab === 'library') {
       project.setFxPanelOpen(false)
@@ -70,17 +50,14 @@ const activeTab = computed<'library' | 'trackfx' | 'projectfx'>({
   }
 })
 
-// Library-item actions (right-click menu + Info/Editor dialogs), inline rename,
-// and the OS drag-and-drop import zone each live in a focused composable.
+// Actions, rename, and OS drop-zone behavior live in focused composables.
 const { isDragOver, onPanelDragEnter, onPanelDragOver, onPanelDragLeave, onPanelDrop } =
     useLibraryDropZone()
 
 const { editingItemId, editingValue, setNameInputEl, startRename, onDocumentKeyDown, onDocumentPointerDown } =
     useLibraryItemRename()
 
-// While a rename is in progress, listen at the document level for the commit /
-// cancel gestures (more robust than the input's own keydown / blur, which can
-// be blocked when the input lives inside other interactive containers).
+// Document-level rename commit/cancel survives nested interactive containers.
 watch(editingItemId, (id) => {
     if (id) {
         document.addEventListener('keydown', onDocumentKeyDown, { capture: true })
@@ -136,17 +113,13 @@ async function onImportClick(): Promise<void> {
         log.info('library', 'import-button dialog cancelled')
         return
     }
-    // Sample-rate preflight: probe every file and prompt if any differ
-    // from the project's effective target rate. Cancel aborts the
-    // whole batch; "Switch project rate" updates `targetSampleRate`
-    // before the loop runs.
+    // Sample-rate preflight can cancel the whole batch before import starts.
     const decision = await preflightSampleRates(opened.map((f) => f.filePath))
     if (decision === 'cancel') {
         log.info('library', 'import cancelled at sample-rate prompt')
         return
     }
-    // Register the batch with the library store so the status-bar progress
-    // bar reflects the whole import, not per-file flashes.
+    // Track batch progress as one status-bar operation.
     library.beginImportBatch(opened.length)
     for (const file of opened) {
         await importAudioIntoLibrary(file)
@@ -159,12 +132,9 @@ function onItemDragStart(e: DragEvent, item: LibraryItem): void {
     if (!e.dataTransfer) return
     e.dataTransfer.effectAllowed = 'copy'
     e.dataTransfer.setData('application/x-silverdaw-library-item', item.id)
-    // A plain-text fallback helps debugging and lets external surfaces
-    // identify the drag if it escapes the app.
+    // Plain text helps identify drags that escape the app.
     e.dataTransfer.setData('text/plain', item.fileName)
-    // `dataTransfer.getData(...)` returns '' during `dragover` events for
-    // security, so we stash the dragged item id on the store too. The
-    // timeline reads it from there to drive the drop-preview ghost.
+    // Dragover cannot read dataTransfer, so store the id for drop previews.
     library.setDragItem(item.id)
 }
 
@@ -179,8 +149,7 @@ function formatDuration(ms: number): string {
     return `${m}:${String(s).padStart(2, '0')}`
 }
 
-/** Saved clips can be sub-second; show one decimal so a 1.5 s clip
- *  doesn't display as "0:01" alongside its source range. */
+/** Saved clips can be sub-second, so avoid rounding them to whole seconds. */
 function formatClipDuration(ms: number): string {
     const safe = Math.max(0, ms)
     if (safe < 60_000) {
@@ -194,9 +163,6 @@ function formatClipDuration(ms: number): string {
 }
 
 // ─── Metadata display helpers ─────────────────────────────────────
-// Cards show the track title on the top line (falling back to the file
-// name) and the artist on a second muted line when tags are present. The
-// full metadata payload is shown in LibraryItemInfoDialog.
 
 function displayTitle(item: LibraryItem): string {
     return libraryItemDisplayName(item)
@@ -225,12 +191,7 @@ function savedClipEffectiveBpm(item: LibraryItem): number | undefined {
     return sourceBpm * ratio
 }
 
-/**
- * Helper: should this library item be treated as a non-musical sample?
- * Used to suppress BPM / key / variable-tempo badges on its tile in
- * favour of a single "sample" pill. Mirrors `applyDropTimeWarp` so
- * the tile UI matches what the drop will do.
- */
+/** Mirrors drop-time warp rules so sample tiles match drop behavior. */
 function tileIsSample(item: LibraryItem): boolean {
     return libraryItemIsSample(item, library.byId)
 }
@@ -240,15 +201,10 @@ function tileIsSample(item: LibraryItem): boolean {
 const MIN_PANEL_HEIGHT = 80
 const MAX_PANEL_HEIGHT_FRACTION = 0.7 // never more than 70% of the window
 
-// Height the panel animates down to when minimised: just the tab strip.
-// Matches the 32px header (h-8) plus the section's 1px top border, so the
-// header stays fully visible while the body slides out of view.
+// Collapsed height keeps the tab strip fully visible.
 const COLLAPSED_PANEL_HEIGHT = 33
 
-// True only while the user is actively dragging the resize handle. The
-// height transition (used for the minimise / expand slide) is suppressed
-// during a drag so direct manipulation stays instant rather than lagging
-// behind the pointer.
+// Suppress height transition during direct resize.
 const isResizing = ref(false)
 
 let resizeStartY = 0
@@ -266,7 +222,6 @@ function onResizePointerDown(e: PointerEvent): void {
 }
 
 function onResizePointerMove(e: PointerEvent): void {
-    // Dragging the handle UP grows the panel; DOWN shrinks it.
     const delta = resizeStartY - e.clientY
     const max = Math.max(MIN_PANEL_HEIGHT, Math.floor(window.innerHeight * MAX_PANEL_HEIGHT_FRACTION))
     const next = Math.min(max, Math.max(MIN_PANEL_HEIGHT, resizeStartHeight + delta))
@@ -291,9 +246,7 @@ function onResizePointerUp(): void {
     @dragleave="onPanelDragLeave"
     @drop="onPanelDrop"
   >
-    <!-- Top resize handle. The visible line is 1px; the hit area is 6px tall
-             so it's easy to grab. The cursor changes to row-resize on hover.
-             Hidden while minimised — there's nothing to resize. -->
+    <!-- Top resize handle; hidden while minimised. -->
     <div
       v-if="!ui.libraryPanelCollapsed"
       class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize"
@@ -301,8 +254,7 @@ function onResizePointerUp(): void {
       @pointerdown="onResizePointerDown"
     />
 
-    <!-- Header: [Library | Track FX | Project FX] tab strip. The Import
-         action belongs to the Library tab only. -->
+    <!-- Header tab strip. -->
     <header
       class="flex h-8 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-3 text-xs uppercase tracking-wide text-zinc-400"
     >
@@ -381,18 +333,11 @@ function onResizePointerUp(): void {
       </button>
     </header>
 
-    <!-- Body wrapper. Kept mounted (not v-show / v-if) so collapsing and
-         expanding the panel slides the body in / out via the section's
-         height transition instead of unmounting it — that remount, plus the
-         one-shot resize, is what caused the flicker. `overflow-hidden` clips
-         the body as the panel shrinks; `inert` blocks interaction with the
-         clipped content while minimised. The active tab inside still
-         switches with v-if. -->
+    <!-- Kept mounted so collapse animates without remount flicker. -->
     <div
       class="flex min-h-0 flex-1 flex-col overflow-hidden"
       :inert="ui.libraryPanelCollapsed"
     >
-      <!-- Body. Tiles wrap to the available width; only vertical overflow scrolls. -->
       <div
         v-if="activeTab === 'library'"
         class="library-panel-body silverdaw-scroll relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-2"
@@ -407,9 +352,7 @@ function onResizePointerUp(): void {
           v-else
           class="flex w-full min-w-0 flex-wrap items-start content-start gap-3"
         >
-          <!-- Source group: source tile on top, derived saved clips below in a sub-list.
-                       When the source has no saved clips, drop the group framing so the tile
-                       reads as a standalone item rather than an empty container. -->
+          <!-- Source group: source tile plus derived saved clips. -->
           <div
             v-for="source in sourceItems"
             :key="source.id"
@@ -428,7 +371,6 @@ function onResizePointerUp(): void {
               @dblclick="openItemEditor(source)"
               @contextmenu.prevent="(e) => openItemContextMenu(e, source)"
             >
-              <!-- Cover art thumbnail (or fallback) on the left edge. -->
               <div
                 v-if="ui.showLibraryTileImages"
                 class="flex aspect-square w-18.75 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
@@ -451,7 +393,6 @@ function onResizePointerUp(): void {
                   <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
                 </svg>
               </div>
-              <!-- Text body. -->
               <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">
                 <input
                   v-if="editingItemId === source.id"
@@ -523,10 +464,7 @@ function onResizePointerUp(): void {
               </div>
             </div>
 
-            <!-- Saved clip sub-list derived from this source. Compact rows so
-                       a source with many saved clips stays readable. The user
-                       can collapse the sub-list with the disclosure chevron;
-                       collapse state persists with the project. -->
+            <!-- Saved clips derived from this source. -->
             <div
               v-if="childItems(source).length > 0"
               class="flex flex-col bg-zinc-900/60"
@@ -613,7 +551,7 @@ function onResizePointerUp(): void {
             </div>
           </div>
 
-          <!-- Orphan saved clips: source file was removed from the library. -->
+          <!-- Orphan saved clips. -->
           <div
             v-if="orphanSavedClipItems.length > 0"
             class="library-group flex w-60 max-w-full shrink-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/50"
@@ -669,7 +607,7 @@ function onResizePointerUp(): void {
           </div>
         </div>
 
-        <!-- OS-drag overlay - blue dashed outline + tint when dragging files in. -->
+        <!-- OS-drag overlay. -->
         <div
           v-if="isDragOver"
           class="pointer-events-none absolute inset-1 flex items-center justify-center rounded border-2 border-dashed border-blue-500 bg-blue-500/10 text-sm font-medium text-blue-200"
@@ -678,13 +616,13 @@ function onResizePointerUp(): void {
         </div>
       </div>
 
-      <!-- Track FX body. Edits the selected track's Tone, Pan, and Reverb/Delay amounts. -->
+      <!-- Track FX body. -->
       <TrackFxPanel
         v-else-if="activeTab === 'trackfx'"
         class="min-h-0 flex-1"
       />
 
-      <!-- Project FX body. Edits the project-wide shared Reverb + Delay. -->
+      <!-- Project FX body. -->
       <ProjectFxPanel
         v-else
         class="min-h-0 flex-1"
@@ -713,15 +651,11 @@ function onResizePointerUp(): void {
 
 <style scoped>
 .library-item {
-    /* Hide the default text-cursor on drag and give the card a subtle shadow on hover. */
+    /* Suppress drag text-cursor and add subtle card depth. */
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
 .library-panel-body {
-    /* Scrollbar styling shared with the rest of the app via the
-     * `silverdaw-scroll` utility in App.vue. Keeping the class on the
-     * element preserves any layout assumptions earlier code made about
-     * it without re-declaring the colour rules here. */
 }
 </style>
 

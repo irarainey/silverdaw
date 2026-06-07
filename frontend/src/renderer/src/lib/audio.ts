@@ -1,9 +1,4 @@
-// Audio decoding and peak-array generation for waveform rendering.
-//
-// Until the JUCE backend is wired up, the renderer decodes audio via the
-// Web Audio API and computes peaks itself. Peaks are stored at a fixed
-// resolution (`PEAKS_PER_SECOND`) so the timeline can downsample further
-// at draw time without re-decoding the file.
+// Renderer-side audio decoding and fixed-rate peak generation for waveform drawing.
 
 export const PEAKS_PER_SECOND = 500
 
@@ -18,44 +13,31 @@ const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.6
 const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17] as const
 const KEY_MIN_CONFIDENCE_GAP = 0.002
 
-/** Lazily-instantiated `AudioContext` reused across decodes. */
 let audioContext: AudioContext | null = null
 function getAudioContext(): AudioContext {
   if (!audioContext) audioContext = new AudioContext()
   return audioContext
 }
 
-/**
- * Decodes a raw audio buffer (any browser-supported format) into a peaks
- * array suitable for waveform rendering, plus its duration and channel count.
- *
- * The decoded planar PCM (`channels`) is also returned so callers can
- * forward it to the main process for re-encoding as WAV (used when the
- * JUCE backend can't decode the original format natively).
- */
+/** Decode browser-supported audio into waveform peaks and transferable PCM. */
 export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
   durationMs: number
   sampleRate: number
   channelCount: number
   /** Alternating min, max pairs at `PEAKS_PER_SECOND` resolution. */
   peaks: Float32Array
-  /** Per-channel min/max peaks (index 0 = left, 1 = right) for stereo
-   *  sources; empty for mono / >2-channel sources. Mirrors the backend's
-   *  per-lane peaks so the renderer-decoded path can also draw stereo. */
+  /** Stereo per-channel min/max peaks; empty for non-stereo sources. */
   channelPeaks: Float32Array[]
   /** Actual peak-pair rate after integer sample buckets are applied. */
   peaksPerSecond: number
   /** Planar PCM, one Float32Array per channel. */
   channels: Float32Array[]
 }> {
-  // `decodeAudioData` consumes the ArrayBuffer; clone first so the caller
-  // can retain a copy if needed.
+  // Clone because `decodeAudioData` consumes its ArrayBuffer.
   const ctx = getAudioContext()
   const audioBuffer = await ctx.decodeAudioData(data.slice(0))
 
-  // `getChannelData` returns a view into the AudioBuffer's internal
-  // storage. We copy into standalone Float32Arrays so the data survives
-  // the AudioBuffer going out of scope and can be transferred over IPC.
+  // Copy AudioBuffer views into standalone arrays for IPC transfer.
   const channels: Float32Array[] = []
   for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
     const src = audioBuffer.getChannelData(c)
@@ -79,11 +61,7 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
   }
 }
 
-/**
- * Estimate the musical key from decoded PCM using a lightweight chroma
- * profile pass. This is intentionally approximate: it is used as helpful
- * library metadata, not as an editing constraint.
- */
+/** Approximate key estimate for library metadata, not editing constraints. */
 export function detectMusicalKey(channels: readonly Float32Array[], sampleRate: number): string | undefined {
   if (channels.length === 0 || sampleRate <= 0) return undefined
 
@@ -194,11 +172,7 @@ function correlation(a: readonly number[], b: readonly number[]): number {
   return den > 0 ? num / den : 0
 }
 
-/**
- * Reduces an `AudioBuffer` to a min/max peak pair per bucket, where each
- * bucket spans `sampleRate / peaksPerSecond` samples. Channels are mixed
- * down to mono by averaging.
- */
+/** Reduce an `AudioBuffer` to mono min/max peak pairs. */
 function computePeaks(buffer: AudioBuffer, peaksPerSecond: number): Float32Array {
   const { sampleRate, length, numberOfChannels } = buffer
   const samplesPerPeak = Math.max(1, Math.floor(sampleRate / peaksPerSecond))
@@ -215,7 +189,6 @@ function computePeaks(buffer: AudioBuffer, peaksPerSecond: number): Float32Array
     let min = 0
     let max = 0
     for (let i = start; i < end; i++) {
-      // Average across channels for a mono peak.
       let sum = 0
       for (let c = 0; c < numberOfChannels; c++) sum += channels[c]![i]!
       const v = sum / numberOfChannels
@@ -229,14 +202,7 @@ function computePeaks(buffer: AudioBuffer, peaksPerSecond: number): Float32Array
   return out
 }
 
-/**
- * Compute per-channel min/max peaks for a STEREO (exactly 2-channel)
- * buffer, returning `[left, right]` where each entry is alternating
- * min, max pairs at the same bucketing as `computePeaks`. Mono and
- * >2-channel buffers return an empty array (they render from the mono
- * summary only). Keeps the renderer-decoded path in lockstep with the
- * backend's per-lane peaks (see `backend/src/Waveform.cpp`).
- */
+/** Compute stereo per-lane min/max peaks; non-stereo buffers use mono peaks only. */
 function computeChannelPeaks(buffer: AudioBuffer, peaksPerSecond: number): Float32Array[] {
   const { sampleRate, length, numberOfChannels } = buffer
   if (numberOfChannels !== 2) return []

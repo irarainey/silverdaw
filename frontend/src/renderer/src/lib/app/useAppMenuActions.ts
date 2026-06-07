@@ -1,9 +1,4 @@
-// Application menu-action dispatcher, extracted from App.vue. Handles every
-// `window.silverdaw.onMenuAction` command (file / edit / view / help) plus the
-// keyboard accelerators that route through the same channel. The SFC keeps
-// ownership of the dialog open-refs, the unsaved-changes guard, the modal guard,
-// and the recent-path opener, passing them in as deps so this module stays a
-// pure command router with no Vue lifecycle of its own.
+// Application menu-action dispatcher; App.vue owns dialogs, guards and recent-path opening.
 import type { Ref } from 'vue'
 import type { useTransportStore } from '@/stores/transportStore'
 import type { useProjectStore } from '@/stores/projectStore'
@@ -30,16 +25,13 @@ export interface AppMenuActionsDeps {
   library: LibraryStore
   notifications: NotificationsStore
   appStore: AppStore
-  // Dialog open-state owned by the SFC.
   aboutOpen: Ref<boolean>
   preferencesOpen: Ref<boolean>
   projectPropertiesOpen: Ref<boolean>
   exportMixdownOpen: Ref<boolean>
-  // Runs `proceed` once unsaved changes are saved/discarded (SFC-owned).
   guardAgainstUnsavedChanges: (proceed: () => void) => void
   // True when a modal/dialog owns the keyboard; suppresses menu-zoom.
   isModalOpen: () => boolean
-  // Opens a Recent-Projects MRU entry (SFC-owned).
   openRecentPath: (filePath: string) => void
 }
 
@@ -52,10 +44,7 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
 
   function handleMenuAction(action: string): void {
     log.info('menu', `action ${action}`)
-    // The About dialog must remain reachable even before the bridge has
-    // delivered its first PROJECT_STATE — it doesn't touch project state
-    // and users may want to see version / licence info while diagnosing a
-    // backend-startup problem. Same reasoning applies to Preferences.
+    // About and Preferences remain reachable before PROJECT_STATE.
     if (action === 'help.about') {
       deps.aboutOpen.value = true
       return
@@ -64,11 +53,7 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       deps.preferencesOpen.value = true
       return
     }
-    // Quitting / closing the window must work regardless of bridge
-    // state — the user has to be able to give up on a stuck startup.
-    // `project.isDirty` is reliably false until the bridge has
-    // delivered at least one PROJECT_STATE, so the guard is a no-op
-    // in that case anyway.
+    // Quit/close must work even during a stuck startup.
     if (action === 'file.exit') {
       deps.guardAgainstUnsavedChanges(() => window.silverdaw.menuAction('file.exitConfirmed'))
       return
@@ -77,19 +62,12 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       deps.guardAgainstUnsavedChanges(() => window.silverdaw.menuAction('app.confirmClose'))
       return
     }
-    // Drop any menu action (incl. keyboard shortcut) that arrives before
-    // the bridge has delivered its initial PROJECT_STATE — the visible
-    // <StartupScreen> swallows mouse clicks but accelerators bypass
-    // it, and acting on stale local state before reconcile would lose
-    // the action (it'd race the snapshot apply pass).
+    // Drop accelerators until initial PROJECT_STATE reconciles local state.
     if (!transport.bridgeReady) {
       log.warn('menu', `dropped ${action} (bridge not ready)`)
       return
     }
-    // Timeline zoom — menu-click path only. The keyboard path is owned by
-    // `onGlobalShortcutKey` and never routes through here. Mirror that
-    // handler's modal guard so a menu click can't zoom the timeline behind
-    // an open dialog (clip editor, export, recovery, …).
+    // Mirror the keyboard zoom modal guard for menu-click zoom.
     if (
       action === 'view.zoomIn' ||
       action === 'view.zoomOut' ||
@@ -106,9 +84,6 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       }
       return
     }
-    // Adding a track is now just "create an empty track". Importing a file
-    // into the track happens via the per-track Import button on the track
-    // header panel (see TrackHeaderPanel.vue).
     if (action === 'file.addTrack') {
       project.addTrack()
       return
@@ -132,22 +107,14 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       deps.guardAgainstUnsavedChanges(() => {
         void window.silverdaw.chooseProjectOpen().then(async (filePath) => {
           if (!filePath) return
-          // Same allow-list seeding as the auto-open path. The metadata
-          // refresh fired by `applyProjectStateSnapshot` runs as soon as
-          // the backend echoes PROJECT_STATE, so the paths must be on the
-          // whitelist by that point.
+          // Seed the allow-list before PROJECT_STATE triggers metadata refresh.
           await window.silverdaw.prepareProjectOpen(filePath)
           project.requestLoad(filePath)
-          // StartupScreen disappears once PROJECT_STATE arrives. Avoid
-          // a preemptive dismiss so the empty timeline never flashes.
         })
       })
       return
     }
-    // Recent Projects MRU click. The action ID encodes the visible-menu
-    // index; we look the path up out of the appStore mirror because the
-    // file menu only surfaces the top 5 (the full MRU lives in the
-    // start screen).
+    // Recent-project actions encode the appStore MRU index.
     if (action.startsWith('file.openRecentByIndex:')) {
       const indexStr = action.slice('file.openRecentByIndex:'.length)
       const index = Number.parseInt(indexStr, 10)
@@ -163,8 +130,7 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       return
     }
     if (action === 'file.save') {
-      // No current path → fall through to Save As so the user gets the
-      // OS dialog rather than a confusing silent failure.
+      // No current path falls through to Save As.
       if (project.currentFilePath) {
         void project.saveAndWait(project.currentFilePath, false).then((result) => {
           if (
@@ -246,12 +212,7 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       return
     }
     if (action === 'edit.cropProjectToLastClip') {
-      // Crop the project length to the end of the latest clip on any
-      // track. No-op if there are no clips at all — collapsing an empty
-      // project to 0 ms would leave a 0-width ruler with no way back
-      // except a tempo / length edit. The setter clamps upward per-track
-      // to fit clips on that track, so passing the global max keeps the
-      // shorter tracks honest as well.
+      // No-op on empty projects to avoid a 0-width ruler.
       let maxEndMs = 0
       for (const clip of Object.values(project.clips)) {
         const effDur = effectiveClipDurationMs(clip)

@@ -53,35 +53,20 @@ const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
 const exportMixdownOpen = ref(false)
 const relinkDialogOpen = ref(false)
-// "Saved audio device not available" warning state. Populated by the
-// project-load reconciliation watcher below when the project's stored
-// audio-output preference doesn't match any device the OS currently
-// exposes. The live `juce::AudioDeviceManager` keeps whatever device
-// it opened at backend startup; the dialog is purely informational
-// and the project's stored preference is left intact.
+// Warn when a project's saved audio output is unavailable; live output stays unchanged.
 const audioUnavailableOpen = ref(false)
 const audioUnavailableSavedTypeName = ref<string | null>(null)
 const audioUnavailableSavedDeviceName = ref<string | null>(null)
-// Dedupe key for the warning dialog so a single project + missing
-// device combination only fires once per renderer session — without
-// this, PROJECT_STATE echoes or audio-device-list refreshes could
-// reopen the dialog after the user has dismissed it.
+// Dedupe unavailable-output warnings per renderer session.
 const audioReconciledKeys = new Set<string>()
 const sampleRatePromptState = useSampleRateMismatchPromptState()
 const mixdownState = useMixdownState()
-// Crash-recovery state. Populated on bridge-ready by
-// `autosave:listRecoverable`; if non-empty, the RecoveryDialog mounts
-// and blocks the rest of the startup flow (auto-open + start screen)
-// until the user resolves each entry. Mutually exclusive with
-// `pendingOpenAfterRecovery`.
+// Recovery blocks startup until each autosave entry is resolved.
 const recoveryEntries = ref<RecoverableEntry[]>([])
 const recoveryDialogOpen = ref(false)
-// Set when a cold-launch `.silverdaw` file is parked while the
-// recovery dialog is open. Consumed once recovery resolves.
+// Cold-launch path parked while recovery runs.
 let pendingOpenAfterRecovery: string | null = null
-// Unsaved-changes prompt state. `pendingAfterSave` is the action to
-// run once the user has either saved or chosen to discard their
-// changes. Set when the prompt opens; cleared when it closes.
+// Action deferred until the unsaved-changes prompt resolves.
 const unsavedPromptOpen = ref(false)
 let pendingAfterDiscard: (() => void) | null = null
 
@@ -91,14 +76,7 @@ let unsubscribeBackendStatus: (() => void) | null = null
 let unregisterShortcuts: (() => void) | null = null
 let cleanViewStateSave: Promise<void> | null = null
 
-// Mirror "is the app doing a long-running background task" onto the
-// <body> as a single class so the global CSS rule (see <style> below)
-// can swap the OS cursor to the platform's "busy / progress" shape.
-// Combines library imports and mixdown renders — both are
-// long-running, both want the same visual feedback. Using one
-// watcher (rather than one per source) avoids the source-A-ends-
-// while-source-B-still-active race that would otherwise clear the
-// class prematurely.
+// One body class covers all long-running jobs so the busy cursor cannot clear early.
 const stopBusyCursorWatcher = watch(
   () => library.isImporting || mixdownState.value !== null,
   (busy) => {
@@ -108,14 +86,7 @@ const stopBusyCursorWatcher = watch(
 )
 
 // ─── Missing-file detection ────────────────────────────────────────────
-// Watch the set of unresolved LIBRARY ITEM ids — when it transitions from
-// empty to non-empty (i.e. a project just loaded with missing sources),
-// pop the RelinkDialog and a single toast. We key on library items rather
-// than clips because the library is the durable record of every persisted
-// source path: a missing source that isn't currently placed on the
-// timeline (or whose sibling item has no clip) still needs relinking.
-// We watch on id-string so the dialog doesn't bounce open every time a
-// property changes; it only re-opens when NEW unresolved items appear.
+// Watch unresolved library ids so every persisted source path can trigger relinking.
 const unresolvedLibraryItemIds = computed(() =>
   library.items
     .filter((i) => i.unresolved)
@@ -129,16 +100,12 @@ const stopUnresolvedWatch = watch(
     if (!next || next === prev) return
     const ids = next.split('|').filter((s) => s.length > 0)
     if (ids.length === 0) return
-    // Only auto-open / toast when this is a fresh set that wasn't
-    // there before (or has grown).
+    // Only announce fresh or grown missing-file sets.
     const prevIds = (prev ?? '').split('|').filter((s) => s.length > 0)
     const isNew = ids.some((id) => !prevIds.includes(id))
     if (!isNew) return
     relinkDialogOpen.value = true
-    // Count UNIQUE missing file paths (not item references) so the
-    // toast matches the row count the RelinkDialog actually shows —
-    // an audio-file source and a saved clip derived from it share one
-    // path and should count as "1 audio file is missing".
+    // Count unique paths so the toast matches RelinkDialog rows.
     const uniqueMissingPaths = new Set<string>()
     for (const id of ids) {
       const item = library.byId[id]
@@ -155,36 +122,25 @@ const stopUnresolvedWatch = watch(
 onMounted(() => {
   log.info('app', 'mounted')
   unsubscribeMenu = window.silverdaw.onMenuAction(handleMenuAction)
-  // Warm-launch hand-offs: a second `Silverdaw.exe <file.silverdaw>`
-  // collapses into this instance via the single-instance lock; main
-  // pushes the path here.
+  // Warm-launch file hand-offs arrive from the single-instance lock.
   unsubscribeOpenFromPath = window.silverdaw.onOpenProjectFromPath((filePath) => {
     void openProjectByPath(filePath)
   })
-  // Process-level backend supervisor status (restarting / recovered /
-  // failed) drives the mid-session engine-recovery overlay.
+  // Backend supervisor status drives the engine-recovery overlay.
   unsubscribeBackendStatus = window.silverdaw.onBackendStatus(onEngineBackendStatus)
   unregisterShortcuts = registerMenuShortcuts({ devToolsEnabled: appStore.devToolsEnabled })
   window.addEventListener('keydown', onGlobalShortcutKey, { capture: true })
   connectBridge()
   startBridgeConnectionTimer()
-  // Pull persisted panel sizes from the main-process preferences file so
-  // the layout is correct from the very first paint. (Default values are
-  // already in the store, so a slow hydrate just looks like a tiny size
-  // tween rather than a jarring jump.)
+  // Hydrate persisted panel sizes after first paint.
   void ui.hydrate()
-  // Start the background autosave manager. The manager subscribes to
-  // `projectStore.isDirty` + the autosave config — it stays idle until
-  // there's actually something to save, then ticks every N seconds.
+  // Start autosave; it stays idle until the project is dirty.
   const pinia = getActivePinia()
   if (pinia) startAutosaveManager(pinia)
 })
 
 // ─── Global keyboard shortcuts ────────────────────────────────────────────
-// The capture-phase keydown handler lives in `useAppKeyboardShortcuts`
-// (transport / zoom / marker / clip-lock / export shortcuts). The modal
-// guard below stays in the SFC because it reads this component's dialog
-// refs; it's passed into the composable as `isModalOpen`.
+// Modal guard stays here because it reads this component's dialog refs.
 function isShortcutModalOpen(): boolean {
   return (
     aboutOpen.value ||
@@ -213,13 +169,7 @@ const { onGlobalShortcutKey } = useAppKeyboardShortcuts({
 })
 
 // ─── Per-project audio output reconciliation ──────────────────────────
-// When a project loads, its saved audio-output preference (if any)
-// drives a live device switch. The reconcile runs once per unique
-// (projectId, savedType, savedDevice) tuple per renderer session so
-// that PROJECT_STATE echoes (mutation acks, undo soft-replaces) don't
-// re-fire the switch. The device list arrives independently of
-// PROJECT_STATE — we watch both signals and gate on
-// `audioDevices.hydrated`.
+// Apply each saved project output once after both project and device state hydrate.
 function reconcileProjectAudioOutput(): void {
   if (!audioDevices.hydrated) return
   const projectId = project.projectId
@@ -232,7 +182,6 @@ function reconcileProjectAudioOutput(): void {
   if (audioReconciledKeys.has(key)) return
   audioReconciledKeys.add(key)
 
-  // Already on the saved device — nothing to do.
   if (
     audioDevices.currentTypeName === savedType &&
     audioDevices.currentDeviceName === savedDevice
@@ -241,11 +190,7 @@ function reconcileProjectAudioOutput(): void {
     return
   }
 
-  // A switch to the saved device is already in flight — e.g. the user
-  // just picked it on the transport bar, which both issues the live
-  // switch and pins it to the project (firing this watch). Don't
-  // re-issue the switch; doing so would also overwrite the in-flight
-  // user-preference persistence intent.
+  // Do not override an in-flight user-initiated switch to the same device.
   const pending = audioDevices.pendingSelection
   if (pending && pending.typeName === savedType && pending.deviceName === savedDevice) {
     return
@@ -268,9 +213,7 @@ function reconcileProjectAudioOutput(): void {
   }
 }
 
-// Two triggers: project load (PROJECT_STATE applies, projectId changes
-// and the audioOutput fields may change) AND audio-device hydration
-// (the device list arrives after PROJECT_STATE on the connect path).
+// Reconcile when project output or device hydration changes.
 watch(
   () => [
     project.projectId,
@@ -285,12 +228,7 @@ watch(
 )
 
 // ─── Initial bridge-connection timeout ────────────────────────────────
-// Without this the StartupScreen can sit on screen forever if the
-// backend never starts (missing exe, wrong path, crashed at launch) or
-// if the bridge handshake fails (socket open but no PROJECT_STATE). 30
-// seconds comfortably covers a cold backend launch + initial
-// `audio device init` on a slow machine while still being short enough
-// that a real failure is surfaced before the user gives up.
+// Surface startup failures instead of leaving StartupScreen waiting forever.
 const BRIDGE_CONNECTION_TIMEOUT_MS = 30_000
 let bridgeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -300,11 +238,7 @@ function startBridgeConnectionTimer(): void {
     bridgeTimer = null
     if (transport.bridgeReady) return
     log.warn('app', `bridge connection timed out after ${BRIDGE_CONNECTION_TIMEOUT_MS}ms`)
-    // Phrase the message so it reads like a normal end-user error — no
-    // mention of logs, debug mode, or developer concepts. The two
-    // failure modes (socket never opened vs opened but no handshake)
-    // get slightly different copy so a relaunch lands the user closer
-    // to the right next step.
+    // Keep copy user-facing; distinguish socket failure from handshake failure.
     const message = transport.connected
       ? 'Silverdaw connected to the audio engine but did not receive a response. Please relaunch Silverdaw.'
       : 'Silverdaw could not connect to the audio engine. Please relaunch Silverdaw.'
@@ -312,10 +246,7 @@ function startBridgeConnectionTimer(): void {
   }, BRIDGE_CONNECTION_TIMEOUT_MS)
 }
 
-// Cancel the timer the instant the bridge comes up. Subsequent
-// disconnect/reconnect cycles do NOT re-arm it — those are normal
-// session events handled by `bridgeService`'s backoff loop, not
-// terminal startup failures.
+// Only the initial connect can trip this terminal startup timeout.
 const stopBridgeTimerWatcher = watch(
   () => transport.bridgeReady,
   (ready) => {
@@ -325,10 +256,7 @@ const stopBridgeTimerWatcher = watch(
     }
     if (!ready) return
     // ── Startup coordinator ────────────────────────────────────────────
-    // 1. Park any cold-launch hand-off path so it doesn't race the
-    //    recovery scan (consumePendingOpenPath clears the slot in main;
-    //    we hold the value locally until the recovery flow has
-    //    finished).
+    // Park cold-launch paths until recovery has finished.
     void window.silverdaw.consumePendingOpenPath().then((filePath) => {
       if (filePath) pendingOpenAfterRecovery = filePath
       runStartupRecoveryFlow()
@@ -348,27 +276,19 @@ function runStartupRecoveryFlow(): void {
   })
 }
 
-/** Called once the recovery dialog has resolved (Restore + close, or
- *  Skip, or no entries to begin with). Runs the cold-launch
- *  hand-off if one was parked, then marks the startup flow complete
- *  so the start screen can decide whether to mount. */
+/** Finish recovery, consume any parked cold-launch path, then release startup. */
 function finishStartupFlow(): void {
   const parked = pendingOpenAfterRecovery
   pendingOpenAfterRecovery = null
   if (parked) {
-    // Cold-launch hand-off. The StartupScreen stays mounted while
-    // the project loads — its disappearance is driven by the
-    // `currentFilePath !== null` arm of `startupScreenVisible`,
-    // so there's no need (or desire) to dismiss it preemptively.
+    // Let PROJECT_STATE hide StartupScreen once the project path lands.
     void openProjectByPath(parked)
   }
   appStore.markStartupFlowComplete()
 }
 
 function onRecoveryRestored(): void {
-  // Restore implies a project will replace the empty boot snapshot;
-  // discard any parked cold-launch path so we don't immediately
-  // navigate away from the recovered project.
+  // Restore wins over any parked cold-launch path.
   pendingOpenAfterRecovery = null
 }
 
@@ -378,12 +298,7 @@ function onRecoveryClose(): void {
   finishStartupFlow()
 }
 
-/**
- * Shared entry point for both the cold-launch and warm-launch hand-offs
- * from a `.silverdaw` file association. Runs the same unsaved-changes
- * guard and allow-list seeding that File > Open uses, then sends
- * PROJECT_LOAD over the bridge.
- */
+/** Open `.silverdaw` hand-offs through the same guard as File > Open. */
 async function openProjectByPath(filePath: string): Promise<void> {
   if (!filePath) return
   if (!transport.bridgeReady) {
@@ -393,18 +308,11 @@ async function openProjectByPath(filePath: string): Promise<void> {
   guardAgainstUnsavedChanges(async () => {
     await window.silverdaw.prepareProjectOpen(filePath)
     project.requestLoad(filePath)
-    // The StartupScreen hides naturally when PROJECT_STATE arrives and
-    // `currentFilePath` becomes non-null. Dismissing here would briefly
-    // expose the empty timeline during the load round-trip.
+    // PROJECT_STATE hides StartupScreen without exposing the empty timeline.
   })
 }
 
-/**
- * Open a Recent Projects entry. Guarded by the unsaved-changes prompt
- * + main's path allow-list seeding. If the file no longer exists, the
- * MRU entry is removed and a toast surfaces the failure — the user
- * was probably looking at a stale list.
- */
+/** Open a recent project, dropping stale MRU entries before loading. */
 async function openRecentPath(filePath: string): Promise<void> {
   if (!filePath) return
   if (!transport.bridgeReady) {
@@ -423,41 +331,22 @@ async function openRecentPath(filePath: string): Promise<void> {
 }
 
 function onStartScreenNew(): void {
-  // "New Project" creates an empty workspace with no file path and
-  // no tracks, so the natural file-loaded gate can't hide the
-  // screen — we have to dismiss explicitly.
+  // Empty new projects need explicit start-screen dismissal.
   appStore.dismissStartScreen()
   handleMenuAction('file.newProject')
 }
 
 function onStartScreenOpen(): void {
-  // Defer dismissal to the project-loaded gate via `openProjectByPath`.
-  // If the user cancels the file dialog, the screen stays.
+  // Keep the screen if the file picker is cancelled.
   handleMenuAction('file.openProject')
 }
 
 function onStartScreenRecent(filePath: string): void {
-  // Same as Open: dismissal is driven by the project-loaded gate.
+  // Dismissal is driven by the project-loaded gate.
   void openRecentPath(filePath)
 }
 
-/**
- * Visibility of the startup landing screen. Mounts on app boot
- * (does NOT wait for bridge-ready) and stays visible until the
- * project becomes non-empty or the user explicitly dismisses it.
- * The screen has its own internal "loading / failure / ready"
- * states; gating those there rather than here keeps the boot to
- * a single visual surface — there's no cross-fade between two
- * splashes.
- *
- * RecoveryDialog stacks above this overlay via z-index, so we
- * intentionally do NOT include `recoveryDialogOpen` in the gate.
- *
- * The session-scoped `startScreenDismissed` flag prevents the
- * screen from re-appearing once the user has clicked through to
- * a project — including the empty "New Project" case where
- * currentFilePath is still null.
- */
+/** Startup stays visible until a project loads or the user explicitly dismisses it. */
 const startupScreenVisible = computed(
   () =>
     !appStore.startScreenDismissed &&
@@ -505,14 +394,7 @@ const { handleMenuAction } = useAppMenuActions({
   openRecentPath
 })
 
-/**
- * Run `proceed` only after the user has either saved or chosen to
- * discard the current project's unsaved changes. If the project is
- * already clean, first flush view-only state (scroll/playhead) to disk
- * without opening the unsaved-changes prompt.
- *
- * Used to gate File > New, File > Open, and the app-close path.
- */
+/** Gate destructive navigation on unsaved changes; clean projects still flush view state. */
 function guardAgainstUnsavedChanges(proceed: () => void): void {
   if (!project.isDirty) {
     void persistCleanViewState().then(proceed)
@@ -539,12 +421,7 @@ async function persistCleanViewState(): Promise<void> {
   return cleanViewStateSave
 }
 
-/**
- * User picked "Save" in the unsaved-changes prompt. Save the project
- * (Save vs Save As depending on whether there's already a path) and,
- * on a successful ack, run the pending action. On failure or cancel
- * we don't proceed — the user can retry.
- */
+/** Save from the unsaved-changes prompt, then run the pending action on ack. */
 async function onUnsavedPromptSave(): Promise<void> {
   unsavedPromptOpen.value = false
   const next = pendingAfterDiscard
@@ -556,7 +433,7 @@ async function onUnsavedPromptSave(): Promise<void> {
   if (!filePath) {
     isSaveAs = true
     filePath = await window.silverdaw.chooseProjectSaveAs(project.projectName || 'Untitled')
-    if (!filePath) return // user cancelled the Save As dialog → abort
+    if (!filePath) return // Save As cancelled.
   }
 
   const result = await project.saveAndWait(filePath, isSaveAs)
@@ -567,7 +444,7 @@ async function onUnsavedPromptSave(): Promise<void> {
     ) {
       notifications.pushError(`Save failed: ${result.error}.`)
     }
-    return // PROJECT_SAVED reported failures are shown by bridgeService
+    return // Bridge-reported save failures are shown elsewhere.
   }
   next()
 }
@@ -576,15 +453,7 @@ async function onUnsavedPromptDiscard(): Promise<void> {
   unsavedPromptOpen.value = false
   const next = pendingAfterDiscard
   pendingAfterDiscard = null
-  // The user explicitly chose to throw away their unsaved changes.
-  // Delete this project's autosave bucket so the next launch's
-  // recovery scanner doesn't resurrect them as a "we crashed, want
-  // to restore?" prompt. We MUST await this before proceeding —
-  // `next` is typically `app.confirmClose` / `file.exitConfirmed`
-  // which synchronously calls `app.exit(0)` in main, terminating
-  // the process before any in-flight IPC can land. Without the
-  // await the autosave folder stays on disk and the next launch
-  // still offers recovery.
+  // Await autosave cleanup before close/exit can terminate IPC.
   const projectId = project.projectId
   if (projectId) {
     await clearAutosaveBucket(projectId)
@@ -684,25 +553,13 @@ function onUnsavedPromptCancel(): void {
       @open-recent="onStartScreenRecent"
     />
 
-    <!-- Mid-session audio-engine recovery gate. Sits above everything
-         (including the StartupScreen) so it owns the screen whenever the
-         engine drops after a healthy start. -->
+    <!-- Mid-session audio-engine recovery gate. -->
     <EngineRecoveryOverlay />
   </div>
 </template>
 
 <style>
-/*
- * While the library is importing one or more files, force the OS "busy"
- * cursor everywhere — including over text inputs and interactive widgets
- * that would otherwise pick their own cursor. `!important` is required to
- * win against Tailwind utility classes (e.g. `cursor-pointer` on buttons)
- * and the browser default for inputs.
- *
- * `progress` is the standard "busy but still interactive" cursor; pick it
- * over `wait` so the user can keep navigating menus, scrolling the
- * timeline, etc. while a decode is in flight.
- */
+/* Busy-but-interactive cursor while imports or mixdowns run. */
 body.is-importing,
 body.is-importing * {
   cursor: progress !important;
@@ -744,21 +601,7 @@ button[data-borderless-button="true"]:focus-visible {
   outline: none !important;
 }
 
-/*
- * Shared dark scrollbar treatment. Apply `class="silverdaw-scroll"` to
- * any element whose `overflow-y: auto` chrome would otherwise inherit
- * the browser default (which on Windows is a bright grey track that
- * looks misplaced inside the dark zinc panels). The colours are the
- * same ones the library panel + library-item-info dialog use, lifted
- * here so dialogs, dropdowns and tabbed bodies share one rule instead
- * of each component re-declaring its own.
- *
- *   - Firefox: scrollbar-color / scrollbar-width (thin thumb).
- *   - Chromium / Electron: the ::-webkit-scrollbar pseudo-elements
- *     give us a 12-px chrome with a rounded pill thumb surrounded by
- *     a 3-px transparent ring so the thumb visually shrinks away from
- *     the track edge.
- */
+/* Shared dark scrollbar chrome for scrollable panels and dialogs. */
 .silverdaw-scroll {
   scrollbar-color: rgb(113 113 122) rgb(24 24 27 / 0.8);
   scrollbar-width: thin;

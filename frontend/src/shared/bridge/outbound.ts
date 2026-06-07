@@ -1,18 +1,12 @@
-// Renderer -> Backend (outbound) wire-protocol payloads.
+// Renderer -> Backend (outbound) wire-protocol payloads, the BridgeOutboundMap
+// type->payload index, and the derived send() helper types. Re-exported via the
+// @shared/bridge-protocol facade.
 //
-// Part of the bridge protocol catalogue. Pure TypeScript declarations: every
-// outbound envelope payload, the `BridgeOutboundMap` type->payload index, and
-// the derived `send()` helper types. Re-exported through the stable
-// `@shared/bridge-protocol` facade. See that module for the protocol overview.
-//
-// FILE-SIZE EXCEPTION (justified): this is a single cohesive catalogue of one
-// wire direction (pure interfaces, no runtime logic). Splitting it by message
-// domain would fragment a flat list whose own `BridgeOutboundMap` already acts
-// as the index, adding file-hopping cost without a maintainability win.
+// FILE-SIZE EXCEPTION (justified): a single cohesive catalogue of one wire direction
+// (pure interfaces, no logic); BridgeOutboundMap is its own index, so splitting it
+// by domain would only add file-hopping cost.
 
-// A couple of outbound payloads reference shared protocol vocabulary whose
-// canonical (zod-derived) definition lives with the inbound schemas. These are
-// type-only imports — outbound carries no runtime dependency on inbound.
+// Type-only imports of shared vocabulary whose canonical zod definition lives with inbound.
 import type { LibraryItemKind, TransitionRecipe } from './inbound'
 
 // ─── Renderer → Backend (outbound) ──────────────────────────────────────────
@@ -20,42 +14,28 @@ import type { LibraryItemKind, TransitionRecipe } from './inbound'
 export interface ClipAddPayload {
   trackId: string
   clipId: string
-  /** Source library item the clip plays from. Clips reference their
-   *  audio via the library — they never carry a filesystem path. */
+  /** Source library item; clips reference audio via the library, never a path. */
   libraryItemId: string
   positionMs: number
-  /** Optional trim window: where in the source file to start reading.
-   *  Used by split / duplicate to mint clips that share the underlying
-   *  audio with the original. Omit (or send 0) for a whole-file clip. */
+  /** Trim-window start in the source file; omit/0 for a whole-file clip. */
   inMs?: number
-  /** Optional trim window: how long this clip plays for, starting at
-   *  `inMs` inside the source file. Omit (or send 0) to play to the
-   *  natural end of the source. */
+  /** Trim-window length from `inMs`; omit/0 to play to the source end. */
   durationMs?: number
-  /** Optional 0..15 palette index. Omit to inherit the host track's
-   *  colour. Used by duplicate / split so the copy carries the
-   *  original's per-clip colour. */
+  /** Palette index 0..15; omit to inherit the track colour. */
   colorIndex?: number
 }
 
 export interface ClipMovePayload {
   clipId: string
   positionMs: number
-  /** Optional cross-track move — when present and different from the
-   *  clip's current host track, the backend re-parents the clip's
-   *  ValueTree node under this track. The audio engine doesn't care
-   *  about tracks (each clip is its own playable source) so there's no
-   *  AudioEngine call; only ProjectState changes. */
+  /** Optional cross-track move; backend re-parents the clip's ValueTree node (ProjectState only). */
   trackId?: string
-  /** True on drag release. Lets the backend reset read-ahead before
-   *  the next Play press instead of doing it synchronously on Play. */
+  /** True on drag release; lets the backend reset read-ahead before the next Play. */
   commit?: boolean
 }
 
-/** Atomic three-field trim update. Sent by edge-drag trim (and split,
- *  for the original clip). All three fields are required because a
- *  partial update would briefly let the audio thread observe an
- *  inconsistent `(start, in, duration)` triple. */
+/** Atomic three-field trim update; all three required so the audio thread never sees
+ *  an inconsistent (start, in, duration) triple. */
 export interface ClipTrimPayload {
   clipId: string
   startMs: number
@@ -63,71 +43,48 @@ export interface ClipTrimPayload {
   durationMs: number
 }
 
-/** Update a clip's per-clip colour override. A negative value clears
- *  the override so the clip re-inherits its track's palette colour. */
+/** Update a clip's colour override; a negative value clears it (re-inherits the track colour). */
 export interface ClipColorPayload {
   clipId: string
   colorIndex: number
 }
 
-/** Toggle a clip's lock flag. When `locked: true` the timeline UI
- *  prevents moving and trimming the clip; double-click to open in
- *  the editor still works. Lock is per-clip — locking one instance
- *  of a saved-clip does NOT propagate to siblings. Backend stores
- *  the flag on the clip's ValueTree (absent==unlocked). */
+/** Toggle a clip's lock flag (blocks move/trim; editor still opens). Per-clip; not shared across siblings. */
 export interface ClipSetLockedPayload {
   clipId: string
   locked: boolean
 }
 
-/** Remove a clip from its track. The backend tears down the clip's
- *  audio source and drops it from the project ValueTree; the renderer
- *  optimistically removes it from the store on send. */
+/** Remove a clip; backend tears down its audio source. Renderer removes optimistically on send. */
 export interface ClipRemovePayload {
   clipId: string
 }
 
-/** Relink a library item to a new source file. All clips that
- *  reference the item pick up the new file automatically; the user
- *  doesn't need to relink each clip individually. */
+/** Relink a library item to a new source file; all clips referencing it update automatically. */
 export interface LibraryItemRelinkPayload {
   itemId: string
   filePath: string
 }
 
-/** User-facing display-name override for a single clip. Empty string
- *  clears the override and the clip falls back to its library item /
- *  filename for display. Used by the inline rename on the timeline,
- *  and propagated to saved-clip library items if the clip is saved. */
+/** Clip display-name override; empty string clears it (falls back to library item/filename). */
 export interface ClipRenamePayload {
   clipId: string
   name: string
 }
 
-/** Change a timeline clip's parent library item. Used by "Save clip
- *  to library", which promotes a clip's trim window to a reusable
- *  saved-clip entry — the originating timeline clip is then rebound
- *  to point at the new saved-clip so the project file records the
- *  correct parent relationship. */
+/** Rebind a clip to a new parent library item (used by "Save clip to library"). */
 export interface ClipRebindPayload {
   clipId: string
   libraryItemId: string
 }
 
-/** Ask the backend to compute high-resolution peaks for the given
- *  library item's source file at `peaksPerSecond` (typically much
- *  higher than the default 500). Used by the Clip Editor when the
- *  user zooms in past the point where the default peaks resolution
- *  blocks out into chunky rectangles. Backend caches the result on
- *  disk so subsequent dialog opens for the same source are instant. */
+/** Request high-res peaks at `peaksPerSecond` for the Clip Editor's deep zoom; backend caches to disk. */
 export interface ClipEditorPeaksRequestPayload {
   libraryItemId: string
   peaksPerSecond: number
 }
 
-/** Register a library item with the backend so its durable fields are
- *  persisted with the project. Volatile renderer-only data such as
- *  waveform peaks and object URLs is rebuilt on demand. */
+/** Register a library item so its durable fields persist; volatile data (peaks, URLs) is rebuilt on demand. */
 export interface LibraryAddPayload {
   itemId: string
   filePath: string
@@ -143,12 +100,9 @@ export interface LibraryAddPayload {
   sourceClipId?: string
   sourceInMs?: number
   sourceDurationMs?: number
-  /** Source-group disclosure state. True when the user has collapsed
-   *  the source's saved-clip list in the library panel. */
+  /** True when the source's saved-clip list is collapsed in the library panel. */
   collapsed?: boolean
-  /** Saved-clip default warp settings — only meaningful when
-   *  `kind === 'saved-clip'`. Copied onto a fresh timeline clip when
-   *  the saved-clip tile is dragged in (copy-on-drop, not live link). */
+  /** Saved-clip default warp (kind === 'saved-clip'); copied onto a clip on drop (not a live link). */
   warpEnabled?: boolean
   warpMode?: ClipWarpMode
   tempoRatio?: number
@@ -161,9 +115,7 @@ export interface LibraryRemovePayload {
   itemId: string
 }
 
-/** Force a full analysis refresh for a library item. The backend
- *  recreates its decoded-WAV cache and reruns BPM/beat detection; the
- *  renderer supplies the freshly redetected key and decoded source details. */
+/** Force a full analysis refresh: backend rebuilds its decoded-WAV cache and reruns BPM/beat detection. */
 export interface LibraryReanalysePayload {
   itemId: string
   filePath: string
@@ -176,10 +128,7 @@ export interface LibraryReanalysePayload {
   key?: string
 }
 
-/** Set the user-override classification on a library item.
- *  `'sample'` / `'music'` are persistent overrides; `'auto'` clears
- *  the override so the renderer falls back to the backend's
- *  `lowConfidence` flag. */
+/** User classification override: 'sample'/'music' persist; 'auto' clears it (falls back to lowConfidence). */
 export interface LibraryItemSetSampleModePayload {
   itemId: string
   mode: 'sample' | 'music' | 'auto'
@@ -202,95 +151,47 @@ export interface TrackRenamePayload {
 
 export interface TrackGainPayload {
   trackId: string
-  /** User volume (slider position) — linear gain, 0..~1.9953 (+6 dB
-   *  ceiling), NOT post-mute / post-solo effective gain. The backend
-   *  derives the audible gain from this plus the track's persisted
-   *  muted / soloed flags. */
+  /** User volume, linear gain 0..~1.9953 (+6 dB). Pre-mute/solo; backend derives audible gain. */
   gain: number
 }
 
-/** Toggle a track's mute flag. Persists with the project; the backend
- *  derives the effective audible gain (`gain × audible(...)`) and pushes
- *  it to the AudioEngine. Mute state is mirrored back on PROJECT_STATE
- *  and via `TRACK_MUTE_APPLIED`. */
+/** Toggle a track's mute flag; backend recomputes audible gain. Echoed via TRACK_MUTE_APPLIED. */
 export interface TrackMutePayload {
   trackId: string
   muted: boolean
 }
 
-/** Toggle a track's solo flag. Solo affects audibility of every other
- *  track, so the backend re-pushes effective gain for the whole
- *  project. */
+/** Toggle a track's solo flag; backend re-pushes effective gain for the whole project. */
 export interface TrackSoloPayload {
   trackId: string
   soloed: boolean
 }
 
-/**
- * Persist a per-track row height. Sent once on `pointerup` after a
- * resize-handle drag in TrackHeaderPanel; the backend stores it on the
- * Track ValueTree (so it round-trips through save/load and joins the
- * undo history) and echoes the new value via a fresh `PROJECT_STATE`.
- * Coalesced 60Hz drag motion is kept renderer-local via
- * `projectStore.setTrackHeightLocal` so the bridge only sees the
- * committed value.
- */
+/** Persist a track row height; sent once on pointerup (drag motion stays renderer-local). */
 export interface TrackSetHeightPayload {
   trackId: string
-  /** Row height in CSS pixels. The backend clamps to a project-wide
-   *  min/max so a hostile payload can't make rows invisible or
-   *  push every sibling off-screen. */
+  /** Row height (CSS px); backend clamps to a min/max so a hostile payload can't break layout. */
   heightPx: number
 }
 
-/**
- * Reorder a track within the project. Sent once on drop after the user
- * drags a track header to a new position. `newIndex` is the desired
- * 0-based position in the track list; the backend clamps it to the
- * current track count and emits a fresh PROJECT_STATE reflecting the
- * new order. Joins the undo history as a single "Reorder track" step.
- */
+/** Reorder a track; `newIndex` is the desired 0-based position (backend clamps). One undo step. */
 export interface TrackReorderPayload {
   trackId: string
   newIndex: number
 }
 
 /**
- * Rubber Band time-stretch + pitch-shift mode for a clip.
- *
- *   - `'rhythmic'` — R2 / Faster, optimised for drums and percussive
- *     material. Default for auto-warp because it's the lightest mode
- *     and most general-purpose; user can escalate per-clip.
- *   - `'tonal'`    — R2 with formant-preservation friendly options;
- *     better for melodic / vocal material.
- *   - `'complex'`  — R3 / Finer, highest quality, highest CPU cost.
- *     Reserved for export and for clips the user has explicitly
- *     escalated via the Warp settings dialog.
+ * Time-stretch + pitch-shift mode: 'rhythmic' (light, percussive; auto-warp default),
+ * 'tonal' (melodic/vocal), 'complex' (highest quality/CPU; export and user-escalated clips).
  */
 export type ClipWarpMode = 'rhythmic' | 'tonal' | 'complex'
 
 /**
- * Per-clip warp + pitch-shift settings. Sent as a partial-update from
- * the renderer — every field is optional and only the fields present in
- * a single envelope are mutated on the backend. The handler skips
- * properties that aren't included so the renderer can drive a single
- * field (e.g. just `semitones`) without having to echo the rest.
- *
- * Semantics of the numeric fields:
- *   - `tempoRatio` is `projectBpm / sourceBpm` — i.e. "how many times
- *     faster than its native rate this clip should play". `2.0` plays
- *     at double speed; `0.5` plays at half speed; `1.0` is no
- *     stretching. When `tempoRatio` is **absent** the backend derives
- *     it live from the active project BPM and the library item's
- *     detected BPM (so the clip follows project BPM changes); when
- *     **present** it's a pinned override that survives BPM changes.
- *   - `semitones` ranges ±12; `cents` ±100. Combined pitch scale is
- *     `2^((semitones + cents/100) / 12)`. Pitch is independent of
- *     tempo — changing one does not affect the other.
- *
- * The backend treats this envelope as undoable and collision-checks
- * any change that would alter the effective timeline duration of the
- * clip against neighbouring clips on the same track.
+ * Per-clip warp + pitch settings. Partial-update: only the fields present are mutated.
+ * `tempoRatio` = projectBpm / sourceBpm (2.0 = double speed); absent = derive live from
+ * project BPM, present = pinned override. `semitones` ±12, `cents` ±100; pitch scale
+ * 2^((semitones + cents/100) / 12), independent of tempo. Undoable; collision-checked
+ * against neighbouring clips when the effective duration changes.
  */
 export interface ClipSetWarpPayload {
   clipId: string
@@ -299,14 +200,7 @@ export interface ClipSetWarpPayload {
   tempoRatio?: number | null
   semitones?: number
   cents?: number
-  /**
-   * Renderer-bookkeeping flag — when `true` the backend records that
-   * this clip is waiting on `LIBRARY_ITEM_ANALYSIS` to deliver a
-   * source BPM before warp can actually engage. Cleared automatically
-   * by any subsequent `CLIP_SET_WARP` (including the analysis-time
-   * auto-flip) and by an undoable manual edit, so a user who opts out
-   * of warp before analysis arrives isn't second-guessed afterwards.
-   */
+  /** Clip is waiting on LIBRARY_ITEM_ANALYSIS for a source BPM; cleared by any later CLIP_SET_WARP. */
   pendingAutoWarp?: boolean
 }
 
@@ -317,31 +211,18 @@ export interface ClipSaveAsSamplePayload {
   outputDir: string
 }
 
-// ─── Phase 5 effects envelopes (Bass / Mid / Treble / Leveler / Sends / shared FX) ──
+// ─── Effects envelopes (Bass / Mid / Treble / Leveler / Sends / shared FX) ──
 //
-// All Phase 5 mutation envelopes optionally carry `gestureId` + `gestureEnd`
-// so the backend can coalesce a drag stream (knob turn, slider drag) into
-// one undo step regardless of event rate. When `gestureId` is absent the
-// backend falls back to the existing 500 ms time window. `gestureEnd === true`
-// is included in the same coalesced transaction and clears the coalesce
-// state so the NEXT gesture opens fresh.
-//
-// The handlers persist into the ProjectState ValueTree and ack with a
-// dedicated `*_APPLIED` envelope (NOT a full `PROJECT_STATE`) so 60 Hz
-// fader streams stay cheap on the wire. Real DSP is wired by the per-
-// feature todos that follow this schema-foundation step.
+// Mutation envelopes optionally carry `gestureId` + `gestureEnd` so the backend
+// coalesces a drag stream into one undo step (falling back to a 500 ms window when
+// absent). Handlers ack with a dedicated `*_APPLIED` envelope, not a full PROJECT_STATE,
+// so 60 Hz fader streams stay cheap on the wire.
 
 /** Optional drag-coalesce hints. Shared by every Phase 5 mutation envelope. */
 export interface GestureHints {
-  /** Stable per-drag identifier. The renderer mints one at pointerdown
-   *  and re-uses it for every coalesced sample until pointerup. When
-   *  present, the backend coalesces on `(messageType, targetId,
-   *  gestureId)` regardless of elapsed time. */
+  /** Stable per-drag id (pointerdown→pointerup); backend coalesces on (messageType, targetId, gestureId). */
   gestureId?: string
-  /** Marks the LAST event in a drag gesture. The mutation still applies
-   *  inside the same coalesced transaction; afterwards the backend
-   *  clears the coalesce state so the next gesture starts a fresh
-   *  undo step. */
+  /** Marks the last event in a drag; applied in the same transaction, then the coalesce state resets. */
   gestureEnd?: boolean
 }
 
@@ -354,20 +235,14 @@ export interface TrackSetSendsPayload extends GestureHints {
   delaySend: number
 }
 
-/** Per-track equal-power pan. Signed `[-1, 1]` (`-1` = hard left, `0` =
- *  centre, `+1` = hard right). Default 0 (centre). */
+/** Per-track equal-power pan, signed [-1,1] (0 = centre). Default 0. */
 export interface TrackSetPanPayload extends GestureHints {
   trackId: string
   pan: number
 }
 
-/**
- * Per-track Tone — fixed 3-band shelving EQ + low-cut + high-cut. All gain
- * fields are dB in `[-15, +15]`; `lowCut` engages a fixed high-pass and
- * `highCut` a fixed low-pass when true. Every field is optional so the
- * renderer can drive one knob without echoing the rest — the backend
- * fills missing values from the current persisted state.
- */
+/** Per-track Tone — 3-band shelving EQ (dB [-15,+15]) + low/high-cut. Partial-update;
+ *  backend fills missing fields from persisted state. */
 export interface TrackSetTonePayload extends GestureHints {
   trackId: string
   bassDb?: number
@@ -377,11 +252,7 @@ export interface TrackSetTonePayload extends GestureHints {
   highCut?: boolean
 }
 
-/**
- * Per-track Leveler — single user-facing "amount" knob in `[0, 1]`.
- * Compressor DSP and Advanced controls land in a later todo; for now
- * this is pure persistence + ack.
- */
+/** Per-track Leveler — single "amount" knob in [0,1]. */
 export interface TrackSetLevelerPayload extends GestureHints {
   trackId: string
   amount: number
@@ -395,12 +266,7 @@ export interface ClipEnvelopePoint {
   gain: number
 }
 
-/**
- * Per-clip volume envelope — one atomic mutation per drag. The backend
- * normalises (sorts ascending by `timeMs`, clamps, rejects duplicate
- * times). An empty array clears the envelope entirely (property
- * removed so legacy projects round-trip byte-equivalent).
- */
+/** Per-clip volume envelope (one atomic mutation per drag); backend sorts/clamps/dedupes. Empty = cleared. */
 export interface ClipSetEnvelopePayload extends GestureHints {
   clipId: string
   points: ClipEnvelopePoint[]
@@ -408,20 +274,14 @@ export interface ClipSetEnvelopePayload extends GestureHints {
 
 // ─── Clip transitions (§12.1) ───────────────────────────────────────────────
 //
-// Transition mutations are discrete user actions (not 60 Hz drag streams), so
-// each one is a single undoable backend transaction that mutates BOTH partner
-// clips' derived edge-fade atomically and re-publishes the authoritative
-// `PROJECT_STATE`. That re-publish is also how backend-side reconciliation
-// (auto-deleting invalidated transitions) reaches the renderer — there is no
-// bespoke `*_APPLIED` ack. `TransitionRecipe` is imported from the
-// project-state block above so the wire payload can never drift from the guard.
+// Discrete user actions (not drag streams): each is one undoable transaction that
+// mutates both partner clips' edge-fades atomically and re-publishes PROJECT_STATE
+// (which also carries reconciliation — no bespoke *_APPLIED ack).
 
 /**
- * Create a transition over the sanctioned overlap of two adjacent clips on
- * `trackId`. `leftClipId` is the earlier (fade-out) clip, `rightClipId` the
- * later (fade-in) clip. The backend validates adjacency / single-neighbour
- * overlap and rejects the request (no state change) if the invariants don't
- * hold. `recipe` defaults to the equal-power `smooth` crossfade when omitted.
+ * Create a transition over the overlap of two adjacent clips. `leftClipId` = earlier (fade-out),
+ * `rightClipId` = later (fade-in). Backend validates adjacency/overlap and rejects otherwise.
+ * `recipe` defaults to the equal-power `smooth` crossfade.
  */
 export interface TransitionCreatePayload {
   trackId: string
@@ -430,8 +290,7 @@ export interface TransitionCreatePayload {
   recipe?: TransitionRecipe
 }
 
-/** Delete a transition by id. The partner clips keep their independent
- *  volume envelopes — only the derived edge-fade is removed. */
+/** Delete a transition by id; partner clips keep their volume envelopes (only the edge-fade is removed). */
 export interface TransitionDeletePayload {
   trackId: string
   transitionId: string
@@ -444,11 +303,7 @@ export interface TransitionSetRecipePayload {
   recipe: TransitionRecipe
 }
 
-/**
- * Project-shared Reverb bus parameters. All scalars are `[0, 1]`
- * linear; every field is optional so the renderer can drive one knob
- * without echoing the others.
- */
+/** Project-shared Reverb bus. Scalars linear [0,1]; all optional (partial-update). */
 export interface ProjectSetReverbPayload extends GestureHints {
   size?: number
   decay?: number
@@ -459,11 +314,7 @@ export interface ProjectSetReverbPayload extends GestureHints {
 /** Legal tempo-locked beat divisions for the shared echo. */
 export type DelayNoteValue = '1/4' | '1/8' | '1/8T' | '1/16'
 
-/**
- * Project-shared Delay bus parameters. `noteValue` MUST match
- * one of the legal beat divisions exactly — whitespace / case
- * variants are rejected by the backend (the message is dropped).
- */
+/** Project-shared Delay bus. `noteValue` must exactly match a legal beat division or the backend drops it. */
 export interface ProjectSetDelayPayload extends GestureHints {
   noteValue?: DelayNoteValue
   feedback?: number
@@ -483,13 +334,9 @@ export interface TransportSeekPayload {
 }
 
 /**
- * Per-session AUTH handshake. MUST be the first envelope the renderer
- * sends on every new WebSocket connection — the backend rejects (closes)
- * the socket on any other initial message or on a token mismatch. The
- * token value comes from main via `window.silverdaw.getBridgeToken()`; main
- * passes the same value to the spawned backend through the
- * `SILVERDAW_BRIDGE_TOKEN` env var. See `backend/src/BridgeServer.h` for the
- * server side of the contract.
+ * Per-session AUTH handshake — MUST be the first envelope on every socket;
+ * the backend closes the socket on any other first message or token mismatch.
+ * Token comes from main (SILVERDAW_BRIDGE_TOKEN); see backend/src/BridgeServer.h.
  */
 export interface AuthPayload {
   token: string
@@ -578,11 +425,9 @@ export interface BridgeOutboundMap {
 }
 
 /**
- * Liveness probe sent by the renderer's idle watchdog. The backend
- * answers with a matching `PONG { id }` ON the JUCE message thread, so a
- * round-trip proves the engine command thread itself is responsive — not
- * merely that the socket is open. `id` is an opaque monotonically-rising
- * nonce the renderer uses to ignore stale replies.
+ * Idle-watchdog liveness probe. Backend replies PONG { id } on the JUCE message
+ * thread, proving the engine thread (not just the socket) is responsive.
+ * `id` is a rising nonce so the renderer can ignore stale replies.
  */
 export interface PingPayload {
   id: number
@@ -592,11 +437,7 @@ export interface WaveformRequestPayload {
   clipId: string
 }
 
-/**
- * Save the project. When `filePath` is omitted (or empty), the backend
- * saves to the currently-loaded project path. The first save of a new
- * project must use `PROJECT_SAVE_AS` to seed that path.
- */
+/** Save the project; omit `filePath` to use the loaded path. First save needs PROJECT_SAVE_AS. */
 export interface ProjectSavePayload {
   filePath?: string
   /** Latest horizontal scroll position from the renderer, flushed before save. */
@@ -619,59 +460,32 @@ export interface ProjectLoadPayload {
 }
 
 /**
- * Recover a project from an autosave file. Differs from PROJECT_LOAD in
- * that the backend deliberately seeds the project's "current file path"
- * to `originalPath` (or empty when null) instead of `autosavePath`, and
- * leaves `isDirty` set to `true` so Ctrl+S behaves the way the user
- * expects after a recovery:
- *
- *   - With `originalPath`: the autosave is overlaid on top of the
- *     original; File > Save overwrites the original.
- *   - Without `originalPath` (the project was untitled when it crashed):
- *     File > Save falls through to Save As so the user is forced to
- *     pick a permanent home for their recovered work.
- *
- * The backend rebuilds the engine from the autosave just like
- * PROJECT_LOAD, broadcasts a `reset=true` PROJECT_STATE with the
- * adjusted `filePath`, then broadcasts `PROJECT_DIRTY { dirty: true }`.
+ * Recover a project from an autosave. Unlike PROJECT_LOAD, the backend seeds the
+ * current path to `originalPath` (empty when null) and leaves isDirty=true: with an
+ * originalPath, Save overwrites it; without one, Save falls through to Save As.
  */
 export interface ProjectLoadRecoveryPayload {
   /** Path to the autosave `.silverdaw` file inside `%APPDATA%/Silverdaw/autosave/<projectId>/`. */
   autosavePath: string
-  /** Original backing project path the autosave came from, or `null`
-   *  if the project was untitled. */
+  /** Original project path the autosave came from, or null if untitled. */
   originalPath: string | null
 }
 
-/** Background autosave write request from the renderer. The backend
- *  serializes the current ValueTree to `filePath` without touching
- *  `session.currentPath` or the dirty flag — autosave is invisible to
- *  the user-facing project lifecycle. Playhead position IS captured
- *  (the setter is dirty-suppressed), so a recovered autosave reopens at
- *  the right point in time. View-state scroll is also captured when the
- *  renderer supplies it. */
+/** Background autosave write; backend serialises the ValueTree to `filePath` without
+ *  touching the current path or dirty flag. Playhead and scroll are captured. */
 export interface ProjectAutosavePayload {
   filePath: string
-  /** Latest horizontal scroll position from the renderer, captured into
-   *  the autosave snapshot. Optional — omit for "don't touch the saved
-   *  scroll value". */
+  /** Horizontal scroll captured into the snapshot; omit to leave the saved value untouched. */
   viewScrollX?: number
 }
 
-/** Push the renderer's current horizontal zoom (in pixels-per-second)
- *  and/or current scroll position to the backend so they can be
- *  persisted as part of the project. Either field is optional — the
- *  scroll-position sender debounces independently from the zoom sender.
- *  The backend stores both values on the project root but does NOT mark
- *  the project dirty — view state is not a meaningful edit. */
+/** Persist horizontal zoom and/or scroll. Both optional; backend stores them without marking dirty. */
 export interface ProjectSetViewPayload {
   pxPerSecond?: number
   scrollX?: number
-  /** Id of the selected track, or `null` to clear. Persisted view state
-   *  (non-dirty) so reopening restores the Track FX panel's target. */
+  /** Selected track id, or null to clear. Persisted as non-dirty view state. */
   selectedTrackId?: string | null
-  /** Whether the bottom panel shows the Track FX view. Persisted view
-   *  state (non-dirty). */
+  /** Bottom panel shows Track FX. Persisted as non-dirty view state. */
   fxPanelOpen?: boolean
 }
 
@@ -686,13 +500,8 @@ export interface ProjectSetLengthPayload {
 }
 
 /**
- * Per-project preferred audio output device. `null` / `null` clears the
- * project's preference so the user's global `preferences.json` device
- * becomes the effective choice on next load. Saved on the project file
- * itself; the live `juce::AudioDeviceManager` is updated separately via
- * `AUDIO_DEVICE_SELECT` so the renderer can choose whether to push the
- * live switch (Project Properties dialog: yes; PROJECT_STATE
- * reconciliation on load: yes, but without touching `preferences.json`).
+ * Per-project preferred output device; null/null clears it (global preferences.json wins).
+ * Saved on the project file; the live device is switched separately via AUDIO_DEVICE_SELECT.
  */
 export interface ProjectSetAudioOutputPayload {
   typeName: string | null
@@ -700,44 +509,33 @@ export interface ProjectSetAudioOutputPayload {
 }
 
 /**
- * Per-project target sample rate (Hz). Drives the project's playback
- * caches: every clip's audio is converted to this rate so the audio
- * engine doesn't have to resample on the audio thread for every clip
- * individually. Only 44 100 and 48 000 Hz are accepted today; higher
- * rates are silently capped at 48 000 on the import path.
+ * Target sample rate (Hz) driving playback caches so the audio thread never resamples
+ * per-clip. Only 44100/48000 accepted; higher rates are capped at 48000 on import.
  */
 export interface ProjectSetTargetSampleRatePayload {
   sampleRate: number
 }
 
 /**
- * Persists the last-used export-dialog settings on the project root.
- * `json` is an opaque renderer-owned string (schema: `{ version: 1, … }`);
- * pass an empty string to clear. Backend stores it verbatim, rejects
- * payloads larger than 64 KB, and round-trips it via `.silverdaw` save/load.
+ * Persists the last-used export-dialog settings (opaque renderer-owned JSON; empty clears).
+ * Backend stores it verbatim, rejects payloads > 64 KB, and round-trips via `.silverdaw` save/load.
  */
 export interface ProjectSetExportSettingsPayload {
   json: string
 }
 
 /**
- * Master output volume (linear, clamped to [0, 1]). Backend applies it
- * to the live mix bus via `juce::AudioSourcePlayer::setGain` (block-rate
- * ramped; safe during playback) and to the export render so the file
- * matches what the user hears. Round-tripped through the PROJECT_STATE
- * snapshot; absent from the snapshot when at unity.
+ * Master output volume (linear, clamped [0,1]). Backend applies it block-ramped to the live
+ * mix bus and to the export render. Round-tripped via PROJECT_STATE; absent when at unity.
  */
 export interface ProjectSetMasterVolumePayload {
   gain: number
 }
 
 /**
- * Synchronous-ish file-rate probe used by the import flow to detect
- * sample-rate mismatches before adding a file to the library. The
- * backend opens the file via its `AudioFormatManager`, reads the
- * sample rate / channel count / duration from the file's header, and
- * acks via `AUDIO_FILE_PROBED`. `requestId` is renderer-allocated so
- * concurrent probes don't collide.
+ * File-rate probe used by import to detect sample-rate mismatches before adding a file.
+ * Backend reads rate/channels/duration from the header and acks via AUDIO_FILE_PROBED.
+ * `requestId` is renderer-allocated so concurrent probes don't collide.
  */
 export interface AudioFileProbePayload {
   requestId: string
@@ -745,62 +543,24 @@ export interface AudioFileProbePayload {
 }
 
 /**
- * Start an offline mixdown render. The backend renders every track's
- * clips (honouring trim window, warp, pitch and track gain) into a
- * single stereo file at the requested sample rate and format. The
- * live transport is forced to pause-and-park before the render begins
- * and `TRANSPORT_PLAY` is rejected for the duration so audio playback
- * can't audibly interleave with the offline render.
- *
- * `lengthMode = 'trim-to-last-clip'` truncates the output at the end
- * of the latest-ending clip (using each clip's effective timeline
- * duration). `lengthMode = 'fixed-duration'` honours `lengthMs`
- * exactly — clips that extend past that point are truncated mid-clip,
- * clips that end before are padded with silence.
- *
- * The format-specific tail (`bitrateKbps`) is ignored
- * when `format` is `'wav'` or `'flac'`. `bitDepth` is ignored when
- * `format` is `'mp3'`. `metadata` applies to all three formats
- * (mapped to ID3 for MP3, RIFF INFO for WAV, VORBIS_COMMENT for FLAC).
+ * Start an offline mixdown render. Backend renders all clips (trim/warp/pitch/gain) into one
+ * stereo file; the live transport is parked and TRANSPORT_PLAY rejected for the duration.
+ * `lengthMode`: 'trim-to-last-clip' truncates at the latest-ending clip; 'fixed-duration'
+ * honours `lengthMs` exactly (truncating or padding with silence).
  */
 export interface MixdownStartPayload {
   outputPath: string
   sampleRate: 44100 | 48000
   format: 'wav' | 'mp3' | 'flac' | 'aiff'
-  /** Output bit-depth.
-   *  - `'wav'`: 16 / 24 (PCM) or 32 (IEEE float).
-   *  - `'flac'`: 16 / 24.
-   *  - `'aiff'`: 16 / 24.
-   *  - `'mp3'`: ignored.
-   *  Defaults to 16 if omitted. */
+  /** Output bit-depth (default 16). wav: 16/24/32f; flac/aiff: 16/24; mp3: ignored. */
   bitDepth?: 16 | 24 | 32
-  /** Apply TPDF dither immediately before integer quantisation.
-   *  Only meaningful when the target container is 16-bit integer
-   *  (WAV-16 / FLAC-16). Ignored for 24-bit (noise floor below
-   *  audibility) and 32-float (no quantisation step). Default
-   *  `true`. */
+  /** TPDF dither before integer quantisation; only affects 16-bit output. Default true. */
   dither?: boolean
-  /** Extra silence-tail appended after the timeline, in seconds.
-   *  Range [0, 60]. Independent of, and additive on top of, any
-   *  per-clip processor tail (e.g. reverb decay). Defaults to 0. */
+  /** Extra silence-tail after the timeline (s), range [0,60]. Default 0. */
   tailSeconds?: number
-  /** ITU-R BS.1770-4 loudness measurement and / or two-pass
-   *  normalization. Only valid when `sampleRate` is 44100 or 48000.
-   *  Optional — when absent the export runs in `off` mode and the
-   *  output matches the existing un-analyzed pipeline byte-for-byte.
-   *
-   *  - `off`        no analysis, no gain, no metering.
-   *  - `analyze`    single-pass render measures integrated LUFS +
-   *                 true-peak; reports them on `MIXDOWN_DONE.loudness`.
-   *                 Output bytes are identical to `off`.
-   *  - `normalize`  two-pass render: pass 1 measures the program +
-   *                 writes a 32-float intermediate; pass 2 applies
-   *                 the linear gain needed to hit `targetLufs`,
-   *                 backed off if necessary so the post-gain true
-   *                 peak doesn't exceed `ceilingDbtp - 0.2 dB`.
-   *
-   *  `targetLufs` is required when `mode === 'normalize'`. Both
-   *  numeric fields are clamped to [-30, -6] and [-9, 0] respectively. */
+  /** BS.1770-4 loudness. 'off' = no analysis; 'analyze' = measure LUFS+true-peak (reported on
+   *  MIXDOWN_DONE); 'normalize' = two-pass gain to `targetLufs`, capped at `ceilingDbtp - 0.2 dB`.
+   *  `targetLufs` required for 'normalize'; fields clamped to [-30,-6] and [-9,0]. */
   loudness?: {
     mode: 'off' | 'analyze' | 'normalize'
     targetLufs?: number
@@ -811,13 +571,7 @@ export interface MixdownStartPayload {
   lengthMode: 'trim-to-last-clip' | 'fixed-duration'
   /** Required when `lengthMode === 'fixed-duration'`. Ignored otherwise. */
   lengthMs?: number
-  /** File-level tags written into the output container.
-   *  All fields are optional; absent / empty fields aren't written.
-   *  Mapped per-format by the backend:
- *    - MP3  → ID3v2 frames (TIT2 / TPE1 / TALB / TYER / TCON / COMM).
- *    - WAV  → RIFF INFO chunk (INAM / IART / IPRD / ICRD / IGNR / ICMT).
- *    - FLAC → VORBIS_COMMENT block (TITLE / ARTIST / ALBUM / DATE / GENRE / COMMENT).
- *    - AIFF → NAME / AUTH / (c) / ANNO text chunks (year + genre folded into ANNO). */
+  /** Optional file-level tags; backend maps them per-format (ID3 / RIFF INFO / VORBIS_COMMENT / AIFF chunks). */
   metadata?: {
     title?: string
     artist?: string
@@ -828,10 +582,7 @@ export interface MixdownStartPayload {
   }
 }
 
-/** Request cancellation of an in-progress mixdown render. The backend
- *  finalises (deletes the partial temp file) and emits
- *  `MIXDOWN_FAILED { code: 'cancelled' }`. No-op if no render is
- *  active. */
+/** Cancel an in-progress mixdown; backend deletes the partial file and emits MIXDOWN_FAILED{cancelled}. */
 export type MixdownCancelPayload = undefined
 
 /** Add a timeline marker at an absolute project position in milliseconds. */
@@ -851,32 +602,20 @@ export interface ProjectMarkerRemovePayload {
   markerId: string
 }
 
-/** Start a preview voice on a library item, optionally windowed to a
- *  selection. `inMs` and `durationMs` are in milliseconds relative to the
- *  source file; `durationMs = 0` (or omitted) plays from `inMs` to the
- *  end of the source. Initial warp fields are applied atomically before
- *  the backend broadcasts `PREVIEW_STATE`, so the first Play press cannot
- *  briefly run at the source tempo. */
+/** Start a preview voice, optionally windowed (`inMs`/`durationMs` rel. to source; 0 = to end).
+ *  Initial warp is applied atomically before PREVIEW_STATE so the first Play can't run un-warped. */
 export interface PreviewLoadPayload extends PreviewSetWarpPayload {
   libraryItemId: string
   inMs?: number
   durationMs?: number
 }
 
-/** Seek within the currently loaded preview window. `positionMs` is
- *  relative to the window start (0..durationMs). */
+/** Seek within the preview window; `positionMs` is relative to the window start (0..durationMs). */
 export interface PreviewSeekPayload {
   positionMs: number
 }
 
-/**
- * Configure the warp engine on the currently-loaded preview voice.
- * Mirrors `ClipSetWarpPayload` exactly — partial-update, every field
- * optional, `tempoRatio: null` clears the pin. Used by the Clip
- * Editor to keep the preview audio in sync with the saved-clip's
- * warp defaults (so what the user previews matches what the
- * timeline will play once the clip is dragged in).
- */
+/** Configure warp on the preview voice; mirrors ClipSetWarpPayload (partial-update, tempoRatio:null clears the pin). */
 export interface PreviewSetWarpPayload {
   warpEnabled?: boolean
   warpMode?: ClipWarpMode
@@ -885,54 +624,30 @@ export interface PreviewSetWarpPayload {
   cents?: number
 }
 
-/**
- * Configure the volume shape (gain envelope) on the currently-loaded
- * preview voice. `points` are clip-local post-warp milliseconds + linear
- * gain (same units as `ClipSetEnvelopePayload`); an empty array clears
- * the envelope. Sent live by the Clip Editor while the user edits the
- * volume-shape curve — the backend installs a compiled snapshot onto the
- * preview's `OffsetSource` atomically so the next audio block already
- * reflects it. No ack: matches `PREVIEW_SET_WARP`.
- */
+/** Configure the preview voice's volume envelope; `points` post-warp ms + linear gain (empty clears). No ack. */
 export interface PreviewSetEnvelopePayload {
   points: ClipEnvelopePoint[]
 }
 
 /**
- * Switch the audio output device. Both fields null = "revert to system
- * default" (the backend re-runs JUCE's default-device init). Otherwise
- * both `typeName` (e.g. "Windows Audio") and `deviceName` (e.g.
- * "Speakers (Realtek HD Audio)") must be supplied — JUCE's
- * `AudioDeviceManager::setAudioDeviceSetup` resolves device names
- * within their type, so picking a device from one type without
- * switching to that type first won't take effect.
- *
- * The backend acks with `AUDIO_DEVICE_CHANGED { ok, error? }` and, on
- * success, broadcasts a fresh `AUDIO_DEVICES_LIST` so every connected
- * client sees the new current selection.
+ * Switch the audio output device. Both fields null = revert to system default; otherwise
+ * both `typeName` and `deviceName` are required (JUCE resolves device names within their type).
+ * Backend acks AUDIO_DEVICE_CHANGED and, on success, broadcasts a fresh AUDIO_DEVICES_LIST.
  */
 export interface AudioDeviceSelectPayload {
   typeName: string | null
   deviceName: string | null
 }
 
-/** Force the backend to rescan every device type's available devices.
- *  Renderer fires this when the user explicitly clicks a "refresh"
- *  button or right after a plug / unplug it noticed elsewhere. */
+/** Ask the backend to rescan available devices (on explicit refresh or a detected plug/unplug). */
 export interface AudioDevicesRequestPayload {
-  /** When true, the backend calls `scanForDevices()` on every type
-   *  before responding. Cheap-but-not-free on Windows (ASIO scans
-   *  can take ~10ms); omit for a "just resend the cached snapshot". */
+  /** True = rescan every type before responding (ASIO scans ~10ms); omit to resend the cached snapshot. */
   refresh?: boolean
 }
 
 export type BridgeOutboundType = keyof BridgeOutboundMap
 
-/**
- * Tuple-encoded argument list for the typed `send()` helper. Lets callers
- * write `send('TRANSPORT_PLAY')` for payload-less envelopes and
- * `send('CLIP_ADD', { ... })` for the rest, with full inference.
- */
+/** Tuple args for the typed `send()` helper: `send('TRANSPORT_PLAY')` or `send('CLIP_ADD', {...})`. */
 export type BridgeOutboundArgs<K extends BridgeOutboundType> =
   BridgeOutboundMap[K] extends undefined ? [type: K] : [type: K, payload: BridgeOutboundMap[K]]
 
