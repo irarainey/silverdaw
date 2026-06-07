@@ -215,6 +215,7 @@ add_library(silverdaw_backend_core STATIC
     src/AudioEngine.cpp
     src/BridgeAuth.cpp
     src/BpmDetector.cpp
+    src/BridgeDispatch.cpp
     src/BridgeServer.cpp
     src/ClipCommands.cpp
     src/CommandHelpers.cpp
@@ -236,6 +237,10 @@ add_library(silverdaw_backend_core STATIC
     src/ProjectFxCommands.cpp
     src/ProjectSettingsCommands.cpp
     src/ProjectState.cpp
+    src/ProjectStateClips.cpp
+    src/ProjectStateLibrary.cpp
+    src/ProjectStateSerialization.cpp
+    src/ProjectStateTracksFx.cpp
     src/ProjectSession.cpp
     src/ProjectTransitions.cpp
     src/SampleExport.cpp
