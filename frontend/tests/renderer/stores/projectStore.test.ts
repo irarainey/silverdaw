@@ -452,6 +452,7 @@ describe('projectStore', () => {
         {
           id: 't1',
           name: 'T1',
+          gain: 1,
           clips: [
             { id: 'c1', libraryItemId: 'l2', offsetMs: 0, inMs: 0, durationMs: 1_000, unresolved: true }
           ]
@@ -498,6 +499,7 @@ describe('projectStore', () => {
         {
           id: 't1',
           name: 'T1',
+          gain: 1,
           clips: [{ id: 'c1', libraryItemId: 'l2', offsetMs: 0, inMs: 0, durationMs: 1_000 }]
         }
       ]

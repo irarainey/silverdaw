@@ -37,17 +37,17 @@ describe('projectStore — clip lock guards', () => {
     project.clips = { c1: makeClip({ locked: true }) }
 
     project.trimClip('c1', 100, 100, 800)
-    expect(project.clips.c1.startMs).toBe(0)
-    expect(project.clips.c1.inMs).toBe(0)
-    expect(project.clips.c1.durationMs).toBe(1000)
+    expect(project.clips.c1!.startMs).toBe(0)
+    expect(project.clips.c1!.inMs).toBe(0)
+    expect(project.clips.c1!.durationMs).toBe(1000)
 
     project.setClipLocked('c1', false)
-    expect(project.clips.c1.locked).toBeUndefined()
+    expect(project.clips.c1!.locked).toBeUndefined()
 
     project.trimClip('c1', 100, 100, 800)
-    expect(project.clips.c1.startMs).toBe(100)
-    expect(project.clips.c1.inMs).toBe(100)
-    expect(project.clips.c1.durationMs).toBe(800)
+    expect(project.clips.c1!.startMs).toBe(100)
+    expect(project.clips.c1!.inMs).toBe(100)
+    expect(project.clips.c1!.durationMs).toBe(800)
   })
 
   it('moveClip is rejected when locked, accepted after unlock', () => {
@@ -58,10 +58,10 @@ describe('projectStore — clip lock guards', () => {
     project.clips = { c1: makeClip({ locked: true }) }
 
     project.moveClip('c1', 500)
-    expect(project.clips.c1.startMs).toBe(0)
+    expect(project.clips.c1!.startMs).toBe(0)
 
     project.setClipLocked('c1', false)
     project.moveClip('c1', 500)
-    expect(project.clips.c1.startMs).toBe(500)
+    expect(project.clips.c1!.startMs).toBe(500)
   })
 })

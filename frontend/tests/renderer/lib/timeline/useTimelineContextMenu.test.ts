@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { useTimelineContextMenu } from '@/lib/timeline/useTimelineContextMenu'
+import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
 import { useClipDialogs } from '@/lib/timeline/useClipDialogs'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
@@ -107,7 +108,7 @@ function commandsOf(menu: ReturnType<typeof useTimelineContextMenu>): string[] {
 function findItem(
   menu: ReturnType<typeof useTimelineContextMenu>,
   command: string
-): { command: string; disabled?: boolean; selectedSwatch?: number } | undefined {
+): ClipContextMenuItem | undefined {
   return menu.contextMenuItems.value.find((i) => i.command === command)
 }
 
