@@ -209,51 +209,6 @@ using silverdaw::bridge::readOptionalBool;
 using silverdaw::bridge::readOptionalString;
 using silverdaw::broadcastApplied;
 
-// ─── §12.1 clip-transition dispatch helpers ───────────────────────────────
-//
-// Shared epilogue for the discrete TRANSITION_* edits: re-derive every clip's
-// edge-fade, drop any transition the edit invalidated (folding into the same
-// open undo step), then rebroadcast the authoritative PROJECT_STATE. The
-// renderer has no bespoke ack — the snapshot IS the ack — so we always
-// rebroadcast, even when the mutation was rejected, to re-sync the client.
-void finishTransitionEdit(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
-                          silverdaw::BridgeServer& bridge, silverdaw::ProjectSession& session)
-{
-    projectState.reconcileTransitions(/*useUndo*/ true);
-    silverdaw::syncClipEdgeFades(engine, projectState);
-    bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, false));
-}
-
-// Geometry edits that can move / resize a clip (or change its warp-scaled
-// footprint) and therefore break a transition's sanctioned overlap. Undo /
-// redo / load go through rebuildEngineFromProject (which reconciles + syncs
-// separately), so they are intentionally excluded here.
-bool transitionGeometryMayHaveChanged(const juce::String& type) noexcept
-{
-    return type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_REMOVE" ||
-           type == "CLIP_SET_WARP" || type == "TRACK_REMOVE" || type == "PROJECT_SET_BPM" ||
-           type == "CLIP_RELINK";
-}
-
-// Re-derive edge-fades after a geometry edit and auto-delete any transition
-// whose invariants broke. Gated on the project actually carrying a transition
-// so a transition-free project keeps a byte-for-byte unchanged hot path (the
-// dormancy invariant). Only rebroadcasts PROJECT_STATE when a transition was
-// removed (a rare terminal event), so a 60 Hz move/trim drag does not spam
-// full snapshots.
-void reconcileTransitionsAfterGeometryEdit(silverdaw::AudioEngine& engine,
-                                           silverdaw::ProjectState& projectState,
-                                           silverdaw::BridgeServer& bridge, silverdaw::ProjectSession& session)
-{
-    if (!projectState.hasAnyTransition()) return;
-    const bool removed = projectState.reconcileTransitions(/*useUndo*/ true);
-    silverdaw::syncClipEdgeFades(engine, projectState);
-    if (removed)
-    {
-        bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, false));
-    }
-}
-
 // Same wire-protocol convention as BridgeServer::broadcast: (type, payload) order is
 // fixed by design, so the easily-swappable-parameters check is intentionally silenced.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -1203,21 +1158,21 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::info("bridge", "recv TRANSITION_CREATE track=" +
                                            payload.getProperty("trackId", "").toString());
         silverdaw::applyTransitionCreate(payload, projectState);
-        finishTransitionEdit(engine, projectState, bridge, session);
+        silverdaw::finishTransitionEdit(engine, projectState, bridge, session);
     }
     else if (type == "TRANSITION_DELETE")
     {
         silverdaw::log::info("bridge", "recv TRANSITION_DELETE id=" +
                                            payload.getProperty("transitionId", "").toString());
         silverdaw::applyTransitionDelete(payload, projectState);
-        finishTransitionEdit(engine, projectState, bridge, session);
+        silverdaw::finishTransitionEdit(engine, projectState, bridge, session);
     }
     else if (type == "TRANSITION_SET_RECIPE")
     {
         silverdaw::log::info("bridge", "recv TRANSITION_SET_RECIPE id=" +
                                            payload.getProperty("transitionId", "").toString());
         silverdaw::applyTransitionSetRecipe(payload, projectState);
-        finishTransitionEdit(engine, projectState, bridge, session);
+        silverdaw::finishTransitionEdit(engine, projectState, bridge, session);
     }
     else
     {
@@ -1234,9 +1189,9 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     // edge-fades and auto-delete invalidated transitions (joining this edit's
     // still-open undo step). No-op fast path when the project has no
     // transitions, so transition-free projects are unaffected.
-    if (transitionGeometryMayHaveChanged(type))
+    if (silverdaw::transitionGeometryMayHaveChanged(type))
     {
-        reconcileTransitionsAfterGeometryEdit(engine, projectState, bridge, session);
+        silverdaw::reconcileTransitionsAfterGeometryEdit(engine, projectState, bridge, session);
     }
 
     // Undo-state epilogue. Any mutating envelope (or an undo/redo itself)
