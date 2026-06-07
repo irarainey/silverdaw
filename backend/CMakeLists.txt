@@ -228,6 +228,7 @@ add_library(silverdaw_backend_core STATIC
     src/MarkerCommands.cpp
     src/MixdownEngine.cpp
     src/PeaksCache.cpp
+    src/PlayheadEmitter.cpp
     src/ProjectFile.cpp
     src/PreviewCommands.cpp
     src/ProjectFxCommands.cpp
