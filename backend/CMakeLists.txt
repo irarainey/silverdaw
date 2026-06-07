@@ -231,6 +231,7 @@ add_library(silverdaw_backend_core STATIC
     src/PlayheadEmitter.cpp
     src/ProjectFile.cpp
     src/PreviewCommands.cpp
+    src/ProjectCommands.cpp
     src/ProjectFxCommands.cpp
     src/ProjectState.cpp
     src/ProjectSession.cpp
