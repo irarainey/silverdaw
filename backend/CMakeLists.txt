@@ -234,6 +234,7 @@ add_library(silverdaw_backend_core STATIC
     src/PreviewCommands.cpp
     src/ProjectCommands.cpp
     src/ProjectFxCommands.cpp
+    src/ProjectSettingsCommands.cpp
     src/ProjectState.cpp
     src/ProjectSession.cpp
     src/ProjectTransitions.cpp

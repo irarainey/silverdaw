@@ -29,4 +29,11 @@ void broadcastAudioDevicesList(BridgeServer& bridge, const juce::var& envelope, 
 void handleAudioDevicesRequest(const juce::var& payload, AudioEngine& engine, BridgeServer& bridge);
 void handleAudioDeviceSelect(const juce::var& payload, AudioEngine& engine, BridgeServer& bridge);
 
+// File-header probe used by the renderer's import flow to detect a
+// sample-rate mismatch before adding a clip. Reader construction runs on
+// `peakPool` so the message thread keeps draining transport ticks; the
+// result acks via AUDIO_FILE_PROBED with the round-tripped `requestId`.
+void handleAudioFileProbe(const juce::var& payload, AudioEngine& engine, BridgeServer& bridge,
+                          juce::ThreadPool& peakPool);
+
 } // namespace silverdaw

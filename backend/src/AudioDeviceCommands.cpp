@@ -2,11 +2,16 @@
 
 #include "BridgeServer.h"
 #include "Log.h"
+#include "PayloadHelpers.h"
+
+#include <memory>
 
 #include <juce_events/juce_events.h>
 
 namespace silverdaw
 {
+
+using silverdaw::bridge::tryGetRequiredString;
 
 juce::var buildAudioDevicesListEnvelope(const silverdaw::AudioEngine::AudioDevicesSnapshot& snap,
                                         bool scanInProgress)
@@ -153,6 +158,67 @@ void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& e
     silverdaw::log::info("audio",
                          juce::String("device select type=") + typeName + " name=" + deviceName +
                              (err.isEmpty() ? " ok" : " fail: " + err));
+}
+
+void handleAudioFileProbe(const juce::var& payload, silverdaw::AudioEngine& engine,
+                          silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool)
+{
+    // Synchronous-ish file-rate probe used by the renderer's import
+    // flow to decide whether to prompt about a sample-rate
+    // mismatch. Opens the file via the existing AudioFormatManager,
+    // reads the header (sample rate / channel count / total length),
+    // acks via `AUDIO_FILE_PROBED`. `requestId` round-trips so
+    // concurrent probes from a batched import don't collide.
+    const auto requestId = tryGetRequiredString(payload, "requestId").value_or(juce::String{});
+    const auto filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
+    if (requestId.isEmpty() || filePath.isEmpty())
+    {
+        silverdaw::log::warn("bridge", "AUDIO_FILE_PROBE missing requestId/filePath");
+        return;
+    }
+
+    silverdaw::log::debug("bridge", "recv AUDIO_FILE_PROBE id=" + requestId + " path=" + filePath);
+    // Heavy work (reader construction; on Windows the JUCE
+    // codec call can take a few ms for compressed formats) is
+    // dispatched onto the existing peak-pool so the message
+    // thread keeps draining 60 Hz transport ticks.
+    peakPool.addJob([requestId, filePath, &engine, &bridge]() {
+        const juce::File file(filePath);
+        std::unique_ptr<juce::AudioFormatReader> reader(
+            engine.getFormatManager().createReaderFor(file));
+        juce::MessageManager::callAsync([requestId, filePath, &bridge,
+                                         reader = std::shared_ptr<juce::AudioFormatReader>(std::move(reader))]() {
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty("requestId", requestId);
+            obj->setProperty("filePath", filePath);
+            if (reader && reader->sampleRate > 0.0 && reader->lengthInSamples > 0)
+            {
+                obj->setProperty("ok", true);
+                obj->setProperty("sampleRate", static_cast<int>(reader->sampleRate));
+                obj->setProperty("channelCount", static_cast<int>(reader->numChannels));
+                obj->setProperty(
+                    "durationMs",
+                    (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0);
+                silverdaw::log::info(
+                    "bridge",
+                    "probe ok id=" + requestId + " path=" + filePath
+                        + " sampleRate=" + juce::String(static_cast<int>(reader->sampleRate))
+                        + "Hz ch=" + juce::String(static_cast<int>(reader->numChannels))
+                        + " lengthSamples=" + juce::String(reader->lengthInSamples));
+            }
+            else
+            {
+                obj->setProperty("ok", false);
+                obj->setProperty("error",
+                                 juce::String("could not decode header for ") + filePath);
+                silverdaw::log::warn(
+                    "bridge",
+                    "probe fail id=" + requestId + " path=" + filePath
+                        + " (reader=" + juce::String(reader ? "ok" : "null") + ")");
+            }
+            bridge.broadcast("AUDIO_FILE_PROBED", juce::var(obj));
+        });
+    });
 }
 
 } // namespace silverdaw

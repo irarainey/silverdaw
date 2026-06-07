@@ -21,6 +21,7 @@
 #include "ProjectCommands.h"
 #include "ProjectFxCommands.h"
 #include "ProjectSession.h"
+#include "ProjectSettingsCommands.h"
 #include "ProjectState.h"
 #include "SampleExport.h"
 #include "TransitionCommands.h"
@@ -621,159 +622,31 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "PROJECT_SET_VIEW")
     {
-        // View preferences (zoom + scroll position) travel with the
-        // project so opening a saved file restores the exact view the
-        // user had when they saved. Suppressed from the dirty-flag
-        // listener inside the setters so view changes don't prompt an
-        // unsaved-changes dialog.
-        const auto pxVar = payload.getProperty("pxPerSecond", juce::var());
-        if (pxVar.isDouble() || pxVar.isInt() || pxVar.isInt64())
-        {
-            const double px = static_cast<double>(pxVar);
-            if (px > 0.0)
-            {
-                projectState.setViewPxPerSecond(px);
-            }
-        }
-        const auto sxVar = payload.getProperty("scrollX", juce::var());
-        if (sxVar.isDouble() || sxVar.isInt() || sxVar.isInt64())
-        {
-            projectState.setViewScrollX(juce::jmax(0.0, static_cast<double>(sxVar)));
-        }
-        // Selected track + Track-FX-panel-open flag travel with the
-        // project too, so reopening restores which track's effects the
-        // user was editing. Both are non-dirty view state. Guard on the
-        // property being present: scroll/zoom-only pushes omit these and
-        // must not be treated as "clear the selection".
-        if (payload.hasProperty("selectedTrackId"))
-        {
-            const auto selVar = payload.getProperty("selectedTrackId", juce::var());
-            projectState.setViewSelectedTrack(selVar.isString() ? selVar.toString() : juce::String{});
-        }
-        const auto fxVar = payload.getProperty("fxPanelOpen", juce::var());
-        if (fxVar.isBool())
-        {
-            projectState.setViewFxPanelOpen(static_cast<bool>(fxVar));
-        }
+        silverdaw::handleProjectSetView(payload, projectState);
     }
     else if (type == "PROJECT_SET_BPM")
     {
-        // Tempo edits flip the dirty flag — this is a meaningful change
-        // to the project that the user should be prompted to save.
-        const auto bpmVar = payload.getProperty("bpm", juce::var());
-        if (bpmVar.isDouble() || bpmVar.isInt() || bpmVar.isInt64())
-        {
-            const double bpm = static_cast<double>(bpmVar);
-            if (bpm > 0.0)
-            {
-                projectState.setBpm(bpm);
-                // Live re-warp: every warped clip with a derived (not
-                // pinned) tempo ratio re-stretches to match the new
-                // project BPM. Clips with an explicit `tempoRatio`
-                // override keep their pinned value — the user opted
-                // out of project-BPM tracking on those.
-                projectState.forEachWarpClip(
-                    [&](const silverdaw::ProjectState::WarpClipInfo& info)
-                    {
-                        if (!info.warpEnabled || info.tempoRatioPinned) return;
-                        const double sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
-                        if (sourceBpm <= 0.0) return;
-                        const double ratio = bpm / sourceBpm;
-                        engine.setClipWarp(info.clipId, std::nullopt, std::nullopt,
-                                           ratio, std::nullopt, std::nullopt);
-                        auto appliedPayload = silverdaw::buildClipWarpAppliedPayload(projectState, info.clipId);
-                        bridge.broadcast("CLIP_WARP_APPLIED", juce::var(appliedPayload.release()));
-                    });
-            }
-        }
+        silverdaw::handleProjectSetBpm(payload, engine, projectState, bridge);
     }
     else if (type == "PROJECT_SET_LENGTH")
     {
-        // Length edits flip the dirty flag (same rationale as BPM).
-        const auto lenVar = payload.getProperty("lengthMs", juce::var());
-        if (lenVar.isDouble() || lenVar.isInt() || lenVar.isInt64())
-        {
-            const double lenMs = static_cast<double>(lenVar);
-            if (lenMs >= 0.0)
-            {
-                projectState.setProjectLengthMs(lenMs);
-            }
-        }
+        silverdaw::handleProjectSetLength(payload, projectState);
     }
     else if (type == "PROJECT_SET_AUDIO_OUTPUT")
     {
-        // Per-project preferred audio output. Both fields are nullable —
-        // the renderer passes `null` to clear the preference. We accept
-        // either an explicit empty string or a non-string (e.g. JSON
-        // null) as "clear", and validate strings strictly otherwise so
-        // a malformed envelope can't smuggle a debug-stringified value
-        // into the persisted project file.
-        const auto extract = [](const juce::var& payloadIn, const char* key) -> juce::String {
-            const juce::var v = payloadIn.getProperty(key, juce::var());
-            if (v.isString()) return v.toString();
-            return {};
-        };
-        const auto typeName = extract(payload, "typeName");
-        const auto deviceName = extract(payload, "deviceName");
-        projectState.setAudioOutput(typeName, deviceName);
+        silverdaw::handleProjectSetAudioOutput(payload, projectState);
     }
     else if (type == "PROJECT_SET_TARGET_SAMPLE_RATE")
     {
-        // Project-wide target sample rate. Strict whitelist of accepted
-        // rates so a malformed envelope can't park a project at an
-        // unsupported rate that the import / cache code paths don't
-        // handle. Pass 0 to clear (renderer-scope default applies on
-        // next load).
-        const auto rateOpt = tryGetNumber(payload, "sampleRate");
-        if (rateOpt.has_value())
-        {
-            const int requested = static_cast<int>(*rateOpt);
-            if (requested == 0 || silverdaw::isSupportedSampleRate(requested))
-            {
-                projectState.setTargetSampleRate(requested);
-            }
-            else
-            {
-                silverdaw::log::warn(
-                    "bridge",
-                    "PROJECT_SET_TARGET_SAMPLE_RATE rejected (unsupported rate "
-                        + juce::String(requested) + ")");
-            }
-        }
+        silverdaw::handleProjectSetTargetSampleRate(payload, projectState);
     }
     else if (type == "PROJECT_SET_EXPORT_SETTINGS")
     {
-        // Opaque JSON blob describing the last-used export-dialog
-        // settings (format, bit depth, tail seconds, loudness preset,
-        // file-level tags, …). Renderer owns the schema — we just
-        // round-trip the string. Pass an empty string to clear.
-        const auto json = tryGetRequiredString(payload, "json").value_or(juce::String{});
-        if (json.length() > 64 * 1024)
-        {
-            silverdaw::log::warn(
-                "bridge",
-                "PROJECT_SET_EXPORT_SETTINGS rejected (json > 64 KB; got "
-                    + juce::String(json.length()) + ")");
-        }
-        else
-        {
-            projectState.setExportSettingsJson(json);
-        }
+        silverdaw::handleProjectSetExportSettings(payload, projectState);
     }
     else if (type == "PROJECT_SET_MASTER_VOLUME")
     {
-        // Master output gain in [0, 1]. Persisted on the ValueTree
-        // (undoable, marks dirty) AND pushed live to the AudioEngine
-        // so playback changes audibly during a slider drag. Mixdown
-        // reads the same value from `snapshotProjectForMixdown`, so
-        // the exported file matches what the user hears.
-        const auto gainOpt = tryGetNumber(payload, "gain");
-        if (gainOpt.has_value())
-        {
-            const float clamped = juce::jlimit(0.0F, 1.0F, static_cast<float>(*gainOpt));
-            projectState.setMasterVolume(clamped);
-            engine.setMasterGain(clamped);
-        }
+        silverdaw::handleProjectSetMasterVolume(payload, engine, projectState);
     }
     else if (type == "PROJECT_MARKER_ADD")
     {
@@ -802,63 +675,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "AUDIO_FILE_PROBE")
     {
-        // Synchronous-ish file-rate probe used by the renderer's import
-        // flow to decide whether to prompt about a sample-rate
-        // mismatch. Opens the file via the existing AudioFormatManager,
-        // reads the header (sample rate / channel count / total length),
-        // acks via `AUDIO_FILE_PROBED`. `requestId` round-trips so
-        // concurrent probes from a batched import don't collide.
-        const auto requestId = tryGetRequiredString(payload, "requestId").value_or(juce::String{});
-        const auto filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
-        if (requestId.isEmpty() || filePath.isEmpty())
-        {
-            silverdaw::log::warn("bridge", "AUDIO_FILE_PROBE missing requestId/filePath");
-        }
-        else
-        {
-            silverdaw::log::debug("bridge", "recv AUDIO_FILE_PROBE id=" + requestId + " path=" + filePath);
-            // Heavy work (reader construction; on Windows the JUCE
-            // codec call can take a few ms for compressed formats) is
-            // dispatched onto the existing peak-pool so the message
-            // thread keeps draining 60 Hz transport ticks.
-            peakPool.addJob([requestId, filePath, &engine, &bridge]() {
-                const juce::File file(filePath);
-                std::unique_ptr<juce::AudioFormatReader> reader(
-                    engine.getFormatManager().createReaderFor(file));
-                juce::MessageManager::callAsync([requestId, filePath, &bridge,
-                                                 reader = std::shared_ptr<juce::AudioFormatReader>(std::move(reader))]() {
-                    auto* obj = new juce::DynamicObject();
-                    obj->setProperty("requestId", requestId);
-                    obj->setProperty("filePath", filePath);
-                    if (reader && reader->sampleRate > 0.0 && reader->lengthInSamples > 0)
-                    {
-                        obj->setProperty("ok", true);
-                        obj->setProperty("sampleRate", static_cast<int>(reader->sampleRate));
-                        obj->setProperty("channelCount", static_cast<int>(reader->numChannels));
-                        obj->setProperty(
-                            "durationMs",
-                            (static_cast<double>(reader->lengthInSamples) / reader->sampleRate) * 1000.0);
-                        silverdaw::log::info(
-                            "bridge",
-                            "probe ok id=" + requestId + " path=" + filePath
-                                + " sampleRate=" + juce::String(static_cast<int>(reader->sampleRate))
-                                + "Hz ch=" + juce::String(static_cast<int>(reader->numChannels))
-                                + " lengthSamples=" + juce::String(reader->lengthInSamples));
-                    }
-                    else
-                    {
-                        obj->setProperty("ok", false);
-                        obj->setProperty("error",
-                                         juce::String("could not decode header for ") + filePath);
-                        silverdaw::log::warn(
-                            "bridge",
-                            "probe fail id=" + requestId + " path=" + filePath
-                                + " (reader=" + juce::String(reader ? "ok" : "null") + ")");
-                    }
-                    bridge.broadcast("AUDIO_FILE_PROBED", juce::var(obj));
-                });
-            });
-        }
+        silverdaw::handleAudioFileProbe(payload, engine, bridge, peakPool);
     }
     else if (type == "MIXDOWN_START")
     {
