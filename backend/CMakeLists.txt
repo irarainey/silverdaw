@@ -219,6 +219,7 @@ add_library(silverdaw_backend_core STATIC
     src/ClipCommands.cpp
     src/CommandHelpers.cpp
     src/DecodedCache.cpp
+    src/EditUndoState.cpp
     src/EnginePlaybackPath.cpp
     src/Log.cpp
     src/LibraryAnalysis.cpp
@@ -232,6 +233,7 @@ add_library(silverdaw_backend_core STATIC
     src/ProjectFxCommands.cpp
     src/ProjectState.cpp
     src/ProjectTransitions.cpp
+    src/SampleExport.cpp
     src/TrackCommands.cpp
     src/TransportCommands.cpp
     src/TransitionCommands.cpp
