@@ -30,18 +30,45 @@ applyTo: "**/*.ts"
 
 ## File Size and Single Responsibility
 
+- **Default to domain separation of logic.** Organise code by the feature /
+  problem domain it serves (clips, tracks, markers, transitions, library,
+  persistence, transport, …), not by incidental technical layering. New logic
+  goes into the module that owns its domain; when a file mixes domains, that is
+  the first and strongest seam to split along. Approach every change — new or
+  refactor — by asking "which domain owns this?" before "where is there room to
+  put it?". Cross-domain coupling should be a small, explicit contract (a shared
+  `this`/interface type, a narrow imported helper), never a tangle of reach-ins.
 - A module should be one coherent unit of thought; if you can't describe it in
   one short sentence, split it. Line count is a *symptom, not the goal*.
 - Soft ceilings (scrutinise above): TS module ~350 lines; Pinia store actions /
   large composables, extract pure helpers and sub-modules early. Pure
-  type/schema-only files may run longer. **Any file > 800 lines must be
-  seriously considered for splitting unless there is a very good,
-  explicitly-stated reason.**
-- **A split must genuinely improve maintainability.** If the only way under the
-  ceiling is a contrived extraction — e.g. a composable taking a large
-  cross-cutting "dependency bag", or fragmenting one coherent unit of thought —
-  that harms readability more than the line count helps. In that case keep the
-  file and record a short, explicit justification (an exception, not the norm).
+  type/schema-only files may run longer.
+- **Treat ~800 lines as a firm ceiling, not a suggestion.** Aim well below it.
+  A file approaching ~800 lines is a strong signal to split *now*, before it
+  grows further; a file over ~800 lines is a defect to fix, not a style nit.
+- **Nothing is impossible — exhaust every avenue before keeping a file oversized.**
+  A standing "justified exception" is the last resort, never the first answer.
+  If you reach for one, you must show you genuinely explored splitting by domain,
+  by responsibility, by adapter, and by extracting pure helpers — and record why
+  each was rejected. A previously-recorded exception is **not** a permanent
+  licence: re-evaluate it every time the file grows or a feature lands.
+- **Earlier architectural decisions are always revisable.** As the codebase
+  grows, a module layout or boundary that was once reasonable (including a file
+  that was previously a "justified" large file) may no longer be the cleanest.
+  Treat the existing structure as provisional: when a file crosses the ceiling,
+  actively reconsider whether the original decomposition still holds and
+  re-split by domain / responsibility — e.g. spread focused action modules into
+  a store, lift cross-references into a small shared `this`/contract type —
+  rather than defending the status quo. Prefer revising the structure over
+  declaring an exception. Refactors that move boundaries are expected, normal
+  iterative work, not a special event.
+- **A split must still genuinely improve maintainability**, not just move lines.
+  A contrived extraction — a composable taking a large cross-cutting "dependency
+  bag", or fragmenting one coherent unit of thought into arbitrary part1/part2
+  files — is not progress. But this is a quality bar for *how* you split, not an
+  excuse to skip splitting: first find the real domain seams (they almost always
+  exist), and only fall back to a recorded exception once those are genuinely
+  exhausted.
 - **Resist growing an already-oversized file** (e.g. `projectStore.ts`,
   `bridge-protocol.ts`, `libraryStore.ts`) — extract a focused module instead,
   even for a small addition.

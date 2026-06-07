@@ -38,19 +38,43 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 
 ### Component Design
 
+- **Default to domain separation of logic.** Organise components, composables,
+  and stores by the feature / problem domain they serve (timeline, clip editor,
+  library, transport, …), not by incidental technical layering. New logic goes
+  into the unit that owns its domain; when a component or store mixes domains,
+  that is the first and strongest seam to split along — extract a child
+  component or a `useXxx` composable for the distinct domain. Keep presentation
+  ↔ store ↔ preload ↔ main boundaries clean and cross-domain coupling explicit.
 - Adhere to the single responsibility principle for components
 - Use PascalCase for component names and kebab-case for file names
 - Keep components small and focused on one concern
 - A single-file component should be one coherent unit of thought. Soft ceiling
-  ~250 lines; **any SFC > 800 lines must be seriously considered for splitting
-  unless there is a very good, explicitly-stated reason.** Line count is a
-  symptom, not the goal — the real signal is multiple concerns in one file.
-- **A split must genuinely improve maintainability, not just move lines.** If the
-  only way under the ceiling is a contrived extraction — e.g. a composable that
-  needs a large cross-cutting "dependency bag", or splitting one coherent unit of
-  reactive orchestration — prefer keeping the file and recording a short, explicit
-  justification. An over-budget file with a sound reason is an acceptable
-  exception; a contrived split that hurts readability is not progress.
+  ~250 lines. Line count is a symptom, not the goal — the real signal is
+  multiple concerns in one file.
+- **Treat ~800 lines as a firm ceiling, not a suggestion.** Aim well below it.
+  An SFC approaching ~800 lines is a strong signal to split *now*, before it
+  grows further; an SFC over ~800 lines is a defect to fix, not a style nit.
+- **Nothing is impossible — exhaust every avenue before keeping an SFC oversized.**
+  A standing "justified exception" is the last resort, never the first answer.
+  If you reach for one, show you genuinely explored extracting child components
+  for distinct UI regions and lifting logic into `useXxx` composables, and
+  record why each was rejected. A previously-recorded exception is **not** a
+  permanent licence: re-evaluate it every time the file grows or a feature lands.
+- **Earlier architectural decisions are always revisable.** As the app grows, a
+  component/composable boundary that was once reasonable (including an SFC that
+  was previously a "justified" large file) may no longer be the cleanest. Treat
+  the existing structure as provisional: when a file crosses the ceiling,
+  actively reconsider whether the original decomposition still holds and
+  re-split by UI region / responsibility rather than defending the status quo.
+  Re-drawing component and composable boundaries is expected, normal iterative
+  work, not a special event — prefer it over declaring an exception.
+- **A split must still genuinely improve maintainability**, not just move lines.
+  A contrived extraction — a composable needing a large cross-cutting
+  "dependency bag", or fragmenting one coherent unit of reactive orchestration
+  into arbitrary part1/part2 files — is not progress. This is a quality bar for
+  *how* you split, not an excuse to skip splitting: first find the real seams
+  (distinct UI regions, isolatable reactive logic), and only fall back to a
+  recorded exception once those are genuinely exhausted.
 - When an SFC is over budget, extract child components for distinct UI regions
   and move logic into `useXxx` composables, keeping `<template>` thin. Preserve
   emitted events, props, and watcher timing exactly — extraction must not change

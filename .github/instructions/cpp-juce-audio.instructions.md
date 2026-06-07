@@ -157,17 +157,39 @@ or compact code.
 
 ## File Size and Single Responsibility
 
+- **Default to domain separation of logic.** Organise translation units by the
+  feature / problem domain they serve (transport, project state, transitions,
+  per-command groups, …), not by incidental technical layering. New logic goes
+  into the TU that owns its domain; when a file mixes domains, that is the first
+  and strongest seam to split along. Keep cross-domain coupling to a small,
+  explicit surface, while honouring the audio-thread / message-thread / I/O
+  separation the engine already enforces.
 - A translation unit / header should be one coherent unit of thought. If you
   can't describe it in one short sentence, split it.
 - Soft ceilings (scrutinise above): `.cpp` ~500 lines, `.h` ~250
-  (declarations only). **Any file > 800 lines must be seriously considered for
-  splitting unless there is a very good, explicitly-stated reason.** Line count
-  is a symptom, not the goal.
-- Legitimate reasons to stay large: a genuinely cohesive real-time DSP chain
-  (e.g. one `processBlock` path) — never fragment a real-time audio path purely
-  to chase a line count, that is worse than keeping it together.
-- Prefer extracting cohesive free-function command groups into their own TU
-  (mirror `TransitionCommands.cpp`) over growing `Main.cpp` / `ProjectState.cpp`.
-  Move via pure mechanical extraction (no behaviour change), keeping the build
+  (declarations only). Line count is a symptom, not the goal.
+- **Treat ~800 lines as a firm ceiling, not a suggestion.** Aim well below it.
+  A file approaching ~800 lines is a strong signal to split *now*, before it
+  grows further; a file over ~800 lines is a defect to fix, not a style nit.
+- **Nothing is impossible — exhaust every avenue before keeping a file oversized.**
+  A standing "justified exception" is the last resort, never the first answer.
+  If you reach for one, show you genuinely explored extracting cohesive
+  free-function command groups into their own TU (mirror `TransitionCommands.cpp`)
+  and record why it was rejected. A previously-recorded exception is **not** a
+  permanent licence: re-evaluate it every time the file grows or a feature lands.
+- **Earlier architectural decisions are always revisable.** As the engine grows,
+  a file layout or TU boundary that was once reasonable (including a file that
+  was previously a "justified" large file) may no longer be the cleanest. Treat
+  the existing structure as provisional: when a file crosses the ceiling,
+  actively reconsider whether the original decomposition still holds and re-split
+  by responsibility rather than defending the status quo (e.g. peel command
+  groups off `Main.cpp` / `ProjectState.cpp`). Re-drawing TU boundaries is
+  expected, normal iterative work, not a special event — prefer it over an
+  exception.
+- **The one hard limit on splitting:** never fragment a genuinely cohesive
+  real-time DSP path (e.g. one `processBlock` chain) purely to chase a line
+  count — that is worse than keeping it together, and is the rare case where a
+  recorded exception is correct. Everywhere else, find the real seams first.
+- Move via pure mechanical extraction (no behaviour change), keeping the build
   and `ctest` green at each step. Watch for ODR, static-init-order, and
   threading hazards when moving file-local statics across TUs.
