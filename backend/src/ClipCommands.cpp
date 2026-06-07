@@ -1,8 +1,12 @@
 #include "ClipCommands.h"
 
+#include <optional>
+
 #include "AudioEngine.h"
 #include "BridgeServer.h"
 #include "CommandHelpers.h"
+#include "LibraryAnalysis.h"
+#include "Log.h"
 #include "PayloadHelpers.h"
 #include "ProjectState.h"
 
@@ -121,6 +125,134 @@ void handleClipSetEnvelope(const juce::var& payload, silverdaw::AudioEngine& eng
 
     broadcastApplied(bridge, "CLIP_ENVELOPE_APPLIED",
                      {{"clipId", clipId}, {"points", juce::var(stored)}});
+}
+
+void handleClipSetLocked(const juce::var& payload, silverdaw::ProjectState& projectState)
+{
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    const bool locked = static_cast<bool>(payload.getProperty("locked", false));
+    silverdaw::log::info("bridge", "recv CLIP_SET_LOCKED clipId=" + clipId +
+                                      " locked=" + (locked ? "true" : "false"));
+    if (clipId.isNotEmpty())
+    {
+        projectState.setClipLocked(clipId, locked);
+    }
+}
+
+void handleClipRename(const juce::var& payload, silverdaw::ProjectState& projectState)
+{
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    const juce::String name = tryGetRequiredString(payload, "name").value_or(juce::String{});
+    silverdaw::log::info("bridge", "recv CLIP_RENAME clipId=" + clipId + " name=" + name);
+    projectState.setClipName(clipId, name);
+}
+
+void handleClipRebind(const juce::var& payload, silverdaw::ProjectState& projectState)
+{
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
+    silverdaw::log::info("bridge", "recv CLIP_REBIND clipId=" + clipId + " libraryItemId=" +
+                                       libraryItemId);
+    if (clipId.isNotEmpty() && libraryItemId.isNotEmpty())
+    {
+        projectState.setClipLibraryItemId(clipId, libraryItemId);
+    }
+}
+
+void handleClipSetWarp(const juce::var& payload, silverdaw::AudioEngine& engine,
+                       silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
+{
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    silverdaw::log::info("bridge", "recv CLIP_SET_WARP clipId=" + clipId);
+    if (clipId.isEmpty())
+    {
+        return;
+    }
+
+    std::optional<bool> warpEnabled;
+    if (payload.hasProperty("warpEnabled"))
+        warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
+    std::optional<juce::String> warpMode;
+    if (payload.hasProperty("warpMode"))
+        warpMode = tryGetRequiredString(payload, "warpMode").value_or(juce::String{});
+    // `tempoRatio: null` clears the override (clip reverts to
+    // project-BPM tracking); a finite number pins the ratio.
+    std::optional<double> tempoRatio;
+    bool tempoRatioClear = false;
+    if (payload.hasProperty("tempoRatio"))
+    {
+        const auto& v = payload["tempoRatio"];
+        if (v.isVoid() || v.isUndefined())
+            tempoRatioClear = true;
+        else
+            tempoRatio = static_cast<double>(v);
+    }
+    std::optional<double> semitones;
+    if (payload.hasProperty("semitones"))
+        semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
+    std::optional<double> cents;
+    if (payload.hasProperty("cents"))
+        cents = static_cast<double>(payload.getProperty("cents", 0.0));
+    std::optional<bool> pendingAutoWarp;
+    if (payload.hasProperty("pendingAutoWarp"))
+        pendingAutoWarp = static_cast<bool>(payload.getProperty("pendingAutoWarp", false));
+    projectState.setClipWarp(clipId, warpEnabled, warpMode, tempoRatio, tempoRatioClear,
+                             semitones, cents, pendingAutoWarp);
+    bool clipFound = false;
+    bool enabledNow = false;
+    bool tempoRatioPinnedNow = false;
+    double pinnedTempoRatioNow = 1.0;
+    juce::String libraryItemIdNow;
+    projectState.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            if (info.clipId != clipId) return;
+            clipFound = true;
+            enabledNow = info.warpEnabled;
+            tempoRatioPinnedNow = info.tempoRatioPinned;
+            pinnedTempoRatioNow = info.tempoRatio;
+            libraryItemIdNow = info.libraryItemId;
+        });
+    // If the renderer enabled warp WITHOUT pinning a ratio
+    // ("follow project BPM"), derive the effective ratio from
+    // project / source BPM right here so the engine's lazily-
+    // built WarpProcessor doesn't end up at its default 1.0
+    // and play unwarped. Mirrors the derivation in
+    // `rebuildEngineFromProject` so freshly-warped clips and
+    // freshly-loaded warped clips end up identical.
+    std::optional<double> effectiveRatio = tempoRatio;
+    if (!effectiveRatio.has_value() && !tempoRatioClear && tempoRatioPinnedNow)
+    {
+        effectiveRatio = pinnedTempoRatioNow;
+    }
+    if (enabledNow && !effectiveRatio.has_value() && !tempoRatioClear)
+    {
+        const auto libraryItemId =
+            libraryItemIdNow.isNotEmpty() ? libraryItemIdNow : projectState.getClipLibraryItemId(clipId);
+        if (libraryItemId.isNotEmpty())
+        {
+            const double sourceBpm = projectState.getLibraryItemBpm(libraryItemId);
+            const double projectBpm = projectState.getBpm();
+            if (sourceBpm > 0.0 && projectBpm > 0.0)
+            {
+                effectiveRatio = projectBpm / sourceBpm;
+            }
+        }
+    }
+    silverdaw::log::info("warp",
+        "CLIP_SET_WARP clipId=" + clipId
+        + " enabled=" + (clipFound ? (enabledNow ? "true" : "false") : "unknown")
+        + " mode=" + (warpMode.has_value() ? *warpMode : juce::String("unset"))
+        + " tempoRatio=" + (tempoRatio.has_value() ? juce::String(*tempoRatio) : juce::String(tempoRatioClear ? "null" : "unset"))
+        + " pendingAutoWarp=" + (pendingAutoWarp.has_value() ? (*pendingAutoWarp ? "true" : "false") : "unset")
+        + " effectiveRatio=" + (effectiveRatio.has_value() ? juce::String(*effectiveRatio) : juce::String("unset")));
+    // Fan the same change out to the audio engine so the next
+    // audio block reflects it. The engine owns the per-clip
+    // WarpProcessor lifetime; it builds one lazily when
+    // warp is first enabled and tears it down when disabled.
+    engine.setClipWarp(clipId, warpEnabled, warpMode, effectiveRatio, semitones, cents);
+    auto appliedPayload = silverdaw::buildClipWarpAppliedPayload(projectState, clipId);
+    bridge.broadcast("CLIP_WARP_APPLIED", juce::var(appliedPayload.release()));
 }
 
 } // namespace silverdaw
