@@ -8,6 +8,8 @@
 #include "DecodedCache.h"
 #include "Log.h"
 #include "MixdownEngine.h"
+#include "EnginePlaybackPath.h"
+#include "PreviewCommands.h"
 #include "MarkerCommands.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
@@ -53,7 +55,6 @@ constexpr int kMaxBridgePort = 65535;
 std::mutex bpmJobsMutex;
 std::set<juce::String> bpmJobsInFlight;
 constexpr int kPlayheadUpdateHz = 60;
-constexpr int kPreviewReadyDelayMs = 200;
 // 4 workers keeps peak computation responsive without burning every core
 // on a giant project import. Each job is disk-bound + a tight scan loop,
 // so 4 is plenty even on a 16-core machine.
@@ -68,19 +69,6 @@ std::atomic<bool> g_mixdownBusy{false};
 std::atomic<bool> g_mixdownCancel{false};
 
 void broadcastEditUndoState(silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge);
-
-void broadcastPreviewStateIfCurrent(silverdaw::AudioEngine& engine, silverdaw::BridgeServer& bridge,
-                                    const juce::String& libraryItemId, juce::int64 generation)
-{
-    if (engine.getPreviewGeneration() != generation) return;
-    auto* stateObj = new juce::DynamicObject();
-    if (libraryItemId.isNotEmpty()) stateObj->setProperty("libraryItemId", libraryItemId);
-    stateObj->setProperty("isPlaying", engine.isPreviewPlaying());
-    stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
-    stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
-    stateObj->setProperty("generation", generation);
-    bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
-}
 
 std::unique_ptr<juce::DynamicObject> buildClipWarpAppliedPayload(
     silverdaw::ProjectState& projectState, const juce::String& clipId)
@@ -971,30 +959,6 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, silverdaw::ProjectState&
 }
 
 /**
- * Look up the library item id (if any) whose filePath matches
- * `filePath`, returning empty string if no item exists. Used by both
- * the LIBRARY_ADD and CLIP_ADD paths to find the right item to attach
- * a BPM to. (CLIP_ADD's payload doesn't carry the library itemId, so
- * we re-derive it from the filePath here.)
- */
-juce::String findLibraryItemIdForPath(const silverdaw::ProjectState& projectState, const juce::String& filePath)
-{
-    const auto& root = projectState.getTree();
-    const auto library = root.getChildWithName(juce::Identifier{"LIBRARY"});
-    if (!library.isValid()) return {};
-    for (int i = 0; i < library.getNumChildren(); ++i)
-    {
-        const auto item = library.getChild(i);
-        if (item.getProperty(juce::Identifier{"kind"}, "audio-file").toString() == "audio-file"
-            && item.getProperty(juce::Identifier{"filePath"}).toString() == filePath)
-        {
-            return item.getProperty(juce::Identifier{"id"}).toString();
-        }
-    }
-    return {};
-}
-
-/**
  * Idempotent BPM-detection scheduler. If the library item for
  * `filePath` already has a non-zero BPM (or no library item exists),
  * this is a no-op; otherwise it queues a worker-pool job to run
@@ -1011,7 +975,7 @@ void ensureBpmDetection(const juce::String& filePath, silverdaw::AudioEngine& en
                         juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
 {
     if (filePath.isEmpty()) return;
-    const juce::String itemId = findLibraryItemIdForPath(projectState, filePath);
+    const juce::String itemId = silverdaw::findLibraryItemIdForPath(projectState, filePath);
     if (itemId.isEmpty()) return; // No library item to attach BPM to.
     if (projectState.getLibraryItemBpmForPath(filePath) > 0.0) return; // Already known.
     {
@@ -1049,63 +1013,6 @@ void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& fi
 }
 
 /**
- * Resolve the on-disk path the audio engine should read for `sourceFilePath`.
- * Always prefers the decoded-WAV cache so the audio thread reads cheap
- * 16-bit PCM instead of decoding the original (which is painfully slow
- * for compressed formats like MP3 and breaks the read-ahead-buffer's
- * latency-hiding contract at clip boundaries).
- *
- * Resolution order:
- *   1. The DecodedCache's expected path for this source — if the file
- *      exists on disk, use it. This wins even when ProjectState's
- *      stored `playbackFilePath` is stale (e.g. an upsert wrote the
- *      original source path back onto a previously-cached entry).
- *   2. The ProjectState-stored `playbackFilePath`, but ONLY if it
- *      already points at a `.wav`. Anything else is treated as a
- *      missing cache to avoid loading the original compressed file
- *      via this back door.
- *   3. The original source path as a last-resort fallback. The caller
- *      should ALSO schedule a decode job so the cache is ready for
- *      subsequent clips of the same source.
- *
- * Also keeps `ProjectState` in sync: if we found a cache on disk that
- * the stored `playbackFilePath` doesn't reflect, we overwrite it so the
- * persisted project picks the right path on the next save and so
- * libraryAsJson reports the correct path to the renderer.
- */
-juce::String resolveEnginePlaybackPath(const juce::String& sourceFilePath,
-                                       silverdaw::ProjectState& projectState,
-                                       const silverdaw::DecodedCache& decodedCache)
-{
-    if (sourceFilePath.isEmpty()) return sourceFilePath;
-    const juce::File source(sourceFilePath);
-    if (!source.existsAsFile()) return sourceFilePath;
-
-    const auto cacheFile = decodedCache.getCacheFilePath(source);
-    if (cacheFile.existsAsFile())
-    {
-        const auto cachePath = cacheFile.getFullPathName();
-        const auto stored = projectState.getLibraryItemPlaybackPathForSource(sourceFilePath);
-        if (stored != cachePath)
-        {
-            const auto itemId = findLibraryItemIdForPath(projectState, sourceFilePath);
-            if (itemId.isNotEmpty())
-            {
-                projectState.setLibraryItemPlaybackPath(itemId, cachePath);
-            }
-        }
-        return cachePath;
-    }
-
-    const auto stored = projectState.getLibraryItemPlaybackPathForSource(sourceFilePath);
-    if (stored.isNotEmpty() && stored.endsWithIgnoreCase(".wav") && juce::File(stored).existsAsFile())
-    {
-        return stored;
-    }
-    return sourceFilePath;
-}
-
-/**
  * Make sure a decoded-WAV cache exists for `sourceFilePath`. If the
  * cache file already exists on disk this is a no-op; otherwise a
  * worker-pool job decodes the source in the background and updates
@@ -1132,7 +1039,7 @@ void ensureDecodedCache(const juce::String& sourceFilePath, silverdaw::AudioEngi
             juce::MessageManager::callAsync(
                 [&projectState, sourcePath, cachePath]
                 {
-                    const auto itemId = findLibraryItemIdForPath(projectState, sourcePath);
+                    const auto itemId = silverdaw::findLibraryItemIdForPath(projectState, sourcePath);
                     if (itemId.isNotEmpty())
                     {
                         projectState.setLibraryItemPlaybackPath(itemId, cachePath);
@@ -1207,7 +1114,7 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     // prefers the cache file when it exists and keeps the persisted
     // `playbackFilePath` in sync so subsequent loads pick it up.
     const juce::String engineFilePath =
-        resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+        silverdaw::resolveEnginePlaybackPath(filePath, projectState, decodedCache);
     // Kick off a background decode if the cache is missing. The first
     // play of a freshly-imported file still uses the original (the only
     // option until decoding completes), but every subsequent CLIP_ADD
@@ -1601,7 +1508,7 @@ void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& e
 
             engine.removeClip(clipId);
             const juce::String engineFilePath =
-                resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+                silverdaw::resolveEnginePlaybackPath(filePath, projectState, decodedCache);
             if (engineFilePath == filePath)
             {
                 ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
@@ -1706,7 +1613,7 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             // Same WAV-first resolution as `handleClipAdd` so a loaded
             // project never plays compressed sources at the engine.
             const juce::String engineFilePath =
-                resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+                silverdaw::resolveEnginePlaybackPath(filePath, projectState, decodedCache);
             if (engineFilePath == filePath)
             {
                 ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
@@ -2921,145 +2828,35 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "PREVIEW_LOAD")
     {
-        const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
-        const double inMs = static_cast<double>(payload.getProperty("inMs", 0.0));
-        const double durationMs = static_cast<double>(payload.getProperty("durationMs", 0.0));
-        silverdaw::log::info("bridge", "recv PREVIEW_LOAD libraryItemId=" + libraryItemId +
-                                            " inMs=" + juce::String(inMs) +
-                                            " durationMs=" + juce::String(durationMs));
-        const juce::String sourcePath = projectState.getLibraryItemFilePath(libraryItemId);
-        if (sourcePath.isEmpty())
-        {
-            silverdaw::log::warn("preview", "PREVIEW_LOAD unknown libraryItemId=" + libraryItemId);
-        }
-        else
-        {
-            // Prefer the decoded WAV cache (same resolver as timeline) so a
-            // compressed source still previews promptly. Falls back to the
-            // source path when no cache is available yet.
-            const juce::String playbackPath = resolveEnginePlaybackPath(sourcePath, projectState, decodedCache);
-            juce::String err;
-            std::optional<bool> warpEnabled;
-            std::optional<juce::String> warpMode;
-            std::optional<double> tempoRatio;
-            std::optional<double> semitones;
-            std::optional<double> cents;
-            if (payload.hasProperty("warpEnabled"))
-            {
-                warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
-                if (payload.hasProperty("warpMode"))
-                    warpMode = tryGetRequiredString(payload, "warpMode").value_or(juce::String{});
-                if (payload.hasProperty("tempoRatio"))
-                {
-                    const auto& v = payload["tempoRatio"];
-                    if (!v.isVoid() && !v.isUndefined()) tempoRatio = static_cast<double>(v);
-                }
-                if (payload.hasProperty("semitones"))
-                    semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
-                if (payload.hasProperty("cents"))
-                    cents = static_cast<double>(payload.getProperty("cents", 0.0));
-            }
-            if (!engine.loadPreview(juce::File(playbackPath), inMs, durationMs, &err,
-                                    warpEnabled, warpMode, tempoRatio, semitones, cents))
-            {
-                silverdaw::log::warn("preview", "PREVIEW_LOAD failed: " + err.toStdString());
-            }
-            const auto generation = static_cast<juce::int64>(engine.getPreviewGeneration());
-            juce::Timer::callAfterDelay(
-                kPreviewReadyDelayMs,
-                [&engine, &bridge, libraryItemId, generation]
-                {
-                    broadcastPreviewStateIfCurrent(engine, bridge, libraryItemId, generation);
-                });
-        }
+        silverdaw::handlePreviewLoad(payload, engine, projectState, bridge, decodedCache);
     }
     else if (type == "PREVIEW_UNLOAD")
     {
-        silverdaw::log::info("bridge", "recv PREVIEW_UNLOAD");
-        engine.unloadPreview();
-        auto* stateObj = new juce::DynamicObject();
-        stateObj->setProperty("isPlaying", false);
-        stateObj->setProperty("isLoaded", false);
-        stateObj->setProperty("durationMs", 0.0);
-        stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
-        bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+        silverdaw::handlePreviewUnload(engine, bridge);
     }
     else if (type == "PREVIEW_PLAY")
     {
-        silverdaw::log::info("bridge", "recv PREVIEW_PLAY");
-        // The Clip Editor owns playback exclusively while open — pause the
-        // project transport so the user doesn't hear both at once.
-        if (engine.isPlaying()) engine.pause();
-        engine.playPreview();
-        auto* stateObj = new juce::DynamicObject();
-        stateObj->setProperty("isPlaying", engine.isPreviewPlaying());
-        stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
-        stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
-        stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
-        bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+        silverdaw::handlePreviewPlay(engine, bridge);
     }
     else if (type == "PREVIEW_PAUSE")
     {
-        silverdaw::log::info("bridge", "recv PREVIEW_PAUSE");
-        engine.pausePreview();
-        auto* stateObj = new juce::DynamicObject();
-        stateObj->setProperty("isPlaying", false);
-        stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
-        stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
-        stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
-        bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+        silverdaw::handlePreviewPause(engine, bridge);
     }
     else if (type == "PREVIEW_STOP")
     {
-        silverdaw::log::info("bridge", "recv PREVIEW_STOP");
-        engine.stopPreview();
-        auto* stateObj = new juce::DynamicObject();
-        stateObj->setProperty("isPlaying", false);
-        stateObj->setProperty("isLoaded", engine.isPreviewLoaded());
-        stateObj->setProperty("durationMs", engine.getPreviewDurationMs());
-        stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
-        bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
+        silverdaw::handlePreviewStop(engine, bridge);
     }
     else if (type == "PREVIEW_SEEK")
     {
-        const auto positionMs = tryGetNumber(payload, "positionMs");
-        if (positionMs.has_value())
-        {
-            engine.setPreviewPositionMs(*positionMs);
-        }
+        silverdaw::handlePreviewSeek(payload, engine);
     }
     else if (type == "PREVIEW_SET_WARP")
     {
-        silverdaw::log::info("bridge", "recv PREVIEW_SET_WARP");
-        std::optional<bool> warpEnabled;
-        if (payload.hasProperty("warpEnabled"))
-            warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
-        std::optional<juce::String> warpMode;
-        if (payload.hasProperty("warpMode"))
-            warpMode = tryGetRequiredString(payload, "warpMode").value_or(juce::String{});
-        std::optional<double> tempoRatio;
-        if (payload.hasProperty("tempoRatio"))
-        {
-            const auto& v = payload["tempoRatio"];
-            if (!v.isVoid() && !v.isUndefined()) tempoRatio = static_cast<double>(v);
-        }
-        std::optional<double> semitones;
-        if (payload.hasProperty("semitones"))
-            semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
-        std::optional<double> cents;
-        if (payload.hasProperty("cents"))
-            cents = static_cast<double>(payload.getProperty("cents", 0.0));
-        engine.setPreviewWarp(warpEnabled, warpMode, tempoRatio, semitones, cents);
+        silverdaw::handlePreviewSetWarp(payload, engine);
     }
     else if (type == "PREVIEW_SET_ENVELOPE")
     {
-        juce::Array<juce::var> points;
-        const auto& pointsVar = payload.getProperty("points", juce::var());
-        if (pointsVar.isArray())
-        {
-            points = *pointsVar.getArray();
-        }
-        engine.setPreviewEnvelope(points);
+        silverdaw::handlePreviewSetEnvelope(payload, engine);
     }
     else if (type == "TRACK_ADD")
     {
@@ -3526,7 +3323,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                 const auto rawSourcePath =
                     projectState.getLibraryItemFilePath(clipSnap.libraryItemId);
                 const auto resolvedPath =
-                    resolveEnginePlaybackPath(rawSourcePath, projectState, decodedCache);
+                    silverdaw::resolveEnginePlaybackPath(rawSourcePath, projectState, decodedCache);
                 const auto previousPath = clipSnap.filePath;
                 if (resolvedPath.isNotEmpty()) clipSnap.filePath = resolvedPath;
                 silverdaw::log::info(

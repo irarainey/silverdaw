@@ -219,12 +219,14 @@ add_library(silverdaw_backend_core STATIC
     src/ClipCommands.cpp
     src/CommandHelpers.cpp
     src/DecodedCache.cpp
+    src/EnginePlaybackPath.cpp
     src/Log.cpp
     src/LoudnessAnalyzer.cpp
     src/MarkerCommands.cpp
     src/MixdownEngine.cpp
     src/PeaksCache.cpp
     src/ProjectFile.cpp
+    src/PreviewCommands.cpp
     src/ProjectFxCommands.cpp
     src/ProjectState.cpp
     src/ProjectTransitions.cpp
