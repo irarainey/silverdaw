@@ -2,14 +2,17 @@
 #include "AudioConstants.h"
 #include "BpmDetector.h"
 #include "BridgeServer.h"
+#include "CommandHelpers.h"
 #include "DecodedCache.h"
 #include "Log.h"
 #include "MixdownEngine.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
+#include "ProjectFxCommands.h"
 #include "ProjectState.h"
 #include "TransitionCommands.h"
+#include "TrackCommands.h"
 #include "Waveform.h"
 
 #include <atomic>
@@ -590,6 +593,7 @@ using silverdaw::bridge::tryGetString;
 using silverdaw::bridge::readOptionalNumber;
 using silverdaw::bridge::readOptionalBool;
 using silverdaw::bridge::readOptionalString;
+using silverdaw::broadcastApplied;
 
 /**
  * Compute or load peaks for `filePath` and notify clients that a fresh
@@ -1496,60 +1500,6 @@ void handleClipColor(const juce::var& payload, silverdaw::ProjectState& projectS
     projectState.setClipColorIndex(clipId, colorIndex);
 }
 
-void handleTrackAdd(const juce::var& payload, silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (trackId.isEmpty())
-    {
-        return;
-    }
-    const bool existed = projectState.hasTrack(trackId);
-    const bool ok = projectState.addTrack(trackId);
-    const juce::String name = tryGetRequiredString(payload, "name").value_or(juce::String{});
-    if (ok && !existed && name.trim().isNotEmpty())
-    {
-        projectState.setTrackName(trackId, name);
-    }
-    auto* p = new juce::DynamicObject();
-    p->setProperty("trackId", trackId);
-    p->setProperty("ok", ok);
-    bridge.broadcast("TRACK_ADDED", juce::var(p));
-}
-
-void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
-                       silverdaw::BridgeServer& bridge)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (trackId.isEmpty())
-    {
-        return;
-    }
-    const bool existed = projectState.hasTrack(trackId);
-    // Tear down every audio source on this track BEFORE dropping the
-    // track from ProjectState — otherwise the lookup loses the clip ids.
-    const auto clipIds = projectState.getTrackClipIds(trackId);
-    for (const auto& clipId : clipIds)
-    {
-        engine.removeClip(clipId);
-    }
-    projectState.removeTrack(trackId);
-    auto* p = new juce::DynamicObject();
-    p->setProperty("trackId", trackId);
-    p->setProperty("ok", existed);
-    bridge.broadcast("TRACK_REMOVED", juce::var(p));
-}
-
-void handleTrackRename(const juce::var& payload, silverdaw::ProjectState& projectState)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    const juce::String name = tryGetRequiredString(payload, "name").value_or(juce::String{});
-    if (trackId.isEmpty() || name.trim().isEmpty())
-    {
-        return;
-    }
-    projectState.setTrackName(trackId, name);
-}
-
 void handleClipRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
                       silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
 {
@@ -1568,235 +1518,6 @@ void handleClipRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
     p->setProperty("clipId", clipId);
     p->setProperty("ok", existed);
     bridge.broadcast("CLIP_REMOVED", juce::var(p));
-}
-
-/** Push the effective audible gain (= user volume × mute × solo
- *  logic) to AudioEngine for every clip on `trackId`. Centralised so
- *  the TRACK_GAIN / TRACK_MUTE / TRACK_SOLO handlers can share the
- *  same fan-out. */
-void pushEffectiveTrackGainToEngine(const juce::String& trackId,
-                                    silverdaw::AudioEngine& engine,
-                                    silverdaw::ProjectState& projectState)
-{
-    const float effective = projectState.getEffectiveTrackGain(trackId);
-    const auto clipIds = projectState.getTrackClipIds(trackId);
-    for (const auto& clipId : clipIds)
-    {
-        engine.setClipGain(clipId, effective);
-    }
-}
-
-/** Re-push every track's effective gain. Called after a TRACK_SOLO
- *  toggle because solo state changes audibility of every other
- *  track too. */
-void pushAllEffectiveGainsToEngine(silverdaw::AudioEngine& engine,
-                                   silverdaw::ProjectState& projectState)
-{
-    const auto& tree = projectState.getTree();
-    for (int i = 0; i < tree.getNumChildren(); ++i)
-    {
-        const auto track = tree.getChild(i);
-        if (!track.hasType(juce::Identifier{"TRACK"})) continue;
-        pushEffectiveTrackGainToEngine(track.getProperty(juce::Identifier{"id"}).toString(),
-                                       engine, projectState);
-    }
-}
-
-/** Build a `{ ...fields, ok }` payload and broadcast it under `type`.
- *  Collapses the identical DynamicObject + setProperty + broadcast
- *  boilerplate every `*_APPLIED` ack handler used to repeat. Field
- *  values accept anything `juce::var` constructs from (String, bool,
- *  numeric, var array), preserving each handler's existing wire shape. */
-void broadcastApplied(silverdaw::BridgeServer& bridge, juce::StringRef type,
-                      std::initializer_list<std::pair<const char*, juce::var>> fields,
-                      bool ok = true)
-{
-    auto* p = new juce::DynamicObject();
-    for (const auto& field : fields)
-    {
-        p->setProperty(field.first, field.second);
-    }
-    p->setProperty("ok", ok);
-    bridge.broadcast(type, juce::var(p));
-}
-
-void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
-                     silverdaw::BridgeServer& bridge)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (trackId.isEmpty())
-    {
-        return;
-    }
-    const auto gain = tryGetNumber(payload, "gain");
-    if (!gain.has_value())
-    {
-        return;
-    }
-    const auto gainF = static_cast<float>(*gain);
-    // TRACK_GAIN now carries the USER VOLUME (slider position), NOT
-    // the post-mute/solo effective gain. The backend derives the
-    // effective audible gain from the stored volume + muted + soloed
-    // flags and pushes that to the AudioEngine.
-    const bool stored = projectState.setTrackGain(trackId, gainF);
-    pushEffectiveTrackGainToEngine(trackId, engine, projectState);
-    broadcastApplied(bridge, "TRACK_GAIN_APPLIED",
-                     {{"trackId", trackId}, {"gain", gainF}}, stored);
-}
-
-void handleTrackMute(const juce::var& payload, silverdaw::AudioEngine& engine,
-                     silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (trackId.isEmpty()) return;
-    const bool muted = static_cast<bool>(payload.getProperty("muted", false));
-    const bool stored = projectState.setTrackMuted(trackId, muted);
-    pushEffectiveTrackGainToEngine(trackId, engine, projectState);
-    broadcastApplied(bridge, "TRACK_MUTE_APPLIED",
-                     {{"trackId", trackId}, {"muted", muted}}, stored);
-}
-
-void handleTrackSolo(const juce::var& payload, silverdaw::AudioEngine& engine,
-                     silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (trackId.isEmpty()) return;
-    const bool soloed = static_cast<bool>(payload.getProperty("soloed", false));
-    const bool stored = projectState.setTrackSoloed(trackId, soloed);
-    // Solo affects audibility of every other track — fan out across
-    // the whole project.
-    pushAllEffectiveGainsToEngine(engine, projectState);
-    broadcastApplied(bridge, "TRACK_SOLO_APPLIED",
-                     {{"trackId", trackId}, {"soloed", soloed}}, stored);
-}
-
-// Phase 5 — per-track Reverb / Delay send levels. Persists, pushes the
-// live send amounts to the AudioEngine (shared Reverb / Delay buses), and
-// acks the clamped values.
-//
-// Skips ack + dirty + undo entirely when the setter reports no change so
-// a 60 Hz drag that lands on the same value (or a stray echo of the
-// current state) doesn't pollute the undo history or fire wire traffic.
-void handleTrackSetSends(const juce::var& payload, silverdaw::AudioEngine& engine,
-                         silverdaw::ProjectState& projectState,
-                         silverdaw::BridgeServer& bridge)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (trackId.isEmpty()) return;
-    const auto reverbVar = tryGetNumber(payload, "reverbSend");
-    const auto delayVar = tryGetNumber(payload, "delaySend");
-    if (!reverbVar.has_value() || !delayVar.has_value()) return;
-
-    const auto reverbSend = juce::jlimit(0.0f, 1.0f, static_cast<float>(*reverbVar));
-    const auto delaySend = juce::jlimit(0.0f, 1.0f, static_cast<float>(*delayVar));
-
-    const bool changed = projectState.setTrackSends(trackId, reverbSend, delaySend);
-    if (!changed) return;
-
-    engine.setTrackSends(trackId, reverbSend, delaySend);
-
-    broadcastApplied(bridge, "TRACK_SENDS_APPLIED",
-                     {{"trackId", trackId}, {"reverbSend", reverbSend}, {"delaySend", delaySend}});
-}
-
-// Phase 5 — per-track equal-power pan. Persists the signed `[-1, 1]` value,
-// pushes the live pan to the AudioEngine (which derives the equal-power
-// per-channel gains), and acks the clamped value. Like Sends, skips
-// ack + dirty + undo entirely when the setter reports no change so a 60 Hz
-// drag landing on the same value doesn't pollute undo or fire wire traffic.
-void handleTrackSetPan(const juce::var& payload, silverdaw::AudioEngine& engine,
-                       silverdaw::ProjectState& projectState,
-                       silverdaw::BridgeServer& bridge)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (trackId.isEmpty()) return;
-    const auto panVar = tryGetNumber(payload, "pan");
-    if (!panVar.has_value()) return;
-
-    const auto pan = juce::jlimit(-1.0f, 1.0f, static_cast<float>(*panVar));
-
-    const bool changed = projectState.setTrackPan(trackId, pan);
-    if (!changed) return;
-
-    engine.setTrackPan(trackId, pan);
-
-    broadcastApplied(bridge, "TRACK_PAN_APPLIED",
-                     {{"trackId", trackId}, {"pan", pan}});
-}
-
-// Phase 5 — per-track Tone (3-band fixed EQ + lowCut + highCut). Persists, pushes
-// the live DSP targets to the AudioEngine, and acks the CANONICAL
-// clamped values re-read from ProjectState (the renderer reconciles to
-// these). Defaults for any field absent in the payload come from the
-// existing stored value so the renderer can drive one knob without
-// echoing the rest.
-void handleTrackSetTone(const juce::var& payload, silverdaw::AudioEngine& engine,
-                        silverdaw::ProjectState& projectState,
-                        silverdaw::BridgeServer& bridge)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (trackId.isEmpty()) return;
-
-    const float bassDb = static_cast<float>(
-        readOptionalNumber(payload, "bassDb").value_or(projectState.getTrackToneBassDb(trackId)));
-    const float midDb = static_cast<float>(
-        readOptionalNumber(payload, "midDb").value_or(projectState.getTrackToneMidDb(trackId)));
-    const float trebleDb = static_cast<float>(
-        readOptionalNumber(payload, "trebleDb").value_or(projectState.getTrackToneTrebleDb(trackId)));
-    const bool lowCut =
-        readOptionalBool(payload, "lowCut").value_or(projectState.getTrackToneLowCut(trackId));
-    const bool highCut =
-        readOptionalBool(payload, "highCut").value_or(projectState.getTrackToneHighCut(trackId));
-
-    const bool changed = projectState.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut, highCut);
-    if (!changed) return;
-
-    // Re-read the canonical (clamped / default-suppressed) values so the
-    // engine and the renderer both reconcile to the persisted truth.
-    const float canonBass = projectState.getTrackToneBassDb(trackId);
-    const float canonMid = projectState.getTrackToneMidDb(trackId);
-    const float canonTreble = projectState.getTrackToneTrebleDb(trackId);
-    const bool canonLowCut = projectState.getTrackToneLowCut(trackId);
-    const bool canonHighCut = projectState.getTrackToneHighCut(trackId);
-
-    // Live UI gesture → glide (snap=false) to avoid zipper noise.
-    engine.setTrackTone(trackId, canonBass, canonMid, canonTreble, canonLowCut,
-                        canonHighCut, /*snap*/ false);
-
-    broadcastApplied(bridge, "TRACK_TONE_APPLIED",
-                     {{"trackId", trackId},
-                      {"bassDb", canonBass},
-                      {"midDb", canonMid},
-                      {"trebleDb", canonTreble},
-                      {"lowCut", canonLowCut},
-                      {"highCut", canonHighCut}});
-}
-
-// Phase 5 — per-track Leveler. The single user-facing "amount" knob
-// (`[0, 1]`) drives the curated compressor in `Leveler.h`; the Advanced
-// disclosure of raw threshold / ratio / attack / release is deferred.
-void handleTrackSetLeveler(const juce::var& payload, silverdaw::AudioEngine& engine,
-                           silverdaw::ProjectState& projectState,
-                           silverdaw::BridgeServer& bridge)
-{
-    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
-    if (trackId.isEmpty()) return;
-    const auto amountVar = tryGetNumber(payload, "amount");
-    if (!amountVar.has_value()) return;
-
-    const float amount = juce::jlimit(0.0f, 1.0f, static_cast<float>(*amountVar));
-    const bool changed = projectState.setTrackLevelerAmount(trackId, amount);
-    if (!changed) return;
-
-    // Re-read the canonical (clamped / default-suppressed) value so the
-    // engine and the renderer both reconcile to the persisted truth.
-    const float canonAmount = projectState.getTrackLevelerAmount(trackId);
-
-    // Live UI gesture → glide (snap=false) to avoid zipper noise.
-    engine.setTrackLeveler(trackId, canonAmount, /*snap*/ false);
-
-    broadcastApplied(bridge, "TRACK_LEVELER_APPLIED",
-                     {{"trackId", trackId}, {"amount", canonAmount}});
 }
 
 // Phase 5 — per-clip volume envelope. `points` is a `juce::var` array
@@ -1826,72 +1547,6 @@ void handleClipSetEnvelope(const juce::var& payload, silverdaw::AudioEngine& eng
 
     broadcastApplied(bridge, "CLIP_ENVELOPE_APPLIED",
                      {{"clipId", clipId}, {"points", juce::var(stored)}});
-}
-
-// Phase 5 — project-shared Reverb bus.
-void handleProjectSetReverb(const juce::var& payload, silverdaw::AudioEngine& engine,
-                            silverdaw::ProjectState& projectState,
-                            silverdaw::BridgeServer& bridge)
-{
-    const float size = static_cast<float>(
-        readOptionalNumber(payload, "size").value_or(projectState.getProjectReverbSize()));
-    const float decay = static_cast<float>(
-        readOptionalNumber(payload, "decay").value_or(projectState.getProjectReverbDecay()));
-    const float tone = static_cast<float>(
-        readOptionalNumber(payload, "tone").value_or(projectState.getProjectReverbTone()));
-    const float mix = static_cast<float>(
-        readOptionalNumber(payload, "mix").value_or(projectState.getProjectReverbMix()));
-
-    const bool changed = projectState.setProjectReverb(size, decay, tone, mix);
-    if (!changed) return;
-
-    const float canonSize = projectState.getProjectReverbSize();
-    const float canonDecay = projectState.getProjectReverbDecay();
-    const float canonTone = projectState.getProjectReverbTone();
-    const float canonMix = projectState.getProjectReverbMix();
-
-    // Live UI gesture → glide (snap=false) to avoid zipper noise.
-    engine.setProjectReverb(canonSize, canonDecay, canonTone, canonMix, /*snap*/ false);
-
-    broadcastApplied(bridge, "PROJECT_REVERB_APPLIED",
-                     {{"size", canonSize},
-                      {"decay", canonDecay},
-                      {"tone", canonTone},
-                      {"mix", canonMix}});
-}
-
-// Phase 5 — project-shared Delay bus.
-void handleProjectSetDelay(const juce::var& payload, silverdaw::AudioEngine& engine,
-                           silverdaw::ProjectState& projectState,
-                           silverdaw::BridgeServer& bridge)
-{
-    const juce::String noteValue =
-        readOptionalString(payload, "noteValue").value_or(projectState.getProjectDelayNoteValue());
-    const float feedback = static_cast<float>(
-        readOptionalNumber(payload, "feedback").value_or(projectState.getProjectDelayFeedback()));
-    const float tone = static_cast<float>(
-        readOptionalNumber(payload, "tone").value_or(projectState.getProjectDelayTone()));
-    const float mix = static_cast<float>(
-        readOptionalNumber(payload, "mix").value_or(projectState.getProjectDelayMix()));
-
-    const bool changed = projectState.setProjectDelay(noteValue, feedback, tone, mix);
-    if (!changed) return;
-
-    const juce::String canonNote = projectState.getProjectDelayNoteValue();
-    const float canonFeedback = projectState.getProjectDelayFeedback();
-    const float canonTone = projectState.getProjectDelayTone();
-    const float canonMix = projectState.getProjectDelayMix();
-
-    // Resolve the tempo-locked note value to milliseconds via the shared
-    // helper so the live engine and the offline mixdown agree exactly.
-    const double delayMs = silverdaw::delayNoteToMs(canonNote, projectState.getBpm());
-    engine.setProjectDelay(delayMs, canonFeedback, canonTone, canonMix, /*snap*/ false);
-
-    broadcastApplied(bridge, "PROJECT_DELAY_APPLIED",
-                     {{"noteValue", canonNote},
-                      {"feedback", canonFeedback},
-                      {"tone", canonTone},
-                      {"mix", canonMix}});
 }
 
 // ─── Project-level state (save / load / new / rename) ────────────────────
@@ -3676,35 +3331,35 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "TRACK_ADD")
     {
         silverdaw::log::info("bridge", "recv TRACK_ADD trackId=" + payload.getProperty("trackId", "").toString());
-        handleTrackAdd(payload, projectState, bridge);
+        silverdaw::handleTrackAdd(payload, projectState, bridge);
     }
     else if (type == "TRACK_REMOVE")
     {
         silverdaw::log::info("bridge", "recv TRACK_REMOVE trackId=" + payload.getProperty("trackId", "").toString());
-        handleTrackRemove(payload, engine, projectState, bridge);
+        silverdaw::handleTrackRemove(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_RENAME")
     {
         silverdaw::log::info("bridge", "recv TRACK_RENAME trackId=" + payload.getProperty("trackId", "").toString());
-        handleTrackRename(payload, projectState);
+        silverdaw::handleTrackRename(payload, projectState);
     }
     else if (type == "TRACK_GAIN")
     {
         silverdaw::log::debug("bridge", "recv TRACK_GAIN trackId=" + payload.getProperty("trackId", "").toString() +
                                             " gain=" + payload.getProperty("gain", "").toString());
-        handleTrackGain(payload, engine, projectState, bridge);
+        silverdaw::handleTrackGain(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_MUTE")
     {
         silverdaw::log::info("bridge", "recv TRACK_MUTE trackId=" + payload.getProperty("trackId", "").toString() +
                                             " muted=" + payload.getProperty("muted", "").toString());
-        handleTrackMute(payload, engine, projectState, bridge);
+        silverdaw::handleTrackMute(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_SOLO")
     {
         silverdaw::log::info("bridge", "recv TRACK_SOLO trackId=" + payload.getProperty("trackId", "").toString() +
                                             " soloed=" + payload.getProperty("soloed", "").toString());
-        handleTrackSolo(payload, engine, projectState, bridge);
+        silverdaw::handleTrackSolo(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_SET_HEIGHT")
     {
@@ -3735,27 +3390,27 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                   payload.getProperty("trackId", "").toString() +
                                   " rev=" + payload.getProperty("reverbSend", "").toString() +
                                   " dly=" + payload.getProperty("delaySend", "").toString());
-        handleTrackSetSends(payload, engine, projectState, bridge);
+        silverdaw::handleTrackSetSends(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_SET_TONE")
     {
         silverdaw::log::debug("bridge", "recv TRACK_SET_TONE trackId=" +
                                             payload.getProperty("trackId", "").toString());
-        handleTrackSetTone(payload, engine, projectState, bridge);
+        silverdaw::handleTrackSetTone(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_SET_LEVELER")
     {
         silverdaw::log::debug("bridge", "recv TRACK_SET_LEVELER trackId=" +
                                             payload.getProperty("trackId", "").toString() +
                                             " amount=" + payload.getProperty("amount", "").toString());
-        handleTrackSetLeveler(payload, engine, projectState, bridge);
+        silverdaw::handleTrackSetLeveler(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_SET_PAN")
     {
         silverdaw::log::debug("bridge", "recv TRACK_SET_PAN trackId=" +
                                             payload.getProperty("trackId", "").toString() +
                                             " pan=" + payload.getProperty("pan", "").toString());
-        handleTrackSetPan(payload, engine, projectState, bridge);
+        silverdaw::handleTrackSetPan(payload, engine, projectState, bridge);
     }
     else if (type == "CLIP_SET_ENVELOPE")
     {
@@ -3766,12 +3421,12 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "PROJECT_SET_REVERB")
     {
         silverdaw::log::debug("bridge", "recv PROJECT_SET_REVERB");
-        handleProjectSetReverb(payload, engine, projectState, bridge);
+        silverdaw::handleProjectSetReverb(payload, engine, projectState, bridge);
     }
     else if (type == "PROJECT_SET_DELAY")
     {
         silverdaw::log::debug("bridge", "recv PROJECT_SET_DELAY");
-        handleProjectSetDelay(payload, engine, projectState, bridge);
+        silverdaw::handleProjectSetDelay(payload, engine, projectState, bridge);
     }
     else if (type == "WAVEFORM_REQUEST")
     {

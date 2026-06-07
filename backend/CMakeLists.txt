@@ -215,14 +215,17 @@ add_library(silverdaw_backend_core STATIC
     src/BridgeAuth.cpp
     src/BpmDetector.cpp
     src/BridgeServer.cpp
+    src/CommandHelpers.cpp
     src/DecodedCache.cpp
     src/Log.cpp
     src/LoudnessAnalyzer.cpp
     src/MixdownEngine.cpp
     src/PeaksCache.cpp
     src/ProjectFile.cpp
+    src/ProjectFxCommands.cpp
     src/ProjectState.cpp
     src/ProjectTransitions.cpp
+    src/TrackCommands.cpp
     src/TransitionCommands.cpp
     src/ValueTreeJson.cpp
     src/WarpProcessor.cpp
