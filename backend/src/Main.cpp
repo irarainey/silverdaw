@@ -10,6 +10,7 @@
 #include "MixdownEngine.h"
 #include "EnginePlaybackPath.h"
 #include "PreviewCommands.h"
+#include "TransportCommands.h"
 #include "MarkerCommands.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
@@ -2796,35 +2797,19 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "TRANSPORT_PLAY")
     {
-        if (g_mixdownBusy.load())
-        {
-            silverdaw::log::warn("bridge",
-                                 "recv TRANSPORT_PLAY rejected — mixdown render is in progress");
-            return;
-        }
-        silverdaw::log::info("bridge", "recv TRANSPORT_PLAY");
-        engine.play();
+        silverdaw::handleTransportPlay(engine, g_mixdownBusy.load());
     }
     else if (type == "TRANSPORT_PAUSE")
     {
-        silverdaw::log::info("bridge", "recv TRANSPORT_PAUSE");
-        engine.pause();
+        silverdaw::handleTransportPause(engine);
     }
     else if (type == "TRANSPORT_STOP")
     {
-        silverdaw::log::info("bridge", "recv TRANSPORT_STOP");
-        engine.stop();
-        projectState.setPlayheadMs(0.0);
+        silverdaw::handleTransportStop(engine, projectState);
     }
     else if (type == "TRANSPORT_SEEK")
     {
-        const auto positionMs = tryGetNumber(payload, "positionMs");
-        silverdaw::log::info("bridge", "recv TRANSPORT_SEEK pos=" + juce::String(positionMs.value_or(-1.0)));
-        if (positionMs.has_value())
-        {
-            engine.setPositionMs(*positionMs);
-            projectState.setPlayheadMs(juce::jmax(0.0, *positionMs));
-        }
+        silverdaw::handleTransportSeek(payload, engine, projectState);
     }
     else if (type == "PREVIEW_LOAD")
     {

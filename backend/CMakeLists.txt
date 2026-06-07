@@ -231,6 +231,7 @@ add_library(silverdaw_backend_core STATIC
     src/ProjectState.cpp
     src/ProjectTransitions.cpp
     src/TrackCommands.cpp
+    src/TransportCommands.cpp
     src/TransitionCommands.cpp
     src/ValueTreeJson.cpp
     src/WarpProcessor.cpp
