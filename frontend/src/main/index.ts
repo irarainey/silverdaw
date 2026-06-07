@@ -1,3 +1,8 @@
+// FILE-SIZE EXCEPTION (justified): Electron main entry. Pure leaf concerns are
+// extracted (audioMetadata, audioPaths, preferences, autosaveStore); the residual
+// is the stateful singleton core — window/backend lifecycle plus ~50 ipcMain
+// handlers that close over shared mutable singletons (prefs, mainWindow, timers).
+// Splitting those would require threading a context bag = contrived, so it stays.
 import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog, shell, screen } from 'electron'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -7,107 +12,47 @@ import { basename, dirname, extname, isAbsolute, join, resolve as pathResolve } 
 import { closeLogs, getSessionDir, initLogs, logMain, logRendererLine, type LogLevel } from './log'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { parseFile, type IAudioMetadata, type IPicture } from 'music-metadata'
-import type { AudioMetadata, DebugPreferences, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
+import { parseFile } from 'music-metadata'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 import { BackendSupervisor } from './backendSupervisor'
-
-// ─── Audio metadata ─────────────────────────────────────────────────────────
-
-// Avoid large cover-art blobs in renderer state.
-const MAX_COVER_ART_BYTES = 2 * 1024 * 1024
-
-function pickCoverArt(
-  pictures: IPicture[] | undefined
-): { data: ArrayBuffer; mimeType: string } | undefined {
-  if (!pictures || pictures.length === 0) return undefined
-  const front = pictures.find((p) => (p.type ?? '').toLowerCase().includes('cover')) ?? pictures[0]
-  if (!front.data || front.data.length === 0 || front.data.length > MAX_COVER_ART_BYTES) {
-    return undefined
-  }
-  // IPC should receive an owned buffer, not a parser arena view.
-  const src = front.data
-  const data = src.buffer.slice(src.byteOffset, src.byteOffset + src.byteLength) as ArrayBuffer
-  const mimeType = front.format || 'image/jpeg'
-  return { data, mimeType }
-}
-
-function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
-  const { common, format } = meta
-  const out: AudioMetadata = {}
-  if (common.title) out.title = common.title
-  if (common.artist) out.artist = common.artist
-  if (common.albumartist) out.albumArtist = common.albumartist
-  if (common.album) out.album = common.album
-  if (typeof common.year === 'number') out.year = common.year
-  if (common.genre && common.genre.length > 0) out.genre = common.genre
-  if (common.track) {
-    if (typeof common.track.no === 'number') out.trackNumber = common.track.no
-    if (typeof common.track.of === 'number') out.trackTotal = common.track.of
-  }
-  if (common.disk) {
-    if (typeof common.disk.no === 'number') out.discNumber = common.disk.no
-    if (typeof common.disk.of === 'number') out.discTotal = common.disk.of
-  }
-  if (typeof common.bpm === 'number') out.bpm = common.bpm
-  if (common.key) out.key = common.key
-  if (common.composer && common.composer.length > 0) out.composer = common.composer.join(', ')
-  if (common.comment && common.comment.length > 0) {
-    const first = common.comment[0]
-    out.comment = typeof first === 'string' ? first : (first?.text ?? undefined)
-  }
-  if (format.codec) out.codec = format.codec
-  if (format.container) out.container = format.container
-  if (typeof format.bitrate === 'number') out.bitrate = format.bitrate
-  if (typeof format.duration === 'number') out.durationMs = format.duration * 1000
-  if (typeof format.sampleRate === 'number') out.sampleRate = format.sampleRate
-  if (typeof format.numberOfChannels === 'number') out.channelCount = format.numberOfChannels
-  if (typeof format.lossless === 'boolean') out.lossless = format.lossless
-  if (format.tagTypes && format.tagTypes.length > 0) out.tagTypes = [...format.tagTypes]
-  const cover = pickCoverArt(common.picture)
-  if (cover) out.coverArt = cover
-  return out
-}
+import { normalizeMetadata } from './audioMetadata'
+import {
+  AUDIO_FILE_EXTENSIONS,
+  canonicalisePath,
+  isAllowedAudioPath,
+  registerIssuedPath
+} from './audioPaths'
+import {
+  AUTOSAVE_DEFAULT_SECONDS,
+  MAX_RECENT_PROJECTS,
+  buildDefaultPrefs,
+  clampAutosaveSeconds,
+  getDefaultDebugLogDirectory,
+  normaliseDebugPrefs,
+  sanitiseRecentList,
+  type AudioOutputPrefs,
+  type AutosavePrefs,
+  type DebugPrefs,
+  type PathPrefs,
+  type Preferences,
+  type ToastPrefs,
+  type UiPrefs
+} from './preferences'
+import {
+  AUTOSAVE_FILENAME,
+  AUTOSAVE_ID_REGEX,
+  AUTOSAVE_MANIFEST_FILENAME,
+  getAutosaveRoot,
+  isAutosaveManifest,
+  resolveAutosaveDir,
+  type AutosaveManifest
+} from './autosaveStore'
 
 // ─── Theme / colours (kept in sync with the renderer Tailwind palette) ──────
 const COLOUR_BG = '#18181b' // zinc-900
 
-// Keep accepted audio extensions aligned with backend decoder support.
-const AUDIO_FILE_EXTENSIONS = ['wav', 'mp3', 'flac', 'aiff', 'aif', 'm4a'] as const
-const AUDIO_FILE_EXTENSIONS_SET: ReadonlySet<string> = new Set<string>(AUDIO_FILE_EXTENSIONS)
-
-// Renderer may only read audio paths main previously surfaced through trusted UI.
-const issuedAudioPaths: Set<string> = new Set<string>()
-
 // Cache renderer-side transcodes by source path and decoded geometry.
 const TRANSCODE_CACHE_DIR = join(tmpdir(), 'silverdaw-transcode-cache')
-
-function canonicalisePath(p: string): string {
-  return pathResolve(p)
-}
-
-// Only canonical absolute audio paths can enter the renderer read allow-list.
-function registerIssuedPath(filePath: string): void {
-  if (typeof filePath !== 'string' || filePath === '') return
-  if (!isAbsolute(filePath)) {
-    console.warn('[main] refusing to register non-absolute path:', filePath)
-    return
-  }
-  const ext = extname(filePath).replace(/^\./, '').toLowerCase()
-  if (!AUDIO_FILE_EXTENSIONS_SET.has(ext)) {
-    console.warn('[main] refusing to register non-audio path:', filePath)
-    return
-  }
-  issuedAudioPaths.add(canonicalisePath(filePath))
-}
-
-// Re-check the audio extension at read time as defence in depth.
-function isAllowedAudioPath(filePath: unknown): filePath is string {
-  if (typeof filePath !== 'string' || filePath === '') return false
-  const ext = extname(filePath).replace(/^\./, '').toLowerCase()
-  if (!AUDIO_FILE_EXTENSIONS_SET.has(ext)) return false
-  return issuedAudioPaths.has(canonicalisePath(filePath))
-}
 
 let backendSupervisor: BackendSupervisor | null = null
 let mainWindow: BrowserWindow | null = null
@@ -173,116 +118,6 @@ const bridgeToken = randomBytes(32).toString('hex')
 // ─── Persisted preferences (window state + UI panel sizes) ──────────────────
 // Debounced JSON writes avoid hammering disk during resize/move.
 
-interface WindowPrefs {
-  x?: number
-  y?: number
-  width: number
-  height: number
-  maximized: boolean
-}
-
-interface UiPrefs {
-  trackHeaderWidth: number
-  libraryPanelHeight: number
-  followPlayback: boolean
-  showLibraryTileImages: boolean
-  /** Auto-warp library drops to project BPM when source BPM is usable. */
-  matchProjectTempoOnDrop: boolean
-  /** Default `targetSampleRate` for new projects; only 44 100 and 48 000 are accepted. */
-  defaultProjectSampleRate: number
-  skipButtonTarget: SkipButtonTarget
-  waveformDisplayMode: WaveformDisplayMode
-  libraryPanelCollapsed: boolean
-}
-
-type DebugPrefs = DebugPreferences
-
-interface ToastPrefs {
-  enabled: boolean
-}
-
-// Default dialog folders never grant audio read access; trusted picks still drive the allow-list.
-interface PathPrefs {
-  defaultProjectDir: string
-  defaultClipDir: string
-}
-
-// Renderer owns autosave timing; main owns the project-scoped files.
-interface AutosavePrefs {
-  enabled: boolean
-  /** Clamped 5..600 so corrupt prefs cannot spam autosaves. */
-  intervalSeconds: number
-}
-
-// Persisted output device is passed at backend spawn; unavailable devices fall back at runtime.
-interface AudioOutputPrefs {
-  typeName: string | null
-  deviceName: string | null
-}
-
-interface Preferences {
-  window: WindowPrefs
-  ui: UiPrefs
-  debug: DebugPrefs
-  toasts: ToastPrefs
-  paths: PathPrefs
-  autosave: AutosavePrefs
-  audioOutput: AudioOutputPrefs
-  /** MRU `.silverdaw` paths, newest first, capped and case-insensitive. */
-  recentProjects: string[]
-}
-
-const MAX_RECENT_PROJECTS = 10
-const AUTOSAVE_MIN_SECONDS = 5
-const AUTOSAVE_MAX_SECONDS = 600
-const AUTOSAVE_DEFAULT_SECONDS = 30
-
-// `app.getPath` is only safe after `app.whenReady`, so defaults are lazy.
-function getApplicationDirectory(): string {
-  return app.isPackaged ? dirname(app.getPath('exe')) : pathResolve(__dirname, '..', '..', '..')
-}
-
-function getDefaultDebugLogDirectory(): string {
-  return join(getApplicationDirectory(), 'debug')
-}
-
-function buildDefaultPrefs(): Preferences {
-  const home = app.getPath('home')
-  // Prefer Music/Silverdaw, falling back to home when Music is unavailable.
-  let musicDir = ''
-  try {
-    musicDir = app.getPath('music')
-  } catch {
-    musicDir = ''
-  }
-  const defaultProjectDir = musicDir ? join(musicDir, 'Silverdaw') : join(home, 'Silverdaw')
-  const defaultClipDir = musicDir || defaultProjectDir
-  return {
-    window: { width: 1400, height: 900, maximized: false },
-    ui: {
-      trackHeaderWidth: 175,
-      libraryPanelHeight: 180,
-      followPlayback: true,
-      showLibraryTileImages: true,
-      matchProjectTempoOnDrop: true,
-      defaultProjectSampleRate: 44100,
-      skipButtonTarget: 'timelineEnds',
-      waveformDisplayMode: 'summary',
-      libraryPanelCollapsed: false
-    },
-    debug: {
-      loggingEnabled: false,
-      devToolsEnabled: false,
-      logDirectory: getDefaultDebugLogDirectory()
-    },
-    toasts: { enabled: true },
-    paths: { defaultProjectDir, defaultClipDir },
-    autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
-    audioOutput: { typeName: null, deviceName: null },
-    recentProjects: []
-  }
-}
-
 let prefs: Preferences = {
   window: { width: 1400, height: 900, maximized: false },
   ui: {
@@ -322,28 +157,6 @@ function rememberClipDir(pickedFile: string): void {
   if (!pickedFile) return
   const dir = dirname(pickedFile)
   if (dir && dir !== currentClipDir) currentClipDir = dir
-}
-
-function normaliseDebugPrefs(saved: Partial<DebugPrefs> & { enabled?: boolean } | undefined, defaults: DebugPrefs): DebugPrefs {
-  const legacyEnabled = typeof saved?.enabled === 'boolean' ? saved.enabled : undefined
-  const hasSplitFlags =
-    typeof saved?.loggingEnabled === 'boolean' ||
-    typeof saved?.devToolsEnabled === 'boolean'
-  const loggingEnabled =
-    typeof saved?.loggingEnabled === 'boolean'
-      ? saved.loggingEnabled
-      : hasSplitFlags
-        ? defaults.loggingEnabled
-        : legacyEnabled ?? defaults.loggingEnabled
-  const devToolsEnabled =
-    typeof saved?.devToolsEnabled === 'boolean'
-      ? saved.devToolsEnabled
-      : hasSplitFlags
-        ? defaults.devToolsEnabled
-        : legacyEnabled ?? defaults.devToolsEnabled
-  const savedLogDirectory = typeof saved?.logDirectory === 'string' ? saved.logDirectory.trim() : ''
-  const logDirectory = savedLogDirectory.length > 0 ? savedLogDirectory : defaults.logDirectory
-  return { loggingEnabled, devToolsEnabled, logDirectory }
 }
 
 async function loadPreferences(): Promise<void> {
@@ -459,30 +272,6 @@ function flushPrefsSaveSync(): void {
   }
 }
 
-function clampAutosaveSeconds(input: unknown): number {
-  const value = typeof input === 'number' && Number.isFinite(input) ? input : AUTOSAVE_DEFAULT_SECONDS
-  if (value < AUTOSAVE_MIN_SECONDS) return AUTOSAVE_MIN_SECONDS
-  if (value > AUTOSAVE_MAX_SECONDS) return AUTOSAVE_MAX_SECONDS
-  return Math.round(value)
-}
-
-function sanitiseRecentList(input: unknown): string[] {
-  if (!Array.isArray(input)) return []
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const value of input) {
-    if (typeof value !== 'string') continue
-    const trimmed = value.trim()
-    if (trimmed.length === 0) continue
-    const key = trimmed.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(trimmed)
-    if (out.length >= MAX_RECENT_PROJECTS) break
-  }
-  return out
-}
-
 function bumpRecentProject(filePath: string): boolean {
   if (typeof filePath !== 'string' || filePath.length === 0) return false
   const key = filePath.toLowerCase()
@@ -495,47 +284,6 @@ function bumpRecentProject(filePath: string): boolean {
   }
   return true
 }
-
-// ─── Autosave folder layout ────────────────────────────────────────────
-// Project IDs are strictly whitelisted before touching the autosave filesystem.
-const AUTOSAVE_FILENAME = 'autosave.silverdaw'
-const AUTOSAVE_MANIFEST_FILENAME = 'manifest.json'
-const AUTOSAVE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/
-
-function getAutosaveRoot(): string {
-  return join(app.getPath('userData'), 'autosave')
-}
-
-function resolveAutosaveDir(projectId: string): string {
-  if (!AUTOSAVE_ID_REGEX.test(projectId)) {
-    throw new Error(`[autosave] rejected projectId ${JSON.stringify(projectId)}`)
-  }
-  return join(getAutosaveRoot(), projectId)
-}
-
-interface AutosaveManifest {
-  projectId: string
-  originalPath: string | null
-  projectName: string
-  savedAtIso: string
-  /** Recovery skips pending entries because the file may be partial. */
-  pending: boolean
-  appVersion: string
-}
-
-function isAutosaveManifest(value: unknown): value is AutosaveManifest {
-  if (!value || typeof value !== 'object') return false
-  const v = value as Record<string, unknown>
-  return (
-    typeof v.projectId === 'string' &&
-    AUTOSAVE_ID_REGEX.test(v.projectId) &&
-    (v.originalPath === null || typeof v.originalPath === 'string') &&
-    typeof v.projectName === 'string' &&
-    typeof v.savedAtIso === 'string' &&
-    typeof v.pending === 'boolean'
-  )
-}
-
 
 // Clamp saved bounds so unplugged monitors cannot strand the window off-screen.
 function resolveWindowBounds(): { x?: number; y?: number; width: number; height: number } {

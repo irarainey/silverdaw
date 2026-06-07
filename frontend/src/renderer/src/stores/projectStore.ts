@@ -1,9 +1,13 @@
 // Project state — source of truth for the timeline. Mirrors backend
 // ValueTree state via PROJECT_STATE / TRACK_ADDED / etc. bridge messages.
+//
+// FILE-SIZE EXCEPTION (justified): the domain model (projectTypes.ts) and pure
+// helpers (projectHelpers.ts) are extracted. The residual is one cohesive Pinia
+// options store whose ~80 actions share `this` state and call sibling actions;
+// splitting them into free functions would thread the store instance = contrived.
 
 import { defineStore } from 'pinia'
 import { decodeAudioToPeaks, PEAKS_PER_SECOND } from '@/lib/audio'
-import { MAX_TRACK_GAIN_LINEAR } from '@/lib/audio/db'
 import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
@@ -26,7 +30,6 @@ import type {
   ClipWarpMode,
   DelayNoteValue,
   ProjectStatePayload,
-  ProjectStateTransition,
   TransitionRecipe
 } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
@@ -37,178 +40,47 @@ import type { LibraryItem } from '@/stores/libraryStore'
 // lib/transitions). Re-export keeps that import surface stable.
 export { effectiveClipDurationMs, effectiveClipTempoRatio, isClipTempoWarpActive }
 
-export interface Clip {
-  readonly id: string
-  /** Host track id. Mutable — updated with CLIP_MOVE so the backend re-parents the clip. */
-  trackId: string
-  /** Source library item. Single source of truth for the audio file; clips never
-   *  carry a path. filePath/fileName/peaks below are cached copies for rendering. */
-  libraryItemId: string
-  /** Cached source-file path (== library item filePath); refreshed on relink. */
-  filePath: string
-  /** Cached backend-loadable path; matches CLIP_ADDED/CLIP_ADD_FAILED acks to the clip. */
-  playbackFilePath?: string
-  fileName: string
-  /** Offset from the timeline origin (ms). Mutable so clips can be dragged. */
-  startMs: number
-  /** Read offset into the source file (trim window's left edge). 0 = untrimmed. */
-  inMs: number
-  /** Play length from `inMs` onward (ms). */
-  durationMs: number
-  /** Backend-reported sample rate. May be 0 for placeholder clips until WAVEFORM_DATA arrives. */
-  sampleRate: number
-  readonly channelCount: number
-  /** Alternating min/max pairs. `peaksPerSecond` is the actual bucket rate used. */
-  peaks: Float32Array
-  peaksPerSecond?: number
-  /** Source file missing on disk; rendered greyed-out and listed in the relink toast. */
-  unresolved: boolean
-  /** Colour-palette override (0..15); inherits the track's colorIndex when undefined. */
-  colorIndex?: number
-  /** Display-name override; falls back to the library item title/filename when undefined. */
-  name?: string
-  /** Warp + pitch-shift settings (see ClipSetWarpPayload). `tempoRatio` undefined =
-   *  derive from project.bpm/sourceBpm live; a finite value pins the ratio. */
-  warpEnabled?: boolean
-  warpMode?: ClipWarpMode
-  tempoRatio?: number
-  semitones?: number
-  cents?: number
-  /** Volume-shape breakpoints (post-warp ms, linear gain [0,4], sorted). Empty = unity. */
-  envelopePoints?: ClipEnvelopePoint[]
-  /** Clip dropped before its BPM was detected; cleared by LIBRARY_ITEM_ANALYSIS or a manual warp edit. */
-  pendingAutoWarp?: boolean
-  /** Backend-authoritative effective timing (rendered footprint); `durationMs` is source-time. */
-  effectiveDurationMs?: number
-  effectiveTempoRatio?: number
-  effectiveWarpActive?: boolean
-  /** Locks move/edge-trim gestures (editor still opens). Per-clip; not shared across saved-clip siblings. */
-  locked?: boolean
-}
+import {
+  DEFAULT_PROJECT_NAME,
+  DEFAULT_TRACK_LENGTH_MS,
+  MAX_TRACK_VOLUME,
+  TRACK_PALETTE
+} from './projectTypes'
+import type {
+  Clip,
+  ClipboardEntry,
+  Marker,
+  ProjectDelayState,
+  ProjectReverbState,
+  Track
+} from './projectTypes'
+import {
+  deriveProjectIdFromPath,
+  fileStem,
+  filePathToBasename,
+  filePathToDisplayName,
+  freshUntitledProjectId,
+  hydrateTransitions,
+  parentDir
+} from './projectHelpers'
 
-export interface Marker {
-  readonly id: string
-  positionMs: number
-}
-
-/**
- * Clip-to-clip crossfade on one track (§12.1). Backend-authoritative via
- * TRANSITION_* messages. `leftClipId` = earlier (fade-out) clip, `rightClipId` = later (fade-in).
- */
-export interface Transition {
-  readonly id: string
-  leftClipId: string
-  rightClipId: string
-  recipe: TransitionRecipe
-}
-
-export interface Track {
-  readonly id: string
-  name: string
-  clipIds: string[]
-  muted: boolean
-  soloed: boolean
-  /** Linear gain: 0 = silent, 1 = unity. TrackHeaderPanel maps its 0..1 fader piecewise so unity sits mid-bar. */
-  volume: number
-  /** Index into `TRACK_PALETTE`. Selects the waveform / clip-block colours. */
-  colorIndex: number
-  /** Visible track length (ms); grows to fit longer imports. Drives the ruler/scroll extent. */
-  lengthMs: number
-  /** Row height (CSS px), user-resizable. Falls back to the default when absent. */
-  heightPx?: number
-  /** Tone EQ: 3-band tilt (dB [-15,+15], 0 = flat) + low/high-cut. Suppressed-when-default. */
-  toneBassDb?: number
-  toneMidDb?: number
-  toneTrebleDb?: number
-  toneLowCut?: boolean
-  toneHighCut?: boolean
-  /** Send amounts into the shared Reverb/Delay buses (linear [0,1], 0 = no send). */
-  reverbSend?: number
-  delaySend?: number
-  /** Equal-power pan, signed [-1,1] (0 = centre). Suppressed-when-default. */
-  pan?: number
-  /** Leveler (soft-knee compressor) amount, linear [0,1] (0 = off). Suppressed-when-default. */
-  levelerAmount?: number
-  /** Clip-to-clip crossfades on this track (§12.1); hydrated from PROJECT_STATE. */
-  transitions?: Transition[]
-}
-
-/** Project-shared Reverb. Scalars linear [0,1]; `mix` 0 = inaudible. */
-export interface ProjectReverbState {
-  size: number
-  decay: number
-  tone: number
-  mix: number
-}
-
-/** Project-shared tempo-locked Delay. `noteValue` is a beat division; others linear [0,1]; `mix` 0 = inaudible. */
-export interface ProjectDelayState {
-  noteValue: DelayNoteValue
-  feedback: number
-  tone: number
-  mix: number
-}
-
-/** Default visible length of a new empty track — 10 minutes. */
-export const DEFAULT_TRACK_LENGTH_MS = 10 * 60 * 1000
-
-/**
- * Upper bound on a track's linear volume — the linear equivalent of MAX_TRACK_DB
- * (+6 dB ≈ 1.9953). TrackHeaderPanel's taper puts unity near the top of fader
- * travel. Saved projects clamp incoming `gain` to this domain; older files load identically.
- */
-export const MAX_TRACK_VOLUME = MAX_TRACK_GAIN_LINEAR
-
-/**
- * Stable `projectId` from an absolute path, used to bucket autosave artefacts.
- * Prefers SHA-1 (8-byte prefix); falls back to a deterministic hash without Web Crypto.
- */
-async function deriveProjectIdFromPath(absolutePath: string): Promise<string> {
-  const lower = absolutePath.trim().toLowerCase()
-  try {
-    const subtle = (globalThis.crypto as Crypto | undefined)?.subtle
-    if (subtle) {
-      const data = new TextEncoder().encode(lower)
-      const digest = await subtle.digest('SHA-1', data)
-      return Array.from(new Uint8Array(digest))
-        .slice(0, 8)
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('')
-    }
-  } catch {
-    // Fall through to the synchronous fallback.
-  }
-  // Deterministic FNV-1a fallback for environments without Web Crypto.
-  let h = 0x811c9dc5
-  for (let i = 0; i < lower.length; i++) {
-    h ^= lower.charCodeAt(i)
-    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0
-  }
-  return h.toString(16).padStart(8, '0')
-}
-
-/** Fresh autosave id for an untitled project; matches main's [A-Za-z0-9_-]{1,64} allow-list. */
-function freshUntitledProjectId(): string {
-  const c = globalThis.crypto as Crypto | undefined
-  if (c?.randomUUID) return c.randomUUID().replace(/-/g, '').slice(0, 24)
-  // Test-environment fallback; Math.random() entropy is fine here.
-  let out = ''
-  for (let i = 0; i < 24; i++) {
-    out += Math.floor(Math.random() * 16).toString(16)
-  }
-  return out
-}
-
-function fileStem(name: string): string {
-  return name.replace(/\.[^.\\/:*?"<>|]+$/, '').trim() || 'Sample'
-}
-
-function parentDir(path: string | null | undefined): string {
-  if (!path) return ''
-  const slash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
-  return slash > 0 ? path.slice(0, slash) : ''
-}
-
+// Re-export domain types/constants so existing `@/stores/projectStore` imports stay stable.
+export type {
+  Clip,
+  ClipboardEntry,
+  Marker,
+  ProjectDelayState,
+  ProjectReverbState,
+  Track,
+  TrackPaletteEntry,
+  Transition
+} from './projectTypes'
+export {
+  DEFAULT_PROJECT_NAME,
+  DEFAULT_TRACK_LENGTH_MS,
+  MAX_TRACK_VOLUME,
+  TRACK_PALETTE
+} from './projectTypes'
 async function defaultSamplesDir(currentFilePath: string | null): Promise<string> {
   const projectDir = parentDir(currentFilePath)
   if (projectDir) return `${projectDir}\\Samples`
@@ -247,43 +119,6 @@ async function refreshLibraryItemMedia(itemId: string, filePath: string): Promis
     log.warn('library', `readAudioFile/decode failed for ${filePath}: ${String(err)}`)
   }
 }
-
-/**
- * Fixed 16-entry palette presented in the track-header colour picker. Each
- * entry bundles three shades of one hue:
- *   - `fill`   — the clip-block body
- *   - `border` — the clip-block outline
- *   - `wave`   — the waveform peaks
- *
- * Values are 0x-prefixed numbers because that's the form PixiJS Graphics
- * APIs consume. Hues roughly follow the Tailwind palette so the swatches
- * harmonise with the rest of the UI chrome.
- */
-export interface TrackPaletteEntry {
-  readonly id: string
-  readonly cssHex: string
-  readonly fill: number
-  readonly border: number
-  readonly wave: number
-}
-export const TRACK_PALETTE: readonly TrackPaletteEntry[] = [
-  { id: 'blue', cssHex: '#3b82f6', fill: 0x1e3a8a, border: 0x3b82f6, wave: 0x93c5fd },
-  { id: 'red', cssHex: '#ef4444', fill: 0x7f1d1d, border: 0xef4444, wave: 0xfca5a5 },
-  { id: 'orange', cssHex: '#f97316', fill: 0x7c2d12, border: 0xf97316, wave: 0xfdba74 },
-  { id: 'amber', cssHex: '#f59e0b', fill: 0x78350f, border: 0xf59e0b, wave: 0xfcd34d },
-  { id: 'yellow', cssHex: '#eab308', fill: 0x713f12, border: 0xeab308, wave: 0xfde047 },
-  { id: 'lime', cssHex: '#84cc16', fill: 0x365314, border: 0x84cc16, wave: 0xbef264 },
-  { id: 'emerald', cssHex: '#10b981', fill: 0x064e3b, border: 0x10b981, wave: 0x6ee7b7 },
-  { id: 'teal', cssHex: '#14b8a6', fill: 0x134e4a, border: 0x14b8a6, wave: 0x5eead4 },
-  { id: 'cyan', cssHex: '#06b6d4', fill: 0x164e63, border: 0x06b6d4, wave: 0x67e8f9 },
-  { id: 'sky', cssHex: '#0ea5e9', fill: 0x0c4a6e, border: 0x0ea5e9, wave: 0x7dd3fc },
-  { id: 'indigo', cssHex: '#6366f1', fill: 0x312e81, border: 0x6366f1, wave: 0xa5b4fc },
-  { id: 'violet', cssHex: '#8b5cf6', fill: 0x4c1d95, border: 0x8b5cf6, wave: 0xc4b5fd },
-  { id: 'fuchsia', cssHex: '#d946ef', fill: 0x701a75, border: 0xd946ef, wave: 0xf0abfc },
-  { id: 'pink', cssHex: '#ec4899', fill: 0x831843, border: 0xec4899, wave: 0xf9a8d4 },
-  { id: 'rose', cssHex: '#f43f5e', fill: 0x881337, border: 0xf43f5e, wave: 0xfda4af },
-  { id: 'zinc', cssHex: '#a1a1aa', fill: 0x3f3f46, border: 0xa1a1aa, wave: 0xd4d4d8 }
-] as const
 
 interface ProjectState {
   tracks: Track[]
@@ -356,33 +191,6 @@ interface ProjectState {
   projectDelay: ProjectDelayState
 }
 
-/** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
-export interface ClipboardEntry {
-  sourceTrackId: string
-  /** Source clip's `startMs`; paste lands at the playhead. */
-  sourceStartMs: number
-  /** Source clip's `durationMs`. */
-  sourceDurationMs: number
-  libraryItemId: string
-  filePath: string
-  inMs: number
-  durationMs: number
-  colorIndex?: number
-  name?: string
-  /** Warp settings carried across copy/paste to preserve tempo/pitch. */
-  warpEnabled?: boolean
-  warpMode?: ClipWarpMode
-  tempoRatio?: number
-  semitones?: number
-  cents?: number
-  effectiveDurationMs?: number
-  effectiveTempoRatio?: number
-  effectiveWarpActive?: boolean
-}
-
-/** Default name shown in the title bar before a project is named or loaded. */
-export const DEFAULT_PROJECT_NAME = 'Untitled'
-
 /**
  * Single in-flight resolver for `saveAndWait` (saves are serialised by the modal).
  * Module-level because Promise resolvers aren't serialisable into Pinia's proxy.
@@ -401,19 +209,6 @@ const pendingAutosaveResolvers = new Map<
   string,
   (result: { ok: boolean; error?: string }) => void
 >()
-
-/** Map wire-format transitions to the store shape; undefined for an empty list (suppressed default). */
-function hydrateTransitions(
-  raw: readonly ProjectStateTransition[] | undefined
-): Transition[] | undefined {
-  if (!Array.isArray(raw) || raw.length === 0) return undefined
-  return raw.map((tr) => ({
-    id: tr.id,
-    leftClipId: tr.leftClipId,
-    rightClipId: tr.rightClipId,
-    recipe: tr.recipe
-  }))
-}
 
 export const useProjectStore = defineStore('project', {
   state: (): ProjectState => ({
@@ -2645,29 +2440,6 @@ export const useProjectStore = defineStore('project', {
     }
   }
 })
-
-/**
- * Derive a clip's display name from its backend file path. Strips the
- * directory and file extension; falls back to the full string if either
- * step can't apply.
- */
-function filePathToDisplayName(filePath: string): string {
-  // Handle both Windows backslash and POSIX forward-slash separators.
-  const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
-  const basename = lastSep >= 0 ? filePath.slice(lastSep + 1) : filePath
-  const lastDot = basename.lastIndexOf('.')
-  return lastDot > 0 ? basename.slice(0, lastDot) : basename
-}
-
-/**
- * Same as {@link filePathToDisplayName} but keeps the extension. Used for
- * library item filenames where users expect to see "track.mp3" rather
- * than just "track".
- */
-function filePathToBasename(filePath: string): string {
-  const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
-  return lastSep >= 0 ? filePath.slice(lastSep + 1) : filePath
-}
 
 // Re-export the constant for components that need to know the peaks resolution.
 export { PEAKS_PER_SECOND }
