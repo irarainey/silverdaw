@@ -305,7 +305,16 @@ if(SILVERDAW_BUILD_TESTS)
     enable_testing()
 
     add_executable(SilverdawBackendTests
-        tests/BackendTests.cpp)
+        tests/BackendTests.cpp
+        tests/ProjectStateTests.cpp
+        tests/ProjectStateFxTests.cpp
+        tests/PersistenceTests.cpp
+        tests/BridgeTests.cpp
+        tests/WarpTests.cpp
+        tests/AudioEngineTests.cpp
+        tests/FxDspTests.cpp
+        tests/LoudnessTests.cpp
+        tests/EnvelopeFadeTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
 
