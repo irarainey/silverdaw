@@ -4,9 +4,10 @@
 
 import { ipcMain, dialog, type BrowserWindow } from 'electron'
 import { readFile } from 'node:fs/promises'
-import { extname, join } from 'node:path'
+import { join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
 import { registerIssuedPath } from '../audioPaths'
+import { canonicaliseProjectPath } from '../projectPaths'
 import type { PrefsService } from '../prefsService'
 
 export interface ProjectHandlersContext {
@@ -27,9 +28,10 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
   })
 
   ipcMain.handle(IPC.project.fileExists, async (_evt, value: unknown): Promise<boolean> => {
-    if (typeof value !== 'string' || value.length === 0) return false
+    const canonical = canonicaliseProjectPath(value)
+    if (canonical === null) return false
     try {
-      await readFile(value, { encoding: null, flag: 'r' })
+      await readFile(canonical, { encoding: null, flag: 'r' })
       return true
     } catch {
       return false
@@ -72,16 +74,16 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
 
   // Pre-register project audio paths; `registerIssuedPath` still enforces the allow-list.
   ipcMain.handle(IPC.project.prepareOpen, async (_evt, filePath: unknown): Promise<boolean> => {
-    if (typeof filePath !== 'string' || filePath.length === 0) return false
-    if (extname(filePath).toLowerCase() !== '.silverdaw') return false
+    const canonical = canonicaliseProjectPath(filePath)
+    if (canonical === null) return false
     try {
-      const content = await readFile(filePath, 'utf8')
+      const content = await readFile(canonical, 'utf8')
       // Project JSON may contain `filePath` anywhere in the tree.
       let parsed: unknown
       try {
         parsed = JSON.parse(content)
       } catch (parseErr) {
-        console.warn('[project:prepareOpen] malformed project JSON:', filePath, parseErr)
+        console.warn('[project:prepareOpen] malformed project JSON:', canonical, parseErr)
         return false
       }
       const visit = (node: unknown): void => {
@@ -102,7 +104,7 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       visit(parsed)
       return true
     } catch (err) {
-      console.warn('[project:prepareOpen] could not read project file:', filePath, err)
+      console.warn('[project:prepareOpen] could not read project file:', canonical, err)
       return false
     }
   })

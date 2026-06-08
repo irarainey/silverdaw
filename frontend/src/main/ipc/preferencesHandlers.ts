@@ -11,10 +11,9 @@ import type {
   AutosavePrefs,
   DebugPrefs,
   PathPrefs,
-  ToastPrefs,
-  UiPrefs
+  ToastPrefs
 } from '../preferences'
-import { clampAutosaveSeconds } from '../preferences'
+import { clampAutosaveSeconds, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -29,10 +28,11 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
 
   ipcMain.handle(IPC.prefs.getUi, () => prefs.get().ui)
 
-  // Preferences-dialog saves should be durable immediately.
-  ipcMain.on(IPC.prefs.setUi, (_evt, partial: Partial<UiPrefs>) => {
+  // Preferences-dialog saves should be durable immediately. The renderer-supplied
+  // partial is validated per-field before merging so it cannot corrupt the layout.
+  ipcMain.on(IPC.prefs.setUi, (_evt, partial: unknown) => {
     const p = prefs.get()
-    p.ui = { ...p.ui, ...partial }
+    p.ui = sanitiseUiPrefs(partial, p.ui)
     prefs.flushSaveSync()
   })
 

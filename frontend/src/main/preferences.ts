@@ -157,3 +157,60 @@ export function sanitiseRecentList(input: unknown): string[] {
   }
   return out
 }
+
+// Defensive UI-layout clamps; mirror the renderer's uiStore bounds so a corrupt
+// prefs file or a hostile renderer message cannot poison the persisted layout.
+export const UI_TRACK_HEADER_WIDTH_MIN = 120
+export const UI_TRACK_HEADER_WIDTH_MAX = 480
+export const UI_LIBRARY_PANEL_HEIGHT_MIN = 80
+export const UI_LIBRARY_PANEL_HEIGHT_MAX = 2000
+
+const SUPPORTED_PROJECT_SAMPLE_RATES: ReadonlySet<number> = new Set([44100, 48000])
+const SKIP_BUTTON_TARGETS: ReadonlySet<SkipButtonTarget> = new Set(['timelineEnds', 'markers'])
+const WAVEFORM_DISPLAY_MODES: ReadonlySet<WaveformDisplayMode> = new Set(['summary', 'stereo'])
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.round(Math.max(min, Math.min(max, value)))
+}
+
+function boolOr(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+// Single source of truth for UI-prefs validation. Each field is taken from
+// `partial` only when it has the correct type / enum / range, otherwise the
+// `base` value is kept — so a partial `prefs:setUi` update or a saved prefs file
+// can never inject a wrong-typed or out-of-range UI value.
+export function sanitiseUiPrefs(partial: unknown, base: UiPrefs): UiPrefs {
+  const p = (partial && typeof partial === 'object' ? partial : {}) as Partial<Record<keyof UiPrefs, unknown>>
+  return {
+    trackHeaderWidth: clampInt(
+      p.trackHeaderWidth,
+      UI_TRACK_HEADER_WIDTH_MIN,
+      UI_TRACK_HEADER_WIDTH_MAX,
+      base.trackHeaderWidth
+    ),
+    libraryPanelHeight: clampInt(
+      p.libraryPanelHeight,
+      UI_LIBRARY_PANEL_HEIGHT_MIN,
+      UI_LIBRARY_PANEL_HEIGHT_MAX,
+      base.libraryPanelHeight
+    ),
+    followPlayback: boolOr(p.followPlayback, base.followPlayback),
+    showLibraryTileImages: boolOr(p.showLibraryTileImages, base.showLibraryTileImages),
+    matchProjectTempoOnDrop: boolOr(p.matchProjectTempoOnDrop, base.matchProjectTempoOnDrop),
+    defaultProjectSampleRate:
+      typeof p.defaultProjectSampleRate === 'number' &&
+      SUPPORTED_PROJECT_SAMPLE_RATES.has(p.defaultProjectSampleRate)
+        ? p.defaultProjectSampleRate
+        : base.defaultProjectSampleRate,
+    skipButtonTarget: SKIP_BUTTON_TARGETS.has(p.skipButtonTarget as SkipButtonTarget)
+      ? (p.skipButtonTarget as SkipButtonTarget)
+      : base.skipButtonTarget,
+    waveformDisplayMode: WAVEFORM_DISPLAY_MODES.has(p.waveformDisplayMode as WaveformDisplayMode)
+      ? (p.waveformDisplayMode as WaveformDisplayMode)
+      : base.waveformDisplayMode,
+    libraryPanelCollapsed: boolOr(p.libraryPanelCollapsed, base.libraryPanelCollapsed)
+  }
+}

@@ -13,6 +13,7 @@ import {
   clampAutosaveSeconds,
   normaliseDebugPrefs,
   sanitiseRecentList,
+  sanitiseUiPrefs,
   type AudioOutputPrefs,
   type AutosavePrefs,
   type DebugPrefs,
@@ -60,7 +61,7 @@ export class PrefsService {
       const savedPaths = (parsed.paths ?? {}) as Partial<PathPrefs>
       this.prefs = {
         window: { ...defaults.window, ...(parsed.window ?? {}) },
-        ui: { ...defaults.ui, ...(parsed.ui ?? {}) },
+        ui: sanitiseUiPrefs(parsed.ui, defaults.ui),
         debug: normaliseDebugPrefs(parsed.debug as (Partial<DebugPrefs> & { enabled?: boolean }) | undefined, defaults.debug),
         toasts: { ...defaults.toasts, ...(parsed.toasts ?? {}) },
         paths: {
@@ -95,19 +96,6 @@ export class PrefsService {
               : null
         },
         recentProjects: sanitiseRecentList(parsed.recentProjects)
-      }
-      // Clamp persisted sample rate to the supported whitelist.
-      if (this.prefs.ui.defaultProjectSampleRate !== 44100 && this.prefs.ui.defaultProjectSampleRate !== 48000) {
-        this.prefs.ui.defaultProjectSampleRate = 44100
-      }
-      if (this.prefs.ui.skipButtonTarget !== 'timelineEnds' && this.prefs.ui.skipButtonTarget !== 'markers') {
-        this.prefs.ui.skipButtonTarget = 'timelineEnds'
-      }
-      if (this.prefs.ui.waveformDisplayMode !== 'summary' && this.prefs.ui.waveformDisplayMode !== 'stereo') {
-        this.prefs.ui.waveformDisplayMode = 'summary'
-      }
-      if (typeof this.prefs.ui.libraryPanelCollapsed !== 'boolean') {
-        this.prefs.ui.libraryPanelCollapsed = false
       }
     } catch (err) {
       // Bad prefs should not block startup.
