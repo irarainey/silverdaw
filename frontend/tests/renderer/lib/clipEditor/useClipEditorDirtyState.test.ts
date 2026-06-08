@@ -11,7 +11,7 @@ import type { LibraryItem } from '@/stores/libraryStore'
 // so each test perturbs exactly the field under examination.
 interface HarnessState {
   editsExistingClip: boolean
-  editsSingleTimelineClip: boolean
+  editsTimelineClip: boolean
   timelineClip: Clip | null
   editorItem: LibraryItem | null
   sourceItem: LibraryItem | null
@@ -54,7 +54,7 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
   const item = makeItem()
   const state: HarnessState = {
     editsExistingClip: true,
-    editsSingleTimelineClip: true,
+    editsTimelineClip: true,
     timelineClip: clip,
     editorItem: item,
     sourceItem: item,
@@ -77,7 +77,7 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
 
   const deps: ClipEditorDirtyStateDeps = {
     editsExistingClip: () => state.editsExistingClip,
-    editsSingleTimelineClip: () => state.editsSingleTimelineClip,
+    editsTimelineClip: () => state.editsTimelineClip,
     timelineClip: () => state.timelineClip,
     editorItem: () => state.editorItem,
     sourceItem: () => state.sourceItem,
@@ -143,7 +143,7 @@ describe('useClipEditorDirtyState', () => {
   describe('canSaveChanges volume-shape gating', () => {
     it('enables Save when a single timeline clip has only a dirty volume shape', () => {
       const { dirty } = makeHarness({
-        editsSingleTimelineClip: true,
+        editsTimelineClip: true,
         hasVolumeShapeChanged: true
       })
       expect(dirty.canSaveChanges.value).toBe(true)
@@ -151,7 +151,7 @@ describe('useClipEditorDirtyState', () => {
 
     it('does NOT enable Save for a multi/saved-library clip with only a dirty volume shape', () => {
       const { dirty } = makeHarness({
-        editsSingleTimelineClip: false,
+        editsTimelineClip: false,
         hasVolumeShapeChanged: true
       })
       expect(dirty.canSaveChanges.value).toBe(false)
@@ -160,7 +160,7 @@ describe('useClipEditorDirtyState', () => {
     it('does NOT enable Save for a new clip with only a dirty volume shape', () => {
       const { dirty } = makeHarness({
         editsExistingClip: false,
-        editsSingleTimelineClip: true,
+        editsTimelineClip: true,
         hasVolumeShapeChanged: true
       })
       expect(dirty.canSaveChanges.value).toBe(false)
@@ -168,7 +168,7 @@ describe('useClipEditorDirtyState', () => {
 
     it('still enables Save on a selection change even when not a single timeline clip', () => {
       const { dirty } = makeHarness({
-        editsSingleTimelineClip: false,
+        editsTimelineClip: false,
         selectionInMs: 250
       })
       expect(dirty.canSaveChanges.value).toBe(true)

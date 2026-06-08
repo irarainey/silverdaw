@@ -25,6 +25,7 @@ interface Harness {
   }
   library: {
     updateSavedClipEdit: ReturnType<typeof vi.fn>
+    updateSavedClipEnvelope: ReturnType<typeof vi.fn>
     addSavedClipFromSelection: ReturnType<typeof vi.fn>
   }
   notifications: {
@@ -45,6 +46,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
   }
   const library = {
     updateSavedClipEdit: vi.fn(() => ({ ok: true })),
+    updateSavedClipEnvelope: vi.fn(() => ({ ok: true })),
     addSavedClipFromSelection: vi.fn(() => 'new-id')
   }
   const notifications = { pushInfo: vi.fn(), pushError: vi.fn() }
@@ -57,6 +59,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     titleText: 'Test',
     editsSingleTimelineClip: false,
     editsSavedClipLibrary: true,
+    editsTimelineClip: false,
     hasWarpPitchChanged: false,
     sourceBpm: 120,
     projectBpm: 120,
@@ -85,6 +88,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     titleText: () => state.titleText as string,
     editsSingleTimelineClip: () => state.editsSingleTimelineClip as boolean,
     editsSavedClipLibrary: () => state.editsSavedClipLibrary as boolean,
+    editsTimelineClip: () => state.editsTimelineClip as boolean,
     hasWarpPitchChanged: () => state.hasWarpPitchChanged as boolean,
     sourceBpm: () => state.sourceBpm as number | undefined,
     projectBpm: () => state.projectBpm as number,
@@ -158,6 +162,44 @@ describe('useClipEditorSave', () => {
     expect(h.notifications.pushError).toHaveBeenCalledWith(
       'Cannot save changes — they would overlap clips on Drums, Bass.'
     )
+    expect(h.close).not.toHaveBeenCalled()
+  })
+
+  it('linked-clip save propagates the shared volume envelope to all linked clips', () => {
+    h.state.editsSavedClipLibrary = true
+    h.state.editsTimelineClip = true
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.state.volumeShapeCommittedPoints = [
+      { timeMs: 0, gain: 1 },
+      { timeMs: 500, gain: 0.5 }
+    ]
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.library.updateSavedClipEdit).toHaveBeenCalled()
+    expect(h.library.updateSavedClipEnvelope).toHaveBeenCalledWith('item-1', [
+      { timeMs: 0, gain: 1 },
+      { timeMs: 500, gain: 0.5 }
+    ])
+    expect(h.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('saved-library save (no placed instance) does not touch the volume envelope', () => {
+    h.state.editsSavedClipLibrary = true
+    h.state.editsTimelineClip = false
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.library.updateSavedClipEdit).toHaveBeenCalled()
+    expect(h.library.updateSavedClipEnvelope).not.toHaveBeenCalled()
+  })
+
+  it('linked-clip save skips the envelope when the saved-clip edit is rejected', () => {
+    h.state.editsSavedClipLibrary = true
+    h.state.editsTimelineClip = true
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.library.updateSavedClipEdit.mockReturnValue({ ok: false, conflictingTrackNames: ['Drums'] })
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.library.updateSavedClipEnvelope).not.toHaveBeenCalled()
     expect(h.close).not.toHaveBeenCalled()
   })
 

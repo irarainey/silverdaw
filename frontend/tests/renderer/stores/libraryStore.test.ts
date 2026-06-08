@@ -535,6 +535,97 @@ describe('libraryStore', () => {
     })
   })
 
+  it('propagates a shared volume envelope to every linked timeline clip', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedItem = {
+      id: savedId,
+      kind: 'saved-clip' as const,
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId!, sourceClipId: '', inMs: 1_000, durationMs: 2_000 }
+    }
+    const trackA = project.addTrack()
+    const trackB = project.addTrack()
+    const clipA = project.addClipFromLibrary(trackA, savedItem, 0)!
+    const clipB = project.addClipFromLibrary(trackB, savedItem, 0)!
+    sendMock.mockClear()
+
+    const points = [
+      { timeMs: 0, gain: 1 },
+      { timeMs: 1_000, gain: 0.25 }
+    ]
+    const result = library.updateSavedClipEnvelope(savedId, points)
+
+    expect(result.ok).toBe(true)
+    expect(project.clips[clipA]!.envelopePoints).toEqual(points)
+    expect(project.clips[clipB]!.envelopePoints).toEqual(points)
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_SET_ENVELOPE',
+      expect.objectContaining({ clipId: clipA, points })
+    )
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_SET_ENVELOPE',
+      expect.objectContaining({ clipId: clipB, points })
+    )
+  })
+
+  it('inherits the shared volume envelope when placing another linked instance', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedItem = {
+      id: savedId,
+      kind: 'saved-clip' as const,
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId!, sourceClipId: '', inMs: 1_000, durationMs: 2_000 }
+    }
+    const trackA = project.addTrack()
+    const trackB = project.addTrack()
+
+    // First placement starts flat (no sibling to inherit from).
+    const clipA = project.addClipFromLibrary(trackA, savedItem, 0)!
+    expect(project.clips[clipA]!.envelopePoints).toBeUndefined()
+
+    // Shape the first instance, then place a second instance.
+    const points = [
+      { timeMs: 0, gain: 1 },
+      { timeMs: 1_000, gain: 0.5 }
+    ]
+    project.setClipEnvelope(clipA, points)
+    const clipB = project.addClipFromLibrary(trackB, savedItem, 0)!
+
+    expect(project.clips[clipB]!.envelopePoints).toEqual(points)
+  })
+
   it('redraws linked timeline clips when a saved clip is renamed', () => {
     const library = useLibraryStore()
     const project = useProjectStore()

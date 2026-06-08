@@ -13,7 +13,7 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveDurationMs } from '@/lib/warp'
-import type { ClipWarpMode } from '@shared/bridge-protocol'
+import type { ClipWarpMode, ClipEnvelopePoint } from '@shared/bridge-protocol'
 import type { AddLibraryItemInput, LibraryItem, LibraryState } from './libraryTypes'
 import { buildSavedClipName } from './libraryItemHelpers'
 
@@ -440,6 +440,27 @@ export const savedClipActions = {
       }
       if (linkedClips.length > 0) project.peaksRevision++
       log.info('library', `updateSavedClipEdit id=${itemId} propagatedTo=${linkedClips.length}`)
+      return { ok: true }
+    },
+
+    // Shared volume-shape edit for a saved clip: propagate the envelope to every
+    // linked timeline instance, so editing volume on one linked clip changes them
+    // all (like trim/warp/pitch). The durable store is each clip's backend
+    // envelope (CLIP_SET_ENVELOPE) — the shape lives on the live instances, not on
+    // the library item, so a saved clip with no placed instance carries no shape.
+    updateSavedClipEnvelope(itemId: string, points: ClipEnvelopePoint[]): { ok: boolean } {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item || item.kind !== 'saved-clip') return { ok: false }
+      const project = useProjectStore()
+      const linkedClips = findLinkedTimelineClips(item)
+      for (const c of linkedClips) {
+        if (!c) continue
+        project.setClipEnvelope(c.id, points)
+      }
+      log.info(
+        'library',
+        `updateSavedClipEnvelope id=${itemId} points=${points.length} propagatedTo=${linkedClips.length}`
+      )
       return { ok: true }
     },
 

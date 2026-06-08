@@ -5,7 +5,7 @@
 // `this` type lets them live in separate files with no store import cycle.
 // If a sibling action's signature changes, update it here too.
 
-import type { ClipWarpMode, TransitionRecipe } from '@shared/bridge-protocol'
+import type { ClipWarpMode, TransitionRecipe, ClipEnvelopePoint } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
 import type { ProjectState, Track } from './projectTypes'
 
@@ -72,6 +72,12 @@ export type ProjectClipThis = ProjectState & {
       effectiveWarpActive?: boolean
     },
     opts?: { localOnly?: boolean }
+  ): void
+
+  setClipEnvelope(
+    clipId: string,
+    points: ClipEnvelopePoint[],
+    opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
   ): void
 
   trimClip(clipId: string, startMs: number, inMs: number, durationMs: number): void

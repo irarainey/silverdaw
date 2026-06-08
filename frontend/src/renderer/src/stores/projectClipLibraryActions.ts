@@ -173,6 +173,20 @@ export const clipLibraryActions = {
       // Drop-time warp copies saved defaults or marks eligible audio for auto-warp.
       this.applyDropTimeWarp(clipId, libraryItem)
 
+      // Inherit the saved clip's shared volume envelope from an existing instance
+      // so every linked placement carries the same shape.
+      if (libraryItem.kind === 'saved-clip') {
+        const sibling = Object.values(this.clips).find(
+          (c) =>
+            !!c &&
+            c.id !== clipId &&
+            c.libraryItemId === libraryItem.id &&
+            Array.isArray(c.envelopePoints) &&
+            c.envelopePoints.length >= 2
+        )
+        if (sibling?.envelopePoints) this.setClipEnvelope(clipId, sibling.envelopePoints)
+      }
+
       this.pushTrackGain(track)
       log.info('project', `addClipFromLibrary track=${trackId} clip=${clipId} pos=${snapped}ms`)
       return clipId

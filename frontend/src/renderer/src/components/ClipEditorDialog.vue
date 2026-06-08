@@ -41,7 +41,7 @@ const {
   viewInMs,
   volumeEditMode,
   viewExpanded,
-  editsSingleTimelineClip,
+  editsTimelineClip,
   editsExistingClip,
   canApplyCrop,
   zoom,
@@ -153,7 +153,7 @@ const {
               <ClipEditorViewControls
                 v-model:volume-edit-mode="volumeEditMode"
                 v-model:view-expanded="viewExpanded"
-                :edits-single-timeline-clip="editsSingleTimelineClip"
+                :edits-timeline-clip="editsTimelineClip"
                 :edits-existing-clip="editsExistingClip"
                 :can-apply-crop="canApplyCrop"
                 :zoom="zoom"

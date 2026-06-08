@@ -11,7 +11,7 @@ import { currentHasTempoWarp } from '@/lib/clipEditor/useClipEditorWarpDraft'
 
 export interface ClipEditorDirtyStateDeps {
   editsExistingClip: () => boolean
-  editsSingleTimelineClip: () => boolean
+  editsTimelineClip: () => boolean
   timelineClip: () => Clip | null
   editorItem: () => LibraryItem | null
   sourceItem: () => LibraryItem | null
@@ -78,8 +78,9 @@ export function useClipEditorDirtyState(
 
   const canSaveChanges = computed(() => {
     if (!deps.editsExistingClip()) return false
-    // Shape-only edits cannot enable Save where shape persistence is unsupported.
-    const volumeShapeDirty = deps.editsSingleTimelineClip() && deps.hasVolumeShapeChanged()
+    // Volume shaping is available for any placed timeline clip (linked or not);
+    // linked edits persist to the shared saved clip and all its instances.
+    const volumeShapeDirty = deps.editsTimelineClip() && deps.hasVolumeShapeChanged()
     return hasSelectionChanged.value || hasWarpPitchChanged.value || volumeShapeDirty
   })
 

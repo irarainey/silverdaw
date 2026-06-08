@@ -8,7 +8,7 @@ const volumeEditMode = defineModel<boolean>('volumeEditMode', { required: true }
 const viewExpanded = defineModel<boolean>('viewExpanded', { required: true })
 
 defineProps<{
-  editsSingleTimelineClip: boolean
+  editsTimelineClip: boolean
   editsExistingClip: boolean
   canApplyCrop: boolean
   zoom: number
@@ -27,7 +27,7 @@ defineEmits<{
   <div class="flex shrink-0 items-center gap-1">
     <!-- Volume Shape edit toggle. -->
     <button
-      v-if="editsSingleTimelineClip"
+      v-if="editsTimelineClip"
       type="button"
       class="rounded px-2 py-1 text-[11px] font-medium"
       :class="

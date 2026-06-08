@@ -48,6 +48,7 @@ export function useClipEditorController(
     editsExistingClip,
     editsSavedClipLibrary,
     editsSingleTimelineClip,
+    editsTimelineClip,
     titleText,
     sourceItem,
     sourceDurationMs,
@@ -93,7 +94,7 @@ export function useClipEditorController(
   })
 
   const volumeShapeAvailable = computed(
-    () => editsSingleTimelineClip.value && !viewExpanded.value && volumeShapeDurationMs.value > 0
+    () => editsTimelineClip.value && !viewExpanded.value && volumeShapeDurationMs.value > 0
   )
   const volumeEditActive = computed(() => volumeEditMode.value && volumeShapeAvailable.value)
 
@@ -156,7 +157,7 @@ export function useClipEditorController(
     canSaveAsNew
   } = useClipEditorDirtyState({
     editsExistingClip: () => editsExistingClip.value,
-    editsSingleTimelineClip: () => editsSingleTimelineClip.value,
+    editsTimelineClip: () => editsTimelineClip.value,
     timelineClip: () => timelineClip.value,
     editorItem: () => editorItem.value,
     sourceItem: () => sourceItem.value,
@@ -514,6 +515,7 @@ export function useClipEditorController(
     titleText: () => titleText.value,
     editsSingleTimelineClip: () => editsSingleTimelineClip.value,
     editsSavedClipLibrary: () => editsSavedClipLibrary.value,
+    editsTimelineClip: () => editsTimelineClip.value,
     hasWarpPitchChanged: () => hasWarpPitchChanged.value,
     sourceBpm: () => sourceBpm.value,
     projectBpm: () => transport.bpm,
@@ -577,7 +579,7 @@ export function useClipEditorController(
     viewInMs,
     volumeEditMode,
     viewExpanded,
-    editsSingleTimelineClip,
+    editsTimelineClip,
     editsExistingClip,
     canApplyCrop,
     zoom,

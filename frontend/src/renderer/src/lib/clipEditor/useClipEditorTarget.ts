@@ -27,6 +27,7 @@ export interface ClipEditorTarget {
   editsExistingClip: ComputedRef<boolean>
   editsSavedClipLibrary: ComputedRef<boolean>
   editsSingleTimelineClip: ComputedRef<boolean>
+  editsTimelineClip: ComputedRef<boolean>
   titleText: ComputedRef<string>
   sourceItem: ComputedRef<LibraryItem | null>
   sourceDurationMs: ComputedRef<number>
@@ -67,6 +68,9 @@ export function useClipEditorTarget(
     () => editorMode.value === 'saved-library' || editorMode.value === 'timeline-linked'
   )
   const editsSingleTimelineClip = computed(() => editorMode.value === 'timeline-unlinked')
+  // Both linked and unlinked timeline clips can shape volume; a placed instance
+  // gives the post-warp ms timebase the envelope needs.
+  const editsTimelineClip = computed(() => timelineClip.value !== null)
 
   const titleText = computed(() => {
     const clip = timelineClip.value
@@ -102,6 +106,7 @@ export function useClipEditorTarget(
     editsExistingClip,
     editsSavedClipLibrary,
     editsSingleTimelineClip,
+    editsTimelineClip,
     titleText,
     sourceItem,
     sourceDurationMs,

@@ -36,6 +36,7 @@ export interface ClipEditorSaveDeps {
   titleText: () => string
   editsSingleTimelineClip: () => boolean
   editsSavedClipLibrary: () => boolean
+  editsTimelineClip: () => boolean
   hasWarpPitchChanged: () => boolean
   sourceBpm: () => number | undefined
   projectBpm: () => number
@@ -162,6 +163,13 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
       ...warpPatch
     })
     if (result.ok) {
+      // A linked timeline clip also shares the saved clip's volume envelope:
+      // persist it to every linked instance after trim/warp reflows their
+      // durations, so the post-warp ms basis is current. Saved-library edits
+      // (no placed instance) skip this — they have no volume control.
+      if (deps.editsTimelineClip()) {
+        deps.library.updateSavedClipEnvelope(entry.id, deps.volumeShapeCommittedPoints())
+      }
       deps.notifications.pushInfo(`Saved changes for "${deps.titleText()}".`)
       deps.close()
     } else if (result.conflictingTrackNames && result.conflictingTrackNames.length > 0) {
