@@ -18,9 +18,6 @@ namespace
 {
 constexpr int kPreviewReadyDelayMs = 200;
 
-// Single source of truth for the PREVIEW_STATE envelope. Callers pass the exact
-// isLoaded/durationMs shape they need (unload reports gone; the rest reflect the
-// live preview voice).
 void broadcastPreviewState(AudioEngine& engine, BridgeServer& bridge, bool isPlaying, bool isLoaded,
                            double durationMs)
 {
@@ -32,8 +29,7 @@ void broadcastPreviewState(AudioEngine& engine, BridgeServer& bridge, bool isPla
     bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
 }
 
-// Late PREVIEW_STATE emitted after a load settles — suppressed if a newer load
-// has since bumped the generation (the delayed timer would otherwise clobber it).
+// Generation check prevents stale delayed load state from clobbering a newer load.
 void broadcastPreviewStateIfCurrent(AudioEngine& engine, BridgeServer& bridge,
                                     const juce::String& libraryItemId, juce::int64 generation)
 {
@@ -63,8 +59,7 @@ void handlePreviewLoad(const juce::var& payload, AudioEngine& engine, ProjectSta
         silverdaw::log::warn("preview", "PREVIEW_LOAD unknown libraryItemId=" + libraryItemId);
         return;
     }
-    // Prefer the decoded WAV cache (same resolver as timeline) so a compressed
-    // source still previews promptly. Falls back to the source path otherwise.
+    // Prefer the decoded WAV cache so compressed sources preview promptly.
     const juce::String playbackPath = resolveEnginePlaybackPath(sourcePath, projectState, decodedCache);
     juce::String err;
     std::optional<bool> warpEnabled;
@@ -111,8 +106,7 @@ void handlePreviewUnload(AudioEngine& engine, BridgeServer& bridge)
 void handlePreviewPlay(AudioEngine& engine, BridgeServer& bridge)
 {
     silverdaw::log::info("bridge", "recv PREVIEW_PLAY");
-    // The Clip Editor owns playback exclusively while open — pause the project
-    // transport so the user doesn't hear both at once.
+    // Clip Editor preview is exclusive; pause project transport first.
     if (engine.isPlaying()) engine.pause();
     engine.playPreview();
     broadcastPreviewState(engine, bridge, engine.isPreviewPlaying(), engine.isPreviewLoaded(),

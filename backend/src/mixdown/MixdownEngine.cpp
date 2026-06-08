@@ -22,8 +22,6 @@ const char* mixdownFailureCodeToString(MixdownFailureCode code) noexcept
     return "invalid";
 }
 
-// Public entry point. Keeps the thin "flip the flags + post the job" concern
-// here; the heavy render pipeline lives in MixdownRender.cpp::runMixdownJob.
 void renderMixdownAsync(MixdownSnapshot snapshot,
                         MixdownOptions options,
                         juce::ThreadPool& pool,

@@ -9,10 +9,7 @@ class AudioEngine;
 class ProjectState;
 class BridgeServer;
 
-// Project-shared FX send-bus commands (Reverb / Delay). Extracted from Main.cpp
-// so the dispatcher only routes to them. Each reads a partial-update envelope,
-// persists the canonical values to ProjectState, glides the live engine bus, and
-// acks the stored shape.
+// Shared FX changes persist canonical values before gliding the live bus.
 
 void handleProjectSetReverb(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                             BridgeServer& bridge);

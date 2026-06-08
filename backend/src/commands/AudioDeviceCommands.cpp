@@ -61,15 +61,7 @@ juce::var buildAudioDevicesListEnvelope(const silverdaw::AudioEngine::AudioDevic
     return juce::var(obj);
 }
 
-// AUDIO_DEVICES_LIST broadcasts come from two kinds of source:
-//   - Direct responses to AUDIO_DEVICES_REQUEST (and the deferred
-//     first-scan completion). Always sent: the renderer is waiting for
-//     an answer, including on reconnect.
-//   - Spontaneous `audioDeviceListChanged` notifications. Deduped against
-//     the last list we sent, so the change message that our own deferred
-//     startup scan triggers — JUCE dispatches it asynchronously, after
-//     the deferred response already shipped the identical list — doesn't
-//     reach the renderer a redundant second time.
+// Dedupes spontaneous JUCE hotplug callbacks after the deferred startup scan.
 void broadcastAudioDevicesList(silverdaw::BridgeServer& bridge, const juce::var& envelope, bool dedupe)
 {
     static juce::String lastSentJson;
@@ -86,20 +78,7 @@ void handleAudioDevicesRequest(const juce::var& payload, silverdaw::AudioEngine&
                                silverdaw::BridgeServer& bridge)
 {
     const bool refresh = static_cast<bool>(payload.getProperty("refresh", false));
-    // The first scan after boot is the slow step (100–400 ms, dominated
-    // by ASIO/Bluetooth driver probing). Audio devices rarely change
-    // between launches, so we don't want to block the message thread
-    // for it during the renderer's startup window.
-    //
-    //   - Explicit "Rescan devices" (`refresh: true`): synchronous —
-    //     the user is waiting and expects the freshest list.
-    //   - Already scanned: just broadcast the cached snapshot.
-    //   - First request after boot, no explicit refresh: broadcast
-    //     whatever the engine already has (current device + its type,
-    //     populated by `initialise()`), then defer the full scan via
-    //     `MessageManager::callAsync`. The bridge ships the initial
-    //     response before the slow scan runs, and the UI updates a
-    //     beat later when the deferred scan broadcasts the full list.
+    // First full device scan can block startup, so defer it unless explicitly requested.
     if (refresh)
     {
         engine.refreshAudioDevices();
@@ -113,9 +92,7 @@ void handleAudioDevicesRequest(const juce::var& payload, silverdaw::AudioEngine&
                               buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot(),
                                                             /*scanInProgress*/ needsFirstScan),
                               /*dedupe*/ false);
-    // The fallback notice is one-shot: surface it on this first response,
-    // then clear it so the deferred scan below (and later hotplug
-    // broadcasts) don't re-warn about the same startup fallback.
+    // Fallback notice is one-shot; later scans must not re-warn.
     engine.clearFellBackToDefault();
 
     if (needsFirstScan)
@@ -134,7 +111,7 @@ void handleAudioDevicesRequest(const juce::var& payload, silverdaw::AudioEngine&
 void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& engine,
                              silverdaw::BridgeServer& bridge)
 {
-    // Nullable fields: both null = revert to system default.
+    // Both null reverts to system default.
     const auto typeVar = payload.getProperty("typeName", juce::var());
     const auto deviceVar = payload.getProperty("deviceName", juce::var());
     const juce::String typeName = typeVar.isString() ? typeVar.toString() : juce::String();
@@ -149,11 +126,7 @@ void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& e
     if (err.isNotEmpty()) p->setProperty("error", err);
     bridge.broadcast("AUDIO_DEVICE_CHANGED", juce::var(p));
 
-    // No explicit `AUDIO_DEVICES_LIST` broadcast here: a successful
-    // `setAudioDeviceSetup` fires JUCE's `audioDeviceListChanged`
-    // callback, which the engine forwards to the renderer via
-    // `setDeviceListChangedCallback` (wired up in `runBackend`).
-    // Avoiding the duplicate keeps the round-trip lean on a switch.
+    // JUCE fires `audioDeviceListChanged` after a successful switch.
 
     silverdaw::log::info("audio",
                          juce::String("device select type=") + typeName + " name=" + deviceName +
@@ -163,12 +136,7 @@ void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& e
 void handleAudioFileProbe(const juce::var& payload, silverdaw::AudioEngine& engine,
                           silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool)
 {
-    // Synchronous-ish file-rate probe used by the renderer's import
-    // flow to decide whether to prompt about a sample-rate
-    // mismatch. Opens the file via the existing AudioFormatManager,
-    // reads the header (sample rate / channel count / total length),
-    // acks via `AUDIO_FILE_PROBED`. `requestId` round-trips so
-    // concurrent probes from a batched import don't collide.
+    // `requestId` round-trips so batched import probes don't collide.
     const auto requestId = tryGetRequiredString(payload, "requestId").value_or(juce::String{});
     const auto filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
     if (requestId.isEmpty() || filePath.isEmpty())
@@ -178,10 +146,7 @@ void handleAudioFileProbe(const juce::var& payload, silverdaw::AudioEngine& engi
     }
 
     silverdaw::log::debug("bridge", "recv AUDIO_FILE_PROBE id=" + requestId + " path=" + filePath);
-    // Heavy work (reader construction; on Windows the JUCE
-    // codec call can take a few ms for compressed formats) is
-    // dispatched onto the existing peak-pool so the message
-    // thread keeps draining 60 Hz transport ticks.
+    // Reader construction stays off the message thread to keep 60 Hz transport ticks draining.
     peakPool.addJob([requestId, filePath, &engine, &bridge]() {
         const juce::File file(filePath);
         std::unique_ptr<juce::AudioFormatReader> reader(

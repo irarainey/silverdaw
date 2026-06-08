@@ -24,8 +24,7 @@ class PlayheadEmitter : public juce::Timer
   private:
     AudioEngine& engine;
     BridgeServer& bridge;
-    // Reference-counted: held alive by `payloadObject`; `payload` is the
-    // pre-wrapped juce::var we hand to broadcast() each tick.
+    // `payloadObject` keeps the pre-wrapped broadcast payload alive.
     juce::DynamicObject::Ptr payloadObject;
     juce::var payload;
     double lastPosMs = -1.0;
@@ -43,9 +42,7 @@ class PlayheadEmitter : public juce::Timer
     juce::DynamicObject::Ptr trackLevelsObject{new juce::DynamicObject()};
     juce::var trackLevelsPayload{trackLevelsObject.get()};
     bool lastTrackLevelsHadSignal = false;
-    // Reused across ticks so steady-state metering broadcasts allocate
-    // only the per-track DynamicObject envelope payloads (not this
-    // scratch vector itself).
+    // Reused across ticks to avoid reallocating the scratch vector.
     std::vector<BusGraph::TrackPeakSnapshot> trackPeakScratch;
 };
 

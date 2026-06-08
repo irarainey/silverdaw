@@ -1,10 +1,6 @@
 #pragma once
 
-// Shared factory for a freshly-prepared WarpProcessor with optional tempo and
-// pitch pre-applied. Used by the per-clip rebuild path (AudioEngine clip-edit)
-// and the preview-voice rebuild path (AudioEnginePreview.cpp) so they cannot
-// drift in how they translate (mode, semitones, cents, tempoRatio) into a
-// constructed processor.
+// Silverdaw tempoRatio is project/source; Rubber Band receives the inverse internally.
 
 #include "WarpProcessor.h"
 
@@ -24,8 +20,6 @@ inline std::unique_ptr<WarpProcessor> makeWarpProcessor(
     std::optional<double> semitones,
     std::optional<double> cents)
 {
-    // Use the canonical helper from WarpProcessor.h so live, mixdown
-    // and preview never drift in how they map mode strings to flags.
     const auto options = parseWarpMode(mode);
     auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels),
                                               sampleRate > 0 ? sampleRate : 44100.0,

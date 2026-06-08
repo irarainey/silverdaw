@@ -17,16 +17,7 @@
 namespace
 {
 
-/**
- * One-shot LSQ fit of `t_n = anchor + n * period` over `beats`,
- * with three iterations of outlier filtering (residual > 25 % of
- * current period). Returns `false` if there aren't enough usable
- * beats or the fit collapses to an implausible period.
- *
- * Also returns the RMS residual (in seconds) of the kept beats so
- * the caller can compare two candidate beat lists and pick the
- * better fit.
- */
+// Robust LSQ grid fit; returns RMS residual so candidates can be compared.
 bool fitPeriodAndAnchor(const std::vector<double>& beats, double initialPeriod, double initialAnchor,
                         double& outPeriod, double& outAnchor, double& outRmsResidual, int& outKeptCount)
 {
@@ -81,18 +72,7 @@ bool fitPeriodAndAnchor(const std::vector<double>& beats, double initialPeriod, 
     return true;
 }
 
-/**
- * Compute the same complex spectral-difference HWR onset detection
- * function family that BTrack uses internally, but at a fine hop on
- * the already-resampled mono 44.1 kHz buffer. Returns one ODF value
- * per `envHop` samples.
- *
- * This is intentionally separate from BTrack's private ODF buffer:
- * BTrack resamples that buffer for its own tempo comb filter and
- * does not expose it. Recomputing here lets the autocorrelation
- * refinement use a high-resolution, musically stronger ODF than a
- * simple RMS envelope.
- */
+// Recompute BTrack-style ODF because BTrack's private buffer is resampled and unavailable.
 std::vector<double> computeOdf(const std::vector<float>& signal, int envHop)
 {
     if (signal.empty() || envHop <= 0) return {};
@@ -115,17 +95,7 @@ std::vector<double> computeOdf(const std::vector<float>& signal, int envHop)
     return values;
 }
 
-/**
- * Autocorrelate `odf` over integer lags in `[minLag, maxLag]` and
- * return the lag (in ODF frames, sub-frame via parabolic interp)
- * that maximises a Rayleigh-weighted autocorrelation score. The
- * Rayleigh weight peaks at `preferredLag` so we prefer the octave
- * closest to a known prior (BTrack's estimate) — without this, raw
- * autocorrelation peaks at integer multiples of the true period
- * and we'd happily pick half-time on dense material.
- *
- * Returns 0.0 lag if no usable peak was found.
- */
+// Rayleigh weighting keeps autocorrelation near BTrack's octave instead of latching onto half-time.
 double autocorrPreferredLag(const std::vector<double>& odf, int minLag, int maxLag, double preferredLag)
 {
     if (odf.size() < static_cast<size_t>(maxLag + 4) || minLag < 1 || maxLag <= minLag) return 0.0;
@@ -142,15 +112,11 @@ double autocorrPreferredLag(const std::vector<double>& odf, int minLag, int maxL
     {
         double sum = 0.0;
         for (int n = lag; n < frames; ++n) sum += centered[static_cast<size_t>(n)] * centered[static_cast<size_t>(n - lag)];
-        // Normalise by the number of pairs so a longer lag isn't
-        // unfairly penalised (vs. raw sum) — keeps the comparison
-        // across the search range fair.
+        // Normalise by pair count so longer lags are comparable.
         ac[static_cast<size_t>(lag - minLag)] = sum / static_cast<double>(frames - lag);
     }
 
-    // Rayleigh weighting centred on `preferredLag`. β controls
-    // how narrow the prior is; β = preferredLag puts the mode at
-    // preferredLag and gives ~50 % weight at 2× and ~50 % at 0.5×.
+    // Centre the Rayleigh prior on BTrack's lag while still allowing nearby correction.
     if (preferredLag > 1.0)
     {
         const double beta = preferredLag;
@@ -187,14 +153,7 @@ double autocorrPreferredLag(const std::vector<double>& odf, int minLag, int maxL
     return static_cast<double>(minLag + bestIdx) + frac;
 }
 
-/**
- * Given a known period (in seconds) and the ODF, find the phase
- * (anchor in seconds within [0, period)) that maximises
- *   Σ ODF(anchor + n * period)
- * — i.e. the offset that aligns the predicted beat grid with the
- * most onset energy. Returns the anchor; if the ODF is too quiet
- * to discriminate, returns `fallbackAnchor`.
- */
+// Align the refined beat grid to the ODF energy peak; fall back if the ODF is ambiguous.
 double findBestAnchor(const std::vector<double>& odf, double envRate, double periodSec, double fallbackAnchor)
 {
     if (odf.empty() || envRate <= 0.0 || periodSec <= 0.0) return fallbackAnchor;
@@ -214,9 +173,7 @@ double findBestAnchor(const std::vector<double>& odf, double envRate, double per
             bestPhase = phase;
         }
     }
-    // Parabolic interp around the chosen phase using neighbouring
-    // phases. Wrap modulo periodFrames so the interp can pull
-    // anchors near 0 or near period - 1 either way.
+    // Wrap interpolation so anchors near the period boundary can move either way.
     auto phaseSum = [&](int p) {
         if (p < 0) p += periodFrames;
         if (p >= periodFrames) p -= periodFrames;
@@ -237,12 +194,7 @@ double findBestAnchor(const std::vector<double>& odf, double envRate, double per
     return (bestPhase + frac) / envRate;
 }
 
-/**
- * Evaluate how well a period+anchor grid explains `beats`: returns
- * RMS residual (seconds) of beats within ±25 % of one period from
- * a predicted grid point, plus the count of beats that fit. Used
- * to compare candidate (period, anchor) pairs.
- */
+// Score candidate grids by RMS residual against BTrack beats.
 void scoreGridAgainstBeats(const std::vector<double>& beats, double period, double anchor,
                            double& outRms, int& outKept)
 {
@@ -296,12 +248,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         static_cast<juce::int64>(kMaxAnalysisSeconds * sourceSampleRate);
     const juce::int64 totalSourceSamples = juce::jmin(reader->lengthInSamples, maxSourceSamples);
 
-    // ──────────────────────────────────────────────────────────────────
-    // Step 1: decode the whole capped range into a single mono float
-    // buffer. ~21 MB worst case (2 min of mono float32) — well within
-    // headroom on any modern desktop, and one-shot decoding lets us
-    // hand a single contiguous buffer to libsamplerate.
-    // ──────────────────────────────────────────────────────────────────
+    // One contiguous mono buffer keeps the libsamplerate handoff simple.
     std::vector<float> mono(static_cast<size_t>(totalSourceSamples), 0.0F);
     const int numCh = static_cast<int>(reader->numChannels);
     const int decodeBlockSize = 4096;
@@ -332,11 +279,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         sourcePos += toRead;
     }
 
-    // ──────────────────────────────────────────────────────────────────
-    // Step 2: resample to BTrack's expected 44.1 kHz mono using
-    // libsamplerate (`src_simple`, one-shot conversion of the whole
-    // buffer).
-    // ──────────────────────────────────────────────────────────────────
+    // BTrack expects 44.1 kHz mono; use one-shot libsamplerate conversion.
     std::vector<float> resampled;
     if (std::abs(sourceSampleRate - kAnalysisSampleRate) < 0.001)
     {
@@ -364,12 +307,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         resampled.resize(static_cast<size_t>(srcData.output_frames_gen));
     }
 
-    // ──────────────────────────────────────────────────────────────────
-    // Step 3: feed BTrack frame-by-frame and record beat events.
-    // We map the analysis sample rate's frame index back to source
-    // time so the beat positions remain meaningful regardless of the
-    // source's original sample rate.
-    // ──────────────────────────────────────────────────────────────────
+    // Beat positions stay in source time even after analysis-rate resampling.
     BTrack bt(kHopSize, kFrameSize);
     std::vector<double> hopBuffer(static_cast<size_t>(kHopSize), 0.0);
     std::vector<double> beatTimes;
@@ -399,22 +337,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
                             " (beats=" + juce::String(static_cast<int>(beatTimes.size())) + ", srcSR=" +
                             juce::String(sourceSampleRate) + ")");
 
-    // Prefer a BPM *fit by linear regression to all detected beats*
-    // over BTrack's running tempo estimate. The estimate is updated
-    // incrementally and can be a fraction of a BPM off the true
-    // value implied by the beat positions; a least-squares fit
-    // recovers both the period AND the phase to sub-millisecond
-    // precision, which is what we need for a synthesised marker
-    // grid to stay flush with the actual transients across long
-    // clips and across split / duplicate cycles.
-    //
-    // The fit is robust to occasional outliers (BTrack sometimes
-    // doubles or misses a beat near tempo changes): we start with
-    // the median interval as the period estimate, assign each
-    // detected beat the nearest integer beat-index in that grid,
-    // drop beats whose residual is > 25 % of a period, and re-fit.
-    // Three iterations are enough to converge on a clean fit for
-    // anything but the most erratic material.
+    // LSQ over detected beats gives stable period+phase; outlier rejection handles missed/doubled beats.
     double derivedBpm = bpm;
     double anchorSec = beatTimes.empty() ? 0.0 : beatTimes.front();
     double baselineResidual = std::numeric_limits<double>::infinity();
@@ -446,41 +369,8 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         }
     }
 
-    // ──────────────────────────────────────────────────────────────────
-    // Step 3b: refine the period via direct autocorrelation of an
-    // onset detection function.
-    //
-    // BTrack's beat times are quantised to its hop boundaries (now
-    // ~5.8 ms at 44.1 kHz / hop=256; originally ~11.6 ms at the
-    // default hop=512) AND BTrack picks tempo from a discrete
-    // 2-BPM grid in [80, 160] before rounding to an integer number of
-    // hops. Even with LSQ regression over a couple hundred beats, the
-    // jitter on funky / syncopated material can leave us 2-3 BPM off
-    // the true tempo (we saw 103.7 vs a true 106).
-    //
-    // To escape that quantisation we step back from BTrack's beats and
-    // compute a high-resolution spectral ODF directly on the resampled audio,
-    // then autocorrelate it over a generous lag range covering [50 %,
-    // 200 %] of BTrack's reported tempo (so half / double-time
-    // alternatives are also considered). A Rayleigh prior centred on
-    // the BTrack-implied lag biases the search towards the nearest
-    // octave so a strong sub-beat doesn't pull us into double-time.
-    // Parabolic interpolation around the integer-lag peak gives
-    // sub-frame (= sub-millisecond) precision.
-    //
-    // Once we have a period, the anchor is set by sweeping phase over
-    // [0, period) and picking the offset that aligns the predicted
-    // beat grid with the most ODF energy. The two are decoupled —
-    // BTrack's beats are no longer used for the period, only as a
-    // cross-check (we require the AC-derived BPM to be within ±10 %
-    // of the BTrack LSQ result; otherwise the candidate is rejected
-    // as a likely octave error).
-    //
-    // The AC result replaces the baseline only when it gives a lower
-    // RMS residual on BTrack's beats (a sanity check that the new
-    // period is at least as consistent with the detected beats as
-    // the old one).
-    // ──────────────────────────────────────────────────────────────────
+    // Refine via ODF autocorrelation to escape BTrack hop/BPM-grid quantisation.
+    // Accept only near-octave candidates that do not worsen the BTrack-beat residual.
     if (!resampled.empty() && beatTimes.size() >= 6 && baselineKept > 0)
     {
         constexpr int kOdfHop = 256; // ~5.8 ms @ 44.1 kHz
@@ -490,11 +380,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         {
             const double btrackPeriodSec = (derivedBpm > 0.0) ? (60.0 / derivedBpm) : 0.5;
             const double preferredLag = btrackPeriodSec * envRate;
-            // Tight ±10 % search window around BTrack's estimate.
-            // We only want sub-grid refinement of an already-correct
-            // tempo, not full re-detection — a wider window admits
-            // half-time / triple-time peaks that would happily out-
-            // score the true period in raw autocorrelation.
+            // Keep refinement near BTrack's octave to avoid half/triple-time peaks.
             const int minLag = std::max(2, static_cast<int>(std::floor(preferredLag * 0.90)));
             const int maxLag = std::max(minLag + 4, static_cast<int>(std::ceil(preferredLag * 1.10)));
             const double bestLag = autocorrPreferredLag(odf, minLag, maxLag, preferredLag);
@@ -517,12 +403,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
                     double acRms = 0.0;
                     int acKept = 0;
                     scoreGridAgainstBeats(beatTimes, acPeriod, acAnchor, acRms, acKept);
-                    // Accept the autocorrelation result if it
-                    // explains BTrack's beats at least as well as
-                    // the baseline. We don't demand a *tighter*
-                    // fit (the period quantisation is precisely
-                    // what's broken in the baseline) — equal-or-
-                    // better is enough.
+                    // Equal-or-better residual is enough because the baseline period is quantised.
                     if (acKept >= baselineKept * 0.8 && acRms <= baselineResidual * 1.05)
                     {
                         silverdaw::log::info("bpm",
@@ -558,20 +439,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         return result;
     }
 
-    // ──────────────────────────────────────────────────────────────────
-    // Step 4: tempo-stability check. BTrack's running estimate settles
-    // over the first few beats; we skip those and look at the spread
-    // of the remaining samples. A spread > 5 % of the mean flags the
-    // clip as variable-tempo so the UI can warn the user (and the
-    // first-clip-on-empty-project seeder can opt out).
-    //
-    // The thresholds are deliberately loose: real recordings of even
-    // metronomically-perfect music carry a small amount of BTrack
-    // estimator jitter (~1-3 %). 5 % keeps that out while still
-    // catching clips whose tempo genuinely drifts. We also require
-    // at least a dozen non-settling samples — very short clips
-    // don't have enough data to draw a stable spread.
-    // ──────────────────────────────────────────────────────────────────
+    // Skip BTrack settling; a loose spread threshold avoids flagging estimator jitter as drift.
     constexpr size_t kSettlingBeats = 4;
     constexpr size_t kMinSamplesForStabilityCheck = 12;
     constexpr double kStabilityThreshold = 0.05; // 5 %
@@ -598,13 +466,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     result.beatAnchorSec = anchorSec;
     result.beatTimesSec = std::move(beatTimes);
     result.variableTempo = variable;
-    // Low-confidence heuristic: a fit RMS residual greater than ~8 %
-    // of one beat period indicates the detected beats don't sit on
-    // a uniform grid (typical of non-rhythmic material like ambient
-    // noise or speech). We also defer to `variableTempo` as a
-    // softer hint. Combined, this auto-classifies the most obvious
-    // false positives without taking away analysis data on real
-    // music with slight tempo drift. Tunable from a corpus run.
+    // High residual plus instability catches obvious non-rhythmic false positives without hiding data.
     const double periodSec = (derivedBpm > 0.0) ? (60.0 / derivedBpm) : 0.5;
     const double relResidual =
         (baselineResidual > 0.0 && std::isfinite(baselineResidual)) ? (baselineResidual / periodSec) : 0.0;
@@ -613,10 +475,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
             ? static_cast<double>(baselineKept) / static_cast<double>(result.beatTimesSec.size())
             : 0.0;
     const bool poorFit = relResidual > 0.08 || (baselineKept > 0 && keptFraction < 0.6);
-    // Variable-tempo alone isn't enough to call something "sample" —
-    // live performances and rubato music drift too. Require an
-    // additional poor-fit indicator before flagging low confidence
-    // automatically.
+    // Tempo drift alone is valid musical material, so require a poor-fit signal too.
     result.lowConfidence = poorFit && (variable || keptFraction < 0.5);
     silverdaw::log::info("bpm", "estimated " + audioFile.getFileName() + " -> " +
                                     juce::String(derivedBpm, 4) + " BPM" + (variable ? " (variable)" : "") +

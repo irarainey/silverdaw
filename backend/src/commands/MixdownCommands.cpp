@@ -21,12 +21,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
                         juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache,
                         std::atomic<bool>& mixdownBusy, std::atomic<bool>& mixdownCancel)
 {
-    // Render a project mixdown offline. Heavy work runs on the
-    // peakPool; results stream back via MIXDOWN_PROGRESS /
-    // MIXDOWN_DONE / MIXDOWN_FAILED. Idempotent under double-
-    // click — if a render is already in flight, reject the new
-    // request with an `invalid` failure rather than starting a
-    // second one.
+    // Double-clicks must not start a second offline render.
     if (mixdownBusy.load())
     {
         auto* obj = new juce::DynamicObject();
@@ -35,9 +30,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
         bridge.broadcast("MIXDOWN_FAILED", juce::var(obj));
         return;
     }
-    // Stop transport (and don't fight an existing play state) so
-    // the live audio device isn't producing sound during the
-    // offline render. The TRANSPORT_PLAY gate above keeps it stopped.
+    // Keep the live audio device silent during offline render.
     engine.pause();
 
     const auto outputPath = tryGetRequiredString(payload, "outputPath").value_or(juce::String{});
@@ -46,9 +39,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     const auto lengthMode = tryGetRequiredString(payload, "lengthMode").value_or(juce::String("trim-to-last-clip"));
     const double lengthMsHint = static_cast<double>(payload.getProperty("lengthMs", 0.0));
     const int bitrateKbps = static_cast<int>(payload.getProperty("bitrateKbps", 192));
-    // Phase A export fields. All optional with safe defaults so
-    // older renderer builds keep working. Validated below before
-    // we hand them to the engine.
+    // Optional for older renderer builds; validated before rendering.
     const int bitDepthRaw = static_cast<int>(payload.getProperty("bitDepth", 16));
     const double tailSecondsRaw = static_cast<double>(payload.getProperty("tailSeconds", 0.0));
     const bool ditherRaw = static_cast<bool>(payload.getProperty("dither", true));
@@ -71,16 +62,9 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
         return;
     }
 
-    // Snapshot the project on the message thread before the
-    // worker dispatches — see rubber-duck finding A.
+    // Snapshot on the message thread before worker dispatch.
     auto snapshot = silverdaw::snapshotProjectForMixdown(projectState);
-    // Re-resolve each clip's source path through the SAME helper
-    // the live engine uses for CLIP_ADD. Without this, mixdown
-    // can open the original MP3/WMA for a clip whose stored
-    // playbackFilePath is empty/stale while live plays the
-    // decoded WAV cache — yielding selective warp failures and
-    // amplitude drift when the two readers' sample rates or
-    // padding/encoder-delay differ. See rubber-duck H2.
+    // Use the live resolver so mixdown matches decoded-cache playback and warp timing.
     for (auto& trackSnap : snapshot.tracks)
     {
         for (auto& clipSnap : trackSnap.clips)
@@ -113,17 +97,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
         return;
     }
 
-    // Align mixdown's internal "project rate" with the live device
-    // rate. The per-clip JUCE chain in MixdownEngine is identical to
-    // live's (AudioFormatReaderSource → OffsetSource → AudioTransport
-    // Source). The transport's internal ResamplingAudioSource uses
-    // linear interpolation, so running mixdown at a different rate
-    // than live changes the source→render resample ratio and can
-    // perceptibly attenuate high frequencies vs live (rubber-duck
-    // pair #2: top remaining cause of "export quieter than live").
-    // We then do the projectRate→outputRate step through the
-    // FinalResampler (libsamplerate SINC), which is higher quality
-    // than the transport's linear interpolator.
+    // Match live device rate before final high-quality resampling to avoid tonal drift.
     {
         const auto deviceSnap = engine.getAudioDevicesSnapshot();
         const int previousRate = snapshot.projectSampleRate;
@@ -143,8 +117,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     silverdaw::MixdownOptions options;
     options.outputFile = juce::File(outputPath);
     options.outputSampleRate = outputSampleRate;
-    // Map and validate format. Anything unrecognised falls back to
-    // WAV so a frontend typo can't produce a binary mismatch.
+    // Unknown format falls back to WAV to avoid binary mismatch.
     if (formatStr == "mp3")
         options.format = silverdaw::MixdownOptions::Format::Mp3;
     else if (formatStr == "flac")
@@ -154,10 +127,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     else
         options.format = silverdaw::MixdownOptions::Format::Wav;
 
-    // Per-format bit-depth validation. The renderer's UI restricts
-    // choices but we still validate here — never trust the
-    // frontend. Reject unsupported combinations rather than
-    // silently quantising.
+    // Reject unsupported bit depths instead of silently quantising.
     const auto rejectInvalid = [&](const juce::String& msg)
     {
         auto* obj = new juce::DynamicObject();
@@ -192,13 +162,10 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
             }
             break;
         case silverdaw::MixdownOptions::Format::Mp3:
-            // MP3 ignores bit-depth; nothing to validate here.
             break;
     }
     options.bitDepth = bitDepthRaw;
-    // Tail seconds: finite, non-negative, capped at 60s. The
-    // engine also clamps but rejecting at the boundary gives a
-    // clearer error than silent clamping.
+    // Reject tail outside the engine clamp range so the user gets a clear error.
     if (! std::isfinite(tailSecondsRaw) || tailSecondsRaw < 0.0 || tailSecondsRaw > 60.0)
     {
         rejectInvalid("tailSeconds must be in [0, 60] (got " +
@@ -209,11 +176,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     options.dither = ditherRaw;
     options.bitrateKbps = bitrateKbps;
 
-    // Loudness block: optional. Accepts `{ mode, targetLufs?,
-    // ceilingDbtp? }` where mode ∈ {off, analyze, normalize}.
-    // Defaults: mode=off, targetLufs=-14, ceilingDbtp=-1.
-    // Normalize requires targetLufs and ceilingDbtp in the
-    // valid ranges; analyze ignores those values.
+    // Normalize requires explicit loudness targets; analyze only validates ranges.
     const auto loudnessVar = payload.getProperty("loudness", juce::var());
     if (loudnessVar.isObject())
     {
@@ -275,7 +238,6 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
                                ? lengthMsHint
                                : projectState.getProjectLengthMs();
     }
-    // File-level metadata (format-agnostic; mapped per-format in the engine).
     const auto md = payload.getProperty("metadata", juce::var());
     if (md.isObject())
     {

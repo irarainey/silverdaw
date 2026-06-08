@@ -87,13 +87,7 @@ const juce::String ProjectState::kDefaultName{"Untitled"};
 
 ProjectState::ProjectState() : root(kProject)
 {
-    // The initial `name=Untitled` write and the empty container children
-    // happen BEFORE we attach the listener so they don't count as
-    // user-initiated edits. Adding the LIBRARY / MARKERS containers up
-    // front means add-then-remove cycles return to byte-identical state
-    // (the containers don't appear and disappear with their contents),
-    // so the clean-snapshot comparison correctly reports "clean" after
-    // a net-zero edit sequence.
+    // Initialise before listener attach so defaults don't count as user edits.
     root.setProperty(kName, kDefaultName, nullptr);
     root.appendChild(juce::ValueTree(kLibrary), nullptr);
     root.appendChild(juce::ValueTree(kMarkers), nullptr);
@@ -108,10 +102,7 @@ ProjectState::~ProjectState()
 
 void ProjectState::markClean()
 {
-    // Capture the current tree as the new clean baseline so subsequent
-    // mutations are compared against the just-saved state. Any net-zero
-    // edit sequence (e.g. add + remove a library item) will then
-    // correctly return the project to its clean status.
+    // Snapshot the new baseline so later net-zero edits can return to clean.
     cleanSnapshot = root.createCopy();
     if (dirty) setDirty(false);
 }
@@ -138,10 +129,7 @@ void ProjectState::setDirty(bool d)
 
 void ProjectState::recomputeDirty()
 {
-    // Compare the live tree against the last clean snapshot. If they
-    // match, the project has effectively returned to its saved state
-    // and should be considered clean again — even if individual
-    // listener callbacks tried to flip dirty=true along the way.
+    // Equivalence against the clean snapshot lets net-zero edits clear dirty.
     if (!cleanSnapshot.isValid())
     {
         setDirty(true);
@@ -180,12 +168,7 @@ void ProjectState::valueTreeChildOrderChanged(juce::ValueTree& /*parent*/, int /
 
 void ProjectState::setNonDirtyRootProperty(const juce::Identifier& id, const juce::var& value)
 {
-    // Write to the live tree under suppression (no dirty transition),
-    // then mirror into cleanSnapshot so the listener's equivalence
-    // check never sees a delta on this property after an undo. Without
-    // the mirror the tree silently drifts away from the snapshot and
-    // any subsequent net-zero edit fails the equivalence test, leaving
-    // the project stuck as "dirty" with nothing actually to save.
+    // Mirror into cleanSnapshot so non-edit state cannot create phantom dirty deltas.
     const SuppressDirtyScope suppress(*this);
     root.setProperty(id, value, nullptr);
     if (cleanSnapshot.isValid())
@@ -211,10 +194,7 @@ bool ProjectState::mutateDerivedLibraryItem(
     }
     if (!liveItem.isValid()) return false;
 
-    // Suppress dirty transitions for both the live write and the
-    // mirror write — the property change listener fires for any
-    // descendant of `root`, so mutating a library item without
-    // suppression would mark the project dirty.
+    // Suppress both live and mirror writes because descendant listeners mark dirty.
     const SuppressDirtyScope suppress(*this);
     mutator(liveItem);
 
@@ -281,17 +261,13 @@ juce::ValueTree ProjectState::findClip(const juce::String& clipId) const
 
 double ProjectState::getViewPxPerSecond() const
 {
-    // 100 px/s default matches the renderer's `DEFAULT_PX_PER_SECOND` so
-    // a freshly-created project opens at the same zoom that was used
-    // before this preference existed.
+    // Match renderer default zoom for projects saved before this preference.
     return static_cast<double>(root.getProperty(kViewPxPerSecond, 100.0));
 }
 
 void ProjectState::setViewPxPerSecond(double pxPerSecond)
 {
-    // Zoom is view state, same as scroll — never marks dirty, and
-    // mirrored into cleanSnapshot so a later undo cleanly returns to
-    // the un-dirty baseline.
+    // Mirror zoom into cleanSnapshot so it never marks dirty.
     setNonDirtyRootProperty(kViewPxPerSecond, pxPerSecond);
 }
 
@@ -302,9 +278,7 @@ double ProjectState::getViewScrollX() const
 
 void ProjectState::setViewScrollX(double scrollX)
 {
-    // Scroll is a view setting — never marks dirty, and mirrored into
-    // cleanSnapshot so a later undo cleanly returns to the un-dirty
-    // baseline.
+    // Mirror scroll into cleanSnapshot so it never marks dirty.
     setNonDirtyRootProperty(kViewScrollX, scrollX);
 }
 
@@ -315,8 +289,7 @@ juce::String ProjectState::getViewSelectedTrack() const
 
 void ProjectState::setViewSelectedTrack(const juce::String& trackId)
 {
-    // Selection is navigation, not a content edit — view state, never
-    // marks dirty (mirrors scroll/zoom).
+    // Selection is navigation, not a content edit.
     setNonDirtyRootProperty(kViewSelectedTrack, trackId);
 }
 
@@ -337,11 +310,7 @@ double ProjectState::getPlayheadMs() const
 
 void ProjectState::setPlayheadMs(double playheadMs)
 {
-    // Playhead position is a transient transport / view value — never
-    // marks dirty. Seeks/stops mirror into this property, and save
-    // captures the current engine position immediately before writing.
-    // Mirrored into cleanSnapshot so transport movement post-markClean
-    // doesn't leave the project stuck dirty after a net-zero edit+undo.
+    // Mirror playhead into cleanSnapshot so transport movement cannot cause phantom dirty.
     setNonDirtyRootProperty(kPlayheadMs, playheadMs);
 }
 
@@ -352,8 +321,7 @@ double ProjectState::getBpm() const
 
 void ProjectState::setBpm(double bpm)
 {
-    // Tempo is a meaningful project edit; record via the undo manager
-    // so Ctrl+Z reverts a tempo change.
+    // Tempo edits belong in undo.
     root.setProperty(kBpm, bpm, &undoManager);
 }
 
@@ -364,8 +332,7 @@ double ProjectState::getProjectLengthMs() const
 
 void ProjectState::setProjectLengthMs(double lengthMs)
 {
-    // Length is a meaningful edit (the user explicitly chose this
-    // length via the transport bar) — recorded for undo.
+    // User-chosen length edits belong in undo.
     root.setProperty(kProjectLengthMs, lengthMs, &undoManager);
 }
 
@@ -381,8 +348,7 @@ juce::String ProjectState::getAudioOutputDeviceName() const
 
 void ProjectState::setAudioOutput(const juce::String& typeName, const juce::String& deviceName)
 {
-    // Empty strings are persisted as absent properties so projects
-    // without a preference don't carry the keys forward at all.
+    // Empty strings are persisted as absent properties.
     if (typeName.isEmpty())
     {
         root.removeProperty(kAudioOutputTypeName, &undoManager);
@@ -408,9 +374,7 @@ int ProjectState::getTargetSampleRate() const
 
 void ProjectState::setTargetSampleRate(int sampleRate)
 {
-    // Empty value is persisted as an absent property so projects that
-    // never set the field don't carry the key forward at all. Same
-    // shape as the audio-output preference.
+    // Empty target sample rate is persisted as an absent property.
     if (sampleRate <= 0)
     {
         root.removeProperty(kTargetSampleRate, &undoManager);
@@ -428,10 +392,7 @@ juce::String ProjectState::getExportSettingsJson() const
 
 void ProjectState::setExportSettingsJson(const juce::String& json)
 {
-    // No undo entry (export prefs are not part of the editing undo
-    // stack). Pass nullptr so the value-tree mutation doesn't get
-    // attached to any open transaction. The listener still fires so
-    // dirty tracking + clean-snapshot comparison work normally.
+    // Export prefs skip undo but still mark dirty through the listener.
     if (json.isEmpty())
     {
         root.removeProperty(kExportSettingsJson, nullptr);
@@ -444,9 +405,7 @@ void ProjectState::setExportSettingsJson(const juce::String& json)
 
 float ProjectState::getMasterVolume() const
 {
-    // Default unity when absent. Property is only stored when the
-    // user has moved the master slider, keeping legacy projects
-    // round-trip clean.
+    // Unity is absent so legacy projects round-trip clean.
     return static_cast<float>(static_cast<double>(root.getProperty(kMasterVolume, 1.0)));
 }
 

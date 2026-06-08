@@ -65,8 +65,7 @@ void handleProjectSetDelay(const juce::var& payload, silverdaw::AudioEngine& eng
     const float canonTone = projectState.getProjectDelayTone();
     const float canonMix = projectState.getProjectDelayMix();
 
-    // Resolve the tempo-locked note value to milliseconds via the shared
-    // helper so the live engine and the offline mixdown agree exactly.
+    // Shared resolver keeps live playback and offline mixdown aligned.
     const double delayMs = silverdaw::delayNoteToMs(canonNote, projectState.getBpm());
     engine.setProjectDelay(delayMs, canonFeedback, canonTone, canonMix, /*snap*/ false);
 

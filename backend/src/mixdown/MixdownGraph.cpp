@@ -7,11 +7,6 @@
 namespace silverdaw::mixdown_graph
 {
 
-/**
- * Build one OfflineClip from the snapshot entry. Returns nullptr on failure
- * (the caller decides how to surface that). `formatManager` must outlive the
- * returned clip.
- */
 std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapshot& clip,
                                               const juce::String& trackId,
                                               float trackGain,
@@ -42,14 +37,8 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
         return nullptr;
     }
 
-    // ReaderSource takes ownership of the reader (deleteWhenRemoved=true).
     out->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
 
-    // OffsetSource positions are SOURCE-rate frames — identical convention
-    // to AudioEngine::addClip. AudioTransportSource's internal resampler
-    // maps render-rate (projectRate) cursors back to source-rate cursors,
-    // so the offset/in/duration we set here are observed correctly when
-    // the transport advances.
     out->offsetSource = std::make_unique<OffsetSource>(out->readerSource.get());
     out->offsetSource->setOffsetSamples(
         static_cast<juce::int64>(clip.offsetMs * out->sourceRate / 1000.0));
@@ -57,19 +46,12 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
         static_cast<juce::int64>(clip.inMs * out->sourceRate / 1000.0));
     out->offsetSource->setClipDurationSamples(
         static_cast<juce::int64>(clip.durationMs * out->sourceRate / 1000.0));
-    // Volume shape runs inside the same OffsetSource as the live engine
-    // (post-warp, pre-transport-resample), so the export carries the
-    // identical envelope the user hears. Empty point list => no shape.
     out->envelopeSnapshot = EnvelopeSnapshot::fromVarArray(clip.envelopePoints);
     if (out->envelopeSnapshot != nullptr && !out->envelopeSnapshot->isEmpty())
     {
         out->offsetSource->setEnvelopeSnapshot(out->envelopeSnapshot.get());
     }
 
-    // §12.1 transition edge-fade — applied inside the SAME OffsetSource stage
-    // as live (post-warp, pre-transport-resample), so the export crossfades
-    // identically. Master-timeline ms convert to source-rate frames with the
-    // same factor as the offset/in/duration above. No transition => no shape.
     if (clip.edgeFadeIn || clip.edgeFadeOut)
     {
         const auto toSrc = [&](double ms) {
@@ -86,9 +68,6 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
 
     if (clip.warpEnabled)
     {
-        // Same constructor invocation pattern as AudioEngine::makeWarpProcessor.
-        // WarpProcessor is at SOURCE rate so its priming, start-delay and
-        // transient analysis windows are identical to live.
         out->warp = std::make_unique<WarpProcessor>(out->sourceChannels,
                                                     out->sourceRate,
                                                     parseWarpMode(clip.warpMode));
@@ -102,11 +81,6 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
     }
 
     out->transport = std::make_unique<juce::AudioTransportSource>();
-    // readAhead=0, no background thread — offline rendering wants
-    // deterministic synchronous reads. The transport still gets the
-    // sourceSampleRateToCorrectFor argument so JUCE inserts its
-    // internal ResamplingAudioSource between OffsetSource (source rate)
-    // and us (project rate).
     out->transport->setSource(out->offsetSource.get(),
                               0, nullptr,
                               out->sourceRate, out->sourceChannels);
@@ -114,14 +88,8 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
     out->transport->setPosition(0.0);
     out->transport->start();
 
-    // Per-clip summing adapter for `BusGraph::TrackRuntime`
-    // attachment (Phase 5 step 1d). Wraps the transport with mono→
-    // stereo duplication and constant `trackGain` multiplication
-    // (bit-equivalent to the pre-1d `mixClipBlock` summing path).
     out->summingSource = std::make_unique<ClipSummingSource>(
         out->transport.get(), trackGain, out->sourceChannels);
-    // Compute timeline end in projectRate frames so the pump loop can
-    // retire the clip when its window closes.
     const double endMs = clipTimelineEndMs(clip);
     out->timelineEndFrames =
         static_cast<juce::int64>(std::ceil(endMs * static_cast<double>(projectSampleRate) / 1000.0));

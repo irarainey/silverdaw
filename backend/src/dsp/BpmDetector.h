@@ -12,85 +12,31 @@ struct BpmAnalysis
 {
     /** Estimated tempo in BPM. 0 when no plausible tempo was found. */
     double bpm = 0.0;
-    /** Phase of the ideal beat grid: implied time (seconds, can be
-     *  negative) of "beat 0" in the linear-regression fit. The
-     *  renderer uses this with `bpm` to draw a synthetic beat grid
-     *  that's robust to BTrack's per-beat jitter. */
+    /** LSQ beat-grid phase; can be negative so rendered grids stay stable despite beat jitter. */
     double beatAnchorSec = 0.0;
-    /** Beat positions in seconds from the start of the source file —
-     *  the raw per-beat detections, kept so a future "edit beats on
-     *  a clip" tool can use them as starting points for manual
-     *  refinement. May contain outliers; rendering / snap reads the
-     *  `bpm` + `beatAnchorSec` grid instead. */
+    /** Raw detections may contain outliers; render/snap use `bpm` + `beatAnchorSec`. */
     std::vector<double> beatTimesSec;
-    /** True when BTrack's running tempo estimate fluctuated by more
-     *  than ~2 % over the analysis window (after a short settling
-     *  period). Drives the "variable tempo" badge on the library tile;
-     *  the project-BPM seed logic suppresses itself for these files
-     *  so a wobbly groove doesn't pick a misleading project tempo. */
+    /** Suppresses project-BPM seeding when BTrack's post-settling tempo spread is high. */
     bool variableTempo = false;
-    /** True when the BPM/beat result looks unlikely to reflect a
-     *  real musical groove — used to auto-classify items as
-     *  "non-musical samples" (rain ambience, vocal one-shots, sound
-     *  effects). Currently driven by the LSQ-fit RMS residual being
-     *  large relative to a beat period, the fraction of detected
-     *  beats kept after outlier rejection, and the variable-tempo
-     *  flag. The renderer can override via `sampleMode`. */
+    /** Marks likely non-rhythmic detections; the renderer can override via `sampleMode`. */
     bool lowConfidence = false;
 };
 
-/**
- * Offline BPM + beat-position detection using the BTrack algorithm
- * (Stark / Davies / Plumbley, Queen Mary University of London).
- *
- * Workflow:
- *   1. Open the file via the supplied `juce::AudioFormatManager`.
- *   2. Decode the whole capped range to a single mono float buffer.
- *   3. Resample to BTrack's expected 44.1 kHz with libsamplerate
- *      (`src_simple`, one-shot — much simpler than the chunked
- *      interpolator we tried first and avoids the gotchas with
- *      JUCE's interpolator returning "input samples consumed").
- *   4. Feed the mono signal into BTrack frame-by-frame at the
- *      default hop=512 / frame=1024 settings.
- *   5. Record a beat-time entry for every frame where
- *      `beatDueInCurrentFrame()` fires, plus the running tempo
- *      estimate sampled at each beat.
- *   6. Final tempo = `getCurrentTempoEstimate()`, clamped into
- *      `[kMinPlausibleBpm, kMaxPlausibleBpm]`.
- *
- * Designed to run on a background worker thread (the existing peaks
- * pool) — no JUCE message-thread or audio-thread interaction.
- */
+// Offline BTrack analysis; run only on workers, never the audio or message thread.
 class BpmDetector
 {
   public:
-    /** Sample rate BTrack was tuned for. */
     static constexpr double kAnalysisSampleRate = 44100.0;
-    /** BTrack hop size. Smaller than BTrack's default 512 so offline
-     *  beat positions aren't quantised to 11.6 ms steps, but not as
-     *  expensive as a 128-sample hop. */
+    /** Smaller than BTrack's default to reduce offline beat-position quantisation. */
     static constexpr int kHopSize = 256;
-    /** BTrack frame size. Keep a 1024-sample spectral window while
-     *  advancing in 128-sample hops for finer timing. */
     static constexpr int kFrameSize = 1024;
-    /** Plausibility window for a final estimate. Anything outside is
-     *  treated as "didn't detect anything useful" and reported as 0. */
+    /** Anything outside the musical plausibility window is reported as no tempo. */
     static constexpr double kMinPlausibleBpm = 40.0;
     static constexpr double kMaxPlausibleBpm = 240.0;
-    /** Cap the amount of audio fed to BTrack — long files don't yield
-     *  better estimates and the user shouldn't wait for the whole
-     *  thing. Two minutes is enough to capture a steady tempo on
-     *  music-style material. */
+    /** Cap analysis because long files rarely improve tempo confidence enough to justify the wait. */
     static constexpr double kMaxAnalysisSeconds = 60.0;
 
-    /**
-     * Run the offline analysis on `audioFile`. Returns a populated
-     * `BpmAnalysis`; an empty result (`bpm == 0`, empty beats) means
-     * the file was unreadable, the decode failed, or no plausible
-     * tempo was detected. Blocking — call from a worker thread, not
-     * the audio or message thread. `formatManager` must outlive the
-     * call.
-     */
+    /** Blocking; call from a worker, and keep `formatManager` alive for the call. */
     BpmAnalysis analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager);
 };
 

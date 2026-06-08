@@ -7,43 +7,14 @@
 namespace silverdaw
 {
 
-/**
- * Per-track "Tone" EQ — the simple, fixed-frequency 3-band tilt + low-cut
- * documented in §7.9.3 / §7.10 of `.ref/daw-design-plan.md`. Deliberately
- * NOT a parametric EQ: three musical bands (Bass / Mid / Treble) plus a
- * one-button Low Cut, matching the GarageBand-style simplicity ethos.
- *
- *   Bass   = low  shelf @ 250 Hz   (-15..+15 dB)
- *   Mid    = peak       @ 1 kHz    (-15..+15 dB, fixed Q)
- *   Treble = high shelf @ 4 kHz    (-15..+15 dB)
- *   LowCut = 4th-order Butterworth high-pass @ 120 Hz, 24 dB/oct (toggle)
- *   HighCut= 4th-order Butterworth low-pass  @ 6 kHz, 24 dB/oct (toggle)
- *
- * **Threading.** This object is owned by `TrackChain`, which is driven by
- * the audio thread inside `BusGraph::getNextAudioBlock`. Parameter updates
- * (`setParams`) arrive from the message thread but always under the same
- * `BusGraph` CriticalSection the audio thread holds while calling
- * `process` — so the plain (non-atomic) target members are race-free
- * without extra synchronisation. `setParams` only stores the targets; all
- * trig-heavy coefficient recomputation happens on the audio thread inside
- * `process`, so the message thread never blocks on DSP math.
- *
- * **Realtime safety.** No allocation, locking, or logging in `process`.
- * Coefficients are recomputed only while a smoothed parameter is still
- * moving toward its target. Targets are smoothed per-block with a
- * block-size-independent one-pole coefficient so drag gestures don't
- * zipper. `setParams(..., snap=true)` collapses the smoother instantly —
- * used for project load / mixdown setup / newly-created runtimes so the
- * offline export starts at the steady-state response (no ramp-from-flat
- * divergence between live and export).
- */
+// Per-track Tone EQ owned by `TrackChain`; message-thread setters publish under the `BusGraph` lock.
+// `process` stays allocation/lock/log free, and snap paths keep live/export startup parity.
 class ToneEq
 {
 public:
     ToneEq() = default;
 
-    /** Size internal state and snap the smoother to the current targets.
-     *  Re-called whenever sample rate / channel count changes. */
+    /** Recalled on sample-rate or channel-count changes. */
     void prepare(double sampleRate, int numChannels) noexcept
     {
         sr = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
@@ -54,17 +25,10 @@ public:
         recomputeCoeffs();
     }
 
-    /** Clear filter histories (transport stop / catastrophic seek). Keeps
-     *  coefficients and targets intact. */
+    /** Clears filter histories on stop/seek without changing targets. */
     void reset() noexcept { clearState(); }
 
-    /**
-     * Publish new tone targets. Called on the message thread under the
-     * owning `BusGraph` lock. `snap` collapses the smoother so the new
-     * response is in effect on the very next block (load / mixdown /
-     * runtime-creation paths use this for live↔export parity); the live
-     * UI-gesture path passes `snap=false` to glide.
-     */
+    /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity. */
     void setParams(float bassDb, float midDb, float trebleDb, bool lowCutOn,
                    bool highCutOn, bool snap) noexcept
     {
@@ -81,7 +45,6 @@ public:
         }
     }
 
-    /** In-place per-block processing over `[startSample, startSample+numSamples)`. */
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
         if (! prepared || numSamples <= 0) return;
@@ -118,42 +81,22 @@ public:
 private:
     static constexpr int kMaxChannels = 2;
 
-    // Fixed band centres / type-specific Q (see class doc). Corners are
-    // pulled in from the spectral extremes (Bass 120→250 Hz, Treble
-    // 6k→4k) so each band acts on audible low-mid body / presence rather
-    // than only sub-bass and air, giving the controls obvious impact.
+    // Corners target audible body/presence rather than only spectral extremes.
     static constexpr double kBassHz = 250.0;
     static constexpr double kMidHz = 1000.0;
     static constexpr double kTrebleHz = 4000.0;
     static constexpr double kShelfSlope = 1.0;       // S=1, maximally flat shelf
     static constexpr double kMidQ = 0.9;             // gentle musical peak
-    // Low Cut and High Cut are 4th-order Butterworth filters, each realised
-    // as two cascaded 2nd-order sections; these are the Butterworth section
-    // Qs that combine to a maximally-flat 24 dB/oct response (no resonant
-    // bump at the corner). Shared by both the high-pass and low-pass designs.
+    // Butterworth section Qs avoid a resonant bump at the cutoff.
     static constexpr double kButterQ1 = 0.54119610;
     static constexpr double kButterQ2 = 1.30656296;
 
-    // Low-cut is a 4th-order high-pass (two cascaded biquads) whose corner
-    // glides instead of being switched in/out — that avoids the comb/phase
-    // coloration a dry/wet blend would cause and the click a cold-state
-    // enable would cause. "Off" parks the corner at the identity sentinel
-    // (0 Hz) so a flat, low-cut-off track is bit-exact passthrough (preserves
-    // the §7.9.6 parity guarantee); enabling glides the corner up to 120 Hz.
-    // Corners at/below kLowCutIdentityHz resolve to true identity coefficients
-    // — a ~12 Hz high-pass is already inaudible, so the tiny step to exact
-    // identity at the bottom of the glide is imperceptible.
+    // Glide the corner instead of dry/wet blending to avoid clicks and combing; off resolves to identity.
     static constexpr float kLowCutOnHz = 120.0F;
     static constexpr float kLowCutOffHz = 0.0F;
     static constexpr float kLowCutIdentityHz = 12.0F;
 
-    // High-cut mirrors low-cut but as a 4th-order low-pass. "Off" parks the
-    // corner at a high sentinel (above the audible band) which resolves to
-    // identity, so a flat, high-cut-off track is bit-exact passthrough
-    // (preserves the §7.9.6 parity guarantee); enabling glides the corner
-    // down to 6 kHz. Corners at/above kHighCutIdentityHz resolve to true
-    // identity coefficients — a >20 kHz low-pass is already inaudible, so the
-    // tiny step to exact identity at the top of the glide is imperceptible.
+    // High-cut mirrors low-cut; the high off-sentinel resolves to identity.
     static constexpr float kHighCutOnHz = 6000.0F;
     static constexpr float kHighCutOffHz = 24000.0F;
     static constexpr float kHighCutIdentityHz = 20000.0F;
@@ -161,8 +104,6 @@ private:
     static constexpr float kDbEpsilon = 1.0e-3F;
     static constexpr double kSmoothTauSeconds = 0.02; // 20 ms glide
 
-    /** One stereo biquad: shared coefficients, per-channel Transposed
-     *  Direct-Form II state. */
     struct Biquad
     {
         float b0 = 1.0F, b1 = 0.0F, b2 = 0.0F, a1 = 0.0F, a2 = 0.0F;
@@ -219,8 +160,7 @@ private:
 
     float blockAlpha(int numSamples) const noexcept
     {
-        // Per-block one-pole retention factor. Independent of block size:
-        // a larger block advances the glide proportionally further.
+        // Block-size-independent glide.
         const double a = std::exp(-static_cast<double>(numSamples)
                                   / (kSmoothTauSeconds * sr));
         return static_cast<float>(juce::jlimit(0.0, 1.0, a));
@@ -288,8 +228,6 @@ private:
         }
     }
 
-    // ── RBJ Audio-EQ-Cookbook biquad designs (normalised by a0) ───────
-
     void designPeak(Biquad& f, double freq, float gainDb) noexcept
     {
         if (std::abs(gainDb) < kDbEpsilon) { f.setIdentity(); return; }
@@ -349,9 +287,7 @@ private:
         const double alpha = sw / (2.0 * q);
         const double onePlusCw = 1.0 + cw;
 
-        // RBJ high-pass numerator uses (1 + cos w0). Using (1 - cos w0) here
-        // would yield a LOW-pass — i.e. "Low Cut" would strip everything
-        // ABOVE the corner and leave only sub-bass, sounding like a mute.
+        // High-pass needs (1 + cos w0); the low-pass numerator would invert Low Cut.
         f.setNormalized(onePlusCw / 2.0, -onePlusCw, onePlusCw / 2.0,
                         1.0 + alpha, -2.0 * cw, 1.0 - alpha);
     }
@@ -364,15 +300,14 @@ private:
         const double alpha = sw / (2.0 * q);
         const double oneMinusCw = 1.0 - cw;
 
-        // RBJ low-pass numerator uses (1 - cos w0) — the mirror image of the
-        // high-pass. This is "High Cut": it passes lows and removes highs.
+        // Low-pass mirrors the high-pass numerator for High Cut.
         f.setNormalized(oneMinusCw / 2.0, oneMinusCw, oneMinusCw / 2.0,
                         1.0 + alpha, -2.0 * cw, 1.0 - alpha);
     }
 
     double omega(double freq) const noexcept
     {
-        // Keep the corner safely below Nyquist for any supported rate.
+        // Keep the corner safely below Nyquist.
         const double f = juce::jlimit(1.0, sr * 0.49, freq);
         return 2.0 * juce::MathConstants<double>::pi * f / sr;
     }

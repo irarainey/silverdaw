@@ -49,8 +49,7 @@ bool ProjectState::hasTrack(const juce::String& trackId) const
 
 bool ProjectState::moveTrack(const juce::String& trackId, int newIndex)
 {
-    // Only `TRACK`-typed children count toward the visible track order;
-    // PROJECT may also hold LIBRARY / MARKERS at the same depth.
+    // Visible track order ignores sibling LIBRARY/MARKERS nodes.
     int currentIndex = -1;
     int trackChildCount = 0;
     for (int i = 0; i < root.getNumChildren(); ++i)
@@ -64,11 +63,7 @@ bool ProjectState::moveTrack(const juce::String& trackId, int newIndex)
     }
     if (currentIndex < 0 || trackChildCount <= 1)
         return false;
-    // `newIndex` arrives in TRACK-ordinal space (i.e. ignoring sibling
-    // LIBRARY / MARKERS nodes); translate it back into the absolute
-    // child index ValueTree expects. We do this by walking forwards
-    // skipping non-TRACK children until we've stepped over `newIndex`
-    // tracks.
+    // Translate track-ordinal index back to ValueTree child index.
     const int clampedOrdinal = juce::jlimit(0, trackChildCount - 1, newIndex);
     int absoluteTarget = -1;
     int seen = 0;
@@ -172,9 +167,7 @@ bool ProjectState::setTrackMuted(const juce::String& trackId, bool muted)
     }
     else
     {
-        // Drop the property entirely when false so saved files don't
-        // accumulate `muted: false` noise. Same convention as the rest
-        // of the codebase (e.g. variableTempo, lowConfidence).
+        // False is suppressed to avoid persisted `muted:false` noise.
         track.removeProperty(kMuted, &undoManager);
     }
     return true;
@@ -195,10 +188,7 @@ bool ProjectState::setTrackSoloed(const juce::String& trackId, bool soloed)
     return true;
 }
 
-// Per-track row height clamps. Must agree with the renderer's
-// MIN_TRACK_HEIGHT / MAX_TRACK_HEIGHT in
-// `frontend/src/renderer/src/lib/timeline/constants.ts` so the backend
-// rejects values outside the resize-handle's range.
+// Must match renderer resize limits so backend rejects out-of-range heights.
 static constexpr double kMinTrackHeightPx = 60.0;
 static constexpr double kMaxTrackHeightPx = 400.0;
 
@@ -224,12 +214,7 @@ bool ProjectState::setTrackHeightPx(const juce::String& trackId, double heightPx
     return true;
 }
 
-// Float-precision tolerance for the per-track send setters. A drag
-// gesture that lands within ~1e-4 of zero is treated as "off" so the
-// property is removed from the tree, keeping legacy snapshots
-// byte-equivalent and avoiding silent dirty-flagging from noisy UI
-// streams. Same epsilon is used to compare against the prior stored
-// value to decide whether anything actually changed.
+// Send epsilon suppresses near-zero UI noise and keeps legacy snapshots byte-equivalent.
 static constexpr float kSendEpsilon = 1.0e-4f;
 
 static bool nearlyZero(float value) noexcept
@@ -242,9 +227,7 @@ static bool nearlyEqual(float a, float b) noexcept
     return std::abs(a - b) < kSendEpsilon;
 }
 
-// Apply a `[0, 1]`-clamped float to `track` under `id`, mirroring the
-// "absent == default(0)" convention used by every other Phase 5 setter.
-// Returns `true` iff the persisted shape actually changed.
+// `absent == 0` keeps default sends out of persisted shape.
 static bool applyClampedSend(juce::ValueTree& track,
                              const juce::Identifier& id,
                              float value,
@@ -306,9 +289,7 @@ float ProjectState::getTrackDelaySend(const juce::String& trackId) const
     return static_cast<float>(static_cast<double>(track.getProperty(kSendDelay, 0.0)));
 }
 
-// Per-track equal-power pan. Stored signed in `[-1, 1]` (0 = centre) and
-// suppressed within `kPanEpsilon` of zero so a centred (default) track
-// carries no `pan` property and legacy projects round-trip byte-clean.
+// Near-centre pan is suppressed so legacy projects round-trip byte-clean.
 static constexpr float kPanEpsilon = 1.0e-4f;
 
 static bool applyClampedPan(juce::ValueTree& track,
@@ -358,15 +339,9 @@ float ProjectState::getTrackPan(const juce::String& trackId) const
     return static_cast<float>(static_cast<double>(track.getProperty(kPan, 0.0)));
 }
 
-// ─── Phase 5: per-track Tone / Leveler, per-clip Envelope,
-// ─── project-shared Reverb / Delay. All follow the same
-// ─── default-suppression contract as `setTrackSends`: setters return
-// ─── `true` only when the stored shape changes, so dispatchers can
-// ─── skip ack/undo/dirty on no-op writes.
+// Default suppression lets dispatchers skip ack/undo/dirty on no-op writes.
 
-// Per-parameter epsilons. dB knobs are perceptibly stable around
-// ~0.01 dB; ms knobs at the sub-millisecond level are below the
-// renderer's pixel resolution.
+// Epsilons sit below perceptible or renderer-visible resolution.
 static constexpr float kToneDbEpsilon = 1.0e-3f;
 static constexpr float kLevelerEpsilon = 1.0e-4f;
 static constexpr float kReverbEpsilon = 1.0e-4f;
@@ -495,9 +470,6 @@ float ProjectState::getTrackLevelerAmount(const juce::String& trackId) const
     return static_cast<float>(static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
 }
 
-// Returns the existing envelope array as a copy or an empty array if
-// the property is absent. Used both by `getClipEnvelope` for outside
-// callers and for change-detection inside the setter.
 static juce::Array<juce::var> readEnvelopeArray(const juce::ValueTree& clip,
                                                 const juce::Identifier& id)
 {
@@ -530,10 +502,7 @@ bool ProjectState::setClipEnvelope(const juce::String& clipId,
     auto clip = findClip(clipId);
     if (!clip.isValid()) return false;
 
-    // Normalise: clamp, sort ascending by timeMs, reject duplicate
-    // times. An empty input array clears the envelope entirely
-    // (property removed) — that's the "default" shape that round-trips
-    // legacy projects unchanged.
+    // Normalise envelopes so default/duplicate shapes do not pollute persisted state.
     juce::Array<juce::var> normalised;
     normalised.ensureStorageAllocated(points.size());
     for (const auto& p : points)
@@ -609,10 +578,7 @@ float ProjectState::getProjectReverbMix() const
     return static_cast<float>(static_cast<double>(root.getProperty(kReverbMix, 0.0)));
 }
 
-// Whitelist of legal delay note values. Anything else (including
-// whitespace variants like " 1/8" or case mismatches) is rejected
-// without mutating the tree so the persisted shape can't get into
-// an unknown state via a hostile / mis-versioned client.
+// Reject unknown delay note values so hostile clients cannot persist unsupported state.
 static bool isLegalDelayNoteValue(const juce::String& v)
 {
     return v == "1/4" || v == "1/8" || v == "1/8T" || v == "1/16";
@@ -625,8 +591,7 @@ bool ProjectState::setProjectDelay(const juce::String& noteValue, float feedback
 
     bool changed = false;
 
-    // Default note value is "1/8" — suppress that exact string so a
-    // never-touched delay project rounds-trips with no property set.
+    // Suppress the default note so untouched delay state stays absent.
     const bool hadNote = root.hasProperty(kDelayNoteValue);
     const auto prevNote = hadNote ? root.getProperty(kDelayNoteValue).toString() : juce::String("1/8");
     if (noteValue == "1/8")

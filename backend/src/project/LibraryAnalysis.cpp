@@ -51,8 +51,7 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
 {
     silverdaw::log::info("bpmjob", "seed check for itemId=" + itemId);
     const auto& tree = projectState.getTree();
-    // Find the library item + its stored BPM. Bail if either is
-    // missing — only useful when the analysis has actually landed.
+    // Seeding only makes sense once the analysed item has a stored BPM.
     const auto library = tree.getChildWithName(juce::Identifier{"LIBRARY"});
     if (!library.isValid())
     {
@@ -91,9 +90,7 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
         silverdaw::log::info("bpmjob", "seed skipped for itemId=" + itemId + " (itemBpm=0)");
         return;
     }
-    // Effective sample classification: user override wins; otherwise
-    // fall back to the auto-detected low-confidence flag. Non-musical
-    // samples must never drag the project tempo — skip the seed.
+    // User classification wins; non-musical samples must not seed tempo.
     const bool effectivelySample =
         itemSampleMode == "sample" || (itemSampleMode != "music" && itemLowConfidence);
     if (effectivelySample)
@@ -126,8 +123,7 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
         return;
     }
 
-    // Gate 2: no other library item should already have a BPM (the seed
-    // has effectively run on an earlier import).
+    // Gate 2: another BPM means the seed already ran on an earlier import.
     int otherItemsWithBpm = 0;
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
@@ -162,8 +158,7 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
 
 namespace
 {
-// Decode → analyse on a worker thread, then marshal the ValueTree writes +
-// broadcasts back to the message thread via MessageManager::callAsync.
+// Worker analysis must marshal ValueTree writes and broadcasts to the message thread.
 void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                      AudioEngine& engine, ProjectState& projectState,
                      BridgeServer& bridge, const DecodedCache& decodedCache,
@@ -171,24 +166,20 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
 {
     silverdaw::log::info("bpmjob", "start itemId=" + itemId + " file=" + filePath.getFileName());
 
-    // Step 1: decode the whole source into a 16-bit PCM WAV cache (no-op if a
-    // cache entry already exists). The engine reads this cheap PCM for all
-    // subsequent CLIP_ADDs of the file instead of decoding on every block.
+    // Decode once so later clip adds use cheap PCM instead of block-time decoding.
     const auto cachedFile = recreateDecodedCache
                                 ? decodedCache.recreateDecoded(filePath, engine.getFormatManager())
                                 : decodedCache.ensureDecoded(filePath, engine.getFormatManager());
     const juce::String cachedPath = cachedFile.existsAsFile() ? cachedFile.getFullPathName() : juce::String();
 
-    // Step 2: analyse. Prefer the cached WAV — faster to decode AND identical
-    // to what the engine plays, so reported beat times line up with playback.
+    // Analyse the cached WAV so beat times match playback.
     const juce::File analysisFile = cachedFile.existsAsFile() ? cachedFile : filePath;
     silverdaw::BpmDetector detector;
     const silverdaw::BpmAnalysis analysis = detector.analyse(analysisFile, engine.getFormatManager());
     if (analysis.bpm <= 0.0)
     {
         silverdaw::log::info("bpmjob", "no plausible BPM for itemId=" + itemId);
-        // Still surface the decoded-cache path so future CLIP_ADDs use the
-        // cheap WAV: broadcast a minimal zero-BPM analysis envelope.
+        // Still publish the cache path so future clip adds use the WAV.
         if (cachedPath.isNotEmpty() || recreateDecodedCache)
         {
             juce::MessageManager::callAsync(
@@ -251,10 +242,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
             }
             bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
 
-            // Late auto-warp: clips dropped before this item's BPM was known
-            // carry `pendingAutoWarp`. With a stable BPM (skip variable-tempo
-            // and low-confidence cases), flip warp on so the user gets the
-            // intent they signalled at drop time without further action.
+            // Late auto-warp preserves the user's drop-time intent once stable BPM is known.
             DBG("[warp/late-flip] LIBRARY_ITEM_ANALYSIS itemId=" + itemId
                 + " bpm=" + juce::String(analysis.bpm)
                 + " variableTempo=" + (analysis.variableTempo ? "true" : "false")
@@ -296,7 +284,6 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                     + " flipped=" + juce::String(flipped));
             }
 
-            // Seed the project BPM (the helper checks its own gates).
             maybeSeedProjectBpmFor(itemId, projectState, bridge);
             {
                 std::lock_guard<std::mutex> lock(bpmJobsMutex);

@@ -30,15 +30,10 @@ bool BridgeServer::start(int port)
         return true;
     }
 
-    // On Windows this calls WSAStartup; on POSIX it is a no-op. Required
-    // before any socket(2) / setsockopt(2) call, otherwise listen() fails
-    // with "setsockopt(SO_REUSEADDR) ... Unknown error". Reference counted
-    // and balanced by ix::uninitNetSystem() in stop().
+    // Required before listen() on Windows; balanced in stop().
     ix::initNetSystem();
 
-    // Explicit loopback bind: the bridge is renderer<->backend only and must
-    // never accept connections from off-host (the renderer lives in the same
-    // Electron process tree). Don't rely on IXWebSocket's default host.
+    // Explicit loopback bind prevents off-host bridge access.
     server = std::make_unique<ix::WebSocketServer>(port, "127.0.0.1");
 
     server->setOnClientMessageCallback(
@@ -131,9 +126,7 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
   try
   {
     silverdaw::log::debug("bridge", "incoming bytes=" + juce::String(static_cast<int>(raw.size())));
-    // Parse JSON on the I/O thread, then either consume the envelope here
-    // (AUTH handshake) or dispatch the typed message onto the JUCE message
-    // thread so the AudioEngine isn't accessed from multiple threads.
+    // AUTH stays on the I/O thread; engine-touching messages hop to the JUCE message thread.
     juce::var parsed = juce::JSON::parse(juce::String(raw));
     if (!parsed.isObject())
     {
@@ -148,23 +141,16 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
         return;
     }
 
-    // Captured here so the post-AUTH initial-state push can target this
-    // specific client. Held as a shared_ptr so the socket survives even
-    // if the client disconnects between the I/O thread and the message
-    // thread running the ready handler.
+    // Keeps the authenticated socket alive until the message-thread ready handler runs.
     std::shared_ptr<ix::WebSocket> readyClient;
 
-    // Auth gate: every envelope from a non-authenticated client must be an
-    // `AUTH` carrying the expected token. Anything else (including a wrong
-    // token) gets the connection slammed shut so a misbehaving local
-    // process can't keep probing.
+    // Close unauthenticated clients on anything except a valid first AUTH.
     {
         std::lock_guard<std::mutex> lock(clientsMutex);
         const auto it = clients.find(&webSocket);
         if (it == clients.end())
         {
-            // We don't know this client (it must have closed between the
-            // I/O thread reading the message and us getting here). Drop.
+            // Client closed between I/O receipt and auth lookup.
             return;
         }
         if (!it->second.authenticated)
@@ -179,21 +165,16 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
             it->second.authenticated = true;
             readyClient = it->second.socket;
             silverdaw::log::info("bridge", "client authenticated");
-            // Send READY now that the client is trusted. Release the lock
-            // around the send so we don't hold it across IXWebSocket's
-            // internal mutex.
+            // Release the lock before sending through IXWebSocket.
         }
         else if (type == "AUTH")
         {
-            // Re-sending AUTH after success is harmless; just ignore it so
-            // we don't double-dispatch a meaningless message to the engine.
+            // Ignore duplicate AUTH after success.
             return;
         }
         else
         {
-            // Authenticated, non-AUTH message: fall through to dispatch.
-            // `messageHandler` is `const` and set by the constructor, so
-            // it's safe to reference from the async lambda without a copy.
+            // Constructor-injected handler is immutable, so async capture by `this` is safe.
             juce::MessageManager::callAsync(
                 [this, type, payload]
                 {
@@ -206,13 +187,9 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
         }
     }
 
-    // Reached only on a successful AUTH transition.
     sendReadyTo(webSocket);
 
-    // Post-AUTH initial state push (e.g. PROJECT_STATE). Runs on the
-    // JUCE message thread so the handler can read engine/project state
-    // without locking. `readyClient` keeps the socket alive in the
-    // closure even if the connection drops before the handler fires.
+    // Initial-state push runs on the message thread so project reads stay thread-safe.
     if (clientReadyHandler && readyClient)
     {
         juce::MessageManager::callAsync(
@@ -243,9 +220,7 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
   }
   catch (const std::exception& e)
   {
-    // I/O-thread crash firewall. IXWebSocket invokes this callback on its
-    // own thread; an exception escaping here would call std::terminate and
-    // take the whole engine down. Log and drop the offending frame instead.
+    // I/O-thread crash firewall: drop the frame instead of terminating the engine.
     silverdaw::log::error("bridge", juce::String("onIncoming threw: ") + e.what() + " — frame dropped");
   }
   catch (...)
@@ -272,9 +247,7 @@ void BridgeServer::sendReadyTo(ix::WebSocket& webSocket)
     webSocket.send(serialised);
 }
 
-// `type` and `payload` differ semantically (envelope-type tag vs. arbitrary
-// JSON body); the (type, payload) order is the wire-protocol convention
-// shared with the renderer and intentionally fixed.
+// Wire-protocol order is fixed as (type, payload) despite semantic similarity.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
 {
@@ -292,10 +265,7 @@ void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
 
     const auto serialised = juce::JSON::toString(juce::var(envelope), true).toStdString();
 
-    // Skip the 60 Hz playhead and preview-position chatter; both fire
-    // up to 60×/sec while a transport is playing and would otherwise
-    // dominate the log file. Everything else is rare enough that one
-    // line per envelope is useful for diagnostics.
+    // Skip high-rate transport/meter chatter so diagnostics remain readable.
     if (type != "PLAYHEAD_UPDATE" && type != "PREVIEW_POSITION" && type != "MASTER_LEVEL")
     {
         silverdaw::log::info("bridge", "broadcast " + type + " bytes=" + juce::String(static_cast<int>(serialised.size())));

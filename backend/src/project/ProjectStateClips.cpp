@@ -6,9 +6,7 @@
 namespace silverdaw
 {
 
-// `addClip` carries multiple adjacent `juce::String` parameters because the
-// bridge envelope itself uses two distinct string fields. The parameter
-// order is a load-bearing wire-protocol convention; swapping is silenced.
+// Parameter order follows the bridge envelope, so the swappable-string warning is intentional.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool ProjectState::addClip(const juce::String& trackId, const juce::String& clipId, const juce::String& libraryItemId,
                            double offsetMs, double durationMs, double inMs, int colorIndex)
@@ -80,9 +78,7 @@ bool ProjectState::setClipTrack(const juce::String& clipId, const juce::String& 
     {
         return true; // already on the destination track
     }
-    // ValueTree nodes can only have one parent; removeChild +
-    // appendChild on the same ValueTree object preserves the node
-    // (including its sub-properties).
+    // Re-parenting preserves the same ValueTree node and sub-properties.
     oldParent.removeChild(clip, &undoManager);
     destTrack.appendChild(clip, &undoManager);
     return true;
@@ -95,8 +91,7 @@ bool ProjectState::setClipTrim(const juce::String& clipId, double offsetMs, doub
     {
         return false;
     }
-    // Three writes on the same clip node coalesce into a single dirty
-    // transition because `setDirty(true)` is a no-op when already true.
+    // Repeated dirty writes coalesce because setDirty(true) is idempotent.
     clip.setProperty(kOffsetMs, offsetMs, &undoManager);
     clip.setProperty(kInMs, inMs, &undoManager);
     clip.setProperty(kDurationMs, durationMs, &undoManager);
@@ -126,8 +121,7 @@ bool ProjectState::setClipColorIndex(const juce::String& clipId, int colorIndex)
     }
     if (colorIndex < 0)
     {
-        // Negative = remove the per-clip override and inherit the
-        // host-track colour at render time.
+        // Negative restores host-track colour inheritance.
         clip.removeProperty(kColorIndex, &undoManager);
     }
     else
@@ -150,8 +144,7 @@ bool ProjectState::setClipLocked(const juce::String& clipId, bool locked)
     }
     else
     {
-        // Remove the property so absent==unlocked on disk and on the
-        // wire. Matches the colorIndex / clipName conventions.
+        // Absent means unlocked on disk and wire.
         clip.removeProperty(kLocked, &undoManager);
     }
     return true;
@@ -323,8 +316,7 @@ bool ProjectState::setClipWarp(const juce::String& clipId,
     }
     if (warpMode.has_value() && warpMode->isNotEmpty())
     {
-        // The mode strings used on the wire are validated by the bridge
-        // dispatch site; we trust them once they reach here.
+        // Bridge validation makes mode strings trustworthy here.
         clip.setProperty(kWarpMode, *warpMode, &undoManager);
     }
     if (tempoRatioClear)
@@ -333,10 +325,7 @@ bool ProjectState::setClipWarp(const juce::String& clipId,
     }
     else if (tempoRatio.has_value())
     {
-        // Clamp to a sane band so a hostile payload can't ask Rubber Band
-        // to stretch by 1000x. 0.25 = quarter speed, 4.0 = quadruple
-        // speed; outside this band the audible artefacts dominate the
-        // result anyway.
+        // Clamp tempo ratio so hostile payloads cannot ask Rubber Band for extreme stretches.
         const auto clamped = juce::jlimit(0.25, 4.0, *tempoRatio);
         clip.setProperty(kTempoRatio, clamped, &undoManager);
     }
@@ -381,9 +370,7 @@ juce::String ProjectState::getClipFilePath(const juce::String& clipId) const
     {
         return {};
     }
-    // Source-of-truth is the linked library item; fall back to a
-    // legacy `filePath` property if present (older projects that
-    // pre-date the library-item-id refactor).
+    // Linked library item is authoritative; legacy clips may still carry filePath.
     const juce::String libraryItemId = clip.getProperty(kLibraryItemId, {}).toString();
     if (libraryItemId.isNotEmpty())
     {

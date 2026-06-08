@@ -28,15 +28,11 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
         return result;
     }
 
-    // Open a fresh reader independent of any reader the audio engine
-    // already holds for this file; both can stream from the same file
-    // simultaneously without sharing state.
+    // Use an independent reader so waveform scans don't share engine read state.
     std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
     if (reader == nullptr)
     {
-        // Same probe-the-bytes fallback as AudioEngine::addClip: some
-        // JUCE format readers only advertise a narrow extension set even
-        // though their decoder accepts a wider range.
+        // Probe bytes because some JUCE readers decode more formats than their extensions advertise.
         if (auto stream = file.createInputStream())
         {
             reader.reset(formatManager.createReaderFor(std::move(stream)));
@@ -54,17 +50,11 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
     const int samplesPerPeak = juce::jmax(1, static_cast<int>(reader->sampleRate / peaksPerSecond));
     const auto peakCount = static_cast<int>((totalSamples + samplesPerPeak - 1) / samplesPerPeak);
 
-    // Lane 0 is always the mono summary. Stereo (exactly 2-channel) files
-    // additionally store per-channel left/right lanes so the renderer can
-    // draw a stacked stereo waveform; mono and >2-channel files store the
-    // summary only. Keep this policy in lockstep with the renderer's
-    // `computePeaks` in `audio.ts`.
+    // Keep lane policy in lockstep with the renderer's `computePeaks`.
     const bool stereo = numChannels == 2;
     const int laneCount = stereo ? 3 : 1;
     result.laneCount = laneCount;
 
-    // Channel-major layout: lane L spans [L*peakCount*2 .. (L+1)*peakCount*2).
-    // Two floats per bucket (min, max), default-initialised to 0.0F.
     result.peaks.assign(static_cast<std::size_t>(peakCount) * 2U * static_cast<std::size_t>(laneCount), 0.0F);
 
     juce::AudioBuffer<float> buffer(numChannels, kChunkSamples);
@@ -72,9 +62,7 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
     juce::int64 readPos = 0;
     int peakIndex = 0;
     int bucketCount = 0;
-    // Sentinel values for std::min/max so the first sample of each
-    // bucket always replaces them. Avoids a special-case branch on
-    // the first sample of every bucket. One (min,max) accumulator per lane.
+    // Sentinels avoid a first-sample branch for every bucket.
     constexpr int kMaxLanes = 3;
     const float inf = std::numeric_limits<float>::infinity();
     std::array<float, kMaxLanes> laneMin;
@@ -109,7 +97,6 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
 
         for (int i = 0; i < toRead; ++i)
         {
-            // Lane 0: average across channels for a mono summary peak.
             float sum = 0.0F;
             for (int c = 0; c < numChannels; ++c)
             {
@@ -119,7 +106,6 @@ PeaksResult computePeaks(const juce::File& file, juce::AudioFormatManager& forma
             laneMin[0] = std::min(summary, laneMin[0]);
             laneMax[0] = std::max(summary, laneMax[0]);
 
-            // Lanes 1..2: raw per-channel samples (stereo only).
             if (stereo)
             {
                 for (int c = 0; c < 2; ++c)

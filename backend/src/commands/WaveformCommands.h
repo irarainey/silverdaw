@@ -13,12 +13,7 @@ class PeaksCache;
 
 namespace waveform { struct PeaksResult; }
 
-// Clip-audio + waveform/peaks command handlers. CLIP_ADD ingests a library
-// item as a track clip (resolving the engine playback path + scheduling peaks
-// and BPM detection); WAVEFORM_REQUEST / CLIP_EDITOR_PEAKS_REQUEST (re)produce
-// cached peaks for the timeline and the clip editor. effectivePeaksPerSecond is
-// the single source of truth for the broadcast peaks-per-second value (also
-// used by sample export in Main.cpp).
+// Keep bridge and sample-export peak rates aligned.
 
 double effectivePeaksPerSecond(const waveform::PeaksResult& result);
 

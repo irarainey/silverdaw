@@ -47,11 +47,7 @@ juce::var ProjectState::tracksAsJson() const
         trackObj->setProperty("id", track.getProperty(kId).toString());
         trackObj->setProperty("name", track.getProperty(kName).toString());
         trackObj->setProperty("gain", static_cast<double>(track.getProperty(kGain, 1.0)));
-        // Mute / solo round-trip through the project file. The
-        // renderer reads them on PROJECT_STATE to seed its UI and
-        // the live audio engine derives effective gain from them.
-        // Both default to false and are only emitted when true to
-        // keep saved files tidy.
+        // Emit only truthy mute/solo so defaults stay absent on disk/wire.
         if (static_cast<bool>(track.getProperty(kMuted, false)))
         {
             trackObj->setProperty("muted", true);
@@ -60,19 +56,12 @@ juce::var ProjectState::tracksAsJson() const
         {
             trackObj->setProperty("soloed", true);
         }
-        // Only emit heightPx when explicitly set; the renderer falls
-        // back to its own default for tracks that have never been
-        // resized so older projects survive without backfilling.
+        // Omit unset heights so older projects need no backfill.
         if (track.hasProperty(kHeightPx))
         {
             trackObj->setProperty("heightPx", static_cast<double>(track.getProperty(kHeightPx, 0.0)));
         }
-        // Phase 5 — per-track Tone EQ. Persisted on the track node and
-        // round-tripped to the renderer so the Track FX sliders reflect
-        // the saved state after a reload (the audio engine restores tone
-        // separately in rebuildEngineFromProject). Each field is emitted
-        // only when non-default to keep the snapshot and saved file tidy,
-        // matching the renderer's default-suppression on the way back in.
+        // Emit only non-default Tone fields to match renderer default suppression.
         if (track.hasProperty(kToneBassDb))
         {
             trackObj->setProperty("toneBassDb",
@@ -96,19 +85,13 @@ juce::var ProjectState::tracksAsJson() const
         {
             trackObj->setProperty("toneHighCut", true);
         }
-        // Phase 5 — per-track Leveler Amount (`[0, 1]`). Like Tone, emitted
-        // only when non-default so the Track FX Leveler knob restores after a
-        // reload while flat / legacy tracks stay byte-clean.
+        // Emit Leveler only when non-default so flat tracks stay byte-clean.
         if (track.hasProperty(kLevelerAmount))
         {
             trackObj->setProperty("levelerAmount",
                                   static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
         }
-        // Phase 5 — per-track Reverb / Delay send amounts. Like Tone, these
-        // live on the track node and are emitted only when non-default so
-        // the Track FX Sends sliders restore after a reload while legacy
-        // projects stay byte-clean. Identifiers are `sendReverb`/`sendDelay`
-        // (the renderer maps them onto its `reverbSend`/`delaySend` fields).
+        // Emit sends only when non-default; renderer maps sendReverb/sendDelay names.
         if (track.hasProperty(kSendReverb))
         {
             trackObj->setProperty("sendReverb",
@@ -119,9 +102,7 @@ juce::var ProjectState::tracksAsJson() const
             trackObj->setProperty("sendDelay",
                                   static_cast<double>(track.getProperty(kSendDelay, 0.0)));
         }
-        // Phase 5 — per-track equal-power pan, signed `[-1, 1]` (0 = centre).
-        // Emitted only when non-default so the Track FX Pan control restores
-        // after a reload while centred / legacy tracks stay byte-clean.
+        // Emit pan only when off-centre so centred tracks stay byte-clean.
         if (track.hasProperty(kPan))
         {
             trackObj->setProperty("pan",
@@ -147,16 +128,12 @@ juce::var ProjectState::tracksAsJson() const
             clipObj->setProperty("effectiveTempoRatio", effectiveTiming.tempoRatio);
             clipObj->setProperty("effectiveDurationMs", effectiveTiming.durationMs);
             clipObj->setProperty("effectiveWarpActive", effectiveTiming.warpActive);
-            // Only emit `colorIndex` when explicitly set so the renderer
-            // can distinguish "inherit from track" (property absent)
-            // from "user picked a colour".
+            // Absent colorIndex means inherit from track.
             if (clip.hasProperty(kColorIndex))
             {
                 clipObj->setProperty("colorIndex", static_cast<int>(clip.getProperty(kColorIndex, -1)));
             }
-            // Lock flag: emitted only when truthy so legacy projects
-            // (and explicitly-unlocked clips that removed the property)
-            // round-trip without a stray `locked:false` on the wire.
+            // Emit only locked=true so unlocked clips stay absent on the wire.
             if (static_cast<bool>(clip.getProperty(kLocked, false)))
             {
                 clipObj->setProperty("locked", true);
@@ -165,9 +142,7 @@ juce::var ProjectState::tracksAsJson() const
             {
                 clipObj->setProperty("name", clip.getProperty(kClipName).toString());
             }
-            // Warp settings: every field is omitted when unset so older
-            // projects round-trip unchanged and the renderer can default
-            // each one independently.
+            // Omit unset warp fields so older projects round-trip unchanged.
             if (clip.hasProperty(kWarpEnabled))
             {
                 clipObj->setProperty("warpEnabled", static_cast<bool>(clip.getProperty(kWarpEnabled, false)));
@@ -194,17 +169,10 @@ juce::var ProjectState::tracksAsJson() const
             }
             if (clip.hasProperty(kEnvelopePoints))
             {
-                // Pass the stored `juce::var` ARRAY straight through — each
-                // element is a `{ timeMs, gain }` object, ready for JSON and
-                // matching the renderer's `ProjectStateClipSchema`. Without
-                // this the per-clip Volume Shape is lost on project reload.
+                // Stored envelope arrays are already renderer-schema JSON.
                 clipObj->setProperty("envelopePoints", clip.getProperty(kEnvelopePoints));
             }
-            // Resolve the source file through the linked library item so
-            // the renderer can flag clips whose underlying file went
-            // missing since the project was last saved. An empty library
-            // item id (defensive — shouldn't happen) is also treated as
-            // unresolved.
+            // Resolve through the library item so missing sources surface as unresolved.
             const juce::String resolvedFilePath = getLibraryItemFilePath(libraryItemId);
             const bool unresolved =
                 libraryItemId.isEmpty() || resolvedFilePath.isEmpty() || !juce::File(resolvedFilePath).existsAsFile();
@@ -215,8 +183,7 @@ juce::var ProjectState::tracksAsJson() const
             clipsArray.add(juce::var(clipObj));
         }
         trackObj->setProperty("clips", clipsArray);
-        // §12.1 — per-track clip transitions. Emitted only when present so
-        // legacy projects and transition-free tracks stay byte-clean.
+        // Omit absent transitions so transition-free tracks stay byte-clean.
         const auto transitions = buildTransitionsJson(track);
         if (auto* arr = transitions.getArray(); arr != nullptr && arr->size() > 0)
         {
@@ -254,21 +221,14 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
     {
         return juce::Result::fail("Expected root <PROJECT> element");
     }
-    // Suppress dirty transitions while we wipe + re-populate `root` —
-    // those listener callbacks would otherwise produce a misleading
-    // "dirty=true" emission for a freshly-loaded (and therefore clean)
-    // project. RAII-scoped so a thrown exception still restores the
-    // listener; we explicitly markClean() at the end so the renderer
-    // sees a single, correct transition.
+    // Suppress listener dirties during load; markClean emits the final correct state.
     {
         const SuppressDirtyScope suppress(*this);
         root.removeAllChildren(nullptr);
         root.removeAllProperties(nullptr);
         root.copyPropertiesAndChildrenFrom(newTree, nullptr);
         removeLegacyClipFadeProperties(root);
-        // Ensure the standard container children exist even if the
-        // loaded project file pre-dates them, so subsequent add+remove
-        // cycles round-trip cleanly against the clean-snapshot baseline.
+        // Backfill standard containers so add/remove cycles can return to clean.
         if (!root.getChildWithName(kLibrary).isValid())
         {
             root.appendChild(juce::ValueTree(kLibrary), nullptr);
@@ -279,8 +239,7 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
         }
         undoManager.clearUndoHistory();
     }
-    // A load is by definition clean (in-memory state matches disk).
-    // Emit a single dirty=false transition if we were dirty going in.
+    // A load is clean because in-memory state now matches disk.
     markClean();
     return juce::Result::ok();
 }

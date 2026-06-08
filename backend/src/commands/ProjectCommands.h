@@ -12,11 +12,7 @@ class ProjectState;
 class BridgeServer;
 class DecodedCache;
 
-// Project-lifecycle command handlers — new / load / save / save-as /
-// view-state save / rename / autosave / crash-recovery load, plus
-// library-item relink. Each owns its ProjectFile I/O + PROJECT_STATE
-// (or PROJECT_*) broadcast; the shared snapshot/rebuild helpers live in
-// ProjectSession.
+// Project lifecycle handlers own file I/O; snapshot/rebuild helpers stay in ProjectSession.
 
 void handleLibraryItemRelink(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                              BridgeServer& bridge, const ProjectSession& session, juce::ThreadPool& peakPool,

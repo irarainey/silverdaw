@@ -13,10 +13,7 @@ juce::var toVar(const juce::ValueTree& tree)
     auto* obj = new juce::DynamicObject();
     obj->setProperty(kTypeKey, tree.getType().toString());
 
-    // Properties — `juce::var` is natively serialisable by `juce::JSON`
-    // for the primitive / array / object flavours we use. Anything else
-    // round-trips as its `.toString()` form rather than being lost, so a
-    // mistakenly-stored MemoryBlock still produces readable output.
+    // Unsupported var flavours stringify rather than disappearing silently.
     const int numProps = tree.getNumProperties();
     for (int i = 0; i < numProps; ++i)
     {
@@ -25,9 +22,7 @@ juce::var toVar(const juce::ValueTree& tree)
         obj->setProperty(name, value);
     }
 
-    // Children — emit a `$children` array only when there are any, so
-    // leaf nodes serialise as compact objects without trailing empty
-    // arrays cluttering up diffs.
+    // Omit empty children arrays to keep saved diffs compact.
     const int numChildren = tree.getNumChildren();
     if (numChildren > 0)
     {
@@ -59,10 +54,7 @@ juce::ValueTree fromVar(const juce::var& value)
 
     juce::ValueTree tree(juce::Identifier{typeStr});
 
-    // Walk every property, skipping the two reserved keys. ValueTrees
-    // don't preserve property iteration order in any meaningful sense,
-    // so we don't sort — the JSON file will reflect whatever order JUCE
-    // gave us, which is insertion order in practice.
+    // Preserve JUCE's property order; sorting would add churn without semantic value.
     for (const auto& nameValue : obj->getProperties())
     {
         const auto& name = nameValue.name;

@@ -16,10 +16,7 @@ using silverdaw::bridge::tryGetRequiredString;
 
 namespace
 {
-/** Push the effective audible gain (= user volume × mute × solo
- *  logic) to AudioEngine for every clip on `trackId`. Centralised so
- *  the TRACK_GAIN / TRACK_MUTE / TRACK_SOLO handlers can share the
- *  same fan-out. */
+// Centralised so gain, mute, and solo share one effective-gain fan-out.
 void pushEffectiveTrackGainToEngine(const juce::String& trackId,
                                     silverdaw::AudioEngine& engine,
                                     silverdaw::ProjectState& projectState)
@@ -32,9 +29,7 @@ void pushEffectiveTrackGainToEngine(const juce::String& trackId,
     }
 }
 
-/** Re-push every track's effective gain. Called after a TRACK_SOLO
- *  toggle because solo state changes audibility of every other
- *  track too. */
+// Solo state changes audibility of every track.
 void pushAllEffectiveGainsToEngine(silverdaw::AudioEngine& engine,
                                    silverdaw::ProjectState& projectState)
 {
@@ -78,8 +73,7 @@ void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
         return;
     }
     const bool existed = projectState.hasTrack(trackId);
-    // Tear down every audio source on this track BEFORE dropping the
-    // track from ProjectState — otherwise the lookup loses the clip ids.
+    // Remove audio sources before ProjectState loses this track's clip ids.
     const auto clipIds = projectState.getTrackClipIds(trackId);
     for (const auto& clipId : clipIds)
     {
@@ -117,10 +111,7 @@ void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, s
         return;
     }
     const auto gainF = static_cast<float>(*gain);
-    // TRACK_GAIN now carries the USER VOLUME (slider position), NOT
-    // the post-mute/solo effective gain. The backend derives the
-    // effective audible gain from the stored volume + muted + soloed
-    // flags and pushes that to the AudioEngine.
+    // Track gain stores user volume; backend derives mute/solo effective gain.
     const bool stored = projectState.setTrackGain(trackId, gainF);
     pushEffectiveTrackGainToEngine(trackId, engine, projectState);
     broadcastApplied(bridge, "TRACK_GAIN_APPLIED",
@@ -146,16 +137,13 @@ void handleTrackSolo(const juce::var& payload, silverdaw::AudioEngine& engine,
     if (trackId.isEmpty()) return;
     const bool soloed = static_cast<bool>(payload.getProperty("soloed", false));
     const bool stored = projectState.setTrackSoloed(trackId, soloed);
-    // Solo affects audibility of every other track — fan out across
-    // the whole project.
+    // Solo affects every track's audibility.
     pushAllEffectiveGainsToEngine(engine, projectState);
     broadcastApplied(bridge, "TRACK_SOLO_APPLIED",
                      {{"trackId", trackId}, {"soloed", soloed}}, stored);
 }
 
-// Persist + push per-track Reverb/Delay sends. Skips ack/dirty/undo when the
-// setter reports no change so a 60 Hz drag landing on the same value can't
-// pollute undo history or fire redundant wire traffic.
+// Skip no-op sends during 60 Hz drags to avoid undo and wire churn.
 void handleTrackSetSends(const juce::var& payload, silverdaw::AudioEngine& engine,
                          silverdaw::ProjectState& projectState,
                          silverdaw::BridgeServer& bridge)
@@ -178,8 +166,7 @@ void handleTrackSetSends(const juce::var& payload, silverdaw::AudioEngine& engin
                      {{"trackId", trackId}, {"reverbSend", reverbSend}, {"delaySend", delaySend}});
 }
 
-// Persist + push per-track equal-power pan (engine derives the per-channel
-// gains). Skips ack/dirty/undo when unchanged — same 60 Hz-drag guard as Sends.
+// Skip no-op pan updates during 60 Hz drags.
 void handleTrackSetPan(const juce::var& payload, silverdaw::AudioEngine& engine,
                        silverdaw::ProjectState& projectState,
                        silverdaw::BridgeServer& bridge)
@@ -200,9 +187,7 @@ void handleTrackSetPan(const juce::var& payload, silverdaw::AudioEngine& engine,
                      {{"trackId", trackId}, {"pan", pan}});
 }
 
-// Persist + push per-track tone (3-band EQ + low/high cut). Partial-update:
-// fields absent from the payload fall back to the stored value, and the ack
-// carries the canonical re-read so renderer and engine reconcile to one truth.
+// Ack uses canonical re-read so renderer and engine reconcile to persisted tone.
 void handleTrackSetTone(const juce::var& payload, silverdaw::AudioEngine& engine,
                         silverdaw::ProjectState& projectState,
                         silverdaw::BridgeServer& bridge)
@@ -224,8 +209,7 @@ void handleTrackSetTone(const juce::var& payload, silverdaw::AudioEngine& engine
     const bool changed = projectState.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut, highCut);
     if (!changed) return;
 
-    // Re-read the canonical (clamped / default-suppressed) values so the
-    // engine and the renderer both reconcile to the persisted truth.
+    // Re-read canonical values so renderer and engine match persisted truth.
     const float canonBass = projectState.getTrackToneBassDb(trackId);
     const float canonMid = projectState.getTrackToneMidDb(trackId);
     const float canonTreble = projectState.getTrackToneTrebleDb(trackId);
@@ -245,8 +229,7 @@ void handleTrackSetTone(const juce::var& payload, silverdaw::AudioEngine& engine
                       {"highCut", canonHighCut}});
 }
 
-// Persist + push the single user-facing "amount" knob (`[0, 1]`) driving the
-// curated compressor in `Leveler.h`; raw threshold/ratio/attack/release deferred.
+// Leveler exposes one curated amount knob; raw compressor controls stay hidden.
 void handleTrackSetLeveler(const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState,
                            silverdaw::BridgeServer& bridge)
@@ -260,8 +243,7 @@ void handleTrackSetLeveler(const juce::var& payload, silverdaw::AudioEngine& eng
     const bool changed = projectState.setTrackLevelerAmount(trackId, amount);
     if (!changed) return;
 
-    // Re-read the canonical (clamped / default-suppressed) value so the
-    // engine and the renderer both reconcile to the persisted truth.
+    // Re-read canonical value so renderer and engine match persisted truth.
     const float canonAmount = projectState.getTrackLevelerAmount(trackId);
 
     // Live UI gesture → glide (snap=false) to avoid zipper noise.

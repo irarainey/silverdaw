@@ -9,15 +9,10 @@ namespace silverdaw
 namespace
 {
 
-// On-disk preamble. Kept minimal but versioned so format changes are
-// detected as a miss rather than misinterpreted. Serialised field-by-field
-// at explicit byte offsets — NOT via `sizeof(CacheHeader)`, because the
-// natural struct layout pads the trailing `double` to an 8-byte boundary
-// (making the struct 32 bytes, not the 28 bytes actually written).
+// Versioned fixed offsets avoid struct-padding mismatches being read as valid cache data.
 constexpr std::uint32_t kCacheMagic = 0x53445057U; // 'SDPW' little-endian
 constexpr std::uint32_t kCacheVersion = 2U;
 
-// Byte offsets within the header.
 constexpr int kOffMagic = 0;
 constexpr int kOffVersion = 4;
 constexpr int kOffPeaksPerSecond = 8;
@@ -76,9 +71,7 @@ juce::File PeaksCache::getCacheFilePath(const juce::File& sourceFile, int peaksP
 
 juce::File PeaksCache::cacheFileFor(const juce::File& sourceFile, int peaksPerSecond) const
 {
-    // Stable key: full path + mtime + size + peaks/s. Any of those
-    // changing must invalidate the entry. We hash via MD5 (cheap, in
-    // juce_core, collision-safe for our address space).
+    // Key includes path, mtime, size, and density so source changes invalidate cache.
     const auto path = sourceFile.getFullPathName();
     const auto mtime = sourceFile.getLastModificationTime().toMilliseconds();
     const auto size = sourceFile.getSize();
@@ -153,9 +146,7 @@ void PeaksCache::store(const juce::File& sourceFile, const waveform::PeaksResult
     }
 
     const auto target = cacheFileFor(sourceFile, result.peaksPerSecond);
-    // Write to a temp sibling and rename so a crash mid-write can never
-    // leave a half-written cache file (which would be honoured by a
-    // future tryLoad with garbage data).
+    // Sibling-temp rename prevents crash-truncated cache files from being honoured.
     const auto tmp = target.getSiblingFile(target.getFileName() + ".tmp");
     tmp.deleteFile();
 

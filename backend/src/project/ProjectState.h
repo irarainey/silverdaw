@@ -10,39 +10,9 @@
 namespace silverdaw
 {
 
-/**
- * Backend-authoritative project state.
- *
- * Wraps a `juce::ValueTree` and a single `juce::UndoManager` so every
- * mutation that touches user-visible project structure (tracks, clips,
- * positions, gains) lives in one place that can later be serialised,
- * persisted, and undone as a unit.
- *
- * Tree shape:
- *
- *     PROJECT
- *       TRACK (id="t1", name="Drums", gain=1.0)
- *         CLIP (id="c1", filePath="...", offsetMs=0.0)
- *         CLIP (id="c2", filePath="...", offsetMs=4000.0)
- *       TRACK (id="t2", gain=0.7)
- *         CLIP (id="c3", ...)
- *
- * `ProjectState` is the structural truth; `AudioEngine` owns the matching
- * audio-graph nodes and is updated in lockstep by the bridge dispatch
- * handlers. Today the engine has one playable audio source per `clipId`;
- * multi-clip-per-track audio playback is Phase 5 work — but the ValueTree
- * already models the right shape so that future change is wire-compatible.
- *
- * Thread model: all methods run on the JUCE message thread, matching the
- * dispatch site in `Main.cpp::dispatchBridgeMessage`. No locking needed.
- *
- * Dirty tracking: a `juce::ValueTree::Listener` flips an internal flag
- * on every mutation (property change, child add/remove/order). The flag
- * is cleared by `markClean()` (called after load and successful save),
- * and `setDirtyChangedCallback` lets `Main.cpp` broadcast PROJECT_DIRTY
- * envelopes on transitions so the renderer's title bar / unsaved-changes
- * prompt stay in lockstep with the truth.
- */
+// Backend-authoritative ValueTree model; message-thread owned, undoable, and persisted as a unit.
+// Dirty tracking compares against a clean snapshot so net-zero edits can return to clean.
+
 class ProjectState : public juce::ValueTree::Listener
 {
   public:
@@ -60,34 +30,19 @@ class ProjectState : public juce::ValueTree::Listener
     ProjectState(ProjectState&&) = delete;
     ProjectState& operator=(ProjectState&&) = delete;
 
-    // ─── Dirty tracking ────────────────────────────────────────────────
-
-    /** True if the project has been mutated since the last load / save / new. */
     bool isDirty() const noexcept
     {
         return dirty;
     }
 
-    /**
-     * Reset the dirty flag to false. Called after a successful load,
-     * save, or new-project — at which point the in-memory state matches
-     * the on-disk file (or the blank canvas). Fires the dirty-changed
-     * callback if this is an actual transition.
-     */
+    // Called after load/save/new when memory matches disk or the blank canvas.
     void markClean();
 
-    /**
-     * Force the dirty flag to true. Used by crash-recovery loads where
-     * we deliberately want File > Save to be the next step the user
-     * takes (the autosave is a transient safety net, not a real save).
-     * No-op if already dirty.
-     */
+    // Crash recovery marks dirty because autosave is not a real save target.
     void markDirty();
 
     /** Register a callback fired on every dirty-flag transition. */
     void setDirtyChangedCallback(DirtyChangedCallback callback);
-
-    // ─── Project metadata ──────────────────────────────────────────────
 
     /** User-facing project name; "Untitled" until renamed or loaded. */
     juce::String getName() const;
@@ -95,100 +50,48 @@ class ProjectState : public juce::ValueTree::Listener
     /** Update the project's name. Empty / blank inputs are coerced to `kDefaultName`. */
     void setName(const juce::String& name);
 
-    // ─── Tracks ────────────────────────────────────────────────────────
-
     /** Add an empty track. Idempotent: returns true if `trackId` already exists. */
     bool addTrack(const juce::String& trackId);
 
-    /**
-     * Remove `trackId` and every clip it contains. Returns the ids of
-     * the clips that were removed (so the audio engine can drop their
-     * playable sources in lockstep). Empty if the track did not exist.
-     */
+    // Returns removed clip ids so the engine can drop playable sources in lockstep.
     juce::StringArray removeTrack(const juce::String& trackId);
 
     /** Returns true if `trackId` exists in the tree. */
     bool hasTrack(const juce::String& trackId) const;
 
-    /** Move `trackId` so it ends up at `newIndex` in the project's
-     *  track order. `newIndex` is clamped to [0, trackCount-1]. Returns
-     *  true if the track existed and the order actually changed. The
-     *  move goes through `juce::ValueTree::moveChild` so it sits in
-     *  the undo manager as a single coalesced step. */
+    // `newIndex` is track-ordinal; moveChild keeps ordering undoable.
     bool moveTrack(const juce::String& trackId, int newIndex);
 
-    /** Per-track linear gain (0 = silent, 1 = unity). 1.0 if unknown.
-     *  Now stores the USER VOLUME (slider position) rather than the
-     *  post-mute/solo effective gain. The audible gain is computed
-     *  on the fly via `getEffectiveTrackGain` so mute / solo can be
-     *  toggled without losing the underlying volume choice. Old
-     *  project files (which stored the post-mute effective value
-     *  here) load with `muted=false`, so a muted-at-save-time track
-     *  comes back as `volume=0, muted=false` — same audible result
-     *  as today; the toggleable mute state is what's new. */
+    // Stores user volume; mute/solo effective gain is derived so volume survives toggles.
     float getTrackGain(const juce::String& trackId) const;
 
-    /** Mute / solo state for a track. Both persist with the project
-     *  and survive save / load. The renderer mirrors them and the
-     *  effective gain (what the AudioEngine / MixdownEngine apply)
-     *  is derived from `gain × audible(muted, soloed, anySoloed)`
-     *  via `getEffectiveTrackGain`. */
+    // Mute/solo persist; effective gain is derived from volume and solo context.
     bool getTrackMuted(const juce::String& trackId) const;
     bool getTrackSoloed(const juce::String& trackId) const;
     bool anyTrackSoloed() const;
 
-    /** Effective audible gain for the AudioEngine / MixdownEngine.
-     *  Returns `0` for a muted track, or for any track that isn't
-     *  the soloed one when at least one track is soloed; otherwise
-     *  returns the per-track `gain` (= user volume). */
     float getEffectiveTrackGain(const juce::String& trackId) const;
 
     /** Set a track's user-facing name. Blank names are rejected. */
     bool setTrackName(const juce::String& trackId, const juce::String& name);
 
-    /** Set per-track user volume (NOT effective gain). Returns true if
-     *  the track existed. Mute and solo are toggled via the dedicated
-     *  setters below — calling `setTrackGain` doesn't clear them. */
+    // Sets user volume without clearing mute/solo.
     bool setTrackGain(const juce::String& trackId, float gain);
 
-    /** Set per-track mute / solo flags. Both mark the project dirty
-     *  and round-trip through save / load. Returns true if the track
-     *  existed. */
     bool setTrackMuted(const juce::String& trackId, bool muted);
     bool setTrackSoloed(const juce::String& trackId, bool soloed);
 
-    /** Per-track send levels to the project Reverb / Delay buses. Both
-     *  scalars are clamped to `[0, 1]`. Values within `kSendEpsilon` of
-     *  zero are stored as "absent" (`removeProperty`) so legacy /
-     *  unconfigured projects keep their existing on-disk shape.
-     *
-     *  Returns `true` iff the track exists AND at least one stored
-     *  scalar changed. Handlers use the change flag to skip ack / undo
-     *  broadcasts on no-op writes (e.g. echo of the current value at
-     *  the end of a drag gesture). */
+    // Defaults are suppressed so no-op drag echoes can skip broadcasts and undo entries.
     bool setTrackSends(const juce::String& trackId, float reverbSend, float delaySend);
 
-    /** Read the persisted send levels. Returns 0/0 if the track is
-     *  missing or the properties are absent. */
     float getTrackReverbSend(const juce::String& trackId) const;
     float getTrackDelaySend(const juce::String& trackId) const;
 
-    /** Per-track equal-power pan, signed `[-1, 1]` (`-1` = hard left,
-     *  `0` = centre, `+1` = hard right). The setter clamps to that range
-     *  and suppresses the centred default so legacy projects round-trip
-     *  byte-equivalent. Returns `true` iff the track exists AND the stored
-     *  pan actually changed. */
+    // Centred pan is suppressed so legacy projects round-trip byte-equivalent.
     bool setTrackPan(const juce::String& trackId, float pan);
     float getTrackPan(const juce::String& trackId) const;
 
-    /** Per-track Tone (3-band fixed EQ + low-cut + high-cut). All gain
-     *  values are in dB; the setter clamps to `[-15, +15]`. `lowCut`
-     *  engages a fixed high-pass and `highCut` a fixed low-pass when true.
-     *  Defaults (`0 dB`, `lowCut=false`, `highCut=false`) are suppressed so
-     *  legacy projects round-trip byte-equivalent.
-     *
-     *  Returns `true` iff the track exists AND any stored scalar
-     *  actually changed. */
+    // Tone defaults are suppressed so flat tracks preserve legacy file shape.
     bool setTrackTone(const juce::String& trackId, float bassDb, float midDb, float trebleDb,
                       bool lowCut, bool highCut);
     float getTrackToneBassDb(const juce::String& trackId) const;
@@ -197,39 +100,17 @@ class ProjectState : public juce::ValueTree::Listener
     bool getTrackToneLowCut(const juce::String& trackId) const;
     bool getTrackToneHighCut(const juce::String& trackId) const;
 
-    /** Per-track Leveler "amount" knob, range `[0, 1]`. Real
-     *  compressor wiring lands when DSP is added; for now this is
-     *  pure persistence. `amount == 0` is the suppressed default. */
+    // Zero amount is suppressed until Leveler DSP makes this more than persistence.
     bool setTrackLevelerAmount(const juce::String& trackId, float amount);
     float getTrackLevelerAmount(const juce::String& trackId) const;
 
-    /** Per-clip volume envelope. Stored as a single `juce::var` array
-     *  property on the clip — one atomic mutation per drag, no child
-     *  nodes (keeps default-suppression trivial). Each entry is a
-     *  `juce::DynamicObject` with `timeMs` (clip-local post-warp,
-     *  `[0, clipDuration]`) and `gain` (linear, `[0, 4]`, 1.0 ==
-     *  unity).
-     *
-     *  Points are sorted ascending by `timeMs` before persistence;
-     *  duplicate times are rejected (setter returns false). An empty
-     *  array clears the envelope and removes the property entirely. */
+    // One array property keeps envelope drags atomic and default suppression simple.
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
     juce::Array<juce::var> getClipEnvelope(const juce::String& clipId) const;
 
-    // ─── Transitions (§12.1 clip crossfades) ───────────────────────────
-    //
-    // A transition is the single source of truth for a clip-to-clip
-    // crossfade. It is stored as a `TRANSITION` child node of the host
-    // `TRACK` (sibling of the `CLIP` nodes) carrying the partner clip ids
-    // (`leftClipId` = earlier / fade-out, `rightClipId` = later / fade-in)
-    // and a recipe. The overlap REGION is never stored — it is derived from
-    // the two clips' live timeline geometry so it can never drift.
+    // Transitions store partners only; overlap is derived from live clip geometry.
 
-    /** Geometry of a clip's derived edge fade(s), in master-timeline ms.
-     *  A clip that is the RIGHT partner of a transition carries a head
-     *  fade-in; the LEFT partner carries a tail fade-out; a clip sandwiched
-     *  between two transitions carries both. Ready to hand to
-     *  `AudioEngine::setClipEdgeFade`. */
+    // Derived edge fades are ready for AudioEngine::setClipEdgeFade.
     struct ClipEdgeFade
     {
         bool hasFadeIn = false;
@@ -241,14 +122,7 @@ class ProjectState : public juce::ValueTree::Listener
         bool any() const noexcept { return hasFadeIn || hasFadeOut; }
     };
 
-    /** Create a transition between two clips on `trackId`. Validates (both
-     *  clips are children of the track, `left` strictly earlier than
-     *  `right`, a proper tail/head overlap `leftStart < rightStart <
-     *  leftEnd <= rightEnd`, neither edge already in another transition, no
-     *  third clip intruding into the overlap). Rejects (returns false)
-     *  otherwise. `recipe` is the discriminated-union object (only
-     *  `{kind:"smooth"}` for now; an empty/invalid recipe defaults to
-     *  smooth). Mutates through the undo manager. */
+    // Rejects invalid overlaps or reused edges so each clip edge has one crossfade owner.
     bool addTransition(const juce::String& trackId, const juce::String& transitionId,
                        const juce::String& leftClipId, const juce::String& rightClipId,
                        const juce::var& recipe);
@@ -260,58 +134,32 @@ class ProjectState : public juce::ValueTree::Listener
     bool setTransitionRecipe(const juce::String& trackId, const juce::String& transitionId,
                              const juce::var& recipe);
 
-    /** Derive the edge-fade geometry for a clip from the transitions it
-     *  participates in plus the live clip geometry. Empty when the clip is
-     *  in no transition. */
     ClipEdgeFade getClipEdgeFade(const juce::String& clipId) const;
 
-    /** Drop every transition whose invariants no longer hold (partner
-     *  removed / re-parented, clips moved apart, trimmed so they no longer
-     *  overlap with a proper tail/head shape, or a third clip intruding the
-     *  overlap). When `useUndo` is true the removals join the current undo
-     *  transaction (so undoing the geometry edit that broke them brings them
-     *  back); at load time pass false so cleanup doesn't pollute the undo
-     *  history. Returns true if anything was removed. */
+    // `useUndo=false` keeps load-time transition cleanup out of undo history.
     bool reconcileTransitions(bool useUndo);
 
-    /** True when any track carries at least one transition. Cheap guard so
-     *  the geometry-edit reconcile/sync path stays on a zero-cost fast lane
-     *  while a project has no transitions (the dormant default). */
+    // Cheap guard for skipping transition reconcile/sync on transition-free projects.
     bool hasAnyTransition() const;
 
-    /** Project-shared Reverb bus parameters. All four scalars are
-     *  `[0, 1]`-clamped linear values; defaults are all zero and the
-     *  properties are suppressed when at default. Returns `true` iff
-     *  any stored value actually changed. */
+    // Reverb defaults are suppressed so untouched projects stay byte-clean.
     bool setProjectReverb(float size, float decay, float tone, float mix);
     float getProjectReverbSize() const;
     float getProjectReverbDecay() const;
     float getProjectReverbTone() const;
     float getProjectReverbMix() const;
 
-    /** Project-shared Delay bus parameters. `noteValue` is one
-     *  of `"1/4" | "1/8" | "1/8T" | "1/16"` — any other string
-     *  (including whitespace variants) is rejected and the setter
-     *  returns false without mutating. `feedback`, `tone`, `mix` are
-     *  `[0, 1]` clamped. Defaults are `"1/8"` and zeros, all
-     *  suppressed. */
+    // Unknown delay note values are rejected rather than persisted.
     bool setProjectDelay(const juce::String& noteValue, float feedback, float tone, float mix);
     juce::String getProjectDelayNoteValue() const;
     float getProjectDelayFeedback() const;
     float getProjectDelayTone() const;
     float getProjectDelayMix() const;
 
-    /** Per-track row height in CSS pixels (renderer-side display
-     *  metric). 0 if unknown — the renderer falls back to its default
-     *  in that case. Clamped to a sane min/max by the setter so a
-     *  hostile bridge payload can't make rows invisible. */
+    // Height is clamped so bridge payloads cannot make rows invisible.
     double getTrackHeightPx(const juce::String& trackId) const;
 
-    /** Persist a per-track row height. Returns false if the track is
-     *  unknown. The value is clamped to [`kMinTrackHeightPx`,
-     *  `kMaxTrackHeightPx`] mirroring the renderer's clamp so a value
-     *  written by an older / different client doesn't drift outside
-     *  the resize-handle's range. */
+    // Mirrors renderer clamps to keep persisted heights inside resize-handle range.
     bool setTrackHeightPx(const juce::String& trackId, double heightPx);
 
     /** Ordered ids of all clips on `trackId` (empty if the track is missing). */
@@ -320,12 +168,6 @@ class ProjectState : public juce::ValueTree::Listener
     /** Ids of every clip in the project, across all tracks. */
     juce::StringArray getAllClipIds() const;
 
-    // ─── Clips ─────────────────────────────────────────────────────────
-
-    /**
-     * Add a clip under an existing track. Returns false if `trackId` is
-     * unknown or `clipId` already exists anywhere in the tree.
-     */
     bool addClip(const juce::String& trackId, const juce::String& clipId, const juce::String& libraryItemId,
                  double offsetMs, double durationMs, double inMs = 0.0, int colorIndex = -1);
 
@@ -335,32 +177,16 @@ class ProjectState : public juce::ValueTree::Listener
     /** Update a clip's timeline offset. Returns true if the clip existed. */
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
 
-    /** Move a clip to a different host track. The clip's node is
-     *  re-parented in the ValueTree to the new TRACK node; properties
-     *  (offset, in, duration, colour) are preserved. Returns true if
-     *  both the clip and the destination track existed. */
+    // ValueTree re-parenting preserves clip properties.
     bool setClipTrack(const juce::String& clipId, const juce::String& newTrackId);
 
-    /**
-     * Atomically update the trim window (offsetMs / inMs / durationMs)
-     * of `clipId`. Used by edge-drag trim and renderer-side split. All
-     * three writes happen inside one `suppressDirtyTransitions=false`
-     * scope so the project flips dirty exactly once. Returns true if
-     * the clip existed.
-     */
+    // Keeps trim window writes together so dirty/undo semantics stay coherent.
     bool setClipTrim(const juce::String& clipId, double offsetMs, double inMs, double durationMs);
 
-    /** Update the per-clip colour palette index (0..15). Pass `-1` to
-     *  remove the override and inherit the host track's colour. */
+    // `-1` restores host-track colour inheritance.
     bool setClipColorIndex(const juce::String& clipId, int colorIndex);
 
-    /** Per-clip lock flag. When locked, the timeline UI prevents moving
-     *  and trimming the clip (double-click to open in the editor still
-     *  works). Purely a UI policy — the audio engine is unaffected. The
-     *  flag is per-clip, not per-library-item, so locking one instance
-     *  of a saved-clip does not affect siblings. `false` removes the
-     *  property so absent==unlocked on the wire and on disk. Returns
-     *  true if the clip exists. */
+    // Clip lock is UI-only and per-instance; false is suppressed on disk/wire.
     bool setClipLocked(const juce::String& clipId, bool locked);
 
     /** Read a clip's lock flag. Defaults to false. */
@@ -372,24 +198,14 @@ class ProjectState : public juce::ValueTree::Listener
     /** Read the clip's `durationMs`. 0 if unknown. */
     double getClipDurationMs(const juce::String& clipId) const;
 
-    /** Update a clip's source file path. Returns true if the clip
-     *  existed. Used by the relink-missing-files flow on load — the
-     *  user picks a replacement file in an OS dialog and the renderer
-     *  emits CLIP_RELINK so we can re-create the engine's audio source
-     *  against the new path. */
+    // Relink writes the replacement path so the engine can recreate the source.
     bool setClipFilePath(const juce::String& clipId, const juce::String& filePath);
 
-    /** Read the library item id the clip is sourced from. Empty if
-     *  the clip is not yet linked (legacy paths only). */
     juce::String getClipLibraryItemId(const juce::String& clipId) const;
 
-    /** Update which library item a clip is sourced from. Used by the
-     *  CLIP_RELINK / library-relink flow. */
     bool setClipLibraryItemId(const juce::String& clipId, const juce::String& libraryItemId);
 
-    /** Set a clip's user-facing display name override. Empty/blank
-     *  clears the override. Marks dirty. Returns true if the clip
-     *  existed. */
+    // Empty clip names clear the display-name override.
     bool setClipName(const juce::String& clipId, const juce::String& name);
 
     /** Read a clip's user-facing display name override, or empty if unset. */
@@ -406,17 +222,11 @@ class ProjectState : public juce::ValueTree::Listener
         double semitones;
         double cents;
         juce::String warpMode;
-        /** True when the clip was dropped before its source BPM was
-         *  known. The `LIBRARY_ITEM_ANALYSIS` late-flip path uses
-         *  this to distinguish "user opted into auto-warp but BPM
-         *  wasn't ready yet" from "user explicitly disabled warp". */
+            // Distinguishes pending auto-warp from explicit warp-off before BPM was known.
         bool pendingAutoWarp;
     };
 
-    /** Visit every clip in the project. Used by `Main.cpp`'s
-     *  `PROJECT_SET_BPM` handler to update the warp ratio of every
-     *  clip whose `tempoRatio` is not explicitly pinned, so a tempo
-     *  change live-re-stretches the whole timeline in lockstep. */
+    // Used to re-stretch unpinned warped clips after project tempo changes.
     void forEachWarpClip(const std::function<void(const WarpClipInfo&)>& visitor) const;
 
     struct EffectiveClipTiming
@@ -426,31 +236,12 @@ class ProjectState : public juce::ValueTree::Listener
         bool warpActive = false;
     };
 
-    /** Backend-authoritative effective timing for a clip. `durationMs`
-     *  is the timeline/output footprint, while the stored clip
-     *  `durationMs` remains the source-time window. */
+    // Effective duration is timeline/output time; stored duration remains source time.
     EffectiveClipTiming getClipEffectiveTiming(const juce::String& clipId) const;
 
-    /** Source BPM (from the library item) in beats-per-minute. 0 if
-     *  the item is unknown or its BPM hasn't been detected yet. */
     double getLibraryItemBpm(const juce::String& itemId) const;
 
-    /**
-     * Partial update of a clip's warp + pitch settings. Every parameter
-     * is wrapped in `std::optional` so the caller can drive a single
-     * field (e.g. just `semitones`) without touching the rest. Returns
-     * true if the clip existed. Mutations go through the `UndoManager`
-     * so a single `CLIP_SET_WARP` envelope coalesces with any other
-     * fields landed in the same drag window.
-     *
-     * The `tempoRatio` argument follows tri-state semantics:
-     *   - `std::nullopt` — caller is not touching `tempoRatio`.
-     *   - non-null double — pin `tempoRatio` to this explicit value;
-     *     project BPM changes no longer move the clip.
-     *   - sentinel: pass `std::optional<double>{}` plus
-     *     `tempoRatioClear=true` to remove the property so it reverts
-     *     to project-BPM tracking.
-     */
+    // Optional fields allow partial warp edits; `tempoRatioClear` reverts to project-BPM tracking.
     bool setClipWarp(const juce::String& clipId,
                      std::optional<bool> warpEnabled,
                      std::optional<juce::String> warpMode,
@@ -466,15 +257,7 @@ class ProjectState : public juce::ValueTree::Listener
     /** Returns the backend-stored file path for `clipId`, or empty if unknown. */
     juce::String getClipFilePath(const juce::String& clipId) const;
 
-    // ─── View settings ─────────────────────────────────────────────────
-    //
-    // Project-scoped view state that survives save/load but is NOT
-    // considered a meaningful "edit" — changing the zoom level or
-    // scroll position should not prompt an unsaved-changes dialog. The
-    // setter routes through `setNonDirtyRootProperty`, which writes to
-    // the live tree under suppression AND mirrors the value into
-    // `cleanSnapshot` so the listener's equivalence check never sees a
-    // delta on this property after a net-zero edit + undo.
+    // View state persists but is mirrored into cleanSnapshot so it never marks dirty.
 
     /** Horizontal zoom (pixels per second). Defaults to 60. */
     double getViewPxPerSecond() const;
@@ -488,21 +271,13 @@ class ProjectState : public juce::ValueTree::Listener
     /** Update the persisted scroll position. Does NOT mark the project dirty. */
     void setViewScrollX(double scrollX);
 
-    /** Id of the track whose header is selected, or an empty string when
-     *  none. Persisted view state — restores the timeline selection and
-     *  the Track FX panel's target on load. Defaults to empty. */
     juce::String getViewSelectedTrack() const;
 
-    /** Update the persisted selected-track id. Does NOT mark the project
-     *  dirty (selection is navigation, not a content edit). */
+    // Selection is navigation, not a content edit.
     void setViewSelectedTrack(const juce::String& trackId);
 
-    /** Whether the bottom panel shows the Track FX view (vs the Library).
-     *  Persisted view state. Defaults to false. */
     bool getViewFxPanelOpen() const;
 
-    /** Update the persisted Track-FX-panel-open flag. Does NOT mark the
-     *  project dirty. */
     void setViewFxPanelOpen(bool open);
 
     /** Persisted playhead position in ms. Defaults to 0. */
@@ -511,83 +286,43 @@ class ProjectState : public juce::ValueTree::Listener
     /** Update the persisted playhead position. Does NOT mark the project dirty. */
     void setPlayheadMs(double playheadMs);
 
-    // ─── Tempo / length (meaningful edits — flip dirty flag) ───────────
-
     /** Project tempo in BPM. Defaults to 100. */
     double getBpm() const;
 
     /** Update the tempo. Marks the project dirty as a normal property edit. */
     void setBpm(double bpm);
 
-    /** Persisted project length in ms (the user-editable Length field).
-     *  Defaults to 0 — the renderer falls back to the per-track default
-     *  in that case. */
     double getProjectLengthMs() const;
 
     /** Update the persisted project length. Marks dirty. */
     void setProjectLengthMs(double lengthMs);
 
-    /** Per-project preferred audio output device. Both fields default to
-     *  empty (no project-level override). Empty values are persisted as
-     *  absent properties so projects that never set a preference don't
-     *  carry the keys forward. */
+    // Empty audio-output fields mean no project-level override.
     juce::String getAudioOutputTypeName() const;
     juce::String getAudioOutputDeviceName() const;
 
-    /** Update the per-project preferred audio output device. Pass empty
-     *  strings to clear the preference (the user's global
-     *  `preferences.json` then applies on next load). Marks dirty and
-     *  records an undo step. */
+    // Empty strings clear the project override so user-scope preferences apply.
     void setAudioOutput(const juce::String& typeName, const juce::String& deviceName);
 
-    /** Per-project target sample rate (Hz). Drives the playback-cache
-     *  rebuild so every clip's audio is at this rate on disk.
-     *  Defaults to 0 (= "not set"; renderer falls back to the user-
-     *  scope `audio.defaultProjectSampleRate` preference, then 44 100). */
+    // Zero means no project override; renderer falls back to user/default sample rate.
     int getTargetSampleRate() const;
 
-    /** Update the per-project target sample rate. Pass 0 to clear the
-     *  preference (renderer-scope default will apply on next load).
-     *  Records an undo step; marks the project dirty. */
+    // Passing 0 clears the project sample-rate override.
     void setTargetSampleRate(int sampleRate);
 
-    /** Opaque JSON blob of the last-used export-dialog settings (format,
-     *  bit depth, dither, tail seconds, MP3 bitrate,
-     *  loudness preset / target, length mode, file-level tags, …).
-     *  The renderer owns the schema; the backend just round-trips the
-     *  string verbatim. Empty when the project has never run an export.
-     *  Roundtrips through `.silverdaw` so the same settings reappear on
-     *  next open. New projects start empty (= dialog uses base defaults). */
+    // Renderer-owned export settings are round-tripped verbatim.
     juce::String getExportSettingsJson() const;
 
-    /** Replace the persisted export-settings JSON. Pass an empty string
-     *  to clear. Does NOT push an undo step (export dialog choices are
-     *  not part of the editing undo stack) but DOES mark the project
-     *  dirty so the user is prompted to save. */
+    // Export choices mark dirty but stay out of the editing undo stack.
     void setExportSettingsJson(const juce::String& json);
 
-    /** Master output volume (0.0 = silent, 1.0 = unity). Applied to the
-     *  live audio engine's final mix bus and to the export render so
-     *  the mixed file matches what the user hears. Defaults to 1.0
-     *  when absent (new projects start at unity). */
+    // Shared by live playback and export so rendered output matches monitoring.
     float getMasterVolume() const;
 
-    /** Update the master output volume. Clamped to [0.0, 1.0]. Pushes
-     *  an undo step (mirrors `setTrackGain`) and marks the project
-     *  dirty. Persisted to `.silverdaw` only when ≠ unity so legacy
-     *  projects round-trip with no extra property. */
+    // Unity is suppressed so legacy projects round-trip without an extra property.
     void setMasterVolume(float volume);
 
-    // ─── Library catalogue ─────────────────────────────────────────────
-    //
-    // Items the user has imported into the library — independently of
-    // whether they've been dragged onto a track yet. Persisted with
-    // the project so re-opening it restores the full catalogue, not
-    // just the items referenced by an active clip. Cover art / ID3
-    // metadata is NOT stored here (renderer re-extracts it on load
-    // via the existing `audio:readMetadata` IPC) — only the stable
-    // `(id, filePath, fileName, duration, format details)` fields the
-    // backend needs to know about.
+    // Library items persist imported sources; rich metadata is re-read by the renderer.
 
     /** Add (or update the file path of) a library item. Marks dirty. */
     bool addLibraryItem(const juce::String& itemId, const juce::String& filePath, const juce::String& fileName = {},
@@ -601,56 +336,30 @@ class ProjectState : public juce::ValueTree::Listener
     /** Remove a library item by id. Returns true if it existed. Marks dirty. */
     bool removeLibraryItem(const juce::String& itemId);
 
-    /** Set the detected BPM on a library item. Pass 0.0 to clear.
-     *  Derived cache metadata — does NOT mark the project dirty (the
-     *  value is regenerated from the source file on demand). Returns
-     *  true if the item existed. */
+    // Derived BPM metadata is regenerated from source and does not mark dirty.
     bool setLibraryItemBpm(const juce::String& itemId, double bpm);
 
-    /** Set the detected beat positions (seconds from start of source)
-     *  on a library item. Empty array clears them. Derived cache
-     *  metadata — does NOT mark the project dirty. Returns true if
-     *  the item existed. */
+    // Derived beat metadata is regenerated from source and does not mark dirty.
     bool setLibraryItemBeats(const juce::String& itemId, const std::vector<double>& beatTimesSec);
 
-    /** Set the regression-derived "ideal beat 0" anchor (seconds, may
-     *  be negative) on a library item. Used by the renderer to lay
-     *  out the synthesised beat-marker grid robustly. Derived cache
-     *  metadata — does NOT mark the project dirty. Returns true if
-     *  the item existed. */
+    // Derived beat anchor supports renderer beat-grid layout without marking dirty.
     bool setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec);
 
-    /** Set the cached-decoded-WAV path on a library item. Used by
-     *  the backend after `DecodedCache::ensureDecoded` has finished.
-     *  Pass an empty string to clear. Derived cache metadata — does
-     *  NOT mark the project dirty (the cache file is regenerated from
-     *  the source). Returns true if the item existed. */
+    // Decoded-WAV cache paths are derived metadata and do not mark dirty.
     bool setLibraryItemPlaybackPath(const juce::String& itemId, const juce::String& playbackPath);
 
-    /** Update a library item's source file path. Used by the
-     *  relink-missing-files flow: the user picks a replacement file
-     *  and the new path is applied to the library item. All clips
-     *  referencing the item pick up the new file automatically. */
+    // Relinking the library item updates all clips that reference it.
     bool setLibraryItemFilePath(const juce::String& itemId, const juce::String& filePath);
 
     /** Read a library item's source file path. */
     juce::String getLibraryItemFilePath(const juce::String& itemId) const;
 
-    /** Read a library item's decoded-WAV playback path. Empty when
-     *  no cache has been written yet. */
     juce::String getLibraryItemPlaybackPath(const juce::String& itemId) const;
 
-    /** Replace or clear the detected musical key for a library item.
-     *  Pass an empty string to clear. Marks dirty. Returns true if
-     *  the item existed. */
+    // Empty key clears the detected-key override.
     bool setLibraryItemKey(const juce::String& itemId, const juce::String& key);
 
-    /** Partial update of a saved-clip library item's warp + pitch
-     *  defaults — the same five fields a `CLIP_SET_WARP` carries.
-     *  Mirrors `setClipWarp` exactly so save/load round-trip is
-     *  uniform between clips and saved clips. No-op (returns false)
-     *  on `audio-file` items; warp is meaningful only on saved
-     *  clips. */
+    // Saved-clip warp defaults mirror clip warp fields for copy-on-drop consistency.
     bool setLibraryItemWarp(const juce::String& itemId,
                             std::optional<bool> warpEnabled,
                             std::optional<juce::String> warpMode,
@@ -659,51 +368,26 @@ class ProjectState : public juce::ValueTree::Listener
                             std::optional<double> semitones,
                             std::optional<double> cents);
 
-    /** Clear persisted BPM/beat/variable-tempo fields before a forced
-     *  reanalysis. Derived cache metadata — does NOT mark the project
-     *  dirty (clicking Re-analyse is a request to recompute, not an
-     *  edit to the project itself). Returns true if the item existed. */
+    // Re-analysis clears derived metadata without marking the project dirty.
     bool clearLibraryItemAnalysis(const juce::String& itemId);
 
-    /** Read the cached-decoded-WAV path for the library item with
-     *  `filePath` as its source path. Returns empty string when no
-     *  matching item exists or no cache has been written yet. Used
-     *  by `handleClipAdd` to prefer the cached WAV over the original
-     *  for new clip sources. */
+    // Clip ingest prefers cached WAVs when available.
     juce::String getLibraryItemPlaybackPathForSource(const juce::String& sourceFilePath) const;
 
-    /** Flag (or clear) the library item as having a variable tempo —
-     *  drives the UI badge and suppresses the first-clip project
-     *  BPM seed. Derived cache metadata — does NOT mark the project
-     *  dirty. Returns true if the item existed. */
+    // Variable-tempo analysis suppresses project-BPM seeding without marking dirty.
     bool setLibraryItemVariableTempo(const juce::String& itemId, bool variable);
 
-    /** Flag (or clear) the library item as having a low-confidence
-     *  BPM analysis result — used by the renderer to auto-classify
-     *  it as a non-musical "sample". Derived cache metadata — does
-     *  NOT mark the project dirty. Returns true if the item existed. */
+    // Low-confidence analysis feeds auto-classification without marking dirty.
     bool setLibraryItemLowConfidence(const juce::String& itemId, bool lowConfidence);
 
-    /** Persist the user's classification override for a library
-     *  item: "sample" forces non-musical treatment, "music" forces
-     *  musical treatment, empty/absent restores auto-classification
-     *  from `lowConfidence`. Marks dirty. Returns true if the item
-     *  existed. */
+    // Classification override beats low-confidence auto-classification.
     bool setLibraryItemSampleMode(const juce::String& itemId, const juce::String& mode);
 
-    /** True if a library item is registered for `filePath`. Used by the
-     *  detection scheduler to avoid duplicate work. */
     bool hasLibraryItemForPath(const juce::String& filePath) const;
 
-    /** Read the BPM on the library item matching `filePath`. Returns 0
-     *  if no item matches or no BPM has been detected yet. */
     double getLibraryItemBpmForPath(const juce::String& filePath) const;
 
-    /** Snapshot the persisted library items, ready to drop into a
-     *  PROJECT_STATE envelope's `library` field. */
     juce::var libraryAsJson() const;
-
-    // ─── Timeline markers ──────────────────────────────────────────────
 
     /** Add a timeline marker at an absolute project position in ms. Marks dirty. */
     bool addMarker(const juce::String& markerId, double positionMs);
@@ -717,41 +401,14 @@ class ProjectState : public juce::ValueTree::Listener
     /** Snapshot persisted timeline markers for PROJECT_STATE. */
     juce::var markersAsJson() const;
 
-    // ─── Serialisation ─────────────────────────────────────────────────
-
-    /**
-     * Snapshot the project's tracks as a `juce::var` array of track
-     * objects, ready to drop into a PROJECT_STATE envelope as its
-     * `tracks` field. Caller composes the wrapping envelope (file path,
-     * project name, reset flag) in `Main.cpp::buildProjectStateEnvelope`.
-     *
-     * Each track:
-     *   { id, name, gain, clips: [ { id, filePath, offsetMs, durationMs } ] }
-     */
     juce::var tracksAsJson() const;
 
-    /**
-     * Read-only access to the underlying `ValueTree`. Used by serialisation
-     * (`ProjectFile::save`) and tests that need to assert structural shape.
-     * The returned reference is stable for the lifetime of `ProjectState`.
-     */
     const juce::ValueTree& getTree() const noexcept
     {
         return root;
     }
 
-    /**
-     * Replace this project's contents with `newTree`. The supplied tree
-     * must have type `PROJECT` (the root element produced by `getTree`).
-     *
-     * Properties and children of the existing root are dropped first;
-     * `root`'s node identity is preserved so any future listeners stay
-     * attached. The undo history is cleared because undo is meaningless
-     * across a project load.
-     *
-     * Returns `juce::Result::ok()` on success, or a failure result with
-     * a user-displayable message when validation fails.
-     */
+    // Preserves root node identity for listeners; clears undo because loads are a new baseline.
     juce::Result replaceTree(const juce::ValueTree& newTree);
 
     /** Access the shared undo manager (Phase 7 will surface this in the UI). */
@@ -764,21 +421,12 @@ class ProjectState : public juce::ValueTree::Listener
     juce::ValueTree findTrack(const juce::String& trackId) const;
     juce::ValueTree findClip(const juce::String& clipId) const;
 
-    /** Build the per-track `transitions` JSON array (empty when the track
-     *  has none). Defined in ProjectTransitions.cpp; called from
-     *  `tracksAsJson`. */
     juce::var buildTransitionsJson(const juce::ValueTree& track) const;
 
-    /** Timeline footprint `[startMs, endMs)` of a clip using its effective
-     *  (warp-scaled) duration. False when the clip is unknown or
-     *  zero-length. Defined in ProjectTransitions.cpp. */
+    // Transition math uses warp-scaled timeline footprints.
     bool clipTimelineSpanMs(const juce::String& clipId, double& startMs, double& endMs) const;
 
-    /** Shared transition validity predicate: true iff `left`/`right` are
-     *  both clips of `track`, form a proper tail/head overlap
-     *  (`leftStart < rightStart < leftEnd <= rightEnd`), and no third clip
-     *  on the track intrudes into the overlap. On success returns the
-     *  derived overlap region. Defined in ProjectTransitions.cpp. */
+    // Valid transitions require a proper tail/head overlap with no third-clip intrusion.
     bool transitionOverlapMs(const juce::ValueTree& track,
                              const juce::String& leftClipId, const juce::String& rightClipId,
                              double& overlapStartMs, double& overlapEndMs) const;
@@ -794,30 +442,10 @@ class ProjectState : public juce::ValueTree::Listener
     void setDirty(bool d);
     void recomputeDirty();
 
-    /**
-     * Writes a property that is persisted on the project tree but is
-     * NOT considered a user-facing edit (view zoom, scroll, playhead).
-     * Mirrors the value into `cleanSnapshot` so the post-edit
-     * equivalence check used by `recomputeDirty()` continues to ignore
-     * the property — without that mirror, any drift between the live
-     * tree and the snapshot would survive an undo and leave the project
-     * stuck in the dirty state.
-     */
+    // Mirrors non-edit state into cleanSnapshot so undo cannot leave phantom dirty deltas.
     void setNonDirtyRootProperty(const juce::Identifier& id, const juce::var& value);
 
-    /**
-     * Apply a mutation to a library item *without* marking the project
-     * dirty. Used for derived/cache metadata (BPM analysis, beat grid,
-     * decoded-WAV playback path) that is regenerated from the source
-     * audio file and should not force the user to "save" their project
-     * just because a background analysis finished. Finds the item by
-     * id in both `root` and `cleanSnapshot`, applies the mutator to
-     * each under suppression. Returns true if the item existed in the
-     * live tree. If the item exists only in `root` (added after the
-     * last `markClean`) the live mutation still happens but the
-     * snapshot mirror is skipped — that's harmless because the item
-     * itself is already a structural delta against the snapshot.
-     */
+    // Derived library metadata mirrors into cleanSnapshot so background analysis stays non-dirty.
     bool mutateDerivedLibraryItem(const juce::String& itemId,
                                   const std::function<void(juce::ValueTree&)>& mutator);
 
@@ -825,26 +453,11 @@ class ProjectState : public juce::ValueTree::Listener
     juce::ValueTree cleanSnapshot;
     juce::UndoManager undoManager;
     bool dirty{false};
-    /**
-     * Re-entrant suppression depth for listener-driven dirty
-     * transitions. Bumped via the scoped `SuppressDirtyScope` guard
-     * below — listeners early-out whenever depth > 0. Used by
-     * `replaceTree` (a project load is by definition clean) and by
-     * `setNonDirtyRootProperty` (view / playhead state mutations that
-     * are persisted but never count as user edits). A counter rather
-     * than a bool so a nested suppression scope cannot accidentally
-     * unsuppress a still-active outer scope.
-     */
+    // Counter, not bool, so nested dirty-suppression scopes cannot unsuppress an outer scope.
     int suppressDirtyDepth{0};
     DirtyChangedCallback onDirtyChanged;
 
-    /**
-     * RAII guard that bumps `suppressDirtyDepth` on construction and
-     * decrements it on destruction. Exception-safe (the listeners stay
-     * suppressed only for the lifetime of the scope) and nest-safe (a
-     * nested scope still increments then decrements, so the outer
-     * scope's suppression remains intact).
-     */
+    // RAII keeps dirty-suppression exception-safe and nest-safe.
     class SuppressDirtyScope
     {
     public:
@@ -860,8 +473,7 @@ class ProjectState : public juce::ValueTree::Listener
         ProjectState& state;
     };
 
-    // ValueTree identifiers — defined once so typos surface at link time
-    // rather than as silent zero-property reads on the audio side.
+    // Central identifiers make property typos link-time failures.
     static const juce::Identifier kProject;
     static const juce::Identifier kTrack;
     static const juce::Identifier kClip;
@@ -913,9 +525,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kCollapsed;
     static const juce::Identifier kLibraryItemId;
 
-    // Per-clip warp + pitch shift. Identifiers are reused for the same
-    // properties on saved-clip library items (where they act as the
-    // copy-on-drop defaults for a future timeline placement).
+    // Reused on saved-clip library items as copy-on-drop defaults.
     static const juce::Identifier kWarpEnabled;
     static const juce::Identifier kWarpMode;
     static const juce::Identifier kTempoRatio;
@@ -923,34 +533,27 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kCents;
     static const juce::Identifier kPendingAutoWarp;
 
-    // Phase 5 — per-track send levels to the project Reverb / Delay buses.
-    // Both default to 0 (no send) and are persisted only when non-zero.
+    // Sends persist only when non-zero.
     static const juce::Identifier kSendReverb;
     static const juce::Identifier kSendDelay;
     static const juce::Identifier kPan;
 
-    // Phase 5 — per-track Tone (3-band fixed EQ + low-cut). dB values
-    // default to 0; the low-cut flag defaults to false. All four
-    // properties are suppressed at default to keep legacy projects
-    // byte-equivalent on round-trip.
+    // Tone defaults are suppressed for byte-equivalent legacy round-trips.
     static const juce::Identifier kToneBassDb;
     static const juce::Identifier kToneMidDb;
     static const juce::Identifier kToneTrebleDb;
     static const juce::Identifier kToneLowCut;
     static const juce::Identifier kToneHighCut;
 
-    // Phase 5 — per-track Leveler. Just the user-facing "amount" knob
-    // until the compressor DSP and Advanced controls land.
+    // Leveler is currently persisted as the user-facing amount knob.
     static const juce::Identifier kLevelerAmount;
 
-    // Phase 5 — per-clip volume envelope. The envelope is a single ARRAY
-    // property of `{ timeMs, gain }` objects.
+    // Envelope stays one array property for atomic edits.
     static const juce::Identifier kEnvelopePoints;
     static const juce::Identifier kEnvelopeTimeMs;
     static const juce::Identifier kEnvelopeGain;
 
-    // §12.1 — clip-to-clip transition (crossfade). A `TRANSITION` child of
-    // the host `TRACK` node. The overlap region is derived, never stored.
+    // Transition overlap is derived, never stored.
     static const juce::Identifier kTransition;
     static const juce::Identifier kLeftClipId;
     static const juce::Identifier kRightClipId;
@@ -963,8 +566,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kReverbTone;
     static const juce::Identifier kReverbMix;
 
-    // Phase 5 — project-shared Delay bus. `noteValue` is a
-    // tempo-locked beat division string; the others are 0..1 linear.
+    // Delay noteValue is a tempo-locked beat division; other values are 0..1.
     static const juce::Identifier kDelayNoteValue;
     static const juce::Identifier kDelayFeedback;
     static const juce::Identifier kDelayTone;
@@ -973,11 +575,7 @@ class ProjectState : public juce::ValueTree::Listener
 
 class AudioEngine;
 
-/** Re-derive every clip's transition edge-fade from the current project
- *  state and publish it to the live engine (clears clips with no
- *  transition, keeping them on the null fast path). Call after load and
- *  after any transition / clip-geometry mutation. Defined in
- *  ProjectTransitions.cpp. */
+// Clears clips with no transition so they stay on the null fast path.
 void syncClipEdgeFades(AudioEngine& engine, const ProjectState& project);
 
 } // namespace silverdaw

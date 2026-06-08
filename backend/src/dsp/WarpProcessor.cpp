@@ -11,12 +11,7 @@ WarpProcessor::WarpProcessor(int numChannelsArg, double sampleRateArg,
                              RubberBandStretcher::Options modeOptions)
     : numChannels(juce::jmax(1, numChannelsArg)), sampleRate(sampleRateArg)
 {
-    // Compose the option flags: caller-supplied mode (R2 Faster / R2 Finer / R3)
-    // OR'd with our own per-build defaults. Real-time mode is mandatory —
-    // we'd starve the audio callback in offline mode. PitchHighConsistency
-    // lets us change pitch live without artefacts on the order of a few
-    // samples; the cost is one extra `setPitchScale()` per block, which
-    // is measured in tens of nanoseconds.
+    // Real-time mode is mandatory for the audio callback; high-consistency pitch avoids live artefacts.
     const auto options = modeOptions
                        | RubberBandStretcher::OptionProcessRealTime
                        | RubberBandStretcher::OptionPitchHighConsistency;
@@ -34,10 +29,7 @@ WarpProcessor::~WarpProcessor() = default;
 
 void WarpProcessor::prepareToPlay(int maxBlockSamples)
 {
-    // The stretcher may demand up to one block of source per output
-    // block at ratio 1.0 — at our 0.25..4.0 ratio cap it can demand up
-    // to 4× that. Pre-allocate the worst case so `process()` never
-    // touches the heap.
+    // Pre-allocate the 0.25-ratio worst case so `process()` never touches the heap.
     const int worstCase = juce::jmax(maxBlockSamples * 4, 1024);
     if (worstCase <= allocatedBlockSamples) return;
     allocatedBlockSamples = worstCase;
@@ -57,10 +49,7 @@ void WarpProcessor::doReset()
 {
     if (stretcher == nullptr) return;
     stretcher->reset();
-    // Real-time Rubber Band expects callers to feed preferred input
-    // padding and then discard its reported output delay. Without that
-    // discard, first playback after a seek can emit partially-primed
-    // transient output before the stretched stream has settled.
+    // Feed Rubber Band's start pad and discard its priming delay after reset/seek.
     const int pad = static_cast<int>(stretcher->getPreferredStartPad());
     outputDelayToDiscard = static_cast<int>(stretcher->getStartDelay());
     if (pad > 0 && allocatedBlockSamples > 0)
@@ -85,9 +74,7 @@ void WarpProcessor::applyPendingParams() noexcept
     const double tr = pendingTempoRatio.load(std::memory_order_acquire);
     if (tr != appliedTempoRatio)
     {
-        // Rubber Band's time-ratio is output / input; Silverdaw's
-        // `tempoRatio` is project / source (i.e. how much faster the
-        // clip plays). Invert.
+        // Rubber Band wants output/input, the inverse of Silverdaw's project/source ratio.
         stretcher->setTimeRatio(1.0 / tr);
         appliedTempoRatio = tr;
     }
@@ -147,27 +134,19 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
         if (available > 0)
         {
             const int want = std::min(available, numOutputSamples - produced);
-            // Offset each pre-allocated output-pointer by `produced` so
-            // successive pulls concatenate cleanly into the output block.
             for (int c = 0; c < numChannels; ++c) outputScratchPtrs[c] = output[c] + produced;
             const size_t got = stretcher->retrieve(outputScratchPtrs.data(), static_cast<size_t>(want));
             produced += static_cast<int>(got);
             continue;
         }
 
-        // Stretcher needs more source. Ask the callback for one block's
-        // worth at the current source position; the callback is
-        // responsible for placing exactly `chunk` samples per channel
-        // into the supplied scratch pointers.
         const int chunk = std::min(allocatedBlockSamples, 1024);
         readSource(sourceScratchPtrs.data(), nextSourceSample, chunk);
         stretcher->process(sourceScratchPtrs.data(), static_cast<size_t>(chunk), false);
         nextSourceSample += chunk;
     }
 
-    // Fill any remaining output with silence — this should be rare
-    // (only during start-up before the stretcher has primed) but keeps
-    // the contract honest.
+    // Silence-fill rare priming shortfalls to keep the output contract stable.
     if (produced < numOutputSamples)
     {
         for (int c = 0; c < numChannels; ++c)

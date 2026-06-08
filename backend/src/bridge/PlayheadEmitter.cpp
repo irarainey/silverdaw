@@ -17,25 +17,11 @@ void PlayheadEmitter::timerCallback()
     const bool playing = engine.isPlaying();
     const double rawPosMs = engine.getPositionMs();
 
-    // While the transport is playing, subtract the device's
-    // effective output latency from the broadcast position so the
-    // visual playhead matches what the user is hearing — critical
-    // for high-latency outputs like Bluetooth headphones, where
-    // the uncompensated value drifts ~200 ms ahead of the audio.
-    //
-    // Paused / seek-anchor reads stay raw (see
-    // `AudioEngine::getPositionMs` for the rationale): click-to-
-    // seek lands exactly where the user clicked, and Save's
-    // persisted playhead matches the engine's write position.
-    // The play/pause transition does cause a one-off visual snap
-    // (~latency ms), absorbed by the renderer's existing position
-    // smoothing.
+    // Compensate only during playback so the playhead matches heard audio without moving seek anchors.
     const double latencyMs = playing ? engine.getOutputLatencyMs() : 0.0;
     const double posMs = playing ? juce::jmax(0.0, rawPosMs - latencyMs) : rawPosMs;
 
-    // Always broadcast on transitions; while playing, broadcast every tick so the
-    // renderer can drive a smooth playhead. Reuse a single DynamicObject so we
-    // don't churn the heap 60x/s on the message thread.
+    // Reuse payload storage to avoid 60 Hz message-thread heap churn.
     if (playing || posMs != lastPosMs)
     {
         payloadObject->setProperty("positionMs", posMs);
@@ -44,10 +30,7 @@ void PlayheadEmitter::timerCallback()
         lastPosMs = posMs;
     }
 
-    // Preview voice — independent of the project transport. Broadcast
-    // position while playing, and detect end-of-window here (the
-    // OffsetSource emits silence past durationMs but the transport
-    // keeps "playing"; we explicitly stop and notify).
+    // Preview transport is independent; stop here because the source only emits silence past duration.
     const bool previewPlaying = engine.isPreviewPlaying();
     const double previewPos = engine.getPreviewPositionMs();
     const double previewDur = engine.getPreviewDurationMs();
@@ -75,11 +58,7 @@ void PlayheadEmitter::timerCallback()
         lastPreviewPosMs = previewPos;
     }
 
-    // Master peak meter. Drain the audio thread's "max since last
-    // read" lanes and broadcast a MASTER_LEVEL envelope. We gate
-    // on activity (signal above ~ -100 dBFS, plus one trailing
-    // zero so the renderer's hold/decay can finish gracefully)
-    // to avoid spamming envelopes during long silent stretches.
+    // Gate meter broadcasts, but emit one trailing zero so renderer decay can finish.
     float peakL = 0.0F;
     float peakR = 0.0F;
     engine.consumeMasterPeaks(peakL, peakR);
@@ -93,17 +72,7 @@ void PlayheadEmitter::timerCallback()
         lastMasterLevelHadSignal = hasSignal;
     }
 
-    // Diagnostic: record the final post-master-gain output peak — the
-    // signal actually handed to the device. Fires both while PLAYING (was
-    // the first play silent at the engine, or did real audio reach the
-    // device?). A peak at the keep-alive floor (~0.004) is dither only; a
-    // music-level peak (≳ 0.1) is real audio; a flat 0 while playing means
-    // the output never reached the device. We accumulate the running max
-    // across every drained tick so a throttled sample can't miss a
-    // transient, then emit it on the message thread (free of any
-    // audio-thread cost) and reset. Only accumulate while playing so the
-    // brief wake-pre-roll floor can't contaminate the first post-resume
-    // sample.
+    // Accumulate post-master peaks on the message thread so diagnostics miss fewer transients.
     if (playing)
     {
         masterPeakLogMaxL = juce::jmax(masterPeakLogMaxL, peakL);
@@ -115,8 +84,7 @@ void PlayheadEmitter::timerCallback()
         masterPeakLogMaxR = 0.0F;
     }
     const double nowMs = juce::Time::getMillisecondCounterHiRes();
-    // Only log during active playback — idle/paused output is now true
-    // silence, so logging it would just spam zeros every interval.
+    // Idle/paused output is true silence, so logging it would spam zeros.
     if (playing && (nowMs - lastMasterPeakLogMs) >= kMasterPeakLogIntervalMs)
     {
         silverdaw::log::debug("perf.master",
@@ -129,13 +97,7 @@ void PlayheadEmitter::timerCallback()
         masterPeakLogMaxR = 0.0F;
     }
 
-    // Per-track peak meters. Same gating rules as the master
-    // meter (only broadcast on activity; emit one trailing zero
-    // on the active→silent transition so the renderer's
-    // hold/decay finishes cleanly). The payload carries a flat
-    // array — small at typical project sizes (≤ few dozen
-    // tracks) and the renderer fans out by `id` to the
-    // matching track-meter component.
+    // Per-track meters use the same activity gate and one trailing zero as master.
     engine.drainAllTrackPeaks(trackPeakScratch);
     bool anyTrackHasSignal = false;
     for (const auto& snap : trackPeakScratch)

@@ -9,11 +9,7 @@ class AudioEngine;
 class ProjectState;
 class BridgeServer;
 
-// Clip edit commands: lightweight, non-destructive ProjectState mutations on an
-// existing clip (move, trim, colour, remove, lock, rename, rebind, warp, volume
-// envelope). Extracted from Main.cpp so the dispatcher only routes to them. Clip
-// audio ingest (CLIP_ADD, editor peaks) is a separate concern and stays with the
-// peaks/decode pipeline.
+// Clip ingest stays with the peaks/decode pipeline; edits are non-destructive.
 
 void handleClipMove(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
 void handleClipTrim(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);

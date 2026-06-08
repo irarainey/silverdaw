@@ -21,9 +21,7 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
         library = juce::ValueTree(kLibrary);
         root.appendChild(library, nullptr);
     }
-    // If an item with the same id already exists, just update its
-    // filePath — covers the relink-from-library case and is more
-    // forgiving than a hard-fail.
+    // Existing ids update in place to support relink-from-library.
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         auto item = library.getChild(i);
@@ -138,10 +136,7 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
     {
         item.setProperty(kCollapsed, true, nullptr);
     }
-    // The properties above are set on the orphan item BEFORE it joins
-    // the tree so they don't generate undo actions individually — the
-    // single `appendChild` below records one undoable action that
-    // covers the entire item insertion (undo removes the whole child).
+    // Set orphan properties before append so insertion is one undoable action.
     library.appendChild(item, &undoManager);
     return true;
 }
@@ -221,8 +216,7 @@ bool ProjectState::setLibraryItemFilePath(const juce::String& itemId, const juce
         if (item.getProperty(kId).toString() == itemId)
         {
             item.setProperty(kFilePath, filePath, &undoManager);
-            // Clear the cached playback path — the new source needs to
-            // be decoded again before playback can use a WAV cache.
+            // New source invalidates the decoded playback cache path.
             item.removeProperty(kPlaybackFilePath, &undoManager);
             return true;
         }
@@ -456,9 +450,7 @@ juce::var ProjectState::libraryAsJson() const
         }
         if (item.hasProperty(kBeats))
         {
-            // Pass the underlying `juce::var` array straight through —
-            // it's already a `juce::var` containing `Array<var>` of
-            // numbers, which `JSON::toString` serialises as `[…]`.
+            // Stored beat arrays are already JSON-ready juce::var values.
             obj->setProperty("beats", item.getProperty(kBeats));
         }
         if (item.hasProperty(kBeatAnchorSec))
@@ -506,11 +498,7 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("collapsed", true);
         }
-        // Saved-clip default warp settings. These travel on the library
-        // item so dragging the tile back to the timeline restores the
-        // user's preferred warp state for new placements; they are
-        // copied-on-drop into the timeline clip and do NOT live-link
-        // back here (per the linked-clip / warp design split).
+        // Saved-clip warp defaults are copied on drop, not live-linked.
         if (item.hasProperty(kWarpEnabled))
         {
             obj->setProperty("warpEnabled", static_cast<bool>(item.getProperty(kWarpEnabled, false)));
@@ -531,9 +519,7 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("cents", static_cast<double>(item.getProperty(kCents, 0.0)));
         }
-        // Same unresolved-flag pattern as clips so the renderer can
-        // grey-out library cards whose source file has gone missing
-        // since the project was last saved.
+        // Mirrors clip unresolved state for missing library sources.
         if (filePath.isEmpty() || !juce::File(filePath).existsAsFile())
         {
             obj->setProperty("unresolved", true);

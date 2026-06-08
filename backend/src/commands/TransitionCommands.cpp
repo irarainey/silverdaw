@@ -28,8 +28,7 @@ bool applyTransitionCreate(const juce::var& payload, ProjectState& projectState)
         return false;
     }
 
-    // The renderer never mints the id — the backend owns it so two clients
-    // racing the same overlap can't collide on a caller-chosen string.
+    // Backend-minted ids avoid caller-chosen collisions.
     const auto transitionId = juce::Uuid().toDashedString();
     const auto recipe = payload.getProperty("recipe", juce::var());
 

@@ -10,9 +10,6 @@
 namespace silverdaw
 {
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Snapshot (unchanged from previous implementation)
-// ─────────────────────────────────────────────────────────────────────────────
 
 MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
 {
@@ -23,7 +20,6 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
                                      : kDefaultSampleRate;
     snapshot.masterGain = juce::jlimit(0.0F, 1.0F, project.getMasterVolume());
 
-    // Phase 5 — project-shared Reverb / Delay, captured once for the render.
     snapshot.reverbSize = project.getProjectReverbSize();
     snapshot.reverbDecay = project.getProjectReverbDecay();
     snapshot.reverbTone = project.getProjectReverbTone();
@@ -59,15 +55,10 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         if (!trackTree.hasType(kTrack)) continue;
         MixdownSnapshot::TrackSnapshot track;
         track.id = trackTree.getProperty(kId).toString();
-        // Match live's clamp policy in AudioEngine::addClip / setClipGain
-        // (juce::jlimit(0.0F, 4.0F, ...)). Without this the export
-        // applies whatever raw gain ProjectState carries and diverges
-        // from playback for tracks whose user gain is outside [0, 4].
         const float rawEffectiveGain = project.getEffectiveTrackGain(track.id);
         track.gain = juce::jlimit(kMinTrackGain, kMaxTrackGain, rawEffectiveGain);
 
-        // Phase 5 — capture per-track Tone EQ so the offline render
-        // applies the same tilt the live engine does (§7.9.6 parity).
+        // Snapshot live per-track parameters so offline render stays in parity with playback.
         track.toneBassDb = project.getTrackToneBassDb(track.id);
         track.toneMidDb = project.getTrackToneMidDb(track.id);
         track.toneTrebleDb = project.getTrackToneTrebleDb(track.id);
@@ -99,12 +90,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             clip.id = clipTree.getProperty(kId).toString();
             const auto libraryItemId = clipTree.getProperty(kLibraryItemId).toString();
             clip.libraryItemId = libraryItemId;
-            // Prefer the decoded-WAV cache when available so the worker
-            // doesn't have to decode MP3 / WMA inside the render loop.
-            // NOTE: the dispatcher (Main.cpp) will overwrite this with
-            // `resolveEnginePlaybackPath(...)` so live and mixdown open
-            // the exact same bytes — keeps selective warp divergence
-            // off the table when the stored playback path is stale.
+            // NOTE: dispatcher overwrites this with live's resolved playback path for parity.
             clip.filePath = project.getLibraryItemPlaybackPath(libraryItemId);
             if (clip.filePath.isEmpty()) clip.filePath = project.getLibraryItemFilePath(libraryItemId);
             clip.offsetMs = static_cast<double>(clipTree.getProperty(kOffsetMs, 0.0));
@@ -112,25 +98,15 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             clip.durationMs = static_cast<double>(clipTree.getProperty(kDurationMs, 0.0));
             clip.warpEnabled = static_cast<bool>(clipTree.getProperty(kWarpEnabled, false));
             clip.warpMode = clipTree.getProperty(kWarpMode, "rhythmic").toString();
-            // tempoRatio and effectiveDurationMs come from the authoritative
-            // `getClipEffectiveTiming` helper. Reading kTempoRatio directly
-            // from the ValueTree with a default of 1.0 was a previous bug —
-            // it ignored the "follow project BPM" case where the property
-            // is absent and the live engine derives the ratio as
-            // projectBpm/sourceBpm on the fly.
+            // Silverdaw tempoRatio is project/source; Rubber Band receives the inverse
+            // internally.
             const auto timing = project.getClipEffectiveTiming(clip.id);
             clip.tempoRatio = timing.tempoRatio > 0.0 ? timing.tempoRatio : 1.0;
             clip.semitones = static_cast<double>(clipTree.getProperty(kSemitones, 0.0));
             clip.cents = static_cast<double>(clipTree.getProperty(kCents, 0.0));
             clip.effectiveDurationMs = timing.durationMs > 0.0 ? timing.durationMs : clip.durationMs;
-            // Volume-envelope breakpoints via the canonical accessor so
-            // the offline render applies the exact same shape the live
-            // engine received through `setClipEnvelope`.
             clip.envelopePoints = project.getClipEnvelope(clip.id);
 
-            // §12.1 — derived transition edge-fade geometry (master-timeline
-            // ms). Carried so the offline OffsetSource applies the identical
-            // crossfade the live engine does.
             const auto edge = project.getClipEdgeFade(clip.id);
             clip.edgeFadeIn = edge.hasFadeIn;
             clip.edgeFadeInStartMs = edge.fadeInStartMs;
@@ -139,9 +115,6 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             clip.edgeFadeOutStartMs = edge.fadeOutStartMs;
             clip.edgeFadeOutEndMs = edge.fadeOutEndMs;
 
-            // Pull the source's native rate from the library item — useful
-            // for diagnostics; the renderer reads the authoritative rate
-            // off the reader at build time.
             const auto library = root.getChildWithName(kLibrary);
             if (library.isValid())
             {

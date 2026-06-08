@@ -34,16 +34,12 @@ namespace silverdaw
 {
 namespace
 {
-// Mixdown job state. `g_mixdownBusy` is set true while a render is in flight
-// and gates `TRANSPORT_PLAY` so transport can't audibly start mid-render.
-// `g_mixdownCancel` is the cancel flag the engine polls every block.
+// Mixdown state gates playback and carries the engine-polled cancel flag.
 std::atomic<bool> g_mixdownBusy{false};
 std::atomic<bool> g_mixdownCancel{false};
 } // namespace
 
-// Bridge payload validation helpers live in `PayloadHelpers.h` so the backend
-// test binary can link them in. Hoist them in here so the dispatch branches
-// (`tryGetNumber(payload, "X")` etc.) read unqualified.
+// Hoist payload readers so dispatch branches stay readable.
 using silverdaw::bridge::tryGetNumber;
 using silverdaw::bridge::tryGetRequiredString;
 using silverdaw::bridge::tryGetString;
@@ -52,18 +48,14 @@ using silverdaw::bridge::readOptionalBool;
 using silverdaw::bridge::readOptionalString;
 using silverdaw::broadcastApplied;
 
-// Same wire-protocol convention as BridgeServer::broadcast: (type, payload) order is
-// fixed by design, so the easily-swappable-parameters check is intentionally silenced.
+// Wire-protocol order is fixed as (type, payload).
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                            juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
                            const silverdaw::DecodedCache& decodedCache, silverdaw::ProjectSession& session)
 {
-    // Liveness fast-path. PING is answered on the message thread so a
-    // round-trip proves the engine command thread itself is responsive,
-    // not merely that the socket is open. It mutates nothing, so it
-    // bypasses the undo prologue/epilogue entirely.
+    // Answer on the message thread so PING proves command-thread responsiveness.
     if (type == "PING")
     {
         auto* p = new juce::DynamicObject();
@@ -72,11 +64,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         return;
     }
 
-    // Undo-transaction prologue. Each project-mutating envelope is wrapped
-    // in its own UndoManager transaction so Ctrl+Z reverts one logical
-    // edit. Drag streams (CLIP_MOVE / CLIP_TRIM / TRACK_GAIN) coalesce
-    // same-target events within a 500 ms window so a 60 Hz drag is one
-    // undo step.
+    // Mutations get one undo transaction; high-rate drag streams coalesce by target.
     silverdaw::beginUndoTransactionIfNeeded(type, payload, projectState);
     if (type == "CLIP_ADD")
     {
@@ -460,25 +448,16 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::warn("bridge", "unhandled message type: " + type);
     }
 
-    // Mirror to `beginUndoTransactionIfNeeded`. Called AFTER the handler
-    // has applied its mutation so the terminal `gestureEnd: true` event
-    // folds into the open transaction, then clears the coalesce state
-    // for the next gesture.
+    // Run after mutation so terminal gesture events fold into the open transaction.
     silverdaw::endUndoTransactionIfNeeded(type, payload);
 
-    // §12.1 — a geometry edit can break a transition's overlap. Re-derive
-    // edge-fades and auto-delete invalidated transitions (joining this edit's
-    // still-open undo step). No-op fast path when the project has no
-    // transitions, so transition-free projects are unaffected.
+    // Geometry edits can invalidate transition overlaps; reconcile inside the same undo step.
     if (silverdaw::transitionGeometryMayHaveChanged(type))
     {
         silverdaw::reconcileTransitionsAfterGeometryEdit(engine, projectState, bridge, session);
     }
 
-    // Undo-state epilogue. Any mutating envelope (or an undo/redo itself)
-    // can change `canUndo` / `canRedo`. PROJECT_LOAD / PROJECT_NEW and
-    // the recovery / autosave paths each clear the undo history via
-    // `replaceTree`, so they fall under the mutating branch too.
+    // Mutations and project replacement can change undo/redo menu state.
     if (silverdaw::isUndoableEnvelopeType(type) || type == "EDIT_UNDO" || type == "EDIT_REDO" ||
         type == "PROJECT_NEW" || type == "PROJECT_LOAD" || type == "PROJECT_LOAD_RECOVERY")
     {

@@ -21,7 +21,6 @@ using mixdown_graph::kOutputChannels;
 
 namespace
 {
-// Min spacing between progress envelopes so the bridge isn't flooded.
 constexpr int kProgressMinIntervalMs = 50;
 
 Pass2Result fail(MixdownFailureCode code, const juce::String& message)
@@ -47,15 +46,7 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                               BridgeServer& bridge,
                               std::atomic<bool>& cancelFlag)
 {
-    // Open a reader on the f32 intermediate. Bytes are
-    // already on disk after the pass-1 writer.reset().
-    //
-    // The intermediate is always a WAV float file we wrote in pass 1,
-    // but its name carries a ".f32.tmp" suffix so the final output
-    // rename stays atomic. AudioFormatManager::createReaderFor() gates
-    // on the file extension, and ".tmp" matches no registered format —
-    // it would return nullptr and fail every Normalize export. Open it
-    // with the WAV reader directly since we know exactly what it is.
+    // Write caches to a sibling temp file so partial entries are never visible.
     juce::WavAudioFormat wavReadback;
     std::unique_ptr<juce::AudioFormatReader> p2Reader;
     if (auto f32In = f32TmpFile.createInputStream())
@@ -67,7 +58,6 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                     "Pass 2: could not open intermediate file for read-back.");
     }
 
-    // Open the user-chosen final writer on `tmpFile`.
     std::unique_ptr<juce::OutputStream> p2Stream =
         std::make_unique<juce::FileOutputStream>(tmpFile);
     if (! static_cast<juce::FileOutputStream*>(p2Stream.get())->openedOk())
@@ -100,13 +90,11 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                                 && chosenBitDepth == 16
                                 && ! p2Writer->isFloatingPoint();
 
-    // Linear gain factor for pass 2's per-sample multiply.
     const float linGain = static_cast<float>(std::pow(10.0, appliedGainDb / 20.0));
 
     Pass2Result result;
     result.ok = true;
 
-    // Stream the intermediate in kBlockFrames chunks.
     juce::AudioBuffer<float> p2Buf(kOutputChannels, kBlockFrames);
     const juce::int64 totalP2Frames = p2Reader->lengthInSamples;
     juce::int64 p2Pos = 0;
@@ -132,10 +120,8 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
             return fail(MixdownFailureCode::Io, "Pass 2: read failure.");
         }
 
-        // Apply gain + track post-gain peak and clip count.
-        // Clip count vs the integer ceiling matters when the
-        // analytical TP_final exceeds 0 dBFS; we surface it
-        // as a separate metric in the loudness report.
+        // Loudness normalization uses a measured pass before final gain, limiting, dither, and
+        // encode.
         float* pL = p2Buf.getWritePointer(0);
         float* pR = p2Buf.getWritePointer(1);
         for (int i = 0; i < chunk; ++i)
@@ -183,15 +169,9 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
     }
     broadcastProgress(bridge, 90.0, "normalize-pass2");
     p2Writer.reset();
-    // The final on-disk file length is what pass 2 wrote.
     result.outputFramesWritten = p2OutputFramesWritten;
-    // Recompute the analytical final loudness with the gain
-    // that was actually applied.
     result.finalLoudness = analyzer.computeForLinearGainDb(appliedGainDb);
 
-    // Intermediate is consumed; drop it before the user's
-    // file is committed so a crash after this point doesn't
-    // leak the sidecar.
     f32TmpFile.deleteFile();
     broadcastProgress(bridge, 92.0, "finalize");
     return result;

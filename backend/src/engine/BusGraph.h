@@ -13,97 +13,21 @@
 namespace silverdaw
 {
 
-/**
- * `BusGraph` — project root pull-source for the realtime audio graph,
- * introduced in Phase 5 step 1c (see `.ref/daw-design-plan.md` §7.9.1).
- * Replaces the per-engine `juce::MixerAudioSource mixer` with a
- * purpose-built mixer that owns block lifecycle deterministically,
- * runs the canonical signal flow in a strict order each block, and
- * gives subsequent Phase 5 steps a single seam to insert shared
- * project FX (Reverb, Delay — step 7) and the master accumulator.
- *
- * **Topology after step 1c:**
- *
- *   clip transports → TrackRuntime.innerMixer → TrackChain
- *                                                  ↓
- *                                                BusGraph.dryBus  ← shared FX (step 7)
- *                                                  ↓
- *                                              master (MasterClockSource)
- *                                                  ↓
- *                                              topMixer  ← preview audio
- *                                                  ↓
- *                                              masterMeter → device
- *
- * **Invariants (must hold every block, audio-thread):**
- *
- * - All scratch buffers are owned by `BusGraph` and preallocated in
- *   `prepareToPlay` sized for `preparedMax × 2`. No allocation, no
- *   resize, no map insertion inside `getNextAudioBlock`.
- * - If the device requests a larger block than `preparedMax`,
- *   `getNextAudioBlock` **chunks** the callback through the
- *   preallocated scratch (`ceil(requestedBlock / preparedMax)`
- *   sub-blocks) so audio output is never interrupted by an oversize
- *   request — JUCE's host will trigger a fresh `prepareToPlay` for
- *   the larger size shortly after, but in the meantime we don't drop
- *   audio.
- * - Each `TrackRuntime` is pulled **exactly once per sub-block** so a
- *   compressor / EQ in the chain sees a contiguous sample stream
- *   with no double-pull artefacts.
- * - Track add / remove on the message thread takes the internal
- *   `juce::CriticalSection`; the audio thread takes the same lock at
- *   the top of `getNextAudioBlock`. This mirrors the
- *   `juce::MixerAudioSource` pattern shipped today; §7.11 promotes
- *   this to lock-free pointer publication in a later Phase 5 step.
- *
- * **What BusGraph is NOT.** Not a general routing engine — that's
- * the Phase 8 `juce::AudioProcessorGraph` migration. `BusGraph` is a
- * small, fixed-shape mixer purpose-built for Silverdaw's single
- * project bus + two shared sends model.
- */
+// Message-thread writes are published for bounded, lock-free audio-thread reads.
 class BusGraph final : public juce::AudioSource
 {
 public:
-    /**
-     * Per-UI-track runtime. As of step 1c, lives inside `BusGraph` so
-     * the project mixer owns the entire track→runtime registry in
-     * one place. `BusGraph` lazily creates a `TrackRuntime` the first
-     * time a clip on a given `trackId` is attached, and destroys it
-     * when the last clip is detached.
-     *
-     * `TrackRuntime` is itself an `AudioSource`: `getNextAudioBlock`
-     * (a) pulls the inner `MixerAudioSource` to sum every clip
-     * transport on this UI track, (b) runs the canonical
-     * `TrackChain` over the summed block, then (c) taps per-channel
-     * peak amplitude post-chain for the per-track UI meter. The
-     * chain is sample-equivalent no-op today — subsequent Phase 5
-     * steps populate it.
-     */
     struct TrackRuntime final : public juce::AudioSource
     {
         juce::String trackId;
         juce::MixerAudioSource innerMixer;
         TrackChain chain;
         int clipCount = 0;
-        // Per-track wet send amounts into the shared Reverb / Delay buses
-        // (§7.9.4). Read on the audio thread and written on the message
-        // thread, both under the BusGraph `lock` — same race-free plain
-        // float discipline as the Tone targets in `TrackChain`.
         float reverbSend = 0.0F;
         float delaySend = 0.0F;
-        // Per-track equal-power pan (§7.9.3). `pan` is the signed request in
-        // `[-1, 1]` (0 = centre); `panGainL` / `panGainR` are the derived
-        // per-channel gains applied to the DRY contribution AFTER the pre-pan
-        // send tap, so the Reverb / Delay sends stay pre-pan. Centre keeps unity
-        // on both channels so a default project is bit-exact with the no-pan
-        // path. Written on the message thread, read on the audio thread, both
-        // under the BusGraph `lock`.
         float pan = 0.0F;
         float panGainL = 1.0F;
         float panGainR = 1.0F;
-        // Post-chain "max sample magnitude since last drain" per
-        // channel. Lock-free atomic store from the audio thread,
-        // drained by the message-thread broadcaster — same pattern
-        // as `MeteringSource` uses for the master bus.
         std::atomic<float> peakL{0.0F};
         std::atomic<float> peakR{0.0F};
 
@@ -138,7 +62,6 @@ public:
                                info.buffer->getMagnitude(0, info.startSample, info.numSamples));
         }
 
-        /** Drain accumulated peaks and reset to 0 atomically. */
         void consumePeaks(float& outL, float& outR) noexcept
         {
             outL = peakL.exchange(0.0F, std::memory_order_relaxed);
@@ -151,7 +74,6 @@ public:
             float cur = a.load(std::memory_order_relaxed);
             while (v > cur && ! a.compare_exchange_weak(cur, v, std::memory_order_relaxed))
             {
-                // `cur` refreshed by compare_exchange_weak on failure.
             }
         }
     };
@@ -162,7 +84,6 @@ public:
     BusGraph(const BusGraph&) = delete;
     BusGraph& operator=(const BusGraph&) = delete;
 
-    // ─── juce::AudioSource ──────────────────────────────────────────
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
     {
         const juce::ScopedLock sl(lock);
@@ -192,17 +113,11 @@ public:
     {
         if (info.buffer == nullptr || info.numSamples <= 0) return;
 
-        // Clear the requested active region first; we additively
-        // accumulate every track into it across all sub-blocks.
         for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
             info.buffer->clear(ch, info.startSample, info.numSamples);
 
         const juce::ScopedLock sl(lock);
-        // NOTE: do NOT early-return on empty `runtimes`. The shared FX may
-        // still be ringing out a tail after the last clip detaches (notably
-        // the offline mixdown's FX-tail phase, where every clip has retired);
-        // we must keep pumping silent send buses through `sharedFx` so those
-        // tails decay naturally and the tail detectors can terminate.
+        // NOTE: do NOT early-return on empty runtimes; shared FX tails still need pumping.
         if (preparedMax <= 0) return;
 
         const int outChannels = juce::jmin(scratch.getNumChannels(),
@@ -217,7 +132,6 @@ public:
         {
             const int n = juce::jmin(remaining, preparedMax);
 
-            // Send buses are accumulated fresh each sub-block.
             for (int ch = 0; ch < 2; ++ch)
             {
                 reverbSendBuf.clear(ch, 0, n);
@@ -226,23 +140,12 @@ public:
 
             for (auto& kv : runtimes)
             {
-                // Each TrackRuntime fills `n` frames into `scratch`
-                // starting at offset 0; we then add into `info.buffer`
-                // at the destination offset. The scratch is cleared
-                // per-track (not just per sub-block) because the
-                // inner MixerAudioSource clears it itself — but we
-                // belt-and-braces re-clear to make oversize-chunk
-                // semantics unambiguous if the inner mixer is ever
-                // swapped for something that accumulates.
                 scratch.clear(0, n);
                 juce::AudioSourceChannelInfo sub(&scratch, 0, n);
                 kv.second->getNextAudioBlock(sub);
 
                 const float rSend = kv.second->reverbSend;
                 const float dSend = kv.second->delaySend;
-                // Pre-pan send tap: the Reverb / Delay sends read the dry,
-                // un-panned track output so a hard-panned track still feeds
-                // the shared FX at full level (pan only places the dry path).
                 for (int ch = 0; ch < sendChannels; ++ch)
                 {
                     if (rSend != 0.0F)
@@ -250,11 +153,6 @@ public:
                     if (dSend != 0.0F)
                         delaySendBuf.addFrom(ch, 0, scratch, ch, 0, n, dSend);
                 }
-                // Equal-power pan on the DRY contribution. A centred track
-                // (pan == 0) takes the plain unity add so a default project
-                // stays bit-exact; only an actually panned track pays the
-                // per-channel gain. Mono output (outChannels < 2) can't be
-                // panned, so it also takes the unity path.
                 if (kv.second->pan == 0.0F || outChannels < 2)
                 {
                     for (int ch = 0; ch < outChannels; ++ch)
@@ -269,7 +167,6 @@ public:
                 }
             }
 
-            // Sum the wet Reverb + Delay returns into the dry master bus.
             sharedFx.process(reverbSendBuf, delaySendBuf, *info.buffer, dst, n);
 
             remaining -= n;
@@ -277,18 +174,7 @@ public:
         }
     }
 
-    // ─── Message-thread API (clip ↔ track wiring) ──────────────────
 
-    /** Attach a clip transport to its UI track. Creates the
-     *  `TrackRuntime` lazily on the first clip per `trackId`. The
-     *  caller (`AudioEngine::addClip`) must `detachClip` any
-     *  previously-existing clip with the same `clipId` first — this
-     *  method does not handle replacement.
-     *
-     *  Safe to call while the engine is running; the audio thread
-     *  takes the same `CriticalSection` at the top of
-     *  `getNextAudioBlock` so the graph snapshot it iterates is
-     *  always consistent. */
     void attachClip(const juce::String& trackId,
                     const juce::String& clipId,
                     juce::AudioSource* clipTransport)
@@ -310,9 +196,6 @@ public:
         ++rt->clipCount;
         clipToTrack[clipId] = rt;
 
-        // Re-apply any tone parameters captured for this track while it had
-        // no runtime (or before its first clip). Snapped so the response is
-        // steady-state immediately — matches the load / mixdown paths.
         auto toneIt = pendingTone.find(trackId);
         if (toneIt != pendingTone.end())
         {
@@ -320,17 +203,12 @@ public:
             rt->chain.setTone(t.bassDb, t.midDb, t.trebleDb, t.lowCut, t.highCut, /*snap*/ true);
         }
 
-        // Re-apply any per-track Leveler Amount captured for this track while
-        // it had no runtime, mirroring the Tone re-application above. Snapped
-        // so the compressor response is steady-state immediately.
         auto levelerIt = pendingLeveler.find(trackId);
         if (levelerIt != pendingLeveler.end())
         {
             rt->chain.setLeveler(levelerIt->second, /*snap*/ true);
         }
 
-        // Re-apply any per-track send amounts captured for this track while
-        // it had no runtime, mirroring the Tone re-application above.
         auto sendIt = pendingSends.find(trackId);
         if (sendIt != pendingSends.end())
         {
@@ -338,8 +216,6 @@ public:
             rt->delaySend = sendIt->second.delaySend;
         }
 
-        // Re-apply any per-track pan captured while the track had no runtime,
-        // mirroring the Tone / Sends re-application above.
         auto panIt = pendingPans.find(trackId);
         if (panIt != pendingPans.end())
         {
@@ -348,9 +224,6 @@ public:
         }
     }
 
-    /** Detach a clip transport from its runtime. `clipTransport` MUST
-     *  be the same pointer originally passed to `attachClip`.
-     *  Destroys the runtime if this was its last clip. */
     void detachClip(const juce::String& clipId,
                     juce::AudioSource* clipTransport)
     {
@@ -368,8 +241,6 @@ public:
         clipToTrack.erase(it);
     }
 
-    /** Drain `trackId`'s post-chain peak meter into the out params.
-     *  Returns false (and writes 0/0) if the track is unknown. */
     bool consumeTrackPeaks(const juce::String& trackId,
                            float& outL, float& outR) noexcept
     {
@@ -385,14 +256,6 @@ public:
         return true;
     }
 
-    /** Publish per-track Tone EQ targets. Stored in `pendingTone` so the
-     *  parameters survive the track having no runtime yet (clip-less track,
-     *  or a clip removed then re-added) and are re-applied on the next
-     *  `attachClip`. If a runtime already exists the targets are forwarded
-     *  to its chain immediately. Takes the same `lock` the audio thread
-     *  holds in `getNextAudioBlock`, so the chain's plain target members are
-     *  written race-free. `snap` collapses the smoother (load / mixdown /
-     *  runtime-creation paths); live UI gestures pass `snap=false`. */
     void setTrackTone(const juce::String& trackId,
                       float bassDb, float midDb, float trebleDb, bool lowCut,
                       bool highCut, bool snap)
@@ -405,12 +268,6 @@ public:
             it->second->chain.setTone(bassDb, midDb, trebleDb, lowCut, highCut, snap);
     }
 
-    /** Publish a track's Leveler Amount (`[0, 1]`). Stored sticky in
-     *  `pendingLeveler` (like Tone) so it survives the runtime's lazy
-     *  create/destroy lifecycle, and forwarded to a live runtime
-     *  immediately. Takes the audio-thread `lock`; `snap` collapses the
-     *  Amount smoother (load / mixdown / runtime-creation paths) while live
-     *  UI gestures pass `snap=false` to glide. */
     void setTrackLeveler(const juce::String& trackId, float amount, bool snap)
     {
         if (trackId.isEmpty()) return;
@@ -422,10 +279,6 @@ public:
             it->second->chain.setLeveler(a, snap);
     }
 
-    /** Publish a track's wet send amounts into the shared Reverb / Delay
-     *  buses. Stored sticky in `pendingSends` (like Tone) so they survive
-     *  the runtime's lazy create/destroy lifecycle, and forwarded to a
-     *  live runtime immediately. Takes the audio-thread `lock`. */
     void setTrackSends(const juce::String& trackId, float reverbSend, float delaySend)
     {
         if (trackId.isEmpty()) return;
@@ -441,10 +294,6 @@ public:
         }
     }
 
-    /** Compute the equal-power per-channel gains for a signed pan in
-     *  `[-1, 1]`. `theta` sweeps `0..pi/2` as pan goes `-1..+1`; the
-     *  `sqrt2` factor normalises the centre (`theta == pi/4`) to unity so a
-     *  centred track is 0 dB and matches the no-pan path bit-for-bit. */
     static void equalPowerPanGains(float pan, float& gainL, float& gainR) noexcept
     {
         const float p = juce::jlimit(-1.0F, 1.0F, std::isfinite(pan) ? pan : 0.0F);
@@ -453,12 +302,6 @@ public:
         gainR = juce::MathConstants<float>::sqrt2 * std::sin(theta);
     }
 
-    /** Publish a track's equal-power pan. Stored sticky in `pendingPans`
-     *  (like Tone / Sends) so it survives the runtime's lazy
-     *  create/destroy lifecycle, and forwarded to a live runtime
-     *  immediately. Takes the audio-thread `lock`. Pan is applied as a
-     *  per-sample gain (no smoothing) — the renderer streams fine-grained
-     *  drag samples, and a centred track keeps the bit-exact unity path. */
     void setTrackPan(const juce::String& trackId, float pan)
     {
         if (trackId.isEmpty()) return;
@@ -477,8 +320,6 @@ public:
         }
     }
 
-    /** Publish project Reverb parameters to the shared FX. Stored
-     *  sticky so a device-driven re-`prepareToPlay` re-applies them. */
     void setProjectReverb(float size, float decay, float tone, float mix, bool snap)
     {
         const juce::ScopedLock sl(lock);
@@ -486,9 +327,6 @@ public:
         sharedFx.setReverbParams(size, decay, tone, mix, snap);
     }
 
-    /** Publish project Delay parameters to the shared FX.
-     *  `delayMs` is the tempo-resolved delay time; `applyTimeNow`
-     *  promotes it immediately rather than staging for the next play. */
     void setProjectDelay(double delayMs, float feedback, float tone, float mix, bool snap,
                          bool applyTimeNow)
     {
@@ -497,26 +335,18 @@ public:
         sharedFx.setDelayParams(delayMs, feedback, tone, mix, snap, applyTimeNow);
     }
 
-    /** Wipe the shared FX decay state (Reverb tank, Delay line, tail
-     *  detectors). Called by the engine on transport stop and seek. */
     void resetSharedFx()
     {
         const juce::ScopedLock sl(lock);
         sharedFx.reset();
     }
 
-    /** True once both shared FX tails have decayed — used by the offline
-     *  mixdown to know when its FX-tail phase can stop. */
     bool sharedFxTerminated()
     {
         const juce::ScopedLock sl(lock);
         return sharedFx.bothTerminated();
     }
 
-    /** Lightweight per-track peak snapshot used by the bridge
-     *  broadcaster — copying out into a vector lets the caller
-     *  release the BusGraph lock before iterating to build the
-     *  envelope payload (which involves DynamicObject allocations). */
     struct TrackPeakSnapshot
     {
         juce::String trackId;
@@ -524,11 +354,6 @@ public:
         float peakR;
     };
 
-    /** Drain every active runtime's post-chain peaks into `out`,
-     *  resetting each lane atomically. `out` is `clear()`-then-
-     *  populated so the caller can reuse a single vector across
-     *  broadcaster ticks and skip per-tick allocation in steady
-     *  state once capacity stabilises. */
     void drainAllTrackPeaks(std::vector<TrackPeakSnapshot>& out)
     {
         out.clear();
@@ -543,9 +368,6 @@ public:
         }
     }
 
-    /** Shutdown teardown — releases every runtime and clears the
-     *  registry. Caller MUST guarantee no audio thread can call
-     *  `getNextAudioBlock` after this returns. */
     void clear()
     {
         const juce::ScopedLock sl(lock);
@@ -561,9 +383,6 @@ public:
     }
 
 private:
-    /** Re-apply the sticky project FX parameters (snapped) after the
-     *  shared FX is (re)prepared, so a device-driven re-`prepareToPlay`
-     *  doesn't silently reset Reverb / Delay to defaults. Caller holds `lock`. */
     void reapplyStickyProjectFx() noexcept
     {
         if (stickyReverb.valid)
@@ -579,9 +398,6 @@ private:
     std::unordered_map<juce::String, std::unique_ptr<TrackRuntime>> runtimes;
     std::unordered_map<juce::String, TrackRuntime*> clipToTrack;
 
-    // Sticky per-track Tone targets, keyed by trackId. Updated on every
-    // setTrackTone and re-applied to a runtime on creation in attachClip,
-    // so EQ persists across the runtime's lazy create/destroy lifecycle.
     struct ToneParams
     {
         float bassDb = 0.0F;
@@ -592,12 +408,8 @@ private:
     };
     std::unordered_map<juce::String, ToneParams> pendingTone;
 
-    // Sticky per-track Leveler Amount (`[0, 1]`), keyed by trackId — same
-    // lifecycle discipline as `pendingTone`.
     std::unordered_map<juce::String, float> pendingLeveler;
 
-    // Sticky per-track send amounts, keyed by trackId — same lifecycle
-    // discipline as `pendingTone`.
     struct SendParams
     {
         float reverbSend = 0.0F;
@@ -605,12 +417,8 @@ private:
     };
     std::unordered_map<juce::String, SendParams> pendingSends;
 
-    // Sticky per-track pan (signed `[-1, 1]`, 0 = centre), keyed by
-    // trackId — same lifecycle discipline as `pendingTone` / `pendingSends`.
     std::unordered_map<juce::String, float> pendingPans;
 
-    // Sticky project FX params so a device-driven re-prepare re-applies
-    // them rather than resetting Reverb / Delay to silent defaults.
     struct StickyReverb
     {
         float size = 0.0F, decay = 0.0F, tone = 0.0F, mix = 0.0F;

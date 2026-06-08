@@ -45,8 +45,7 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
                                 collapsedFlag);
     if (kind == "saved-clip")
     {
-        // Warp defaults — only meaningful on saved clips. Each field is partial;
-        // missing fields stay at whatever `addLibraryItem` left them (identity).
+        // Saved-clip warp fields are partial; missing fields keep identity defaults.
         std::optional<bool> warpEnabled;
         if (payload.hasProperty("warpEnabled"))
             warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
@@ -124,8 +123,7 @@ void handleLibraryItemSetSampleMode(const juce::var& payload, ProjectState& proj
     }
     else
     {
-        // "auto" and empty both clear the override (auto-detect falls back to
-        // the analysis-side `lowConfidence` flag).
+        // "auto" and empty both clear the override.
         const juce::String stored = (mode == "sample" || mode == "music") ? mode : juce::String{};
         projectState.setLibraryItemSampleMode(itemId, stored);
     }

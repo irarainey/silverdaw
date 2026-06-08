@@ -51,12 +51,7 @@ std::string currentIso8601Ms()
     return out.str();
 }
 
-/**
- * Resolve the directory the backend writes its log file into. Priority:
- *   1. `SILVERDAW_LOG_DIR` (passed by Electron main on spawn).
- *   2. `<exe-dir>/../.logs/standalone-<timestamp>` for hand-run sessions.
- * Either way the directory is created if missing.
- */
+// Electron passes the log dir; standalone runs fall back under `.logs`.
 juce::File resolveLogDirectory(const juce::String& override)
 {
     if (override.isNotEmpty())
@@ -87,15 +82,12 @@ void initialise(const juce::String& logDirOverride)
     g_file.open(file.getFullPathName().toStdString(), std::ios::out | std::ios::app);
     if (!g_file.is_open())
     {
-        // We can't log the logger's own failure (chicken-and-egg). Drop
-        // a single stderr line so a developer can see why the file
-        // doesn't appear later.
+        // Logger startup failures can only go to stderr.
         std::cerr << "[log] failed to open backend.log at " << file.getFullPathName().toStdString() << '\n';
         return;
     }
     g_initialised = true;
-    // Mark the session boundary so a multi-run backend.log can be split
-    // visually.
+    // Mark session boundaries in append-mode logs.
     g_file << currentIso8601Ms() << " INFO  [log] backend logger initialised; logDir="
            << dir.getFullPathName().toStdString() << '\n';
     g_file.flush();

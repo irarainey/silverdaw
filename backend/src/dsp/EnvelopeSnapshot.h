@@ -11,25 +11,8 @@
 namespace silverdaw
 {
 
-/**
- * Immutable, audio-thread-readable per-clip volume envelope.
- *
- * Breakpoints are `(clip-local post-warp milliseconds, linear gain)`.
- * Interpolation between adjacent breakpoints is **linear in decibels**
- * (geometric in gain), which gives a musically natural ramp to and from
- * silence rather than the perceptually lumpy curve of linear-in-gain.
- *
- * Lifetime / threading: built off the audio thread, then published to it
- * as a `const EnvelopeSnapshot*` (release/acquire). Never mutated after
- * construction, so concurrent reads on the audio thread are safe. The
- * owning `Track` keeps the live instance alive and retires replaced
- * instances into a deferred free-list (drained when the transport is
- * quiescent) — mirroring the `WarpProcessor` retire discipline.
- *
- * An envelope with fewer than two points is "empty": callers treat it as
- * no envelope at all so the no-shape common path is bit-identical to
- * pre-envelope output.
- */
+// Immutable envelope published to the audio thread by pointer; never mutate after construction.
+// Linear-in-dB interpolation gives perceptual fades, while fewer than two points means identity.
 class EnvelopeSnapshot
 {
   public:
@@ -42,11 +25,7 @@ class EnvelopeSnapshot
 
     EnvelopeSnapshot() = default;
 
-    /** Build from the persisted point array (objects carrying `"timeMs"`
-     *  and `"gain"`). `ProjectState` already normalises order and range,
-     *  but we defensively clamp and sort so a snapshot is always valid.
-     *  Returns an instance whose `isEmpty()` is true when fewer than two
-     *  usable points remain. */
+    /** Defensively clamps/sorts persisted points so the audio thread sees a valid snapshot. */
     static std::unique_ptr<EnvelopeSnapshot> fromVarArray(const juce::Array<juce::var>& arr)
     {
         auto snap = std::make_unique<EnvelopeSnapshot>();
@@ -67,11 +46,7 @@ class EnvelopeSnapshot
 
     bool isEmpty() const noexcept { return points.size() < 2; }
 
-    /** Linear-in-dB gain at clip-local `ms`. `seg` is an in/out cursor the
-     *  caller advances monotonically across a block so evaluation is O(1)
-     *  amortised rather than a binary search per sample. RT-safe: no
-     *  allocation, no locking. Clamps to the endpoint gains outside the
-     *  breakpoint range. */
+    /** RT-safe; caller's monotonic `seg` cursor makes block evaluation O(1) amortised. */
     float gainAtMs(double ms, std::size_t& seg) const noexcept
     {
         const std::size_t n = points.size();
@@ -97,8 +72,7 @@ class EnvelopeSnapshot
     const std::vector<Point>& getPoints() const noexcept { return points; }
 
   private:
-    // ~-100 dB floor so a true-zero breakpoint interpolates as a smooth
-    // exponential ramp toward silence instead of an instantaneous drop.
+    // Lets true-zero breakpoints fade smoothly instead of dropping instantly.
     static constexpr double kGainFloor = 1.0e-5;
 
     std::vector<Point> points;

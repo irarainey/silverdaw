@@ -1,9 +1,5 @@
 #pragma once
 
-// Mixdown bridge-envelope emitters. The render pump (MixdownRender.cpp) and the
-// Normalize pass-2 (MixdownNormalize.cpp) both stream MIXDOWN_PROGRESS and end
-// on MIXDOWN_DONE / MIXDOWN_FAILED, so these live in one place rather than being
-// duplicated per pass.
 
 #include "LoudnessAnalyzer.h"
 #include "MixdownEngine.h"  // MixdownFailureCode, BridgeServer fwd-decl

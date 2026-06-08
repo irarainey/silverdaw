@@ -8,11 +8,7 @@ namespace silverdaw
 class AudioEngine;
 class ProjectState;
 
-// TRANSPORT_* command handlers — project (timeline) playback. Kept out of the
-// Main.cpp dispatcher; each drives the engine's main transport and keeps the
-// persisted playhead in step.
-
-// `mixdownInProgress` gates playback so transport can't audibly start mid-render.
+// `mixdownInProgress` prevents transport audio during offline render.
 void handleTransportPlay(AudioEngine& engine, bool mixdownInProgress);
 void handleTransportPause(AudioEngine& engine);
 void handleTransportStop(AudioEngine& engine, ProjectState& projectState);

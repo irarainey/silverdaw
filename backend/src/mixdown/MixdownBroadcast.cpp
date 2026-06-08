@@ -8,7 +8,6 @@
 namespace silverdaw::mixdown_bridge
 {
 
-// Min spacing between progress envelopes so the bridge isn't flooded.
 void broadcastProgress(BridgeServer& bridge, double percent, const char* stage)
 {
     auto* obj = new juce::DynamicObject();
@@ -32,9 +31,8 @@ void broadcastDone(BridgeServer& bridge,
     if (loudness != nullptr)
     {
         auto* l = new juce::DynamicObject();
-        // BS.1770: integrated LUFS may be -Infinity for silent
-        // programmes. JSON cannot represent ±Infinity, so emit
-        // explicit nulls and let the UI render "—".
+        // Loudness normalization uses a measured pass before final gain, limiting, dither, and
+        // encode.
         if (loudness->silent || ! std::isfinite(loudness->integratedLufs))
             l->setProperty("integratedLufs", juce::var());
         else

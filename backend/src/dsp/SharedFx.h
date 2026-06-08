@@ -9,13 +9,7 @@
 namespace silverdaw
 {
 
-/**
- * Resolve a tempo-locked note value + project BPM to a delay time in
- * milliseconds. The single source of truth shared by the live bridge
- * handler and the offline `MixdownEngine` so both resolve identical
- * Delay timing (live ↔ export parity, §7.9.6). Unknown note values fall
- * back to a 1/8 note. BPM is clamped to a sane musical range.
- */
+// Shared delay-note resolver keeps live and export timing identical.
 inline double delayNoteToMs(const juce::String& noteValue, double bpm) noexcept
 {
     const double safeBpm = juce::jlimit(15.0, 999.0, (bpm > 0.0 && std::isfinite(bpm)) ? bpm : 120.0);
@@ -27,66 +21,15 @@ inline double delayNoteToMs(const juce::String& noteValue, double bpm) noexcept
     return beats * 60000.0 / safeBpm;
 }
 
-/**
- * `SharedFx` — the project-level shared **Reverb** and **Delay**
- * (tempo-synced stereo delay) documented in §7.9.4 / §7.10 of
- * `.ref/daw-design-plan.md`. One instance is owned by every `BusGraph`,
- * so the live `AudioEngine` and the offline `MixdownEngine` run the
- * identical processor — guaranteeing live ↔ export parity (§7.9.6).
- *
- * **Send / return topology.** `SharedFx` is a pure **wet** processor.
- * `BusGraph` accumulates each track's pre-pan, post-chain signal scaled
- * by that track's per-track send amount into two stereo "send buses"
- * (one for Reverb, one for Delay) and hands them to `process`, which adds
- * the wet returns back into the dry master bus in place. The dry signal
- * itself never flows through here.
- *
- * **Reverb.** `juce::Reverb` (the Freeverb implementation that ships in
- * `juce_audio_basics` — algorithmically the same engine exposed as
- * `juce::dsp::Reverb`, used directly so the backend keeps its
- * single-module, no-`juce_dsp` build). Four user knobs map onto it:
- *   - Size  → `roomSize`
- *   - Decay → `1 - damping` (more decay ⇒ less damping ⇒ longer tail)
- *   - Tone  → a one-pole low-pass on the wet output (brightness)
- *   - Mix   → wet return gain (the reverb itself runs fully wet)
- *
- * **Delay.** A hand-rolled integer-sample stereo delay (independent L/R
- * lines, no cross-feed) with a one-pole tone filter in the feedback
- * path. Time is a tempo-locked note value resolved to milliseconds by
- * the caller from project BPM; per §7.9.4 the live delay **time** is
- * staged and only takes effect when the transport is not playing
- * (feedback / tone / mix always apply live). Feedback is clamped to
- * `[0, 0.95]` so loop gain is always < unity.
- *
- * **Realtime safety.** No allocation, locking or logging in `process`.
- * All buffers are sized in `prepare`. Parameter setters only publish
- * targets and are always called under the owning `BusGraph`
- * CriticalSection that the audio thread also holds in `process`, so the
- * plain (non-atomic) members are race-free (same discipline as
- * `ToneEq`). `reset()` is the only place state is cleared (transport
- * stop / seek per §7.10); pause does **not** reset.
- *
- * **Tail-render policy (§7.10).** After the dry input goes silent the
- * processors keep ringing. Two independent detectors decide when each
- * FX has effectively decayed (used by `MixdownEngine` to bound the
- * offline render and by callers that want to know when the bus is
- * silent):
- *   - Reverb: post-mix stereo RMS below `-60 dBFS` for `N` consecutive
- *     blocks (`N = ceil(50 ms / blockMs)`), with `+3 dB` hysteresis;
- *     independent 8 s safety cap measured from the last dry input.
- *   - Delay: repeat-aware — RMS-silent **and** the time since the last
- *     dry input has exceeded both a hold window (`delay + 50 ms`) and
- *     an analytic tail length (`ceil(log(0.001)/log(feedback)) ×
- *     delay`); independent 4 s safety cap.
- */
+// Shared wet-only Reverb/Delay processor; live and export share it for parity.
+// All buffers are sized in `prepare`, and `process` must stay allocation/lock/log free.
+// Tail detectors bound offline render after the dry send goes silent.
 class SharedFx
 {
 public:
     SharedFx() = default;
 
-    /** Size internal state for a given rate / max block. Re-callable on
-     *  any rate or block-size change. Snaps all smoothers and clears all
-     *  decay state. */
+    /** Sizes buffers outside the audio callback and clears decay state. */
     void prepare(double sampleRate, int maxBlockSize) noexcept
     {
         sr = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
@@ -107,10 +50,7 @@ public:
         reset();
     }
 
-    /** Wipe every processor's decay state (reverb tank, delay line,
-     *  tone filters, tail detectors). Called on transport stop and seek
-     *  (§7.10). Also promotes any staged delay time to active, since the
-     *  next play starts from cold state. */
+    /** Clears decay state on stop/seek and promotes staged delay time for the next cold start. */
     void reset() noexcept
     {
         reverb.reset();
@@ -125,21 +65,12 @@ public:
         resetDetectors();
     }
 
-    /** Publish Reverb targets. `snap` (load / mixdown / runtime setup)
-     *  collapses smoothers and clears the tank so the first rendered
-     *  block is steady-state; live gestures pass `snap=false` to glide. */
+    /** `snap` gives load/mixdown/runtime setup a steady-state first block; live gestures glide. */
     void setReverbParams(float size, float decay, float tone, float mix, bool snap) noexcept
     {
         const float s = juce::jlimit(0.0F, 1.0F, sanitize(size));
         const float d = juce::jlimit(0.0F, 1.0F, sanitize(decay));
-        // Size and Decay are independent axes so each knob makes an
-        // obvious difference. Size sweeps the room from a tight booth to a
-        // large hall across almost the whole of Freeverb's usable range
-        // (its internal comb feedback is roomSize * 0.28 + 0.7, so mapping
-        // Size to ~0.05..0.97 spans feedback ~0.71..0.97 — the small end
-        // up to the long, lush end that the previous 0.15..0.75 mapping
-        // never reached). Decay then sets how long that space rings by
-        // trading off damping alone.
+        // Keep Size and Decay independent so each knob has an obvious effect.
         targetRoomSize = juce::jlimit(0.0F, 1.0F, 0.05F + 0.92F * s);
         targetDamping = 1.0F - d;
         targetReverbToneHz = mapToneHz(juce::jlimit(0.0F, 1.0F, sanitize(tone)));
@@ -158,13 +89,7 @@ public:
         }
     }
 
-    /**
-     * Publish Delay targets. `delayMs` is the tempo-resolved delay time;
-     * `applyTimeNow` promotes it to the live delay line immediately
-     * (load / mixdown / transport-stopped paths) rather than staging it
-     * for the next transport start (§7.9.4 BPM-change policy). `snap`
-     * collapses the feedback / tone / mix smoothers.
-     */
+    /** `applyTimeNow` avoids live-time jumps; `snap` gives setup paths steady-state params. */
     void setDelayParams(double delayMs, float feedback, float tone, float mix, bool snap,
                         bool applyTimeNow) noexcept
     {
@@ -187,13 +112,6 @@ public:
         }
     }
 
-    /**
-     * Add the wet Reverb + Delay returns for this block into `out` in
-     * place. `reverbSend` / `delaySend` are the accumulated dry send
-     * buses (stereo, valid over `[0, numSamples)`). `out` is the dry
-     * master bus; the wet returns are summed into
-     * `[startSample, startSample + numSamples)`.
-     */
     void process(const juce::AudioBuffer<float>& reverbSend,
                  const juce::AudioBuffer<float>& delaySend,
                  juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept
@@ -220,7 +138,7 @@ public:
     SharedFx& operator=(const SharedFx&) = delete;
 
 private:
-    // ── Tunables (see class doc / §7.10) ──────────────────────────────
+    // Tunables for tail detection and smoothing.
     static constexpr double kMaxDelayMs = 4000.0;     // 1/4 note at 15 BPM (worst case)
     static constexpr float kMaxFeedback = 0.95F;      // loop gain < unity
     static constexpr float kRmsFloorLin = 0.001F;     // -60 dBFS
@@ -235,8 +153,7 @@ private:
 
     static float sanitize(float v) noexcept { return std::isfinite(v) ? v : 0.0F; }
 
-    // Map a 0..1 "tone" knob to a low-pass corner (log scale): 0 = dark,
-    // 1 = open/bright.
+    // Log mapping makes the tone knob feel even across octaves.
     static double mapToneHz(float tone01) noexcept
     {
         const double t = juce::jlimit(0.0, 1.0, static_cast<double>(tone01));
@@ -261,8 +178,6 @@ private:
         return true;
     }
 
-    // One-pole LPF coefficient for a given corner; `a` is the feedback
-    // retention so y += a_in * (x - y) with a_in = 1 - pole.
     float onePoleCoeff(double hz) const noexcept
     {
         const double f = juce::jlimit(20.0, sr * 0.49, hz);
@@ -327,9 +242,7 @@ private:
 
     void recomputeAnalyticTail() noexcept
     {
-        // Number of repeats for the loop gain to fall below the -60 dBFS
-        // linear threshold from a reference amplitude of 1.0. Feedback is
-        // clamped < 1 so log(feedback) is finite and strictly negative.
+        // Feedback is clamped below unity, so the analytic tail log stays finite.
         const double fb = juce::jlimit(0.0, static_cast<double>(kMaxFeedback), static_cast<double>(targetFeedback));
         if (fb <= 1.0e-4)
         {
@@ -360,7 +273,7 @@ private:
 
         reverb.processStereo(wetL.data(), wetR.data(), numSamples);
 
-        // Wet tone (one-pole LPF) + accumulate post-mix RMS for the detector.
+        // Accumulate post-mix RMS so the detector follows the audible return.
         double sumSq = 0.0;
         const float mix = curReverbMix;
         for (int i = 0; i < numSamples; ++i)
@@ -474,7 +387,7 @@ private:
         return juce::jmax(1, static_cast<int>(std::ceil(kSilenceWindowMs / juce::jmax(1.0e-3, blockMs))));
     }
 
-    // ── State ─────────────────────────────────────────────────────────
+    // State.
     double sr = 44100.0;
     int maxBlock = 0;
     bool prepared = false;
@@ -482,7 +395,6 @@ private:
     juce::Reverb reverb;
     std::vector<float> wetL, wetR;
 
-    // Reverb smoothed params + targets.
     float targetRoomSize = 0.0F, curRoomSize = 0.0F;
     float targetDamping = 1.0F, curDamping = 1.0F;
     double targetReverbToneHz = kToneMaxHz, curReverbToneHz = kToneMaxHz;
@@ -492,7 +404,6 @@ private:
     float lastAppliedRoomSize = -1.0F, lastAppliedDamping = -1.0F;
     bool reverbParamsApplied = false;
 
-    // Delay state.
     std::vector<float> delayBufL, delayBufR;
     int maxDelaySamples = 2;
     int delayWriteIdx = 0;
@@ -505,7 +416,6 @@ private:
     float echoToneStateL = 0.0F, echoToneStateR = 0.0F;
     int analyticTailRepeats = 1;
 
-    // Tail detectors.
     int reverbSilentBlocks = 0;
     int64_t reverbFramesSinceInput = 0;
     bool reverbDone = false;

@@ -7,9 +7,6 @@
 namespace silverdaw
 {
 
-// Timeline end position (ms) of a clip after warp. Shared by the snapshot
-// (`computeLastClipEndMs`) and the offline graph builder (`buildOfflineClip`),
-// so it lives in a header rather than either translation unit.
 inline double clipTimelineEndMs(const MixdownSnapshot::ClipSnapshot& clip) noexcept
 {
     const double eff = clip.warpEnabled

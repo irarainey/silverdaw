@@ -10,9 +10,7 @@ class ProjectState;
 class BridgeServer;
 class DecodedCache;
 
-// PREVIEW_* command handlers — the Clip Editor's exclusive audition path. Kept
-// out of the Main.cpp dispatcher; each drives the engine's preview voice and
-// (where relevant) broadcasts the resulting PREVIEW_STATE to the renderer.
+// Clip Editor preview is an exclusive audition path, separate from transport.
 
 void handlePreviewLoad(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                        BridgeServer& bridge, const DecodedCache& decodedCache);

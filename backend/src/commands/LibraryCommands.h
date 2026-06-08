@@ -10,9 +10,7 @@ class ProjectState;
 class BridgeServer;
 class DecodedCache;
 
-// LIBRARY_* command handlers — library-item lifecycle (import, removal,
-// re-analysis, sample classification). Background analysis is delegated to
-// LibraryAnalysis; these handlers own the ProjectState mutation + scheduling.
+// LibraryAnalysis owns background analysis; handlers own mutation + scheduling.
 
 void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                       BridgeServer& bridge, juce::ThreadPool& peakPool, const DecodedCache& decodedCache);

@@ -1,15 +1,6 @@
 #pragma once
 
-// Mixdown render pass-1: build the per-clip offline source graph, run the main
-// pump loop (read → mix → master gain → meter → final-resample → optional
-// dither → write), and flush. Split out of MixdownRender.cpp to mirror the
-// pass-2 split (MixdownNormalize.cpp) and keep `runMixdownJob` as the
-// orchestration layer.
-//
-// The built clip chains are RETURNED to the caller (not destroyed here): on
-// Windows, closing each source reader's file handle is ~1 s, so the caller
-// defers that teardown until AFTER the MIXDOWN_DONE broadcast so the dialog
-// dismisses promptly.
+// Pass 1 returns clip chains so Windows handle teardown can be deferred.
 
 #include "LoudnessAnalyzer.h"
 #include "MixdownDither.h"
@@ -31,7 +22,7 @@ struct Pass1Result
     MixdownFailureCode code { MixdownFailureCode::Io };
     juce::String message;
 
-    // The live per-clip chains, handed back for deferred teardown.
+    // Member order preserves JUCE source lifetimes during teardown.
     std::vector<std::unique_ptr<mixdown_graph::OfflineClip>> clips;
 
     int64_t outputFramesWritten { 0 };
@@ -40,10 +31,7 @@ struct Pass1Result
     int64_t clippedSampleCount { 0 };
 };
 
-// Runs the whole pass-1 stream into `writer` (already opened by the caller).
-// `analyzer`, when non-null, is fed the pre-dither program for loudness
-// measurement but is NOT finalized here. On failure the result carries the
-// code + message and any partial file at `pass1File` has been removed.
+// Loudness normalization uses a measured pass before final gain, limiting, dither, and encode.
 Pass1Result runPass1(const MixdownSnapshot& snapshot,
                      const MixdownOptions& options,
                      juce::AudioFormatManager& formatManager,

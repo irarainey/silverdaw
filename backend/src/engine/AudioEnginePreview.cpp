@@ -7,9 +7,6 @@
 
 namespace silverdaw
 {
-// -----------------------------------------------------------------------------
-// Preview voice
-// -----------------------------------------------------------------------------
 
 bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double durationMs,
                               juce::String* outError,
@@ -19,8 +16,6 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
                               std::optional<double> initialSemitones,
                               std::optional<double> initialCents)
 {
-    // Always start from a clean slate. unloadPreview() handles the case
-    // where nothing is currently loaded.
     unloadPreview();
 
     if (!filePath.existsAsFile())
@@ -68,15 +63,7 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     }
 
     preview.transportSource = std::make_unique<juce::AudioTransportSource>();
-    // Match the per-track readahead size (8192) rather than the JUCE
-    // default 32768. The bigger buffer was inherited from an earlier
-    // no-warp preview path; with Rubber Band stretching in the chain,
-    // a 32k-sample readahead on a single background reader thread can
-    // underrun visibly when the user is auditioning warped material
-    // (audible as a "stuttered/chopped" playback). Tracks have always
-    // used 8192 with warp and play cleanly, so align preview with the
-    // proven track-side discipline. ~85ms at 96kHz, still well above
-    // the audio block size.
+    // Silverdaw tempoRatio is project/source; Rubber Band receives the inverse internally.
     preview.transportSource->setSource(preview.offsetSource.get(),
                                        /*readAheadBufferSize=*/kTransportReadAheadSamples,
                                        &readAheadThread, preview.sampleRate);
@@ -92,10 +79,8 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
 
 void AudioEngine::unloadPreview()
 {
-    // Abandon any in-flight wake pre-roll first: its deferred start would
-    // otherwise fire against a torn-down or replaced preview transport (e.g.
-    // loadPreview() unloads the old clip mid-pre-roll), starting a clip the
-    // user never asked to play.
+    // Wake pre-roll spends endpoint fade-in on the keep-alive floor, not the first content
+    // attack.
     cancelWakePreroll();
     if (preview.transportSource == nullptr) return;
     preview.transportSource->stop();
@@ -167,11 +152,6 @@ bool AudioEngine::setPreviewEnvelope(const juce::Array<juce::var>& points)
 {
     if (preview.offsetSource == nullptr) return false;
 
-    // Compile the immutable snapshot off the audio thread; an empty /
-    // single-point shape is "no envelope" → publish nullptr. Publish the
-    // new pointer (release) BEFORE retiring the old object so the audio
-    // thread only ever sees a live snapshot or nullptr — never a freed
-    // pointer. Mirrors `setClipEnvelope`.
     auto snapshot = EnvelopeSnapshot::fromVarArray(points);
     const EnvelopeSnapshot* published = snapshot->isEmpty() ? nullptr : snapshot.get();
     preview.offsetSource->setEnvelopeSnapshot(published);
@@ -186,13 +166,10 @@ bool AudioEngine::setPreviewEnvelope(const juce::Array<juce::var>& points)
 void AudioEngine::playPreview()
 {
     if (preview.transportSource == nullptr) return;
-    // If the playhead is at or past the end of the window, restart from 0.
     if (getPreviewPositionMs() >= preview.durationMs - 1.0)
     {
         preview.transportSource->setPosition(0.0);
     }
-    // Start now if the endpoint is warm, or after a short wake pre-roll if it
-    // may have slept, so a cold preview's first attack isn't swallowed.
     startWithWakePreroll([this]() {
         if (preview.transportSource != nullptr)
             preview.transportSource->start();

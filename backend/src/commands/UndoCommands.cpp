@@ -86,21 +86,8 @@ juce::String prettyTransactionName(const juce::String& type)
     return type;
 }
 
-// File-scope coalescing state. Dispatch always runs on the JUCE message
-// thread so no synchronisation is needed.
-//
-// Two coalescing modes are supported:
-//   1. **Time-window mode** (legacy): same `(type, idPart)` within
-//      `kUndoCoalesceWindowMs` reuses the open transaction. This is what
-//      the existing CLIP_MOVE / CLIP_TRIM / TRACK_GAIN / slider drag
-//      paths rely on and the new fader paths fall back to when the
-//      renderer doesn't mint a gestureId.
-//   2. **Explicit-gesture mode** (Phase 5): when the envelope carries a
-//      `gestureId` string, coalescing keys on `(type, idPart, gestureId)`
-//      regardless of elapsed time. The terminal event of a gesture sets
-//      `gestureEnd: true` — that event still folds into the open
-//      transaction; the coalesce state is cleared AFTER it lands so the
-//      next gesture opens a fresh undo step.
+// Dispatch runs on the JUCE message thread, so coalescing state needs no lock.
+// gestureId coalesces explicit gestures; otherwise same-target events use the time window.
 struct UndoCoalesceState
 {
     juce::String lastKey;
@@ -122,9 +109,7 @@ void resetUndoCoalesceState() noexcept
     s.gestureActive = false;
 }
 
-// 60Hz drag streams (CLIP_MOVE / CLIP_TRIM / TRACK_GAIN) coalesce
-// same-target events within this window into a single undo step. Other
-// mutating envelopes get a fresh transaction every time.
+// 60 Hz drag streams coalesce same-target events into one undo step.
 constexpr juce::int64 kUndoCoalesceWindowMs = 500;
 
 } // namespace
@@ -149,7 +134,6 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     else if (type == "PROJECT_SET_MASTER_VOLUME" ||
              type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY")
     {
-        // Singleton project-level edit — slider drag coalesces.
         idPart = "_";
     }
     else if (type == "PROJECT_MARKER_MOVE")
@@ -158,9 +142,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     }
     else if (type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" || type == "PROJECT_RENAME")
     {
-        // Singleton project-level edits coalesce against themselves
-        // — typing in the BPM / length / name field commits per
-        // keystroke, but we want one undo step per "edit session".
+        // Coalesce field typing into one undo step per edit session.
         idPart = "_";
     }
 
@@ -173,10 +155,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     const auto now = juce::Time::currentTimeMillis();
     auto& s = undoCoalesceState();
 
-    // Explicit-gesture coalesce ignores the time window entirely. The
-    // renderer's pointerdown/pointermove/pointerup loop drives the same
-    // `gestureId` for every sample so even a paused-mid-drag stream
-    // stays in the same undo step.
+    // gestureId keeps paused-mid-drag streams in one undo step.
     const bool gestureCoalesce =
         gestureId.isNotEmpty() && s.gestureActive && key == s.lastKey;
 
@@ -193,12 +172,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     s.gestureActive = gestureId.isNotEmpty();
 }
 
-// Companion to `beginUndoTransactionIfNeeded`. Called by the dispatcher
-// AFTER the handler runs so that the terminal `gestureEnd: true` event
-// folds into the open transaction (it was just applied above) and only
-// THEN clears the coalesce state. Without this, a same-gesture follow-up
-// sample arriving after `gestureEnd` would silently start a new undo
-// step.
+// Clear after terminal gestureEnd so that sample still folds into the open transaction.
 void endUndoTransactionIfNeeded(const juce::String& type, const juce::var& payload) noexcept
 {
     if (!isUndoableEnvelopeType(type)) return;
@@ -217,8 +191,7 @@ void handleEditUndo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& pro
                     juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
 {
     auto& um = projectState.getUndoManager();
-    // Flush any in-flight coalesced transaction so this undo step is
-    // a clean unit.
+    // Flush in-flight coalescing before undo.
     um.beginNewTransaction();
     resetUndoCoalesceState();
     if (!um.canUndo())
@@ -227,9 +200,7 @@ void handleEditUndo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& pro
         return;
     }
 
-    // Capture engine playhead so the user doesn't get teleported to 0
-    // by the rebuild's `engine.stop()`. View state (zoom, scroll) is
-    // outside the undo stack so it survives naturally.
+    // Preserve playhead across rebuild's `engine.stop()`.
     const double playheadMs = engine.getPositionMs();
     const auto preIds = silverdaw::collectClipIds(projectState);
 
@@ -241,9 +212,7 @@ void handleEditUndo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& pro
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildSoftReplaceProjectStateEnvelope(session, projectState));
 
-    // The dirty listener only fires on transitions. Force-broadcast the
-    // current dirty state so the renderer's title-bar indicator picks up
-    // the "still dirty after undo" case.
+    // Dirty listener only fires on transitions; force current state after undo.
     {
         auto* p = new juce::DynamicObject();
         p->setProperty("dirty", projectState.isDirty());

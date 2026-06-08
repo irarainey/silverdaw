@@ -20,11 +20,7 @@ constexpr double kStepMs             = 100.0;
 
 LoudnessAnalyzer::Biquad LoudnessAnalyzer::designKHighShelf(double fs)
 {
-    // BS.1770-4 stage 1 ("pre-filter") — high-shelving boost ≈ +4 dB
-    // centred near 1.681 kHz. Derived via bilinear transform with
-    // pre-warp of the canonical analog prototype published by the
-    // ITU reference implementation. Verified against the published
-    // 48 kHz coefficients (b0=1.53512…, etc.).
+    // Runtime design avoids coefficient-table drift from the BS.1770 prototypes.
     constexpr double f0 = 1681.974450955533;
     constexpr double G  = 3.999843853973347; // dB
     constexpr double Q  = 0.7071752369554196;
@@ -44,8 +40,7 @@ LoudnessAnalyzer::Biquad LoudnessAnalyzer::designKHighShelf(double fs)
 
 LoudnessAnalyzer::Biquad LoudnessAnalyzer::designKHighPass(double fs)
 {
-    // BS.1770-4 stage 2 — 2nd-order high-pass at ≈ 38 Hz, Q = 0.5.
-    // Standard RBJ HPF biquad from the same analog prototype.
+    // Same BS.1770 runtime-design path as the pre-filter stage.
     constexpr double f0 = 38.13547087602444;
     constexpr double Q  = 0.5003270373238773;
     const double K  = std::tan(juce::MathConstants<double>::pi * f0 / fs);
@@ -101,26 +96,12 @@ void LoudnessAnalyzer::reset()
 
 void LoudnessAnalyzer::buildTruePeakFir()
 {
-    // 4× upsampling polyphase FIR: 64 effective taps (16 per phase),
-    // designed as a windowed sinc with Kaiser-ish raised-cosine
-    // window for stop-band attenuation suitable for true-peak
-    // estimation (target ≈ −60 dB sidelobe). For each output phase
-    // p ∈ [0..3], coef[p][n] = sinc((n - 7.5 + p/4) / 1) * window(n)
-    // — i.e. the impulse response of a low-pass at fs/4 of the
-    // upsampled rate, sampled at the polyphase positions.
-    //
-    // This is intentionally a simple, deterministic FIR (no IIR
-    // ringing). Inter-sample peaks within ±0.25 dB of a perfectly
-    // band-limited reconstruction is sufficient for our ceiling
-    // back-off heuristic (we pad an extra 0.2 dB safety margin in
-    // the engine's gain math).
+    // Deterministic 4× FIR is accurate enough for true-peak back-off without IIR ringing.
     constexpr int N = TruePeak::kTapsPerPhase;
     constexpr int P = TruePeak::kPhases;
     const double centre = (N - 1) * 0.5;
     for (int p = 0; p < P; ++p)
     {
-        // Output sample p of every group of P comes from convolving the
-        // input history with this phase's coefficients.
         const double delta = static_cast<double>(p) / static_cast<double>(P);
         double sumW = 0.0;
         std::array<double, N> raw{};
@@ -131,7 +112,6 @@ void LoudnessAnalyzer::buildTruePeakFir()
                                     ? 1.0
                                     : std::sin(juce::MathConstants<double>::pi * x)
                                           / (juce::MathConstants<double>::pi * x);
-            // Hann window over N taps.
             const double w = 0.5 - 0.5 * std::cos(2.0 * juce::MathConstants<double>::pi
                                                    * static_cast<double>(n)
                                                    / static_cast<double>(N - 1));
@@ -139,8 +119,7 @@ void LoudnessAnalyzer::buildTruePeakFir()
             raw[static_cast<size_t>(n)] = v;
             sumW += v;
         }
-        // Normalise so each phase's coefficients sum to 1.0 — this
-        // makes the FIR pass DC unattenuated.
+        // Preserve DC through each phase.
         const double norm = sumW == 0.0 ? 1.0 : 1.0 / sumW;
         for (int n = 0; n < N; ++n)
         {
@@ -154,8 +133,6 @@ void LoudnessAnalyzer::pushTruePeakSample(int ch, float sample)
 {
     auto& hist = truePeak_.history[static_cast<size_t>(ch)];
     auto& widx = truePeak_.writeIdx[static_cast<size_t>(ch)];
-    // Append the new sample; convolve four polyphase outputs against
-    // the most recent kTapsPerPhase input samples (incl. this one).
     hist[static_cast<size_t>(widx)] = sample;
     widx = (widx + 1) % TruePeak::kTapsPerPhase;
     constexpr int N = TruePeak::kTapsPerPhase;
@@ -164,7 +141,6 @@ void LoudnessAnalyzer::pushTruePeakSample(int ch, float sample)
     for (int p = 0; p < P; ++p)
     {
         double acc = 0.0;
-        // Iterate from oldest sample to newest.
         for (int n = 0; n < N; ++n)
         {
             const int idx = (widx + n) % N; // widx now points to oldest
@@ -192,19 +168,13 @@ void LoudnessAnalyzer::pushKWeightedSample(double xL, double xR)
 
 void LoudnessAnalyzer::closeBlock()
 {
-    // Sub-block boundary (every `stepFrames_` = 100 ms). Push the
-    // sub-block's per-channel sum-of-squares into a 4-slot ring
-    // buffer. Once we have at least 4 sub-blocks, we emit a 400 ms
-    // gating block formed by summing the last 4 sub-blocks — that's
-    // how the BS.1770 75% overlap is achieved.
+    // Four 100 ms sub-blocks form the BS.1770 400 ms block with 75% overlap.
     if (stepFrames_ <= 0) return;
     subBlocks_[static_cast<size_t>(subBlockWriteIdx_)] = { sumSqL_, sumSqR_ };
     subBlockWriteIdx_ = (subBlockWriteIdx_ + 1) % kSubBlocksPerBlock;
     ++subBlocksFilled_;
     if (subBlocksFilled_ >= kSubBlocksPerBlock)
     {
-        // Sum the 4 sub-blocks back-to-front. Each sub-block was over
-        // exactly stepFrames_ samples → block length is 4·stepFrames_.
         double sL = 0.0, sR = 0.0;
         for (int i = 0; i < kSubBlocksPerBlock; ++i)
         {
@@ -215,7 +185,6 @@ void LoudnessAnalyzer::closeBlock()
                                 * static_cast<double>(stepFrames_);
         const double msL = sL / blockLen;
         const double msR = sR / blockLen;
-        // BS.1770 stereo channel weighting G_L = G_R = 1.0.
         const double msSum = msL + msR;
         blockMs_.push_back(msSum);
         ungatedRunningSum_ += msSum;
@@ -245,11 +214,7 @@ void LoudnessAnalyzer::process(const float* const* channels, int numChannels, in
 LoudnessAnalyzer::Result LoudnessAnalyzer::finalize()
 {
     if (finalized_) return cachedResult_;
-    // Short-program fallback: if we never accumulated 4 full sub-
-    // blocks (i.e. total signal < 400 ms) build ONE block from
-    // whatever signal we did see. Uses the in-flight sub-block
-    // accumulators + any closed sub-blocks in the ring, divided by
-    // the total number of samples seen.
+    // Short-program fallback: use one whole-signal block if no 400 ms block closed.
     if (blockMs_.empty() && totalFramesSeen_ > 0)
     {
         double sL = sumSqL_;
@@ -282,8 +247,6 @@ LoudnessAnalyzer::Result LoudnessAnalyzer::finalize()
         return r;
     }
 
-    // Absolute gate at -70 LUFS: convert that threshold to a MS sum
-    // threshold via the inverse of (-0.691 + 10·log10(MS)).
     auto msFromLufs = [](double lufs) -> double
     {
         return std::pow(10.0, (lufs - kBs1770Calibration) / 10.0);
@@ -301,9 +264,7 @@ LoudnessAnalyzer::Result LoudnessAnalyzer::finalize()
     }
     if (countAbs == 0)
     {
-        // Nothing above the absolute gate: report unmeasurable and
-        // fall back to the ungated whole-signal mean so the user
-        // still gets a number.
+        // Fall back to ungated mean so below-gate material still gets a number.
         r.unmeasurable = true;
         const double meanAll = ungatedRunningSum_ / static_cast<double>(ungatedRunningCount_);
         r.integratedLufs = meanAll > 0.0
@@ -329,8 +290,7 @@ LoudnessAnalyzer::Result LoudnessAnalyzer::finalize()
     }
     if (countRel == 0)
     {
-        // Vanishingly rare: relative gate excluded every block.
-        // Fall back to the absolute-gated mean.
+        // If the relative gate excludes everything, use the absolute-gated mean.
         r.gatedBlockCount = countAbs;
         r.integratedLufs = kBs1770Calibration + 10.0 * std::log10(meanAbs);
     }
@@ -347,11 +307,7 @@ LoudnessAnalyzer::Result LoudnessAnalyzer::finalize()
 
 LoudnessAnalyzer::Result LoudnessAnalyzer::computeForLinearGainDb(double gainDb) const
 {
-    // K-weighting and the block-MS gate are linear in signal energy;
-    // a linear gain of `gainDb` scales every block's MS sum by
-    // 10^(gainDb/10). The -70 LUFS absolute gate and the -10 LU
-    // relative gate are NOT gain-invariant (the absolute gate is a
-    // fixed threshold), so we re-gate against the scaled MS values.
+    // Gates are not gain-invariant, so scale stored MS values and re-gate.
     Result r{};
     const double linearGain = std::pow(10.0, gainDb / 10.0); // for MS (energy)
     r.truePeakDbtp = cachedResult_.silent

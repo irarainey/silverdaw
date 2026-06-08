@@ -1,12 +1,7 @@
 #include "AudioEngine.h"
 #include "ProjectState.h"
 
-// §12.1 clip-to-clip transitions (crossfades). Kept in its own translation
-// unit so neither ProjectState.cpp nor Main.cpp grows further. A transition is
-// the single source of truth; the overlap REGION is derived from the two
-// clips' live timeline geometry (never stored) so it can never drift, and each
-// clip's edge-fade is re-derived from scratch on every publish (so deleting one
-// leg of a sandwiched clip can never leave a stale leg behind).
+// Transitions live here to keep ProjectState/Main focused; overlap is derived to avoid drift.
 
 namespace silverdaw
 {
@@ -19,9 +14,7 @@ const juce::Identifier ProjectState::kRecipeKind{"kind"};
 
 namespace
 {
-// The only recipe kind implemented so far (equal-power smooth crossfade).
-// Unknown / absent kinds normalise to this so a hostile or future payload
-// can never persist an unrenderable recipe.
+// Unknown recipes normalise to a renderable smooth crossfade.
 const juce::String kSmoothRecipeKind{"smooth"};
 
 juce::String normaliseRecipeKind(const juce::var& recipe)
@@ -53,7 +46,6 @@ bool ProjectState::transitionOverlapMs(const juce::ValueTree& track,
     if (!track.isValid() || leftClipId.isEmpty() || rightClipId.isEmpty()) return false;
     if (leftClipId == rightClipId) return false;
 
-    // Both partners must be children of THIS track.
     const auto left = findClip(leftClipId);
     const auto right = findClip(rightClipId);
     if (!left.isValid() || !right.isValid()) return false;
@@ -63,11 +55,7 @@ bool ProjectState::transitionOverlapMs(const juce::ValueTree& track,
     if (!clipTimelineSpanMs(leftClipId, leftStart, leftEnd)) return false;
     if (!clipTimelineSpanMs(rightClipId, rightStart, rightEnd)) return false;
 
-    // A proper tail/head crossfade: the left clip is strictly earlier, the
-    // right clip starts inside the left clip's tail, and the left clip ends no
-    // later than the right clip. This rejects equal starts and the
-    // "right fully contained in left" case, which would put the fade in the
-    // middle of the left clip rather than on its tail.
+    // Require tail/head overlap so fades stay on clip edges, not mid-clip.
     constexpr double kEps = 1.0e-6;
     if (!(leftStart + kEps < rightStart && rightStart + kEps < leftEnd && leftEnd <= rightEnd + kEps))
         return false;
@@ -76,7 +64,7 @@ bool ProjectState::transitionOverlapMs(const juce::ValueTree& track,
     const double oEnd = leftEnd; // == min(leftEnd, rightEnd) given leftEnd <= rightEnd
     if (oEnd - oStart <= kEps) return false;
 
-    // No third clip on the track may intrude into the sanctioned overlap.
+    // Third-clip intrusion would make the derived overlap ambiguous.
     for (int i = 0; i < track.getNumChildren(); ++i)
     {
         const auto other = track.getChild(i);
@@ -101,9 +89,7 @@ bool ProjectState::addTransition(const juce::String& trackId, const juce::String
     auto track = findTrack(trackId);
     if (!track.isValid()) return false;
 
-    // Reject a duplicate transition id, and single-neighbour reuse of either
-    // edge (a left clip can only fade out into one right neighbour, and a
-    // right clip can only fade in from one left neighbour).
+    // Each clip edge can have only one transition neighbour.
     for (int i = 0; i < track.getNumChildren(); ++i)
     {
         const auto t = track.getChild(i);
@@ -181,14 +167,12 @@ ProjectState::ClipEdgeFade ProjectState::getClipEdgeFade(const juce::String& cli
 
         if (rightId == clipId)
         {
-            // This clip is the later partner — it fades IN over the overlap.
             fade.hasFadeIn = true;
             fade.fadeInStartMs = oStart;
             fade.fadeInEndMs = oEnd;
         }
         if (leftId == clipId)
         {
-            // This clip is the earlier partner — it fades OUT over the overlap.
             fade.hasFadeOut = true;
             fade.fadeOutStartMs = oStart;
             fade.fadeOutEndMs = oEnd;
@@ -207,8 +191,7 @@ bool ProjectState::reconcileTransitions(bool useUndo)
         auto track = root.getChild(t);
         if (!track.hasType(kTrack)) continue;
 
-        // Iterate backwards so removal doesn't shift the indices we still
-        // need to visit.
+        // Iterate backwards so removals don't shift pending indices.
         for (int i = track.getNumChildren() - 1; i >= 0; --i)
         {
             auto node = track.getChild(i);

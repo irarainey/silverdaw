@@ -68,8 +68,6 @@ juce::Result save(const juce::File& file, const ProjectState& project)
         return juce::Result::fail("Project state has no valid root");
     }
 
-    // Build the outer wrapper:
-    //   { schemaVersion, appVersion, savedAt, project: <tree-as-json> }
     auto* rootObj = new juce::DynamicObject();
     rootObj->setProperty(kSchemaVersionKey, kCurrentSchemaVersion);
     rootObj->setProperty(kAppVersionKey, kAppVersionValue);
@@ -155,9 +153,7 @@ LoadResult load(const juce::File& file, ProjectState& project)
         return result;
     }
 
-    // Schema version gating. A file from a newer build of Silverdaw is
-    // refused; an older version falls through to the migration path
-    // (no migrations exist yet — v1 is the only format).
+    // Refuse newer schemas so incompatible fields are not silently dropped.
     const auto schemaVar = rootObj->getProperty(kSchemaVersionKey);
     result.schemaVersion = static_cast<int>(schemaVar);
     if (result.schemaVersion <= 0)
@@ -173,9 +169,7 @@ LoadResult load(const juce::File& file, ProjectState& project)
         return result;
     }
 
-    // Find the "project" sub-object. Unknown sibling keys (future
-    // transport / library / UI chunks) are ignored at this stage —
-    // they get their own loader hooks in later todos.
+    // Unknown compatible sibling keys are ignored for forward compatibility.
     const auto projectVar = rootObj->getProperty(kProjectKey);
     if (!projectVar.isObject())
     {

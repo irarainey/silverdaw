@@ -11,10 +11,6 @@
 namespace silverdaw::mixdown_export
 {
 
-// ── MP3 / LAME helpers ──────────────────────────────────────────────
-// JUCE's LAMEEncoderAudioFormat shells out to a `lame.exe` child
-// process. We bundle it next to SilverdawBackend.exe via CMake; this
-// helper finds it relative to the current executable.
 juce::File findLameExecutable()
 {
     const auto exeDir = juce::File::getSpecialLocation(
@@ -27,10 +23,6 @@ juce::File findLameExecutable()
 #endif
 }
 
-// Map a CBR bitrate (kbps) to JUCE's LAMEEncoderAudioFormat quality
-// option index. The wrapper's option list is 10 VBR levels (0..9)
-// followed by CBR rates { 32, 40, 48, 56, 64, 80, 96, 112, 128, 160,
-// 192, 224, 256, 320 } — so CBR indices start at 10.
 int lameQualityIndexForCbr(int kbps)
 {
     switch (kbps)
@@ -56,8 +48,6 @@ int lameQualityIndexForCbr(int kbps)
 std::unordered_map<juce::String, juce::String>
 buildMp3MetadataMap(const ExportMetadata& md)
 {
-    // LAME (via JUCE's LAMEEncoderAudioFormat) recognises these id3*
-    // keys and writes them as ID3v2 frames. Year maps to id3date.
     std::unordered_map<juce::String, juce::String> m;
     if (md.title.isNotEmpty())   m["id3title"]   = md.title;
     if (md.artist.isNotEmpty())  m["id3artist"]  = md.artist;
@@ -71,37 +61,17 @@ buildMp3MetadataMap(const ExportMetadata& md)
 std::unordered_map<juce::String, juce::String>
 buildWavMetadataMap(const ExportMetadata& md)
 {
-    // JUCE's WavAudioFormat writes a RIFF INFO chunk for these keys.
-    // INAM/IART/IPRD/ICRD/IGNR/ICMT are the canonical RIFF INFO IDs;
-    // Explorer's Details pane and foobar2000/MediaMonkey read them.
     std::unordered_map<juce::String, juce::String> m;
     if (md.title.isNotEmpty())   m[juce::WavAudioFormat::riffInfoTitle]        = md.title;
     if (md.artist.isNotEmpty())  m[juce::WavAudioFormat::riffInfoArtist]       = md.artist;
     if (md.album.isNotEmpty())   m[juce::WavAudioFormat::riffInfoProductName]  = md.album;
     if (md.year.isNotEmpty())    m[juce::WavAudioFormat::riffInfoDateCreated]  = md.year;
     if (md.genre.isNotEmpty())   m[juce::WavAudioFormat::riffInfoGenre]        = md.genre;
-    // riffInfoComment2 ("ICMT") is the standard RIFF INFO comment ID; the
-    // bare riffInfoComment ("CMNT") is a JUCE-specific extension that few
-    // players read. Use the standard one.
     if (md.comment.isNotEmpty()) m[juce::WavAudioFormat::riffInfoComment2]     = md.comment;
     return m;
 }
 
-/**
- * Insert AIFF text metadata chunks (NAME, AUTH, (c) , ANNO) into an
- * already-written AIFF file. JUCE 8's `AiffAudioFormat` writer ignores
- * the metadata map passed via `withMetadataValues`, so we patch the
- * container after the fact.
- *
- * AIFF/FORM layout:
- *   "FORM" + u32 BE form-size + "AIFF" + sub-chunks
- *
- * Each sub-chunk: 4-byte FOURCC + u32 BE data-size + data + optional
- * 1-byte pad if data-size is odd. We insert our text chunks immediately
- * after the "AIFF" FOURCC (before COMM) and bump the outer form-size.
- *
- * Text chunks carry the raw string bytes (no length prefix, no NUL).
- */
+// JUCE 8 lacks some tag hooks, so FLAC/AIFF metadata is post-processed after encode.
 bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
 {
     if (md.isEmpty())
@@ -131,8 +101,6 @@ bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
         { {'(','c',')',' '}, &md.comment }, // closest standard AIFF "copyright/comment" chunk
         { {'A','N','N','O'}, &md.album   }, // ANNO is free-form annotation; used here for album
     };
-    // Year + genre have no standard AIFF text chunk. We fold them into an
-    // extra ANNO line so they aren't silently dropped.
     juce::String anno;
     if (md.album.isNotEmpty()) anno = md.album;
     if (md.year.isNotEmpty())
@@ -175,15 +143,11 @@ bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
         return false;
     }
 
-    // Compose: bytes 0..11 (FORM + size + AIFF) + inserted chunks + remainder.
     juce::MemoryBlock out;
     out.append(data, 12);
     out.append(inserted.getData(), inserted.getSize());
     out.append(data + 12, size - 12);
 
-    // Patch the outer FORM size (big-endian u32 at offset 4). The size
-    // excludes the "FORM" FOURCC and the size field itself, so it is
-    // `total file size - 8`.
     const juce::uint32 newFormSize = (juce::uint32) (out.getSize() - 8);
     auto* outBytes = static_cast<juce::uint8*>(out.getData());
     outBytes[4] = (juce::uint8) ((newFormSize >> 24) & 0xFF);
@@ -208,21 +172,6 @@ bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
     return true;
 }
 
-/**
- * Insert a VORBIS_COMMENT metadata block into an already-written FLAC
- * file. JUCE 8's `FlacAudioFormat` does not expose any metadata-writing
- * hook, so we do it ourselves by rewriting the file's metadata block
- * region (the audio frames are left bit-identical).
- *
- * FLAC layout: "fLaC" magic (4 bytes) + one or more metadata blocks +
- * audio frames. Each metadata block has a 4-byte header: top bit of
- * byte 0 = "is last block", lower 7 bits = block type (4 = VORBIS_
- * COMMENT), bytes 1..3 = block length big-endian.
- *
- * Strategy: walk metadata blocks until we find the last one, clear its
- * "is last block" flag, append our VORBIS_COMMENT block (with the flag
- * set) before the audio frames, write the result atomically.
- */
 bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md)
 {
     if (md.isEmpty())
@@ -243,15 +192,6 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
         return false;
     }
 
-    // Walk metadata blocks. Track:
-    //   - lastBlockHeaderPos: header offset of the previous "last" block
-    //     (so we can clear its top bit).
-    //   - existingVcStart / existingVcEnd: byte range of any pre-existing
-    //     VORBIS_COMMENT block. FLAC permits at most one (RFC 9639), so
-    //     if one is present we DROP it and emit our own as the new last
-    //     block. (JUCE's FlacAudioFormat never writes one, so the common
-    //     case is no existing block — but be robust if this helper runs
-    //     against a file that already has tags.)
     size_t pos = 4;
     size_t lastBlockHeaderPos = pos;
     bool sawLast = false;
@@ -290,20 +230,13 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
         silverdaw::log::warn("mixdown", "FLAC metadata: no last-block flag found; skipping tags");
         return false;
     }
-    // `pos` now points at the first byte of audio frames.
 
-    // Build the VORBIS_COMMENT payload: vendor_length (LE u32) +
-    // vendor_string + num_comments (LE u32) + N × (length LE u32 +
-    // "FIELD=value" bytes). Strings are UTF-8.
     auto buildPayload = [&]()
     {
         juce::MemoryOutputStream mos;
         const juce::String vendor = "Silverdaw / JUCE FLAC";
         const auto vendorUtf8 = vendor.toRawUTF8();
         const auto vendorLen = (juce::uint32) std::strlen(vendorUtf8);
-        // VORBIS_COMMENT integer fields are LITTLE-ENDIAN per the Vorbis
-        // I spec (unlike FLAC headers which are big-endian).
-        // juce::MemoryOutputStream::writeInt is little-endian.
         mos.writeInt((int) vendorLen);                                   // u32 LE
         mos.write(vendorUtf8, vendorLen);
 
@@ -343,14 +276,8 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
         return false;
     }
 
-    // Compose the rewritten file. We append progressively; the
-    // MemoryBlock grows as needed. (Do NOT call ensureSize here — that
-    // sets the logical size and `append` would write *after* it,
-    // leaving the file with leading garbage.)
     juce::MemoryBlock out;
 
-    // (a) copy through the metadata region, skipping any pre-existing
-    //     VORBIS_COMMENT block (we replace it with our own).
     if (hasExistingVc)
     {
         out.append(data, existingVcStart);
@@ -361,17 +288,11 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
         out.append(data, pos);
     }
 
-    // (b) clear the "is last block" flag on the original last
-    //     non-Vorbis metadata block. After step (a), that header byte
-    //     sits at the same offset in `out` as in `data`, UNLESS the
-    //     skipped VORBIS_COMMENT block sat before it, in which case
-    //     the offset shifts down by the VC block's length.
     size_t lastFlagPosInOut = lastBlockHeaderPos;
     if (hasExistingVc && existingVcStart < lastBlockHeaderPos)
         lastFlagPosInOut -= (existingVcEnd - existingVcStart);
     static_cast<juce::uint8*>(out.getData())[lastFlagPosInOut] &= 0x7F;
 
-    // (c) our VORBIS_COMMENT block header: 0x84 = last-block | type 4.
     const juce::uint32 plen = (juce::uint32) payload.getSize();
     const juce::uint8 vcHeader[4] = {
         (juce::uint8) 0x84,
@@ -382,10 +303,8 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
     out.append(vcHeader, 4);
     out.append(payload.getData(), payload.getSize());
 
-    // (d) the original audio frames (everything after the metadata region).
     out.append(data + pos, size - pos);
 
-    // Atomic-ish: write to a sibling temp then rename over the target.
     auto tmp = flacFile.getSiblingFile(flacFile.getFileNameWithoutExtension() + ".tagtmp.flac");
     if (! tmp.replaceWithData(out.getData(), out.getSize()))
     {
@@ -403,7 +322,7 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
     return true;
 }
 
-// Atomic "<file>.tmp" → "<file>" finalize. Same code as before.
+// Write caches to a sibling temp file so partial entries are never visible.
 bool atomicReplace(const juce::File& tmp, const juce::File& target)
 {
 #if JUCE_WINDOWS
@@ -417,8 +336,6 @@ bool atomicReplace(const juce::File& tmp, const juce::File& target)
 #endif
 }
 
-// Create the final-format writer (see header). The normalize-WAV-f32 pass-1
-// intermediate is a deliberate caller-side special case and is NOT routed here.
 std::unique_ptr<juce::AudioFormatWriter> createOutputWriter(
     MixdownOptions::Format format,
     const juce::AudioFormatWriterOptions& baseOptions,
@@ -435,13 +352,11 @@ std::unique_ptr<juce::AudioFormatWriter> createOutputWriter(
     }
     if (format == MixdownOptions::Format::Flac)
     {
-        // FLAC tags injected post-encode via writeFlacVorbisComment().
         juce::FlacAudioFormat flac;
         return flac.createWriterFor(stream, baseOptions);
     }
     if (format == MixdownOptions::Format::Aiff)
     {
-        // AIFF tags injected post-encode via writeAiffTextChunks().
         juce::AiffAudioFormat aiff;
         return aiff.createWriterFor(stream, baseOptions);
     }

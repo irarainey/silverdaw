@@ -9,11 +9,7 @@ class AudioEngine;
 class ProjectState;
 class BridgeServer;
 
-// TRACK_* command handlers. Extracted from Main.cpp (an oversized god file)
-// so the dispatcher only routes to them. Each validates its envelope, mutates
-// ProjectState, pushes any live values to the AudioEngine, and acks/broadcasts
-// the applied state. Track gain/mute/solo share the effective-gain fan-out kept
-// file-local in TrackCommands.cpp.
+// Track gain/mute/solo share effective-gain fan-out in TrackCommands.cpp.
 
 void handleTrackAdd(const juce::var& payload, ProjectState& projectState, BridgeServer& bridge);
 void handleTrackRemove(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,

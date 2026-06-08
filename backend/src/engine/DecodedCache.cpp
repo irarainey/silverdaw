@@ -26,9 +26,6 @@ juce::File DecodedCache::getCacheFilePath(const juce::File& sourceFile) const
 
 juce::File DecodedCache::cacheFileFor(const juce::File& sourceFile) const
 {
-    // Stable key — identical recipe to `PeaksCache::cacheFileFor`,
-    // minus the `peaksPerSecond` component (the WAV is the raw
-    // decoded audio, not a derived view of it).
     const auto path = sourceFile.getFullPathName();
     const auto mtime = sourceFile.getLastModificationTime().toMilliseconds();
     const auto size = sourceFile.getSize();
@@ -63,9 +60,7 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
         return {};
     }
 
-    // Atomic write: stream to a `.tmp` sibling, then rename when the
-    // entire file is written. A partially-written cache entry is
-    // never visible to readers.
+    // Write caches to a sibling temp file so partial entries are never visible.
     const auto tmpPath = cachePath.withFileExtension(".wav.tmp");
     tmpPath.deleteFile();
 
@@ -80,11 +75,7 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
     outStream->truncate();
 
     juce::WavAudioFormat wavFormat;
-    // 16-bit linear PCM: half the size of 32-bit float, indistinguishable
-    // from the lossy MP3 source for audio-editing purposes, and what
-    // every consumer-grade WAV expects. JUCE writes a standard PCM
-    // header; the read path uses the normal `AudioFormatReader`
-    // dispatcher with no special handling needed downstream.
+    // Cache WAVs as 16-bit PCM to keep decoded files small and universally readable.
     constexpr int kBitsPerSample = 16;
     constexpr int kWriteQuality = 0;
     std::unique_ptr<juce::AudioFormatWriter> writer(
@@ -95,12 +86,8 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
         silverdaw::log::warn("decodedcache", "createWriterFor failed for " + cachePath.getFileName());
         return {};
     }
-    // `createWriterFor` took ownership of `outStream` on success.
     outStream.release();
 
-    // Stream the decoded audio in 4096-sample chunks. The reader
-    // decodes lazily; the writer dithers + writes synchronously.
-    // Memory footprint: one block at a time.
     constexpr int kBlockSize = 4096;
     if (!writer->writeFromAudioReader(*reader, 0, reader->lengthInSamples))
     {

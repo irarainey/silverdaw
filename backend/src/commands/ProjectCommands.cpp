@@ -17,12 +17,7 @@ namespace silverdaw
 using silverdaw::bridge::tryGetNumber;
 using silverdaw::bridge::tryGetRequiredString;
 
-/**
- * Library-item relink. Updates the source file path on a library item
- * and rebuilds every clip that references it. Every dependent clip
- * picks up the new file automatically because clips reference the
- * library item by id, not by path.
- */
+// Clips reference library items by id, so relink rebuilds each dependent clip.
 void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& engine,
                              silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                              const silverdaw::ProjectSession& session, juce::ThreadPool& peakPool,
@@ -40,9 +35,7 @@ void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& e
         return;
     }
 
-    // Re-create every clip that points at this library item so the
-    // engine swaps in the new source file. Each clip is its own
-    // playable source in the engine, so we rebuild them individually.
+    // Each clip is its own playable source, so rebuild dependents individually.
     const auto& root = projectState.getTree();
     int rebuilt = 0;
     int failed = 0;
@@ -86,17 +79,14 @@ void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& e
     silverdaw::log::info("project", "LIBRARY_ITEM_RELINK itemId=" + itemId + " rebuilt=" + juce::String(rebuilt) +
                                         " failed=" + juce::String(failed));
 
-    // Re-broadcast PROJECT_STATE so the renderer learns the new
-    // filePath + clears the unresolved flag on every dependent clip.
+    // Re-broadcast so dependent clips clear unresolved state.
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, false));
 }
 
 void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                       silverdaw::BridgeServer& bridge, silverdaw::ProjectSession& session)
 {
-    // Capture the CURRENT project's clip ids before we replace the tree —
-    // otherwise we'd ask the engine to remove the freshly-empty set,
-    // leaking the old playable sources.
+    // Capture old clip ids before replacing the tree to avoid leaking sources.
     const auto previousClipIds = silverdaw::collectClipIds(projectState);
 
     engine.stop();
@@ -128,10 +118,7 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
         return;
     }
 
-    // Capture OLD clip ids before the load wipes the ValueTree — needed
-    // to tear down the engine's playable sources for the previous
-    // project. Done before `ProjectFile::load` so a load failure leaves
-    // the engine intact (we only call removeClip / addClip on success).
+    // Capture old clip ids before load so failures leave the engine intact.
     const auto previousClipIds = silverdaw::collectClipIds(projectState);
 
     const auto result = silverdaw::ProjectFile::load(juce::File(filePath), projectState);
@@ -151,17 +138,13 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
         engine.removeClip(id);
     }
     silverdaw::rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
-    // Restore the persisted playhead position so the user reopens the
-    // project at the same point they left it. `engine.stop()` reset to
-    // 0 above; this puts us back where the project file says.
+    // Restore the persisted playhead after `engine.stop()` resets to 0.
     const double persistedPlayhead = projectState.getPlayheadMs();
     if (persistedPlayhead > 0.0)
     {
         engine.setPositionMs(persistedPlayhead);
     }
-    // Block-prime the read-ahead buffers at the restored playhead so the
-    // first "press play" after a load is instant — never an audible gap
-    // while the background reader catches up at a non-zero position.
+    // Prime read-ahead at the restored playhead to avoid first-play gaps.
     engine.primeTracksForPlayback(silverdaw::kLoadPrimeBudgetMs);
     session.currentPath = filePath;
 
@@ -176,9 +159,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
     juce::String filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
     if (filePath.isEmpty())
     {
-        // PROJECT_SAVE with no path falls back to the current project's
-        // path. The renderer is supposed to gate this on currentFilePath
-        // being non-null, but we double-check defensively.
+        // Defensively fall back to the current project path.
         filePath = session.currentPath;
     }
     if (filePath.isEmpty())
@@ -197,10 +178,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
         projectState.setViewScrollX(juce::jmax(0.0, *scrollX));
     }
 
-    // Capture the engine's current playhead position into the project
-    // tree just before serialisation so the saved file remembers where
-    // the user was. Suppressed from dirty-tracking inside `setPlayheadMs`
-    // — capturing this value is a save-side concern, not a user edit.
+    // Capture playhead on save without marking it as a user edit.
     projectState.setPlayheadMs(engine.getPositionMs());
 
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
@@ -214,11 +192,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
     if (result.wasOk())
     {
         session.currentPath = filePath;
-        // If the project still has its default name (Untitled), fold
-        // the file basename in so the title bar reflects the chosen
-        // filename. Once the user has explicitly renamed the project
-        // to anything else we leave their choice alone — Save / Save
-        // As should never silently overwrite a user-chosen name.
+        // Only the default project name follows the chosen file basename.
         if (projectState.getName() == silverdaw::ProjectState::kDefaultName)
         {
             const auto stem = juce::File(filePath).getFileNameWithoutExtension();
@@ -227,8 +201,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
                 projectState.setName(stem);
             }
         }
-        // A successful save makes the in-memory state match disk; clear
-        // dirty. `markClean` fires a PROJECT_DIRTY(false) transition.
+        // markClean emits PROJECT_DIRTY(false).
         projectState.markClean();
     }
     bridge.broadcast("PROJECT_SAVED", juce::var(p));
@@ -237,8 +210,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
                              (result.wasOk() ? "ok" : "fail: " + result.getErrorMessage()) + " path=" + filePath);
     if (result.wasOk() && isSaveAs)
     {
-        // Push the updated project state so the renderer picks up the
-        // new filePath + name without waiting on a rename ack.
+        // Save As changes filePath/name without a separate rename ack.
         bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, false));
     }
 }
@@ -268,9 +240,7 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
     projectState.setViewScrollX(scrollX);
     projectState.setPlayheadMs(playheadMs);
 
-    // Selection + panel state are kept current on the project tree via
-    // PROJECT_SET_VIEW pushes, so the lightweight view-state save just
-    // mirrors whatever is already there into the file.
+    // PROJECT_SET_VIEW already keeps selection and panel state current.
     const juce::String selectedTrackId = projectState.getViewSelectedTrack();
     const bool fxPanelOpen = projectState.getViewFxPanelOpen();
 
@@ -298,14 +268,7 @@ void handleProjectRename(const juce::var& payload, silverdaw::ProjectState& proj
     bridge.broadcast("PROJECT_RENAMED", juce::var(p));
 }
 
-// Background autosave: serialise the current ValueTree to `filePath`
-// without touching `session.currentPath` or the dirty flag. Used by the
-// renderer's autosave manager — autosave is deliberately invisible to
-// the user-facing project lifecycle so an in-progress edit session is
-// never silently "saved" against the wrong file or quietly marked
-// clean. Playhead and scroll setters are dirty-suppressed (see
-// `ProjectState::setPlayheadMs` / `setViewScrollX`) so capturing them
-// here doesn't pollute the dirty bit.
+// Autosave must not touch currentPath or clear dirty state.
 void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)
 {
@@ -320,11 +283,7 @@ void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& eng
         return;
     }
 
-    // Capture playhead + scroll so a recovered autosave restores the
-    // user where they actually were. Both setters are explicitly
-    // dirty-suppressed so this does not turn into a feedback loop with
-    // the autosave manager (which only runs while the project is
-    // already dirty).
+    // Dirty-suppressed playhead/scroll capture avoids autosave feedback loops.
     const auto scrollX = tryGetNumber(payload, "viewScrollX");
     if (scrollX.has_value())
     {
@@ -344,13 +303,7 @@ void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& eng
                              (result.wasOk() ? "ok" : "fail: " + result.getErrorMessage()) + " path=" + filePath);
 }
 
-// Crash-recovery load. Same restore pipeline as PROJECT_LOAD but
-// `session.currentPath` is set to the *original* backing path (or left
-// empty when the autosave was for an untitled project) so File > Save
-// either overwrites the original or falls through to Save As. The
-// project is marked dirty after the load so the user is clearly
-// steered to a deliberate save (the autosave file should be a transient
-// safety net, not a stand-in for the real project).
+// Recovery points Save back at the original path and forces a deliberate save.
 void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine& engine,
                                silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                                silverdaw::ProjectSession& session, juce::ThreadPool& peakPool,
@@ -394,20 +347,15 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
     {
         engine.setPositionMs(persistedPlayhead);
     }
-    // Block-prime the read-ahead buffers at the restored playhead so the
-    // first "press play" after a recovery is instant (see PROJECT_LOAD).
+    // Prime read-ahead at the restored playhead; see PROJECT_LOAD.
     engine.primeTracksForPlayback(silverdaw::kLoadPrimeBudgetMs);
 
-    // Aim the user's "current project" pointer at the original backing
-    // path (or clear it for an untitled recovery). The autosave path
-    // itself is never exposed as the user's working file.
+    // Never expose the autosave path as the user's working file.
     session.currentPath = originalPath;
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
 
-    // Force dirty so the user is steered to save. `ProjectFile::load`
-    // calls `markClean()` at the end of replaceTree, so we have to
-    // re-dirty the project here rather than rely on the listener.
+    // ProjectFile::load marks clean, so re-dirty recovered projects explicitly.
     projectState.markDirty();
 
     silverdaw::log::info("project",

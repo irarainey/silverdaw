@@ -9,47 +9,16 @@
 namespace silverdaw
 {
 
-/**
- * Real-time-safe output "keep-alive" subsystem and the single source of truth
- * for the transport-gating flags it depends on.
- *
- * The output device must never see a sustained run of digital silence while
- * audio is needed: some endpoints — notably USB-C headphone dongles and
- * USB-Audio-Class DACs — silence-detect and soft-mute during silence, then
- * apply a wake-up fade on the next audible block, swallowing the attack of the
- * first audio after the gap. To prevent that we inject a low TPDF dither floor
- * into output blocks that are otherwise (near-)silent.
- *
- * The floor is applied at the FINAL output stage, AFTER the master gain
- * (see `MeteringSource`), so a low project master volume can never attenuate it
- * below the level that keeps a sleep-prone endpoint awake.
- *
- * Gating — the floor runs only when output is genuinely needed:
- *   - while PLAYING, to fill leading silence before the first clip and any gap
- *     with no active clip;
- *   - during a short WAKE PRE-ROLL (`wakePreroll`) fired by the engine before a
- *     cold-start play, so the endpoint's wake-up fade is spent on the floor and
- *     not on the first musical attack.
- * While the app sits idle/paused it emits TRUE digital silence — there is no
- * continuous floor — so a loaded-but-stopped project makes no sound. The
- * per-block silence test (the caller passes the block's pre-floor content peak)
- * still ensures real audio is never coloured.
- *
- * State is written from the message thread and read on the audio thread via
- * atomics. The dither path is real-time safe: no allocation, no locking, no
- * exceptions, bounded work.
- */
+// Real-time-safe keep-alive floor for sleep-prone output endpoints.
 class OutputKeepAlive
 {
   public:
-    // --- Transport state (single source of truth) ---
 
     void setPlaying(bool p) noexcept { playing.store(p, std::memory_order_release); }
     bool isPlaying() const noexcept { return playing.load(std::memory_order_acquire); }
 
-    /** Arm/disarm the wake pre-roll: while set, the floor runs even though the
-     *  transport gate is still closed, so the engine can wake a cold endpoint
-     *  before opening content. Driven by the message thread. */
+    // Wake pre-roll spends endpoint fade-in on the keep-alive floor, not the first content
+    // attack.
     void setWakePreroll(bool active) noexcept
     {
         wakePreroll.store(active, std::memory_order_release);
@@ -62,25 +31,13 @@ class OutputKeepAlive
     }
     bool isContentLoaded() const noexcept { return contentLoaded.load(std::memory_order_acquire); }
 
-    /** Whether the keep-alive floor should be emitted given transport state:
-     *  while playing (fills gaps / leading silence) or during a wake pre-roll.
-     *  Idle/paused output stays truly silent. The per-block silence test still
-     *  gates on actual content so real audio is never coloured. */
+    // Keep-alive only wakes sleep-prone endpoints; idle output remains true digital silence.
     bool shouldRun() const noexcept
     {
         return playing.load(std::memory_order_acquire)
                || wakePreroll.load(std::memory_order_acquire);
     }
 
-    /**
-     * Inject the dither floor across [startSample, startSample + numSamples) of
-     * every channel, but ONLY if the transport gate is open and `programPeak`
-     * (the block's pre-floor content peak, measured on the program audio so a
-     * low master volume can't make real content look silent) is at or below the
-     * silence threshold. Returns true if the floor was injected.
-     *
-     * Real-time safe: no allocation, no locking, no exceptions, bounded work.
-     */
     bool maybeApplyFloor(juce::AudioBuffer<float>& buffer, int startSample, int numSamples,
                          float programPeak) noexcept
     {
@@ -115,13 +72,9 @@ class OutputKeepAlive
     }
 
     std::atomic<bool> playing{false};
-    // Armed during the cold-start wake pre-roll: runs the floor with the
-    // transport gate still closed so the endpoint wakes before content.
     std::atomic<bool> wakePreroll{false};
     std::atomic<bool> contentLoaded{false};
-    // xorshift PRNG state for the dither. Touched only on the audio thread inside
-    // maybeApplyFloor, so a plain (non-atomic) word is sufficient. Seeded to a
-    // non-zero constant (xorshift requires a non-zero state).
+    // Message-thread writes are published for bounded, lock-free audio-thread reads.
     juce::uint32 rngState{0x9E3779B9u};
 };
 

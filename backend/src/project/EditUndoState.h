@@ -8,9 +8,7 @@ namespace silverdaw
 class ProjectState;
 class BridgeServer;
 
-// Edit undo-state broadcast. The envelope mirrors the UndoManager's
-// canUndo/canRedo + the next undo/redo labels so the renderer can enable
-// its toolbar buttons; broadcastEditUndoState pushes it to every client.
+// Undo-state envelope used to keep renderer toolbar state in sync.
 
 juce::var buildEditUndoStateEnvelope(ProjectState& projectState);
 void broadcastEditUndoState(ProjectState& projectState, BridgeServer& bridge);
