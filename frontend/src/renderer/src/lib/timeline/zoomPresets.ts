@@ -15,7 +15,7 @@ import { DEFAULT_PX_PER_SECOND } from './constants'
  *
  * Ordered low → high so the menu reads zoomed-out → zoomed-in.
  */
-export const ZOOM_PRESET_PX_PER_SECOND = [20, 50, 100, 200, 400] as const
+export const ZOOM_PRESET_PX_PER_SECOND = [20, 50, 100, 200, 400, 800] as const
 
 const ZOOM_PRESET_ACTION_PREFIX = 'view.zoomPreset:'
 

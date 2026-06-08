@@ -17,7 +17,7 @@ export const SCROLLBAR_WIDTH = 12
 // Zoom caps keep redraw cost bounded while allowing sub-beat alignment.
 export const DEFAULT_PX_PER_SECOND = 100
 export const MIN_PX_PER_SECOND = 10
-export const MAX_PX_PER_SECOND = 600
+export const MAX_PX_PER_SECOND = 800
 export const ZOOM_STEP_PX_PER_SECOND = 10
 
 // ─── Musical grid ───────────────────────────────────────────────────────────
