@@ -2,13 +2,16 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <atomic>
 #include <cmath>
 
 namespace silverdaw
 {
 
-// Per-track Tone EQ owned by `TrackChain`; message-thread setters publish under the `BusGraph` lock.
-// `process` stays allocation/lock/log free, and snap paths keep live/export startup parity.
+// Per-track Tone EQ owned by `TrackChain`. Setters publish targets lock-free (atomics +
+// a release `snapRequested` flag) so the message thread never blocks the audio callback;
+// `process` consumes the flag and owns all coefficient recompute. Snap defers to the next
+// `process` block, preserving live/export startup parity (the first block is steady-state).
 class ToneEq
 {
 public:
@@ -23,39 +26,43 @@ public:
         clearState();
         prepared = true;
         recomputeCoeffs();
+        snapRequested.store(false, std::memory_order_relaxed);
     }
 
     /** Clears filter histories on stop/seek without changing targets. */
     void reset() noexcept { clearState(); }
 
-    /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity. */
+    /** Lock-free message-thread setter; publishes targets and (on snap) a deferred snap flag. */
     void setParams(float bassDb, float midDb, float trebleDb, bool lowCutOn,
                    bool highCutOn, bool snap) noexcept
     {
-        targetBassDb = sanitizeDb(bassDb);
-        targetMidDb = sanitizeDb(midDb);
-        targetTrebleDb = sanitizeDb(trebleDb);
-        targetLowCutHz = lowCutOn ? kLowCutOnHz : kLowCutOffHz;
-        targetHighCutHz = highCutOn ? kHighCutOnHz : kHighCutOffHz;
+        targetBassDb.store(sanitizeDb(bassDb), std::memory_order_relaxed);
+        targetMidDb.store(sanitizeDb(midDb), std::memory_order_relaxed);
+        targetTrebleDb.store(sanitizeDb(trebleDb), std::memory_order_relaxed);
+        targetLowCutHz.store(lowCutOn ? kLowCutOnHz : kLowCutOffHz, std::memory_order_relaxed);
+        targetHighCutHz.store(highCutOn ? kHighCutOnHz : kHighCutOffHz, std::memory_order_relaxed);
 
-        if (snap)
-        {
-            snapToTargets();
-            if (prepared) recomputeCoeffs();
-        }
+        // Release pairs with the acquire in `process`, so a consumed snap also sees the targets.
+        if (snap) snapRequested.store(true, std::memory_order_release);
     }
 
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
         if (! prepared || numSamples <= 0) return;
 
+        if (snapRequested.exchange(false, std::memory_order_acquire))
+        {
+            snapToTargets();
+            recomputeCoeffs();
+        }
+
         const float alpha = blockAlpha(numSamples);
         bool moved = false;
-        moved |= smoothToward(curBassDb, targetBassDb, alpha);
-        moved |= smoothToward(curMidDb, targetMidDb, alpha);
-        moved |= smoothToward(curTrebleDb, targetTrebleDb, alpha);
-        moved |= smoothToward(curLowCutHz, targetLowCutHz, alpha);
-        moved |= smoothToward(curHighCutHz, targetHighCutHz, alpha);
+        moved |= smoothToward(curBassDb, targetBassDb.load(std::memory_order_relaxed), alpha);
+        moved |= smoothToward(curMidDb, targetMidDb.load(std::memory_order_relaxed), alpha);
+        moved |= smoothToward(curTrebleDb, targetTrebleDb.load(std::memory_order_relaxed), alpha);
+        moved |= smoothToward(curLowCutHz, targetLowCutHz.load(std::memory_order_relaxed), alpha);
+        moved |= smoothToward(curHighCutHz, targetHighCutHz.load(std::memory_order_relaxed), alpha);
         if (moved) recomputeCoeffs();
 
         const int nCh = juce::jmin(buffer.getNumChannels(), channels);
@@ -183,11 +190,11 @@ private:
 
     void snapToTargets() noexcept
     {
-        curBassDb = targetBassDb;
-        curMidDb = targetMidDb;
-        curTrebleDb = targetTrebleDb;
-        curLowCutHz = targetLowCutHz;
-        curHighCutHz = targetHighCutHz;
+        curBassDb = targetBassDb.load(std::memory_order_relaxed);
+        curMidDb = targetMidDb.load(std::memory_order_relaxed);
+        curTrebleDb = targetTrebleDb.load(std::memory_order_relaxed);
+        curLowCutHz = targetLowCutHz.load(std::memory_order_relaxed);
+        curHighCutHz = targetHighCutHz.load(std::memory_order_relaxed);
     }
 
     void clearState() noexcept
@@ -318,13 +325,20 @@ private:
     int channels = 2;
     bool prepared = false;
 
-    float targetBassDb = 0.0F, targetMidDb = 0.0F, targetTrebleDb = 0.0F;
-    float targetLowCutHz = kLowCutOffHz;
-    float targetHighCutHz = kHighCutOffHz;
+    // Targets published lock-free by the message thread; consumed by `process` on the audio thread.
+    std::atomic<float> targetBassDb{0.0F};
+    std::atomic<float> targetMidDb{0.0F};
+    std::atomic<float> targetTrebleDb{0.0F};
+    std::atomic<float> targetLowCutHz{kLowCutOffHz};
+    std::atomic<float> targetHighCutHz{kHighCutOffHz};
+    std::atomic<bool> snapRequested{false};
 
     float curBassDb = 0.0F, curMidDb = 0.0F, curTrebleDb = 0.0F;
     float curLowCutHz = kLowCutOffHz;
     float curHighCutHz = kHighCutOffHz;
+
+    static_assert(std::atomic<float>::is_always_lock_free,
+                  "ToneEq publishes params via lock-free atomics on the audio thread");
 };
 
 } // namespace silverdaw

@@ -99,7 +99,6 @@ public:
         reverbSendBuf.clear();
         delaySendBuf.clear();
         sharedFx.prepare(preparedRate, preparedMax);
-        reapplyStickyProjectFx();
         for (auto& kv : runtimes)
             kv.second->prepareToPlay(preparedMax, preparedRate);
     }
@@ -122,9 +121,9 @@ public:
         // invariant forbids it). If the message thread is mid-mutation we skip
         // this block (already cleared above -> silence) and record it for the
         // debug logs, rather than waiting and risking priority inversion.
-        // NOTE: this is NOT full lock-free publication. The lock still guards
-        // non-atomic DSP param coherence (TrackChain/SharedFx setters); making
-        // those publish atomically is the remaining debt to fully retire it.
+        // The lock now guards only structural graph edits (attach/detach/clear)
+        // and prepare/release; all DSP param mutation (TrackChain/SharedFx) is
+        // published lock-free, so live FX automation no longer contends here.
         const juce::ScopedTryLock sl(lock);
         if (! sl.isLocked())
         {
@@ -282,7 +281,9 @@ public:
                       bool highCut, bool snap)
     {
         if (trackId.isEmpty()) return;
-        const juce::ScopedLock sl(lock);
+        // Lock-free: `pendingTone` and the runtime map are message-thread-only (serialised vs
+        // attach/detach/clear), and `ToneEq` publishes its params atomically, so the audio
+        // thread's read-only map iteration is never raced.
         pendingTone[trackId] = {bassDb, midDb, trebleDb, lowCut, highCut};
         auto it = runtimes.find(trackId);
         if (it != runtimes.end())
@@ -293,7 +294,7 @@ public:
     {
         if (trackId.isEmpty()) return;
         const float a = juce::jlimit(0.0F, 1.0F, std::isfinite(amount) ? amount : 0.0F);
-        const juce::ScopedLock sl(lock);
+        // Lock-free: see `setTrackTone`; `Leveler` publishes its param atomically.
         pendingLeveler[trackId] = a;
         auto it = runtimes.find(trackId);
         if (it != runtimes.end())
@@ -346,28 +347,28 @@ public:
 
     void setProjectReverb(float size, float decay, float tone, float mix, bool snap)
     {
-        const juce::ScopedLock sl(lock);
-        stickyReverb = {size, decay, tone, mix, true};
+        // Lock-free: `SharedFx` publishes targets + a deferred snap flag atomically; the
+        // persistent target atomics are re-snapped by `sharedFx.prepare` after device changes.
         sharedFx.setReverbParams(size, decay, tone, mix, snap);
     }
 
     void setProjectDelay(double delayMs, float feedback, float tone, float mix, bool snap,
                          bool applyTimeNow)
     {
-        const juce::ScopedLock sl(lock);
-        stickyDelay = {delayMs, feedback, tone, mix, applyTimeNow, true};
+        // Lock-free: see `setProjectReverb`.
         sharedFx.setDelayParams(delayMs, feedback, tone, mix, snap, applyTimeNow);
     }
 
     void resetSharedFx()
     {
-        const juce::ScopedLock sl(lock);
-        sharedFx.reset();
+        // Lock-free: schedules the reset for the next audio block instead of mutating
+        // decay state from the message thread.
+        sharedFx.requestReset();
     }
 
     bool sharedFxTerminated()
     {
-        const juce::ScopedLock sl(lock);
+        // Lock-free: reads atomic done flags written by the audio-thread tail detectors.
         return sharedFx.bothTerminated();
     }
 
@@ -414,17 +415,6 @@ public:
     }
 
 private:
-    void reapplyStickyProjectFx() noexcept
-    {
-        if (stickyReverb.valid)
-            sharedFx.setReverbParams(stickyReverb.size, stickyReverb.decay,
-                                     stickyReverb.tone, stickyReverb.mix, /*snap*/ true);
-        if (stickyDelay.valid)
-            sharedFx.setDelayParams(stickyDelay.delayMs, stickyDelay.feedback,
-                                    stickyDelay.tone, stickyDelay.mix, /*snap*/ true,
-                                    /*applyTimeNow*/ true);
-    }
-
     juce::CriticalSection lock;
     std::atomic<juce::uint64> skippedBlocks{0};
     std::unordered_map<juce::String, std::unique_ptr<TrackRuntime>> runtimes;
@@ -450,19 +440,6 @@ private:
     std::unordered_map<juce::String, SendParams> pendingSends;
 
     std::unordered_map<juce::String, float> pendingPans;
-
-    struct StickyReverb
-    {
-        float size = 0.0F, decay = 0.0F, tone = 0.0F, mix = 0.0F;
-        bool valid = false;
-    } stickyReverb;
-    struct StickyDelay
-    {
-        double delayMs = 1.0;
-        float feedback = 0.0F, tone = 0.0F, mix = 0.0F;
-        bool applyTimeNow = true;
-        bool valid = false;
-    } stickyDelay;
 
     SharedFx sharedFx;
     juce::AudioBuffer<float> reverbSendBuf;

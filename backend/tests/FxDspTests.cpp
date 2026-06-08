@@ -474,6 +474,153 @@ void testBusGraphConcurrentParamUpdatesAreSafe()
     bg.releaseResources();
 }
 
+// M3: the project-FX setters and resetSharedFx are now lock-free. Hammer them
+// (plus the unlocked tone/leveler setters) from a writer thread while the audio
+// callback pumps the shared FX: output must stay finite with no crash or deadlock.
+void testBusGraphLockFreeProjectFxUpdatesAreSafe()
+{
+    constexpr int kBlock = 128;
+    constexpr double kRate = 48000.0;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, kRate);
+
+    ConstantSource src(0.25F);
+    bg.attachClip("t1", "c1", &src);
+    bg.setTrackSends("t1", 0.5F, 0.5F); // feed both shared FX
+
+    std::atomic<bool> stop{false};
+    std::thread writer([&]() {
+        int i = 0;
+        while (! stop.load(std::memory_order_relaxed))
+        {
+            const float u = static_cast<float>(i % 100) / 100.0F;
+            bg.setProjectReverb(u, 1.0F - u, u, u, /*snap*/ (i % 7) == 0);
+            bg.setProjectDelay(50.0 + 200.0 * u, 0.4F * u, u, u, /*snap*/ (i % 11) == 0,
+                               /*applyTimeNow*/ (i % 3) == 0);
+            bg.setTrackTone("t1", 6.0F * u, -3.0F * u, 4.0F * u, (i & 1) != 0, (i & 2) != 0,
+                            (i % 13) == 0);
+            bg.setTrackLeveler("t1", u, (i % 17) == 0);
+            if ((i % 5) == 0) bg.resetSharedFx();
+            ++i;
+        }
+    });
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    for (int b = 0; b < 4000; ++b)
+    {
+        out.clear();
+        bg.getNextAudioBlock(info);
+        require(std::isfinite(out.getMagnitude(0, 0, kBlock))
+                    && std::isfinite(out.getMagnitude(1, 0, kBlock)),
+                "shared-FX output stays finite under concurrent lock-free project-FX churn");
+    }
+
+    stop.store(true, std::memory_order_relaxed);
+    writer.join();
+    bg.releaseResources();
+}
+
+// M3: resetSharedFx is deferred (requestReset) and consumed by the next audio
+// block, so a ringing tail must be cut on the block after the reset is scheduled.
+void testSharedFxRequestResetCutsTailNextBlock()
+{
+    silverdaw::SharedFx fx;
+    const double sr = 48000.0;
+    const int n = 512;
+    fx.prepare(sr, n);
+    fx.setReverbParams(1.0F, 1.0F, 1.0F, 1.0F, /*snap*/ true);
+    fx.setDelayParams(250.0, 0.0F, 0.0F, 0.0F, /*snap*/ true, /*applyTimeNow*/ true); // Echo off
+
+    juce::AudioBuffer<float> sendR(2, n), sendD(2, n), out(2, n);
+    sendD.clear();
+    for (int b = 0; b < 8; ++b) // prime the room so the tail builds up
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < n; ++i) sendR.setSample(ch, i, 0.5F);
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+    }
+
+    sendR.clear();
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n); // let the tail ring, no further input
+    const double tail = out.getMagnitude(0, 0, n);
+    require(tail > 1.0e-4, "Room tail should be audible before the reset");
+
+    fx.requestReset(); // lock-free: consumed at the top of the next process block
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(out.getMagnitude(0, 0, n) < tail * 0.01,
+            "requestReset must clear the reverb tail on the next processed block");
+}
+
+// M3: snap is now a deferred flag consumed by process. A snapped Tone EQ must
+// apply the full boost on the FIRST block, while a non-snap setter glides in.
+void testToneEqSnapAppliesOnFirstBlock()
+{
+    constexpr double sr = 48000.0;
+    constexpr int n = 128; // ~2.7 ms, far shorter than the 20 ms param glide
+    const auto sine = [sr](juce::AudioBuffer<float>& b) {
+        for (int ch = 0; ch < b.getNumChannels(); ++ch)
+            for (int i = 0; i < b.getNumSamples(); ++i)
+                b.setSample(ch, i, 0.25F * static_cast<float>(std::sin(
+                                       2.0 * juce::MathConstants<double>::pi * 1000.0 * i / sr)));
+    };
+
+    silverdaw::ToneEq snapped;
+    snapped.prepare(sr, 2);
+    snapped.setParams(0.0F, 15.0F, 0.0F, false, false, /*snap*/ true); // +15 dB mid @1 kHz
+    juce::AudioBuffer<float> a(2, n);
+    sine(a);
+    snapped.process(a, 0, n);
+    const double snapRms = toneRms(a, 0, n);
+
+    silverdaw::ToneEq glided;
+    glided.prepare(sr, 2);
+    glided.setParams(0.0F, 15.0F, 0.0F, false, false, /*snap*/ false);
+    juce::AudioBuffer<float> b(2, n);
+    sine(b);
+    glided.process(b, 0, n);
+    const double glideRms = toneRms(b, 0, n);
+
+    require(snapRms > glideRms * 1.5,
+            "snap applies the full Tone EQ boost on the first block; glide ramps in slowly");
+}
+
+// M3: a snapped Leveler must apply its makeup on the FIRST block; the non-snap
+// setter glides in from passthrough, so a quiet signal is barely boosted yet.
+void testLevelerSnapAppliesOnFirstBlock()
+{
+    constexpr double sr = 48000.0;
+    constexpr int n = 128;
+    const auto sine = [sr](juce::AudioBuffer<float>& b, float amp) {
+        for (int ch = 0; ch < b.getNumChannels(); ++ch)
+            for (int i = 0; i < b.getNumSamples(); ++i)
+                b.setSample(ch, i, amp * static_cast<float>(std::sin(
+                                       2.0 * juce::MathConstants<double>::pi * 220.0 * i / sr)));
+    };
+
+    silverdaw::Leveler snapped;
+    snapped.prepare(sr, 2);
+    snapped.setParams(1.0F, /*snap*/ true);
+    juce::AudioBuffer<float> a(2, n);
+    sine(a, 0.05F); // quiet -> auto-makeup should boost it
+    snapped.process(a, 0, n);
+    const double snapRms = toneRms(a, 0, n);
+
+    silverdaw::Leveler glided;
+    glided.prepare(sr, 2);
+    glided.setParams(1.0F, /*snap*/ false);
+    juce::AudioBuffer<float> b(2, n);
+    sine(b, 0.05F);
+    glided.process(b, 0, n);
+    const double glideRms = toneRms(b, 0, n);
+
+    require(snapRms > glideRms * 1.2,
+            "snap applies the Leveler makeup on the first block; glide ramps in slowly");
+}
+
 } // namespace
 
 void addFxDspTests(std::vector<TestCase>& tests)
@@ -487,6 +634,10 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"BusGraph equal-power pan gains (unity centre, constant power)", testEqualPowerPanGains});
     tests.push_back({"BusGraph lock-free pan publishes equal-power gains through the mix", testBusGraphPanAppliedThroughMix});
     tests.push_back({"BusGraph stays safe under concurrent lock-free param updates", testBusGraphConcurrentParamUpdatesAreSafe});
+    tests.push_back({"BusGraph stays safe under concurrent lock-free project-FX updates", testBusGraphLockFreeProjectFxUpdatesAreSafe});
+    tests.push_back({"SharedFx requestReset cuts the tail on the next audio block", testSharedFxRequestResetCutsTailNextBlock});
+    tests.push_back({"ToneEq snap applies the full boost on the first block", testToneEqSnapAppliesOnFirstBlock});
+    tests.push_back({"Leveler snap applies the makeup on the first block", testLevelerSnapAppliesOnFirstBlock});
 }
 
 } // namespace silverdaw::tests

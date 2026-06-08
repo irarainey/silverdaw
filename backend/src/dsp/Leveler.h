@@ -2,14 +2,16 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <atomic>
 #include <cmath>
 
 namespace silverdaw
 {
 
 // Per-track single-knob compressor; deterministic makeup keeps live/export parity.
-// Owned by `TrackChain`, with message-thread setters protected by the `BusGraph` lock.
-// `process` stays allocation/lock/log free, and per-track detector state avoids clip-edge thumps.
+// Owned by `TrackChain`. The message-thread setter publishes the target lock-free (atomic +
+// a release `snapRequested` flag); `process` consumes the flag and owns all derived recompute,
+// so the audio callback is never blocked. Per-track detector state avoids clip-edge thumps.
 class Leveler
 {
 public:
@@ -20,32 +22,36 @@ public:
     {
         sr = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
         channels = juce::jlimit(1, kMaxChannels, numChannels);
-        curAmount = targetAmount;
+        curAmount = targetAmount.load(std::memory_order_relaxed);
         attackCoeff = onePoleCoeff(kAttackSeconds);
         releaseCoeff = onePoleCoeff(kReleaseSeconds);
         recomputeDerived();
         grEnvDb = 0.0F;
         prepared = true;
+        snapRequested.store(false, std::memory_order_relaxed);
     }
 
     /** Clears the detector envelope on stop/seek without changing params. */
     void reset() noexcept { grEnvDb = 0.0F; }
 
-    /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity. */
+    /** Lock-free message-thread setter; publishes the target and (on snap) a deferred snap flag. */
     void setParams(float amount, bool snap) noexcept
     {
-        targetAmount = sanitizeAmount(amount);
-        if (snap)
-        {
-            curAmount = targetAmount;
-            recomputeDerived();
-        }
+        targetAmount.store(sanitizeAmount(amount), std::memory_order_relaxed);
+        // Release pairs with the acquire in `process`, so a consumed snap also sees the target.
+        if (snap) snapRequested.store(true, std::memory_order_release);
     }
 
     /** Settled-off state leaves the block untouched for live/export parity. */
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
         if (! prepared || numSamples <= 0) return;
+
+        if (snapRequested.exchange(false, std::memory_order_acquire))
+        {
+            curAmount = targetAmount.load(std::memory_order_relaxed);
+            recomputeDerived();
+        }
 
         const bool moved = smoothAmount(numSamples);
         if (moved) recomputeDerived();
@@ -129,11 +135,12 @@ private:
     /** Settles exactly so the identity fast path can become bit-exact. */
     bool smoothAmount(int numSamples) noexcept
     {
-        if (std::abs(targetAmount - curAmount) < 1.0e-5F)
+        const float target = targetAmount.load(std::memory_order_relaxed);
+        if (std::abs(target - curAmount) < 1.0e-5F)
         {
-            if (curAmount != targetAmount)
+            if (curAmount != target)
             {
-                curAmount = targetAmount;
+                curAmount = target;
                 return true;
             }
             return false;
@@ -141,7 +148,7 @@ private:
         const double a = std::exp(-static_cast<double>(numSamples)
                                   / (static_cast<double>(kSmoothTauSeconds) * sr));
         const float alpha = static_cast<float>(juce::jlimit(0.0, 1.0, a));
-        curAmount = targetAmount + (curAmount - targetAmount) * alpha;
+        curAmount = target + (curAmount - target) * alpha;
         return true;
     }
 
@@ -172,7 +179,9 @@ private:
     int channels = 2;
     bool prepared = false;
 
-    float targetAmount = 0.0F;
+    // Target published lock-free by the message thread; consumed by `process` on the audio thread.
+    std::atomic<float> targetAmount{0.0F};
+    std::atomic<bool> snapRequested{false};
     float curAmount = 0.0F;
 
     float thresholdDb = 0.0F;
@@ -186,6 +195,9 @@ private:
 
     // Persists across blocks; cleared only by `reset`.
     float grEnvDb = 0.0F;
+
+    static_assert(std::atomic<float>::is_always_lock_free,
+                  "Leveler publishes its param via a lock-free atomic on the audio thread");
 };
 
 } // namespace silverdaw

@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -22,7 +23,10 @@ inline double delayNoteToMs(const juce::String& noteValue, double bpm) noexcept
 }
 
 // Shared wet-only Reverb/Delay processor; live and export share it for parity.
-// All buffers are sized in `prepare`, and `process` must stay allocation/lock/log free.
+// All buffers are sized in `prepare`. Message-thread setters publish targets and control
+// flags lock-free (atomics + release flags); `process` consumes them and owns every cur*/
+// coefficient/`juce::Reverb` mutation, so the audio callback is never blocked. Snap is a
+// deferred flag consumed at the top of `process`, preserving live/export first-block parity.
 // Tail detectors bound offline render after the dry send goes silent.
 class SharedFx
 {
@@ -48,9 +52,14 @@ public:
         snapSmoothers();
         prepared = true;
         reset();
+        // Targets are already snapped above; drop any stale pending control flags.
+        reverbSnapRequested.store(false, std::memory_order_relaxed);
+        echoSnapRequested.store(false, std::memory_order_relaxed);
+        applyDelayTimeRequested.store(false, std::memory_order_relaxed);
+        resetRequested.store(false, std::memory_order_relaxed);
     }
 
-    /** Clears decay state on stop/seek and promotes staged delay time for the next cold start. */
+    /** Clears decay state and recomputes delay time from the persistent target at the current rate. */
     void reset() noexcept
     {
         reverb.reset();
@@ -60,56 +69,47 @@ public:
         reverbToneStateL = reverbToneStateR = 0.0F;
         echoToneStateL = echoToneStateR = 0.0F;
 
-        activeDelaySamples = pendingDelaySamples;
+        activeDelaySamples.store(computeDelaySamples(targetDelayMs.load(std::memory_order_relaxed)),
+                                 std::memory_order_relaxed);
 
         resetDetectors();
     }
 
-    /** `snap` gives load/mixdown/runtime setup a steady-state first block; live gestures glide. */
+    /** Lock-free: schedules a decay-state reset consumed at the top of the next `process` block. */
+    void requestReset() noexcept { resetRequested.store(true, std::memory_order_release); }
+
+    /** Lock-free; `snap` schedules a steady-state first block for setup/load/runtime paths. */
     void setReverbParams(float size, float decay, float tone, float mix, bool snap) noexcept
     {
         const float s = juce::jlimit(0.0F, 1.0F, sanitize(size));
         const float d = juce::jlimit(0.0F, 1.0F, sanitize(decay));
         // Keep Size and Decay independent so each knob has an obvious effect.
-        targetRoomSize = juce::jlimit(0.0F, 1.0F, 0.05F + 0.92F * s);
-        targetDamping = 1.0F - d;
-        targetReverbToneHz = mapToneHz(juce::jlimit(0.0F, 1.0F, sanitize(tone)));
-        targetReverbMix = juce::jlimit(0.0F, 1.0F, sanitize(mix));
+        targetRoomSize.store(juce::jlimit(0.0F, 1.0F, 0.05F + 0.92F * s), std::memory_order_relaxed);
+        targetDamping.store(1.0F - d, std::memory_order_relaxed);
+        targetReverbToneHz.store(mapToneHz(juce::jlimit(0.0F, 1.0F, sanitize(tone))),
+                                 std::memory_order_relaxed);
+        targetReverbMix.store(juce::jlimit(0.0F, 1.0F, sanitize(mix)), std::memory_order_relaxed);
 
-        applyReverbParams();
-        if (snap)
-        {
-            curRoomSize = targetRoomSize;
-            curDamping = targetDamping;
-            curReverbToneHz = targetReverbToneHz;
-            curReverbMix = targetReverbMix;
-            applyReverbParams();
-            recomputeReverbToneCoeff();
-            if (prepared) reverb.reset();
-        }
+        // Release pairs with the acquire in `processReverb`, so a consumed snap sees the targets.
+        if (snap) reverbSnapRequested.store(true, std::memory_order_release);
     }
 
-    /** `applyTimeNow` avoids live-time jumps; `snap` gives setup paths steady-state params. */
+    /** Lock-free; `applyTimeNow` schedules a delay-time jump, `snap` a steady-state first block. */
     void setDelayParams(double delayMs, float feedback, float tone, float mix, bool snap,
                         bool applyTimeNow) noexcept
     {
         const double clampedMs = juce::jlimit(1.0, kMaxDelayMs, std::isfinite(delayMs) ? delayMs : 1.0);
-        pendingDelaySamples =
-            juce::jlimit(1, maxDelaySamples - 1, static_cast<int>(std::round(clampedMs * sr / 1000.0)));
-        if (applyTimeNow) activeDelaySamples = pendingDelaySamples;
-
-        targetFeedback = juce::jlimit(0.0F, kMaxFeedback, sanitize(feedback));
-        targetEchoToneHz = mapToneHz(juce::jlimit(0.0F, 1.0F, sanitize(tone)));
-        targetEchoMix = juce::jlimit(0.0F, 1.0F, sanitize(mix));
+        targetDelayMs.store(clampedMs, std::memory_order_relaxed);
+        targetFeedback.store(juce::jlimit(0.0F, kMaxFeedback, sanitize(feedback)),
+                             std::memory_order_relaxed);
+        targetEchoToneHz.store(mapToneHz(juce::jlimit(0.0F, 1.0F, sanitize(tone))),
+                               std::memory_order_relaxed);
+        targetEchoMix.store(juce::jlimit(0.0F, 1.0F, sanitize(mix)), std::memory_order_relaxed);
 
         recomputeAnalyticTail();
-        if (snap)
-        {
-            curFeedback = targetFeedback;
-            curEchoToneHz = targetEchoToneHz;
-            curEchoMix = targetEchoMix;
-            recomputeEchoToneCoeff();
-        }
+        // `applyTimeNow=false` keeps the current echo time until the next reset/cold start.
+        if (applyTimeNow) applyDelayTimeRequested.store(true, std::memory_order_release);
+        if (snap) echoSnapRequested.store(true, std::memory_order_release);
     }
 
     void process(const juce::AudioBuffer<float>& reverbSend,
@@ -118,6 +118,9 @@ public:
     {
         if (! prepared || numSamples <= 0 || numSamples > maxBlock) return;
         if (out.getNumChannels() < 1) return;
+
+        if (resetRequested.exchange(false, std::memory_order_acquire))
+            reset();
 
         const float alpha = blockAlpha(numSamples);
         const bool reverbInputPresent = bufferHasSignal(reverbSend, numSamples);
@@ -128,11 +131,11 @@ public:
     }
 
     /** True once the Reverb tail has decayed below audibility (§7.10). */
-    bool reverbTerminated() const noexcept { return reverbDone; }
+    bool reverbTerminated() const noexcept { return reverbDone.load(std::memory_order_relaxed); }
     /** True once the Delay tail has fully repeated out (§7.10). */
-    bool echoTerminated() const noexcept { return echoDone; }
+    bool echoTerminated() const noexcept { return echoDone.load(std::memory_order_relaxed); }
     /** True once **both** shared FX have terminated — the bus is silent. */
-    bool bothTerminated() const noexcept { return reverbDone && echoDone; }
+    bool bothTerminated() const noexcept { return reverbTerminated() && echoTerminated(); }
 
     SharedFx(const SharedFx&) = delete;
     SharedFx& operator=(const SharedFx&) = delete;
@@ -152,6 +155,13 @@ private:
     static constexpr double kToneMaxHz = 18000.0;
 
     static float sanitize(float v) noexcept { return std::isfinite(v) ? v : 0.0F; }
+
+    int computeDelaySamples(double ms) const noexcept
+    {
+        const double clampedMs = juce::jlimit(1.0, kMaxDelayMs, std::isfinite(ms) ? ms : 1.0);
+        return juce::jlimit(1, juce::jmax(1, maxDelaySamples - 1),
+                            static_cast<int>(std::round(clampedMs * sr / 1000.0)));
+    }
 
     // Log mapping makes the tone knob feel even across octaves.
     static double mapToneHz(float tone01) noexcept
@@ -211,13 +221,13 @@ private:
 
     void snapSmoothers() noexcept
     {
-        curRoomSize = targetRoomSize;
-        curDamping = targetDamping;
-        curReverbToneHz = targetReverbToneHz;
-        curReverbMix = targetReverbMix;
-        curFeedback = targetFeedback;
-        curEchoToneHz = targetEchoToneHz;
-        curEchoMix = targetEchoMix;
+        curRoomSize = targetRoomSize.load(std::memory_order_relaxed);
+        curDamping = targetDamping.load(std::memory_order_relaxed);
+        curReverbToneHz = targetReverbToneHz.load(std::memory_order_relaxed);
+        curReverbMix = targetReverbMix.load(std::memory_order_relaxed);
+        curFeedback = targetFeedback.load(std::memory_order_relaxed);
+        curEchoToneHz = targetEchoToneHz.load(std::memory_order_relaxed);
+        curEchoMix = targetEchoMix.load(std::memory_order_relaxed);
         applyReverbParams();
         recomputeReverbToneCoeff();
         recomputeEchoToneCoeff();
@@ -235,31 +245,44 @@ private:
     {
         reverbSilentBlocks = 0;
         reverbFramesSinceInput = 0;
-        reverbDone = false;
+        reverbDone.store(false, std::memory_order_relaxed);
         echoFramesSinceInput = 0;
-        echoDone = false;
+        echoDone.store(false, std::memory_order_relaxed);
     }
 
     void recomputeAnalyticTail() noexcept
     {
         // Feedback is clamped below unity, so the analytic tail log stays finite.
-        const double fb = juce::jlimit(0.0, static_cast<double>(kMaxFeedback), static_cast<double>(targetFeedback));
+        const double fb = juce::jlimit(0.0, static_cast<double>(kMaxFeedback),
+                                       static_cast<double>(targetFeedback.load(std::memory_order_relaxed)));
         if (fb <= 1.0e-4)
         {
-            analyticTailRepeats = 1; // effectively a single slap
+            analyticTailRepeats.store(1, std::memory_order_relaxed); // effectively a single slap
             return;
         }
         const double n = std::ceil(std::log(static_cast<double>(kRmsFloorLin)) / std::log(fb));
-        analyticTailRepeats = juce::jlimit(1, 4096, static_cast<int>(n));
+        analyticTailRepeats.store(juce::jlimit(1, 4096, static_cast<int>(n)), std::memory_order_relaxed);
     }
 
     void processReverb(const juce::AudioBuffer<float>& send, juce::AudioBuffer<float>& out,
                        int startSample, int numSamples, float alpha, bool inputPresent) noexcept
     {
-        smoothToward(curRoomSize, targetRoomSize, alpha);
-        smoothToward(curDamping, targetDamping, alpha);
-        if (smoothToward(curReverbToneHz, targetReverbToneHz, alpha)) recomputeReverbToneCoeff();
-        smoothToward(curReverbMix, targetReverbMix, alpha);
+        if (reverbSnapRequested.exchange(false, std::memory_order_acquire))
+        {
+            curRoomSize = targetRoomSize.load(std::memory_order_relaxed);
+            curDamping = targetDamping.load(std::memory_order_relaxed);
+            curReverbToneHz = targetReverbToneHz.load(std::memory_order_relaxed);
+            curReverbMix = targetReverbMix.load(std::memory_order_relaxed);
+            applyReverbParams();
+            recomputeReverbToneCoeff();
+            reverb.reset();
+        }
+
+        smoothToward(curRoomSize, targetRoomSize.load(std::memory_order_relaxed), alpha);
+        smoothToward(curDamping, targetDamping.load(std::memory_order_relaxed), alpha);
+        if (smoothToward(curReverbToneHz, targetReverbToneHz.load(std::memory_order_relaxed), alpha))
+            recomputeReverbToneCoeff();
+        smoothToward(curReverbMix, targetReverbMix.load(std::memory_order_relaxed), alpha);
         applyReverbParams();
 
         const int sendCh = send.getNumChannels();
@@ -294,14 +317,27 @@ private:
     void processEcho(const juce::AudioBuffer<float>& send, juce::AudioBuffer<float>& out,
                      int startSample, int numSamples, float alpha, bool inputPresent) noexcept
     {
-        smoothToward(curFeedback, targetFeedback, alpha);
-        if (smoothToward(curEchoToneHz, targetEchoToneHz, alpha)) recomputeEchoToneCoeff();
-        smoothToward(curEchoMix, targetEchoMix, alpha);
+        if (applyDelayTimeRequested.exchange(false, std::memory_order_acquire))
+            activeDelaySamples.store(computeDelaySamples(targetDelayMs.load(std::memory_order_relaxed)),
+                                     std::memory_order_relaxed);
+        if (echoSnapRequested.exchange(false, std::memory_order_acquire))
+        {
+            curFeedback = targetFeedback.load(std::memory_order_relaxed);
+            curEchoToneHz = targetEchoToneHz.load(std::memory_order_relaxed);
+            curEchoMix = targetEchoMix.load(std::memory_order_relaxed);
+            recomputeEchoToneCoeff();
+        }
+
+        smoothToward(curFeedback, targetFeedback.load(std::memory_order_relaxed), alpha);
+        if (smoothToward(curEchoToneHz, targetEchoToneHz.load(std::memory_order_relaxed), alpha))
+            recomputeEchoToneCoeff();
+        smoothToward(curEchoMix, targetEchoMix.load(std::memory_order_relaxed), alpha);
 
         const int sendCh = send.getNumChannels();
         const float* inL = sendCh > 0 ? send.getReadPointer(0) : nullptr;
         const float* inR = sendCh > 1 ? send.getReadPointer(1) : inL;
-        const int delaySamps = juce::jlimit(1, maxDelaySamples - 1, activeDelaySamples);
+        const int delaySamps = juce::jlimit(1, maxDelaySamples - 1,
+                                            activeDelaySamples.load(std::memory_order_relaxed));
         const float fb = curFeedback;
         const float mix = curEchoMix;
 
@@ -360,7 +396,7 @@ private:
 
         const bool decayed = reverbSilentBlocks >= n;
         const bool capped = reverbFramesSinceInput >= static_cast<int64_t>(kRoomCapSeconds * sr);
-        reverbDone = decayed || capped;
+        reverbDone.store(decayed || capped, std::memory_order_relaxed);
     }
 
     void updateEchoDetector(double sumSq, int numSamples, int delaySamps, bool inputPresent) noexcept
@@ -371,14 +407,15 @@ private:
         const float rms = static_cast<float>(std::sqrt(sumSq / (2.0 * numSamples)));
         const int64_t holdFrames =
             static_cast<int64_t>(delaySamps) + static_cast<int64_t>(kSilenceWindowMs * sr / 1000.0);
-        const int64_t analyticFrames = static_cast<int64_t>(analyticTailRepeats) * delaySamps;
+        const int64_t analyticFrames =
+            static_cast<int64_t>(analyticTailRepeats.load(std::memory_order_relaxed)) * delaySamps;
         const int64_t requiredFrames = juce::jmax(holdFrames, analyticFrames);
         const int64_t capFrames = static_cast<int64_t>(kEchoCapSeconds * sr);
 
         const bool rmsSilent = rms < kRmsFloorLin;
         const bool repeatAwareDone = rmsSilent && echoFramesSinceInput >= requiredFrames;
         const bool capped = echoFramesSinceInput >= capFrames;
-        echoDone = repeatAwareDone || capped;
+        echoDone.store(repeatAwareDone || capped, std::memory_order_relaxed);
     }
 
     int silenceBlockTarget(int numSamples) const noexcept
@@ -395,10 +432,28 @@ private:
     juce::Reverb reverb;
     std::vector<float> wetL, wetR;
 
-    float targetRoomSize = 0.0F, curRoomSize = 0.0F;
-    float targetDamping = 1.0F, curDamping = 1.0F;
-    double targetReverbToneHz = kToneMaxHz, curReverbToneHz = kToneMaxHz;
-    float targetReverbMix = 0.0F, curReverbMix = 0.0F;
+    // Targets + control flags are published lock-free by the message thread; cur*/coeff/state
+    // below are owned exclusively by the audio thread (or by prepare/clear with audio excluded).
+    std::atomic<float> targetRoomSize{0.0F};
+    std::atomic<float> targetDamping{1.0F};
+    std::atomic<double> targetReverbToneHz{kToneMaxHz};
+    std::atomic<float> targetReverbMix{0.0F};
+    std::atomic<float> targetFeedback{0.0F};
+    std::atomic<double> targetEchoToneHz{kToneMaxHz};
+    std::atomic<float> targetEchoMix{0.0F};
+    std::atomic<double> targetDelayMs{1.0};
+    std::atomic<int> activeDelaySamples{1};
+    std::atomic<int> analyticTailRepeats{1};
+
+    std::atomic<bool> reverbSnapRequested{false};
+    std::atomic<bool> echoSnapRequested{false};
+    std::atomic<bool> applyDelayTimeRequested{false};
+    std::atomic<bool> resetRequested{false};
+
+    float curRoomSize = 0.0F;
+    float curDamping = 1.0F;
+    double curReverbToneHz = kToneMaxHz;
+    float curReverbMix = 0.0F;
     float reverbToneCoeff = 1.0F;
     float reverbToneStateL = 0.0F, reverbToneStateR = 0.0F;
     float lastAppliedRoomSize = -1.0F, lastAppliedDamping = -1.0F;
@@ -407,20 +462,21 @@ private:
     std::vector<float> delayBufL, delayBufR;
     int maxDelaySamples = 2;
     int delayWriteIdx = 0;
-    int activeDelaySamples = 1;
-    int pendingDelaySamples = 1;
-    float targetFeedback = 0.0F, curFeedback = 0.0F;
-    double targetEchoToneHz = kToneMaxHz, curEchoToneHz = kToneMaxHz;
-    float targetEchoMix = 0.0F, curEchoMix = 0.0F;
+    float curFeedback = 0.0F;
+    double curEchoToneHz = kToneMaxHz;
+    float curEchoMix = 0.0F;
     float echoToneCoeff = 1.0F;
     float echoToneStateL = 0.0F, echoToneStateR = 0.0F;
-    int analyticTailRepeats = 1;
 
     int reverbSilentBlocks = 0;
     int64_t reverbFramesSinceInput = 0;
-    bool reverbDone = false;
+    std::atomic<bool> reverbDone{false};
     int64_t echoFramesSinceInput = 0;
-    bool echoDone = false;
+    std::atomic<bool> echoDone{false};
+
+    static_assert(std::atomic<float>::is_always_lock_free && std::atomic<double>::is_always_lock_free
+                      && std::atomic<int>::is_always_lock_free,
+                  "SharedFx publishes params via lock-free atomics on the audio thread");
 };
 
 } // namespace silverdaw
