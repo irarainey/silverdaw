@@ -18,6 +18,7 @@ class MeteringSource : public juce::AudioSource
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
     {
         source.prepareToPlay(samplesPerBlockExpected, sampleRate);
+        keepAlive.prepare(sampleRate);
         smoothedGain.reset(sampleRate, 0.01);
         smoothedGain.setCurrentAndTargetValue(targetGain.load(std::memory_order_relaxed));
     }

@@ -675,19 +675,19 @@ mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 
 To stop sleep-prone audio devices (notably some USB DACs) from soft-muting and
-clipping the first instants of playback, an inaudible **keep-alive floor** (TPDF
-dither at `kKeepAliveDitherAmplitude`, ≈0.004) can be mixed into the output.
-[`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h) owns the gate, and the
-floor is injected by the metering stage **after** the master-gain ramp, so a low
-master volume can't attenuate it below the level that keeps the endpoint awake.
-The floor runs only when audio is genuinely imminent: while playing, and during a
-short **wake pre-roll** (`kWakePrerollMs`, ≈250 ms) issued before a cold-start
-play or preview — that is, only when the output endpoint has been idle long
-enough (`kEndpointWarmWindowMs`, ≈1.5 s) to risk soft-muting. When the engine is
-idle or paused the output is left **truly silent**, so a loaded-but-stopped
-project produces no audible hiss. `MasterClockSource` still gates the transport
-and clears the buffer when not playing; the keep-alive injection lives downstream
-in the metering stage.
+clipping the first instants of playback, an inaudible **ultrasonic keep-alive
+tone** (`kKeepAliveTonePeak`, ≈0.004 / −48 dBFS, just below Nyquist) is mixed into
+otherwise-silent output. [`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h)
+owns the gate and is injected by the metering stage **after** the master-gain ramp,
+so a low master volume can't attenuate it below the level that keeps the endpoint
+awake. The tone runs whenever a project is loaded (`contentLoaded`) or playback is
+active, ramped in/out over `kKeepAliveRampSeconds` to stay click-free, and rings
+out on real programme above `kKeepAliveSilenceThreshold` so content is never
+coloured. Because it runs continuously while a project is loaded, the endpoint is
+already awake before the user presses play, so the first play is instant with no
+audible pre-roll. With no project loaded the output is left **truly silent**.
+`MasterClockSource` still gates the transport and clears the buffer when not
+playing; the keep-alive injection lives downstream in the metering stage.
 
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
 export writer** in [`MixdownExport`](../backend/src/mixdown/MixdownExport.cpp). (The

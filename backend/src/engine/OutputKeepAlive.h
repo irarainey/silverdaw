@@ -3,13 +3,17 @@
 #include "AudioConstants.h"
 
 #include <atomic>
+#include <cmath>
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_core/juce_core.h>
 
 namespace silverdaw
 {
 
-// Real-time-safe keep-alive floor for sleep-prone output endpoints.
+// Real-time-safe keep-alive for sleep-prone output endpoints. Holds the DAC awake with an
+// inaudible ultrasonic tone whenever a project is loaded, so the first play is instant — no
+// audible hiss and no wake pre-roll latency. The tone is added only on otherwise-silent
+// blocks and ramped in/out to stay click-free; with no project loaded the output is true
+// digital silence.
 class OutputKeepAlive
 {
   public:
@@ -17,65 +21,84 @@ class OutputKeepAlive
     void setPlaying(bool p) noexcept { playing.store(p, std::memory_order_release); }
     bool isPlaying() const noexcept { return playing.load(std::memory_order_acquire); }
 
-    // Wake pre-roll spends endpoint fade-in on the keep-alive floor, not the first content
-    // attack.
-    void setWakePreroll(bool active) noexcept
-    {
-        wakePreroll.store(active, std::memory_order_release);
-    }
-    bool isWakePreroll() const noexcept { return wakePreroll.load(std::memory_order_acquire); }
-
     void setContentLoaded(bool loaded) noexcept
     {
         contentLoaded.store(loaded, std::memory_order_release);
     }
     bool isContentLoaded() const noexcept { return contentLoaded.load(std::memory_order_acquire); }
 
-    // Keep-alive only wakes sleep-prone endpoints; idle output remains true digital silence.
+    // A loaded project keeps the endpoint warm; an idle app with no project stays truly silent.
     bool shouldRun() const noexcept
     {
         return playing.load(std::memory_order_acquire)
-               || wakePreroll.load(std::memory_order_acquire);
+               || contentLoaded.load(std::memory_order_acquire);
     }
 
+    // Called from prepareToPlay (device/sample-rate start): tune the oscillator for the active
+    // rate. The tone sits just below Nyquist so it is inaudible at every supported rate while
+    // remaining a full-level digital signal to the endpoint's auto-mute detector.
+    void prepare(double sampleRate) noexcept
+    {
+        const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
+        const double freq = sr >= 88200.0 ? 32000.0 : sr * 0.46;
+        phaseIncrement = juce::MathConstants<float>::twoPi * static_cast<float>(freq / sr);
+        rampStep = static_cast<float>(
+            static_cast<double>(kKeepAliveTonePeak) / juce::jmax(1.0, kKeepAliveRampSeconds * sr));
+        phase = 0.0F;
+        envelope = 0.0F;
+    }
+
+    // Audio thread: add the inaudible keep-alive tone on otherwise-silent blocks while the gate
+    // is open, ramped to stay click-free. Returns true if any tone was written this block.
     bool maybeApplyFloor(juce::AudioBuffer<float>& buffer, int startSample, int numSamples,
                          float programPeak) noexcept
     {
-        if (! shouldRun()) return false;
-        if (programPeak > silverdaw::kKeepAliveSilenceThreshold) return false;
+        const bool active = shouldRun() && programPeak <= silverdaw::kKeepAliveSilenceThreshold;
+        const float target = active ? kKeepAliveTonePeak : 0.0F;
 
-        constexpr float int32Scale = 1.0F / 2147483648.0F; // int32 → ~[-1, 1)
-        constexpr float ditherScale = silverdaw::kKeepAliveDitherAmplitude * 0.5F;
-        const int numChannels = buffer.getNumChannels();
+        // Gate closed and nothing left to fade out -> leave true digital silence.
+        if (! active && envelope <= 0.0F)
+            return false;
+
+        constexpr int kMaxChannels = 32;
+        const int numChannels = juce::jmin(buffer.getNumChannels(), kMaxChannels);
+        float* dest[kMaxChannels];
         for (int ch = 0; ch < numChannels; ++ch)
+            dest[ch] = buffer.getWritePointer(ch, startSample);
+
+        bool wrote = false;
+        for (int i = 0; i < numSamples; ++i)
         {
-            float* const dest = buffer.getWritePointer(ch, startSample);
-            for (int i = 0; i < numSamples; ++i)
+            if (envelope < target)
+                envelope = juce::jmin(target, envelope + rampStep);
+            else if (envelope > target)
+                envelope = juce::jmax(target, envelope - rampStep);
+
+            const float sample = std::sin(phase) * envelope;
+            phase += phaseIncrement;
+            if (phase >= juce::MathConstants<float>::twoPi)
+                phase -= juce::MathConstants<float>::twoPi;
+
+            if (envelope > 0.0F)
             {
-                const float u1 = static_cast<float>(static_cast<juce::int32>(nextRandom())) * int32Scale;
-                const float u2 = static_cast<float>(static_cast<juce::int32>(nextRandom())) * int32Scale;
-                dest[i] += (u1 + u2) * ditherScale;
+                for (int ch = 0; ch < numChannels; ++ch)
+                    dest[ch][i] += sample;
+                wrote = true;
             }
         }
-        return true;
+        return wrote;
     }
 
   private:
-    juce::uint32 nextRandom() noexcept
-    {
-        juce::uint32 x = rngState;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        rngState = x;
-        return x;
-    }
-
     std::atomic<bool> playing{false};
-    std::atomic<bool> wakePreroll{false};
     std::atomic<bool> contentLoaded{false};
-    // Message-thread writes are published for bounded, lock-free audio-thread reads.
-    juce::uint32 rngState{0x9E3779B9u};
+    // Oscillator state — audio-thread only. prepare() runs from prepareToPlay during a
+    // device/sample-rate (re)start, which JUCE serialises against the IO callback (the stream
+    // is stopped across the restart), so these non-atomic floats are never touched concurrently.
+    float phase{0.0F};
+    float phaseIncrement{0.0F};
+    float envelope{0.0F};
+    float rampStep{0.0F};
 };
 
 } // namespace silverdaw

@@ -59,19 +59,12 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
     rebuildDevicesSnapshot(/*rescan*/ false);
     devicesSnapshot.fellBackToDefault = didFallBack;
 
-    // Wake pre-roll spends endpoint fade-in on the keep-alive floor, not the first content
-    // attack.
-    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
-
     return {};
 }
 
 void AudioEngine::shutdown()
 {
     rebuildTimer.stopTimer();
-    prerollTimer.stopTimer();
-    prerollAction = nullptr;
-    outputKeepAlive.setWakePreroll(false);
     stop();
     unloadPreview();
     deviceManager.removeChangeListener(&deviceChangeListener);
@@ -255,66 +248,12 @@ void AudioEngine::onDeviceListChanged()
     }
 }
 
-void AudioEngine::startWithWakePreroll(std::function<void()> startFn)
-{
-    const bool previewPlaying =
-        preview.transportSource != nullptr && preview.transportSource->isPlaying();
-    if (master.isPlaying() || previewPlaying)
-    {
-        startFn();
-        return;
-    }
-
-    if (outputKeepAlive.isWakePreroll())
-    {
-        prerollAction = std::move(startFn);
-        return;
-    }
-
-    const double now = juce::Time::getMillisecondCounterHiRes();
-    const bool cold = (now - lastOutputActiveMs) >= static_cast<double>(kEndpointWarmWindowMs);
-
-    if (! cold || master.getSampleRate() <= 0.0)
-    {
-        startFn();
-        return;
-    }
-
-    prerollAction = std::move(startFn);
-    outputKeepAlive.setWakePreroll(true);
-    prerollTimer.startTimer(kWakePrerollMs);
-    silverdaw::log::info("engine",
-                         "wake pre-roll armed (" + juce::String(kWakePrerollMs) +
-                             "ms) — endpoint cold after " +
-                             juce::String(now - lastOutputActiveMs, 0) + "ms idle");
-}
-
-void AudioEngine::cancelWakePreroll()
-{
-    if (! prerollTimer.isTimerRunning() && ! outputKeepAlive.isWakePreroll())
-        return;
-    prerollTimer.stopTimer();
-    prerollAction = nullptr;
-    outputKeepAlive.setWakePreroll(false);
-    silverdaw::log::info("engine", "wake pre-roll cancelled before completion");
-}
-
-void AudioEngine::completeWakePreroll()
-{
-    prerollTimer.stopTimer();
-    outputKeepAlive.setWakePreroll(false);
-    auto action = std::move(prerollAction);
-    prerollAction = nullptr;
-    silverdaw::log::info("engine", "wake pre-roll complete — opening content");
-    if (action)
-        action();
-}
-
 void AudioEngine::play()
 {
     rebuildTimer.stopTimer();
     pendingSeekPrewarm = false;
     flushAllDirtyRebuildsSync();
+
     if (! primeTracksForPlayback(kPlayPrimeBudgetMs))
     {
         silverdaw::log::warn("engine",
@@ -324,12 +263,13 @@ void AudioEngine::play()
                                  ") — gate kept closed to avoid a silent first play");
         return;
     }
-    // Keep-alive only wakes sleep-prone endpoints; idle output remains true digital silence.
-    startWithWakePreroll([this]() {
-        master.setPlaying(true);
-        silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
-                                           " pos=" + juce::String(master.getPositionSamples()) + ")");
-    });
+
+    // The endpoint is already awake: while a project is loaded the inaudible keep-alive tone
+    // (MeteringSource / OutputKeepAlive) holds the DAC out of auto-mute, so content opens
+    // instantly with no wake pre-roll and no audible warm-up.
+    master.setPlaying(true);
+    silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
+                                       " pos=" + juce::String(master.getPositionSamples()) + ")");
 }
 
 bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
@@ -419,8 +359,6 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
 
 void AudioEngine::pause()
 {
-    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
-    cancelWakePreroll();
     master.setPlaying(false);
     // Retire replaced snapshots/processors until the audio thread is quiescent.
     for (auto& [id, track] : tracks)
@@ -434,8 +372,6 @@ void AudioEngine::pause()
 
 void AudioEngine::stop()
 {
-    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
-    cancelWakePreroll();
     master.setPlaying(false);
     master.setPositionSamples(0);
     busGraph.resetSharedFx();

@@ -79,9 +79,6 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
 
 void AudioEngine::unloadPreview()
 {
-    // Wake pre-roll spends endpoint fade-in on the keep-alive floor, not the first content
-    // attack.
-    cancelWakePreroll();
     if (preview.transportSource == nullptr) return;
     preview.transportSource->stop();
     topMixer.removeInputSource(preview.transportSource.get());
@@ -170,25 +167,20 @@ void AudioEngine::playPreview()
     {
         preview.transportSource->setPosition(0.0);
     }
-    startWithWakePreroll([this]() {
-        if (preview.transportSource != nullptr)
-            preview.transportSource->start();
-    });
+    // The loaded project's inaudible keep-alive tone already holds the endpoint awake, so
+    // preview playback opens instantly without a wake pre-roll.
+    preview.transportSource->start();
 }
 
 void AudioEngine::pausePreview()
 {
     if (preview.transportSource == nullptr) return;
-    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
-    cancelWakePreroll();
     preview.transportSource->stop();
 }
 
 void AudioEngine::stopPreview()
 {
     if (preview.transportSource == nullptr) return;
-    lastOutputActiveMs = juce::Time::getMillisecondCounterHiRes();
-    cancelWakePreroll();
     preview.transportSource->stop();
     preview.transportSource->setPosition(0.0);
 }

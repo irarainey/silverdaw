@@ -257,26 +257,6 @@ class AudioEngine
     RebuildTimer rebuildTimer{*this};
     static constexpr int kRebuildDebounceMs = 150;
 
-    // Wake pre-roll spends endpoint fade-in on the keep-alive floor, not the first content
-    // attack.
-    class PrerollTimer : public juce::Timer
-    {
-      public:
-        explicit PrerollTimer(AudioEngine& e) : engine(e) {}
-        void timerCallback() override { engine.completeWakePreroll(); }
-
-      private:
-        AudioEngine& engine;
-    };
-    PrerollTimer prerollTimer{*this};
-    std::function<void()> prerollAction;
-
-    double lastOutputActiveMs = 0.0;
-
-    void startWithWakePreroll(std::function<void()> startFn);
-    void cancelWakePreroll();
-    void completeWakePreroll();
-
     bool pendingSeekPrewarm = false;
 
     juce::AudioDeviceManager deviceManager;

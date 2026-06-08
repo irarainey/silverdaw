@@ -16,16 +16,18 @@ inline constexpr int kPrimePerTrackTimeoutMs = 250;
 inline constexpr int kPlayPrimeBudgetMs = 3000;
 inline constexpr int kLoadPrimeBudgetMs = 1500;
 
-// Keep-alive floor wakes sleep-prone endpoints without colouring non-silent blocks.
-inline constexpr float kKeepAliveDitherAmplitude = 0.004F; // ~-48 dBFS peak
+// Inaudible ultrasonic keep-alive tone holds sleep-prone USB DACs awake while a project is
+// loaded, so the first play is instant — without the audible hiss of a broadband floor or the
+// latency of a wake pre-roll. The tone sits just below Nyquist (above human hearing) yet is a
+// strong, clearly non-silent signal to the DAC's auto-mute detector. Kept at a very low level
+// so any ultrasonic energy that reaches a transducer cannot stress it or cause audible IMD.
+inline constexpr float kKeepAliveTonePeak = 0.004F; // ~-48 dBFS peak, inaudible (ultrasonic)
 
-// Keep-alive only wakes sleep-prone endpoints; idle output remains true digital silence.
+// Only inject the tone on otherwise-silent blocks; real programme above this passes through.
 inline constexpr float kKeepAliveSilenceThreshold = 1.0e-3F;
 
-inline constexpr int kWakePrerollMs = 250;
-
-// Wake pre-roll spends endpoint fade-in on the keep-alive floor, not the first content attack.
-inline constexpr int kEndpointWarmWindowMs = 1500;
+// Click-free fade as the tone engages/disengages across silent/non-silent block boundaries.
+inline constexpr double kKeepAliveRampSeconds = 0.01; // 10 ms
 
 inline constexpr int kDefaultSampleRate = 44100;
 inline constexpr int kAltSampleRate = 48000;
