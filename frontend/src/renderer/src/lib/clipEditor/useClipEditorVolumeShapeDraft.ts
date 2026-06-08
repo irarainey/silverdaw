@@ -45,6 +45,9 @@ export interface ClipEditorVolumeShapeDraft {
   /** Reset the draft back to a flat unity shape spanning `durationMs`. */
   reset: (durationMs: number) => void
 
+  /** True when the draft is already a flat unity shape (nothing to reset). */
+  isFlat: ComputedRef<boolean>
+
   /** The points to persist on Save — empty when the shape is flat unity so
    *  the backend clears the envelope property. */
   committedPoints: () => ClipEnvelopePoint[]
@@ -66,6 +69,8 @@ export function useClipEditorVolumeShapeDraft(): ClipEditorVolumeShapeDraft {
     const persisted = getCurrentClip()?.envelopePoints
     return !envelopesEqual(normalisedDraft(), persisted)
   })
+
+  const isFlat = computed<boolean>(() => isFlatUnityEnvelope(draftPoints.value))
 
   function initialise(current: Clip | null, durationMs: number): void {
     getCurrentClip = () => current
@@ -106,6 +111,7 @@ export function useClipEditorVolumeShapeDraft(): ClipEditorVolumeShapeDraft {
     movePoint,
     removePoint,
     reset,
+    isFlat,
     committedPoints
   }
 }

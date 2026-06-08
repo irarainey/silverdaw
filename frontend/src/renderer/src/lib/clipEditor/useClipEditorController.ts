@@ -98,6 +98,14 @@ export function useClipEditorController(
   )
   const volumeEditActive = computed(() => volumeEditMode.value && volumeShapeAvailable.value)
 
+  // Reset is offered only while actively shaping a clip that has a non-flat draft.
+  const canResetVolumeShape = computed(
+    () => volumeShapeAvailable.value && !volumeShapeDraft.isFlat.value
+  )
+  function onResetVolumeShape(): void {
+    volumeShapeDraft.reset(volumeShapeDurationMs.value)
+  }
+
 
   const warpActive = computed(() => {
     const entry = editorItem.value
@@ -564,6 +572,8 @@ export function useClipEditorController(
     onSkipToEnd,
     onToggleLoop,
     volumeEditActive,
+    canResetVolumeShape,
+    onResetVolumeShape,
     onCanvasMouseDown,
     onCanvasContextMenu,
     onCanvasWheel,

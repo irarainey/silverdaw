@@ -44,6 +44,8 @@ const {
   editsTimelineClip,
   editsExistingClip,
   canApplyCrop,
+  canResetVolumeShape,
+  onResetVolumeShape,
   zoom,
   onApplyCrop,
   zoomOut,
@@ -156,9 +158,11 @@ const {
                 :edits-timeline-clip="editsTimelineClip"
                 :edits-existing-clip="editsExistingClip"
                 :can-apply-crop="canApplyCrop"
+                :can-reset-volume="canResetVolumeShape"
                 :zoom="zoom"
                 :zoom-percent="zoomPercent"
                 @apply-crop="onApplyCrop"
+                @reset-volume="onResetVolumeShape"
                 @zoom-out="zoomOut"
                 @reset-zoom="resetZoom"
                 @zoom-in="zoomIn"

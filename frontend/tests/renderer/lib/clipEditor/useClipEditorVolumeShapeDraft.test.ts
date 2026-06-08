@@ -83,4 +83,27 @@ describe('useClipEditorVolumeShapeDraft', () => {
     expect(d.hasChanged.value).toBe(true)
     expect(d.committedPoints()).toEqual([])
   })
+
+  it('tracks isFlat as the draft is shaped and reset', () => {
+    const d = useClipEditorVolumeShapeDraft()
+    d.initialise(clipWith(undefined), 1000)
+    expect(d.isFlat.value).toBe(true)
+    d.addPoint(500, 0.5)
+    expect(d.isFlat.value).toBe(false)
+    d.reset(1000)
+    expect(d.isFlat.value).toBe(true)
+  })
+
+  it('reports isFlat false when seeded from a persisted shape', () => {
+    const d = useClipEditorVolumeShapeDraft()
+    d.initialise(
+      clipWith([
+        { timeMs: 0, gain: 1 },
+        { timeMs: 500, gain: 0.5 },
+        { timeMs: 1000, gain: 1 }
+      ]),
+      1000
+    )
+    expect(d.isFlat.value).toBe(false)
+  })
 })

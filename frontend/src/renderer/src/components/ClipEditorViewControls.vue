@@ -11,12 +11,14 @@ defineProps<{
   editsTimelineClip: boolean
   editsExistingClip: boolean
   canApplyCrop: boolean
+  canResetVolume: boolean
   zoom: number
   zoomPercent: number
 }>()
 
 defineEmits<{
   (e: 'apply-crop'): void
+  (e: 'reset-volume'): void
   (e: 'zoom-out'): void
   (e: 'reset-zoom'): void
   (e: 'zoom-in'): void
@@ -25,6 +27,19 @@ defineEmits<{
 
 <template>
   <div class="flex shrink-0 items-center gap-1">
+    <!-- Reset the volume shape back to standard (flat unity). Shares the Volume
+         toggle's visibility so entering/leaving volume-edit mode never reflows
+         the toolbar; enabled whenever a shape exists, without needing edit mode. -->
+    <button
+      v-if="editsTimelineClip"
+      type="button"
+      class="flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+      :disabled="!canResetVolume"
+      title="Reset the volume shape to standard"
+      @click="$emit('reset-volume')"
+    >
+      <span class="text-base leading-none">↺</span>
+    </button>
     <!-- Volume Shape edit toggle. -->
     <button
       v-if="editsTimelineClip"
