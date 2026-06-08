@@ -53,6 +53,39 @@ export function createClipRenderer(ctx: ClipRendererContext) {
   const { tracksLayer, GraphicsCtor, TextCtor, clipHitRegions } = ctx
   const { pxPerSecond, headerWidth } = ctx.geometry
 
+  // Per-frame Graphics pool. `redraw()` detaches every child via the layer's
+  // `removeChildren()` (which does NOT destroy them), so allocating a fresh
+  // `Graphics` per clip block/lane/wave/badge on each redraw churned GC on
+  // redraw-heavy timelines. Reusing instances across frames removes that churn.
+  type PooledGraphics = InstanceType<NonNullable<typeof GraphicsCtor.value>>
+  const graphicsPool: PooledGraphics[] = []
+  let poolCursor = 0
+
+  // Reset the pool cursor at the start of each redraw — call AFTER the caller has
+  // detached the previous frame's children. Acquired instances are re-added in
+  // draw order, so child z-ordering is identical to fresh allocation.
+  function beginFrame(): void {
+    poolCursor = 0
+  }
+
+  // Hand back a cleared, reusable Graphics. Grows the pool to the peak number of
+  // graphics drawn in a single frame (bounded by visible clips); the surplus is
+  // released when the Pixi app is destroyed on unmount. Only drawing commands are
+  // reset by `clear()`; these graphics never set display props (alpha/tint/etc.),
+  // so no further reset is required.
+  function acquireGraphics(G: NonNullable<typeof GraphicsCtor.value>): PooledGraphics {
+    const existing = graphicsPool[poolCursor]
+    if (existing) {
+      existing.clear()
+      poolCursor++
+      return existing
+    }
+    const created = new G()
+    graphicsPool[poolCursor] = created
+    poolCursor++
+    return created
+  }
+
   function drawClip(
     clip: Clip,
     rowWorldY: number,
@@ -94,7 +127,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     const borderWidth = isSelected ? 3 : 1
     const effectiveBorderAlpha = isSelected ? 1.0 : borderAlpha
 
-    const block = new G()
+    const block = acquireGraphics(G)
     block
       .roundRect(absX, innerY, w, innerH, 4)
       .fill({ color: fillColour, alpha: fillAlpha })
@@ -227,7 +260,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
           }
         }
         const gain = laneGains[ch]!
-        const laneGfx = new G()
+        const laneGfx = acquireGraphics(G)
         const drew = drawLane(
           laneGfx,
           lanePeaks,
@@ -242,7 +275,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         }
       }
     } else {
-      const wave = new G()
+      const wave = acquireGraphics(G)
       if (drawLane(wave, peaks, peaksPerSecond, midY, innerH / 2 - 2, volumeColumnGain)) {
         wave.stroke({ color: waveColour, width: 1, alpha: 0.95 })
         tracksL.addChild(wave)
@@ -268,7 +301,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         Math.ceil((inMs - universalAnchorMs) / beatSpacingMs) * beatSpacingMs
       while (firstBeatMs < inMs) firstBeatMs += beatSpacingMs
       const minMarkerSpacingPx = 4
-      const markers = new G()
+      const markers = acquireGraphics(G)
       let drew = 0
       // Stride by whole beats when zoomed out to avoid drawing skipped markers.
       const pxPerBeat = (beatSpacingMs / warpRatio) * pxPerMs
@@ -327,7 +360,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       if (w <= 0) continue
       if (x1 < worldLeft || x0 > worldRight) continue
 
-      const overlay = new G()
+      const overlay = acquireGraphics(G)
       overlay
         .roundRect(x0, innerY, w, innerH, 3)
         .fill({ color: TRANSITION_FILL, alpha: TRANSITION_FILL_ALPHA })
@@ -436,7 +469,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
 
     const labelW = label.text.length > 0 ? label.width : 0
     const desiredW = Math.min(clipW, Math.ceil(labelW) + PAD_X * 2 + BADGES_W)
-    const headerBg = new G()
+    const headerBg = acquireGraphics(G)
     headerBg
       .rect(clipX, clipInnerY, desiredW, HEADER_H)
       .fill({ color: palette.border, alpha: 0.95 })
@@ -448,7 +481,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
 
     let badgeRight = clipX + desiredW - PAD_X
     if (isLinked) {
-      const badge = new G()
+      const badge = acquireGraphics(G)
       const cx = badgeRight - LINK_BADGE_FULL_W / 2
       const cy = clipInnerY + HEADER_H / 2
       badge
@@ -473,7 +506,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       // Compact padlock glyph sized to match other badges.
       const cx = badgeRight - LOCK_BADGE_FULL_W / 2
       const cy = clipInnerY + HEADER_H / 2
-      const bg = new G()
+      const bg = acquireGraphics(G)
       bg
         .roundRect(
           cx - LOCK_BADGE_FULL_W / 2,
@@ -485,7 +518,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         .fill({ color: 0x18181b, alpha: 0.95 })
         .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
       tracksL.addChild(bg)
-      const glyph = new G()
+      const glyph = acquireGraphics(G)
       const bodyW = 6
       const bodyH = 5
       const bodyX = cx - bodyW / 2
@@ -493,7 +526,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       glyph.roundRect(bodyX, bodyY, bodyW, bodyH, 1).fill({ color: 0xffffff })
       tracksL.addChild(glyph)
       // Separate shackle path avoids Pixi stroking from the previous origin.
-      const shackle = new G()
+      const shackle = acquireGraphics(G)
       const shackleR = 2.2
       const shackleCy = bodyY
       shackle.moveTo(cx - shackleR, shackleCy)
@@ -504,7 +537,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       badgeRight -= LOCK_BADGE_FULL_W + BADGE_GAP
     }
     if (pitchShifted) {
-      const bg = new G()
+      const bg = acquireGraphics(G)
       const cx = badgeRight - PITCH_BADGE_FULL_W / 2
       const cy = clipInnerY + HEADER_H / 2
       bg
@@ -533,7 +566,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       badgeRight -= PITCH_BADGE_FULL_W + BADGE_GAP
     }
     if (warpIsPending) {
-      const badge = new G()
+      const badge = acquireGraphics(G)
       const cx = badgeRight - WARP_BADGE_FULL_W / 2
       const cy = clipInnerY + HEADER_H / 2
       const phase = Math.floor(Date.now() / 125) % 8
@@ -557,7 +590,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       }
       tracksL.addChild(badge)
     } else if (warpIsActive) {
-      const bg = new G()
+      const bg = acquireGraphics(G)
       const cx = badgeRight - WARP_BADGE_FULL_W / 2
       const cy = clipInnerY + HEADER_H / 2
       bg
@@ -586,5 +619,5 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     }
   }
 
-  return { drawClip, drawTrackTransitions }
+  return { drawClip, drawTrackTransitions, beginFrame }
 }

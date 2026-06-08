@@ -141,6 +141,9 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     tracks.removeChildren()
     headers.removeChildren()
     clipHitRegions.length = 0
+    // Pooled clip graphics were just detached above; reset the pool so the next
+    // frame reuses them instead of allocating fresh Graphics per clip.
+    clipRenderer.beginFrame()
 
     // `screen.width` is Pixi's CSS-pixel drawing width, independent of DPR.
     const width = a.renderer.screen.width
