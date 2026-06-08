@@ -89,6 +89,9 @@ class AudioEngine
     // Total audio blocks the bus graph dropped under message-thread contention.
     juce::uint64 busGraphSkippedBlocks() const noexcept { return busGraph.audioBlocksSkipped(); }
 
+    // Drains audio-thread block-timing for non-RT perf logging.
+    MasterClockSource::AudioPerfSnapshot drainAudioPerf() noexcept { return master.drainAudioPerf(); }
+
     void setPositionMs(double ms);
 
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);

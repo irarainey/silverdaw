@@ -39,6 +39,9 @@ class PlayheadEmitter : public juce::Timer
     double lastMasterPeakLogMs = 0.0;
     float masterPeakLogMaxL = 0.0F;
     float masterPeakLogMaxR = 0.0F;
+    // Wall-clock throttle for the perf.audio block-timing diagnostic.
+    static constexpr double kAudioPerfLogIntervalMs = 1000.0;
+    double lastAudioPerfLogMs = 0.0;
     juce::DynamicObject::Ptr trackLevelsObject{new juce::DynamicObject()};
     juce::var trackLevelsPayload{trackLevelsObject.get()};
     bool lastTrackLevelsHadSignal = false;

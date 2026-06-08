@@ -109,6 +109,26 @@ void PlayheadEmitter::timerCallback()
         lastSkippedBlocks = skipped;
     }
 
+    // perf.audio: the audio thread publishes raw block timing lock-free; format
+    // and log it here, off the real-time thread. Reports worst-case elapsed since
+    // the last drain so transient overruns stay visible.
+    if ((nowMs - lastAudioPerfLogMs) >= kAudioPerfLogIntervalMs)
+    {
+        const auto perf = engine.drainAudioPerf();
+        const double budgetMs = perf.sampleRate > 0.0 && perf.numSamples > 0
+                                    ? (static_cast<double>(perf.numSamples) * 1000.0) / perf.sampleRate
+                                    : 0.0;
+        const double pct = budgetMs > 0.0 ? (perf.maxElapsedMs / budgetMs) * 100.0 : 0.0;
+        silverdaw::log::debug("perf.audio",
+                              "cb#" + juce::String(static_cast<juce::int64>(perf.callbackCount)) +
+                                  " playing=" + juce::String(perf.playing ? 1 : 0) +
+                                  " pos=" + juce::String(perf.positionSamples) +
+                                  " elapsedMs=" + juce::String(perf.maxElapsedMs, 3) +
+                                  " budgetMs=" + juce::String(budgetMs, 3) +
+                                  " budgetPct=" + juce::String(pct, 1));
+        lastAudioPerfLogMs = nowMs;
+    }
+
     // Per-track meters use the same activity gate and one trailing zero as master.
     engine.drainAllTrackPeaks(trackPeakScratch);
     bool anyTrackHasSignal = false;

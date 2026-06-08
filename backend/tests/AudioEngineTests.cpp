@@ -300,6 +300,51 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
     }
 }
 
+// MasterClockSource must publish block timing to atomics for off-thread logging
+// (the audio thread no longer builds strings or touches the file logger).
+void testMasterClockPublishesAudioPerfOffThread()
+{
+    constexpr int kBlock = 256;
+    constexpr double kRate = 48000.0;
+    silverdaw::OutputKeepAlive keepAlive;
+    ConstantSource child(0.1F);
+    silverdaw::MasterClockSource master(child, keepAlive);
+    master.prepareToPlay(kBlock, kRate);
+
+    juce::AudioBuffer<float> buf(2, kBlock);
+    juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+    // Idle: the keep-alive silence path still publishes timing but must not advance.
+    for (int i = 0; i < 10; ++i)
+    {
+        buf.clear();
+        master.getNextAudioBlock(info);
+    }
+    auto snap = master.drainAudioPerf();
+    require(snap.callbackCount == 10, "callback count reflects pumped blocks");
+    require(snap.numSamples == kBlock, "published block size matches");
+    requireNear(snap.sampleRate, kRate, 1.0e-6, "published sample rate matches");
+    require(std::isfinite(snap.maxElapsedMs) && snap.maxElapsedMs >= 0.0,
+            "published elapsed time is finite and non-negative");
+    require(! snap.playing, "idle snapshot reports not playing");
+    require(snap.positionSamples == 0, "idle keep-alive path does not advance the transport");
+
+    // Draining resets the worst-case accumulator.
+    auto reset = master.drainAudioPerf();
+    require(reset.maxElapsedMs == 0.0, "drain resets the worst-case elapsed accumulator");
+
+    // Playing: the transport advances by one block and the counter keeps rising.
+    keepAlive.setPlaying(true);
+    buf.clear();
+    master.getNextAudioBlock(info);
+    auto playSnap = master.drainAudioPerf();
+    require(playSnap.playing, "playing snapshot reports playing");
+    require(playSnap.positionSamples == kBlock, "playing advances the transport by the block size");
+    require(playSnap.callbackCount == 11, "callback count keeps incrementing");
+
+    master.releaseResources();
+}
+
 } // namespace
 
 void addAudioEngineTests(std::vector<TestCase>& tests)
@@ -307,6 +352,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
     tests.push_back({"OutputKeepAlive floor is post-gain and transport-gated", testOutputKeepAliveFloorIsPostGainAndGated});
+    tests.push_back({"MasterClockSource publishes audio-thread timing for off-thread logging", testMasterClockPublishesAudioPerfOffThread});
 }
 
 } // namespace silverdaw::tests
