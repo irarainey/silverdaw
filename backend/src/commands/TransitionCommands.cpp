@@ -3,25 +3,20 @@
 #include "AudioEngine.h"
 #include "BridgeServer.h"
 #include "Log.h"
+#include "PayloadHelpers.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
 
 namespace silverdaw
 {
 
-namespace
-{
-juce::String requiredString(const juce::var& payload, const char* key)
-{
-    return payload.getProperty(key, juce::var()).toString();
-}
-} // namespace
+using silverdaw::bridge::tryGetRequiredString;
 
 bool applyTransitionCreate(const juce::var& payload, ProjectState& projectState)
 {
-    const auto trackId = requiredString(payload, "trackId");
-    const auto leftClipId = requiredString(payload, "leftClipId");
-    const auto rightClipId = requiredString(payload, "rightClipId");
+    const auto trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    const auto leftClipId = tryGetRequiredString(payload, "leftClipId").value_or(juce::String{});
+    const auto rightClipId = tryGetRequiredString(payload, "rightClipId").value_or(juce::String{});
     if (trackId.isEmpty() || leftClipId.isEmpty() || rightClipId.isEmpty())
     {
         log::warn("transition", "TRANSITION_CREATE rejected: missing trackId/leftClipId/rightClipId");
@@ -40,8 +35,8 @@ bool applyTransitionCreate(const juce::var& payload, ProjectState& projectState)
 
 bool applyTransitionDelete(const juce::var& payload, ProjectState& projectState)
 {
-    const auto trackId = requiredString(payload, "trackId");
-    const auto transitionId = requiredString(payload, "transitionId");
+    const auto trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    const auto transitionId = tryGetRequiredString(payload, "transitionId").value_or(juce::String{});
     if (trackId.isEmpty() || transitionId.isEmpty())
     {
         log::warn("transition", "TRANSITION_DELETE rejected: missing trackId/transitionId");
@@ -55,8 +50,8 @@ bool applyTransitionDelete(const juce::var& payload, ProjectState& projectState)
 
 bool applyTransitionSetRecipe(const juce::var& payload, ProjectState& projectState)
 {
-    const auto trackId = requiredString(payload, "trackId");
-    const auto transitionId = requiredString(payload, "transitionId");
+    const auto trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    const auto transitionId = tryGetRequiredString(payload, "transitionId").value_or(juce::String{});
     if (trackId.isEmpty() || transitionId.isEmpty())
     {
         log::warn("transition", "TRANSITION_SET_RECIPE rejected: missing trackId/transitionId");

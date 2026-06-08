@@ -158,12 +158,51 @@ void testBridgePayloadHelpersRejectMalformed()
     }
 }
 
+// The optional readers are silent for absent fields (normal for fields like
+// gestureId/clipId that only some envelope types carry) but must still reject —
+// never coerce — present-but-wrong-typed values, matching the strict contract.
+void testBridgeOptionalReadersRejectWrongType()
+{
+    using silverdaw::bridge::readOptionalBool;
+    using silverdaw::bridge::readOptionalString;
+
+    // Absent optional field — silently empty, not an error.
+    {
+        const auto v = makeBridgePayload({});
+        require(!readOptionalString(v, "gestureId").has_value(),
+                "absent optional string should yield nullopt");
+        require(!readOptionalBool(v, "gestureEnd").has_value(),
+                "absent optional bool should yield nullopt");
+    }
+
+    // Present, correctly typed — accepted.
+    {
+        const auto v = makeBridgePayload({{"gestureId", juce::var("g-1")},
+                                          {"gestureEnd", juce::var(true)}});
+        const auto s = readOptionalString(v, "gestureId");
+        require(s.has_value() && *s == "g-1", "valid optional string should be accepted");
+        require(readOptionalBool(v, "gestureEnd").value_or(false), "valid optional bool should be accepted");
+    }
+
+    // Present but wrong-typed — rejected (NOT coerced). A numeric clipId must not
+    // become the string "5", and a string "true" must not become a boolean.
+    {
+        const auto v = makeBridgePayload({{"clipId", juce::var(5)},
+                                          {"gestureEnd", juce::var("true")}});
+        require(!readOptionalString(v, "clipId").has_value(),
+                "numeric value should not be coerced into an optional string");
+        require(!readOptionalBool(v, "gestureEnd").has_value(),
+                "string value should not be coerced into an optional bool");
+    }
+}
+
 } // namespace
 
 void addBridgeTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"Bridge auth token validation", testBridgeAuthTokenValidation});
     tests.push_back({"Bridge payload helpers reject malformed values", testBridgePayloadHelpersRejectMalformed});
+    tests.push_back({"Bridge optional readers reject wrong types", testBridgeOptionalReadersRejectWrongType});
 }
 
 } // namespace silverdaw::tests

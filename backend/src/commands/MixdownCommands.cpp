@@ -14,6 +14,7 @@
 namespace silverdaw
 {
 
+using silverdaw::bridge::readOptionalString;
 using silverdaw::bridge::tryGetRequiredString;
 
 void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine,
@@ -241,12 +242,12 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     const auto md = payload.getProperty("metadata", juce::var());
     if (md.isObject())
     {
-        options.metadata.title   = md.getProperty("title",   "").toString();
-        options.metadata.artist  = md.getProperty("artist",  "").toString();
-        options.metadata.album   = md.getProperty("album",   "").toString();
-        options.metadata.year    = md.getProperty("year",    "").toString();
-        options.metadata.genre   = md.getProperty("genre",   "").toString();
-        options.metadata.comment = md.getProperty("comment", "").toString();
+        options.metadata.title   = readOptionalString(md, "title").value_or(juce::String{});
+        options.metadata.artist  = readOptionalString(md, "artist").value_or(juce::String{});
+        options.metadata.album   = readOptionalString(md, "album").value_or(juce::String{});
+        options.metadata.year    = readOptionalString(md, "year").value_or(juce::String{});
+        options.metadata.genre   = readOptionalString(md, "genre").value_or(juce::String{});
+        options.metadata.comment = readOptionalString(md, "comment").value_or(juce::String{});
     }
 
     silverdaw::renderMixdownAsync(std::move(snapshot), std::move(options),

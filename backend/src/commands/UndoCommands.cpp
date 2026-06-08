@@ -4,10 +4,14 @@
 #include "BridgeServer.h"
 #include "DecodedCache.h"
 #include "Log.h"
+#include "PayloadHelpers.h"
 #include "ProjectState.h"
 
 namespace silverdaw
 {
+
+using silverdaw::bridge::readOptionalBool;
+using silverdaw::bridge::readOptionalString;
 
 bool isUndoableEnvelopeType(const juce::String& type) noexcept
 {
@@ -123,13 +127,13 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     if (type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_SET_WARP" ||
         type == "CLIP_SET_ENVELOPE")
     {
-        idPart = payload.getProperty("clipId", "").toString();
+        idPart = readOptionalString(payload, "clipId").value_or(juce::String{});
     }
     else if (type == "TRACK_GAIN" || type == "TRACK_SET_SENDS" ||
              type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
              type == "TRACK_SET_PAN")
     {
-        idPart = payload.getProperty("trackId", "").toString();
+        idPart = readOptionalString(payload, "trackId").value_or(juce::String{});
     }
     else if (type == "PROJECT_SET_MASTER_VOLUME" ||
              type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY")
@@ -138,7 +142,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     }
     else if (type == "PROJECT_MARKER_MOVE")
     {
-        idPart = payload.getProperty("markerId", "").toString();
+        idPart = readOptionalString(payload, "markerId").value_or(juce::String{});
     }
     else if (type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" || type == "PROJECT_RENAME")
     {
@@ -146,7 +150,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
         idPart = "_";
     }
 
-    const auto gestureId = payload.getProperty("gestureId", "").toString();
+    const auto gestureId = readOptionalString(payload, "gestureId").value_or(juce::String{});
 
     juce::String key = type;
     if (idPart.isNotEmpty()) key << ":" << idPart;
@@ -176,9 +180,9 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
 void endUndoTransactionIfNeeded(const juce::String& type, const juce::var& payload) noexcept
 {
     if (!isUndoableEnvelopeType(type)) return;
-    const auto gestureId = payload.getProperty("gestureId", "").toString();
+    const auto gestureId = readOptionalString(payload, "gestureId").value_or(juce::String{});
     if (gestureId.isEmpty()) return;
-    const bool gestureEnd = static_cast<bool>(payload.getProperty("gestureEnd", false));
+    const bool gestureEnd = readOptionalBool(payload, "gestureEnd").value_or(false);
     if (!gestureEnd) return;
     auto& s = undoCoalesceState();
     s.lastKey = {};

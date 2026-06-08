@@ -15,6 +15,7 @@
 namespace silverdaw
 {
 
+using silverdaw::bridge::readOptionalString;
 using silverdaw::bridge::tryGetRequiredString;
 
 void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
@@ -113,7 +114,7 @@ void handleLibraryReanalyse(const juce::var& payload, AudioEngine& engine, Proje
 void handleLibraryItemSetSampleMode(const juce::var& payload, ProjectState& projectState)
 {
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
-    const juce::String mode = payload.getProperty("mode", juce::var("")).toString();
+    const juce::String mode = readOptionalString(payload, "mode").value_or(juce::String{});
     silverdaw::log::info("bridge", "recv LIBRARY_ITEM_SET_SAMPLE_MODE itemId=" + itemId + " mode='" + mode + "'");
     if (itemId.isEmpty())
     {
