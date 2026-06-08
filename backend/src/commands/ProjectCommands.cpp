@@ -109,6 +109,11 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
     {
         projectState.setViewScrollX(juce::jmax(0.0, *scrollX));
     }
+    const auto pxPerSecond = tryGetNumber(payload, "viewPxPerSecond");
+    if (pxPerSecond.has_value())
+    {
+        projectState.setViewPxPerSecond(*pxPerSecond);
+    }
 
     // Capture playhead on save without marking it as a user edit.
     projectState.setPlayheadMs(engine.getPositionMs());
@@ -172,11 +177,16 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
     projectState.setViewScrollX(scrollX);
     projectState.setPlayheadMs(playheadMs);
 
+    // Renderer sends the live zoom; fall back to in-memory state for older clients.
+    const double pxPerSecond = tryGetNumber(payload, "viewPxPerSecond").value_or(projectState.getViewPxPerSecond());
+    projectState.setViewPxPerSecond(pxPerSecond);
+
     // PROJECT_SET_VIEW already keeps selection and panel state current.
     const juce::String selectedTrackId = projectState.getViewSelectedTrack();
     const bool fxPanelOpen = projectState.getViewFxPanelOpen();
 
-    const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), scrollX, playheadMs,
+    const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), scrollX,
+                                                              projectState.getViewPxPerSecond(), playheadMs,
                                                               selectedTrackId, fxPanelOpen);
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())
@@ -220,6 +230,11 @@ void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& eng
     if (scrollX.has_value())
     {
         projectState.setViewScrollX(juce::jmax(0.0, *scrollX));
+    }
+    const auto pxPerSecond = tryGetNumber(payload, "viewPxPerSecond");
+    if (pxPerSecond.has_value())
+    {
+        projectState.setViewPxPerSecond(*pxPerSecond);
     }
     projectState.setPlayheadMs(juce::jmax(0.0, engine.getPositionMs()));
 

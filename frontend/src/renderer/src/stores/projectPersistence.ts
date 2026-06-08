@@ -12,7 +12,7 @@ import type { ProjectState } from './projectTypes'
 /** Store fields the persistence handshakes read/write. */
 type PersistenceTarget = Pick<
   ProjectState,
-  'currentFilePath' | 'viewScrollX' | 'pendingRecoveredProjectId'
+  'currentFilePath' | 'viewScrollX' | 'viewPxPerSecond' | 'pendingRecoveredProjectId'
 >
 
 type SaveResult = { ok: boolean; error?: string }
@@ -36,7 +36,8 @@ export function requestSave(target: PersistenceTarget): boolean {
   log.info('project', `requestSave path=${target.currentFilePath}`)
   const sent = sendBridge('PROJECT_SAVE', {
     filePath: target.currentFilePath,
-    viewScrollX: target.viewScrollX ?? undefined
+    viewScrollX: target.viewScrollX ?? undefined,
+    viewPxPerSecond: target.viewPxPerSecond ?? undefined
   })
   if (!sent) {
     useNotificationsStore().pushError('Save failed: the audio engine isn\'t connected.')
@@ -46,7 +47,11 @@ export function requestSave(target: PersistenceTarget): boolean {
 
 export function requestSaveAs(target: PersistenceTarget, filePath: string): void {
   log.info('project', `requestSaveAs path=${filePath}`)
-  const sent = sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: target.viewScrollX ?? undefined })
+  const sent = sendBridge('PROJECT_SAVE_AS', {
+    filePath,
+    viewScrollX: target.viewScrollX ?? undefined,
+    viewPxPerSecond: target.viewPxPerSecond ?? undefined
+  })
   if (!sent) {
     useNotificationsStore().pushError('Save failed: the audio engine isn\'t connected.')
   }
@@ -70,8 +75,16 @@ export function saveAndWait(target: PersistenceTarget, filePath: string, isSaveA
     }, PENDING_SAVE_TIMEOUT_MS)
   })
   const sent = isSaveAs
-    ? sendBridge('PROJECT_SAVE_AS', { filePath, viewScrollX: target.viewScrollX ?? undefined })
-    : sendBridge('PROJECT_SAVE', { filePath, viewScrollX: target.viewScrollX ?? undefined })
+    ? sendBridge('PROJECT_SAVE_AS', {
+        filePath,
+        viewScrollX: target.viewScrollX ?? undefined,
+        viewPxPerSecond: target.viewPxPerSecond ?? undefined
+      })
+    : sendBridge('PROJECT_SAVE', {
+        filePath,
+        viewScrollX: target.viewScrollX ?? undefined,
+        viewPxPerSecond: target.viewPxPerSecond ?? undefined
+      })
   if (!sent) {
     if (pendingSaveTimeout) {
       clearTimeout(pendingSaveTimeout)
@@ -105,7 +118,8 @@ export function saveViewStateAndWait(target: PersistenceTarget): Promise<SaveRes
   })
   sendBridge('PROJECT_SAVE_VIEW_STATE', {
     filePath: target.currentFilePath,
-    viewScrollX: target.viewScrollX ?? 0
+    viewScrollX: target.viewScrollX ?? 0,
+    viewPxPerSecond: target.viewPxPerSecond ?? undefined
   })
   return promise
 }
@@ -130,7 +144,8 @@ export function autosaveAndWait(target: PersistenceTarget, filePath: string): Pr
   })
   const sent = sendBridge('PROJECT_AUTOSAVE', {
     filePath,
-    viewScrollX: target.viewScrollX ?? undefined
+    viewScrollX: target.viewScrollX ?? undefined,
+    viewPxPerSecond: target.viewPxPerSecond ?? undefined
   })
   if (!sent) {
     pendingAutosaveResolvers.delete(filePath)

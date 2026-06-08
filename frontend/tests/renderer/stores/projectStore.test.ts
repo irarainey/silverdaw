@@ -52,6 +52,29 @@ describe('projectStore', () => {
     vi.unstubAllGlobals()
   })
 
+  it('includes the live zoom in save and view-state payloads', () => {
+    const project = useProjectStore()
+    project.currentFilePath = 'C:\\projects\\mix.silverdaw'
+    project.viewScrollX = 320
+    project.viewPxPerSecond = 250
+    sendMock.mockReturnValue(true)
+
+    project.requestSave()
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SAVE', {
+      filePath: 'C:\\projects\\mix.silverdaw',
+      viewScrollX: 320,
+      viewPxPerSecond: 250
+    })
+
+    sendMock.mockClear()
+    void project.saveViewStateAndWait()
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SAVE_VIEW_STATE', {
+      filePath: 'C:\\projects\\mix.silverdaw',
+      viewScrollX: 320,
+      viewPxPerSecond: 250
+    })
+  })
+
   it('starts from a clean untitled project', () => {
     const project = useProjectStore()
 

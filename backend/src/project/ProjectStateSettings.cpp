@@ -25,8 +25,11 @@ double ProjectState::getViewPxPerSecond() const
 
 void ProjectState::setViewPxPerSecond(double pxPerSecond)
 {
-    // Mirror zoom into cleanSnapshot so it never marks dirty.
-    setNonDirtyRootProperty(kViewPxPerSecond, pxPerSecond);
+    // Clamp to the renderer's supported zoom range so a stale or malformed
+    // payload can't persist an out-of-range view. Mirror into cleanSnapshot
+    // so it never marks dirty.
+    const double clamped = juce::jlimit(10.0, 800.0, pxPerSecond);
+    setNonDirtyRootProperty(kViewPxPerSecond, clamped);
 }
 
 double ProjectState::getViewScrollX() const

@@ -83,8 +83,8 @@ juce::Result save(const juce::File& file, const ProjectState& project)
     return writeProjectJsonAtomically(file, juce::var(rootObj));
 }
 
-juce::Result saveViewState(const juce::File& file, double viewScrollX, double playheadMs,
-                           const juce::String& selectedTrackId, bool fxPanelOpen)
+juce::Result saveViewState(const juce::File& file, double viewScrollX, double viewPxPerSecond,
+                           double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen)
 {
     if (!file.existsAsFile())
     {
@@ -113,6 +113,7 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double pl
 
     rootObj->setProperty(kSavedAtKey, isoTimestampNowUtc());
     projectObj->setProperty("viewScrollX", juce::jmax(0.0, viewScrollX));
+    projectObj->setProperty("viewPxPerSecond", juce::jmax(1.0, viewPxPerSecond));
     projectObj->setProperty("playheadMs", juce::jmax(0.0, playheadMs));
     projectObj->setProperty("viewSelectedTrack", selectedTrackId);
     projectObj->setProperty("viewFxPanelOpen", fxPanelOpen);

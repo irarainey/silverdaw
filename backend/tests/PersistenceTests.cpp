@@ -99,11 +99,12 @@ void testProjectFileSaveLoadAndViewState()
     requireEqual(loaded.getViewSelectedTrack(), "t1", "selected track should persist through save/load");
     require(loaded.getViewFxPanelOpen(), "fx-panel-open flag should persist through save/load");
 
-    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, -10.0, 99.0, "t1", true);
+    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, -10.0, 240.0, 99.0, "t1", true);
     require(viewStateResult.wasOk(), "saveViewState should update existing project file");
     silverdaw::ProjectState reloaded;
     require(silverdaw::ProjectFile::load(file, reloaded).ok, "reloading after view-state save should work");
     requireNear(reloaded.getViewScrollX(), 0.0, 0.0001, "saveViewState should clamp negative scroll");
+    requireNear(reloaded.getViewPxPerSecond(), 240.0, 0.0001, "saveViewState should persist zoom");
     requireNear(reloaded.getPlayheadMs(), 99.0, 0.0001, "saveViewState should update playhead");
     requireEqual(reloaded.getViewSelectedTrack(), "t1", "saveViewState should persist selected track");
     require(reloaded.getViewFxPanelOpen(), "saveViewState should persist fx-panel-open flag");

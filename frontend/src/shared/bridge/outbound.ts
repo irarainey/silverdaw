@@ -442,17 +442,23 @@ export interface ProjectSavePayload {
   filePath?: string
   /** Latest horizontal scroll position from the renderer, flushed before save. */
   viewScrollX?: number
+  /** Latest horizontal zoom (px/sec) from the renderer, flushed before save. */
+  viewPxPerSecond?: number
 }
 
 export interface ProjectSaveAsPayload {
   filePath: string
   /** Latest horizontal scroll position from the renderer, flushed before save. */
   viewScrollX?: number
+  /** Latest horizontal zoom (px/sec) from the renderer, flushed before save. */
+  viewPxPerSecond?: number
 }
 
 export interface ProjectSaveViewStatePayload {
   filePath: string
   viewScrollX: number
+  /** Latest horizontal zoom (px/sec); omit to leave the saved value untouched. */
+  viewPxPerSecond?: number
 }
 
 export interface ProjectLoadPayload {
@@ -477,6 +483,8 @@ export interface ProjectAutosavePayload {
   filePath: string
   /** Horizontal scroll captured into the snapshot; omit to leave the saved value untouched. */
   viewScrollX?: number
+  /** Horizontal zoom (px/sec) captured into the snapshot; omit to leave the saved value untouched. */
+  viewPxPerSecond?: number
 }
 
 /** Persist horizontal zoom and/or scroll. Both optional; backend stores them without marking dirty. */

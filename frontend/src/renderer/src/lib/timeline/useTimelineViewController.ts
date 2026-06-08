@@ -441,14 +441,20 @@ export function useTimelineViewController(
 
   watch(
     pxPerSecond,
-    (next) => {
-      // Mirror zoom for StatusBar and other consumers.
+    (next, prev) => {
+      // Always seed the StatusBar mirror, including the immediate on-mount call.
       ui.setZoomPxPerSecond(next)
+      // The immediate call (prev === undefined) only seeds the mirror: it must
+      // not write the project store or emit, or it would clobber a zoom a
+      // just-loaded project restored and fire a spurious PROJECT_SET_VIEW.
+      if (prev === undefined) return
+      // Live-mirror into the project store so view-state/full saves persist zoom
+      // (matches how the scrollX watch keeps project.viewScrollX current).
+      project.viewPxPerSecond = next
       if (suppressZoomEmit) return
       if (zoomEmitTimer) clearTimeout(zoomEmitTimer)
       zoomEmitTimer = setTimeout(() => {
         zoomEmitTimer = null
-        if (project.viewPxPerSecond !== null && Math.abs(project.viewPxPerSecond - next) < 0.01) return
         sendBridge('PROJECT_SET_VIEW', { pxPerSecond: next })
       }, 200)
     },
