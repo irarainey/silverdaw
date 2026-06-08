@@ -211,57 +211,64 @@ if(SILVERDAW_ENABLE_COVERAGE AND NOT SILVERDAW_BUILD_TESTS)
 endif()
 
 add_library(silverdaw_backend_core STATIC
-    src/AudioDeviceCommands.cpp
-    src/AudioEngine.cpp
-    src/AudioEngineClipEdit.cpp
-    src/AudioEngineClips.cpp
-    src/AudioEnginePreview.cpp
-    src/BridgeAuth.cpp
-    src/BpmDetector.cpp
-    src/BridgeDispatch.cpp
-    src/BridgeServer.cpp
-    src/ClipCommands.cpp
-    src/CommandHelpers.cpp
-    src/DecodedCache.cpp
-    src/EditUndoState.cpp
-    src/EnginePlaybackPath.cpp
-    src/Log.cpp
-    src/LibraryAnalysis.cpp
-    src/LibraryCommands.cpp
-    src/LoudnessAnalyzer.cpp
-    src/MarkerCommands.cpp
-    src/MixdownCommands.cpp
-    src/MixdownEngine.cpp
-    src/MixdownExport.cpp
-    src/MixdownBroadcast.cpp
-    src/MixdownGraph.cpp
-    src/MixdownNormalize.cpp
-    src/MixdownRender.cpp
-    src/MixdownRenderPass1.cpp
-    src/MixdownSnapshot.cpp
-    src/PeaksCache.cpp
-    src/PlayheadEmitter.cpp
-    src/ProjectFile.cpp
-    src/PreviewCommands.cpp
-    src/ProjectCommands.cpp
-    src/ProjectFxCommands.cpp
-    src/ProjectSettingsCommands.cpp
-    src/ProjectState.cpp
-    src/ProjectStateClips.cpp
-    src/ProjectStateLibrary.cpp
-    src/ProjectStateSerialization.cpp
-    src/ProjectStateTracksFx.cpp
-    src/ProjectSession.cpp
-    src/ProjectTransitions.cpp
-    src/SampleExport.cpp
-    src/TrackCommands.cpp
-    src/UndoCommands.cpp
-    src/TransportCommands.cpp
-    src/TransitionCommands.cpp
-    src/ValueTreeJson.cpp
-    src/WarpProcessor.cpp
-    src/Waveform.cpp
-    src/WaveformCommands.cpp)
+    # bridge
+    src/bridge/BridgeAuth.cpp
+    src/bridge/BridgeDispatch.cpp
+    src/bridge/BridgeServer.cpp
+    src/bridge/CommandHelpers.cpp
+    src/bridge/PlayheadEmitter.cpp
+    # commands
+    src/commands/AudioDeviceCommands.cpp
+    src/commands/ClipCommands.cpp
+    src/commands/LibraryCommands.cpp
+    src/commands/MarkerCommands.cpp
+    src/commands/MixdownCommands.cpp
+    src/commands/PreviewCommands.cpp
+    src/commands/ProjectCommands.cpp
+    src/commands/ProjectFxCommands.cpp
+    src/commands/ProjectSettingsCommands.cpp
+    src/commands/TrackCommands.cpp
+    src/commands/TransitionCommands.cpp
+    src/commands/TransportCommands.cpp
+    src/commands/UndoCommands.cpp
+    src/commands/WaveformCommands.cpp
+    # core
+    src/core/Log.cpp
+    # dsp
+    src/dsp/BpmDetector.cpp
+    src/dsp/LoudnessAnalyzer.cpp
+    src/dsp/WarpProcessor.cpp
+    src/dsp/Waveform.cpp
+    # engine
+    src/engine/AudioEngine.cpp
+    src/engine/AudioEngineClipEdit.cpp
+    src/engine/AudioEngineClips.cpp
+    src/engine/AudioEnginePreview.cpp
+    src/engine/DecodedCache.cpp
+    src/engine/EnginePlaybackPath.cpp
+    # mixdown
+    src/mixdown/MixdownBroadcast.cpp
+    src/mixdown/MixdownEngine.cpp
+    src/mixdown/MixdownExport.cpp
+    src/mixdown/MixdownGraph.cpp
+    src/mixdown/MixdownNormalize.cpp
+    src/mixdown/MixdownRender.cpp
+    src/mixdown/MixdownRenderPass1.cpp
+    src/mixdown/MixdownSnapshot.cpp
+    # project
+    src/project/EditUndoState.cpp
+    src/project/LibraryAnalysis.cpp
+    src/project/PeaksCache.cpp
+    src/project/ProjectFile.cpp
+    src/project/ProjectSession.cpp
+    src/project/ProjectState.cpp
+    src/project/ProjectStateClips.cpp
+    src/project/ProjectStateLibrary.cpp
+    src/project/ProjectStateSerialization.cpp
+    src/project/ProjectStateTracksFx.cpp
+    src/project/ProjectTransitions.cpp
+    src/project/SampleExport.cpp
+    src/project/ValueTreeJson.cpp)
 
 target_compile_definitions(silverdaw_backend_core PUBLIC
     JUCE_WEB_BROWSER=0
@@ -271,7 +278,14 @@ target_compile_definitions(silverdaw_backend_core PUBLIC
     JUCE_STANDALONE_APPLICATION=1)
 
 target_include_directories(silverdaw_backend_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/bridge
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/commands
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/mixdown
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/project)
 
 target_link_libraries(silverdaw_backend_core PUBLIC
     juce::juce_core
@@ -309,7 +323,7 @@ juce_add_console_app(SilverdawBackend
     COMPANY_NAME "Silverdaw")
 
 target_sources(SilverdawBackend PRIVATE
-    src/Main.cpp)
+    src/core/Main.cpp)
 
 target_link_libraries(SilverdawBackend PRIVATE
     silverdaw_backend_core)
