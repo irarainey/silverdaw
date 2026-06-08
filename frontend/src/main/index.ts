@@ -169,17 +169,17 @@ app.whenReady().then(async () => {
         }
         break
       } catch (err) {
-        console.error(`[main] failed to initialise log directory ${candidate}:`, err)
+        logMain('ERROR', 'main', `failed to initialise log directory ${candidate}:`, err)
       }
     }
     if (sessionDir) {
       logMain('INFO ', 'main', `session log dir: ${sessionDir}`)
       logMain('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node}`)
     } else {
-      console.error('[main] failed to initialise file logging; continuing with file logging disabled')
+      logMain('ERROR', 'main', 'failed to initialise file logging; continuing with file logging disabled')
     }
   } else {
-    console.log('[main] file logging disabled (Preferences > Developer > Write diagnostic logs is off)')
+    logMain('INFO ', 'main', 'file logging disabled (Preferences > Developer > Write diagnostic logs is off)')
   }
 
   Menu.setApplicationMenu(null)
@@ -246,7 +246,7 @@ app.whenReady().then(async () => {
       return
     }
     if (free !== bridgePort) {
-      console.log(`[main] port ${bridgePort} busy; using ${free} instead`)
+      logMain('INFO ', 'main', `port ${bridgePort} busy; using ${free} instead`)
     }
     bridgePort = free
   }
@@ -263,9 +263,10 @@ app.whenReady().then(async () => {
   })
   .catch((err) => {
   // A rejection here means the main process is only half-initialised (prefs,
-  // port probe, IPC wiring, or window creation failed) and is unusable. File
-  // logging may not exist yet, so console.error is the safe sink before exit.
-  console.error('[main] fatal error during startup', err)
+  // port probe, IPC wiring, or window creation failed) and is unusable.
+  // logMain always mirrors to the console, so this surfaces even if file
+  // logging was never initialised, before we exit.
+  logMain('ERROR', 'main', 'fatal error during startup', err)
   app.exit(1)
   })
 

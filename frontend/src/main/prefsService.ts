@@ -20,6 +20,7 @@ import {
   type PathPrefs,
   type Preferences
 } from './preferences'
+import { logMain } from './log'
 
 export class PrefsService {
   private prefs: Preferences = buildDefaultPrefs()
@@ -101,7 +102,7 @@ export class PrefsService {
       // Bad prefs should not block startup.
       const code = (err as { code?: string }).code
       if (code !== 'ENOENT') {
-        console.warn('[prefs] load failed, using defaults:', err)
+        logMain('WARN ', 'prefs', 'load failed, using defaults:', err)
       }
     }
     this.seedSessionPaths()
@@ -119,7 +120,7 @@ export class PrefsService {
     try {
       await mkdir(dir, { recursive: true })
     } catch (err) {
-      console.warn('[prefs] could not create default project dir', dir, err)
+      logMain('WARN ', 'prefs', `could not create default project dir ${dir}:`, err)
     }
   }
 
@@ -141,7 +142,7 @@ export class PrefsService {
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, JSON.stringify(this.prefs, null, 2), 'utf8')
     } catch (err) {
-      console.warn('[prefs] save failed:', err)
+      logMain('WARN ', 'prefs', 'save failed:', err)
     }
   }
 

@@ -15,6 +15,7 @@ import {
   isAllowedAudioPath,
   registerIssuedPath
 } from '../audioPaths'
+import { logMain } from '../log'
 
 /** Singletons the audio handlers reach back into main for. */
 export interface AudioHandlersContext {
@@ -70,7 +71,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
         registerIssuedPath(filePath)
         out.push({ filePath, fileName: basename(filePath), data })
       } catch (err) {
-        console.error('[audio:openMany] read failed for', filePath, err)
+        logMain('ERROR', 'audio:openMany', `read failed for ${filePath}:`, err)
       }
     }
     return out
@@ -108,7 +109,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
 
   ipcMain.handle(IPC.audio.readFile, async (_evt, filePath: unknown) => {
     if (!isAllowedAudioPath(filePath)) {
-      console.warn('[audio:readFile] rejected path not on allow-list:', filePath)
+      logMain('WARN ', 'audio:readFile', 'rejected path not on allow-list:', filePath)
       return null
     }
     try {
@@ -116,21 +117,21 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
       return { filePath, fileName: basename(filePath), data }
     } catch (err) {
-      console.error('[audio:readFile] failed for', filePath, err)
+      logMain('ERROR', 'audio:readFile', `failed for ${String(filePath)}:`, err)
       return null
     }
   })
 
   ipcMain.handle(IPC.audio.readMetadata, async (_evt, filePath: unknown) => {
     if (!isAllowedAudioPath(filePath)) {
-      console.warn('[audio:readMetadata] rejected path not on allow-list:', filePath)
+      logMain('WARN ', 'audio:readMetadata', 'rejected path not on allow-list:', filePath)
       return null
     }
     try {
       const meta = await parseFile(filePath, { duration: true, skipCovers: false })
       return normalizeMetadata(meta)
     } catch (err) {
-      console.warn('[audio:readMetadata] failed for', filePath, err)
+      logMain('WARN ', 'audio:readMetadata', `failed for ${String(filePath)}:`, err)
       return null
     }
   })
@@ -144,7 +145,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       sampleRate?: unknown
     }
     if (typeof p.sourcePath !== 'string' || !isAllowedAudioPath(p.sourcePath)) {
-      console.warn('[audio:writeTempWav] rejected source not on allow-list:', p.sourcePath)
+      logMain('WARN ', 'audio:writeTempWav', 'rejected source not on allow-list:', p.sourcePath)
       return null
     }
     if (typeof p.sampleRate !== 'number' || !Number.isFinite(p.sampleRate) || p.sampleRate <= 0) {
@@ -176,7 +177,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
     try {
       await mkdir(TRANSCODE_CACHE_DIR, { recursive: true })
     } catch (err) {
-      console.error('[audio:writeTempWav] failed to create cache dir:', err)
+      logMain('ERROR', 'audio:writeTempWav', 'failed to create cache dir:', err)
       return null
     }
 
@@ -234,7 +235,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
     try {
       await writeFile(outPath, buf)
     } catch (err) {
-      console.error('[audio:writeTempWav] failed to write WAV:', err)
+      logMain('ERROR', 'audio:writeTempWav', 'failed to write WAV:', err)
       return null
     }
     registerIssuedPath(outPath)

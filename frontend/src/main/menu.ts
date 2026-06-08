@@ -4,6 +4,7 @@
 
 import { app, BrowserWindow, shell, type BrowserWindow as BrowserWindowType } from 'electron'
 import { IPC } from '../shared/ipc-channels'
+import { logMain } from './log'
 
 export interface MenuActionContext {
   getMainWindow(): BrowserWindowType | null
@@ -123,7 +124,7 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
         wc.send(IPC.menu.action, action)
         break
       }
-      console.warn('[menu] unknown action:', action)
+      logMain('WARN ', 'menu', 'unknown action:', action)
   }
 }
 

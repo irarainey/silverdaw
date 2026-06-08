@@ -5,6 +5,7 @@ import { app, ipcMain } from 'electron'
 import { readFile } from 'node:fs/promises'
 import { resolve as pathResolve } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
+import { logMain } from '../log'
 
 export function registerPeaksHandlers(): void {
   // Peaks reads are confined to the backend-produced cache directory.
@@ -14,7 +15,7 @@ export function registerPeaksHandlers(): void {
     const canonical = pathResolve(value)
     if (!canonical.toLowerCase().startsWith(peaksCacheDir.toLowerCase() + '\\') &&
         canonical.toLowerCase() !== peaksCacheDir.toLowerCase()) {
-      console.warn('[peaks:readCacheFile] refused path outside cache dir:', canonical)
+      logMain('WARN ', 'peaks:readCacheFile', 'refused path outside cache dir:', canonical)
       return null
     }
     try {
@@ -22,7 +23,7 @@ export function registerPeaksHandlers(): void {
       // Structured clone should receive a clean contiguous buffer.
       return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
     } catch (err) {
-      console.warn('[peaks:readCacheFile] read failed:', canonical, err)
+      logMain('WARN ', 'peaks:readCacheFile', `read failed for ${canonical}:`, err)
       return null
     }
   })

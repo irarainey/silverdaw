@@ -9,6 +9,7 @@ import { IPC } from '../../shared/ipc-channels'
 import { registerIssuedPath } from '../audioPaths'
 import { canonicaliseProjectPath } from '../projectPaths'
 import type { PrefsService } from '../prefsService'
+import { logMain } from '../log'
 
 export interface ProjectHandlersContext {
   getMainWindow(): BrowserWindow | null
@@ -83,7 +84,7 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       try {
         parsed = JSON.parse(content)
       } catch (parseErr) {
-        console.warn('[project:prepareOpen] malformed project JSON:', canonical, parseErr)
+        logMain('WARN ', 'project:prepareOpen', `malformed project JSON at ${canonical}:`, parseErr)
         return false
       }
       const visit = (node: unknown): void => {
@@ -104,7 +105,7 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       visit(parsed)
       return true
     } catch (err) {
-      console.warn('[project:prepareOpen] could not read project file:', canonical, err)
+      logMain('WARN ', 'project:prepareOpen', `could not read project file ${canonical}:`, err)
       return false
     }
   })

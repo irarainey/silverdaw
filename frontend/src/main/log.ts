@@ -9,6 +9,7 @@
 import { createWriteStream, type WriteStream } from 'node:fs'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { inspect } from 'node:util'
 
 /** Five-char padded level matches the backend so columns line up in a merged tail. */
 export type LogLevel = 'DEBUG' | 'INFO ' | 'WARN ' | 'ERROR'
@@ -16,6 +17,20 @@ export type LogLevel = 'DEBUG' | 'INFO ' | 'WARN ' | 'ERROR'
 let sessionDir = ''
 let mainStream: WriteStream | null = null
 let rendererStream: WriteStream | null = null
+
+/** Preserve Error stacks and render objects readably instead of `[object Object]`. */
+function formatLogValue(value: unknown): string {
+  if (value instanceof Error) return value.stack ?? value.message
+  if (typeof value === 'string') return value
+  return inspect(value, { depth: 4, breakLength: Infinity })
+}
+
+/** Route the mirrored line to the console method that matches its level. */
+function mirrorToConsole(level: LogLevel, line: string): void {
+  if (level === 'ERROR') console.error(line)
+  else if (level === 'WARN ') console.warn(line)
+  else console.log(line)
+}
 
 /**
  * Resolve `<logParentDir>/<ISO-stamp>/` and open the main + renderer log
@@ -34,10 +49,17 @@ export function initLogs(logParentDir: string): string {
   return sessionDir
 }
 
-/** Append one line to `main.log`. Safe to call before `initLogs()`; ignored if so. */
-export function logMain(level: LogLevel, tag: string, message: string): void {
-  if (!mainStream) return
-  mainStream.write(`${new Date().toISOString()} ${level} [${tag}] ${message}\n`)
+/**
+ * Append one structured line to `main.log` (once `initLogs()` has run) and
+ * always mirror it to the console so diagnostics are visible in the dev
+ * terminal and during the pre-init/bootstrap phase. Extra `args` (errors,
+ * paths, objects) are folded into the message; `Error`s keep their stack.
+ */
+export function logMain(level: LogLevel, tag: string, message: string, ...args: unknown[]): void {
+  const detail = args.length > 0 ? ` ${args.map(formatLogValue).join(' ')}` : ''
+  const line = `${new Date().toISOString()} ${level} [${tag}] ${message}${detail}`
+  mainStream?.write(`${line}\n`)
+  mirrorToConsole(level, line)
 }
 
 /**

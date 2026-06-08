@@ -1,4 +1,5 @@
 import { extname, isAbsolute, resolve as pathResolve } from 'node:path'
+import { logMain } from './log'
 
 // Keep accepted audio extensions aligned with backend decoder support.
 export const AUDIO_FILE_EXTENSIONS = ['wav', 'mp3', 'flac', 'aiff', 'aif', 'm4a'] as const
@@ -15,12 +16,12 @@ export function canonicalisePath(p: string): string {
 export function registerIssuedPath(filePath: string): void {
   if (typeof filePath !== 'string' || filePath === '') return
   if (!isAbsolute(filePath)) {
-    console.warn('[main] refusing to register non-absolute path:', filePath)
+    logMain('WARN ', 'main', 'refusing to register non-absolute path:', filePath)
     return
   }
   const ext = extname(filePath).replace(/^\./, '').toLowerCase()
   if (!AUDIO_FILE_EXTENSIONS_SET.has(ext)) {
-    console.warn('[main] refusing to register non-audio path:', filePath)
+    logMain('WARN ', 'main', 'refusing to register non-audio path:', filePath)
     return
   }
   issuedAudioPaths.add(canonicalisePath(filePath))

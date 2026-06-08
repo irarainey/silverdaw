@@ -15,6 +15,7 @@ import {
   resolveAutosaveDir,
   type AutosaveManifest
 } from '../autosaveStore'
+import { logMain } from '../log'
 
 export function registerAutosaveHandlers(): void {
   // ─── Autosave folder + manifest IPCs ────────────────────────────────────
@@ -29,7 +30,7 @@ export function registerAutosaveHandlers(): void {
         await mkdir(dir, { recursive: true })
         return { dir, filePath: join(dir, AUTOSAVE_FILENAME) }
       } catch (err) {
-        console.warn('[autosave:resolveDir]', err)
+        logMain('WARN ', 'autosave:resolveDir', 'failed:', err)
         return null
       }
     }
@@ -53,7 +54,7 @@ export function registerAutosaveHandlers(): void {
       await writeFile(join(dir, AUTOSAVE_MANIFEST_FILENAME), JSON.stringify(manifest, null, 2), 'utf8')
       return true
     } catch (err) {
-      console.warn('[autosave:writeManifest]', err)
+      logMain('WARN ', 'autosave:writeManifest', 'failed:', err)
       return false
     }
   })
@@ -139,13 +140,13 @@ export function registerAutosaveHandlers(): void {
       const canonical = pathResolve(dir)
       const canonicalRoot = pathResolve(root)
       if (!canonical.toLowerCase().startsWith(canonicalRoot.toLowerCase())) {
-        console.warn('[autosave:clear] refused traversal:', canonical)
+        logMain('WARN ', 'autosave:clear', 'refused traversal:', canonical)
         return false
       }
       await rm(canonical, { recursive: true, force: true })
       return true
     } catch (err) {
-      console.warn('[autosave:clear]', err)
+      logMain('WARN ', 'autosave:clear', 'failed:', err)
       return false
     }
   })

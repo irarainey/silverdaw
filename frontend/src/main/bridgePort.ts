@@ -2,6 +2,7 @@
 // Main owns the port and passes it to the backend and renderer.
 
 import { createServer as createNetServer } from 'node:net'
+import { logMain } from './log'
 
 export const DEFAULT_BRIDGE_PORT = 8765
 export const MIN_BRIDGE_PORT = 1024
@@ -18,8 +19,10 @@ export function resolveBridgePort(): number {
     parsed < MIN_BRIDGE_PORT ||
     parsed > MAX_BRIDGE_PORT
   ) {
-    console.warn(
-      `[main] SILVERDAW_BRIDGE_PORT=${raw} is not a valid port in [${MIN_BRIDGE_PORT}, ${MAX_BRIDGE_PORT}]; using default ${DEFAULT_BRIDGE_PORT}`
+    logMain(
+      'WARN ',
+      'main',
+      `SILVERDAW_BRIDGE_PORT=${raw} is not a valid port in [${MIN_BRIDGE_PORT}, ${MAX_BRIDGE_PORT}]; using default ${DEFAULT_BRIDGE_PORT}`
     )
     return DEFAULT_BRIDGE_PORT
   }
