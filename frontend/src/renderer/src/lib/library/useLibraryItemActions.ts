@@ -10,8 +10,8 @@ import { reanalyseLibraryItem } from '@/lib/importAudio'
 import { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 
 export interface LibraryItemActionsDeps {
-  /** Begin the inline rename gesture (owned by the rename composable). */
-  startRename: (item: LibraryItem) => void
+  /** Begin the inline rename gesture (owned by the rename composable; async). */
+  startRename: (item: LibraryItem) => void | Promise<void>
 }
 
 export interface LibraryItemActions {

@@ -29,10 +29,10 @@ export interface AppMenuActionsDeps {
   preferencesOpen: Ref<boolean>
   projectPropertiesOpen: Ref<boolean>
   exportMixdownOpen: Ref<boolean>
-  guardAgainstUnsavedChanges: (proceed: () => void) => void
+  guardAgainstUnsavedChanges: (proceed: () => void | Promise<void>) => void
   // True when a modal/dialog owns the keyboard; suppresses menu-zoom.
   isModalOpen: () => boolean
-  openRecentPath: (filePath: string) => void
+  openRecentPath: (filePath: string) => void | Promise<void>
 }
 
 export interface AppMenuActions {
@@ -121,7 +121,9 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       if (!Number.isFinite(index) || index < 0) return
       const filePath = appStore.recentProjects[index]
       if (!filePath) return
-      deps.openRecentPath(filePath)
+      void (async () => {
+        await deps.openRecentPath(filePath)
+      })().catch((err) => log.warn('menu', `open recent failed: ${String(err)}`))
       return
     }
     if (action === 'file.clearRecentProjects') {

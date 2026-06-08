@@ -11,7 +11,7 @@ import { log } from '@/lib/log'
 
 export interface UnsavedChangesGuard {
   unsavedPromptOpen: Ref<boolean>
-  guardAgainstUnsavedChanges: (proceed: () => void) => void
+  guardAgainstUnsavedChanges: (proceed: () => void | Promise<void>) => void
   onUnsavedPromptSave: () => Promise<void>
   onUnsavedPromptDiscard: () => Promise<void>
   onUnsavedPromptCancel: () => void
@@ -24,13 +24,23 @@ export function useUnsavedChangesGuard(): UnsavedChangesGuard {
 
   // Action deferred until the unsaved-changes prompt resolves.
   const unsavedPromptOpen = ref(false)
-  let pendingAfterDiscard: (() => void) | null = null
+  // Deferred actions may be async; run them fire-and-forget but never let a
+  // sync throw or async rejection escape into the prompt's event handlers.
+  let pendingAfterDiscard: (() => void | Promise<void>) | null = null
   let cleanViewStateSave: Promise<void> | null = null
 
+  function runDeferred(action: () => void | Promise<void>): void {
+    void (async () => {
+      await action()
+    })().catch((err) => log.warn('app', `deferred navigation action failed: ${String(err)}`))
+  }
+
   /** Gate destructive navigation on unsaved changes; clean projects still flush view state. */
-  function guardAgainstUnsavedChanges(proceed: () => void): void {
+  function guardAgainstUnsavedChanges(proceed: () => void | Promise<void>): void {
     if (!project.isDirty) {
-      void persistCleanViewState().then(proceed)
+      void persistCleanViewState()
+        .then(proceed)
+        .catch((err) => log.warn('app', `deferred navigation action failed: ${String(err)}`))
       return
     }
     pendingAfterDiscard = proceed
@@ -79,7 +89,7 @@ export function useUnsavedChangesGuard(): UnsavedChangesGuard {
       }
       return // Bridge-reported save failures are shown elsewhere.
     }
-    next()
+    runDeferred(next)
   }
 
   async function onUnsavedPromptDiscard(): Promise<void> {
@@ -91,7 +101,7 @@ export function useUnsavedChangesGuard(): UnsavedChangesGuard {
     if (projectId) {
       await clearAutosaveBucket(projectId)
     }
-    next?.()
+    if (next) runDeferred(next)
   }
 
   function onUnsavedPromptCancel(): void {

@@ -260,7 +260,14 @@ app.whenReady().then(async () => {
       mainWindow = createWindow(buildCreateWindowContext())
     }
   })
-})
+  })
+  .catch((err) => {
+  // A rejection here means the main process is only half-initialised (prefs,
+  // port probe, IPC wiring, or window creation failed) and is unusable. File
+  // logging may not exist yet, so console.error is the safe sink before exit.
+  console.error('[main] fatal error during startup', err)
+  app.exit(1)
+  })
 
 app.on('window-all-closed', () => {
   backendSupervisor?.kill()
