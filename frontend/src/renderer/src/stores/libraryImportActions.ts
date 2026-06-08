@@ -5,7 +5,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import type { Clip } from '@/stores/projectStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
-import type { LibraryState } from './library.types'
+import type { LibraryState } from './libraryTypes'
 import { libraryItemDisplayName } from './libraryItemHelpers'
 
 type ImportThis = LibraryState & {

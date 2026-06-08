@@ -1,6 +1,6 @@
 // Shared audio import flow: dialog, decode, project/library update, backend load.
 
-import { decodeAudioToPeaks, detectMusicalKey } from '@/lib/audio'
+import { decodeAudioToPeaks, detectMusicalKey } from '@/lib/audioDecode'
 import { send as sendBridge, probeAudioFile } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useProjectStore } from '@/stores/projectStore'

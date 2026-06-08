@@ -11,7 +11,7 @@ vi.mock('@/lib/bridgeService', () => ({
 vi.mock('@/lib/log', () => ({
   log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }
 }))
-vi.mock('@/lib/audio', () => ({
+vi.mock('@/lib/audioDecode', () => ({
   PEAKS_PER_SECOND: 200,
   decodeAudioToPeaks: vi.fn()
 }))

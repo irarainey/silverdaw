@@ -16,7 +16,7 @@ import type {
   AddLibraryItemInput,
   LibraryItem,
   LibraryState
-} from './library.types'
+} from './libraryTypes'
 import { revokeItemCoverArt } from './libraryItemHelpers'
 
 // Stable facade for existing `@/stores/libraryStore` imports.
@@ -27,7 +27,7 @@ export type {
   ItemChannelPeaks,
   LibraryItem,
   SavedClipSource
-} from './library.types'
+} from './libraryTypes'
 export { libraryItemDisplayName, libraryItemIsSample, libraryItemSourceBpm } from './libraryItemHelpers'
 
 import { savedClipActions } from './librarySavedClipActions'

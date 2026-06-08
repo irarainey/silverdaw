@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectMusicalKey, effectivePeaksPerSecond } from '@/lib/audio'
+import { detectMusicalKey, effectivePeaksPerSecond } from '@/lib/audioDecode'
 
 describe('audio peak helpers', () => {
   it('returns the actual peak rate after integer sample bucketing', () => {

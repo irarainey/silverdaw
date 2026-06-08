@@ -9,7 +9,7 @@ vi.mock('@/lib/bridgeService', () => ({ send: vi.fn() }))
 vi.mock('@/lib/log', () => ({
   log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }
 }))
-vi.mock('@/lib/audio', () => ({ PEAKS_PER_SECOND: 200, decodeAudioToPeaks: vi.fn() }))
+vi.mock('@/lib/audioDecode', () => ({ PEAKS_PER_SECOND: 200, decodeAudioToPeaks: vi.fn() }))
 
 function makeItem(overrides: Partial<LibraryItem> = {}): LibraryItem {
   return {

@@ -14,7 +14,7 @@ import { log } from '@/lib/log'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveDurationMs } from '@/lib/warp'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
-import type { AddLibraryItemInput, LibraryItem, LibraryState } from './library.types'
+import type { AddLibraryItemInput, LibraryItem, LibraryState } from './libraryTypes'
 import { buildSavedClipName } from './libraryItemHelpers'
 
 type SavedClipThis = LibraryState & {

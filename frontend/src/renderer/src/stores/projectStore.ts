@@ -16,7 +16,7 @@
 // settings, and thin persistence/snapshot wrappers.
 
 import { defineStore } from 'pinia'
-import { PEAKS_PER_SECOND } from '@/lib/audio'
+import { PEAKS_PER_SECOND } from '@/lib/audioDecode'
 import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,

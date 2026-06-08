@@ -3,7 +3,7 @@
 // The store action is a thin wrapper that calls applyProjectStateSnapshot then
 // resolves any in-flight recovery load.
 
-import { decodeAudioToPeaks } from '@/lib/audio'
+import { decodeAudioToPeaks } from '@/lib/audioDecode'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { sanitizeEnvelopePoints } from '@/lib/envelope'
 import { log } from '@/lib/log'

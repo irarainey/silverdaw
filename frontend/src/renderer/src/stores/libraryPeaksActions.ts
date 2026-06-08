@@ -3,7 +3,7 @@
 
 import { log } from '@/lib/log'
 import { buildPeaksLodPyramid } from '@/lib/peaksLod'
-import type { LibraryState } from './library.types'
+import type { LibraryState } from './libraryTypes'
 
 type PeaksThis = LibraryState
 

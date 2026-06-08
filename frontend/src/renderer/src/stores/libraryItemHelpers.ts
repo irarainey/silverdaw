@@ -7,7 +7,7 @@
 // needs and re-exports the public helpers for existing `@/stores/libraryStore`
 // consumers.
 
-import type { LibraryItem, SavedClipSource } from './library.types'
+import type { LibraryItem, SavedClipSource } from './libraryTypes'
 
 /**
  * Resolve a library item to the label that should be used wherever it's

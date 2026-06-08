@@ -18,7 +18,7 @@ vi.mock('@/lib/log', () => ({
   }
 }))
 
-vi.mock('@/lib/audio', () => ({
+vi.mock('@/lib/audioDecode', () => ({
   PEAKS_PER_SECOND: 200,
   decodeAudioToPeaks: vi.fn()
 }))
