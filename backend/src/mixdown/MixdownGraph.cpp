@@ -4,9 +4,7 @@
 
 #include <cmath>
 
-namespace silverdaw
-{
-namespace mixdown_graph
+namespace silverdaw::mixdown_graph
 {
 
 /**
@@ -157,5 +155,4 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
     return out;
 }
 
-} // namespace mixdown_graph
-} // namespace silverdaw
+} // namespace silverdaw::mixdown_graph

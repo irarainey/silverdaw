@@ -22,9 +22,7 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
-namespace silverdaw
-{
-namespace mixdown_render_pass1
+namespace silverdaw::mixdown_render_pass1
 {
 
 struct Pass1Result
@@ -59,5 +57,4 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
                      BridgeServer& bridge,
                      std::atomic<bool>& cancelFlag);
 
-} // namespace mixdown_render_pass1
-} // namespace silverdaw
+} // namespace silverdaw::mixdown_render_pass1

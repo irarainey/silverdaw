@@ -5,9 +5,7 @@
 #include <cmath>
 #include <limits>
 
-namespace silverdaw
-{
-namespace mixdown_bridge
+namespace silverdaw::mixdown_bridge
 {
 
 // Min spacing between progress envelopes so the bridge isn't flooded.
@@ -66,5 +64,4 @@ void broadcastFailed(BridgeServer& bridge, MixdownFailureCode code, const juce::
     bridge.broadcast("MIXDOWN_FAILED", juce::var(obj));
 }
 
-} // namespace mixdown_bridge
-} // namespace silverdaw
+} // namespace silverdaw::mixdown_bridge

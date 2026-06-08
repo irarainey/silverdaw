@@ -20,9 +20,7 @@
 
 #include <samplerate.h>
 
-namespace silverdaw
-{
-namespace mixdown_graph
+namespace silverdaw::mixdown_graph
 {
 
 // Block size bounds WarpProcessor's internal 64-iteration safety cap and
@@ -305,5 +303,4 @@ private:
     const char* lastError_{nullptr};
 };
 
-} // namespace mixdown_graph
-} // namespace silverdaw
+} // namespace silverdaw::mixdown_graph

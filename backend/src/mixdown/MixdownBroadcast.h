@@ -12,9 +12,7 @@
 
 #include <juce_core/juce_core.h>
 
-namespace silverdaw
-{
-namespace mixdown_bridge
+namespace silverdaw::mixdown_bridge
 {
 
 void broadcastProgress(BridgeServer& bridge, double percent, const char* stage);
@@ -30,5 +28,4 @@ void broadcastDone(BridgeServer& bridge,
 
 void broadcastFailed(BridgeServer& bridge, MixdownFailureCode code, const juce::String& error);
 
-} // namespace mixdown_bridge
-} // namespace silverdaw
+} // namespace silverdaw::mixdown_bridge

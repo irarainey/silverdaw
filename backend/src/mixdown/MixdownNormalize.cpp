@@ -10,9 +10,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
-namespace silverdaw
-{
-namespace mixdown_normalize
+namespace silverdaw::mixdown_normalize
 {
 
 using mixdown_bridge::broadcastProgress;
@@ -199,5 +197,4 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
     return result;
 }
 
-} // namespace mixdown_normalize
-} // namespace silverdaw
+} // namespace silverdaw::mixdown_normalize

@@ -14,9 +14,7 @@
 
 #include <juce_core/juce_core.h>
 
-namespace silverdaw
-{
-namespace mixdown_normalize
+namespace silverdaw::mixdown_normalize
 {
 
 struct Pass2Result
@@ -48,5 +46,4 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                               BridgeServer& bridge,
                               std::atomic<bool>& cancelFlag);
 
-} // namespace mixdown_normalize
-} // namespace silverdaw
+} // namespace silverdaw::mixdown_normalize

@@ -12,9 +12,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
-namespace silverdaw
-{
-namespace mixdown_render_pass1
+namespace silverdaw::mixdown_render_pass1
 {
 
 using mixdown_bridge::broadcastProgress;
@@ -443,5 +441,4 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     return result;
 }
 
-} // namespace mixdown_render_pass1
-} // namespace silverdaw
+} // namespace silverdaw::mixdown_render_pass1
