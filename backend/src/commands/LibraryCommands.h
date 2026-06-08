@@ -9,9 +9,13 @@ class AudioEngine;
 class ProjectState;
 class BridgeServer;
 class DecodedCache;
+struct ProjectSession;
 
 // LibraryAnalysis owns background analysis; handlers own mutation + scheduling.
 
+void handleLibraryItemRelink(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
+                             BridgeServer& bridge, const ProjectSession& session, juce::ThreadPool& peakPool,
+                             const DecodedCache& decodedCache);
 void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                       BridgeServer& bridge, juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
 void handleLibraryRemove(const juce::var& payload, ProjectState& projectState);

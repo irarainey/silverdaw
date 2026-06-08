@@ -1,6 +1,7 @@
 #include "ProjectState.h"
 
 #include <cmath>
+#include <algorithm>
 #include <functional>
 
 namespace silverdaw
@@ -380,4 +381,85 @@ juce::String ProjectState::getClipFilePath(const juce::String& clipId) const
     return clip.getProperty(kFilePath, {}).toString();
 }
 
+
+static juce::Array<juce::var> readEnvelopeArray(const juce::ValueTree& clip,
+                                                const juce::Identifier& id)
+{
+    if (!clip.hasProperty(id)) return {};
+    const auto& v = clip.getProperty(id);
+    if (!v.isArray()) return {};
+    return *v.getArray();
+}
+
+static bool envelopeArraysSemanticallyEqual(const juce::Array<juce::var>& a,
+                                            const juce::Array<juce::var>& b,
+                                            const juce::Identifier& timeId,
+                                            const juce::Identifier& gainId)
+{
+    if (a.size() != b.size()) return false;
+    for (int i = 0; i < a.size(); ++i)
+    {
+        const double ta = static_cast<double>(a.getReference(i).getProperty(timeId, 0.0));
+        const double tb = static_cast<double>(b.getReference(i).getProperty(timeId, 0.0));
+        const double ga = static_cast<double>(a.getReference(i).getProperty(gainId, 1.0));
+        const double gb = static_cast<double>(b.getReference(i).getProperty(gainId, 1.0));
+        if (std::abs(ta - tb) > 1.0e-3 || std::abs(ga - gb) > 1.0e-4) return false;
+    }
+    return true;
+}
+
+bool ProjectState::setClipEnvelope(const juce::String& clipId,
+                                   const juce::Array<juce::var>& points)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+
+    // Normalise envelopes so default/duplicate shapes do not pollute persisted state.
+    juce::Array<juce::var> normalised;
+    normalised.ensureStorageAllocated(points.size());
+    for (const auto& p : points)
+    {
+        if (!p.isObject()) return false;
+        const double t = static_cast<double>(p.getProperty(kEnvelopeTimeMs, 0.0));
+        const double g = static_cast<double>(p.getProperty(kEnvelopeGain, 1.0));
+        const double clampedTime = juce::jmax(0.0, t);
+        const double clampedGain = juce::jlimit(0.0, 4.0, g);
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty(kEnvelopeTimeMs, clampedTime);
+        obj->setProperty(kEnvelopeGain, clampedGain);
+        normalised.add(juce::var(obj));
+    }
+    std::sort(normalised.begin(), normalised.end(),
+              [](const juce::var& a, const juce::var& b) {
+                  return static_cast<double>(a.getProperty("timeMs", 0.0)) <
+                         static_cast<double>(b.getProperty("timeMs", 0.0));
+              });
+    for (int i = 1; i < normalised.size(); ++i)
+    {
+        const double prev = static_cast<double>(normalised.getReference(i - 1).getProperty(kEnvelopeTimeMs, 0.0));
+        const double curr = static_cast<double>(normalised.getReference(i).getProperty(kEnvelopeTimeMs, 0.0));
+        if (std::abs(curr - prev) < 1.0e-3) return false; // duplicate timeMs
+    }
+
+    const auto existing = readEnvelopeArray(clip, kEnvelopePoints);
+    if (normalised.isEmpty())
+    {
+        if (!clip.hasProperty(kEnvelopePoints)) return false;
+        clip.removeProperty(kEnvelopePoints, &undoManager);
+        return true;
+    }
+    if (envelopeArraysSemanticallyEqual(existing, normalised, kEnvelopeTimeMs, kEnvelopeGain))
+    {
+        return false;
+    }
+    clip.setProperty(kEnvelopePoints, juce::var(normalised), &undoManager);
+    return true;
+}
+
+juce::Array<juce::var> ProjectState::getClipEnvelope(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return {};
+    return readEnvelopeArray(clip, kEnvelopePoints);
+}
 } // namespace silverdaw

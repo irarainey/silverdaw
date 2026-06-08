@@ -1,4 +1,5 @@
 #include "ProjectState.h"
+#include "ProjectStatePropertyHelpers.h"
 
 #include <cmath>
 
@@ -214,7 +215,7 @@ bool ProjectState::setTrackHeightPx(const juce::String& trackId, double heightPx
     return true;
 }
 
-// Send epsilon suppresses near-zero UI noise and keeps legacy snapshots byte-equivalent.
+
 static constexpr float kSendEpsilon = 1.0e-4f;
 
 static bool nearlyZero(float value) noexcept
@@ -344,8 +345,6 @@ float ProjectState::getTrackPan(const juce::String& trackId) const
 // Epsilons sit below perceptible or renderer-visible resolution.
 static constexpr float kToneDbEpsilon = 1.0e-3f;
 static constexpr float kLevelerEpsilon = 1.0e-4f;
-static constexpr float kReverbEpsilon = 1.0e-4f;
-static constexpr float kDelayEpsilon = 1.0e-4f;
 
 static bool applyClampedDb(juce::ValueTree& tree,
                            const juce::Identifier& id,
@@ -364,28 +363,6 @@ static bool applyClampedDb(juce::ValueTree& tree,
         return true;
     }
     if (hadProperty && std::abs(previous - clamped) < kToneDbEpsilon) return false;
-    tree.setProperty(id, clamped, undo);
-    return true;
-}
-
-static bool applyUnitFloat(juce::ValueTree& tree,
-                           const juce::Identifier& id,
-                           float value,
-                           float epsilon,
-                           juce::UndoManager* undo)
-{
-    const auto clamped = juce::jlimit(0.0f, 1.0f, value);
-    const bool hadProperty = tree.hasProperty(id);
-    const auto previous = hadProperty
-        ? static_cast<float>(static_cast<double>(tree.getProperty(id)))
-        : 0.0f;
-    if (std::abs(clamped) < epsilon)
-    {
-        if (!hadProperty) return false;
-        tree.removeProperty(id, undo);
-        return true;
-    }
-    if (hadProperty && std::abs(previous - clamped) < epsilon) return false;
     tree.setProperty(id, clamped, undo);
     return true;
 }
@@ -468,163 +445,6 @@ float ProjectState::getTrackLevelerAmount(const juce::String& trackId) const
     const auto track = findTrack(trackId);
     if (!track.isValid()) return 0.0f;
     return static_cast<float>(static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
-}
-
-static juce::Array<juce::var> readEnvelopeArray(const juce::ValueTree& clip,
-                                                const juce::Identifier& id)
-{
-    if (!clip.hasProperty(id)) return {};
-    const auto& v = clip.getProperty(id);
-    if (!v.isArray()) return {};
-    return *v.getArray();
-}
-
-static bool envelopeArraysSemanticallyEqual(const juce::Array<juce::var>& a,
-                                            const juce::Array<juce::var>& b,
-                                            const juce::Identifier& timeId,
-                                            const juce::Identifier& gainId)
-{
-    if (a.size() != b.size()) return false;
-    for (int i = 0; i < a.size(); ++i)
-    {
-        const double ta = static_cast<double>(a.getReference(i).getProperty(timeId, 0.0));
-        const double tb = static_cast<double>(b.getReference(i).getProperty(timeId, 0.0));
-        const double ga = static_cast<double>(a.getReference(i).getProperty(gainId, 1.0));
-        const double gb = static_cast<double>(b.getReference(i).getProperty(gainId, 1.0));
-        if (std::abs(ta - tb) > 1.0e-3 || std::abs(ga - gb) > 1.0e-4) return false;
-    }
-    return true;
-}
-
-bool ProjectState::setClipEnvelope(const juce::String& clipId,
-                                   const juce::Array<juce::var>& points)
-{
-    auto clip = findClip(clipId);
-    if (!clip.isValid()) return false;
-
-    // Normalise envelopes so default/duplicate shapes do not pollute persisted state.
-    juce::Array<juce::var> normalised;
-    normalised.ensureStorageAllocated(points.size());
-    for (const auto& p : points)
-    {
-        if (!p.isObject()) return false;
-        const double t = static_cast<double>(p.getProperty(kEnvelopeTimeMs, 0.0));
-        const double g = static_cast<double>(p.getProperty(kEnvelopeGain, 1.0));
-        const double clampedTime = juce::jmax(0.0, t);
-        const double clampedGain = juce::jlimit(0.0, 4.0, g);
-        auto* obj = new juce::DynamicObject();
-        obj->setProperty(kEnvelopeTimeMs, clampedTime);
-        obj->setProperty(kEnvelopeGain, clampedGain);
-        normalised.add(juce::var(obj));
-    }
-    std::sort(normalised.begin(), normalised.end(),
-              [](const juce::var& a, const juce::var& b) {
-                  return static_cast<double>(a.getProperty("timeMs", 0.0)) <
-                         static_cast<double>(b.getProperty("timeMs", 0.0));
-              });
-    for (int i = 1; i < normalised.size(); ++i)
-    {
-        const double prev = static_cast<double>(normalised.getReference(i - 1).getProperty(kEnvelopeTimeMs, 0.0));
-        const double curr = static_cast<double>(normalised.getReference(i).getProperty(kEnvelopeTimeMs, 0.0));
-        if (std::abs(curr - prev) < 1.0e-3) return false; // duplicate timeMs
-    }
-
-    const auto existing = readEnvelopeArray(clip, kEnvelopePoints);
-    if (normalised.isEmpty())
-    {
-        if (!clip.hasProperty(kEnvelopePoints)) return false;
-        clip.removeProperty(kEnvelopePoints, &undoManager);
-        return true;
-    }
-    if (envelopeArraysSemanticallyEqual(existing, normalised, kEnvelopeTimeMs, kEnvelopeGain))
-    {
-        return false;
-    }
-    clip.setProperty(kEnvelopePoints, juce::var(normalised), &undoManager);
-    return true;
-}
-
-juce::Array<juce::var> ProjectState::getClipEnvelope(const juce::String& clipId) const
-{
-    const auto clip = findClip(clipId);
-    if (!clip.isValid()) return {};
-    return readEnvelopeArray(clip, kEnvelopePoints);
-}
-
-bool ProjectState::setProjectReverb(float size, float decay, float tone, float mix)
-{
-    bool changed = false;
-    changed |= applyUnitFloat(root, kReverbSize, size, kReverbEpsilon, &undoManager);
-    changed |= applyUnitFloat(root, kReverbDecay, decay, kReverbEpsilon, &undoManager);
-    changed |= applyUnitFloat(root, kReverbTone, tone, kReverbEpsilon, &undoManager);
-    changed |= applyUnitFloat(root, kReverbMix, mix, kReverbEpsilon, &undoManager);
-    return changed;
-}
-
-float ProjectState::getProjectReverbSize() const
-{
-    return static_cast<float>(static_cast<double>(root.getProperty(kReverbSize, 0.0)));
-}
-float ProjectState::getProjectReverbDecay() const
-{
-    return static_cast<float>(static_cast<double>(root.getProperty(kReverbDecay, 0.0)));
-}
-float ProjectState::getProjectReverbTone() const
-{
-    return static_cast<float>(static_cast<double>(root.getProperty(kReverbTone, 0.0)));
-}
-float ProjectState::getProjectReverbMix() const
-{
-    return static_cast<float>(static_cast<double>(root.getProperty(kReverbMix, 0.0)));
-}
-
-// Reject unknown delay note values so hostile clients cannot persist unsupported state.
-static bool isLegalDelayNoteValue(const juce::String& v)
-{
-    return v == "1/4" || v == "1/8" || v == "1/8T" || v == "1/16";
-}
-
-bool ProjectState::setProjectDelay(const juce::String& noteValue, float feedback,
-                                   float tone, float mix)
-{
-    if (!isLegalDelayNoteValue(noteValue)) return false;
-
-    bool changed = false;
-
-    // Suppress the default note so untouched delay state stays absent.
-    const bool hadNote = root.hasProperty(kDelayNoteValue);
-    const auto prevNote = hadNote ? root.getProperty(kDelayNoteValue).toString() : juce::String("1/8");
-    if (noteValue == "1/8")
-    {
-        if (hadNote) { root.removeProperty(kDelayNoteValue, &undoManager); changed = true; }
-    }
-    else if (!hadNote || prevNote != noteValue)
-    {
-        root.setProperty(kDelayNoteValue, noteValue, &undoManager);
-        changed = true;
-    }
-
-    changed |= applyUnitFloat(root, kDelayFeedback, feedback, kDelayEpsilon, &undoManager);
-    changed |= applyUnitFloat(root, kDelayTone, tone, kDelayEpsilon, &undoManager);
-    changed |= applyUnitFloat(root, kDelayMix, mix, kDelayEpsilon, &undoManager);
-    return changed;
-}
-
-juce::String ProjectState::getProjectDelayNoteValue() const
-{
-    return root.getProperty(kDelayNoteValue, "1/8").toString();
-}
-float ProjectState::getProjectDelayFeedback() const
-{
-    return static_cast<float>(static_cast<double>(root.getProperty(kDelayFeedback, 0.0)));
-}
-float ProjectState::getProjectDelayTone() const
-{
-    return static_cast<float>(static_cast<double>(root.getProperty(kDelayTone, 0.0)));
-}
-float ProjectState::getProjectDelayMix() const
-{
-    return static_cast<float>(static_cast<double>(root.getProperty(kDelayMix, 0.0)));
 }
 
 juce::StringArray ProjectState::getTrackClipIds(const juce::String& trackId) const

@@ -14,9 +14,6 @@ class DecodedCache;
 
 // Project lifecycle handlers own file I/O; snapshot/rebuild helpers stay in ProjectSession.
 
-void handleLibraryItemRelink(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
-                             BridgeServer& bridge, const ProjectSession& session, juce::ThreadPool& peakPool,
-                             const DecodedCache& decodedCache);
 void handleProjectNew(AudioEngine& engine, ProjectState& projectState, BridgeServer& bridge,
                       ProjectSession& session);
 void handleProjectLoad(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,

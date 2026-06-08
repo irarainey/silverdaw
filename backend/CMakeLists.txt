@@ -264,8 +264,12 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectState.cpp
     src/project/ProjectStateClips.cpp
     src/project/ProjectStateLibrary.cpp
+    src/project/ProjectStateLibraryAnalysis.cpp
+    src/project/ProjectStateMarkers.cpp
+    src/project/ProjectStateProjectFx.cpp
     src/project/ProjectStateSerialization.cpp
-    src/project/ProjectStateTracksFx.cpp
+    src/project/ProjectStateSettings.cpp
+    src/project/ProjectStateTracks.cpp
     src/project/ProjectTransitions.cpp
     src/project/SampleExport.cpp
     src/project/ValueTreeJson.cpp)
