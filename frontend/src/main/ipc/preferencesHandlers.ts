@@ -1,0 +1,168 @@
+// Preferences IPC handlers: UI panel sizes, developer/debug gates, quality-of-life
+// (toasts + default paths), folder picker, autosave config, and audio output
+// selection. All prefs state and save scheduling go through PrefsService.
+// Registered from main/index.ts.
+
+import { ipcMain, dialog, type BrowserWindow } from 'electron'
+import { IPC } from '../../shared/ipc-channels'
+import { getDefaultDebugLogDirectory } from '../preferences'
+import type {
+  AudioOutputPrefs,
+  AutosavePrefs,
+  DebugPrefs,
+  PathPrefs,
+  ToastPrefs,
+  UiPrefs
+} from '../preferences'
+import { clampAutosaveSeconds } from '../preferences'
+import type { PrefsService } from '../prefsService'
+
+export interface PreferencesHandlersContext {
+  getMainWindow(): BrowserWindow | null
+  prefs: PrefsService
+  getStartupLoggingEnabled(): boolean
+  getStartupDevToolsEnabled(): boolean
+}
+
+export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): void {
+  const { prefs } = ctx
+
+  ipcMain.handle(IPC.prefs.getUi, () => prefs.get().ui)
+
+  // Preferences-dialog saves should be durable immediately.
+  ipcMain.on(IPC.prefs.setUi, (_evt, partial: Partial<UiPrefs>) => {
+    const p = prefs.get()
+    p.ui = { ...p.ui, ...partial }
+    prefs.flushSaveSync()
+  })
+
+  // ─── Developer preferences ───────────────────────────────────────────────
+  // Startup snapshots gate logger init, backend env, and DevTools access.
+
+  ipcMain.handle(IPC.debug.getStartupPrefs, () => ({
+    loggingEnabled: ctx.getStartupLoggingEnabled(),
+    devToolsEnabled: ctx.getStartupDevToolsEnabled(),
+    logDirectory: prefs.get().debug.logDirectory
+  }))
+  ipcMain.handle(IPC.debug.getPrefs, () => ({ ...prefs.get().debug }))
+  ipcMain.on(IPC.debug.setPrefs, (_evt, partial: unknown) => {
+    if (!partial || typeof partial !== 'object') return
+    const p = partial as Partial<DebugPrefs>
+    const current = prefs.get().debug
+    const next: DebugPrefs = { ...current }
+    if (typeof p.loggingEnabled === 'boolean') next.loggingEnabled = p.loggingEnabled
+    if (typeof p.devToolsEnabled === 'boolean') next.devToolsEnabled = p.devToolsEnabled
+    if (typeof p.logDirectory === 'string') {
+      const trimmed = p.logDirectory.trim()
+      next.logDirectory = trimmed.length > 0 ? trimmed : getDefaultDebugLogDirectory()
+    }
+    if (
+      next.loggingEnabled === current.loggingEnabled &&
+      next.devToolsEnabled === current.devToolsEnabled &&
+      next.logDirectory === current.logDirectory
+    ) {
+      return
+    }
+    prefs.get().debug = next
+    // These prefs only apply after restart, so persist synchronously.
+    prefs.flushSaveSync()
+  })
+
+  // ─── Quality-of-life preferences (toasts, default paths) ────────────────
+  ipcMain.handle(IPC.prefs.getQol, () => ({
+    toasts: { ...prefs.get().toasts },
+    paths: { ...prefs.get().paths }
+  }))
+
+  ipcMain.on(IPC.prefs.setQol, (_evt, partial: unknown) => {
+    if (!partial || typeof partial !== 'object') return
+    const p = partial as {
+      toasts?: Partial<ToastPrefs>
+      paths?: Partial<PathPrefs>
+    }
+    const store = prefs.get()
+    if (p.toasts && typeof p.toasts.enabled === 'boolean') {
+      store.toasts = { ...store.toasts, enabled: p.toasts.enabled }
+    }
+    if (p.paths) {
+      const nextPaths: PathPrefs = { ...store.paths }
+      if (typeof p.paths.defaultProjectDir === 'string' && p.paths.defaultProjectDir.length > 0) {
+        nextPaths.defaultProjectDir = p.paths.defaultProjectDir
+      }
+      if (typeof p.paths.defaultClipDir === 'string' && p.paths.defaultClipDir.length > 0) {
+        nextPaths.defaultClipDir = p.paths.defaultClipDir
+        // Apply the new default immediately for this session.
+        prefs.setCurrentClipDir(p.paths.defaultClipDir)
+      }
+      store.paths = nextPaths
+      // Best-effort; failures fall back in the dialog.
+      void prefs.ensureProjectDirExists()
+    }
+    prefs.flushSaveSync()
+  })
+
+  ipcMain.handle(
+    IPC.prefs.chooseDirectory,
+    async (_evt, args: unknown): Promise<string | null> => {
+      const win = ctx.getMainWindow()
+      if (!win) return null
+      const a = (args ?? {}) as { title?: string; defaultPath?: string }
+      const result = await dialog.showOpenDialog(win, {
+        title: typeof a.title === 'string' ? a.title : 'Choose folder',
+        defaultPath: typeof a.defaultPath === 'string' ? a.defaultPath : undefined,
+        properties: ['openDirectory', 'createDirectory']
+      })
+      if (result.canceled || result.filePaths.length === 0) return null
+      return result.filePaths[0]
+    }
+  )
+
+  // ─── Autosave preferences ───────────────────────────────────────────────
+  ipcMain.handle(
+    IPC.prefs.getAutosaveConfig,
+    (): { enabled: boolean; intervalSeconds: number } => ({ ...prefs.get().autosave })
+  )
+
+  ipcMain.on(IPC.prefs.setAutosaveConfig, (_evt, partial: unknown) => {
+    if (!partial || typeof partial !== 'object') return
+    const p = partial as Partial<AutosavePrefs>
+    const store = prefs.get()
+    let changed = false
+    if (typeof p.enabled === 'boolean' && p.enabled !== store.autosave.enabled) {
+      store.autosave = { ...store.autosave, enabled: p.enabled }
+      changed = true
+    }
+    if (typeof p.intervalSeconds === 'number' && Number.isFinite(p.intervalSeconds)) {
+      const clamped = clampAutosaveSeconds(p.intervalSeconds)
+      if (clamped !== store.autosave.intervalSeconds) {
+        store.autosave = { ...store.autosave, intervalSeconds: clamped }
+        changed = true
+      }
+    }
+    if (changed) prefs.schedulePrefsSave()
+  })
+
+  // ─── Audio output device preferences ────────────────────────────────────
+  // Persist only backend-acknowledged selections; runtime state stays in the renderer.
+  ipcMain.handle(
+    IPC.prefs.getAudioOutput,
+    (): { typeName: string | null; deviceName: string | null } => ({ ...prefs.get().audioOutput })
+  )
+
+  ipcMain.on(IPC.prefs.setAudioOutput, (_evt, partial: unknown) => {
+    if (!partial || typeof partial !== 'object') return
+    const p = partial as Partial<AudioOutputPrefs>
+    const store = prefs.get()
+    const nextTypeName = typeof p.typeName === 'string' && p.typeName.length > 0 ? p.typeName : null
+    const nextDeviceName =
+      typeof p.deviceName === 'string' && p.deviceName.length > 0 ? p.deviceName : null
+    if (
+      store.audioOutput.typeName === nextTypeName &&
+      store.audioOutput.deviceName === nextDeviceName
+    ) {
+      return
+    }
+    store.audioOutput = { typeName: nextTypeName, deviceName: nextDeviceName }
+    prefs.schedulePrefsSave()
+  })
+}
