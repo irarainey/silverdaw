@@ -29,8 +29,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
-import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
-import { startAutosaveManager, stopAutosaveManager, clearAutosaveBucket } from '@/lib/autosave'
+import { startAutosaveManager, stopAutosaveManager } from '@/lib/autosave'
 import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
@@ -38,6 +37,9 @@ import { registerMenuShortcuts } from '@/lib/menuShortcuts'
 import { onBackendStatus as onEngineBackendStatus } from '@/lib/engineRecovery'
 import { useAppKeyboardShortcuts } from '@/lib/app/useAppKeyboardShortcuts'
 import { useAppMenuActions } from '@/lib/app/useAppMenuActions'
+import { useMissingFileRelink } from '@/lib/app/useMissingFileRelink'
+import { useProjectAudioOutputReconciliation } from '@/lib/app/useProjectAudioOutputReconciliation'
+import { useUnsavedChangesGuard } from '@/lib/app/useUnsavedChangesGuard'
 import { useAppStore } from '@/stores/appStore'
 
 const project = useProjectStore()
@@ -45,20 +47,12 @@ const transport = useTransportStore()
 const ui = useUiStore()
 const library = useLibraryStore()
 const notifications = useNotificationsStore()
-const audioDevices = useAudioDeviceStore()
 const appStore = useAppStore()
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
 const exportMixdownOpen = ref(false)
-const relinkDialogOpen = ref(false)
-// Warn when a project's saved audio output is unavailable; live output stays unchanged.
-const audioUnavailableOpen = ref(false)
-const audioUnavailableSavedTypeName = ref<string | null>(null)
-const audioUnavailableSavedDeviceName = ref<string | null>(null)
-// Dedupe unavailable-output warnings per renderer session.
-const audioReconciledKeys = new Set<string>()
 const sampleRatePromptState = useSampleRateMismatchPromptState()
 const mixdownState = useMixdownState()
 // Recovery blocks startup until each autosave entry is resolved.
@@ -66,15 +60,24 @@ const recoveryEntries = ref<RecoverableEntry[]>([])
 const recoveryDialogOpen = ref(false)
 // Cold-launch path parked while recovery runs.
 let pendingOpenAfterRecovery: string | null = null
-// Action deferred until the unsaved-changes prompt resolves.
-const unsavedPromptOpen = ref(false)
-let pendingAfterDiscard: (() => void) | null = null
+
+// Missing-file relink, per-project audio-output reconciliation, and the
+// unsaved-changes guard live in focused shell composables.
+const { relinkDialogOpen } = useMissingFileRelink()
+const { audioUnavailableOpen, audioUnavailableSavedTypeName, audioUnavailableSavedDeviceName } =
+  useProjectAudioOutputReconciliation()
+const {
+  unsavedPromptOpen,
+  guardAgainstUnsavedChanges,
+  onUnsavedPromptSave,
+  onUnsavedPromptDiscard,
+  onUnsavedPromptCancel
+} = useUnsavedChangesGuard()
 
 let unsubscribeMenu: (() => void) | null = null
 let unsubscribeOpenFromPath: (() => void) | null = null
 let unsubscribeBackendStatus: (() => void) | null = null
 let unregisterShortcuts: (() => void) | null = null
-let cleanViewStateSave: Promise<void> | null = null
 
 // One body class covers all long-running jobs so the busy cursor cannot clear early.
 const stopBusyCursorWatcher = watch(
@@ -83,40 +86,6 @@ const stopBusyCursorWatcher = watch(
     document.body.classList.toggle('is-importing', busy)
   },
   { immediate: true }
-)
-
-// ─── Missing-file detection ────────────────────────────────────────────
-// Watch unresolved library ids so every persisted source path can trigger relinking.
-const unresolvedLibraryItemIds = computed(() =>
-  library.items
-    .filter((i) => i.unresolved)
-    .map((i) => i.id)
-    .sort()
-    .join('|')
-)
-const stopUnresolvedWatch = watch(
-  unresolvedLibraryItemIds,
-  (next, prev) => {
-    if (!next || next === prev) return
-    const ids = next.split('|').filter((s) => s.length > 0)
-    if (ids.length === 0) return
-    // Only announce fresh or grown missing-file sets.
-    const prevIds = (prev ?? '').split('|').filter((s) => s.length > 0)
-    const isNew = ids.some((id) => !prevIds.includes(id))
-    if (!isNew) return
-    relinkDialogOpen.value = true
-    // Count unique paths so the toast matches RelinkDialog rows.
-    const uniqueMissingPaths = new Set<string>()
-    for (const id of ids) {
-      const item = library.byId[id]
-      if (item) uniqueMissingPaths.add(item.filePath)
-    }
-    const fileCount = uniqueMissingPaths.size
-    notifications.push(
-      'error',
-      `${fileCount} ${fileCount === 1 ? 'audio file is' : 'audio files are'} missing — locate or relink to play.`
-    )
-  }
 )
 
 onMounted(() => {
@@ -167,65 +136,6 @@ const { onGlobalShortcutKey } = useAppKeyboardShortcuts({
     exportMixdownOpen.value = true
   }
 })
-
-// ─── Per-project audio output reconciliation ──────────────────────────
-// Apply each saved project output once after both project and device state hydrate.
-function reconcileProjectAudioOutput(): void {
-  if (!audioDevices.hydrated) return
-  const projectId = project.projectId
-  if (!projectId) return
-  const savedType = project.audioOutputTypeName
-  const savedDevice = project.audioOutputDeviceName
-  if (!savedType || !savedDevice) return
-
-  const key = `${projectId}::${savedType}::${savedDevice}`
-  if (audioReconciledKeys.has(key)) return
-  audioReconciledKeys.add(key)
-
-  if (
-    audioDevices.currentTypeName === savedType &&
-    audioDevices.currentDeviceName === savedDevice
-  ) {
-    log.info('audio', `project audio output already active (${savedType} / ${savedDevice})`)
-    return
-  }
-
-  // Do not override an in-flight user-initiated switch to the same device.
-  const pending = audioDevices.pendingSelection
-  if (pending && pending.typeName === savedType && pending.deviceName === savedDevice) {
-    return
-  }
-
-  const available = audioDevices.flatDevices.some(
-    (d) => d.typeName === savedType && d.deviceName === savedDevice
-  )
-  if (available) {
-    log.info('audio', `switching to project audio output (${savedType} / ${savedDevice})`)
-    audioDevices.selectDevice(savedType, savedDevice, { persistUserPreference: false })
-  } else {
-    log.warn(
-      'audio',
-      `project audio output unavailable (${savedType} / ${savedDevice}); leaving live device on default`
-    )
-    audioUnavailableSavedTypeName.value = savedType
-    audioUnavailableSavedDeviceName.value = savedDevice
-    audioUnavailableOpen.value = true
-  }
-}
-
-// Reconcile when project output or device hydration changes.
-watch(
-  () => [
-    project.projectId,
-    project.audioOutputTypeName,
-    project.audioOutputDeviceName,
-    audioDevices.hydrated
-  ] as const,
-  () => {
-    reconcileProjectAudioOutput()
-  },
-  { immediate: true }
-)
 
 // ─── Initial bridge-connection timeout ────────────────────────────────
 // Surface startup failures instead of leaving StartupScreen waiting forever.
@@ -370,7 +280,6 @@ onBeforeUnmount(() => {
   stopAutosaveManager()
   stopBusyCursorWatcher()
   stopBridgeTimerWatcher()
-  stopUnresolvedWatch()
   if (bridgeTimer) {
     clearTimeout(bridgeTimer)
     bridgeTimer = null
@@ -393,78 +302,6 @@ const { handleMenuAction } = useAppMenuActions({
   isModalOpen: isShortcutModalOpen,
   openRecentPath
 })
-
-/** Gate destructive navigation on unsaved changes; clean projects still flush view state. */
-function guardAgainstUnsavedChanges(proceed: () => void): void {
-  if (!project.isDirty) {
-    void persistCleanViewState().then(proceed)
-    return
-  }
-  pendingAfterDiscard = proceed
-  unsavedPromptOpen.value = true
-}
-
-async function persistCleanViewState(): Promise<void> {
-  if (!transport.bridgeReady || !project.currentFilePath || cleanViewStateSave) {
-    return cleanViewStateSave ?? Promise.resolve()
-  }
-  cleanViewStateSave = project
-    .saveViewStateAndWait()
-    .then((result) => {
-      if (!result.ok) {
-        log.warn('project', `view-state save failed: ${result.error ?? 'unknown error'}`)
-      }
-    })
-    .finally(() => {
-      cleanViewStateSave = null
-    })
-  return cleanViewStateSave
-}
-
-/** Save from the unsaved-changes prompt, then run the pending action on ack. */
-async function onUnsavedPromptSave(): Promise<void> {
-  unsavedPromptOpen.value = false
-  const next = pendingAfterDiscard
-  pendingAfterDiscard = null
-  if (!next) return
-
-  let filePath = project.currentFilePath
-  let isSaveAs = false
-  if (!filePath) {
-    isSaveAs = true
-    filePath = await window.silverdaw.chooseProjectSaveAs(project.projectName || 'Untitled')
-    if (!filePath) return // Save As cancelled.
-  }
-
-  const result = await project.saveAndWait(filePath, isSaveAs)
-  if (!result.ok) {
-    if (
-      result.error?.startsWith('Timed out') ||
-      result.error === 'The audio engine isn\'t connected'
-    ) {
-      notifications.pushError(`Save failed: ${result.error}.`)
-    }
-    return // Bridge-reported save failures are shown elsewhere.
-  }
-  next()
-}
-
-async function onUnsavedPromptDiscard(): Promise<void> {
-  unsavedPromptOpen.value = false
-  const next = pendingAfterDiscard
-  pendingAfterDiscard = null
-  // Await autosave cleanup before close/exit can terminate IPC.
-  const projectId = project.projectId
-  if (projectId) {
-    await clearAutosaveBucket(projectId)
-  }
-  next?.()
-}
-
-function onUnsavedPromptCancel(): void {
-  unsavedPromptOpen.value = false
-  pendingAfterDiscard = null
-}
 </script>
 
 <template>

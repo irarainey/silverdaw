@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Track-header overlay aligned to the PixiJS timeline rows.
 
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoTrack } from '@/lib/importAudio'
@@ -11,13 +11,11 @@ import {
   MAX_TRACK_DB,
   taperPositionToLinear
 } from '@/lib/audio/db'
-import {
-  MAX_TRACK_HEIGHT,
-  MIN_TRACK_HEIGHT,
-  RULER_HEIGHT
-} from '@/lib/timeline/constants'
-import { buildTrackRowLayout, trackHeightOf } from '@/lib/timeline/trackLayout'
+import { RULER_HEIGHT } from '@/lib/timeline/constants'
+import { buildTrackRowLayout } from '@/lib/timeline/trackLayout'
 import { useTrackHeaderEditing } from '@/lib/track/useTrackHeaderEditing'
+import { useTrackResizeDrag } from '@/lib/track/useTrackResizeDrag'
+import { useTrackReorderDrag } from '@/lib/track/useTrackReorderDrag'
 import TrackMeter from '@/components/TrackMeter.vue'
 
 withDefaults(defineProps<{ scrollY?: number }>(), { scrollY: 0 })
@@ -64,85 +62,14 @@ const {
 const rowLayout = computed(() => buildTrackRowLayout(project.tracks))
 
 // ─── Resize-handle drag ───────────────────────────────────────────────────
-// Pointermove previews locally; pointerup commits one undoable backend change.
+// Visual height of the resize-handle strip (template geometry).
 const HANDLE_PX = 5
 
-interface ResizeDragState {
-  trackId: string
-  startY: number
-  startHeightPx: number
-  moved: boolean
-}
-let resizeDrag: ResizeDragState | null = null
-
-function onHandlePointerDown(track: { id: string }, ev: PointerEvent): void {
-  if (ev.button !== 0) return
-  const current = project.tracks.find((t) => t.id === track.id)
-  if (!current) return
-  ev.preventDefault()
-  ev.stopPropagation()
-  resizeDrag = {
-    trackId: track.id,
-    startY: ev.clientY,
-    startHeightPx: trackHeightOf(current),
-    moved: false
-  }
-  ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
-  window.addEventListener('pointermove', onHandlePointerMove)
-  window.addEventListener('pointerup', onHandlePointerUp)
-  window.addEventListener('pointercancel', onHandlePointerUp)
-}
-
-function onHandlePointerMove(ev: PointerEvent): void {
-  if (!resizeDrag) return
-  const dy = ev.clientY - resizeDrag.startY
-  if (!resizeDrag.moved && Math.abs(dy) < 1) return
-  resizeDrag.moved = true
-  const next = Math.max(
-    MIN_TRACK_HEIGHT,
-    Math.min(MAX_TRACK_HEIGHT, Math.round(resizeDrag.startHeightPx + dy))
-  )
-  project.setTrackHeightLocal(resizeDrag.trackId, next)
-}
-
-function onHandlePointerUp(): void {
-  window.removeEventListener('pointermove', onHandlePointerMove)
-  window.removeEventListener('pointerup', onHandlePointerUp)
-  window.removeEventListener('pointercancel', onHandlePointerUp)
-  const drag = resizeDrag
-  resizeDrag = null
-  if (!drag || !drag.moved) return
-  const t = project.tracks.find((x) => x.id === drag.trackId)
-  if (!t) return
-  // Commit once per drag.
-  project.setTrackHeight(drag.trackId, trackHeightOf(t))
-}
+const { onHandlePointerDown } = useTrackResizeDrag()
 
 // ─── Reorder drag ─────────────────────────────────────────────────────────
-// A movement threshold prevents accidental reorder commits from grip misclicks.
-const REORDER_THRESHOLD_PX = 4
-
-interface ReorderDragState {
-  trackId: string
-  startY: number
-  startIndex: number
-  moved: boolean
-}
-let reorderDrag: ReorderDragState | null = null
-const dropIndicatorIndex = ref<number | null>(null)
-const reorderingTrackId = ref<string | null>(null)
-
-function computeDropIndex(clientY: number, rowsHostRect: DOMRect): number {
-  // Convert pointer y into row-layout content space.
-  const localY = clientY - rowsHostRect.top + RULER_HEIGHT
-  const layout = rowLayout.value
-  for (let i = 0; i < layout.length; i++) {
-    const row = layout[i]!
-    const mid = row.top + row.height / 2
-    if (localY < mid) return i
-  }
-  return layout.length
-}
+const { rowsHostEl, dropIndicatorIndex, reorderingTrackId, dropIndicatorTopPx, onGripPointerDown } =
+  useTrackReorderDrag(rowLayout)
 
 function onHeaderClick(track: { id: string }, ev: MouseEvent): void {
   // Ignore clicks on controls so selection never steals their gesture.
@@ -178,69 +105,6 @@ function isTrackFxShowing(trackId: string): boolean {
     !ui.libraryPanelCollapsed
   )
 }
-
-function onGripPointerDown(track: { id: string }, ev: PointerEvent): void {
-  if (ev.button !== 0) return
-  ev.preventDefault()
-  ev.stopPropagation()
-  const startIndex = project.tracks.findIndex((t) => t.id === track.id)
-  if (startIndex < 0) return
-  reorderDrag = {
-    trackId: track.id,
-    startY: ev.clientY,
-    startIndex,
-    moved: false
-  }
-  ;(ev.target as HTMLElement).setPointerCapture?.(ev.pointerId)
-  window.addEventListener('pointermove', onGripPointerMove)
-  window.addEventListener('pointerup', onGripPointerUp)
-  window.addEventListener('pointercancel', onGripPointerUp)
-}
-
-function onGripPointerMove(ev: PointerEvent): void {
-  if (!reorderDrag) return
-  const dy = ev.clientY - reorderDrag.startY
-  if (!reorderDrag.moved && Math.abs(dy) < REORDER_THRESHOLD_PX) return
-  reorderDrag.moved = true
-  reorderingTrackId.value = reorderDrag.trackId
-  const host = rowsHostEl.value
-  if (!host) return
-  const rect = host.getBoundingClientRect()
-  let target = computeDropIndex(ev.clientY, rect)
-  // Convert visual slot to post-removal target; hide no-op indicators.
-  if (target > reorderDrag.startIndex) target -= 1
-  dropIndicatorIndex.value = target === reorderDrag.startIndex ? null : target
-}
-
-function onGripPointerUp(): void {
-  window.removeEventListener('pointermove', onGripPointerMove)
-  window.removeEventListener('pointerup', onGripPointerUp)
-  window.removeEventListener('pointercancel', onGripPointerUp)
-  const drag = reorderDrag
-  reorderDrag = null
-  reorderingTrackId.value = null
-  const indicator = dropIndicatorIndex.value
-  dropIndicatorIndex.value = null
-  if (!drag || !drag.moved || indicator === null) return
-  project.reorderTrack(drag.trackId, indicator)
-}
-
-const rowsHostEl = ref<HTMLDivElement | null>(null)
-
-// Drop-indicator top in rows-host content space.
-const dropIndicatorTopPx = computed<number>(() => {
-  const idx = dropIndicatorIndex.value
-  const layout = rowLayout.value
-  if (idx === null) return 0
-  if (idx >= layout.length) {
-    const last = layout[layout.length - 1]
-    if (!last) return 0
-    return last.top + last.height - RULER_HEIGHT
-  }
-  const row = layout[idx]
-  if (!row) return 0
-  return row.top - RULER_HEIGHT - 1
-})
 </script>
 
 <template>
