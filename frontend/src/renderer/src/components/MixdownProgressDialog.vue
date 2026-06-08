@@ -42,7 +42,7 @@ function onCancel(): void {
   <Teleport to="body">
     <div
       v-if="visible"
-      class="dialog-backdrop z-[1200]"
+      class="dialog-backdrop z-1200"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="mixdown-progress-title"

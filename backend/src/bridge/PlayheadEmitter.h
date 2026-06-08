@@ -44,6 +44,8 @@ class PlayheadEmitter : public juce::Timer
     bool lastTrackLevelsHadSignal = false;
     // Reused across ticks to avoid reallocating the scratch vector.
     std::vector<BusGraph::TrackPeakSnapshot> trackPeakScratch;
+    // Last observed bus-graph skip count, to log only newly dropped blocks.
+    juce::uint64 lastSkippedBlocks = 0;
 };
 
 } // namespace silverdaw

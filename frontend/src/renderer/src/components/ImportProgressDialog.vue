@@ -46,7 +46,7 @@ function stageColor(stage: ImportStage): string {
   <Transition name="fade">
     <div
       v-if="entries.length > 0"
-      class="fixed bottom-12 right-4 z-[1100] flex w-72 flex-col gap-1 rounded-lg border border-zinc-700 bg-zinc-900/95 p-2 shadow-xl backdrop-blur"
+      class="fixed bottom-12 right-4 z-1100 flex w-72 flex-col gap-1 rounded-lg border border-zinc-700 bg-zinc-900/95 p-2 shadow-xl backdrop-blur"
       role="status"
       aria-live="polite"
     >

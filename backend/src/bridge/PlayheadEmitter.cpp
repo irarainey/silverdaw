@@ -97,6 +97,18 @@ void PlayheadEmitter::timerCallback()
         masterPeakLogMaxR = 0.0F;
     }
 
+    // Surface any audio blocks the bus graph dropped under contention. Logged on
+    // the message thread (never the audio thread) and only when newly dropped.
+    const juce::uint64 skipped = engine.busGraphSkippedBlocks();
+    if (skipped != lastSkippedBlocks)
+    {
+        silverdaw::log::warn("engine.audio",
+                             "busGraph skipped " + juce::String(skipped - lastSkippedBlocks) +
+                                 " audio block(s) under message-thread contention (total=" +
+                                 juce::String(skipped) + ")");
+        lastSkippedBlocks = skipped;
+    }
+
     // Per-track meters use the same activity gate and one trailing zero as master.
     engine.drainAllTrackPeaks(trackPeakScratch);
     bool anyTrackHasSignal = false;

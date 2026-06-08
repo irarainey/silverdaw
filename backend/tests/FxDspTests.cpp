@@ -391,6 +391,89 @@ void testEqualPowerPanGains()
         }
 }
 
+// Regression guard for the atomic pan publication: a lock-free setTrackPan must
+// still apply the equal-power gains through the audio-thread mix.
+void testBusGraphPanAppliedThroughMix()
+{
+    constexpr int kBlock = 256;
+    constexpr double kRate = 48000.0;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, kRate);
+
+    ConstantSource src(0.5F);
+    bg.attachClip("t1", "c1", &src);
+    bg.setTrackPan("t1", -1.0F); // hard left
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    out.clear();
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    bg.getNextAudioBlock(info);
+
+    requireNear(out.getMagnitude(0, 0, kBlock), 0.5 * std::sqrt(2.0), 1.0e-4,
+                "hard-left pan boosts the left channel by sqrt2");
+    requireNear(out.getMagnitude(1, 0, kBlock), 0.0, 1.0e-4,
+                "hard-left pan silences the right channel");
+
+    bg.releaseResources();
+}
+
+// Stress the lock-free setters (pan/sends/peaks) and the locked tone setter
+// concurrently with the audio callback: output must stay finite, no crash or
+// deadlock, and the final published state must take effect deterministically.
+void testBusGraphConcurrentParamUpdatesAreSafe()
+{
+    constexpr int kBlock = 128;
+    constexpr double kRate = 48000.0;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, kRate);
+
+    ConstantSource src(0.25F);
+    bg.attachClip("t1", "c1", &src);
+
+    std::atomic<bool> stop{false};
+    std::thread writer([&]() {
+        int i = 0;
+        std::vector<silverdaw::BusGraph::TrackPeakSnapshot> peaks;
+        while (! stop.load(std::memory_order_relaxed))
+        {
+            const float pan = (static_cast<float>(i % 200) / 100.0F) - 1.0F; // sweep -1..1
+            bg.setTrackPan("t1", pan);
+            bg.setTrackSends("t1", 0.3F, 0.2F);
+            bg.setTrackTone("t1", 2.0F, -1.0F, 1.5F, false, false, false);
+            bg.drainAllTrackPeaks(peaks);
+            ++i;
+        }
+    });
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    for (int b = 0; b < 4000; ++b)
+    {
+        out.clear();
+        bg.getNextAudioBlock(info);
+        require(std::isfinite(out.getMagnitude(0, 0, kBlock)),
+                "left output stays finite under concurrent param churn");
+        require(std::isfinite(out.getMagnitude(1, 0, kBlock)),
+                "right output stays finite under concurrent param churn");
+    }
+
+    stop.store(true, std::memory_order_relaxed);
+    writer.join();
+
+    // Settle to a known pan and confirm the lock-free publication took effect.
+    // Assert on hard-left so the check is independent of the tone EQ the stress
+    // loop left applied: the right channel is silenced by gainR=0 regardless.
+    bg.setTrackPan("t1", -1.0F);
+    out.clear();
+    bg.getNextAudioBlock(info);
+    requireNear(out.getMagnitude(1, 0, kBlock), 0.0, 1.0e-4,
+                "settled hard-left pan silences the right channel");
+    require(out.getMagnitude(0, 0, kBlock) > 0.01F,
+            "settled hard-left pan keeps the left channel audible");
+
+    bg.releaseResources();
+}
+
 } // namespace
 
 void addFxDspTests(std::vector<TestCase>& tests)
@@ -402,6 +485,8 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"SharedFx Room rings a tail after input stops and terminates", testSharedFxRoomTailRingsAndTerminates});
     tests.push_back({"SharedFx Echo reproduces a delayed copy and terminates", testSharedFxEchoRepeatsAndTerminates});
     tests.push_back({"BusGraph equal-power pan gains (unity centre, constant power)", testEqualPowerPanGains});
+    tests.push_back({"BusGraph lock-free pan publishes equal-power gains through the mix", testBusGraphPanAppliedThroughMix});
+    tests.push_back({"BusGraph stays safe under concurrent lock-free param updates", testBusGraphConcurrentParamUpdatesAreSafe});
 }
 
 } // namespace silverdaw::tests

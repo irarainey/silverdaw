@@ -23,11 +23,13 @@ public:
         juce::MixerAudioSource innerMixer;
         TrackChain chain;
         int clipCount = 0;
-        float reverbSend = 0.0F;
-        float delaySend = 0.0F;
-        float pan = 0.0F;
-        float panGainL = 1.0F;
-        float panGainR = 1.0F;
+        // Scalar mix params: atomically published by message-thread setters and
+        // read by the audio thread, so setTrackSends/setTrackPan need no lock.
+        std::atomic<float> reverbSend{0.0F};
+        std::atomic<float> delaySend{0.0F};
+        std::atomic<float> pan{0.0F};
+        std::atomic<float> panGainL{1.0F};
+        std::atomic<float> panGainR{1.0F};
         std::atomic<float> peakL{0.0F};
         std::atomic<float> peakR{0.0F};
 
@@ -116,7 +118,19 @@ public:
         for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
             info.buffer->clear(ch, info.startSample, info.numSamples);
 
-        const juce::ScopedLock sl(lock);
+        // Bounded real-time mitigation: never block the audio thread (the hard
+        // invariant forbids it). If the message thread is mid-mutation we skip
+        // this block (already cleared above -> silence) and record it for the
+        // debug logs, rather than waiting and risking priority inversion.
+        // NOTE: this is NOT full lock-free publication. The lock still guards
+        // non-atomic DSP param coherence (TrackChain/SharedFx setters); making
+        // those publish atomically is the remaining debt to fully retire it.
+        const juce::ScopedTryLock sl(lock);
+        if (! sl.isLocked())
+        {
+            skippedBlocks.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         // NOTE: do NOT early-return on empty runtimes; shared FX tails still need pumping.
         if (preparedMax <= 0) return;
 
@@ -144,8 +158,8 @@ public:
                 juce::AudioSourceChannelInfo sub(&scratch, 0, n);
                 kv.second->getNextAudioBlock(sub);
 
-                const float rSend = kv.second->reverbSend;
-                const float dSend = kv.second->delaySend;
+                const float rSend = kv.second->reverbSend.load(std::memory_order_relaxed);
+                const float dSend = kv.second->delaySend.load(std::memory_order_relaxed);
                 for (int ch = 0; ch < sendChannels; ++ch)
                 {
                     if (rSend != 0.0F)
@@ -153,15 +167,17 @@ public:
                     if (dSend != 0.0F)
                         delaySendBuf.addFrom(ch, 0, scratch, ch, 0, n, dSend);
                 }
-                if (kv.second->pan == 0.0F || outChannels < 2)
+                if (kv.second->pan.load(std::memory_order_relaxed) == 0.0F || outChannels < 2)
                 {
                     for (int ch = 0; ch < outChannels; ++ch)
                         info.buffer->addFrom(ch, dst, scratch, ch, 0, n);
                 }
                 else
                 {
-                    info.buffer->addFrom(0, dst, scratch, 0, 0, n, kv.second->panGainL);
-                    info.buffer->addFrom(1, dst, scratch, 1, 0, n, kv.second->panGainR);
+                    info.buffer->addFrom(0, dst, scratch, 0, 0, n,
+                                         kv.second->panGainL.load(std::memory_order_relaxed));
+                    info.buffer->addFrom(1, dst, scratch, 1, 0, n,
+                                         kv.second->panGainR.load(std::memory_order_relaxed));
                     for (int ch = 2; ch < outChannels; ++ch)
                         info.buffer->addFrom(ch, dst, scratch, ch, 0, n);
                 }
@@ -212,15 +228,19 @@ public:
         auto sendIt = pendingSends.find(trackId);
         if (sendIt != pendingSends.end())
         {
-            rt->reverbSend = sendIt->second.reverbSend;
-            rt->delaySend = sendIt->second.delaySend;
+            rt->reverbSend.store(sendIt->second.reverbSend, std::memory_order_relaxed);
+            rt->delaySend.store(sendIt->second.delaySend, std::memory_order_relaxed);
         }
 
         auto panIt = pendingPans.find(trackId);
         if (panIt != pendingPans.end())
         {
-            rt->pan = panIt->second;
-            equalPowerPanGains(panIt->second, rt->panGainL, rt->panGainR);
+            float gL = 1.0F;
+            float gR = 1.0F;
+            equalPowerPanGains(panIt->second, gL, gR);
+            rt->pan.store(panIt->second, std::memory_order_relaxed);
+            rt->panGainL.store(gL, std::memory_order_relaxed);
+            rt->panGainR.store(gR, std::memory_order_relaxed);
         }
     }
 
@@ -244,7 +264,8 @@ public:
     bool consumeTrackPeaks(const juce::String& trackId,
                            float& outL, float& outR) noexcept
     {
-        const juce::ScopedLock sl(lock);
+        // Lock-free: the map is only ever mutated on this (message) thread, and
+        // peaks are atomic, so this read cannot race the audio thread.
         auto it = runtimes.find(trackId);
         if (it == runtimes.end())
         {
@@ -284,13 +305,14 @@ public:
         if (trackId.isEmpty()) return;
         const float r = juce::jlimit(0.0F, 1.0F, std::isfinite(reverbSend) ? reverbSend : 0.0F);
         const float d = juce::jlimit(0.0F, 1.0F, std::isfinite(delaySend) ? delaySend : 0.0F);
-        const juce::ScopedLock sl(lock);
+        // Lock-free: publishes atomic scalars; pending* and the map are
+        // message-thread-only, so this never contends the audio callback.
         pendingSends[trackId] = {r, d};
         auto it = runtimes.find(trackId);
         if (it != runtimes.end())
         {
-            it->second->reverbSend = r;
-            it->second->delaySend = d;
+            it->second->reverbSend.store(r, std::memory_order_relaxed);
+            it->second->delaySend.store(d, std::memory_order_relaxed);
         }
     }
 
@@ -309,14 +331,16 @@ public:
         float gL = 1.0F;
         float gR = 1.0F;
         equalPowerPanGains(p, gL, gR);
-        const juce::ScopedLock sl(lock);
+        // Lock-free: publishes atomic scalars. Map/pending* are message-thread-only.
+        // A concurrent audio read may briefly see a mismatched pan/gain pair; each
+        // value is individually valid so the worst case is a one-block transient.
         pendingPans[trackId] = p;
         auto it = runtimes.find(trackId);
         if (it != runtimes.end())
         {
-            it->second->pan = p;
-            it->second->panGainL = gL;
-            it->second->panGainR = gR;
+            it->second->panGainL.store(gL, std::memory_order_relaxed);
+            it->second->panGainR.store(gR, std::memory_order_relaxed);
+            it->second->pan.store(p, std::memory_order_relaxed);
         }
     }
 
@@ -356,8 +380,8 @@ public:
 
     void drainAllTrackPeaks(std::vector<TrackPeakSnapshot>& out)
     {
+        // Lock-free: message-thread-only map iteration; peaks are atomic.
         out.clear();
-        const juce::ScopedLock sl(lock);
         out.reserve(runtimes.size());
         for (auto& kv : runtimes)
         {
@@ -366,6 +390,13 @@ public:
             kv.second->consumePeaks(l, r);
             out.push_back({kv.first, l, r});
         }
+    }
+
+    // Total audio blocks skipped because the audio thread could not acquire the
+    // lock (message-thread mutation in flight). Monotonic; for debug telemetry.
+    juce::uint64 audioBlocksSkipped() const noexcept
+    {
+        return skippedBlocks.load(std::memory_order_relaxed);
     }
 
     void clear()
@@ -395,6 +426,7 @@ private:
     }
 
     juce::CriticalSection lock;
+    std::atomic<juce::uint64> skippedBlocks{0};
     std::unordered_map<juce::String, std::unique_ptr<TrackRuntime>> runtimes;
     std::unordered_map<juce::String, TrackRuntime*> clipToTrack;
 

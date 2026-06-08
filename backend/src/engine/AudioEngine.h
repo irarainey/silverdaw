@@ -86,6 +86,9 @@ class AudioEngine
 
     void drainAllTrackPeaks(std::vector<BusGraph::TrackPeakSnapshot>& out);
 
+    // Total audio blocks the bus graph dropped under message-thread contention.
+    juce::uint64 busGraphSkippedBlocks() const noexcept { return busGraph.audioBlocksSkipped(); }
+
     void setPositionMs(double ms);
 
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
