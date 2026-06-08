@@ -828,7 +828,7 @@ the change is heard immediately.
 **Backend (audio-thread data model).** The renderer holds the editable
 breakpoint list; the backend stores it on the clip's `ValueTree` and
 compiles it into an immutable **`EnvelopeSnapshot`**
-(`backend/src/EnvelopeSnapshot.h`): a sorted flat array of
+(`backend/src/dsp/EnvelopeSnapshot.h`): a sorted flat array of
 `(timeMs, gainLinear, gainDb)` points, built off the audio thread whenever
 the points change. A snapshot with fewer than two points is treated as "no
 envelope", so the common no-shape path is bit-identical to pre-envelope
@@ -878,7 +878,7 @@ applies the identical stage so live and offline outputs match.
   disconnect / session reset, all open gestures are force-closed.
   When `gestureId` is absent (e.g. a numeric field commit in the
   dialog) the backend falls back to the existing time-window
-  coalescing in `Main.cpp` for backward compatibility — one undo
+  coalescing in `BridgeDispatch.cpp` for backward compatibility — one undo
   step per gesture, regardless of how many intermediate messages
   flowed.
 - `CLIP_SET_ENVELOPE` is registered in the hardcoded undoable type list
@@ -1328,9 +1328,8 @@ playable at every point — no broken-build day):
   buffer, independent of clip count). Add **separate**
   `trackId → TrackRuntime` and `clipId → TrackRuntime` indices on
   `AudioEngine`; **do not change the existing clip-keyed `tracks`
-  map or any clip-keyed call sites yet** (`AudioEngine.h:1327`,
-  `AudioEngine.cpp:457–464`, mixdown clip enumerations
-  `MixdownEngine.cpp:576–746`). `TrackRuntime` sums clip outputs
+  map or any clip-keyed call sites yet** (in `AudioEngine.*` and the
+  mixdown clip enumerations). `TrackRuntime` sums clip outputs
   into its per-track buffer and still pushes into the existing
   `MixerAudioSource`, taking over the role of being the thing the
   mixer pulls — individual clip transports are **no longer also
@@ -1384,7 +1383,7 @@ playable at every point — no broken-build day):
   pointing at **inert backend handlers** that validate, persist to
   `ValueTree`, register undo entries, and acknowledge — but do **no
   DSP work**. Register each in the hardcoded undoable-types list and
-  the coalesce-key map in `Main.cpp` with stable target keys
+  the coalesce-key map in `BridgeDispatch.cpp` with stable target keys
   (`clipId`, `trackId`, `"project"`) and the new
   `(messageType, targetId, gestureId)` coalesce key (§7.11). Add
   runtime-guard tests in `bridge-protocol.test.ts`. **No on-disk

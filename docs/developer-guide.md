@@ -86,33 +86,28 @@ Threading invariants:
 ```text
 backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
   src/
-    AudioEngine.*        Master transport clock, mixer, per-track audio sources
-    BusGraph.*           Root pull graph: per-track runtimes (incl. equal-power pan) + shared FX bus
-    TrackChain.*         Canonical per-track DSP chain (Tone → Leveler → gain → mute/solo)
-    ToneEq.*             Per-track 3-band EQ + Low / High Cut filters
-    Leveler.*            Per-track single-knob soft-knee compressor (the Leveler)
-    SharedFx.*           Project-wide shared Reverb + Delay buses
-    EnvelopeSnapshot.*   Compiled, audio-thread-readable per-clip volume envelope
-    MixdownEngine.*      Offline render on the same canonical chain as playback
-    WarpProcessor.*      Rubber Band time-stretch / pitch-shift wrapper
-    BpmDetector.*        BTrack-based BPM / beat analysis
-    LoudnessAnalyzer.*   ITU-R BS.1770-4 loudness + true-peak measurement
-    BridgeServer.*       IXWebSocket loopback server + AUTH + text-frame broadcast
-    Main.cpp             Entry point, message dispatch, PlayheadEmitter, peaks ThreadPool
-    PeaksCache.*         Disk-backed peaks cache (%APPDATA%/Silverdaw/peaks/)
-    ProjectFile.*        .silverdaw JSON save / load (versioned ValueTree serialisation)
-    ProjectState.*       juce::ValueTree wrapper + UndoManager + dirty tracking
-    ValueTreeJson.*      Generic juce::ValueTree ↔ juce::var converter (used by ProjectFile)
-    Waveform.*           Min/max peak computation
+    core/                Entry point (Main.cpp) + logging
+    bridge/              IXWebSocket loopback server, AUTH, message dispatch,
+                         payload helpers, playhead emitter
+    commands/            Per-domain bridge command handlers (clips, tracks,
+                         mixdown, undo, transport, library, …)
+    engine/              Master transport clock, mixer / bus graph (incl.
+                         equal-power pan), per-track audio sources, keep-alive
+    dsp/                 Per-track DSP: Tone EQ, Leveler, pan / track chain,
+                         shared Reverb + Delay, BPM + loudness, waveform peaks
+    mixdown/             Offline render + export / normalise / dither on the
+                         same canonical chain as playback
+    project/             juce::ValueTree state + UndoManager, .silverdaw save /
+                         load, ValueTree↔JSON converter, peaks cache
   tests/                 SilverdawBackendTests custom harness (wired into CTest)
   CMakeLists.txt         FetchContent for JUCE + IXWebSocket
 frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
   resources/icons/       Multi-resolution .ico + PNG set (consumed by main + renderer)
   src/
-    main/                Electron main process (window, menu, IPC, prefs, backend spawn)
+    main/                Electron main process (window, menu, IPC, prefs, backend spawn + supervisor)
     preload/             contextBridge surface exposed as window.silverdaw
-    renderer/src/        Vue 3 SPA (Composition API, Pinia, PixiJS, Tailwind v4)
-    shared/              Bridge wire-protocol catalogue + runtime guards (also TS-tested)
+    renderer/src/        Vue 3 SPA (Composition API, Pinia, PixiJS, Tailwind v4); lib/ holds composables + audio/timeline helpers
+    shared/              Bridge wire-protocol facade → bridge/inbound + bridge/outbound zod schemas (also TS-tested)
   electron-builder.yml   Windows NSIS installer config
 scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
 .github/instructions/    Copilot/AI agent guidance per file type
@@ -161,9 +156,9 @@ Silverdaw currently supports the core arrangement workflow:
   shared, song-wide returns those amounts route into: a **Reverb** and a
   **Delay** (tempo-locked). All are edited live (slider drags coalesce into one undo
   step) and applied to both playback and mixdown. The DSP lives in
-  [`ToneEq`](../backend/src/ToneEq.h) / [`Leveler`](../backend/src/Leveler.h) /
-  [`TrackChain`](../backend/src/TrackChain.h)
-  / [`BusGraph`](../backend/src/BusGraph.h) (which applies pan to the dry path
+  [`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
+  [`TrackChain`](../backend/src/dsp/TrackChain.h)
+  / [`BusGraph`](../backend/src/engine/BusGraph.h) (which applies pan to the dry path
   after the pre-pan send tap) and the shared-FX engine on the backend. The open
   FX tab and the selected track are project **view state**, round-tripped through
   `PROJECT_SET_VIEW` and saved in the `.silverdaw` file alongside mute / solo.
@@ -349,10 +344,10 @@ wrapper around `schema.safeParse(value).success`. Outbound (renderer → backend
 payloads stay as plain TypeScript interfaces because every `send<K>()` call site
 is type-checked at compile time. The renderer dispatches inbound messages in
 [`frontend/src/renderer/src/lib/bridgeService.ts`](../frontend/src/renderer/src/lib/bridgeService.ts);
-the backend dispatches in [`backend/src/Main.cpp`](../backend/src/Main.cpp)
+the backend dispatches in [`backend/src/bridge/BridgeDispatch.cpp`](../backend/src/bridge/BridgeDispatch.cpp)
 (`dispatchBridgeMessage`). Inbound string / number payload fields on the
 backend are extracted through the strict
-[`backend/src/PayloadHelpers.h`](../backend/src/PayloadHelpers.h) helpers
+[`backend/src/bridge/PayloadHelpers.h`](../backend/src/bridge/PayloadHelpers.h) helpers
 (`tryGetString` / `tryGetRequiredString` / `tryGetNumber`) which reject
 malformed values up front instead of silently coercing them via
 `juce::var::toString()`.
@@ -566,14 +561,14 @@ or served from cache on load.
 **Save / load** is via `.silverdaw` files — a versioned JSON serialisation. A small outer
 object carries `schemaVersion`, `appVersion`, and an ISO `savedAt` timestamp; the `project`
 field holds the entire `PROJECT` `ValueTree` mapped through
-[`ValueTreeJson`](../backend/src/ValueTreeJson.h) (each node becomes
+[`ValueTreeJson`](../backend/src/project/ValueTreeJson.h) (each node becomes
 `{ "$type": "TRACK", id: "...", $children: [ … ] }`). Atomic save (write `<file>.tmp` then
 rename) and forward-compatible load (unknown keys are ignored). Normal Save / Save As writes
 the full project tree. Before leaving a clean project, the renderer sends
 `PROJECT_SAVE_VIEW_STATE`; the backend updates only `viewScrollX` and `playheadMs` in the
 existing `.silverdaw` file, so view state survives reopen without saving unrelated unsaved
 project edits or changing the dirty flag. Logic lives in
-[`backend/src/ProjectFile.cpp`](../backend/src/ProjectFile.cpp).
+[`backend/src/project/ProjectFile.cpp`](../backend/src/project/ProjectFile.cpp).
 
 **Missing files** — on every `tracksAsJson` / `libraryAsJson` call, the backend resolves
 each clip's library item and stat()s the underlying source path. Anything that's gone
@@ -645,7 +640,7 @@ Windows) currently round-trip through the renderer's Web Audio decoder:
 is what goes on the wire as `CLIP_ADD.filePath`.
 
 The relevant code is in
-[`audio.ts`](../frontend/src/renderer/src/lib/audio.ts),
+[`audioDecode.ts`](../frontend/src/renderer/src/lib/audioDecode.ts),
 [`importAudio.ts`](../frontend/src/renderer/src/lib/importAudio.ts) and the `audio:writeTempWav`
 handler in [`main/index.ts`](../frontend/src/main/index.ts).
 
@@ -666,8 +661,8 @@ the way in, and the original file is never modified (non-destructive editing).
 Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp and
 the per-clip volume-shape multiplier, per-track summing, the per-track
 Tone EQ + Low Cut / High Cut filters and the per-track Leveler
-([`ToneEq`](../backend/src/ToneEq.h) / [`Leveler`](../backend/src/Leveler.h) /
-[`TrackChain`](../backend/src/TrackChain.h)),
+([`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
+[`TrackChain`](../backend/src/dsp/TrackChain.h)),
 the per-track Reverb / Delay sends into the project-wide shared-FX buses,
 track gain and mute / solo, equal-power panning, the master mix and metering,
 and the `MasterClockSource` that gates playback and feeds the device. The
@@ -682,7 +677,7 @@ mute/solo; further nodes are planned there — see the
 To stop sleep-prone audio devices (notably some USB DACs) from soft-muting and
 clipping the first instants of playback, an inaudible **keep-alive floor** (TPDF
 dither at `kKeepAliveDitherAmplitude`, ≈0.004) can be mixed into the output.
-[`OutputKeepAlive`](../backend/src/OutputKeepAlive.h) owns the gate, and the
+[`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h) owns the gate, and the
 floor is injected by the metering stage **after** the master-gain ramp, so a low
 master volume can't attenuate it below the level that keeps the endpoint awake.
 The floor runs only when audio is genuinely imminent: while playing, and during a
@@ -695,7 +690,7 @@ and clears the buffer when not playing; the keep-alive injection lives downstrea
 in the metering stage.
 
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
-export writer** in [`MixdownEngine`](../backend/src/MixdownEngine.cpp). (The
+export writer** in [`MixdownExport`](../backend/src/mixdown/MixdownExport.cpp). (The
 renderer's throwaway transcode / preview WAV is itself 32-bit float, so it does
 not quantise either.) Export bit depth defaults to **16-bit**
 (`MixdownOptions::bitDepth{16}`) and offers, per format: WAV 16 / 24 / 32-float,
@@ -770,7 +765,7 @@ tempo so the timeline grid lines up with the source.
 ### Key detection
 
 Key detection runs in the renderer immediately after Web Audio decodes the file.
-`detectMusicalKey` in [`audio.ts`](../frontend/src/renderer/src/lib/audio.ts)
+`detectMusicalKey` in [`audioDecode.ts`](../frontend/src/renderer/src/lib/audioDecode.ts)
 downmixes up to the first 120 seconds, builds a chroma profile with Goertzel
 magnitude sampling, and compares that profile against major/minor key templates.
 If the top candidate is not clearly ahead of the next candidate, the key is left
@@ -793,7 +788,7 @@ persisted as `LIBRARY > ITEM.key`.
 - **FFT**: [KISS FFT](https://github.com/mborgerding/kissfft) 1.3.0 (BSD), bundled in
   the BTrack vendor copy. No FFTW dependency.
 
-The detector lives in [`backend/src/BpmDetector.cpp`](../backend/src/BpmDetector.cpp) and
+The detector lives in [`backend/src/dsp/BpmDetector.cpp`](../backend/src/dsp/BpmDetector.cpp) and
 runs on the same `juce::ThreadPool` that produces peaks — kicked off from both the
 `LIBRARY_ADD` and `CLIP_ADD` dispatch handlers (whichever arrives first wins; the
 helper `ensureBpmDetection` is idempotent and won't re-analyse a file the library

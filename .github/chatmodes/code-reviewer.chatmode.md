@@ -43,7 +43,7 @@ as blocking-class findings:
    where, and the new file/module names). Heuristics: Vue SFC > ~250 lines,
    TS module > ~350 lines, C++ TU > ~500 lines, function > ~50 lines or deeply
    nested. **Especially flag new code being piled into already-oversized files**
-   (e.g. `Main.cpp`, large stores/components) — push for extraction.
+   (e.g. large stores / components) — push for extraction.
 2. **Duplication.** Hunt for duplicated logic, dispatch branches, payload
    shapes, regex, constants, or mirrored helpers across stores/files. For each,
    give a dedupe strategy and the single source of truth it should collapse to.

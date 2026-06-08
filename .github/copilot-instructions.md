@@ -44,7 +44,7 @@ as blocking-class review findings, not stylistic suggestions.
     feature / adapter), preferring a stable barrel/facade re-export so importers
     don't churn, and **extract via pure mechanical moves** (no behaviour change)
     with build + tests green at each step.
-  **Resist adding new code to an already-oversized file** (e.g. `Main.cpp`,
+  **Resist adding new code to an already-oversized file** (e.g.
   `projectStore.ts`) — extract into a focused unit instead of growing the god
   file, even for a small addition.
 - **No duplication.** Duplicated logic, dispatch branches, payload shapes, regex,
