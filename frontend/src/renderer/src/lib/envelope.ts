@@ -108,6 +108,57 @@ export function insertEnvelopePoint(
   return { points: next, index: next.findIndex((p) => Math.abs(p.timeMs - t) < 1e-3) }
 }
 
+/** Minimum width (ms) of a hard envelope edge; an inaudible ramp that reads as
+ *  an instant transition while staying clear of the 1e-3 ms de-dup tolerance. */
+export const ENVELOPE_EDGE_EPSILON_MS = 1
+
+/**
+ * Flatten `[startMs, endMs]` to `gain` with hard step edges, leaving the rest of
+ * the envelope intact. Produces a held gate (e.g. silence a region) instead of a
+ * ramp, with near-vertical transitions into and out of the gated span.
+ */
+export function applyEnvelopeGate(
+  points: readonly ClipEnvelopePoint[],
+  startMs: number,
+  endMs: number,
+  gain: number,
+  epsilonMs: number = ENVELOPE_EDGE_EPSILON_MS
+): ClipEnvelopePoint[] {
+  const lo = Math.max(0, Math.min(startMs, endMs))
+  const hi = Math.max(startMs, endMs)
+  const endTime = points[points.length - 1]?.timeMs ?? hi
+  if (hi - lo < epsilonMs) return points.map((p) => ({ ...p }))
+
+  // Sample the original shape just outside the span so the edges don't disturb
+  // the rest of the envelope.
+  const beforeGain = envelopeGainAtMs(points, Math.max(0, lo - epsilonMs))
+  const afterGain = envelopeGainAtMs(points, hi + epsilonMs)
+  const atStart = lo <= epsilonMs
+  const atEnd = hi >= endTime - epsilonMs
+
+  // Drop interior breakpoints inside the span; pinned endpoints stay.
+  let next = points
+    .map((p) => ({ ...p }))
+    .filter((p, i, arr) => {
+      if (i === 0 || i === arr.length - 1) return true
+      return p.timeMs < lo - 1e-3 || p.timeMs > hi + 1e-3
+    })
+
+  if (atStart) {
+    next = insertEnvelopePoint(next, 0, gain).points
+  } else {
+    next = insertEnvelopePoint(next, Math.max(0, lo - epsilonMs), beforeGain).points
+    next = insertEnvelopePoint(next, lo, gain).points
+  }
+  if (atEnd) {
+    next = insertEnvelopePoint(next, endTime, gain).points
+  } else {
+    next = insertEnvelopePoint(next, hi, gain).points
+    next = insertEnvelopePoint(next, hi + epsilonMs, afterGain).points
+  }
+  return next
+}
+
 /** Remove an interior breakpoint; pinned endpoints are kept. */
 export function removeEnvelopePoint(
   points: readonly ClipEnvelopePoint[],

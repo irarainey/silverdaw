@@ -18,6 +18,8 @@ import { useClipEditorSave } from '@/lib/clipEditor/useClipEditorSave'
 import { useClipEditorCanvasInteraction } from '@/lib/clipEditor/useClipEditorCanvasInteraction'
 import { useClipEditorKeyboard } from '@/lib/clipEditor/useClipEditorKeyboard'
 import { useClipEditorTransport } from '@/lib/clipEditor/useClipEditorTransport'
+import { sourceMsToVolumeTime } from '@/lib/clipEditor/volumeOverlay'
+import { ENVELOPE_MIN_GAIN } from '@/lib/envelope'
 
 export type ClipEditorProps = {
   open: boolean
@@ -155,6 +157,27 @@ export function useClipEditorController(
     zoomOut
   } = viewport
   void _basePxPerMs
+
+  // Region gate: flatten the current selection to silence/full with hard edges.
+  const canGateSelection = computed(
+    () => volumeShapeAvailable.value && hasPlaybackSelection.value
+  )
+  function onGateSelection(gain: number): void {
+    if (!canGateSelection.value) return
+    const ratio = warpDraft.draftEffectiveRatio.value
+    const base = viewInMs.value
+    const durMs = volumeShapeDurationMs.value
+    const clampLocal = (sourceMs: number): number =>
+      Math.max(0, Math.min(durMs, sourceMsToVolumeTime(sourceMs, base, ratio)))
+    volumeShapeDraft.gateRange(clampLocal(selectionInMs.value), clampLocal(selectionEndMs.value), gain)
+    if (!volumeEditMode.value) volumeEditMode.value = true
+  }
+  function onSilenceSelection(): void {
+    onGateSelection(ENVELOPE_MIN_GAIN)
+  }
+  function onFullSelection(): void {
+    onGateSelection(1)
+  }
 
 
   // Dirty-state + save/crop affordances live in `useClipEditorDirtyState`.
@@ -574,6 +597,9 @@ export function useClipEditorController(
     volumeEditActive,
     canResetVolumeShape,
     onResetVolumeShape,
+    canGateSelection,
+    onSilenceSelection,
+    onFullSelection,
     onCanvasMouseDown,
     onCanvasContextMenu,
     onCanvasWheel,

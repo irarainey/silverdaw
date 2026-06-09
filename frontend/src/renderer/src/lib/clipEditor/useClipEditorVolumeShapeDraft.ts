@@ -11,6 +11,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { ClipEnvelopePoint } from '@shared/bridge-protocol'
 import type { Clip } from '@/stores/projectStore'
 import {
+  applyEnvelopeGate,
   defaultEnvelope,
   envelopesEqual,
   insertEnvelopePoint,
@@ -41,6 +42,9 @@ export interface ClipEditorVolumeShapeDraft {
 
   /** Remove the breakpoint at `index` (pinned endpoints are never removed). */
   removePoint: (index: number) => void
+
+  /** Flatten `[startMs, endMs]` (clip-local) to `gain` with hard step edges. */
+  gateRange: (startMs: number, endMs: number, gain: number) => void
 
   /** Reset the draft back to a flat unity shape spanning `durationMs`. */
   reset: (durationMs: number) => void
@@ -95,6 +99,10 @@ export function useClipEditorVolumeShapeDraft(): ClipEditorVolumeShapeDraft {
     draftPoints.value = removeEnvelopePoint(draftPoints.value, index)
   }
 
+  function gateRange(startMs: number, endMs: number, gain: number): void {
+    draftPoints.value = applyEnvelopeGate(draftPoints.value, startMs, endMs, gain)
+  }
+
   function reset(durationMs: number): void {
     draftPoints.value = defaultEnvelope(durationMs)
   }
@@ -110,6 +118,7 @@ export function useClipEditorVolumeShapeDraft(): ClipEditorVolumeShapeDraft {
     addPoint,
     movePoint,
     removePoint,
+    gateRange,
     reset,
     isFlat,
     committedPoints

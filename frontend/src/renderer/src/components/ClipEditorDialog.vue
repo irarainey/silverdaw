@@ -46,6 +46,9 @@ const {
   canApplyCrop,
   canResetVolumeShape,
   onResetVolumeShape,
+  canGateSelection,
+  onSilenceSelection,
+  onFullSelection,
   zoom,
   onApplyCrop,
   zoomOut,
@@ -159,10 +162,13 @@ const {
                 :edits-existing-clip="editsExistingClip"
                 :can-apply-crop="canApplyCrop"
                 :can-reset-volume="canResetVolumeShape"
+                :can-gate-selection="canGateSelection"
                 :zoom="zoom"
                 :zoom-percent="zoomPercent"
                 @apply-crop="onApplyCrop"
                 @reset-volume="onResetVolumeShape"
+                @silence-selection="onSilenceSelection"
+                @full-selection="onFullSelection"
                 @zoom-out="zoomOut"
                 @reset-zoom="resetZoom"
                 @zoom-in="zoomIn"

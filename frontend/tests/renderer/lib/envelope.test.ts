@@ -6,6 +6,7 @@ import {
   envelopeGainAtMs,
   defaultEnvelope,
   insertEnvelopePoint,
+  applyEnvelopeGate,
   removeEnvelopePoint,
   moveEnvelopePoint,
   isFlatUnityEnvelope
@@ -163,6 +164,62 @@ describe('envelope helpers', () => {
       expect(out[1]!.timeMs).toBeLessThan(1000)
       expect(out[1]!.timeMs).toBeGreaterThan(0)
       expect(out[1]!.gain).toBe(0.25)
+    })
+  })
+
+  describe('applyEnvelopeGate', () => {
+    it('silences a span from the clip start with a hard trailing edge', () => {
+      // Flat unity; silence [0, 1000] → silent block then hard rise to full.
+      const pts = [
+        { timeMs: 0, gain: 1 },
+        { timeMs: 2000, gain: 1 }
+      ]
+      const out = applyEnvelopeGate(pts, 0, 1000, 0)
+      expect(out).toEqual([
+        { timeMs: 0, gain: 0 },
+        { timeMs: 1000, gain: 0 },
+        { timeMs: 1001, gain: 1 },
+        { timeMs: 2000, gain: 1 }
+      ])
+    })
+
+    it('gates an interior span with hard edges on both sides', () => {
+      const pts = [
+        { timeMs: 0, gain: 1 },
+        { timeMs: 2000, gain: 1 }
+      ]
+      const out = applyEnvelopeGate(pts, 800, 1200, 0)
+      expect(out).toEqual([
+        { timeMs: 0, gain: 1 },
+        { timeMs: 799, gain: 1 },
+        { timeMs: 800, gain: 0 },
+        { timeMs: 1200, gain: 0 },
+        { timeMs: 1201, gain: 1 },
+        { timeMs: 2000, gain: 1 }
+      ])
+    })
+
+    it('drops interior breakpoints inside the gated span', () => {
+      const pts = [
+        { timeMs: 0, gain: 1 },
+        { timeMs: 1000, gain: 0.5 },
+        { timeMs: 2000, gain: 1 }
+      ]
+      const out = applyEnvelopeGate(pts, 0, 2000, 0)
+      expect(out).toEqual([
+        { timeMs: 0, gain: 0 },
+        { timeMs: 2000, gain: 0 }
+      ])
+    })
+
+    it('clamps the gate level and ignores spans narrower than an edge', () => {
+      const pts = [
+        { timeMs: 0, gain: 1 },
+        { timeMs: 2000, gain: 1 }
+      ]
+      expect(applyEnvelopeGate(pts, 1000, 1000.5, 0)).toEqual(pts)
+      const gated = applyEnvelopeGate(pts, 0, 1000, 9)
+      expect(gated[0]).toEqual({ timeMs: 0, gain: ENVELOPE_MAX_GAIN })
     })
   })
 })

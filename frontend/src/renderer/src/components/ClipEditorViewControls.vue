@@ -12,6 +12,7 @@ defineProps<{
   editsExistingClip: boolean
   canApplyCrop: boolean
   canResetVolume: boolean
+  canGateSelection: boolean
   zoom: number
   zoomPercent: number
 }>()
@@ -19,6 +20,8 @@ defineProps<{
 defineEmits<{
   (e: 'apply-crop'): void
   (e: 'reset-volume'): void
+  (e: 'silence-selection'): void
+  (e: 'full-selection'): void
   (e: 'zoom-out'): void
   (e: 'reset-zoom'): void
   (e: 'zoom-in'): void
@@ -55,12 +58,42 @@ defineEmits<{
         viewExpanded
           ? 'Switch to the Clip view to shape volume'
           : volumeEditMode
-            ? 'Volume shaping on — click the waveform to add or drag breakpoints'
+            ? 'Volume shaping on — drag to add or move breakpoints; hold Shift to snap to beats'
             : 'Shape the clip volume over time on the waveform'
       "
       @click="volumeEditMode = !volumeEditMode"
     >
       Volume
+    </button>
+    <!-- Region gate: flatten the selected range to silence or full volume with
+         hard edges. Acts on the current selection; enabled once a range exists. -->
+    <button
+      v-if="editsTimelineClip"
+      type="button"
+      class="rounded bg-zinc-800 px-2 py-1 text-[11px] font-medium text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+      :disabled="!canGateSelection"
+      :title="
+        canGateSelection
+          ? 'Silence the selected range with hard edges'
+          : 'Select a range on the waveform first'
+      "
+      @click="$emit('silence-selection')"
+    >
+      Silence
+    </button>
+    <button
+      v-if="editsTimelineClip"
+      type="button"
+      class="rounded bg-zinc-800 px-2 py-1 text-[11px] font-medium text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+      :disabled="!canGateSelection"
+      :title="
+        canGateSelection
+          ? 'Set the selected range to full volume with hard edges'
+          : 'Select a range on the waveform first'
+      "
+      @click="$emit('full-selection')"
+    >
+      Full
     </button>
     <!-- Non-destructive crop with dialog-local undo/redo. -->
     <button

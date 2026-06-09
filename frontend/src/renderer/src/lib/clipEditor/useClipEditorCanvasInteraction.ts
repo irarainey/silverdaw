@@ -1,15 +1,8 @@
 // Clip Editor canvas pointer, wheel, scrollbar, and keyboard-nudge handlers.
 // Pointer math uses CSS pixels; waveform drawing uses device pixels.
 import type { Ref } from 'vue'
-import {
-  hitTestHandle,
-  overlayGainToY,
-  overlayLaneIndexForY,
-  overlayYToGain,
-  sourceMsToVolumeTime,
-  volumeOverlayLanes,
-  volumeTimeToSourceMs
-} from '@/lib/clipEditor/volumeOverlay'
+import { hitTestHandle, overlayGainToY, overlayLaneIndexForY, overlayYToGain, sourceMsToVolumeTime, volumeOverlayLanes, volumeTimeToSourceMs } from '@/lib/clipEditor/volumeOverlay'
+import { snapTimelineMsToBeat, type BeatSnapContext } from '@/lib/clipEditor/envelopeBeatSnap'
 import type { LibraryItem } from '@/stores/libraryStore'
 import type { usePreviewStore } from '@/stores/previewStore'
 import type { ClipEditorVolumeShapeDraft } from '@/lib/clipEditor/useClipEditorVolumeShapeDraft'
@@ -160,6 +153,18 @@ export function useClipEditorCanvasInteraction(
       const sourceMs = vIn + ((clientX - rect.left) / rect.width) * vDur
       return Math.max(0, Math.min(durMs, sourceMsToVolumeTime(sourceMs, clipStartSourceMs, ratio)))
     }
+    // Snap a clip-local time to the source beat grid unless Shift is held.
+    // Freehand placement by default; hold Shift to snap to the source beat grid.
+    const src = deps.sourceItem()
+    const snapCtx: BeatSnapContext = {
+      baseSourceMs: clipStartSourceMs,
+      ratio,
+      sourceBpm: src?.bpm,
+      anchorSec: src?.beatAnchorSec ?? src?.beats?.[0],
+      durationMs: durMs
+    }
+    const timeAt = (clientX: number, snap: boolean): number =>
+      snap ? snapTimelineMsToBeat(xToTime(clientX), snapCtx) : xToTime(clientX)
     // In stereo view, hit-test and drag within the pointer's lane only.
     const lanes = volumeOverlayLanes(waveTopCss, waveHCss, waveformStereoLanes.value)
     const lx = e.clientX - rect.left
@@ -185,13 +190,13 @@ export function useClipEditorCanvasInteraction(
 
     let dragIndex = hit
     if (dragIndex === null) {
-      dragIndex = volumeShapeDraft.addPoint(xToTime(e.clientX), yToGain(e.clientY))
+      dragIndex = volumeShapeDraft.addPoint(timeAt(e.clientX, e.shiftKey), yToGain(e.clientY))
     }
     e.preventDefault()
 
     const onMove = (ev: MouseEvent): void => {
       if (dragIndex === null) return
-      volumeShapeDraft.movePoint(dragIndex, xToTime(ev.clientX), yToGain(ev.clientY))
+      volumeShapeDraft.movePoint(dragIndex, timeAt(ev.clientX, ev.shiftKey), yToGain(ev.clientY))
     }
     const onUp = (): void => {
       window.removeEventListener('mousemove', onMove)
