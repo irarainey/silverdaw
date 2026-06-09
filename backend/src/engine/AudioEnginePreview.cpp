@@ -151,13 +151,48 @@ bool AudioEngine::setPreviewEnvelope(const juce::Array<juce::var>& points)
 
     auto snapshot = EnvelopeSnapshot::fromVarArray(points);
     const EnvelopeSnapshot* published = snapshot->isEmpty() ? nullptr : snapshot.get();
+    const double posBefore =
+        preview.transportSource != nullptr ? preview.transportSource->getCurrentPosition() : -1.0;
+    silverdaw::log::debug("preview",
+                          "setPreviewEnvelope " + snapshot->describe().toStdString() +
+                              " published=" + (published != nullptr ? "1" : "0") +
+                              " playing=" + (preview.transportSource != nullptr &&
+                                                     preview.transportSource->isPlaying()
+                                                 ? "1"
+                                                 : "0") +
+                              " pos=" + juce::String(posBefore, 3).toStdString());
     preview.offsetSource->setEnvelopeSnapshot(published);
     if (preview.envelopeSnapshot != nullptr)
     {
         preview.retiredEnvelopes.push_back(std::move(preview.envelopeSnapshot));
     }
     preview.envelopeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
+
+    // The volume envelope is applied upstream of the transport's read-ahead buffer, so samples
+    // already cached still carry the previous gain. While playing, the read position advances past
+    // the cached window within a few ms so the new gain is heard almost immediately and we avoid
+    // disturbing the audition. While stopped, the buffer is parked over the play position and a
+    // plain seek can't invalidate an already-valid region in place (JUCE only refills once the play
+    // position leaves the cached range), so rebuild the read-ahead to force a re-read with the new
+    // envelope.
+    if (preview.transportSource != nullptr && !preview.transportSource->isPlaying())
+    {
+        rebuildPreviewReadAhead();
+    }
     return true;
+}
+
+void AudioEngine::rebuildPreviewReadAhead()
+{
+    if (preview.transportSource == nullptr || preview.offsetSource == nullptr) return;
+    const double pos = preview.transportSource->getCurrentPosition();
+    preview.transportSource->setSource(nullptr);
+    preview.transportSource->setSource(preview.offsetSource.get(),
+                                       kTransportReadAheadSamples,
+                                       &readAheadThread, preview.sampleRate);
+    preview.transportSource->setPosition(pos);
+    silverdaw::log::debug("preview",
+                          "rebuildPreviewReadAhead pos=" + juce::String(pos, 3).toStdString());
 }
 
 void AudioEngine::playPreview()
@@ -167,6 +202,14 @@ void AudioEngine::playPreview()
     {
         preview.transportSource->setPosition(0.0);
     }
+    silverdaw::log::info("preview",
+                         "playPreview pos=" +
+                             juce::String(preview.transportSource->getCurrentPosition(), 3)
+                                 .toStdString() +
+                             " envelope=" +
+                             (preview.envelopeSnapshot != nullptr
+                                  ? preview.envelopeSnapshot->describe().toStdString()
+                                  : "none"));
     // The loaded project's inaudible keep-alive tone already holds the endpoint awake, so
     // preview playback opens instantly without a wake pre-roll.
     preview.transportSource->start();

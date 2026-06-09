@@ -71,6 +71,24 @@ class EnvelopeSnapshot
 
     const std::vector<Point>& getPoints() const noexcept { return points; }
 
+    /** Compact, message-thread-only summary for diagnostic logging (not RT-safe). */
+    juce::String describe() const
+    {
+        juce::String s;
+        s << "n=" << static_cast<int>(points.size());
+        const std::size_t shown = std::min<std::size_t>(points.size(), 8);
+        s << " [";
+        for (std::size_t i = 0; i < shown; ++i)
+        {
+            if (i > 0) s << ", ";
+            s << juce::String(points[i].timeMs, 0) << "ms:"
+              << juce::String(points[i].gainLinear, 3);
+        }
+        if (points.size() > shown) s << ", ...";
+        s << "]";
+        return s;
+    }
+
   private:
     // Lets true-zero breakpoints fade smoothly instead of dropping instantly.
     static constexpr double kGainFloor = 1.0e-5;

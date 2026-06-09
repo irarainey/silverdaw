@@ -237,6 +237,11 @@ class AudioEngine
 
     void rebuildTrackPrefetch(Track& track);
 
+    // Rebuilds the preview transport's read-ahead buffer so a changed envelope/gain is heard from
+    // the first played block. JUCE's BufferingAudioSource won't invalidate an already-cached region
+    // in place, so re-setting the source is the only reliable flush when the transport is stopped.
+    void rebuildPreviewReadAhead();
+
     void flushAllDirtyRebuildsSync();
 
     void flushDirtyRebuilds();

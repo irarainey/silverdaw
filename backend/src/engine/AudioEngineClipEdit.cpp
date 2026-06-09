@@ -130,6 +130,12 @@ bool AudioEngine::setClipEnvelope(const juce::String& clipId, const juce::Array<
     auto snapshot = EnvelopeSnapshot::fromVarArray(points);
     const EnvelopeSnapshot* published = snapshot->isEmpty() ? nullptr : snapshot.get();
 
+    silverdaw::log::info("engine",
+                         "setClipEnvelope id=" + clipId.toStdString() + " " +
+                             snapshot->describe().toStdString() +
+                             " published=" + (published != nullptr ? "1" : "0") +
+                             " playing=" + (master.isPlaying() ? "1" : "0"));
+
     // Retire replaced snapshots/processors until the audio thread is quiescent.
     track->offsetSource->setEnvelopeSnapshot(published);
     if (track->envelopeSnapshot != nullptr)
@@ -137,6 +143,19 @@ bool AudioEngine::setClipEnvelope(const juce::String& clipId, const juce::Array<
         track->retiredEnvelopes.push_back(std::move(track->envelopeSnapshot));
     }
     track->envelopeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
+
+    // The envelope is applied upstream of the JUCE read-ahead buffer, so already-buffered samples
+    // carry the old gain. Rebuild the prefetch so the new envelope is audible from the first
+    // played block rather than only after the stale buffer drains.
+    if (master.isPlaying())
+    {
+        rebuildTrackPrefetch(*track);
+    }
+    else
+    {
+        track->prefetchDirty = true;
+        rebuildTimer.startTimer(kRebuildDebounceMs);
+    }
     return true;
 }
 
