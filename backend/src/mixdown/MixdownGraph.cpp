@@ -59,7 +59,8 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
         };
         out->edgeFadeSnapshot = EdgeFadeSnapshot::create(
             clip.edgeFadeIn, toSrc(clip.edgeFadeInStartMs), toSrc(clip.edgeFadeInEndMs),
-            clip.edgeFadeOut, toSrc(clip.edgeFadeOutStartMs), toSrc(clip.edgeFadeOutEndMs));
+            clip.edgeFadeOut, toSrc(clip.edgeFadeOutStartMs), toSrc(clip.edgeFadeOutEndMs),
+            clip.edgeFadeInCurve, clip.edgeFadeOutCurve);
         if (out->edgeFadeSnapshot != nullptr && !out->edgeFadeSnapshot->isEmpty())
         {
             out->offsetSource->setEdgeFadeSnapshot(out->edgeFadeSnapshot.get());

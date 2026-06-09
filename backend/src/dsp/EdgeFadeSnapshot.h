@@ -8,8 +8,18 @@
 namespace silverdaw
 {
 
+// Per-leg fade gain law. `equalPower` (sin/cos) holds blend energy constant for
+// uncorrelated material; `linear` ramps amplitude straight, matching the
+// "Fade out / in" transition recipe.
+enum class EdgeFadeCurve
+{
+    equalPower,
+    linear
+};
+
 // Immutable transition fades are published to the audio thread by pointer.
-// Timeline-sample coordinates avoid warp conversion, and equal-power legs preserve blend energy.
+// Timeline-sample coordinates avoid warp conversion; each leg carries its own
+// gain law so the two transitions around a sandwiched clip can differ.
 class EdgeFadeSnapshot
 {
   public:
@@ -21,7 +31,9 @@ class EdgeFadeSnapshot
                                                      juce::int64 fadeInEnd,
                                                      bool wantFadeOut,
                                                      juce::int64 fadeOutStart,
-                                                     juce::int64 fadeOutEnd)
+                                                     juce::int64 fadeOutEnd,
+                                                     EdgeFadeCurve fadeInCurve = EdgeFadeCurve::equalPower,
+                                                     EdgeFadeCurve fadeOutCurve = EdgeFadeCurve::equalPower)
     {
         auto snap = std::make_unique<EdgeFadeSnapshot>();
         if (wantFadeIn && fadeInEnd > fadeInStart)
@@ -29,12 +41,14 @@ class EdgeFadeSnapshot
             snap->hasFadeIn = true;
             snap->fadeInStart = fadeInStart;
             snap->fadeInEnd = fadeInEnd;
+            snap->fadeInCurve = fadeInCurve;
         }
         if (wantFadeOut && fadeOutEnd > fadeOutStart)
         {
             snap->hasFadeOut = true;
             snap->fadeOutStart = fadeOutStart;
             snap->fadeOutEnd = fadeOutEnd;
+            snap->fadeOutCurve = fadeOutCurve;
         }
         return snap;
     }
@@ -53,7 +67,7 @@ class EdgeFadeSnapshot
             {
                 const double t = static_cast<double>(s - fadeInStart) /
                                  static_cast<double>(fadeInEnd - fadeInStart);
-                g *= static_cast<float>(std::sin(t * kHalfPi));
+                g *= fadeInGain(t, fadeInCurve);
             }
         }
         if (hasFadeOut)
@@ -64,7 +78,7 @@ class EdgeFadeSnapshot
             {
                 const double t = static_cast<double>(s - fadeOutStart) /
                                  static_cast<double>(fadeOutEnd - fadeOutStart);
-                g *= static_cast<float>(std::cos(t * kHalfPi));
+                g *= fadeOutGain(t, fadeOutCurve);
             }
         }
         return g;
@@ -76,9 +90,28 @@ class EdgeFadeSnapshot
     juce::int64 getFadeInEnd() const noexcept { return fadeInEnd; }
     juce::int64 getFadeOutStart() const noexcept { return fadeOutStart; }
     juce::int64 getFadeOutEnd() const noexcept { return fadeOutEnd; }
+    EdgeFadeCurve getFadeInCurve() const noexcept { return fadeInCurve; }
+    EdgeFadeCurve getFadeOutCurve() const noexcept { return fadeOutCurve; }
 
   private:
     static constexpr double kHalfPi = 1.57079632679489661923;
+
+    // Rising leg: 0 → 1 across the overlap. Linear ramps amplitude; equal-power
+    // uses sin so paired fade-in/out hold constant power.
+    static float fadeInGain(double t, EdgeFadeCurve curve) noexcept
+    {
+        if (curve == EdgeFadeCurve::linear)
+            return static_cast<float>(t);
+        return static_cast<float>(std::sin(t * kHalfPi));
+    }
+
+    // Falling leg: 1 → 0 across the overlap, mirroring the rising law.
+    static float fadeOutGain(double t, EdgeFadeCurve curve) noexcept
+    {
+        if (curve == EdgeFadeCurve::linear)
+            return static_cast<float>(1.0 - t);
+        return static_cast<float>(std::cos(t * kHalfPi));
+    }
 
     bool hasFadeIn = false;
     bool hasFadeOut = false;
@@ -86,6 +119,8 @@ class EdgeFadeSnapshot
     juce::int64 fadeInEnd = 0;
     juce::int64 fadeOutStart = 0;
     juce::int64 fadeOutEnd = 0;
+    EdgeFadeCurve fadeInCurve = EdgeFadeCurve::equalPower;
+    EdgeFadeCurve fadeOutCurve = EdgeFadeCurve::equalPower;
 };
 
 } // namespace silverdaw

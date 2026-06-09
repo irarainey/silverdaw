@@ -111,9 +111,11 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             clip.edgeFadeIn = edge.hasFadeIn;
             clip.edgeFadeInStartMs = edge.fadeInStartMs;
             clip.edgeFadeInEndMs = edge.fadeInEndMs;
+            clip.edgeFadeInCurve = edge.fadeInCurve;
             clip.edgeFadeOut = edge.hasFadeOut;
             clip.edgeFadeOutStartMs = edge.fadeOutStartMs;
             clip.edgeFadeOutEndMs = edge.fadeOutEndMs;
+            clip.edgeFadeOutCurve = edge.fadeOutCurve;
 
             const auto library = root.getChildWithName(kLibrary);
             if (library.isValid())

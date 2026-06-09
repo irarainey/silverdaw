@@ -8,6 +8,8 @@
 
 #include <juce_core/juce_core.h>
 
+#include "EdgeFadeSnapshot.h"
+
 namespace silverdaw
 {
 
@@ -30,9 +32,11 @@ struct MixdownSnapshot
         bool edgeFadeIn{false};
         double edgeFadeInStartMs{0.0};
         double edgeFadeInEndMs{0.0};
+        EdgeFadeCurve edgeFadeInCurve{EdgeFadeCurve::equalPower};
         bool edgeFadeOut{false};
         double edgeFadeOutStartMs{0.0};
         double edgeFadeOutEndMs{0.0};
+        EdgeFadeCurve edgeFadeOutCurve{EdgeFadeCurve::equalPower};
         bool warpEnabled{false};
         juce::String warpMode; // "rhythmic" / "tonal" / "complex"
         double tempoRatio{1.0};

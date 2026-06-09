@@ -27,7 +27,7 @@ int main()
     addEnvelopeFadeTests(tests);
     addMixdownRenderTests(tests);
 
-    require(tests.size() == 54, "backend test registry should contain 54 tests");
+    require(tests.size() == 55, "backend test registry should contain 55 tests");
 
     int failed = 0;
     for (const auto& test : tests)

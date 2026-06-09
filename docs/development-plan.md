@@ -1898,8 +1898,19 @@ Implementation increments (foundations first; each keeps build + tests green):
 - [x] **D — Creation gesture + rendering + recipe UI.** Edge-drag-into-neighbour
   creates a transition (single-adjacent-neighbour only); PixiJS crossfade-region
   rendering from transition state; remove-crossfade context-menu actions; Vitest.
-  (Recipe *selection* UI is a no-op while `smooth` is the only recipe — it lands
-  with the second recipe; the store action `setTransitionRecipe` is already wired.)
+- [x] **E — Second recipe + selection UI.** A second gain-law recipe, **Fade
+  out/in** (`linear`), now reaches the audio thread: the recipe kind threads
+  through `ProjectState` → `ClipEdgeFade` → `AudioEngine::setClipEdgeFade` →
+  `EdgeFadeSnapshot` as a per-leg `EdgeFadeCurve` (`equalPower` | `linear`), so a
+  clip sandwiched between two differently-recipe'd transitions composes the right
+  law on each edge. Live and offline (`MixdownGraph`) paths share the curve. The
+  timeline context menu lists one row per recipe (per transition side, current
+  marked with a check) dispatching `setTransitionRecipe`. Custom-harness +
+  Vitest coverage for the linear law, recipe→curve derivation, and the menu.
+- [ ] **FX-based recipes** — **Bass swap**, **Filter fade**, **Delay out** still
+  pending; they need per-clip EQ/filter/delay automation tied to the transition
+  geometry (no gain-law shortcut exists). The recipe schema and selection UI are
+  ready to host them once the DSP lands.
 - [ ] **"Vocal Focus" ducking** — one action derives a ducking volume-shape on
   music clips/tracks under a selected vocal clip. Offline/precomputed, editable
   and undoable; **not** sidechain routing (that stays Phase 8).

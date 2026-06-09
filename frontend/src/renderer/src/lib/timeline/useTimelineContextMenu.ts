@@ -24,6 +24,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
+import { TRANSITION_RECIPES } from '@/lib/transitions/transitionRecipes'
 import { log } from '@/lib/log'
 
 export type ChooseAudioFile = (args: {
@@ -158,28 +159,44 @@ export function useTimelineContextMenu(
           : 'Play the clip backwards (non-destructive).'
       })
     }
-    // §12.1 — crossfade removal. A clip can fade out into its following
-    // neighbour (it is the LEFT partner) and/or fade in from its preceding
-    // neighbour (the RIGHT partner), so a sandwiched clip can show both
-    // rows. The transition id is carried in the command token.
+    // §12.1 — crossfade recipe + removal. A clip can fade out into its
+    // following neighbour (it is the LEFT partner) and/or fade in from its
+    // preceding neighbour (the RIGHT partner), so a sandwiched clip can show
+    // both groups. Each group offers the selectable recipes (current marked
+    // with a leading check) followed by its removal row. The transition id and
+    // recipe kind are carried in the command token.
     if (clip) {
       const track = project.tracks.find((t) => t.id === clip.trackId)
       const clipTransitions = track?.transitions ?? []
       const asLeft = clipTransitions.find((tr) => tr.leftClipId === clip.id)
       const asRight = clipTransitions.find((tr) => tr.rightClipId === clip.id)
-      if (asLeft) {
-        items.push({
-          command: `clip.removeTransition:${asLeft.id}`,
-          label: 'Remove Crossfade to Next Clip',
-          separatorAbove: true
+      const pushRecipeGroup = (
+        tr: { id: string; recipe: { kind: string } },
+        sideLabel: string,
+        removeLabel: string,
+        firstSeparator: boolean
+      ): void => {
+        TRANSITION_RECIPES.forEach((recipe, idx) => {
+          const on = tr.recipe.kind === recipe.kind
+          items.push({
+            command: `clip.setTransitionRecipe:${tr.id}:${recipe.kind}`,
+            label: `${on ? '\u2713 ' : ''}${sideLabel}: ${recipe.label}`,
+            title: recipe.description,
+            separatorAbove: firstSeparator && idx === 0
+          })
         })
+        items.push({ command: `clip.removeTransition:${tr.id}`, label: removeLabel })
+      }
+      if (asLeft) {
+        pushRecipeGroup(asLeft, 'Crossfade to next', 'Remove Crossfade to Next Clip', true)
       }
       if (asRight) {
-        items.push({
-          command: `clip.removeTransition:${asRight.id}`,
-          label: 'Remove Crossfade from Previous Clip',
-          separatorAbove: !asLeft
-        })
+        pushRecipeGroup(
+          asRight,
+          'Crossfade from previous',
+          'Remove Crossfade from Previous Clip',
+          !asLeft
+        )
       }
     }
     items.push({
@@ -275,6 +292,15 @@ export function useTimelineContextMenu(
     } else if (command.startsWith('clip.color:')) {
       const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
       if (Number.isFinite(idx)) project.setClipColor(clipId, idx)
+    } else if (command.startsWith('clip.setTransitionRecipe:')) {
+      const rest = command.slice('clip.setTransitionRecipe:'.length)
+      const sep = rest.lastIndexOf(':')
+      const transitionId = sep > 0 ? rest.slice(0, sep) : ''
+      const kind = sep > 0 ? rest.slice(sep + 1) : ''
+      const known = TRANSITION_RECIPES.find((r) => r.kind === kind)
+      if (clip && transitionId && known) {
+        project.setTransitionRecipe(clip.trackId, transitionId, { kind: known.kind })
+      }
     } else if (command.startsWith('clip.removeTransition:')) {
       const transitionId = command.slice('clip.removeTransition:'.length)
       if (clip && transitionId) project.deleteTransition(clip.trackId, transitionId)

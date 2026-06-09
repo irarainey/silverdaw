@@ -38,6 +38,9 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     auto* obj = new juce::DynamicObject();
     obj->setProperty("filePath", session.currentPath.isEmpty() ? juce::var() : juce::var(session.currentPath));
     obj->setProperty("name", projectState.getName());
+    // Authoritative unsaved-changes flag so incremental rebroadcasts (e.g. a
+    // transition create) don't let the renderer drop the project's dirty state.
+    obj->setProperty("dirty", projectState.isDirty());
     if (reset)
     {
         obj->setProperty("reset", true);

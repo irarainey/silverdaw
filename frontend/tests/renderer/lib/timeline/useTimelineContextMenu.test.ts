@@ -246,9 +246,37 @@ describe('useTimelineContextMenu — items builder', () => {
     expect(del).toHaveBeenCalledWith('track-1', 'tr-next')
   })
 
+  it('offers a recipe row per kind with a check on the current recipe', () => {
+    const menu = setupMenu({ clip: makeClip({ id: 'c1' }), item: makeAudioFileItem() })
+    const project = useProjectStore()
+    project.tracks[0]!.transitions = [
+      { id: 'tr-next', leftClipId: 'c1', rightClipId: 'c2', recipe: { kind: 'linear' } }
+    ] as never
+    const cmds = commandsOf(menu)
+    expect(cmds).toContain('clip.setTransitionRecipe:tr-next:smooth')
+    expect(cmds).toContain('clip.setTransitionRecipe:tr-next:linear')
+
+    const smooth = findItem(menu, 'clip.setTransitionRecipe:tr-next:smooth')
+    const linear = findItem(menu, 'clip.setTransitionRecipe:tr-next:linear')
+    expect(smooth?.label).not.toContain('\u2713')
+    expect(linear?.label).toContain('\u2713')
+  })
+
+  it('dispatches a recipe selection to setTransitionRecipe', () => {
+    const menu = setupMenu({ clip: makeClip({ id: 'c1' }), item: makeAudioFileItem() })
+    const project = useProjectStore()
+    project.tracks[0]!.transitions = [
+      { id: 'tr-next', leftClipId: 'c1', rightClipId: 'c2', recipe: { kind: 'smooth' } }
+    ] as never
+    const set = vi.spyOn(project, 'setTransitionRecipe')
+    menu.onContextMenuCommand('clip.setTransitionRecipe:tr-next:linear')
+    expect(set).toHaveBeenCalledWith('track-1', 'tr-next', { kind: 'linear' })
+  })
+
   it('omits remove-crossfade rows when the clip has no transitions', () => {
     const menu = setupMenu({ clip: makeClip({ id: 'c1' }), item: makeAudioFileItem() })
     expect(commandsOf(menu).some((c) => c.startsWith('clip.removeTransition:'))).toBe(false)
+    expect(commandsOf(menu).some((c) => c.startsWith('clip.setTransitionRecipe:'))).toBe(false)
   })
 })
 

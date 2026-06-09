@@ -7,6 +7,8 @@
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
 
+#include "EdgeFadeSnapshot.h"
+
 namespace silverdaw
 {
 
@@ -116,9 +118,11 @@ class ProjectState : public juce::ValueTree::Listener
         bool hasFadeIn = false;
         double fadeInStartMs = 0.0;
         double fadeInEndMs = 0.0;
+        EdgeFadeCurve fadeInCurve = EdgeFadeCurve::equalPower;
         bool hasFadeOut = false;
         double fadeOutStartMs = 0.0;
         double fadeOutEndMs = 0.0;
+        EdgeFadeCurve fadeOutCurve = EdgeFadeCurve::equalPower;
         bool any() const noexcept { return hasFadeIn || hasFadeOut; }
     };
 

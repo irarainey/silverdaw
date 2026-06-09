@@ -16,6 +16,7 @@ namespace
 {
 // Unknown recipes normalise to a renderable smooth crossfade.
 const juce::String kSmoothRecipeKind{"smooth"};
+const juce::String kLinearRecipeKind{"linear"};
 
 juce::String normaliseRecipeKind(const juce::var& recipe)
 {
@@ -23,8 +24,15 @@ juce::String normaliseRecipeKind(const juce::var& recipe)
     {
         const auto kind = recipe.getProperty("kind", {}).toString();
         if (kind == kSmoothRecipeKind) return kSmoothRecipeKind;
+        if (kind == kLinearRecipeKind) return kLinearRecipeKind;
     }
     return kSmoothRecipeKind;
+}
+
+// Each recipe selects the gain law applied to both legs of its overlap.
+EdgeFadeCurve recipeKindToCurve(const juce::String& kind)
+{
+    return kind == kLinearRecipeKind ? EdgeFadeCurve::linear : EdgeFadeCurve::equalPower;
 }
 } // namespace
 
@@ -165,17 +173,21 @@ ProjectState::ClipEdgeFade ProjectState::getClipEdgeFade(const juce::String& cli
         double oStart = 0.0, oEnd = 0.0;
         if (!transitionOverlapMs(track, leftId, rightId, oStart, oEnd)) continue;
 
+        const auto curve = recipeKindToCurve(t.getProperty(kRecipeKind, {}).toString());
+
         if (rightId == clipId)
         {
             fade.hasFadeIn = true;
             fade.fadeInStartMs = oStart;
             fade.fadeInEndMs = oEnd;
+            fade.fadeInCurve = curve;
         }
         if (leftId == clipId)
         {
             fade.hasFadeOut = true;
             fade.fadeOutStartMs = oStart;
             fade.fadeOutEndMs = oEnd;
+            fade.fadeOutCurve = curve;
         }
     }
     return fade;
@@ -268,7 +280,8 @@ void syncClipEdgeFades(AudioEngine& engine, const ProjectState& project)
         const auto fade = project.getClipEdgeFade(clipId);
         engine.setClipEdgeFade(clipId,
                                fade.hasFadeIn, fade.fadeInStartMs, fade.fadeInEndMs,
-                               fade.hasFadeOut, fade.fadeOutStartMs, fade.fadeOutEndMs);
+                               fade.hasFadeOut, fade.fadeOutStartMs, fade.fadeOutEndMs,
+                               fade.fadeInCurve, fade.fadeOutCurve);
     }
 }
 

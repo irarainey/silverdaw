@@ -869,6 +869,56 @@ describe('projectStore', () => {
     expect(cleared?.transitions).toBeUndefined()
   })
 
+  it('honours the backend dirty flag on a non-reset snapshot so crossfade creation stays dirty', () => {
+    const project = useProjectStore()
+
+    // Genuine load/new baseline: backend reports a clean tree.
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\xfade.silverdaw',
+      name: 'Xfade',
+      reset: true,
+      dirty: false,
+      bpm: 120,
+      tracks: [{ id: 't1', name: 'T1', gain: 1, clips: [] }]
+    })
+    expect(project.isDirty).toBe(false)
+
+    // Incremental rebroadcast (e.g. after TRANSITION_CREATE) must NOT clear the
+    // unsaved-change state the backend still reports as dirty.
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\xfade.silverdaw',
+      name: 'Xfade',
+      dirty: true,
+      bpm: 120,
+      tracks: [{ id: 't1', name: 'T1', gain: 1, clips: [] }]
+    })
+    expect(project.isDirty).toBe(true)
+
+    // A non-reset snapshot reporting clean (e.g. after Save As) clears it.
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\xfade.silverdaw',
+      name: 'Xfade',
+      dirty: false,
+      bpm: 120,
+      tracks: [{ id: 't1', name: 'T1', gain: 1, clips: [] }]
+    })
+    expect(project.isDirty).toBe(false)
+  })
+
+  it('clears dirty on a legacy non-reset snapshot that omits the dirty flag', () => {
+    const project = useProjectStore()
+    project.isDirty = true
+
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\legacy.silverdaw',
+      name: 'Legacy',
+      bpm: 120,
+      tracks: [{ id: 't1', name: 'T1', gain: 1, clips: [] }]
+    })
+
+    expect(project.isDirty).toBe(false)
+  })
+
   it('sends fire-and-forget TRANSITION_* envelopes without mutating local state', () => {
     const project = useProjectStore()
     sendMock.mockClear()
@@ -937,6 +987,51 @@ describe('projectStore', () => {
 
     // c1's tail (ends 1000) overlaps c2's head (starts 800) by 200 ms.
     project.maybeCreateTransitionAfterTrim('c1', 'right')
+    expect(sendMock).toHaveBeenCalledWith('TRANSITION_CREATE', {
+      trackId: 't1',
+      leftClipId: 'c1',
+      rightClipId: 'c2'
+    })
+  })
+
+  it('emits TRANSITION_CREATE after a left-edge trim overlaps the previous clip', () => {
+    const project = useProjectStore()
+
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\xfade.silverdaw',
+      name: 'Xfade',
+      reset: true,
+      bpm: 120,
+      library: [
+        {
+          id: 'l1',
+          kind: 'audio-file',
+          filePath: 'C:\\audio\\loop.wav',
+          fileName: 'loop.wav',
+          durationMs: 8_000,
+          sampleRate: 44_100,
+          channelCount: 2
+        }
+      ],
+      tracks: [
+        {
+          id: 't1',
+          name: 'T1',
+          gain: 1,
+          clips: [
+            { id: 'c1', libraryItemId: 'l1', offsetMs: 0, inMs: 0, durationMs: 1_000 },
+            // c2 was dragged left over c1's tail; its in-point (200) shows it had
+            // leading source to reveal, so the start could move back into [800,1000].
+            { id: 'c2', libraryItemId: 'l1', offsetMs: 800, inMs: 200, durationMs: 1_000 }
+          ]
+        }
+      ]
+    })
+    sendMock.mockClear()
+
+    // Dragging c2's start back is symmetric with extending c1's end: same overlap,
+    // same crossfade. c2 is the right partner, c1 the left.
+    project.maybeCreateTransitionAfterTrim('c2', 'left')
     expect(sendMock).toHaveBeenCalledWith('TRANSITION_CREATE', {
       trackId: 't1',
       leftClipId: 'c1',

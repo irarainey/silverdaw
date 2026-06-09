@@ -218,7 +218,8 @@ export type ProjectStateClip = z.infer<typeof ProjectStateClipSchema>
 
 /** Clip-transition recipe; discriminated union keeps variant handling wire-safe. */
 export const TransitionRecipeSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('smooth') })
+  z.object({ kind: z.literal('smooth') }),
+  z.object({ kind: z.literal('linear') })
 ])
 export type TransitionRecipe = z.infer<typeof TransitionRecipeSchema>
 
@@ -323,6 +324,8 @@ export const ProjectStatePayloadSchema = z.object({
   reset: z.boolean().optional(),
   /** Undo/Redo reconcile: replace project contents without resetting UI-only state. */
   softReplace: z.boolean().optional(),
+  /** Backend-authoritative unsaved-changes flag; absent only from legacy backends. */
+  dirty: z.boolean().optional(),
   viewPxPerSecond: z.number().optional(),
   viewScrollX: z.number().optional(),
   viewSelectedTrack: z.string().optional(),

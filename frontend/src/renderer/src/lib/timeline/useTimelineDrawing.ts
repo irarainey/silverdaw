@@ -418,6 +418,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
         clipRenderer.drawClip(clip, worldY, rowHeight, palette, worldLeft, worldRight, track.pan ?? 0)
         ++visibleClipCount
       }
+      // Overlap hatch sits above the clip blocks; crossfade curves above that.
+      clipRenderer.drawClipOverlaps(track, worldY, rowHeight, worldLeft, worldRight)
       // Crossfade overlays sit above both partner clips.
       clipRenderer.drawTrackTransitions(track, worldY, rowHeight, worldLeft, worldRight)
     }

@@ -74,7 +74,13 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
       const previousFilePath = target.currentFilePath
       target.currentFilePath = snapshot.filePath
       target.projectName = snapshot.name?.trim() ? snapshot.name : DEFAULT_PROJECT_NAME
-      if (!isSoftReplace) {
+      // Trust the backend's authoritative dirty flag when present: incremental
+      // PROJECT_STATE rebroadcasts (transition create, reconcile, reconnect)
+      // must not silently clear unsaved-change state. Legacy backends without
+      // the field fall back to the previous reset-on-replace behaviour.
+      if (typeof snapshot.dirty === 'boolean') {
+        target.isDirty = snapshot.dirty
+      } else if (!isSoftReplace) {
         target.isDirty = false
       }
       // Rotate autosave buckets when load/new/save-as changes project identity.

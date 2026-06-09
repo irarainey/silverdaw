@@ -47,3 +47,12 @@ export const TRANSITION_FILL = 0x38bdf8 // sky-400
 export const TRANSITION_FILL_ALPHA = 0.18
 export const TRANSITION_LINE = 0x7dd3fc // sky-300
 export const TRANSITION_LINE_ALPHA = 0.9
+
+// ─── Clip overlap hatch ─────────────────────────────────────────────────────
+// Diagonal hatch marking any region where two clips on a track overlap. Amber
+// reads clearly over every track-palette colour and stays distinct from the
+// blue crossfade curves, so the shared region is obvious even mid-drag, before
+// a transition is committed.
+export const OVERLAP_HATCH = 0xfbbf24 // amber-400
+export const OVERLAP_HATCH_ALPHA = 0.55
+export const OVERLAP_HATCH_SPACING_PX = 7

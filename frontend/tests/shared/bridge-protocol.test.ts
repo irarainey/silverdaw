@@ -385,6 +385,27 @@ describe('isProjectStatePayload', () => {
     ).toBe(true)
   })
 
+  it('accepts a track carrying a linear transition', () => {
+    expect(
+      isProjectStatePayload({
+        ...base,
+        tracks: [
+          {
+            id: 't1',
+            gain: 1.0,
+            clips: [
+              { id: 'c1', libraryItemId: 'l1', offsetMs: 0, durationMs: 1000 },
+              { id: 'c2', libraryItemId: 'l1', offsetMs: 800, durationMs: 1000 }
+            ],
+            transitions: [
+              { id: 'x1', leftClipId: 'c1', rightClipId: 'c2', recipe: { kind: 'linear' } }
+            ]
+          }
+        ]
+      })
+    ).toBe(true)
+  })
+
   it('rejects a transition with an unknown recipe kind or missing fields', () => {
     const track = (transitions: unknown): unknown => ({
       ...base,

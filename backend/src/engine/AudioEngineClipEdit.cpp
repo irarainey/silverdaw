@@ -195,7 +195,8 @@ bool AudioEngine::setClipReversed(const juce::String& clipId, bool reversed)
 
 bool AudioEngine::setClipEdgeFade(const juce::String& clipId,
                                   bool hasFadeIn, double fadeInStartMs, double fadeInEndMs,
-                                  bool hasFadeOut, double fadeOutStartMs, double fadeOutEndMs)
+                                  bool hasFadeOut, double fadeOutStartMs, double fadeOutEndMs,
+                                  EdgeFadeCurve fadeInCurve, EdgeFadeCurve fadeOutCurve)
 {
     auto it = tracks.find(clipId);
     if (it == tracks.end())
@@ -215,7 +216,8 @@ bool AudioEngine::setClipEdgeFade(const juce::String& clipId,
 
     auto snapshot = EdgeFadeSnapshot::create(
         hasFadeIn, toSamples(fadeInStartMs), toSamples(fadeInEndMs),
-        hasFadeOut, toSamples(fadeOutStartMs), toSamples(fadeOutEndMs));
+        hasFadeOut, toSamples(fadeOutStartMs), toSamples(fadeOutEndMs),
+        fadeInCurve, fadeOutCurve);
     const EdgeFadeSnapshot* published =
         (snapshot != nullptr && !snapshot->isEmpty()) ? snapshot.get() : nullptr;
 

@@ -113,7 +113,9 @@ class AudioEngine
 
     bool setClipEdgeFade(const juce::String& clipId,
                          bool hasFadeIn, double fadeInStartMs, double fadeInEndMs,
-                         bool hasFadeOut, double fadeOutStartMs, double fadeOutEndMs);
+                         bool hasFadeOut, double fadeOutStartMs, double fadeOutEndMs,
+                         EdgeFadeCurve fadeInCurve = EdgeFadeCurve::equalPower,
+                         EdgeFadeCurve fadeOutCurve = EdgeFadeCurve::equalPower);
 
     bool isPlaying() const;
 

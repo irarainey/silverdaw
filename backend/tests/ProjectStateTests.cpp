@@ -463,6 +463,29 @@ void testProjectStateClipTransitions()
     requireNear(rightFade.fadeInStartMs, 800.0, 1e-6, "right fade-in starts at overlap start");
     requireNear(rightFade.fadeInEndMs, 1000.0, 1e-6, "right fade-in ends at overlap end");
 
+    // ── Recipe → curve derivation ────────────────────────────────────────
+    require(leftFade.fadeOutCurve == silverdaw::EdgeFadeCurve::equalPower,
+            "smooth recipe derives an equal-power fade-out leg");
+    require(rightFade.fadeInCurve == silverdaw::EdgeFadeCurve::equalPower,
+            "smooth recipe derives an equal-power fade-in leg");
+
+    auto* linearObj = new juce::DynamicObject();
+    linearObj->setProperty("kind", "linear");
+    require(state.setTransitionRecipe("t1", "tr1", juce::var(linearObj)),
+            "switching tr1 to the linear recipe should change state");
+    require(state.getClipEdgeFade("c1").fadeOutCurve == silverdaw::EdgeFadeCurve::linear,
+            "linear recipe derives a linear fade-out leg");
+    require(state.getClipEdgeFade("c2").fadeInCurve == silverdaw::EdgeFadeCurve::linear,
+            "linear recipe derives a linear fade-in leg");
+    {
+        auto* smoothObj = new juce::DynamicObject();
+        smoothObj->setProperty("kind", "smooth");
+        require(state.setTransitionRecipe("t1", "tr1", juce::var(smoothObj)),
+                "restoring the smooth recipe should change state back");
+        require(state.getClipEdgeFade("c1").fadeOutCurve == silverdaw::EdgeFadeCurve::equalPower,
+                "restored smooth recipe derives equal-power again");
+    }
+
     // ── Serialisation ────────────────────────────────────────────────────
     {
         const auto tracks = state.tracksAsJson();

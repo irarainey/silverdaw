@@ -399,6 +399,44 @@ void testEdgeFadeSnapshotEqualPower()
         requireNear(sandwich->gainAtSample(5000), 0.0, 1.0e-6, "sandwich tail ends silent");
 }
 
+void testEdgeFadeSnapshotLinear()
+{
+        using silverdaw::EdgeFadeCurve;
+        using silverdaw::EdgeFadeSnapshot;
+
+        // Linear fade-in over [1000, 2000): straight amplitude ramp t, not sin.
+        auto fadeIn = EdgeFadeSnapshot::create(true, 1000, 2000, false, 0, 0,
+                                               EdgeFadeCurve::linear, EdgeFadeCurve::equalPower);
+        requireNear(fadeIn->gainAtSample(1000), 0.0, 1.0e-6, "linear fade-in starts at silence");
+        requireNear(fadeIn->gainAtSample(2000), 1.0, 1.0e-6, "linear fade-in reaches unity");
+        requireNear(fadeIn->gainAtSample(1500), 0.5, 1.0e-6, "linear fade-in midpoint is 0.5");
+        requireNear(fadeIn->gainAtSample(1250), 0.25, 1.0e-6, "linear fade-in quarter is 0.25");
+
+        // Linear fade-out over [1000, 2000): straight 1 - t ramp.
+        auto fadeOut = EdgeFadeSnapshot::create(false, 0, 0, true, 1000, 2000,
+                                                EdgeFadeCurve::equalPower, EdgeFadeCurve::linear);
+        requireNear(fadeOut->gainAtSample(1000), 1.0, 1.0e-6, "linear fade-out starts at unity");
+        requireNear(fadeOut->gainAtSample(2000), 0.0, 1.0e-6, "linear fade-out reaches silence");
+        requireNear(fadeOut->gainAtSample(1500), 0.5, 1.0e-6, "linear fade-out midpoint is 0.5");
+
+        // Paired linear legs sum to unity gain (amplitude), not constant power.
+        for (juce::int64 s = 1000; s <= 2000; s += 50)
+        {
+            const double in = fadeIn->gainAtSample(s);
+            const double out = fadeOut->gainAtSample(s);
+            requireNear(in + out, 1.0, 1.0e-5, "linear crossfade sums to unity amplitude");
+        }
+
+        // Per-leg curves are independent: a clip can fade in linearly and out
+        // with equal power, which is what distinct sandwiching recipes produce.
+        auto mixed = EdgeFadeSnapshot::create(true, 0, 1000, true, 4000, 5000,
+                                              EdgeFadeCurve::linear, EdgeFadeCurve::equalPower);
+        requireNear(mixed->gainAtSample(500), 0.5, 1.0e-6, "mixed head uses linear law");
+        requireNear(mixed->gainAtSample(4500),
+                    std::cos(0.5 * 1.57079632679489661923), 1.0e-6,
+                    "mixed tail uses equal-power law");
+}
+
 } // namespace
 
 void addEnvelopeFadeTests(std::vector<TestCase>& tests)
@@ -408,6 +446,7 @@ void addEnvelopeFadeTests(std::vector<TestCase>& tests)
     tests.push_back({"tracksAsJson carries per-clip volume envelope into PROJECT_STATE", testTracksAsJsonCarriesClipEnvelope});
     tests.push_back({"tracksAsJson carries per-clip reverse flag into PROJECT_STATE", testTracksAsJsonCarriesClipReversed});
     tests.push_back({"EdgeFadeSnapshot equal-power crossfade, endpoints, and sandwiching", testEdgeFadeSnapshotEqualPower});
+    tests.push_back({"EdgeFadeSnapshot linear curve law and independent per-leg curves", testEdgeFadeSnapshotLinear});
     tests.push_back({"OffsetSource composes edge fade with volume envelope (B2 audio wiring)", testOffsetSourceComposesEdgeFadeWithEnvelope});
     tests.push_back({"OffsetSource reverses the clip window non-destructively across block boundaries", testOffsetSourceReversesClipWindow});
 }

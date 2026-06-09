@@ -12,6 +12,14 @@ import type { ClipHitRegion } from './useDragHandlers'
 /** Pixel edge zone for trim-vs-move hit detection. */
 const TRIM_EDGE_PX = 8
 
+/**
+ * At a butt-join the previous clip's right edge and the next clip's left edge
+ * sit on the same pixel. Bias the boundary toward the later clip's left edge so
+ * aiming at the visible seam line reliably grabs the start of the right clip;
+ * the previous clip's right edge stays reachable a few pixels deeper inside it.
+ */
+const BOUNDARY_LEFT_BIAS_PX = 3
+
 /** Horizontal edge zone used to auto-scroll while dragging a clip. */
 const CLIP_AUTOSCROLL_EDGE_PX = 72
 /** Maximum horizontal auto-scroll speed, in pixels per animation frame. */
@@ -132,23 +140,73 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     return null
   }
 
-  /** Return the clip edge hit in pixel space; null outside the trim zone. */
-  function hitTestClipEdge(clientX: number, region: ClipHitRegion): 'left' | 'right' | null {
-    if (!host.value) return null
-    // Linked saved clips resize only through the Clip Editor, not timeline trim.
+  /** True when timeline trim is permitted for the clip backing this region. */
+  function isRegionTrimmable(region: ClipHitRegion): boolean {
     const clip = project.clips[region.clipId]
-    if (clip && isClipLinkedToSavedClip(clip)) return null
+    // Linked saved clips resize only through the Clip Editor, not timeline trim.
+    if (clip && isClipLinkedToSavedClip(clip)) return false
     // Locked clips suppress trim affordances; the store remains the backstop.
-    if (clip?.locked) return null
-    const rect = host.value.getBoundingClientRect()
-    const worldX = (clientX - rect.left) + scrollX.value
+    if (clip?.locked) return false
+    return true
+  }
+
+  /**
+   * Resolve a trim edge for a single clip, returning the edge and its pixel
+   * distance. The left edge is detectable a few pixels before the clip start so a
+   * butt-joined start stays grabbable right at the seam; the right edge stays
+   * inside-only so the seam splits cleanly the rest of the time.
+   */
+  function resolveRegionEdge(
+    worldX: number,
+    region: ClipHitRegion
+  ): { edge: 'left' | 'right'; dist: number } | null {
     const leftDist = worldX - region.x
     const rightDist = region.x + region.w - worldX
     // Keep tiny clips moveable by capping the edge zone.
     const edge = Math.min(TRIM_EDGE_PX, region.w / 3)
-    if (leftDist <= edge) return 'left'
-    if (rightDist <= edge) return 'right'
+    if (leftDist >= -BOUNDARY_LEFT_BIAS_PX && leftDist <= edge) {
+      return { edge: 'left', dist: Math.abs(leftDist) }
+    }
+    if (rightDist >= 0 && rightDist <= edge) return { edge: 'right', dist: rightDist }
     return null
+  }
+
+  /**
+   * Resolve a trim edge across every clip under the pointer, independent of draw
+   * order. This lets the later clip's left edge be grabbed at a join even when an
+   * adjacent or overlapping neighbour is drawn on top.
+   */
+  function hitTestTrimEdge(
+    clientX: number,
+    clientY: number
+  ): { region: ClipHitRegion; edge: 'left' | 'right' } | null {
+    if (!host.value) return null
+    const rect = host.value.getBoundingClientRect()
+    const worldX = (clientX - rect.left) + scrollX.value
+    const worldY = (clientY - rect.top) + scrollY.value
+    const regions = getClipHitRegions()
+    let best: { region: ClipHitRegion; edge: 'left' | 'right'; dist: number } | null = null
+    for (const region of regions) {
+      if (worldY < region.y || worldY > region.y + region.h) continue
+      if (!isRegionTrimmable(region)) continue
+      const resolved = resolveRegionEdge(worldX, region)
+      if (!resolved) continue
+      // A later clip's left edge always wins over a previous clip's right edge at
+      // a shared boundary; otherwise the nearest edge wins.
+      if (best === null || isBetterTrimCandidate(resolved, best)) {
+        best = { region, edge: resolved.edge, dist: resolved.dist }
+      }
+    }
+    return best ? { region: best.region, edge: best.edge } : null
+  }
+
+  /** Rank trim candidates: left edges outrank right edges, then nearest wins. */
+  function isBetterTrimCandidate(
+    candidate: { edge: 'left' | 'right'; dist: number },
+    best: { edge: 'left' | 'right'; dist: number }
+  ): boolean {
+    if (candidate.edge !== best.edge) return candidate.edge === 'left'
+    return candidate.dist < best.dist
   }
 
   /** True when the clip is linked to a saved-clip library item. */
@@ -186,7 +244,7 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     clipAutoScrollDelta,
     hitTestClip,
     hitTestMarker,
-    hitTestClipEdge,
+    hitTestTrimEdge,
     isClipLinkedToSavedClip,
     getSourceDurationMs,
     pointerToTrackId

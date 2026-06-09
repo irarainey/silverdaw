@@ -83,7 +83,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     clipAutoScrollDelta,
     hitTestClip,
     hitTestMarker,
-    hitTestClipEdge,
+    hitTestTrimEdge,
     getSourceDurationMs,
     pointerToTrackId
   } = createTimelineQueries({
@@ -179,8 +179,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       return
     }
 
-    // Clip clicks seek unless movement crosses the drag threshold.
-    const hit = hitTestClip(e.clientX, e.clientY)
+    // Clip clicks seek unless movement crosses the drag threshold. A trim-edge
+    // hit takes precedence so a butt-joined clip's start edge stays grabbable.
+    const trimHit = hitTestTrimEdge(e.clientX, e.clientY)
+    const hit = trimHit?.region ?? hitTestClip(e.clientX, e.clientY)
     if (hit) {
       const clip = project.clips[hit.clipId]
       if (clip) {
@@ -190,7 +192,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
           project.selectClip(clip.id)
           project.selectTrack(clip.trackId)
           pendingDragClipId = clip.id
-          pendingDragEdge = hitTestClipEdge(e.clientX, hit)
+          pendingDragEdge = trimHit?.edge ?? null
           pendingDragStartX = e.clientX
           pendingDragStartY = e.clientY
           pendingDragStartMs = pointerMs
@@ -500,13 +502,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       if (hoverCursor.value !== 'grab') hoverCursor.value = 'grab'
       return
     }
-    const hit = hitTestClip(e.clientX, e.clientY)
-    if (!hit) {
-      if (hoverCursor.value !== 'default') hoverCursor.value = 'default'
-      return
-    }
-    const edge = hitTestClipEdge(e.clientX, hit)
-    const next = edge ? 'ew-resize' : 'default'
+    const trimHit = hitTestTrimEdge(e.clientX, e.clientY)
+    const next = trimHit ? 'ew-resize' : 'default'
     if (hoverCursor.value !== next) hoverCursor.value = next
   }
 
