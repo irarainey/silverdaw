@@ -171,4 +171,11 @@ void handlePreviewSetEnvelope(const juce::var& payload, AudioEngine& engine)
     engine.setPreviewEnvelope(points);
 }
 
+void handlePreviewSetReversed(const juce::var& payload, AudioEngine& engine)
+{
+    silverdaw::log::info("bridge", "recv PREVIEW_SET_REVERSED");
+    const bool reversed = static_cast<bool>(payload.getProperty("reversed", false));
+    engine.setPreviewReversed(reversed);
+}
+
 } // namespace silverdaw

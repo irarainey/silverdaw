@@ -41,6 +41,7 @@ function makeWaveform(h: Harness): ReturnType<typeof useClipEditorWaveform> {
     volumeShapeDurationMs: () => 0,
     draftPoints: () => [],
     draftEffectiveRatio: () => 1,
+    draftReversed: () => false,
     editorHiResPeaks: () => h.hiRes.value,
     channelPeaksByItemId: () => ({}) as Record<string, ItemChannelPeaks>,
     waveformDisplayMode: () => 'summary',

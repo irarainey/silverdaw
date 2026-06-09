@@ -102,6 +102,17 @@ class OffsetSource : public juce::PositionableAudioSource
         warpReseekRequested.store(true, std::memory_order_release);
     }
 
+    // Reverse plays the clip window backwards by mirroring source reads; applied upstream of
+    // warp/pitch so those still operate normally on the reversed stream.
+    void setReversed(bool r) noexcept
+    {
+        reversed.store(r, std::memory_order_release);
+    }
+    bool isReversed() const noexcept
+    {
+        return reversed.load(std::memory_order_acquire);
+    }
+
     void prepareToPlay(int blockSize, double sampleRate) override
     {
         cachedBlockSize.store(blockSize, std::memory_order_relaxed);
@@ -110,6 +121,10 @@ class OffsetSource : public juce::PositionableAudioSource
                             /*keepExistingContent*/ false,
                             /*clearExtraSpace*/ true,
                             /*avoidReallocating*/ false);
+        reverseScratch.setSize(kMaxWarpChannels, juce::jmax(64, blockSize),
+                               /*keepExistingContent*/ false,
+                               /*clearExtraSpace*/ true,
+                               /*avoidReallocating*/ false);
         if (child != nullptr)
         {
             child->prepareToPlay(blockSize, sampleRate);
@@ -172,8 +187,8 @@ class OffsetSource : public juce::PositionableAudioSource
             juce::AudioSourceChannelInfo audible = info;
             audible.startSample += silentLeading;
             audible.numSamples = audibleSamples;
-            const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
             auto* w = currentWarp;
+            const bool rev = reversed.load(std::memory_order_acquire);
             if (w != nullptr)
             {
                 // Only reseek warp on discontinuities; steady-state playback lets the stretcher
@@ -186,14 +201,21 @@ class OffsetSource : public juce::PositionableAudioSource
                         inSrc + static_cast<juce::int64>(static_cast<double>(audibleStart - clipStart) * ratio);
                     w->seekSource(warpedSourcePos);
                 }
-                pullThroughWarp(*w, *audible.buffer, audible.startSample, audibleSamples);
+                pullThroughWarp(*w, *audible.buffer, audible.startSample, audibleSamples,
+                                rev, inSrc, sourceDur);
                 lastBlockEnded = false;
                 lastAudibleEnd = audibleEnd;
             }
             else
             {
-                child->setNextReadPosition(sourcePos);
-                child->getNextAudioBlock(audible);
+                const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
+                float* planes[kMaxWarpChannels] = {nullptr};
+                const int numCh = juce::jmin(audible.buffer->getNumChannels(), kMaxWarpChannels);
+                for (int c = 0; c < numCh; ++c)
+                {
+                    planes[c] = audible.buffer->getWritePointer(c, audible.startSample);
+                }
+                readChildReversibleBlock(planes, numCh, sourcePos, audibleSamples, rev, inSrc, sourceDur);
                 lastBlockEnded = false;
                 lastAudibleEnd = audibleEnd;
             }
@@ -324,6 +346,7 @@ class OffsetSource : public juce::PositionableAudioSource
     std::atomic<const EdgeFadeSnapshot*> edgeFade{nullptr};
     std::atomic<WarpProcessor*> warp{nullptr};
     std::atomic<bool> warpReseekRequested{false};
+    std::atomic<bool> reversed{false};
     juce::int64 lastAudibleEnd{std::numeric_limits<juce::int64>::min()};
     std::atomic<juce::int64> lastBlockEndPosition{-1};
     bool lastBlockEnded{true};
@@ -375,8 +398,69 @@ class OffsetSource : public juce::PositionableAudioSource
     static constexpr int kMaxWarpChannels = 8;
 
     juce::AudioBuffer<float> warpScratch;
+    // Holds the mirrored forward read before it is reversed into the caller's planes.
+    juce::AudioBuffer<float> reverseScratch;
 
-    void pullThroughWarp(WarpProcessor& w, juce::AudioBuffer<float>& dest, int startSample, int numSamples)
+    // Reads `n` source samples for forward clip-source position `srcPos` into `dst`. When
+    // `rev` is set the clip window `[inSrc, inSrc + sourceDur)` is mirrored so the audio plays
+    // backwards; samples outside the window are silenced rather than leaking neighbouring audio.
+    void readChildReversibleBlock(float* const* dst, int numCh, juce::int64 srcPos, int n,
+                                  bool rev, juce::int64 inSrc, juce::int64 sourceDur)
+    {
+        if (child == nullptr || n <= 0 || numCh <= 0) return;
+
+        if (!rev)
+        {
+            child->setNextReadPosition(srcPos);
+            juce::AudioBuffer<float> bufView(const_cast<float**>(dst), numCh, n);
+            juce::AudioSourceChannelInfo info(&bufView, 0, n);
+            child->getNextAudioBlock(info);
+            return;
+        }
+
+        if (reverseScratch.getNumChannels() < numCh || reverseScratch.getNumSamples() < n)
+        {
+            reverseScratch.setSize(juce::jmax(reverseScratch.getNumChannels(), numCh),
+                                   juce::jmax(reverseScratch.getNumSamples(), n),
+                                   /*keepExistingContent*/ false,
+                                   /*clearExtraSpace*/ false,
+                                   /*avoidReallocating*/ false);
+        }
+        reverseScratch.clear(0, n);
+
+        const juce::int64 localStart = srcPos - inSrc;
+        const juce::int64 mirroredLocalStart = sourceDur - localStart - n;
+        const juce::int64 validStart = juce::jmax(static_cast<juce::int64>(0), mirroredLocalStart);
+        const juce::int64 validEnd = juce::jmin(mirroredLocalStart + n, sourceDur);
+        const int validCount = static_cast<int>(validEnd - validStart);
+        const int scratchPlanes = juce::jmin(numCh, kMaxWarpChannels);
+        if (validCount > 0)
+        {
+            const int destOffset = static_cast<int>(validStart - mirroredLocalStart);
+            float* sp[kMaxWarpChannels] = {nullptr};
+            for (int c = 0; c < scratchPlanes; ++c)
+            {
+                sp[c] = reverseScratch.getWritePointer(c) + destOffset;
+            }
+            child->setNextReadPosition(inSrc + validStart);
+            juce::AudioBuffer<float> bufView(sp, scratchPlanes, validCount);
+            juce::AudioSourceChannelInfo info(&bufView, 0, validCount);
+            child->getNextAudioBlock(info);
+        }
+
+        for (int c = 0; c < numCh; ++c)
+        {
+            const float* s = reverseScratch.getReadPointer(juce::jmin(c, scratchPlanes - 1));
+            float* d = dst[c];
+            for (int i = 0, j = n - 1; i < n; ++i, --j)
+            {
+                d[i] = s[j];
+            }
+        }
+    }
+
+    void pullThroughWarp(WarpProcessor& w, juce::AudioBuffer<float>& dest, int startSample, int numSamples,
+                         bool rev, juce::int64 inSrc, juce::int64 sourceDur)
     {
         if (child == nullptr || numSamples <= 0) return;
 
@@ -401,12 +485,9 @@ class OffsetSource : public juce::PositionableAudioSource
         }
 
         auto readSource =
-            [this, sourceCh](float* const* dst, juce::int64 srcPos, int n)
+            [this, sourceCh, rev, inSrc, sourceDur](float* const* dst, juce::int64 srcPos, int n)
         {
-            child->setNextReadPosition(srcPos);
-            juce::AudioBuffer<float> bufView(const_cast<float**>(dst), sourceCh, n);
-            juce::AudioSourceChannelInfo info(&bufView, 0, n);
-            child->getNextAudioBlock(info);
+            readChildReversibleBlock(dst, sourceCh, srcPos, n, rev, inSrc, sourceDur);
         };
         w.process(warpOut, numSamples, readSource);
 

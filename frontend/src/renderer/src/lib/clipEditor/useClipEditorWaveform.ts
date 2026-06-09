@@ -38,6 +38,7 @@ export interface ClipEditorWaveformDeps {
   volumeShapeDurationMs: () => number
   draftPoints: () => readonly ClipEnvelopePoint[]
   draftEffectiveRatio: () => number
+  draftReversed: () => boolean
   editorHiResPeaks: () => EditorHiResPeaks | null
   channelPeaksByItemId: () => Record<string, ItemChannelPeaks>
   waveformDisplayMode: () => 'summary' | 'stereo'
@@ -181,6 +182,11 @@ export function useClipEditorWaveform(deps: ClipEditorWaveformDeps): ClipEditorW
     }
 
     // Shared lane renderer keeps summary and stereo column mapping identical.
+    // Reversed clips mirror the peak read across the full clip window so the
+    // waveform shape reads back-to-front (the source-time ruler, beats,
+    // selection and playhead stay forward).
+    const reversed = deps.draftReversed()
+    const mirrorSumMs = deps.viewInMs() + deps.viewEndMs()
     const drawWaveLane = (
       lanePeaks: Float32Array,
       lanePps: number,
@@ -191,10 +197,12 @@ export function useClipEditorWaveform(deps: ClipEditorWaveformDeps): ClipEditorW
       const pairs = Math.floor(lanePeaks.length / 2)
       // Prefer rate-based peak mapping so transients stay aligned to the ruler.
       const useRate = lanePps > 0
-      const peakStart = useRate ? (vIn / 1000) * lanePps : (vIn / sourceTotal) * pairs
-      const peakSpan = useRate ? (vDur / 1000) * lanePps : (vDur / sourceTotal) * pairs
       for (let x = 0; x < w; x++) {
-        const i = Math.floor(peakStart + (x / w) * peakSpan)
+        const visMs = vIn + (x / w) * vDur
+        const srcMs = reversed ? mirrorSumMs - visMs : visMs
+        const i = useRate
+          ? Math.floor((srcMs / 1000) * lanePps)
+          : Math.floor((srcMs / sourceTotal) * pairs)
         if (i < 0 || i >= pairs) continue
         const lo = lanePeaks[i * 2] || 0
         const hi = lanePeaks[i * 2 + 1] || 0

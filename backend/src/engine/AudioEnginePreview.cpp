@@ -182,6 +182,21 @@ bool AudioEngine::setPreviewEnvelope(const juce::Array<juce::var>& points)
     return true;
 }
 
+// Reverse is applied upstream of the read-ahead buffer (inside OffsetSource), exactly like the
+// volume envelope, so the same flush rules apply: while stopped the parked buffer must be rebuilt
+// to force a re-read; while playing the cached window drains within a few ms.
+bool AudioEngine::setPreviewReversed(bool reversed)
+{
+    if (preview.offsetSource == nullptr) return false;
+    preview.offsetSource->setReversed(reversed);
+    silverdaw::log::debug("preview", std::string("setPreviewReversed ") + (reversed ? "1" : "0"));
+    if (preview.transportSource != nullptr && !preview.transportSource->isPlaying())
+    {
+        rebuildPreviewReadAhead();
+    }
+    return true;
+}
+
 void AudioEngine::rebuildPreviewReadAhead()
 {
     if (preview.transportSource == nullptr || preview.offsetSource == nullptr) return;

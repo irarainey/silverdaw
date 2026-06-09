@@ -584,6 +584,45 @@ describe('libraryStore', () => {
     )
   })
 
+  it('propagates a shared reverse flag to every linked timeline clip', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedItem = {
+      id: savedId,
+      kind: 'saved-clip' as const,
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId!, sourceClipId: '', inMs: 1_000, durationMs: 2_000 }
+    }
+    const trackA = project.addTrack()
+    const trackB = project.addTrack()
+    const clipA = project.addClipFromLibrary(trackA, savedItem, 0)!
+    const clipB = project.addClipFromLibrary(trackB, savedItem, 0)!
+    sendMock.mockClear()
+
+    const result = library.updateSavedClipReversed(savedId, true)
+
+    expect(result.ok).toBe(true)
+    expect(project.clips[clipA]!.reversed).toBe(true)
+    expect(project.clips[clipB]!.reversed).toBe(true)
+    expect(sendMock).toHaveBeenCalledWith('CLIP_SET_REVERSED', { clipId: clipA, reversed: true })
+    expect(sendMock).toHaveBeenCalledWith('CLIP_SET_REVERSED', { clipId: clipB, reversed: true })
+  })
+
   it('inherits the shared volume envelope when placing another linked instance', () => {
     const library = useLibraryStore()
     const project = useProjectStore()

@@ -464,6 +464,26 @@ export const savedClipActions = {
       return { ok: true }
     },
 
+    // Shared reverse for a saved clip: propagate the flag to every linked timeline instance, so
+    // reversing one linked clip reverses them all (like trim/warp/pitch/envelope). The durable
+    // store is each clip's backend reverse flag (CLIP_SET_REVERSED); the flag lives on the live
+    // instances, not the library item.
+    updateSavedClipReversed(itemId: string, reversed: boolean): { ok: boolean } {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item || item.kind !== 'saved-clip') return { ok: false }
+      const project = useProjectStore()
+      const linkedClips = findLinkedTimelineClips(item)
+      for (const c of linkedClips) {
+        if (!c) continue
+        project.setClipReversed(c.id, reversed)
+      }
+      log.info(
+        'library',
+        `updateSavedClipReversed id=${itemId} reversed=${reversed} propagatedTo=${linkedClips.length}`
+      )
+      return { ok: true }
+    },
+
     updateSavedClipWarp(
       itemId: string,
       patch: {

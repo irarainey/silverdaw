@@ -21,5 +21,6 @@ void handlePreviewStop(AudioEngine& engine, BridgeServer& bridge);
 void handlePreviewSeek(const juce::var& payload, AudioEngine& engine);
 void handlePreviewSetWarp(const juce::var& payload, AudioEngine& engine);
 void handlePreviewSetEnvelope(const juce::var& payload, AudioEngine& engine);
+void handlePreviewSetReversed(const juce::var& payload, AudioEngine& engine);
 
 } // namespace silverdaw

@@ -12,6 +12,7 @@ function fakePreview() {
     load: vi.fn(),
     setWarp: vi.fn(),
     setEnvelope: vi.fn(),
+    setReversed: vi.fn(),
     seek: vi.fn(),
     pause: vi.fn(),
     play: vi.fn()
@@ -37,6 +38,7 @@ function makeDeps(preview: FakePreview, over: Partial<ClipEditorPreviewDeps> = {
     draftCents: () => 0,
     previewTempoRatio: () => undefined,
     committedEnvelopePoints: () => [],
+    draftReversed: () => false,
     viewInMs: () => 0,
     viewDurationMs: () => 1000,
     visibleDurationMs: () => 1000,
@@ -127,6 +129,23 @@ describe('useClipEditorPreview — draft warp debounce', () => {
     p.clearPreviewWarpUpdateTimer()
     vi.advanceTimersByTime(33)
     expect(preview.setWarp).not.toHaveBeenCalled()
+  })
+})
+
+describe('useClipEditorPreview — reverse push', () => {
+  it('pushes the current reverse draft to the loaded preview', () => {
+    const preview = fakePreview()
+    const p = useClipEditorPreview(makeDeps(preview, { draftReversed: () => true }))
+    p.pushDraftPreviewReversed()
+    expect(preview.setReversed).toHaveBeenCalledWith(true)
+  })
+
+  it('does not push when the preview is not loaded', () => {
+    const preview = fakePreview()
+    preview.isLoaded = false
+    const p = useClipEditorPreview(makeDeps(preview, { draftReversed: () => true }))
+    p.pushDraftPreviewReversed()
+    expect(preview.setReversed).not.toHaveBeenCalled()
   })
 })
 

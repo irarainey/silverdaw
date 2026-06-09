@@ -27,6 +27,7 @@ export interface ClipEditorDirtyStateDeps {
   draftSemitones: () => number
   draftCents: () => number
   hasVolumeShapeChanged: () => boolean
+  hasReverseChanged: () => boolean
   sourceBpm: () => number | undefined
   projectBpm: () => number
 }
@@ -81,7 +82,8 @@ export function useClipEditorDirtyState(
     // Volume shaping is available for any placed timeline clip (linked or not);
     // linked edits persist to the shared saved clip and all its instances.
     const volumeShapeDirty = deps.editsTimelineClip() && deps.hasVolumeShapeChanged()
-    return hasSelectionChanged.value || hasWarpPitchChanged.value || volumeShapeDirty
+    const reverseDirty = deps.editsTimelineClip() && deps.hasReverseChanged()
+    return hasSelectionChanged.value || hasWarpPitchChanged.value || volumeShapeDirty || reverseDirty
   })
 
   // Non-destructive crop is enabled only for a narrowing selection.

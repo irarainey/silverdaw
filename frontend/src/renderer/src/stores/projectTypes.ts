@@ -53,6 +53,8 @@ export interface Clip {
   effectiveWarpActive?: boolean
   /** Locks move/edge-trim gestures (editor still opens). Per-clip; not shared across saved-clip siblings. */
   locked?: boolean
+  /** Plays the clip window backwards (non-destructive). Propagated across saved-clip siblings. */
+  reversed?: boolean
 }
 
 export interface Marker {

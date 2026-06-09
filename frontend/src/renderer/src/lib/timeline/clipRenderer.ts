@@ -201,15 +201,23 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       )
       const windowSize = endPeak - startPeak
       const peaksPerPixel = windowSize / w
+      const reversed = clip.reversed === true
       let didDraw = false
       for (let px = 0; px < w; px++) {
-        const startIdx = startPeak + Math.floor(px * peaksPerPixel)
+        // Reversed clips read the source window back-to-front; the volume
+        // envelope below stays oriented to clip-time, so only the peak read
+        // is mirrored here.
+        const srcPx = reversed ? w - 1 - px : px
+        const startIdx = startPeak + Math.floor(srcPx * peaksPerPixel)
         // Always read at least one peak per pixel when zoomed in.
         const endIdx = Math.min(
           endPeak,
-          Math.max(startIdx + 1, startPeak + Math.ceil((px + 1) * peaksPerPixel))
+          Math.max(startIdx + 1, startPeak + Math.ceil((srcPx + 1) * peaksPerPixel))
         )
-        if (startIdx >= endPeak) break
+        if (startIdx >= endPeak) {
+          if (reversed) continue
+          break
+        }
 
         let min = 0
         let max = 0

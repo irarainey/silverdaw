@@ -425,7 +425,8 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
               typeof c.effectiveWarpActive === 'boolean' ? c.effectiveWarpActive : undefined,
             pendingAutoWarp:
               c.pendingAutoWarp === true && c.warpEnabled !== true ? true : undefined,
-            locked: c.locked === true ? true : undefined
+            locked: c.locked === true ? true : undefined,
+            reversed: c.reversed === true ? true : undefined
           }
           target.clips[c.id] = placeholder
           track.clipIds.push(c.id)

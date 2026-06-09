@@ -158,6 +158,32 @@ bool ProjectState::isClipLocked(const juce::String& clipId) const
     return static_cast<bool>(clip.getProperty(kLocked, false));
 }
 
+bool ProjectState::setClipReversed(const juce::String& clipId, bool reversed)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    if (reversed)
+    {
+        clip.setProperty(kReversed, true, &undoManager);
+    }
+    else
+    {
+        // Absent means forward on disk and wire.
+        clip.removeProperty(kReversed, &undoManager);
+    }
+    return true;
+}
+
+bool ProjectState::isClipReversed(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+    return static_cast<bool>(clip.getProperty(kReversed, false));
+}
+
 bool ProjectState::setClipFilePath(const juce::String& clipId, const juce::String& filePath)
 {
     auto clip = findClip(clipId);

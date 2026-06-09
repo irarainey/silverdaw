@@ -55,6 +55,12 @@ export interface ClipSetLockedPayload {
   locked: boolean
 }
 
+/** Play a clip's window backwards (non-destructive). Propagated across saved-clip siblings. */
+export interface ClipSetReversedPayload {
+  clipId: string
+  reversed: boolean
+}
+
 /** Remove a clip; backend tears down its audio source. Renderer removes optimistically on send. */
 export interface ClipRemovePayload {
   clipId: string
@@ -353,6 +359,7 @@ export interface BridgeOutboundMap {
   CLIP_TRIM: ClipTrimPayload
   CLIP_COLOR: ClipColorPayload
   CLIP_SET_LOCKED: ClipSetLockedPayload
+  CLIP_SET_REVERSED: ClipSetReversedPayload
   CLIP_REMOVE: ClipRemovePayload
   LIBRARY_ITEM_RELINK: LibraryItemRelinkPayload
   CLIP_RENAME: ClipRenamePayload
@@ -417,6 +424,7 @@ export interface BridgeOutboundMap {
   PREVIEW_SEEK: PreviewSeekPayload
   PREVIEW_SET_WARP: PreviewSetWarpPayload
   PREVIEW_SET_ENVELOPE: PreviewSetEnvelopePayload
+  PREVIEW_SET_REVERSED: PreviewSetReversedPayload
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   EDIT_UNDO: undefined
@@ -635,6 +643,11 @@ export interface PreviewSetWarpPayload {
 /** Configure the preview voice's volume envelope; `points` post-warp ms + linear gain (empty clears). No ack. */
 export interface PreviewSetEnvelopePayload {
   points: ClipEnvelopePoint[]
+}
+
+/** Toggle the preview voice's non-destructive reverse playback. No ack. */
+export interface PreviewSetReversedPayload {
+  reversed: boolean
 }
 
 /**

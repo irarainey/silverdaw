@@ -55,6 +55,7 @@ export interface ClipEditorSaveDeps {
   tempoRatioFromPinnedBpm: () => number | undefined
 
   volumeShapeCommittedPoints: () => ClipEnvelopePoint[]
+  reverseCommitted: () => boolean
 }
 
 export interface ClipEditorSave {
@@ -152,6 +153,9 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
       // Volume shape is stored in clip-local timeline-ms basis; a flat unity
       // draft commits as an empty array, clearing it.
       deps.project.setClipEnvelope(clip.id, deps.volumeShapeCommittedPoints())
+      // Reverse is a non-destructive per-clip flag; `setClipReversed` self-guards
+      // against a no-op change.
+      deps.project.setClipReversed(clip.id, deps.reverseCommitted())
       deps.notifications.pushInfo(`Saved changes for "${deps.titleText()}".`)
       deps.close()
       return
@@ -169,6 +173,7 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
       // (no placed instance) skip this — they have no volume control.
       if (deps.editsTimelineClip()) {
         deps.library.updateSavedClipEnvelope(entry.id, deps.volumeShapeCommittedPoints())
+        deps.library.updateSavedClipReversed(entry.id, deps.reverseCommitted())
       }
       deps.notifications.pushInfo(`Saved changes for "${deps.titleText()}".`)
       deps.close()

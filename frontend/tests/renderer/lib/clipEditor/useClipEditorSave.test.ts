@@ -22,10 +22,12 @@ interface Harness {
     trimClip: ReturnType<typeof vi.fn>
     setClipWarp: ReturnType<typeof vi.fn>
     setClipEnvelope: ReturnType<typeof vi.fn>
+    setClipReversed: ReturnType<typeof vi.fn>
   }
   library: {
     updateSavedClipEdit: ReturnType<typeof vi.fn>
     updateSavedClipEnvelope: ReturnType<typeof vi.fn>
+    updateSavedClipReversed: ReturnType<typeof vi.fn>
     addSavedClipFromSelection: ReturnType<typeof vi.fn>
   }
   notifications: {
@@ -42,11 +44,13 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     clips: {} as Record<string, Clip>,
     trimClip: vi.fn(),
     setClipWarp: vi.fn(),
-    setClipEnvelope: vi.fn()
+    setClipEnvelope: vi.fn(),
+    setClipReversed: vi.fn()
   }
   const library = {
     updateSavedClipEdit: vi.fn(() => ({ ok: true })),
     updateSavedClipEnvelope: vi.fn(() => ({ ok: true })),
+    updateSavedClipReversed: vi.fn(() => ({ ok: true })),
     addSavedClipFromSelection: vi.fn(() => 'new-id')
   }
   const notifications = { pushInfo: vi.fn(), pushError: vi.fn() }
@@ -74,7 +78,8 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     draftMode: 'rhythmic',
     draftTempoPinned: false,
     tempoRatioFromPinnedBpm: undefined,
-    volumeShapeCommittedPoints: []
+    volumeShapeCommittedPoints: [],
+    reverseCommitted: false
   }
 
   const deps: ClipEditorSaveDeps = {
@@ -105,6 +110,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     tempoRatioFromPinnedBpm: () => state.tempoRatioFromPinnedBpm as number | undefined,
     volumeShapeCommittedPoints: () =>
       state.volumeShapeCommittedPoints as ReturnType<ClipEditorSaveDeps['volumeShapeCommittedPoints']>,
+    reverseCommitted: () => state.reverseCommitted as boolean,
     ...overrides
   }
 
@@ -218,6 +224,32 @@ describe('useClipEditorSave', () => {
     expect(h.project.trimClip).toHaveBeenCalledWith('clip-1', 0, 50, 300)
     expect(h.project.setClipWarp).not.toHaveBeenCalled()
     expect(h.project.setClipEnvelope).toHaveBeenCalledWith('clip-1', [])
+    expect(h.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('timeline-clip save commits the reverse flag', () => {
+    h.state.editsSingleTimelineClip = true
+    h.state.editsSavedClipLibrary = false
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.state.canApplyCrop = true
+    h.state.selectionInMs = 0
+    h.state.selectionDurationMs = 1000
+    h.state.reverseCommitted = true
+
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.project.setClipReversed).toHaveBeenCalledWith('clip-1', true)
+  })
+
+  it('linked-clip save propagates the reverse flag to all linked clips', () => {
+    h.state.editsSavedClipLibrary = true
+    h.state.editsTimelineClip = true
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.state.reverseCommitted = true
+
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.library.updateSavedClipReversed).toHaveBeenCalledWith('item-1', true)
     expect(h.close).toHaveBeenCalledTimes(1)
   })
 

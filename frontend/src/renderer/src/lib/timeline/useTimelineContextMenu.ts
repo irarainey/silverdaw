@@ -147,6 +147,17 @@ export function useTimelineContextMenu(
     }
     items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true })
     items.push({ command: 'clip.pitch', label: 'Pitch' })
+    if (clip) {
+      // Single toggle row; a leading check marks the on-state since there is no
+      // natural opposite verb. Reversing a linked clip reverses every sibling.
+      items.push({
+        command: 'clip.reverse',
+        label: clip.reversed ? '\u2713 Reverse' : 'Reverse',
+        title: isLinkedClip
+          ? 'Play the clip backwards. Applies to every linked instance of this saved clip.'
+          : 'Play the clip backwards (non-destructive).'
+      })
+    }
     // §12.1 — crossfade removal. A clip can fade out into its following
     // neighbour (it is the LEFT partner) and/or fade in from its preceding
     // neighbour (the RIGHT partner), so a sandwiched clip can show both
@@ -251,6 +262,16 @@ export function useTimelineContextMenu(
       inputs.dialogs.openWarp(clipId, 'tempo')
     } else if (command === 'clip.pitch') {
       inputs.dialogs.openWarp(clipId, 'pitch')
+    } else if (command === 'clip.reverse') {
+      if (clip) {
+        const next = !clip.reversed
+        const parent = library.byId[clip.libraryItemId]
+        if (parent?.kind === 'saved-clip') {
+          library.updateSavedClipReversed(clip.libraryItemId, next)
+        } else {
+          project.setClipReversed(clipId, next)
+        }
+      }
     } else if (command.startsWith('clip.color:')) {
       const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
       if (Number.isFinite(idx)) project.setClipColor(clipId, idx)

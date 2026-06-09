@@ -96,6 +96,10 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleClipSetLocked(payload, projectState);
     }
+    else if (type == "CLIP_SET_REVERSED")
+    {
+        silverdaw::handleClipSetReversed(payload, engine, projectState);
+    }
     else if (type == "CLIP_REMOVE")
     {
         silverdaw::log::info("bridge", "recv CLIP_REMOVE clipId=" + payload.getProperty("clipId", "").toString());
@@ -190,6 +194,10 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "PREVIEW_SET_ENVELOPE")
     {
         silverdaw::handlePreviewSetEnvelope(payload, engine);
+    }
+    else if (type == "PREVIEW_SET_REVERSED")
+    {
+        silverdaw::handlePreviewSetReversed(payload, engine);
     }
     else if (type == "TRACK_ADD")
     {

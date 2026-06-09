@@ -114,6 +114,66 @@ void testOffsetSourceComposesEdgeFadeWithEnvelope()
     }
 }
 
+void testOffsetSourceReversesClipWindow()
+{
+    using silverdaw::OffsetSource;
+
+    // RampSource emits each sample's absolute source position as its value, so the rendered
+    // buffer reveals exactly which source samples were read and in what order.
+    RampSource child;
+    OffsetSource os(&child);
+    const int blockSize = 256;
+    os.prepareToPlay(blockSize, 48000.0);
+
+    const juce::int64 inSrc = 1000;   // clip references source window [1000, 1000 + dur)
+    const juce::int64 dur = 200;      // sourceDur in samples
+    os.setOffsetSamples(0);
+    os.setInSourceSamples(inSrc);
+    os.setClipDurationSamples(dur);
+
+    juce::AudioBuffer<float> buf(1, blockSize);
+    const auto render = [&](juce::int64 fromPos, int count) {
+        buf.clear();
+        juce::AudioSourceChannelInfo info(&buf, 0, count);
+        os.setNextReadPosition(fromPos);
+        os.getNextAudioBlock(info);
+    };
+
+    // Forward: the audible block reads the window in ascending source order.
+    os.setReversed(false);
+    render(0, static_cast<int>(dur));
+    for (int i = 0; i < dur; ++i)
+        requireNear(buf.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-3,
+                    "forward playback reads the clip window in source order");
+
+    // Reversed in a single block: source order is mirrored within the window.
+    os.setReversed(true);
+    render(0, static_cast<int>(dur));
+    for (int i = 0; i < dur; ++i)
+        requireNear(buf.getSample(0, i), static_cast<float>(inSrc + (dur - 1 - i)), 1.0e-3,
+                    "reversed playback mirrors the clip window");
+
+    // Reversed across a block boundary: the concatenation is still a globally mirrored stream
+    // because each block mirrors its own audible span at the correct source offset.
+    const int firstBlock = 73;
+    os.setReversed(true);
+    render(0, firstBlock);
+    for (int i = 0; i < firstBlock; ++i)
+        requireNear(buf.getSample(0, i), static_cast<float>(inSrc + (dur - 1 - i)), 1.0e-3,
+                    "reversed first block mirrors the head of the window");
+    render(firstBlock, static_cast<int>(dur) - firstBlock);
+    for (int i = 0; i < static_cast<int>(dur) - firstBlock; ++i)
+        requireNear(buf.getSample(0, i), static_cast<float>(inSrc + (dur - 1 - (firstBlock + i))),
+                    1.0e-3, "reversed second block continues the mirrored stream seamlessly");
+
+    // Clearing the flag restores forward reads (toggling is non-destructive and stateless).
+    os.setReversed(false);
+    render(0, static_cast<int>(dur));
+    for (int i = 0; i < dur; ++i)
+        requireNear(buf.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-3,
+                    "clearing the reverse flag restores forward source order");
+}
+
 
 void testEnvelopeSnapshotInterpolation()
 {
@@ -261,6 +321,37 @@ void testTracksAsJsonCarriesClipEnvelope()
             "un-shaped clip must omit envelopePoints to keep PROJECT_STATE tidy");
 }
 
+void testTracksAsJsonCarriesClipReversed()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "addTrack should succeed");
+    require(state.addLibraryItem("lib1", "C:\\audio\\a.wav", "a.wav", 5000.0, 48000, 2),
+            "addLibraryItem should succeed");
+    require(state.addClip("t1", "c-rev", "lib1", 100.0, 1000.0), "addClip should succeed");
+
+    // Forward by default: neither the model nor the wire should carry a reversed flag.
+    require(!state.isClipReversed("c-rev"), "a new clip is forward by default");
+
+    require(state.setClipReversed("c-rev", true), "setClipReversed(true) should succeed");
+    require(state.isClipReversed("c-rev"), "isClipReversed reflects the stored flag");
+
+    const auto withFlag = state.tracksAsJson();
+    auto* clipsArr = (*withFlag.getArray())[0].getDynamicObject()->getProperty("clips").getArray();
+    require(clipsArr != nullptr && clipsArr->size() == 1, "track should carry the clip");
+    auto* clipObj = (*clipsArr)[0].getDynamicObject();
+    require(clipObj->hasProperty("reversed")
+                && static_cast<bool>(clipObj->getProperty("reversed")),
+            "a reversed clip must carry reversed=true in PROJECT_STATE");
+
+    // Clearing the flag removes it entirely so forward clips stay absent on the wire.
+    require(state.setClipReversed("c-rev", false), "setClipReversed(false) should succeed");
+    require(!state.isClipReversed("c-rev"), "clearing the flag restores forward playback");
+    const auto cleared = state.tracksAsJson();
+    auto* clearedClips = (*cleared.getArray())[0].getDynamicObject()->getProperty("clips").getArray();
+    require(!(*clearedClips)[0].getDynamicObject()->hasProperty("reversed"),
+            "a forward clip must omit reversed to keep PROJECT_STATE tidy");
+}
+
 void testEdgeFadeSnapshotEqualPower()
 {
         using silverdaw::EdgeFadeSnapshot;
@@ -315,8 +406,10 @@ void addEnvelopeFadeTests(std::vector<TestCase>& tests)
     tests.push_back({"EnvelopeSnapshot interpolates linear-in-dB with endpoint clamping", testEnvelopeSnapshotInterpolation});
     tests.push_back({"Mixdown snapshot carries per-clip volume envelope", testMixdownSnapshotCarriesClipEnvelope});
     tests.push_back({"tracksAsJson carries per-clip volume envelope into PROJECT_STATE", testTracksAsJsonCarriesClipEnvelope});
+    tests.push_back({"tracksAsJson carries per-clip reverse flag into PROJECT_STATE", testTracksAsJsonCarriesClipReversed});
     tests.push_back({"EdgeFadeSnapshot equal-power crossfade, endpoints, and sandwiching", testEdgeFadeSnapshotEqualPower});
     tests.push_back({"OffsetSource composes edge fade with volume envelope (B2 audio wiring)", testOffsetSourceComposesEdgeFadeWithEnvelope});
+    tests.push_back({"OffsetSource reverses the clip window non-destructively across block boundaries", testOffsetSourceReversesClipWindow});
 }
 
 } // namespace silverdaw::tests

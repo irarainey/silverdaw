@@ -27,6 +27,7 @@ interface HarnessState {
   draftSemitones: number
   draftCents: number
   hasVolumeShapeChanged: boolean
+  hasReverseChanged: boolean
   sourceBpm: number | undefined
   projectBpm: number
 }
@@ -70,6 +71,7 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
     draftSemitones: 0,
     draftCents: 0,
     hasVolumeShapeChanged: false,
+    hasReverseChanged: false,
     sourceBpm: 120,
     projectBpm: 120,
     ...initial
@@ -93,6 +95,7 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
     draftSemitones: () => state.draftSemitones,
     draftCents: () => state.draftCents,
     hasVolumeShapeChanged: () => state.hasVolumeShapeChanged,
+    hasReverseChanged: () => state.hasReverseChanged,
     sourceBpm: () => state.sourceBpm,
     projectBpm: () => state.projectBpm
   }
@@ -172,6 +175,24 @@ describe('useClipEditorDirtyState', () => {
         selectionInMs: 250
       })
       expect(dirty.canSaveChanges.value).toBe(true)
+    })
+  })
+
+  describe('canSaveChanges reverse gating', () => {
+    it('enables Save when a timeline clip has only a dirty reverse flag', () => {
+      const { dirty } = makeHarness({
+        editsTimelineClip: true,
+        hasReverseChanged: true
+      })
+      expect(dirty.canSaveChanges.value).toBe(true)
+    })
+
+    it('does NOT enable Save for a saved-library clip with only a dirty reverse flag', () => {
+      const { dirty } = makeHarness({
+        editsTimelineClip: false,
+        hasReverseChanged: true
+      })
+      expect(dirty.canSaveChanges.value).toBe(false)
     })
   })
 

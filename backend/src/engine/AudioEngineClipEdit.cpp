@@ -159,6 +159,40 @@ bool AudioEngine::setClipEnvelope(const juce::String& clipId, const juce::Array<
     return true;
 }
 
+bool AudioEngine::setClipReversed(const juce::String& clipId, bool reversed)
+{
+    auto it = tracks.find(clipId);
+    if (it == tracks.end())
+    {
+        return false;
+    }
+    auto& track = it->second;
+    if (track->offsetSource == nullptr)
+    {
+        return false;
+    }
+
+    silverdaw::log::info("engine",
+                         "setClipReversed id=" + clipId.toStdString() +
+                             " reversed=" + (reversed ? "1" : "0") +
+                             " playing=" + (master.isPlaying() ? "1" : "0"));
+
+    track->offsetSource->setReversed(reversed);
+    // Reversal is applied upstream of the JUCE read-ahead buffer, so already-buffered samples
+    // carry the old direction. Rebuild the prefetch so the change is audible from the first
+    // played block rather than only after the stale buffer drains.
+    if (master.isPlaying())
+    {
+        rebuildTrackPrefetch(*track);
+    }
+    else
+    {
+        track->prefetchDirty = true;
+        rebuildTimer.startTimer(kRebuildDebounceMs);
+    }
+    return true;
+}
+
 bool AudioEngine::setClipEdgeFade(const juce::String& clipId,
                                   bool hasFadeIn, double fadeInStartMs, double fadeInEndMs,
                                   bool hasFadeOut, double fadeOutStartMs, double fadeOutEndMs)

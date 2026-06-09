@@ -138,6 +138,11 @@ juce::var ProjectState::tracksAsJson() const
             {
                 clipObj->setProperty("locked", true);
             }
+            // Emit only reversed=true so forward clips stay absent on the wire.
+            if (static_cast<bool>(clip.getProperty(kReversed, false)))
+            {
+                clipObj->setProperty("reversed", true);
+            }
             if (clip.hasProperty(kClipName))
             {
                 clipObj->setProperty("name", clip.getProperty(kClipName).toString());

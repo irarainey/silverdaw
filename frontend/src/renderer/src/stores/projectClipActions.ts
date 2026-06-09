@@ -320,7 +320,8 @@ export const clipActions = {
         tempoRatio: clip.tempoRatio,
         semitones: clip.semitones,
         cents: clip.cents,
-        pendingAutoWarp: clip.pendingAutoWarp
+        pendingAutoWarp: clip.pendingAutoWarp,
+        reversed: clip.reversed
       }
       this.clips[newId] = copy
       const insertAt = track.clipIds.indexOf(tail.id)
@@ -356,6 +357,10 @@ export const clipActions = {
           semitones: clip.semitones,
           cents: clip.cents
         })
+      }
+      // Replay reverse so the duplicate plays backwards like its source.
+      if (clip.reversed === true) {
+        sendBridge('CLIP_SET_REVERSED', { clipId: newId, reversed: true })
       }
       log.info('project', `duplicateClip id=${clipId} -> newId=${newId} @${newStartMs}ms`)
       return newId
@@ -557,6 +562,19 @@ export const clipActions = {
       this.peaksRevision++
       sendBridge('CLIP_SET_LOCKED', { clipId, locked: next })
       log.info('project', `setClipLocked id=${clipId} -> ${next ? 'locked' : 'unlocked'}`)
+    },
+
+    /** Persist per-clip reverse state; non-destructive, plays the clip window backwards. */
+    setClipReversed(clipId: string, reversed: boolean): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const next = reversed === true
+      const current = clip.reversed === true
+      if (next === current) return
+      clip.reversed = next ? true : undefined
+      this.peaksRevision++
+      sendBridge('CLIP_SET_REVERSED', { clipId, reversed: next })
+      log.info('project', `setClipReversed id=${clipId} -> ${next ? 'reversed' : 'forward'}`)
     },
 
     /** Set or clear a persisted clip display-name override. */

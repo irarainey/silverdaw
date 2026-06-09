@@ -190,6 +190,8 @@ export const ProjectStateClipSchema = z.object({
   colorIndex: z.number().optional(),
   /** Per-clip lock; not propagated across saved-clip siblings. */
   locked: z.boolean().optional(),
+  /** Play the clip window backwards; non-destructive. Propagates across saved-clip siblings. */
+  reversed: z.boolean().optional(),
   name: z.string().optional(),
   /** Source file is missing; engine skips playback. */
   unresolved: z.boolean().optional(),

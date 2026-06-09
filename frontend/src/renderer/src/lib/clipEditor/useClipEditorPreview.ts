@@ -32,6 +32,7 @@ export interface ClipEditorPreviewDeps {
   draftCents: () => number
   previewTempoRatio: () => number | undefined
   committedEnvelopePoints: () => ClipEnvelopePoint[]
+  draftReversed: () => boolean
   viewInMs: () => number
   viewDurationMs: () => number
   visibleDurationMs: () => number
@@ -48,6 +49,7 @@ export interface ClipEditorPreview {
   scheduleDraftPreviewWarp: () => void
   clearPreviewEnvelopeUpdateTimer: () => void
   scheduleDraftPreviewEnvelope: () => void
+  pushDraftPreviewReversed: () => void
   autoFollowPlayhead: () => void
   enforceSelectionPlaybackBounds: () => void
   loadPreviewForView: () => void
@@ -104,6 +106,13 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
     if (!deps.isOpen() || !deps.editsExistingClip() || !preview.isLoaded) return
     if (previewEnvelopeUpdateTimer !== null) return
     previewEnvelopeUpdateTimer = window.setTimeout(sendDraftPreviewEnvelope, 33)
+  }
+
+  // Reverse is a single toggle (no drag), so push it immediately rather than
+  // throttling like the envelope/warp drafts.
+  function pushDraftPreviewReversed(): void {
+    if (!deps.isOpen() || !deps.editsExistingClip() || !preview.isLoaded) return
+    preview.setReversed(deps.draftReversed())
   }
 
   // While the preview is playing, keep the playhead visible on the canvas
@@ -234,6 +243,7 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
     scheduleDraftPreviewWarp,
     clearPreviewEnvelopeUpdateTimer,
     scheduleDraftPreviewEnvelope,
+    pushDraftPreviewReversed,
     autoFollowPlayhead,
     enforceSelectionPlaybackBounds,
     loadPreviewForView,

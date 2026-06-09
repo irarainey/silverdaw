@@ -177,6 +177,15 @@ Silverdaw currently supports the core arrangement workflow:
   envelope line is mirrored and kept in sync across both channel lanes —
   editing a breakpoint in either lane edits the one shared shape (the engine
   applies that shape equally to both channels).
+- **Reverse clip.** A clip can be played back-to-front non-destructively. The
+  flag is set from the timeline clip's right-click ▸ **Reverse** entry (a
+  checkmarked toggle) or from the **Reverse** toggle in the Clip Editor toolbar,
+  where it is part of the transactional draft and previewed live. Reversal is a
+  per-clip `reversed` flag — the source file is never rewritten; the audio engine
+  reads the clip's source window in reverse. From the context menu the toggle
+  propagates to every linked-saved-clip sibling; from the Clip Editor it follows
+  the same save scope as the other draft edits. The flag round-trips through
+  `PROJECT_STATE` and the `.silverdaw` file and is suppressed from save when off.
 - **Mixdown export** (File ▸ Export Mixdown…) renders the whole project to a
   single stereo file. Formats: WAV (16 / 24 / 32-float), FLAC (16 / 24), AIFF
   (16 / 24), MP3 (128 / 192 / 320 kbps, bundled LAME). Optional TPDF dither for
@@ -447,7 +456,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         toneBassDb?, toneMidDb?, toneTrebleDb?, toneLowCut?, toneHighCut?,
         sendReverb?, sendDelay?, pan?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
-         locked?,
+         locked?, reversed?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
          envelopePoints?,
          effectiveDurationMs?, effectiveTempoRatio?, effectiveWarpActive?]
@@ -513,7 +522,10 @@ clamp / schema-version guards on load, and does not generate undo entries
 `CLIP.locked` is an optional boolean (absent == unlocked) that freezes a clip
 against move / trim / split gestures on the timeline; the lock is per-clip,
 not propagated across linked-saved-clip siblings, and round-trips through
-`PROJECT_STATE`.
+`PROJECT_STATE`. `CLIP.reversed` is an optional boolean (absent == forward) that
+plays the clip's source window back-to-front; it is set via `CLIP_SET_REVERSED`
+(timeline) or `PREVIEW_SET_REVERSED` (Clip Editor live preview), suppressed from
+save when off, and round-trips through `PROJECT_STATE` and the `.silverdaw` file.
 
 **Phase 5 effects properties.** Each `TRACK` carries optional sound-shaping
 fields, all suppressed from save when at their defaults so legacy projects stay
@@ -977,7 +989,7 @@ a **WARP** pill in the editor header; the playhead is shown at the start of
 the view immediately, and Play becomes available once the backend preview
 voice is ready. Auditioning runs through an independent **backend preview
 voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
-`PREVIEW_SEEK` / `PREVIEW_SET_WARP` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` /
+`PREVIEW_SEEK` / `PREVIEW_SET_WARP` / `PREVIEW_SET_REVERSED` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` /
 `PREVIEW_POSITION` / `PREVIEW_ENDED`) so the main transport is unaffected. A
 monotonic `generation` counter on the preview voice means stale events for a
 preview the user has already closed are silently dropped. While playing the
@@ -1281,7 +1293,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
 | `Ctrl + L` | Toggle the **lock** flag on the selected clip. Locked clips refuse drag-move, edge-trim and Split-at-playhead, and show a padlock badge in their title strip. Per-clip — linked-saved-clip siblings stay independently lockable. |
-| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), an inline 16-swatch **Colour** picker, **Save clip to library**, **Save as sample**, **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved-clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
+| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked-saved-clip sibling), **Save clip to library**, **Save as sample**, **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved-clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
 | Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
@@ -1304,6 +1316,7 @@ and the following set takes over instead:
 | Drag on waveform | Mark a sub-selection. The selection drives Save-as-new and Apply-trim. |
 | Drag on a selection handle | Fine-tune the selection edge. |
 | **Volume** toolbar toggle (cropped Clip view only) | Turn Volume Shape editing on / off. The volume line is always drawn faint as read-only context; toggling on makes its breakpoints editable. |
+| **Reverse** toolbar toggle | Play the clip back-to-front. The toggle is part of the transactional draft and previewed live; **Save** commits it (following the same scope as the other edits), **Cancel** discards. |
 | Click / drag on waveform (Volume mode on) | Add a breakpoint, or drag an existing one — freehand placement by default. Endpoints keep their pinned times. |
 | `Shift` + click / drag (Volume mode on) | Snap the breakpoint to the nearest source beat while adding or moving it. |
 | `Alt` + click or right-click a breakpoint (Volume mode on) | Remove that breakpoint (pinned endpoints can't be removed). |

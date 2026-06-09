@@ -215,6 +215,12 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                         engine.setClipEnvelope(clipId, *envVar.getArray());
                     }
                 }
+
+                // Replay persisted reverse so loaded clips play backwards as saved.
+                if (static_cast<bool>(clip.getProperty("reversed", false)))
+                {
+                    engine.setClipReversed(clipId, true);
+                }
             }
             else
             {

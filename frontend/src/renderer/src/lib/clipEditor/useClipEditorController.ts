@@ -11,6 +11,7 @@ import { useClipEditorViewport } from '@/lib/clipEditor/useClipEditorViewport'
 import { useClipEditorWarpDraft } from '@/lib/clipEditor/useClipEditorWarpDraft'
 import { useClipEditorDirtyState } from '@/lib/clipEditor/useClipEditorDirtyState'
 import { useClipEditorVolumeShapeDraft } from '@/lib/clipEditor/useClipEditorVolumeShapeDraft'
+import { useClipEditorReverseDraft } from '@/lib/clipEditor/useClipEditorReverseDraft'
 import { useClipEditorWaveform } from '@/lib/clipEditor/useClipEditorWaveform'
 import { useClipEditorPreview } from '@/lib/clipEditor/useClipEditorPreview'
 import { useClipEditorCropHistory } from '@/lib/clipEditor/useClipEditorCropHistory'
@@ -84,6 +85,19 @@ export function useClipEditorController(
 
   // Volume mode edits the gain envelope instead of the selection in Clip view.
   const volumeEditMode = ref(false)
+
+  // Draft reverse-playback flag; Save commits, Cancel discards.
+  const reverseDraft = useClipEditorReverseDraft()
+  const { hasChanged: hasReverseChanged, initialise: initialiseReverseDraft } = reverseDraft
+
+  // Reverse is a per-clip flag available for any placed timeline clip (linked or
+  // not); linked edits propagate to the shared saved clip and all its instances.
+  const reverseAvailable = computed(() => editsTimelineClip.value)
+  const reverseActive = computed(() => reverseDraft.reversed.value)
+  function onToggleReverse(): void {
+    if (!reverseAvailable.value) return
+    reverseDraft.toggle()
+  }
 
   // Last rendered lane layout; pointer hit-testing must match drawn geometry.
   const waveformStereoLanes = ref(false)
@@ -204,6 +218,7 @@ export function useClipEditorController(
     draftSemitones: () => draftSemitones.value,
     draftCents: () => draftCents.value,
     hasVolumeShapeChanged: () => hasVolumeShapeChanged.value,
+    hasReverseChanged: () => hasReverseChanged.value,
     sourceBpm: () => sourceBpm.value,
     projectBpm: () => transport.bpm
   })
@@ -218,6 +233,7 @@ export function useClipEditorController(
     scheduleDraftPreviewWarp,
     clearPreviewEnvelopeUpdateTimer,
     scheduleDraftPreviewEnvelope,
+    pushDraftPreviewReversed,
     autoFollowPlayhead,
     enforceSelectionPlaybackBounds,
     loadPreviewForView,
@@ -237,6 +253,7 @@ export function useClipEditorController(
     draftCents: () => draftCents.value,
     previewTempoRatio,
     committedEnvelopePoints: volumeShapeCommittedPoints,
+    draftReversed: () => reverseDraft.reversed.value,
     viewInMs: () => viewInMs.value,
     viewDurationMs: () => viewDurationMs.value,
     visibleDurationMs: () => visibleDurationMs.value,
@@ -258,6 +275,7 @@ export function useClipEditorController(
         initSelectionForItem()
         initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
         initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
+        initialiseReverseDraft(timelineClip.value)
         volumeEditMode.value = false
         loopEnabled.value = false
         resetHiResRequestKey()
@@ -293,6 +311,7 @@ export function useClipEditorController(
       initSelectionForItem()
       initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
       initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
+      initialiseReverseDraft(timelineClip.value)
       resetHiResRequestKey()
       resetCropHistory()
       library.setEditorHiResPeaks(null)
@@ -321,6 +340,16 @@ export function useClipEditorController(
     drawWaveform()
   })
 
+  // Reverse toggle → preview voice. Push immediately so the audition flips,
+  // and redraw so the waveform mirrors to match the new state.
+  watch(
+    () => reverseDraft.reversed.value,
+    () => {
+      pushDraftPreviewReversed()
+      drawWaveform()
+    }
+  )
+
   // Re-push envelope after async PREVIEW_LOAD so preview matches latest draft.
   watch(
     () => preview.isLoaded,
@@ -328,6 +357,7 @@ export function useClipEditorController(
       if (!loaded || loaded === prev) return
       if (!props.open || !editsExistingClip.value) return
       preview.setEnvelope(volumeShapeCommittedPoints())
+      preview.setReversed(reverseDraft.reversed.value)
     }
   )
 
@@ -466,6 +496,7 @@ export function useClipEditorController(
     volumeShapeDurationMs: () => volumeShapeDurationMs.value,
     draftPoints: () => volumeShapeDraft.draftPoints.value,
     draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
+    draftReversed: () => reverseDraft.reversed.value,
     editorHiResPeaks: () => library.editorHiResPeaks,
     channelPeaksByItemId: () => library.channelPeaksByItemId,
     waveformDisplayMode: () => ui.waveformDisplayMode,
@@ -561,7 +592,8 @@ export function useClipEditorController(
     draftMode: () => draftMode.value,
     draftTempoPinned: () => draftTempoPinned.value,
     tempoRatioFromPinnedBpm: () => tempoRatioFromPinnedBpm(),
-    volumeShapeCommittedPoints: () => volumeShapeCommittedPoints()
+    volumeShapeCommittedPoints: () => volumeShapeCommittedPoints(),
+    reverseCommitted: () => reverseDraft.committed()
   })
 
   const { onKeydown, onWindowKeydownCapture } = useClipEditorKeyboard({
@@ -600,6 +632,9 @@ export function useClipEditorController(
     canGateSelection,
     onSilenceSelection,
     onFullSelection,
+    reverseAvailable,
+    reverseActive,
+    onToggleReverse,
     onCanvasMouseDown,
     onCanvasContextMenu,
     onCanvasWheel,

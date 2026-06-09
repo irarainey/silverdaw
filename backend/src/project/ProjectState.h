@@ -192,6 +192,12 @@ class ProjectState : public juce::ValueTree::Listener
     /** Read a clip's lock flag. Defaults to false. */
     bool isClipLocked(const juce::String& clipId) const;
 
+    // Clip reverse is a non-destructive per-instance flag; false is suppressed on disk/wire.
+    bool setClipReversed(const juce::String& clipId, bool reversed);
+
+    /** Read a clip's reverse flag. Defaults to false. */
+    bool isClipReversed(const juce::String& clipId) const;
+
     /** Read the clip's `inMs` (where in the source file it starts reading). 0 if unknown. */
     double getClipInMs(const juce::String& clipId) const;
 
@@ -491,6 +497,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kChannelCount;
     static const juce::Identifier kColorIndex;
     static const juce::Identifier kLocked;
+    static const juce::Identifier kReversed;
     static const juce::Identifier kViewPxPerSecond;
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kViewSelectedTrack;

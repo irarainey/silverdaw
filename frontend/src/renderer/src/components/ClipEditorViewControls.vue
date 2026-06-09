@@ -13,6 +13,8 @@ defineProps<{
   canApplyCrop: boolean
   canResetVolume: boolean
   canGateSelection: boolean
+  reverseAvailable: boolean
+  reverseActive: boolean
   zoom: number
   zoomPercent: number
 }>()
@@ -22,6 +24,7 @@ defineEmits<{
   (e: 'reset-volume'): void
   (e: 'silence-selection'): void
   (e: 'full-selection'): void
+  (e: 'toggle-reverse'): void
   (e: 'zoom-out'): void
   (e: 'reset-zoom'): void
   (e: 'zoom-in'): void
@@ -94,6 +97,26 @@ defineEmits<{
       @click="$emit('full-selection')"
     >
       Full
+    </button>
+    <!-- Reverse: non-destructive whole-clip backwards playback toggle. Highlights
+         when on; linked clips reverse every instance. -->
+    <button
+      v-if="reverseAvailable"
+      type="button"
+      class="rounded px-2 py-1 text-[11px] font-medium"
+      :class="
+        reverseActive
+          ? 'bg-violet-600 text-white hover:bg-violet-500'
+          : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+      "
+      :title="
+        reverseActive
+          ? 'Reverse on — the clip plays backwards (non-destructive)'
+          : 'Play the clip backwards (non-destructive)'
+      "
+      @click="$emit('toggle-reverse')"
+    >
+      Reverse
     </button>
     <!-- Non-destructive crop with dialog-local undo/redo. -->
     <button

@@ -77,6 +77,13 @@ export const usePreviewStore = defineStore('preview', {
       if (!this.isLoaded) return
       sendBridge('PREVIEW_SET_ENVELOPE', { points })
     },
+    /** Toggle the preview voice's non-destructive reverse while loaded.
+     *  Called by the Clip Editor so the audition tracks the reverse draft
+     *  live. No-op when no preview is loaded. */
+    setReversed(reversed: boolean): void {
+      if (!this.isLoaded) return
+      sendBridge('PREVIEW_SET_REVERSED', { reversed })
+    },
     /** Update the preview voice's warp engine while loaded. Mirrors
      *  `setClipWarp` semantics — partial update, `tempoRatio: null`
      *  clears the pin. Called by the Clip Editor when warp parameters

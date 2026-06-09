@@ -138,4 +138,30 @@ class ConstantSource : public juce::PositionableAudioSource
     juce::int64 pos = 0;
 };
 
+// Emits each sample's absolute source position as its value, so a reader can verify exactly
+// which source samples (and in which order) were pulled — used to assert reverse playback.
+class RampSource : public juce::PositionableAudioSource
+{
+  public:
+    void prepareToPlay(int, double) override {}
+    void releaseResources() override {}
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+    {
+        for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
+        {
+            auto* d = info.buffer->getWritePointer(ch, info.startSample);
+            for (int i = 0; i < info.numSamples; ++i)
+                d[i] = static_cast<float>(pos + i);
+        }
+        pos += info.numSamples;
+    }
+    void setNextReadPosition(juce::int64 p) override { pos = p; }
+    juce::int64 getNextReadPosition() const override { return pos; }
+    juce::int64 getTotalLength() const override { return std::numeric_limits<juce::int64>::max(); }
+    bool isLooping() const override { return false; }
+
+  private:
+    juce::int64 pos = 0;
+};
+
 } // namespace silverdaw::tests

@@ -49,6 +49,9 @@ const {
   canGateSelection,
   onSilenceSelection,
   onFullSelection,
+  reverseAvailable,
+  reverseActive,
+  onToggleReverse,
   zoom,
   onApplyCrop,
   zoomOut,
@@ -163,12 +166,15 @@ const {
                 :can-apply-crop="canApplyCrop"
                 :can-reset-volume="canResetVolumeShape"
                 :can-gate-selection="canGateSelection"
+                :reverse-available="reverseAvailable"
+                :reverse-active="reverseActive"
                 :zoom="zoom"
                 :zoom-percent="zoomPercent"
                 @apply-crop="onApplyCrop"
                 @reset-volume="onResetVolumeShape"
                 @silence-selection="onSilenceSelection"
                 @full-selection="onFullSelection"
+                @toggle-reverse="onToggleReverse"
                 @zoom-out="zoomOut"
                 @reset-zoom="resetZoom"
                 @zoom-in="zoomIn"

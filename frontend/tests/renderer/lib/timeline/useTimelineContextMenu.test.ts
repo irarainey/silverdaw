@@ -203,6 +203,18 @@ describe('useTimelineContextMenu — items builder', () => {
     expect(splitItem?.label).toContain('locked')
   })
 
+  it('Reverse row check-state reflects clip.reversed', () => {
+    const forward = setupMenu({ clip: makeClip(), item: makeAudioFileItem() })
+    expect(findItem(forward, 'clip.reverse')?.label).toBe('Reverse')
+
+    setActivePinia(createPinia())
+    const reversed = setupMenu({
+      clip: makeClip({ reversed: true }),
+      item: makeAudioFileItem()
+    })
+    expect(findItem(reversed, 'clip.reverse')?.label).toBe('\u2713 Reverse')
+  })
+
   it('Colour selected swatch prefers the clip override, falls back to the track default', () => {
     const trackDefault = setupMenu({
       clip: makeClip(),
@@ -376,6 +388,50 @@ describe('useTimelineContextMenu — command dispatch', () => {
     menu.contextMenuClipId.value = clip.id
     menu.onContextMenuCommand('clip.unlock')
     expect(lockSpy).toHaveBeenLastCalledWith(clip.id, false)
+  })
+
+  it('clip.reverse toggles project.setClipReversed for an audio-file clip', () => {
+    const clip = makeClip()
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    project.clips = { [clip.id]: clip }
+    library.items = [makeAudioFileItem('src')]
+    const reverseSpy = vi.spyOn(project, 'setClipReversed').mockImplementation(() => {})
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.reverse')
+    expect(reverseSpy).toHaveBeenCalledWith(clip.id, true)
+  })
+
+  it('clip.reverse on a linked saved clip routes to library.updateSavedClipReversed', () => {
+    const clip = makeClip({ libraryItemId: 'saved', reversed: true })
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    project.clips = { [clip.id]: clip }
+    library.items = [makeSavedClipItem('saved')]
+    const propagateSpy = vi
+      .spyOn(library, 'updateSavedClipReversed')
+      .mockImplementation(() => ({ ok: true }))
+    const directSpy = vi.spyOn(project, 'setClipReversed').mockImplementation(() => {})
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.reverse')
+    expect(propagateSpy).toHaveBeenCalledWith('saved', false)
+    expect(directSpy).not.toHaveBeenCalled()
   })
 
   it('onContextMenuClose clears state', () => {

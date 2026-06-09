@@ -108,6 +108,9 @@ class AudioEngine
 
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
 
+    /** Play a clip's window backwards (non-destructive); applied upstream of warp/pitch. */
+    bool setClipReversed(const juce::String& clipId, bool reversed);
+
     bool setClipEdgeFade(const juce::String& clipId,
                          bool hasFadeIn, double fadeInStartMs, double fadeInEndMs,
                          bool hasFadeOut, double fadeOutStartMs, double fadeOutEndMs);
@@ -154,6 +157,8 @@ class AudioEngine
                         std::optional<double> cents);
 
     bool setPreviewEnvelope(const juce::Array<juce::var>& points);
+
+    bool setPreviewReversed(bool reversed);
 
     juce::int64 getPreviewGeneration() const;
 

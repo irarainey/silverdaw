@@ -56,6 +56,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   in the Clip Editor to swell, duck, fade in, or fade out, or chop a selected
   range to silence or full volume with hard edges — all non-destructive
   and applied to both playback and export.
+- **Reverse a clip.** Play any clip back-to-front from the timeline right-click
+  menu or a toggle in the Clip Editor (with live preview) — non-destructive, so
+  the source file is never altered.
 - **Single or stereo waveforms.** Choose whether clips show one combined
   waveform or stacked left / right channels, in Preferences — applied across the
   timeline and the Clip Editor.
@@ -94,7 +97,7 @@ are not part of the current feature set. See the
   project-wide Reverb and Delay sends, and the per-clip volume shaping that
   already ship, a wider set of mixing effects, clip-to-clip transitions, and
   stereo width controls for polishing a mix.
-- **More editing power.** Extra clip actions such as reverse, and manual
+- **More editing power.** Extra clip actions and manual
   correction of the detected beat grid.
 - **MIDI devices and scratch authoring.** Support for external MIDI controllers
   and DJ decks, including a studio tool for crafting reusable "scratch" clips to

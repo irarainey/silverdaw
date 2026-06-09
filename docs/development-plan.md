@@ -335,6 +335,7 @@ Non-destructive clip operations on the timeline. Each operation mutates the `Val
 - **Duplicate** — clone a clip at a chosen offset (commonly drag with `Alt` or right-click → "Duplicate to Beat Grid"). Both clips reference the same file; the duplicate gets its own clip id so it can be edited independently.
 - **Repeat-to-loop** — a special-case duplicate that fills a region with N copies of a clip at clip-length spacing; ideal for looping a short sample across a section.
 - **Lock / Unlock** — `Ctrl+L` or right-click ▸ Lock freezes a single clip against accidental move / trim / split. Locked clips show a padlock badge on the title strip, refuse drag-move and edge-trim gestures silently, and surface a toast if Split-at-playhead is invoked on them. Double-click still opens the Clip Editor so warp / pitch / crop remain editable via that surface. The lock is per-clip — linked-saved-clip siblings stay independently lockable — and persisted on the clip's `locked` ValueTree property (absent == unlocked).
+- **Reverse** — right-click ▸ Reverse (a checkmarked toggle) or the **Reverse** toggle in the Clip Editor toolbar plays the clip's source window back-to-front. It is non-destructive: the source file is never rewritten — the audio engine reads the clip window in reverse. From the context menu the toggle propagates to every linked-saved-clip sibling; in the Clip Editor it is part of the transactional draft, previewed live, and committed on **Save** following the same scope as the other draft edits. Persisted on the clip's `reversed` ValueTree property (absent == forward) via `CLIP_SET_REVERSED` / `PREVIEW_SET_REVERSED`.
 
 ### 7.6 Loop Slicing
 - Slice on BTrack transient positions, beat grid divisions, or manual markers
@@ -1931,10 +1932,12 @@ Implementation increments (foundations first; each keeps build + tests green):
   selected timeline range for auditioning (distinct from the existing Clip Editor
   audition loop). Decide FX-tail behaviour at loop wrap up front (flush vs let
   Reverb/Delay tails ring) — pick one intentionally.
-- [ ] **Reverse & selection effects in the Clip Editor** (issue #43) — let the
-  Clip Editor's region selection (§7.2.1 / §7.14) apply destructive actions —
-  reverse, gain, and simple effects — rendered into a new clip/sample so the
-  underlying source file stays intact.
+- [ ] **Selection effects in the Clip Editor** (issue #43) — let the
+  Clip Editor's region selection (§7.2.1 / §7.14) apply gain and simple
+  effects rendered into a new clip/sample so the underlying source file stays
+  intact. (Whole-clip **reverse** has shipped as a non-destructive per-clip
+  `reversed` flag — timeline right-click ▸ Reverse and a Clip Editor toolbar
+  toggle with live preview; see §7.5. Per-selection reverse remains future work.)
 
 ### 12.4 Tempo, beat-grid & harmonic — *Phase 4 polish / Phase 8*
 
