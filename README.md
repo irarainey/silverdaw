@@ -53,7 +53,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   the song-wide Reverb and Delay those sends feed. Plus drag-to-resize and
   reorder tracks, and a master output with live metering.
 - **Per-clip volume shaping.** Draw a volume envelope right on a clip's waveform
-  in the Clip Editor to swell, duck, fade in, or fade out — all non-destructive
+  in the Clip Editor to swell, duck, fade in, or fade out, or chop a selected
+  range to silence or full volume with hard edges — all non-destructive
   and applied to both playback and export.
 - **Single or stereo waveforms.** Choose whether clips show one combined
   waveform or stacked left / right channels, in Preferences — applied across the

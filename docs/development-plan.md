@@ -811,6 +811,13 @@ the **Clip Editor** (§7.14), in the cropped Clip view:
   editor: click the curve to add a breakpoint, drag a breakpoint to move it,
   and `Alt`-click or right-click a breakpoint to remove it. The pinned start
   / end breakpoints keep their times and cannot be removed.
+- Breakpoint placement is **freehand by default** so the shape can be as
+  gradual or as sharp as the user wants; holding `Shift` while adding or
+  dragging snaps the breakpoint to the nearest source beat.
+- The **Silence** and **Full** toolbar buttons act as a **region gate**:
+  with a sub-selection active they flatten that range to silence or full
+  volume with **hard step edges**, leaving the rest of the shape untouched.
+  This is the quickest way to chop a clean, non-fading section.
 - The breakpoint time axis spans the whole (cropped) clip, so it is obvious
   which part of the audio each breakpoint affects.
 - In the **stereo** waveform display the single envelope line is mirrored
@@ -1060,7 +1067,10 @@ project transport.
   envelope is always drawn over the waveform; the canvas toolbar's
   **Volume** toggle makes it editable — click the curve to add a
   breakpoint, drag to move one, `Alt`-click / right-click to remove
-  (pinned start / end breakpoints stay). In the **stereo** waveform
+  (pinned start / end breakpoints stay). Placement is freehand by
+  default; hold `Shift` to snap to the nearest source beat. The
+  **Silence** / **Full** buttons gate the current selection to a flat
+  level with hard edges. In the **stereo** waveform
   display the single shape is mirrored and kept in sync across both
   channel lanes. Edits commit on **Save** with the other drafts and are
   auditioned live in the preview voice via `PREVIEW_SET_ENVELOPE` (see

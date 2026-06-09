@@ -1304,8 +1304,10 @@ and the following set takes over instead:
 | Drag on waveform | Mark a sub-selection. The selection drives Save-as-new and Apply-trim. |
 | Drag on a selection handle | Fine-tune the selection edge. |
 | **Volume** toolbar toggle (cropped Clip view only) | Turn Volume Shape editing on / off. The volume line is always drawn faint as read-only context; toggling on makes its breakpoints editable. |
-| Click / drag on waveform (Volume mode on) | Add a breakpoint, or drag an existing one. Endpoints keep their pinned times. |
+| Click / drag on waveform (Volume mode on) | Add a breakpoint, or drag an existing one — freehand placement by default. Endpoints keep their pinned times. |
+| `Shift` + click / drag (Volume mode on) | Snap the breakpoint to the nearest source beat while adding or moving it. |
 | `Alt` + click or right-click a breakpoint (Volume mode on) | Remove that breakpoint (pinned endpoints can't be removed). |
+| **Silence** / **Full** toolbar buttons | Flatten the current sub-selection to silence or full volume with hard step edges (a region gate). Enabled once a range is selected; the rest of the shape is left untouched. |
 | Mouse wheel | Zoom (anchored on the pointer), capped at 64× / 6400%. |
 | `Shift` + wheel | Pan left / right. |
 | `+` / `-` / `0` | Zoom in / out / reset. |
