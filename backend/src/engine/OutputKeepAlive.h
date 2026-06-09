@@ -10,10 +10,11 @@ namespace silverdaw
 {
 
 // Real-time-safe keep-alive for sleep-prone output endpoints. Holds the DAC awake with an
-// inaudible ultrasonic tone whenever a project is loaded, so the first play is instant — no
-// audible hiss and no wake pre-roll latency. The tone is added only on otherwise-silent
-// blocks and ramped in/out to stay click-free; with no project loaded the output is true
-// digital silence.
+// inaudible ultrasonic tone whenever an output device is open (or a project is loaded, or
+// playback is active), so the first play is instant — no audible hiss and no wake pre-roll
+// latency, and no cold-start window in which a freshly-opened/reconnected device could
+// auto-mute. The tone is added only on otherwise-silent blocks and ramped in/out to stay
+// click-free; once the output device is released the output is true digital silence.
 class OutputKeepAlive
 {
   public:
@@ -27,11 +28,23 @@ class OutputKeepAlive
     }
     bool isContentLoaded() const noexcept { return contentLoaded.load(std::memory_order_acquire); }
 
-    // A loaded project keeps the endpoint warm; an idle app with no project stays truly silent.
+    // Open the gate for as long as an output device is running, so a freshly-opened or
+    // reconnected endpoint is held awake from the moment the stream starts — before any project
+    // is loaded. This closes the cold-start window in which the device would otherwise receive
+    // true digital silence (and auto-mute) between device open and the first content load.
+    void setDeviceActive(bool active) noexcept
+    {
+        deviceActive.store(active, std::memory_order_release);
+    }
+    bool isDeviceActive() const noexcept { return deviceActive.load(std::memory_order_acquire); }
+
+    // An open output device keeps the endpoint warm; once the device closes the gate shuts and
+    // the output returns to true digital silence.
     bool shouldRun() const noexcept
     {
         return playing.load(std::memory_order_acquire)
-               || contentLoaded.load(std::memory_order_acquire);
+               || contentLoaded.load(std::memory_order_acquire)
+               || deviceActive.load(std::memory_order_acquire);
     }
 
     // Called from prepareToPlay (device/sample-rate start): tune the oscillator for the active
@@ -92,6 +105,7 @@ class OutputKeepAlive
   private:
     std::atomic<bool> playing{false};
     std::atomic<bool> contentLoaded{false};
+    std::atomic<bool> deviceActive{false};
     // Oscillator state — audio-thread only. prepare() runs from prepareToPlay during a
     // device/sample-rate (re)start, which JUCE serialises against the IO callback (the stream
     // is stopped across the restart), so these non-atomic floats are never touched concurrently.

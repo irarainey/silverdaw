@@ -244,6 +244,25 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         buf.clear();
         require(! ka.maybeApplyFloor(buf, 0, n, 0.0F), "closed gate must stop injecting the tone");
         require(blockPeak(buf) == 0.0F, "closed gate must leave true digital silence");
+
+        // An open output device opens the gate too — even with no project loaded and not
+        // playing — so a freshly-opened or reconnected endpoint is held awake from the moment
+        // the stream starts. This closes the cold-start digital-silence window that would
+        // otherwise let a sleep-prone USB DAC auto-mute and clip the first play.
+        ka.setDeviceActive(true);
+        require(ka.shouldRun(), "an open output device must open the keep-alive gate");
+        bool wroteForDevice = false;
+        for (int b = 0; b < 4; ++b)
+        {
+            buf.clear();
+            wroteForDevice = ka.maybeApplyFloor(buf, 0, n, 0.0F);
+        }
+        require(wroteForDevice, "device-active + silent block must inject the keep-alive tone");
+        require(blockPeak(buf) > threshold, "device-active tone must clear the silence threshold");
+
+        ka.setDeviceActive(false);
+        require(! ka.shouldRun(),
+                "closing the device with no project and not playing must close the gate");
     }
 
     // ── MeteringSource integration: the tone survives a low master gain ──

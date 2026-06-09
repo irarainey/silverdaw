@@ -19,11 +19,18 @@ class MeteringSource : public juce::AudioSource
     {
         source.prepareToPlay(samplesPerBlockExpected, sampleRate);
         keepAlive.prepare(sampleRate);
+        // The output device is now streaming: hold the endpoint awake from this first block so a
+        // freshly-opened or reconnected DAC never sleeps before the user loads a project and plays.
+        keepAlive.setDeviceActive(true);
         smoothedGain.reset(sampleRate, 0.01);
         smoothedGain.setCurrentAndTargetValue(targetGain.load(std::memory_order_relaxed));
     }
 
-    void releaseResources() override { source.releaseResources(); }
+    void releaseResources() override
+    {
+        keepAlive.setDeviceActive(false);
+        source.releaseResources();
+    }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
     {

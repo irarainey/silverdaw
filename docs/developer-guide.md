@@ -680,14 +680,18 @@ tone** (`kKeepAliveTonePeak`, ≈0.004 / −48 dBFS, just below Nyquist) is mixe
 otherwise-silent output. [`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h)
 owns the gate and is injected by the metering stage **after** the master-gain ramp,
 so a low master volume can't attenuate it below the level that keeps the endpoint
-awake. The tone runs whenever a project is loaded (`contentLoaded`) or playback is
-active, ramped in/out over `kKeepAliveRampSeconds` to stay click-free, and rings
-out on real programme above `kKeepAliveSilenceThreshold` so content is never
-coloured. Because it runs continuously while a project is loaded, the endpoint is
-already awake before the user presses play, so the first play is instant with no
-audible pre-roll. With no project loaded the output is left **truly silent**.
-`MasterClockSource` still gates the transport and clears the buffer when not
-playing; the keep-alive injection lives downstream in the metering stage.
+awake. The tone runs whenever an output device is open (`deviceActive`), a
+project is loaded (`contentLoaded`), or playback is active, ramped in/out over
+`kKeepAliveRampSeconds` to stay click-free, and rings out on real programme above
+`kKeepAliveSilenceThreshold` so content is never coloured. Because it runs from
+the moment the device starts streaming, a freshly-opened or reconnected endpoint
+(e.g. a USB DAC plugged in just before launch) is held awake before the user
+loads a project or presses play, so the first play is instant with no audible
+pre-roll and no cold-start window in which the device could auto-mute. The gate
+only closes — returning the output to **truly silent** digital zero — once the
+output device is released. `MasterClockSource` still gates the transport and
+clears the buffer when not playing; the keep-alive injection lives downstream in
+the metering stage.
 
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
 export writer** in [`MixdownExport`](../backend/src/mixdown/MixdownExport.cpp). (The
