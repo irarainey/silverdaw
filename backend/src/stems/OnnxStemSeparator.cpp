@@ -4,6 +4,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -175,11 +178,10 @@ class OnnxStemSeparator : public StemSeparator
   public:
     OnnxStemSeparator() : env(ORT_LOGGING_LEVEL_WARNING, "silverdaw-stems")
     {
-        // Leave headroom for the realtime audio thread: use at most half the
-        // logical cores for inference, never fewer than one.
+        // No realtime audio plays during an offline separation, so dedicate every
+        // logical core to inference (never fewer than one).
         const unsigned int cores = std::thread::hardware_concurrency();
-        const int threads = std::max(1, static_cast<int>(cores / 2));
-        sessionOptions.SetIntraOpNumThreads(threads);
+        sessionOptions.SetIntraOpNumThreads(static_cast<int>(std::max(1u, cores)));
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     }
 
@@ -285,24 +287,49 @@ class OnnxStemSeparator : public StemSeparator
                                              const StemCancelFn& shouldCancel, double stemBase,
                                              double stemSpan)
     {
-        const auto modelPath = modelFileFor(modelDir, stem).getFullPathName();
-        Ort::Session session(env, modelPath.toWideCharPointer(), sessionOptions);
+        Ort::Session& session = getOrCreateSession(modelFileFor(modelDir, stem).getFullPathName());
 
         Ort::AllocatorWithDefaultOptions allocator;
         const auto inputName = session.GetInputNameAllocated(0, allocator);
         const auto outputName = session.GetOutputNameAllocated(0, allocator);
-        const std::array<const char*, 1> inputNames{inputName.get()};
-        const std::array<const char*, 1> outputNames{outputName.get()};
 
         const int sourceIndex = sourceIndexForStem(stem);
 
         // Overlap-add accumulators: weighted sum per channel + the weight total.
-        std::vector<double> accLeft(static_cast<size_t>(numSamples), 0.0);
-        std::vector<double> accRight(static_cast<size_t>(numSamples), 0.0);
-        std::vector<double> weightSum(static_cast<size_t>(numSamples), 0.0);
+        // float is ample here — each output sample is the sum of at most two
+        // overlapping windows — and halves the bandwidth of this hot loop.
+        std::vector<float> accLeft(static_cast<size_t>(numSamples), 0.0f);
+        std::vector<float> accRight(static_cast<size_t>(numSamples), 0.0f);
+        std::vector<float> weightSum(static_cast<size_t>(numSamples), 0.0f);
 
-        std::vector<float> inputData(static_cast<size_t>(kModelChannels) * kSegmentSamples);
+        // Reusable input tensor over a fixed-length, zero-padded window in
+        // [ch0 samples..., ch1 samples...] layout.
+        std::vector<float> inputData(static_cast<size_t>(kModelChannels) * kSegmentSamples, 0.0f);
         const std::array<int64_t, 3> inputShape{1, kModelChannels, kSegmentSamples};
+        auto inputTensor = Ort::Value::CreateTensor<float>(
+            memInfo, inputData.data(), inputData.size(), inputShape.data(), inputShape.size());
+
+        // Reusable output buffer for the model's [1, sources, channels, segment]
+        // tensor, bound once so ORT writes in place instead of allocating a fresh
+        // ~21 MB output on every window. A shape mismatch surfaces as an
+        // Ort::Exception from Run() and is reported as an inference failure.
+        constexpr int kModelSources = 4;
+        std::vector<float> outputData(static_cast<size_t>(kModelSources) *
+                                      static_cast<size_t>(kModelChannels) * kSegmentSamples);
+        const std::array<int64_t, 4> outputShape{1, kModelSources, kModelChannels, kSegmentSamples};
+        auto outputTensor = Ort::Value::CreateTensor<float>(
+            memInfo, outputData.data(), outputData.size(), outputShape.data(), outputShape.size());
+
+        Ort::IoBinding binding(session);
+        binding.BindInput(inputName.get(), inputTensor);
+        binding.BindOutput(outputName.get(), outputTensor);
+
+        // Offsets of source `sourceIndex`, channels 0/1 in the contiguous
+        // [1, sources, channels, segment] output tensor.
+        const auto channelStride = static_cast<size_t>(kSegmentSamples);
+        const auto sourceStride = static_cast<size_t>(kModelChannels) * channelStride;
+        const float* outLeft = outputData.data() + static_cast<size_t>(sourceIndex) * sourceStride;
+        const float* outRight = outLeft + channelStride;
 
         for (size_t w = 0; w < offsets.size(); ++w)
         {
@@ -310,8 +337,9 @@ class OnnxStemSeparator : public StemSeparator
             const int start = offsets[w];
             const int valid = std::min(kSegmentSamples, numSamples - start);
 
-            // Zero-padded fixed-length window in [ch0 samples..., ch1 samples...] layout.
-            std::fill(inputData.begin(), inputData.end(), 0.0f);
+            // Only the final, partial window needs re-zeroing for its pad tail;
+            // full windows are completely overwritten by the copy below.
+            if (valid < kSegmentSamples) std::fill(inputData.begin(), inputData.end(), 0.0f);
             for (int ch = 0; ch < kModelChannels; ++ch)
             {
                 const float* src = mixture.getReadPointer(ch) + start;
@@ -319,36 +347,11 @@ class OnnxStemSeparator : public StemSeparator
                             inputData.begin() + static_cast<size_t>(ch) * kSegmentSamples);
             }
 
-            auto inputTensor = Ort::Value::CreateTensor<float>(
-                memInfo, inputData.data(), inputData.size(), inputShape.data(), inputShape.size());
-            auto outputs = session.Run(Ort::RunOptions{nullptr}, inputNames.data(), &inputTensor, 1,
-                                       outputNames.data(), 1);
-            if (outputs.empty() || ! outputs.front().IsTensor())
-                throw StemSeparationError(StemFailureCode::Inference,
-                                          juce::String("No output tensor from ") + stem + " model.");
+            session.Run(Ort::RunOptions{nullptr}, binding);
 
-            const auto& outTensor = outputs.front();
-            const auto shape = outTensor.GetTensorTypeAndShapeInfo().GetShape();
-            // Expected output shape is [1, sources, channels, segment].
-            if (shape.size() != 4 || shape[1] < static_cast<int64_t>(sourceIndex) + 1 ||
-                shape[2] < kModelChannels)
-                throw StemSeparationError(StemFailureCode::Inference,
-                                          juce::String("Unexpected output shape from ") + stem +
-                                              " model.");
-            const auto segLen = static_cast<int>(shape[3]);
-            const auto* outData = outTensor.GetTensorData<float>();
-
-            // Offset of source `sourceIndex`, channel `ch` in the contiguous
-            // [1, sources, channels, segment] tensor.
-            const auto channelStride = static_cast<size_t>(segLen);
-            const auto sourceStride = static_cast<size_t>(kModelChannels) * channelStride;
-            const float* outLeft = outData + static_cast<size_t>(sourceIndex) * sourceStride;
-            const float* outRight = outLeft + channelStride;
-
-            const int copy = std::min(valid, segLen);
-            for (int i = 0; i < copy; ++i)
+            for (int i = 0; i < valid; ++i)
             {
-                const double wgt = window[static_cast<size_t>(i)];
+                const float wgt = window[static_cast<size_t>(i)];
                 const size_t pos = static_cast<size_t>(start + i);
                 accLeft[pos] += wgt * outLeft[i];
                 accRight[pos] += wgt * outRight[i];
@@ -364,16 +367,34 @@ class OnnxStemSeparator : public StemSeparator
         float* right = stemBuffer.getWritePointer(1);
         for (int i = 0; i < numSamples; ++i)
         {
-            const double denom = weightSum[static_cast<size_t>(i)];
-            const double inv = denom > 0.0 ? 1.0 / denom : 0.0;
-            left[i] = static_cast<float>(accLeft[static_cast<size_t>(i)] * inv);
-            right[i] = static_cast<float>(accRight[static_cast<size_t>(i)] * inv);
+            const float denom = weightSum[static_cast<size_t>(i)];
+            const float inv = denom > 0.0f ? 1.0f / denom : 0.0f;
+            left[i] = accLeft[static_cast<size_t>(i)] * inv;
+            right[i] = accRight[static_cast<size_t>(i)] * inv;
         }
         return stemBuffer;
     }
 
+    // Build a session the first time a model is needed and reuse it for every
+    // later job. Loading + graph-optimising each ~80 MB specialist is several
+    // seconds, so caching removes that cost from the 2nd job onward. Safe without
+    // locking: separations are single-slot (busyFlag) so this runs serially.
+    Ort::Session& getOrCreateSession(const juce::String& modelPath)
+    {
+        const auto key = modelPath.toStdString();
+        auto it = sessionCache.find(key);
+        if (it == sessionCache.end())
+            it = sessionCache
+                     .emplace(key, std::make_unique<Ort::Session>(
+                                       env, modelPath.toWideCharPointer(), sessionOptions))
+                     .first;
+        return *it->second;
+    }
+
     Ort::Env env;
     Ort::SessionOptions sessionOptions;
+    // Declared last so cached sessions are destroyed before `env`.
+    std::map<std::string, std::unique_ptr<Ort::Session>> sessionCache;
 };
 
 } // namespace
