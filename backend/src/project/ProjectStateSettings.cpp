@@ -86,6 +86,17 @@ void ProjectState::setBpm(double bpm)
     root.setProperty(kBpm, bpm, &undoManager);
 }
 
+bool ProjectState::isBpmSeeded() const
+{
+    return static_cast<bool>(root.getProperty(kBpmSeeded, false));
+}
+
+void ProjectState::setBpmSeeded(bool seeded)
+{
+    // Seeding state tracks derived tempo provenance, not a user edit.
+    setNonDirtyRootProperty(kBpmSeeded, seeded);
+}
+
 double ProjectState::getProjectLengthMs() const
 {
     return static_cast<double>(root.getProperty(kProjectLengthMs, 0.0));

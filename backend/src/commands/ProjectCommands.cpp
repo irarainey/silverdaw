@@ -70,6 +70,14 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
         engine.removeClip(id);
     }
     silverdaw::rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
+    // Legacy projects predate the bpmSeeded flag; if the loaded project already
+    // has on-track content its tempo is established, so don't let a later clip
+    // re-seed (and override) it. Empty loaded projects stay unseeded so the
+    // first dropped clip can still establish the tempo.
+    if (!projectState.isBpmSeeded() && !silverdaw::collectClipIds(projectState).isEmpty())
+    {
+        projectState.setBpmSeeded(true);
+    }
     // Restore the persisted playhead after `engine.stop()` resets to 0.
     const double persistedPlayhead = projectState.getPlayheadMs();
     if (persistedPlayhead > 0.0)
@@ -288,6 +296,12 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
         engine.removeClip(id);
     }
     silverdaw::rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
+    // Recovered legacy autosaves: treat existing on-track content as an
+    // established tempo so a later clip add cannot override it (see PROJECT_LOAD).
+    if (!projectState.isBpmSeeded() && !silverdaw::collectClipIds(projectState).isEmpty())
+    {
+        projectState.setBpmSeeded(true);
+    }
 
     const double persistedPlayhead = projectState.getPlayheadMs();
     if (persistedPlayhead > 0.0)

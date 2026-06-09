@@ -302,6 +302,14 @@ class ProjectState : public juce::ValueTree::Listener
     /** Update the tempo. Marks the project dirty as a normal property edit. */
     void setBpm(double bpm);
 
+    /** True once the project tempo has been auto-seeded from the first musical
+     *  clip placed on a track. Prevents later clips (or derived stems) from
+     *  overriding an already-established project tempo. */
+    bool isBpmSeeded() const;
+
+    /** Record whether the project tempo has been auto-seeded. Does NOT mark dirty. */
+    void setBpmSeeded(bool seeded);
+
     double getProjectLengthMs() const;
 
     /** Update the persisted project length. Marks dirty. */
@@ -508,6 +516,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kViewFxPanelOpen;
     static const juce::Identifier kPlayheadMs;
     static const juce::Identifier kBpm;
+    static const juce::Identifier kBpmSeeded;
     static const juce::Identifier kProjectLengthMs;
     static const juce::Identifier kAudioOutputTypeName;
     static const juce::Identifier kAudioOutputDeviceName;

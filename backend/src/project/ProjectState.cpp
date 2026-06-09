@@ -30,6 +30,7 @@ const juce::Identifier ProjectState::kViewSelectedTrack{"viewSelectedTrack"};
 const juce::Identifier ProjectState::kViewFxPanelOpen{"viewFxPanelOpen"};
 const juce::Identifier ProjectState::kPlayheadMs{"playheadMs"};
 const juce::Identifier ProjectState::kBpm{"bpm"};
+const juce::Identifier ProjectState::kBpmSeeded{"bpmSeeded"};
 const juce::Identifier ProjectState::kProjectLengthMs{"projectLengthMs"};
 const juce::Identifier ProjectState::kAudioOutputTypeName{"audioOutputTypeName"};
 const juce::Identifier ProjectState::kAudioOutputDeviceName{"audioOutputDeviceName"};

@@ -7,7 +7,9 @@
 #include "AudioEngine.h"
 #include "AudioConstants.h"
 #include "BridgeAuth.h"
+#include "BridgeServer.h"
 #include "EdgeFadeSnapshot.h"
+#include "LibraryAnalysis.h"
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
 #include "MixdownEngine.h"
@@ -530,6 +532,114 @@ void testProjectStateClipTransitions()
     require(!state.hasAnyTransition(), "no transitions should remain");
 }
 
+// ── Project-BPM seeding (first clip establishes the project tempo) ───────────
+
+silverdaw::BridgeServer makeSilentBridge()
+{
+    return silverdaw::BridgeServer(
+        "test-token", [](silverdaw::BridgeServer&, const juce::String&, const juce::var&) {});
+}
+
+// Stages a library source with a known BPM and places one clip from it on a
+// track, the minimal state `maybeSeedProjectBpmFor` needs to seed.
+void stageSeededSource(silverdaw::ProjectState& state, const juce::String& itemId, double bpm)
+{
+    require(state.addLibraryItem(itemId, "C:\\audio\\" + itemId + ".wav", itemId + ".wav"),
+            "source library item should add");
+    require(state.setLibraryItemBpm(itemId, bpm), "source BPM should apply");
+    require(state.addTrack("t-" + itemId), "track should add");
+    require(state.addClip("t-" + itemId, "c-" + itemId, itemId, 0.0, 1000.0),
+            "clip from source should add");
+}
+
+void testProjectStateBpmSeededRoundTrip()
+{
+    silverdaw::ProjectState state;
+    require(!state.isBpmSeeded(), "a fresh project is not yet BPM-seeded");
+    const bool dirtyBefore = state.isDirty();
+    state.setBpmSeeded(true);
+    require(state.isBpmSeeded(), "setBpmSeeded(true) should stick");
+    require(state.isDirty() == dirtyBefore, "seeding state must not mark the project dirty");
+
+    const auto file = makeTempDir("bpm-seeded").getChildFile("p.silverdaw");
+    require(silverdaw::ProjectFile::save(file, state).wasOk(), "save should succeed");
+
+    silverdaw::ProjectState reloaded;
+    require(silverdaw::ProjectFile::load(file, reloaded).ok, "load should succeed");
+    require(reloaded.isBpmSeeded(), "bpmSeeded should round-trip through save/load");
+}
+
+void testFirstClipSeedsProjectBpm()
+{
+    silverdaw::ProjectState state;
+    auto bridge = makeSilentBridge();
+    stageSeededSource(state, "l1", 128.0);
+
+    silverdaw::maybeSeedProjectBpmFor("l1", state, bridge);
+    requireNear(state.getBpm(), 128.0, 1e-6, "first clip should seed the project tempo");
+    require(state.isBpmSeeded(), "seeding should set the bpmSeeded flag");
+}
+
+void testLowConfidenceFirstClipSeeds()
+{
+    silverdaw::ProjectState state;
+    auto bridge = makeSilentBridge();
+    stageSeededSource(state, "l1", 95.0);
+    // A merely-uncertain auto-detection must not be treated as a sample.
+    require(state.setLibraryItemLowConfidence("l1", true), "low-confidence flag should apply");
+
+    silverdaw::maybeSeedProjectBpmFor("l1", state, bridge);
+    requireNear(state.getBpm(), 95.0, 1e-6, "low-confidence first clip should still seed tempo");
+    require(state.isBpmSeeded(), "low-confidence seed should set the flag");
+}
+
+void testStemBpmsDoNotBlockFirstSeed()
+{
+    silverdaw::ProjectState state;
+    auto bridge = makeSilentBridge();
+    stageSeededSource(state, "l1", 102.0);
+    // Stems separated from a library-only source already carry a BPM; this must
+    // not be mistaken for an earlier seed (the regression this guards against).
+    for (const auto* stem : {"l2", "l3", "l4", "l5"})
+    {
+        require(state.addLibraryItem(stem, juce::String("C:\\audio\\") + stem + ".wav"),
+                "stem library item should add");
+        require(state.setLibraryItemBpm(stem, 102.0), "stem inherits source BPM");
+    }
+
+    silverdaw::maybeSeedProjectBpmFor("l1", state, bridge);
+    requireNear(state.getBpm(), 102.0, 1e-6,
+                "first dropped clip should seed even when stems already have a BPM");
+    require(state.isBpmSeeded(), "seed should set the flag");
+}
+
+void testSeededProjectIsNotReSeeded()
+{
+    silverdaw::ProjectState state;
+    auto bridge = makeSilentBridge();
+    stageSeededSource(state, "l1", 120.0);
+    silverdaw::maybeSeedProjectBpmFor("l1", state, bridge);
+    requireNear(state.getBpm(), 120.0, 1e-6, "first seed establishes tempo");
+
+    // A later clip from a different source must not override the project tempo.
+    stageSeededSource(state, "l2", 150.0);
+    silverdaw::maybeSeedProjectBpmFor("l2", state, bridge);
+    requireNear(state.getBpm(), 120.0, 1e-6, "established tempo is preserved against later clips");
+}
+
+void testExplicitSampleDoesNotSeed()
+{
+    silverdaw::ProjectState state;
+    auto bridge = makeSilentBridge();
+    const double original = state.getBpm();
+    stageSeededSource(state, "l1", 175.0);
+    require(state.setLibraryItemSampleMode("l1", "sample"), "explicit sample classification applies");
+
+    silverdaw::maybeSeedProjectBpmFor("l1", state, bridge);
+    requireNear(state.getBpm(), original, 1e-6, "a user-classified sample must not seed the tempo");
+    require(!state.isBpmSeeded(), "a blocked seed must leave the project unseeded");
+}
+
 } // namespace
 
 void addProjectStateTests(std::vector<TestCase>& tests)
@@ -542,6 +652,12 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});
     tests.push_back({"ProjectState derived library metadata does not mark dirty", testProjectStateDerivedLibraryMetadataDoesNotMarkDirty});
     tests.push_back({"ProjectState clip transitions: derive, serialise, invariants, reconcile", testProjectStateClipTransitions});
+    tests.push_back({"ProjectState bpmSeeded flag persists across save/load", testProjectStateBpmSeededRoundTrip});
+    tests.push_back({"First on-track clip seeds project BPM", testFirstClipSeedsProjectBpm});
+    tests.push_back({"Low-confidence first clip still seeds project BPM", testLowConfidenceFirstClipSeeds});
+    tests.push_back({"Pre-existing library BPMs do not block the first seed", testStemBpmsDoNotBlockFirstSeed});
+    tests.push_back({"Seeded project BPM is not overridden by later clips", testSeededProjectIsNotReSeeded});
+    tests.push_back({"User-classified sample does not seed project BPM", testExplicitSampleDoesNotSeed});
 }
 
 } // namespace silverdaw::tests

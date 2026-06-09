@@ -90,16 +90,18 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
         silverdaw::log::info("bpmjob", "seed skipped for itemId=" + itemId + " (itemBpm=0)");
         return;
     }
-    // User classification wins; non-musical samples must not seed tempo.
-    const bool effectivelySample =
-        itemSampleMode == "sample" || (itemSampleMode != "music" && itemLowConfidence);
-    if (effectivelySample)
+    // Only an explicit user "sample" classification blocks tempo seeding. A
+    // low-confidence auto-detection still seeds: the very first musical clip on
+    // a track should establish the project tempo (the seeded flag below ensures
+    // this only fires once), rather than leaving the default because the
+    // detector was merely unsure.
+    if (itemSampleMode == "sample")
     {
         silverdaw::log::info(
             "bpmjob",
             "seed skipped for itemId=" + itemId
-                + " (treated as sample — sampleMode='" + itemSampleMode
-                + "' lowConfidence=" + (itemLowConfidence ? "true" : "false") + ")");
+                + " (user-classified as sample — lowConfidence="
+                + (itemLowConfidence ? "true" : "false") + ")");
         return;
     }
 
@@ -123,25 +125,21 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
         return;
     }
 
-    // Gate 2: another BPM means the seed already ran on an earlier import.
-    int otherItemsWithBpm = 0;
-    for (int i = 0; i < library.getNumChildren(); ++i)
-    {
-        const auto item = library.getChild(i);
-        if (item.getProperty(juce::Identifier{"id"}).toString() == itemId) continue;
-        if (item.hasProperty(juce::Identifier{"bpm"}))
-        {
-            ++otherItemsWithBpm;
-        }
-    }
-    if (otherItemsWithBpm > 0)
+    // Gate 2: only seed once. The project tempo is established by the first
+    // musical clip placed on a track; later clips (and derived stems, which
+    // inherit a BPM without ever seeding) must not override it. The flag is the
+    // authoritative signal — counting library items with a BPM mis-fired when
+    // stems were separated from a library-only source before any clip was
+    // dropped, leaving the project stuck at the default tempo.
+    if (projectState.isBpmSeeded())
     {
         silverdaw::log::info("bpmjob",
-                             "seed skipped for itemId=" + itemId +
-                                 " (other library items already have BPM: " +
-                                 juce::String(otherItemsWithBpm) + ")");
+                             "seed skipped for itemId=" + itemId + " (project BPM already seeded)");
         return;
     }
+
+    // All gates passed: this is the first seed for the project.
+    projectState.setBpmSeeded(true);
 
     // Gate 3: don't re-broadcast if the project BPM is already in sync.
     if (std::abs(projectState.getBpm() - itemBpm) < 1e-6)
