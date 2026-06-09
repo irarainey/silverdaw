@@ -78,6 +78,13 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
                                             tempoRatioClear, semitones, cents);
         }
     }
+    else if (kind == "stem")
+    {
+        // Stems are derived from an already-analysed source; inherit its grid and
+        // ensure a decoded cache exists for cheap playback (no re-analysis).
+        inheritAnalysisFromSource(itemId, sourceItemId, engine, projectState, bridge);
+        ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
+    }
     else
     {
         ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);

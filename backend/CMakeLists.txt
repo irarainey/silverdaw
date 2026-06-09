@@ -203,6 +203,60 @@ if(MSVC)
 endif()
 target_link_libraries(rubberband_local PUBLIC SampleRate::samplerate)
 
+# ─── ONNX Runtime (stem separation inference) ────────────────────────────
+# Phase 6 stem separation runs a Demucs model through ONNX Runtime. Microsoft
+# ships official prebuilt Windows binaries, so rather than vendor a DLL by hand
+# we FetchContent the prebuilt release archive at configure time — the same
+# "every dependency is pulled in through CMake" approach used for JUCE,
+# IXWebSocket and Rubber Band above. The archive carries the headers, an MSVC
+# import library and the runtime DLL; we expose them through an IMPORTED target
+# and copy the DLL next to SilverdawBackend.exe so it ships inside the installer
+# (see the extraResources filter in `frontend/electron-builder.yml`).
+#
+# Licence: ONNX Runtime is MIT-licensed (the archive's `LICENSE` lands at
+# `_deps/onnxruntime-src/LICENSE`, picked up by the THIRD_PARTY_LICENSES.md
+# aggregation step), so redistributing the DLL alongside the app is permitted.
+option(SILVERDAW_ENABLE_STEM_SEPARATION
+    "Fetch ONNX Runtime and build the stem-separation engine" ON)
+
+if(SILVERDAW_ENABLE_STEM_SEPARATION AND NOT (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8))
+    message(WARNING
+        "Stem separation currently consumes the win-x64 ONNX Runtime build; "
+        "disabling SILVERDAW_ENABLE_STEM_SEPARATION on this platform.")
+    set(SILVERDAW_ENABLE_STEM_SEPARATION OFF CACHE BOOL "" FORCE)
+endif()
+
+if(SILVERDAW_ENABLE_STEM_SEPARATION)
+    set(ONNXRUNTIME_VERSION "1.26.0"
+        CACHE STRING "ONNX Runtime version to fetch")
+    # SHA-256 of onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip. Bump alongside
+    # ONNXRUNTIME_VERSION; the integrity check makes the fetch reproducible.
+    set(ONNXRUNTIME_SHA256
+        "6ebe99b5564bf4d029b6e93eac9ff423682b6212eade769e9ca3f685eaf500b4"
+        CACHE STRING "SHA-256 of the ONNX Runtime win-x64 release archive")
+
+    FetchContent_Declare(onnxruntime
+        URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip
+        URL_HASH SHA256=${ONNXRUNTIME_SHA256}
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    # Prebuilt binary distribution — no CMakeLists, so populate only (mirrors
+    # the Rubber Band block above; FetchContent_MakeAvailable would try to
+    # add_subdirectory and fail).
+    FetchContent_GetProperties(onnxruntime)
+    if(NOT onnxruntime_POPULATED)
+        FetchContent_Populate(onnxruntime)
+    endif()
+
+    set(ORT_DIR ${onnxruntime_SOURCE_DIR})
+    set(SILVERDAW_ONNXRUNTIME_DLL "${ORT_DIR}/lib/onnxruntime.dll"
+        CACHE FILEPATH "Path to the bundled onnxruntime.dll" FORCE)
+    add_library(onnxruntime SHARED IMPORTED GLOBAL)
+    set_target_properties(onnxruntime PROPERTIES
+        IMPORTED_LOCATION "${SILVERDAW_ONNXRUNTIME_DLL}"
+        IMPORTED_IMPLIB   "${ORT_DIR}/lib/onnxruntime.lib"
+        INTERFACE_INCLUDE_DIRECTORIES "${ORT_DIR}/include")
+endif()
+
 option(SILVERDAW_BUILD_TESTS "Build backend unit tests" OFF)
 option(SILVERDAW_ENABLE_COVERAGE "Instrument backend unit tests for code coverage" OFF)
 
@@ -227,6 +281,7 @@ add_library(silverdaw_backend_core STATIC
     src/commands/ProjectCommands.cpp
     src/commands/ProjectFxCommands.cpp
     src/commands/ProjectSettingsCommands.cpp
+    src/commands/StemSeparationCommands.cpp
     src/commands/TrackCommands.cpp
     src/commands/TransitionCommands.cpp
     src/commands/TransportCommands.cpp
@@ -272,7 +327,11 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectStateTracks.cpp
     src/project/ProjectTransitions.cpp
     src/project/SampleExport.cpp
-    src/project/ValueTreeJson.cpp)
+    src/project/ValueTreeJson.cpp
+    # stems (bridge/job plumbing — ONNX-free, always built)
+    src/stems/StemBroadcast.cpp
+    src/stems/StemSeparationEngine.cpp
+    src/stems/StemSeparatorFactory.cpp)
 
 target_compile_definitions(silverdaw_backend_core PUBLIC
     JUCE_WEB_BROWSER=0
@@ -289,7 +348,8 @@ target_include_directories(silverdaw_backend_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mixdown
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/project)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/project
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/stems)
 
 target_link_libraries(silverdaw_backend_core PUBLIC
     juce::juce_core
@@ -306,6 +366,14 @@ target_link_libraries(silverdaw_backend_core PUBLIC
     SampleRate::samplerate
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
+
+if(SILVERDAW_ENABLE_STEM_SEPARATION)
+    target_link_libraries(silverdaw_backend_core PUBLIC onnxruntime)
+    target_compile_definitions(silverdaw_backend_core PUBLIC SILVERDAW_STEM_SEPARATION=1)
+    # The real ONNX inference is only compiled when stem separation is enabled;
+    # the factory falls back to a stub otherwise.
+    target_sources(silverdaw_backend_core PRIVATE src/stems/OnnxStemSeparator.cpp)
+endif()
 
 if(SILVERDAW_ENABLE_COVERAGE)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -331,6 +399,18 @@ target_sources(SilverdawBackend PRIVATE
 
 target_link_libraries(SilverdawBackend PRIVATE
     silverdaw_backend_core)
+
+# ─── ONNX Runtime DLL (bundled, MIT) ─────────────────────────────────────
+# ONNX Runtime is a shared library. Copy onnxruntime.dll next to the backend
+# executable so it resolves at runtime, and so the electron-builder
+# extraResources step ships it inside the installer next to SilverdawBackend.exe.
+if(SILVERDAW_ENABLE_STEM_SEPARATION)
+    add_custom_command(TARGET SilverdawBackend POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SILVERDAW_ONNXRUNTIME_DLL}"
+            "$<TARGET_FILE_DIR:SilverdawBackend>/onnxruntime.dll"
+        COMMENT "Copying onnxruntime.dll next to backend executable")
+endif()
 
 # ─── LAME MP3 encoder (optional, bundled) ────────────────────────────────
 # JUCE's LAMEEncoderAudioFormat spawns a `lame.exe` child process to
@@ -368,7 +448,8 @@ if(SILVERDAW_BUILD_TESTS)
         tests/FxDspTests.cpp
         tests/LoudnessTests.cpp
         tests/EnvelopeFadeTests.cpp
-tests/MixdownRenderTests.cpp)
+tests/MixdownRenderTests.cpp
+        tests/StemSeparationTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
 

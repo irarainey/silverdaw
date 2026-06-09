@@ -25,6 +25,7 @@ import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
 import { TRANSITION_RECIPES } from '@/lib/transitions/transitionRecipes'
+import { requestStemSeparationForClip } from '@/lib/stems/stemSeparationFlow'
 import { log } from '@/lib/log'
 
 export type ChooseAudioFile = (args: {
@@ -48,6 +49,9 @@ export interface UseTimelineContextMenuInputs {
   /** Audio-file picker for the Relink command. Injected so tests can
    *  stub it out. Defaults to `window.silverdaw.chooseAudioFile`. */
   chooseAudioFile?: ChooseAudioFile
+  /** Starts stem separation for a clip (model-gating + dispatch). Injected so
+   *  tests can stub it; defaults to the separation flow orchestrator. */
+  startStemSeparation?: (clipId: string) => void
   /** Logger for picker / IPC failures. Defaults to `console.warn`. */
   onError?: (message: string, err: unknown) => void
 }
@@ -77,6 +81,8 @@ export function useTimelineContextMenu(
   const transport = useTransportStore()
 
   const chooseAudioFile = inputs.chooseAudioFile ?? DEFAULT_CHOOSE_AUDIO_FILE
+  const startStemSeparation =
+    inputs.startStemSeparation ?? ((clipId: string): void => requestStemSeparationForClip(clipId))
   const onError =
     inputs.onError ??
     ((message: string, err: unknown): void => {
@@ -148,6 +154,14 @@ export function useTimelineContextMenu(
     }
     items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true })
     items.push({ command: 'clip.pitch', label: 'Pitch' })
+    items.push({
+      command: 'clip.separateStems',
+      label: 'Separate Stems',
+      title:
+        'Split the clip into vocals, drums, bass, and other stems, each on its own ' +
+        'new track (non-destructive). A one-time model download is needed on first use.',
+      disabled: !clip || clip.unresolved || !hasLibraryItem
+    })
     if (clip) {
       // Single toggle row; a leading check marks the on-state since there is no
       // natural opposite verb. Reversing a linked clip reverses every sibling.
@@ -279,6 +293,8 @@ export function useTimelineContextMenu(
       inputs.dialogs.openWarp(clipId, 'tempo')
     } else if (command === 'clip.pitch') {
       inputs.dialogs.openWarp(clipId, 'pitch')
+    } else if (command === 'clip.separateStems') {
+      startStemSeparation(clipId)
     } else if (command === 'clip.reverse') {
       if (clip) {
         const next = !clip.reversed

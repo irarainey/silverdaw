@@ -7,7 +7,7 @@
 // by domain would only add file-hopping cost.
 
 // Type-only imports of shared vocabulary whose canonical zod definition lives with inbound.
-import type { LibraryItemKind, TransitionRecipe } from './inbound'
+import type { LibraryItemKind, StemName, TransitionRecipe } from './inbound'
 
 // ─── Renderer → Backend (outbound) ──────────────────────────────────────────
 
@@ -413,6 +413,8 @@ export interface BridgeOutboundMap {
   AUDIO_FILE_PROBE: AudioFileProbePayload
   MIXDOWN_START: MixdownStartPayload
   MIXDOWN_CANCEL: undefined
+  STEM_SEPARATE: StemSeparatePayload
+  STEM_SEPARATE_CANCEL: StemSeparateCancelPayload
   PROJECT_MARKER_ADD: ProjectMarkerAddPayload
   PROJECT_MARKER_MOVE: ProjectMarkerMovePayload
   PROJECT_MARKER_REMOVE: ProjectMarkerRemovePayload
@@ -600,6 +602,34 @@ export interface MixdownStartPayload {
 
 /** Cancel an in-progress mixdown; backend deletes the partial file and emits MIXDOWN_FAILED{cancelled}. */
 export type MixdownCancelPayload = undefined
+
+/**
+ * Separate a source's audio into the chosen stems (any of vocals/drums/bass/other) with the
+ * htdemucs-ft ONNX model. Non-destructive: stems are written to disk and imported as new library
+ * items; the source is untouched. `sourceItemId` is the resolved top-level audio-file library item
+ * to separate. When `clipId` is present (timeline separation), each stem is placed on a new track
+ * aligned to that clip; when absent (library-source separation), stems are imported to the library
+ * only. `modelDir` is the resolved model directory (renderer obtains it from main via IPC after
+ * ensuring the weights are downloaded). Backend streams STEM_PROGRESS then STEM_READY / STEM_FAILED,
+ * correlated by `jobId`.
+ */
+export interface StemSeparatePayload {
+  jobId: string
+  /** Resolved top-level audio-file library item to separate. */
+  sourceItemId: string
+  /** Source clip for timeline placement; omit for library-source separation. */
+  clipId?: string
+  modelDir: string
+  /** Friendly source name used for the stem WAV filenames and track names. */
+  sourceName: string
+  /** Stems the user chose to extract (non-empty). */
+  stems: StemName[]
+}
+
+/** Cancel an in-progress separation job; backend aborts and emits STEM_FAILED{cancelled}. */
+export interface StemSeparateCancelPayload {
+  jobId: string
+}
 
 /** Add a timeline marker at an absolute project position in milliseconds. */
 export interface ProjectMarkerAddPayload {

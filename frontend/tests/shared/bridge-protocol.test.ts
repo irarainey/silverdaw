@@ -20,6 +20,10 @@ import {
   isProjectStatePayload,
   isReadyPayload,
   isSampleSavedPayload,
+  isStemProgressPayload,
+  isStemPartialPayload,
+  isStemReadyPayload,
+  isStemFailedPayload,
   isTrackAddedPayload,
   isTrackGainAppliedPayload,
   isTrackRemovedPayload,
@@ -61,6 +65,10 @@ const INBOUND_TYPES = {
   MIXDOWN_PROGRESS: true,
   MIXDOWN_DONE: true,
   MIXDOWN_FAILED: true,
+  STEM_PROGRESS: true,
+  STEM_PARTIAL: true,
+  STEM_READY: true,
+  STEM_FAILED: true,
   MASTER_LEVEL: true,
   TRACK_LEVELS: true,
   TRACK_SENDS_APPLIED: true,
@@ -665,5 +673,111 @@ describe('isPreviewEndedPayload', () => {
   })
   it('rejects non-numeric generation', () => {
     expect(isPreviewEndedPayload({ generation: '2' })).toBe(false)
+  })
+})
+
+describe('isStemProgressPayload', () => {
+  it('accepts a well-shaped progress tick', () => {
+    expect(
+      isStemProgressPayload({ jobId: 'j1', clipId: 'c1', stage: 'separate', percent: 42 })
+    ).toBe(true)
+  })
+
+  it('rejects an unknown stage', () => {
+    expect(
+      isStemProgressPayload({ jobId: 'j1', clipId: 'c1', stage: 'mixing', percent: 0 })
+    ).toBe(false)
+  })
+
+  it('rejects missing or wrong-typed fields', () => {
+    expect(isStemProgressPayload({ jobId: 'j1', clipId: 'c1', stage: 'prepare' })).toBe(false)
+    expect(isStemProgressPayload({ jobId: '', clipId: 'c1', stage: 'prepare', percent: 0 })).toBe(false)
+    expect(isStemProgressPayload({ jobId: 'j1', clipId: 'c1', stage: 'prepare', percent: '0' })).toBe(false)
+  })
+})
+
+describe('isStemPartialPayload', () => {
+  it('accepts a single written stem', () => {
+    expect(
+      isStemPartialPayload({
+        jobId: 'j1',
+        clipId: 'c1',
+        sourceName: 'Loop',
+        stem: 'drums',
+        filePath: '/cache/drums.wav'
+      })
+    ).toBe(true)
+  })
+
+  it('rejects an unknown stem name or missing path', () => {
+    expect(
+      isStemPartialPayload({ jobId: 'j1', clipId: 'c1', sourceName: 'Loop', stem: 'guitar', filePath: '/x.wav' })
+    ).toBe(false)
+    expect(
+      isStemPartialPayload({ jobId: 'j1', clipId: 'c1', sourceName: 'Loop', stem: 'drums', filePath: '' })
+    ).toBe(false)
+  })
+})
+
+describe('isStemReadyPayload', () => {
+  it('accepts a populated stem list', () => {
+    expect(
+      isStemReadyPayload({
+        jobId: 'j1',
+        clipId: 'c1',
+        sourceName: 'Loop',
+        stems: [
+          { stem: 'vocals', filePath: '/cache/vocals.wav' },
+          { stem: 'drums', filePath: '/cache/drums.wav' },
+          { stem: 'bass', filePath: '/cache/bass.wav' },
+          { stem: 'other', filePath: '/cache/other.wav' }
+        ]
+      })
+    ).toBe(true)
+  })
+
+  it('accepts an empty stem list (sourceName may be empty)', () => {
+    expect(isStemReadyPayload({ jobId: 'j1', clipId: 'c1', sourceName: '', stems: [] })).toBe(true)
+  })
+
+  it('rejects an unknown stem name or a non-string path', () => {
+    expect(
+      isStemReadyPayload({
+        jobId: 'j1',
+        clipId: 'c1',
+        sourceName: 'Loop',
+        stems: [{ stem: 'guitar', filePath: '/cache/guitar.wav' }]
+      })
+    ).toBe(false)
+    expect(
+      isStemReadyPayload({
+        jobId: 'j1',
+        clipId: 'c1',
+        sourceName: 'Loop',
+        stems: [{ stem: 'vocals', filePath: 42 }]
+      })
+    ).toBe(false)
+  })
+
+  it('rejects missing required fields', () => {
+    expect(isStemReadyPayload({ jobId: 'j1', clipId: 'c1', stems: [] })).toBe(false)
+    expect(isStemReadyPayload({ clipId: 'c1', sourceName: 'x', stems: [] })).toBe(false)
+  })
+
+  it('accepts an omitted clipId (library-source separation)', () => {
+    expect(isStemReadyPayload({ jobId: 'j1', sourceName: 'x', stems: [] })).toBe(true)
+  })
+})
+
+describe('isStemFailedPayload', () => {
+  it('accepts each failure code', () => {
+    for (const code of ['cancelled', 'model', 'decode', 'inference', 'io', 'invalid']) {
+      expect(isStemFailedPayload({ jobId: 'j1', clipId: 'c1', code, error: 'boom' })).toBe(true)
+    }
+  })
+
+  it('rejects an unknown code or missing error', () => {
+    expect(isStemFailedPayload({ jobId: 'j1', clipId: 'c1', code: 'timeout', error: 'x' })).toBe(false)
+    expect(isStemFailedPayload({ jobId: 'j1', clipId: 'c1', code: 'io' })).toBe(false)
   })
 })

@@ -82,6 +82,13 @@ export const IPC = {
     status: 'backend:status',
     restart: 'backend:restart'
   },
+  stems: {
+    getModelState: 'stems:getModelState',
+    getModelDir: 'stems:getModelDir',
+    ensureModel: 'stems:ensureModel',
+    cancelModelDownload: 'stems:cancelModelDownload',
+    modelDownloadProgress: 'stems:modelDownloadProgress'
+  },
   log: {
     appendBatch: 'log:append-batch'
   }

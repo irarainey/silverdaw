@@ -24,6 +24,11 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
 void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, ProjectState& projectState,
                         BridgeServer& bridge, juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
 
+// Stems share their source's beat grid: copy the source item's analysis onto the
+// stem and broadcast it, instead of re-analysing (slow and inaccurate for sparse stems).
+void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& sourceItemId,
+                               AudioEngine& engine, ProjectState& projectState, BridgeServer& bridge);
+
 // Force a re-analysis of `itemId`, clearing any prior result first.
 void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& filePath, AudioEngine& engine,
                               ProjectState& projectState, BridgeServer& bridge, juce::ThreadPool& peakPool,

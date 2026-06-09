@@ -158,6 +158,72 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
 
 namespace
 {
+// Applies analysis fields to a library item, broadcasts LIBRARY_ITEM_ANALYSIS,
+// performs late auto-warp for the item's pending clips, and seeds project BPM.
+// Runs on the message thread. Returns false if the item vanished before applying.
+bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
+                                   const std::vector<double>& beats, double beatAnchorSec,
+                                   bool variableTempo, bool lowConfidence,
+                                   const juce::String& cachedPath, AudioEngine& engine,
+                                   ProjectState& projectState, BridgeServer& bridge)
+{
+    // setLibraryItemBpm returns false only when the item is gone (also our guard).
+    if (!projectState.setLibraryItemBpm(itemId, bpm))
+    {
+        silverdaw::log::warn("bpmjob", "library item " + itemId + " gone before analysis applied");
+        return false;
+    }
+    projectState.setLibraryItemBeats(itemId, beats);
+    projectState.setLibraryItemBeatAnchor(itemId, beatAnchorSec);
+    projectState.setLibraryItemVariableTempo(itemId, variableTempo);
+    projectState.setLibraryItemLowConfidence(itemId, lowConfidence);
+    if (cachedPath.isNotEmpty())
+    {
+        projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
+    }
+
+    auto* p = new juce::DynamicObject();
+    p->setProperty("itemId", itemId);
+    p->setProperty("bpm", bpm);
+    p->setProperty("beatAnchorSec", beatAnchorSec);
+    juce::Array<juce::var> beatArr;
+    beatArr.ensureStorageAllocated(static_cast<int>(beats.size()));
+    for (double t : beats) beatArr.add(juce::var(t));
+    p->setProperty("beats", juce::var(beatArr));
+    p->setProperty("variableTempo", variableTempo);
+    p->setProperty("lowConfidence", lowConfidence);
+    if (cachedPath.isNotEmpty())
+    {
+        p->setProperty("playbackFilePath", cachedPath);
+    }
+    bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
+
+    // Late auto-warp preserves the user's drop-time intent once stable BPM is known.
+    if (!variableTempo && !lowConfidence && bpm > 0.0)
+    {
+        const double projectBpm = projectState.getBpm();
+        projectState.forEachWarpClip(
+            [&](const silverdaw::ProjectState::WarpClipInfo& info)
+            {
+                if (info.libraryItemId != itemId) return;
+                if (info.pendingAutoWarp && projectBpm > 0.0)
+                {
+                    const double ratio = projectBpm / bpm;
+                    projectState.setClipWarp(info.clipId, /*enabled=*/true, juce::String("rhythmic"),
+                                             /*tempoRatio=*/std::nullopt, /*tempoRatioClear=*/false,
+                                             std::nullopt, std::nullopt, /*pendingAutoWarp=*/false);
+                    engine.setClipWarp(info.clipId, true, juce::String("rhythmic"), ratio,
+                                       std::nullopt, std::nullopt);
+                    auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
+                    bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
+                }
+            });
+    }
+
+    maybeSeedProjectBpmFor(itemId, projectState, bridge);
+    return true;
+}
+
 // Worker analysis must marshal ValueTree writes and broadcasts to the message thread.
 void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                      AudioEngine& engine, ProjectState& projectState,
@@ -206,85 +272,10 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
     juce::MessageManager::callAsync(
         [itemId, analysis, cachedPath, &projectState, &bridge, &engine]
         {
-            // Item may have been removed while we were busy.
-            if (!projectState.setLibraryItemBpm(itemId, analysis.bpm))
-            {
-                silverdaw::log::warn("bpmjob",
-                                     "library item " + itemId + " gone before BPM applied");
-                {
-                    std::lock_guard<std::mutex> lock(bpmJobsMutex);
-                    bpmJobsInFlight.erase(itemId);
-                }
-                return;
-            }
-            projectState.setLibraryItemBeats(itemId, analysis.beatTimesSec);
-            projectState.setLibraryItemBeatAnchor(itemId, analysis.beatAnchorSec);
-            projectState.setLibraryItemVariableTempo(itemId, analysis.variableTempo);
-            projectState.setLibraryItemLowConfidence(itemId, analysis.lowConfidence);
-            if (cachedPath.isNotEmpty())
-            {
-                projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
-            }
-
-            auto* p = new juce::DynamicObject();
-            p->setProperty("itemId", itemId);
-            p->setProperty("bpm", analysis.bpm);
-            p->setProperty("beatAnchorSec", analysis.beatAnchorSec);
-            juce::Array<juce::var> beatArr;
-            beatArr.ensureStorageAllocated(static_cast<int>(analysis.beatTimesSec.size()));
-            for (double t : analysis.beatTimesSec) beatArr.add(juce::var(t));
-            p->setProperty("beats", juce::var(beatArr));
-            p->setProperty("variableTempo", analysis.variableTempo);
-            p->setProperty("lowConfidence", analysis.lowConfidence);
-            if (cachedPath.isNotEmpty())
-            {
-                p->setProperty("playbackFilePath", cachedPath);
-            }
-            bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
-
-            // Late auto-warp preserves the user's drop-time intent once stable BPM is known.
-            DBG("[warp/late-flip] LIBRARY_ITEM_ANALYSIS itemId=" + itemId
-                + " bpm=" + juce::String(analysis.bpm)
-                + " variableTempo=" + (analysis.variableTempo ? "true" : "false")
-                + " lowConfidence=" + (analysis.lowConfidence ? "true" : "false")
-                + " projectBpm=" + juce::String(projectState.getBpm()));
-            if (!analysis.variableTempo && !analysis.lowConfidence && analysis.bpm > 0.0)
-            {
-                const double projectBpm = projectState.getBpm();
-                int scanned = 0;
-                int flipped = 0;
-                projectState.forEachWarpClip(
-                    [&](const silverdaw::ProjectState::WarpClipInfo& info)
-                    {
-                        if (info.libraryItemId != itemId) return;
-                        ++scanned;
-                        DBG("[warp/late-flip]   candidate clip=" + info.clipId
-                            + " pendingAutoWarp=" + (info.pendingAutoWarp ? "true" : "false")
-                            + " warpEnabled=" + (info.warpEnabled ? "true" : "false"));
-                        if (info.pendingAutoWarp && projectBpm > 0.0)
-                        {
-                            const double ratio = projectBpm / analysis.bpm;
-                            projectState.setClipWarp(info.clipId,
-                                /*enabled=*/true,
-                                juce::String("rhythmic"),
-                                /*tempoRatio=*/std::nullopt,
-                                /*tempoRatioClear=*/false,
-                                std::nullopt, std::nullopt,
-                                /*pendingAutoWarp=*/false);
-                            engine.setClipWarp(info.clipId, true,
-                                juce::String("rhythmic"), ratio, std::nullopt, std::nullopt);
-                            auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
-                            bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
-                            ++flipped;
-                            DBG("[warp/late-flip]   → ENGAGED clip=" + info.clipId
-                                + " ratio=" + juce::String(ratio));
-                        }
-                    });
-                DBG("[warp/late-flip] itemId=" + itemId + " scanned=" + juce::String(scanned)
-                    + " flipped=" + juce::String(flipped));
-            }
-
-            maybeSeedProjectBpmFor(itemId, projectState, bridge);
+            applyAndBroadcastItemAnalysis(itemId, analysis.bpm, analysis.beatTimesSec,
+                                          analysis.beatAnchorSec, analysis.variableTempo,
+                                          analysis.lowConfidence, cachedPath, engine, projectState,
+                                          bridge);
             {
                 std::lock_guard<std::mutex> lock(bpmJobsMutex);
                 bpmJobsInFlight.erase(itemId);
@@ -312,6 +303,57 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
     peakPool.addJob(
         [itemId, file = juce::File(filePath), &engine, &projectState, &bridge, &decodedCache]
         { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache); });
+}
+
+void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& sourceItemId,
+                               AudioEngine& engine, ProjectState& projectState, BridgeServer& bridge)
+{
+    if (itemId.isEmpty() || sourceItemId.isEmpty()) return;
+    const auto& root = projectState.getTree();
+    const auto library = root.getChildWithName(juce::Identifier{"LIBRARY"});
+    if (!library.isValid()) return;
+
+    juce::ValueTree source;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(juce::Identifier{"id"}).toString() == sourceItemId)
+        {
+            source = item;
+            break;
+        }
+    }
+    if (!source.isValid())
+    {
+        silverdaw::log::warn("bpmjob", "stem " + itemId + " source " + sourceItemId + " not found");
+        return;
+    }
+
+    // Stems are sample-aligned with the source file, so its beat grid applies directly.
+    const double bpm = static_cast<double>(source.getProperty(juce::Identifier{"bpm"}, 0.0));
+    const double beatAnchorSec = static_cast<double>(source.getProperty(juce::Identifier{"beatAnchorSec"}, 0.0));
+    const bool variableTempo = static_cast<bool>(source.getProperty(juce::Identifier{"variableTempo"}, false));
+    const juce::String key = source.getProperty(juce::Identifier{"key"}, juce::String{}).toString();
+
+    std::vector<double> beats;
+    if (const auto beatsVar = source.getProperty(juce::Identifier{"beats"}); beatsVar.isArray())
+    {
+        if (auto* arr = beatsVar.getArray())
+        {
+            beats.reserve(static_cast<size_t>(arr->size()));
+            for (const auto& b : *arr) beats.push_back(static_cast<double>(b));
+        }
+    }
+
+    if (key.isNotEmpty()) projectState.setLibraryItemKey(itemId, key);
+    // A stem has no independent confidence measurement; leave its lowConfidence
+    // unset so it defers its sample/music classification to the source (the stem
+    // carries derivedFrom.sourceItemId). This keeps a stem visible as music
+    // whenever the user marks the source as music.
+    applyAndBroadcastItemAnalysis(itemId, bpm, beats, beatAnchorSec, variableTempo, /*lowConfidence=*/false,
+                                  juce::String{}, engine, projectState, bridge);
+    silverdaw::log::info("bpmjob", "inherited analysis for stem " + itemId + " from source "
+                                       + sourceItemId + " bpm=" + juce::String(bpm, 4));
 }
 
 void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& filePath, AudioEngine& engine,

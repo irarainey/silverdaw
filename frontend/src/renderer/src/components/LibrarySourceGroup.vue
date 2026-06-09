@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ComponentPublicInstance } from 'vue'
+import { computed, type ComponentPublicInstance } from 'vue'
 import type { LibraryItem } from '@/stores/libraryStore'
 import LibrarySavedClipRow from '@/components/LibrarySavedClipRow.vue'
 
@@ -31,6 +31,19 @@ const emit = defineEmits<{
 }>()
 
 const editingValue = defineModel<string>('editingValue', { required: true })
+
+const stemChildren = computed(() => props.children.filter((item) => item.kind === 'stem'))
+const savedClipChildren = computed(() => props.children.filter((item) => item.kind === 'saved-clip'))
+
+/** Compact summary for the collapse header, e.g. "2 stems · 3 clips". */
+const childSummary = computed(() => {
+  const parts: string[] = []
+  const stemCount = stemChildren.value.length
+  const clipCount = savedClipChildren.value.length
+  if (stemCount > 0) parts.push(`${stemCount} ${stemCount === 1 ? 'stem' : 'stems'}`)
+  if (clipCount > 0) parts.push(`${clipCount} saved ${clipCount === 1 ? 'clip' : 'clips'}`)
+  return parts.join(' · ')
+})
 </script>
 
 <template>
@@ -139,7 +152,7 @@ const editingValue = defineModel<string>('editingValue', { required: true })
         type="button"
         data-borderless-button="true"
         class="flex w-full items-center gap-1.5 border-t border-zinc-800/80 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-300"
-        :title="props.source.collapsed ? 'Show saved clips' : 'Hide saved clips'"
+        :title="props.source.collapsed ? 'Show stems and saved clips' : 'Hide stems and saved clips'"
         @click="emit('toggleCollapsed', props.source.id, !props.source.collapsed)"
       >
         <svg
@@ -152,11 +165,31 @@ const editingValue = defineModel<string>('editingValue', { required: true })
         >
           <path d="M7 10l5 5 5-5H7z" />
         </svg>
-        <span>{{ props.children.length }} saved {{ props.children.length === 1 ? 'clip' : 'clips' }}</span>
+        <span>{{ childSummary }}</span>
       </button>
       <template v-if="!props.source.collapsed">
         <LibrarySavedClipRow
-          v-for="item in props.children"
+          v-for="item in stemChildren"
+          :key="item.id"
+          v-model:editing-value="editingValue"
+          :item="item"
+          :editing-item-id="props.editingItemId"
+          row-class="saved-clip group relative flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 pr-1 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
+          marker-class="h-6 w-1 shrink-0 rounded-sm bg-violet-500/70"
+          :saved-clip-bpm="props.savedClipEffectiveBpm(item)"
+          :saved-clip-bpm-pill-class="props.savedClipBpmPillClass"
+          :format-clip-duration="props.formatClipDuration"
+          :display-title="props.displayTitle"
+          :key-badge-class="props.keyBadgeClass"
+          :set-name-input-el="props.setNameInputEl"
+          @drag-start="(e, draggedItem) => emit('dragStart', e, draggedItem)"
+          @drag-end="emit('dragEnd')"
+          @open-editor="(editedItem) => emit('openEditor', editedItem)"
+          @open-context-menu="(e, menuItem) => emit('openContextMenu', e, menuItem)"
+          @start-rename="(renamedItem) => emit('startRename', renamedItem)"
+        />
+        <LibrarySavedClipRow
+          v-for="item in savedClipChildren"
           :key="item.id"
           v-model:editing-value="editingValue"
           :item="item"

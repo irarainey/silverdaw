@@ -20,6 +20,8 @@
 #include "ProjectSettingsCommands.h"
 #include "ProjectState.h"
 #include "SampleExport.h"
+#include "StemSeparationCommands.h"
+#include "StemSeparator.h"
 #include "TrackCommands.h"
 #include "TransitionCommands.h"
 #include "TransportCommands.h"
@@ -27,6 +29,7 @@
 #include "WaveformCommands.h"
 
 #include <atomic>
+#include <memory>
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
@@ -37,6 +40,20 @@ namespace
 // Mixdown state gates playback and carries the engine-polled cancel flag.
 std::atomic<bool> g_mixdownBusy{false};
 std::atomic<bool> g_mixdownCancel{false};
+
+// Stem separation runs single-slot on the shared pool; activeJobId is touched
+// only on the message thread so it needs no lock.
+std::atomic<bool> g_stemBusy{false};
+std::atomic<bool> g_stemCancel{false};
+juce::String g_stemActiveJobId;
+
+// Lazily constructed so the ONNX environment is only spun up if a build with
+// stem separation actually receives a STEM_SEPARATE.
+silverdaw::StemSeparator& stemSeparator()
+{
+    static std::unique_ptr<silverdaw::StemSeparator> instance = silverdaw::createDefaultStemSeparator();
+    return *instance;
+}
 } // namespace
 
 // Hoist payload readers so dispatch branches stay readable.
@@ -419,6 +436,15 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "MIXDOWN_CANCEL")
     {
         silverdaw::handleMixdownCancel(g_mixdownBusy, g_mixdownCancel);
+    }
+    else if (type == "STEM_SEPARATE")
+    {
+        silverdaw::handleStemSeparate(payload, projectState, bridge, peakPool, decodedCache,
+                                      stemSeparator(), g_stemBusy, g_stemCancel, g_stemActiveJobId);
+    }
+    else if (type == "STEM_SEPARATE_CANCEL")
+    {
+        silverdaw::handleStemSeparateCancel(payload, g_stemBusy, g_stemCancel, g_stemActiveJobId);
     }
     else if (type == "EDIT_UNDO")
     {

@@ -14,7 +14,8 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
                                    int collapsedFlag)
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return false;
-    const auto normalisedKind = kind == "saved-clip" ? juce::String("saved-clip") : juce::String("audio-file");
+    // 'stem' joins 'saved-clip' as a recognised derived kind; anything else is a source.
+    const auto normalisedKind = (kind == "saved-clip" || kind == "stem") ? kind : juce::String("audio-file");
     auto library = root.getChildWithName(kLibrary);
     if (!library.isValid())
     {

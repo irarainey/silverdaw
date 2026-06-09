@@ -69,3 +69,27 @@ export interface DebugPreferences {
   devToolsEnabled: boolean
   logDirectory: string
 }
+
+// ─── Stem-separation model store (download-on-first-use) ──────────────────────
+
+/** Fast presence summary for the stem-separation model, returned to the renderer. */
+export interface StemModelState {
+  installed: boolean
+  presentBytes: number
+  totalBytes: number
+  fileCount: number
+}
+
+/** Per-tick progress while the ~1.2 GB model is fetched, pushed main → renderer. */
+export interface StemModelDownloadProgress {
+  receivedBytes: number
+  totalBytes: number
+  fileName: string
+  fileIndex: number
+  fileCount: number
+}
+
+/** Outcome of an `ensureStemModel` request. */
+export type EnsureStemModelResult =
+  | { ok: true }
+  | { ok: false; error: string; fileName?: string }

@@ -216,7 +216,7 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
             // Keep CLIP_ADD keyed by source path; cached WAV paths are backend-internal.
             playbackFilePath: item.filePath,
             derivedFrom:
-              item.kind === 'saved-clip'
+              item.kind === 'saved-clip' || item.kind === 'stem'
                 ? {
                     sourceItemId: item.sourceItemId,
                     sourceClipId: item.sourceClipId,
@@ -262,7 +262,9 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
             if (target) target.sampleMode = item.sampleMode
           }
           // Backfill metadata for older projects missing persisted duration.
-          if ((item.kind ?? 'audio-file') === 'audio-file') {
+          // Stems are standalone files too, so refresh their media like sources.
+          const reloadKind = item.kind ?? 'audio-file'
+          if (reloadKind === 'audio-file' || reloadKind === 'stem') {
             void refreshLibraryItemMedia(libId, item.filePath)
           }
         }

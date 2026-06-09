@@ -20,6 +20,10 @@ import {
   isMixdownDonePayload,
   isMixdownFailedPayload,
   isMixdownProgressPayload,
+  isStemProgressPayload,
+  isStemPartialPayload,
+  isStemReadyPayload,
+  isStemFailedPayload,
   isLibraryItemAnalysisPayload,
   isMasterLevelPayload,
   isTrackLevelsPayload,
@@ -151,6 +155,14 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isMixdownDonePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'MIXDOWN_FAILED':
       return isMixdownFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'STEM_PROGRESS':
+      return isStemProgressPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'STEM_PARTIAL':
+      return isStemPartialPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'STEM_READY':
+      return isStemReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'STEM_FAILED':
+      return isStemFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'MASTER_LEVEL':
       return isMasterLevelPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_LEVELS':

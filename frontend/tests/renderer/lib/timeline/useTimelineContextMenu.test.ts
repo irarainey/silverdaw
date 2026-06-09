@@ -67,6 +67,7 @@ function setupMenu(opts: {
   selectedTrackId?: string | null
   positionMs?: number
   chooseAudioFile?: ReturnType<typeof vi.fn>
+  startStemSeparation?: ReturnType<typeof vi.fn>
 }): ReturnType<typeof useTimelineContextMenu> {
   const project = useProjectStore()
   const library = useLibraryStore()
@@ -95,7 +96,8 @@ function setupMenu(opts: {
     scrollY: ref(0),
     getClipHitRegions: () => [],
     dialogs,
-    chooseAudioFile: opts.chooseAudioFile
+    chooseAudioFile: opts.chooseAudioFile,
+    startStemSeparation: opts.startStemSeparation
   })
   menu.contextMenuClipId.value = opts.clip.id
   return menu
@@ -331,6 +333,22 @@ describe('useTimelineContextMenu — command dispatch', () => {
     menu.contextMenuClipId.value = clip.id
     menu.onContextMenuCommand('clip.pitch')
     expect(openWarp).toHaveBeenLastCalledWith(clip.id, 'pitch')
+  })
+
+  it('separate stems item is present and routes to the injected starter', () => {
+    const startStemSeparation = vi.fn()
+    const clip = makeClip()
+    const menu = setupMenu({ clip, item: makeAudioFileItem(), startStemSeparation })
+    expect(findItem(menu, 'clip.separateStems')?.disabled).toBeFalsy()
+
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.separateStems')
+    expect(startStemSeparation).toHaveBeenCalledWith(clip.id)
+  })
+
+  it('separate stems is disabled for unresolved clips', () => {
+    const menu = setupMenu({ clip: makeClip({ unresolved: true }), item: makeAudioFileItem() })
+    expect(findItem(menu, 'clip.separateStems')?.disabled).toBe(true)
   })
 
   it('relink invokes the injected chooseAudioFile picker', async () => {

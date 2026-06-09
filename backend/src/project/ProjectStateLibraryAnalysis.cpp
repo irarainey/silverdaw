@@ -143,7 +143,7 @@ juce::String ProjectState::getLibraryItemPlaybackPathForSource(const juce::Strin
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(kKind, "audio-file").toString() == "audio-file"
+        if (item.getProperty(kKind, "audio-file").toString() != "saved-clip"
             && item.getProperty(kFilePath).toString() == sourceFilePath)
         {
             return item.getProperty(kPlaybackFilePath, {}).toString();
@@ -206,7 +206,7 @@ double ProjectState::getLibraryItemBpmForPath(const juce::String& filePath) cons
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(kKind, "audio-file").toString() == "audio-file"
+        if (item.getProperty(kKind, "audio-file").toString() != "saved-clip"
             && item.getProperty(kFilePath).toString() == filePath)
         {
             return static_cast<double>(item.getProperty(kBpm, 0.0));

@@ -43,6 +43,13 @@ extraResources:
     to: backend
     filter:
       - SilverdawBackend.exe
+      # onnxruntime.dll is copied next to SilverdawBackend.exe by the CMake
+      # POST_BUILD step (see SILVERDAW_ENABLE_STEM_SEPARATION in
+      # backend/CMakeLists.txt). It is MIT-licensed, so it ships inside the
+      # installer to power stem separation with no extra user download. If
+      # stem separation is disabled at build time the DLL is simply absent and
+      # this filter entry matches nothing.
+      - onnxruntime.dll
       # lame.exe is copied next to SilverdawBackend.exe by the CMake POST_BUILD
       # step (see `SILVERDAW_LAME_EXE` in backend/CMakeLists.txt) when the
       # binary is dropped into `backend/third_party/lame/`. When present it

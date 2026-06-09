@@ -1,4 +1,4 @@
-import { extname, isAbsolute, resolve as pathResolve } from 'node:path'
+import { extname, isAbsolute, relative, resolve as pathResolve } from 'node:path'
 import { logMain } from './log'
 
 // Keep accepted audio extensions aligned with backend decoder support.
@@ -7,6 +7,12 @@ const AUDIO_FILE_EXTENSIONS_SET: ReadonlySet<string> = new Set<string>(AUDIO_FIL
 
 // Renderer may only read audio paths main previously surfaced through trusted UI.
 const issuedAudioPaths: Set<string> = new Set<string>()
+
+// App-owned directory trees the renderer may read audio from without each file
+// being individually issued — e.g. the stems output dir, which only the backend
+// writes to and the renderer can't see file paths for until STEM_READY arrives
+// over its direct bridge socket. The audio-extension check still applies.
+const trustedReadRoots: Set<string> = new Set<string>()
 
 export function canonicalisePath(p: string): string {
   return pathResolve(p)
@@ -27,10 +33,32 @@ export function registerIssuedPath(filePath: string): void {
   issuedAudioPaths.add(canonicalisePath(filePath))
 }
 
+// Trust an entire app-controlled directory tree for audio reads. Only ever called
+// with paths main itself derives (never renderer-supplied).
+export function registerTrustedReadRoot(dir: string): void {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) {
+    logMain('WARN ', 'main', 'refusing to register non-absolute read root:', dir)
+    return
+  }
+  trustedReadRoots.add(canonicalisePath(dir))
+}
+
+function isUnderTrustedRoot(canonical: string): boolean {
+  for (const root of trustedReadRoots) {
+    const rel = relative(root, canonical)
+    // Empty means the path is the root itself; a non-`..`, non-absolute relative
+    // path means it lives inside the root (guards against `..` traversal and
+    // different-drive paths, which yield an absolute relative on Windows).
+    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true
+  }
+  return false
+}
+
 // Re-check the audio extension at read time as defence in depth.
 export function isAllowedAudioPath(filePath: unknown): filePath is string {
   if (typeof filePath !== 'string' || filePath === '') return false
   const ext = extname(filePath).replace(/^\./, '').toLowerCase()
   if (!AUDIO_FILE_EXTENSIONS_SET.has(ext)) return false
-  return issuedAudioPaths.has(canonicalisePath(filePath))
+  const canonical = canonicalisePath(filePath)
+  return issuedAudioPaths.has(canonical) || isUnderTrustedRoot(canonical)
 }

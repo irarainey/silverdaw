@@ -14,7 +14,9 @@ juce::String findLibraryItemIdForPath(const ProjectState& projectState, const ju
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(juce::Identifier{"kind"}, "audio-file").toString() == "audio-file"
+        // Saved clips share their source's filePath, so exclude them to avoid
+        // resolving the source id; stems own a unique file and resolve here.
+        if (item.getProperty(juce::Identifier{"kind"}, "audio-file").toString() != "saved-clip"
             && item.getProperty(juce::Identifier{"filePath"}).toString() == filePath)
         {
             return item.getProperty(juce::Identifier{"id"}).toString();

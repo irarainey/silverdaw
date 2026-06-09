@@ -250,12 +250,15 @@ Electron Shell
 
 ## 6. Stem Separation — Demucs Integration
 
-**Planned model:** htdemucs (Demucs v4), 2-stem — separates a stereo track into
-vocals and accompaniment. The intended UX is to download it on first use and keep
-stem-separation UI disabled until the model is present.
+**Model:** htdemucs fine-tuned (Demucs v4), **4-stem** — separates a stereo track
+into vocals, drums, bass and other. The chosen weights are the MIT-licensed
+community ONNX export `StemSplitio/htdemucs-ft-onnx` (a "bag" of four specialist
+models, one per source — so 4-stem is native, not derived). They are downloaded
+on first use and the stem-separation UI stays disabled until the model is
+present.
 
-**Planned integration:** ONNX Runtime C++ API. The `.onnx` model file and
-`onnxruntime.dll` should be the only runtime dependencies. GPU acceleration via
+**Integration:** ONNX Runtime C++ API. The `.onnx` model files and
+`onnxruntime.dll` are the only runtime dependencies. GPU acceleration via
 DirectML on Windows is a Phase 8 optimisation after the CPU path is stable.
 
 | Approach          | Pros                                      | Cons                                  |
@@ -264,12 +267,72 @@ DirectML on Windows is a Phase 8 optimisation after the CPU path is stable.
 | Python subprocess | Quick to prototype                        | Fragile, slow to invoke, hard to ship |
 | LibTorch          | Faithful to original weights              | ~500MB, complex build                 |
 
-**Target UX:** Separation runs on a background thread. Progress is emitted as
-`STEM_PROGRESS` events and displayed inline on the clip waveform. The audio engine
-continues playing during separation. Output stems appear as new grouped tracks
-when done.
+**Dependency acquisition (implemented):** ONNX Runtime is pulled in entirely
+through CMake — no DLL is vendored into the source tree. `backend/CMakeLists.txt`
+fetches the official prebuilt `onnxruntime-win-x64` release archive at configure
+time via `FetchContent` (pinned version + SHA-256 integrity check, behind the
+`SILVERDAW_ENABLE_STEM_SEPARATION` option, default `ON`), exposes it as an
+`IMPORTED` target, and defines `SILVERDAW_STEM_SEPARATION=1` for the backend
+core. This mirrors how JUCE, IXWebSocket and Rubber Band are already obtained.
 
-**Phase 8:** 4-stem model (vocals, drums, bass, other) as an optional additional download once the 2-stem pipeline is proven.
+**Packaging (implemented):** A CMake `POST_BUILD` step copies `onnxruntime.dll`
+next to `SilverdawBackend.exe`, and `frontend/electron-builder.yml` ships it as
+an `extraResource`, so the installer carries everything required to run — ONNX
+Runtime is MIT-licensed, which permits redistribution alongside the app. The
+~1.2 GB model weights are kept out of the installer and downloaded on first use.
+
+**Model store (implemented):** The model files are fetched on first use by the
+Electron main process (the headless backend has no network stack —
+`JUCE_USE_CURL=0`) into the user's app-data directory. `src/main/stems/` holds
+the pinned manifest (`htdemucsModel.ts`) and a dependency-injected `ModelStore`
+(`modelStore.ts`) that checks presence, downloads missing files with progress,
+verifies each file's SHA-256 + byte size, commits atomically, and records the
+manifest revision in an `.installed` sentinel so later launches skip re-hashing.
+The backend loads the ONNX sessions from the resolved model directory.
+
+**Target UX:** Separation runs on a background thread and never touches the audio
+callback. Progress is emitted as `STEM_PROGRESS` events and shown in a
+non-blocking progress dialog; the audio engine keeps playing during separation.
+Stems appear **incrementally**: the backend emits a `STEM_PARTIAL` envelope the
+instant each stem's WAV is written, so its track lands on the timeline while the
+remaining stems are still separating — the user sees steady progress rather than
+a single batch at the end. The final `STEM_READY` lists every stem and backfills
+any not already placed (a per-job set dedupes the two paths). Each of the four
+stems is added to its own new track beneath the
+source clip's track, non-destructively — the original clip and its source file
+are left untouched. Each stem is **also** added to the library as a new `stem`
+item nested under its source group (alongside any saved clips), so the library
+mirrors the timeline; stem rows carry a distinct marker and the source group's
+collapse header summarises its children (e.g. "4 stems · 2 saved clips"). Stem
+library items persist with the project (kind `stem` + a `derivedFrom` pointer to
+the source) and reload like standalone files, and a stem cannot be removed from
+the library while its timeline clip is still present.
+
+**Inference (implemented):** Each specialist `.onnx` takes a fixed-length 7.8 s
+(343 980-sample) stereo segment and emits all four demucs sources
+(`[1, 4, 2, segment]`, source order drums/bass/other/vocals); the backend keeps
+only the source each model is fine-tuned for. A full track is processed
+demucs-style — per-track mean/standard-deviation normalisation, fixed segments
+with 25 % overlap, and triangular-window weighted overlap-add reconstruction
+(`OnnxStemSeparator.cpp`). The segmentation, layout and source-index handling
+were validated against the real htdemucs-ft weights.
+
+**Naming & analysis reuse:** Stem WAV files and their tracks are named from the
+source's friendly library name (e.g. "Song - Vocals" / "Vocals — Song"), never the
+internal decoded-cache hash — the renderer sends `sourceName` in `STEM_SEPARATE`
+and the backend prefers it (falling back to the clip name, then the raw source
+basename). Because each stem is sample-aligned with its source, stems **inherit**
+the source's analysis (BPM, beat grid, anchor, key, variable-tempo flag)
+instead of being re-analysed — applied on both the renderer (so the stem clip
+auto-warps to the project grid the moment it is placed) and the backend (so its
+persisted/playback state matches). This is instant and avoids the sparse-stem
+mis-detection a fresh analysis would produce. A stem does **not** carry its own
+sample/music (low-confidence) flag: it has no independent confidence measurement,
+so its classification defers to the source via `derivedFrom`. Marking the source
+as **music** therefore reveals the beat grid on every derived stem clip.
+
+**Phase 8:** GPU acceleration (DirectML) and an optional experimental 6-stem
+model (adds guitar + piano) once the 4-stem CPU pipeline is proven.
 
 ---
 
@@ -343,10 +406,11 @@ Non-destructive clip operations on the timeline. Each operation mutates the `Val
 - Slices can be laid back on the timeline as individual clips or saved as samples
 
 ### 7.7 Stem Separation
-- Triggered from clip context menu
-- Progress shown inline on the clip via a waveform overlay (driven by `STEM_PROGRESS` events)
-- Output stems placed as new tracks, grouped under the source track
-- Source clip muted but preserved
+- Triggered from the clip context menu (**Separate Stems**) or a library audio-file's context menu; a one-time model download is offered on first use
+- A stem picker is shown first (vocals / drums / bass / other, all ticked by default) — only the chosen stems are separated, which proportionally shortens the run
+- Progress shown in a non-blocking dialog driven by `STEM_PROGRESS` events; the counter reflects the selected stems
+- Stems are imported to the library as a nested **stem** clip type under their source. When started from a timeline clip they are also placed on new tracks (one per stem), each aligned to the source clip's start. When started from a library source they are imported to the library only — adding them to the timeline is a manual step
+- Source preserved untouched (non-destructive); stems inherit the source's beat grid, key, and sample/music classification
 
 ### 7.8 Harmonic Matching
 - Detected key displayed on every clip in the timeline
@@ -1552,10 +1616,11 @@ playable at every point — no broken-build day):
 
 **Goal:** Users can separate stems, chop loops natively, and do sample-accurate clipping in a dedicated editor.
 
-- [ ] ONNX Runtime integration: model download on first use, checksum verification
-- [ ] 2-stem Demucs inference pipeline on background thread (issue #15)
-- [ ] `STEM_PROGRESS` / `STEM_DONE` handling; progress overlay in PixiJS
-- [ ] Stem output as grouped tracks
+- [x] ONNX Runtime pulled in via CMake (`FetchContent`, SHA-256 pinned) and bundled in the installer
+- [x] Model download on first use with SHA-256 + size verification (main-process `ModelStore`)
+- [x] 4-stem htdemucs-ft inference pipeline on background thread (issue #15) — backend `StemSeparator` subsystem + ONNX session loading wired and unit-tested; segmented (343 980-sample, 25 % overlap) normalised overlap-add inference implemented and validated against the real model
+- [x] `STEM_PROGRESS` / `STEM_READY` / `STEM_FAILED` handling; non-blocking separation progress dialog, plus a first-use model-download dialog gated on `stems:` IPC
+- [x] Stem output as new tracks (one per stem) beneath the source — `STEM_READY` reuses the existing library-import / track-add / clip-add flows; each stem lands on its own new track aligned to the source clip start, non-destructively
 - [ ] Loop slicer: transient and grid markers in PixiJS
 - [ ] Slice-to-timeline and slice-to-sample flows
 - [x] Fine-clip editor — shipped as the in-app **Clip Editor** dialog (§7.14): full-source waveform, sample-accurate selection, looped audition through a backend preview voice, Save-as-new-clip and Apply-trim with linked-clip propagation, hi-res peaks on demand. A dedicated BrowserWindow surface remains a future option.
@@ -1722,18 +1787,12 @@ robustness without changing the core editing model.
 - [ ] Sidechain routing and advanced send/return refinements beyond the
   first mixer/effects pass.
 - [ ] VST3 plugin scanning and hosting via a sandboxed child process. (issue #14)
-- [ ] DirectML GPU acceleration for stem separation after CPU 2-stem
-  separation is stable.
-- [ ] Optional 4-stem Demucs model download after the 2-stem UX is proven.
+- [ ] DirectML GPU acceleration for stem separation after the CPU 4-stem
+  path is stable.
 - [ ] Harmonic compatibility indicators between clips, beyond basic key
   display and manual pitch controls.
 - [ ] Pan, send-level and plugin-parameter automation once clip volume
   envelope editing is stable.
-- [ ] Dedicated BrowserWindow Clip Editor surface if the in-app dialog becomes
-  too constrained.
-- [ ] Theme selection after workflow and control density stabilise.
-- [ ] Code signing and installer release hardening beyond the current NSIS
-  package.
 - [ ] CI coverage gates and expanded Electron e2e smoke tests once the feature
   surface stabilises. (issue #17)
 
@@ -1792,7 +1851,7 @@ robustness without changing the core editing model.
   third-party additions must remain licence-compatible
 - **Arrangement view only** — traditional left-to-right timeline; no session/clip launcher
 - **Desktop creation tool** — not for live DJ performance
-- **Demucs** — planned 2-stem model (vocals + accompaniment) downloaded on first use; 4-stem optional later
+- **Demucs** — htdemucs-ft 4-stem model (vocals/drums/bass/other), MIT-licensed ONNX export, downloaded on first use
 - **JUCE is backend only** — no JUCE UI components used; all rendering is Electron + PixiJS
 - **Cross-layer logging** — every session writes `debug/<stamp>/{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (dev builds; flag-gated in release)
 - **Multiple clients on the bridge** — the WebSocket bridge supports multiple authenticated clients. A future Fine-Clip Editor window can use that capability as a second BrowserWindow talking to the same backend.
@@ -1917,8 +1976,8 @@ Implementation increments (foundations first; each keeps build + tests green):
 
 ### 12.2 Stem-driven mashup moves — *extends Phase 6*
 
-- [ ] **Stem-swap commands** — after 2-stem separation lands as
-  grouped tracks (§7.7), add *Use vocals only* / *Use instrumental only* /
+- [ ] **Stem-swap commands** — after 4-stem separation lands as
+  new tracks (§7.7), add *Use vocals only* / *Use instrumental only* /
   *Restore original* on the source clip. The headline mashup move: drop one
   song's vocal over another's instrumental. **Avoid** a per-clip multi-stem
   matrix UI in the first pass.

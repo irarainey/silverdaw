@@ -262,8 +262,8 @@ export const ProjectStateMarkerSchema = z.object({
 })
 export type ProjectStateMarker = z.infer<typeof ProjectStateMarkerSchema>
 
-export type LibraryItemKind = 'audio-file' | 'saved-clip'
-const libraryItemKindSchema = z.enum(['audio-file', 'saved-clip'])
+export type LibraryItemKind = 'audio-file' | 'saved-clip' | 'stem'
+const libraryItemKindSchema = z.enum(['audio-file', 'saved-clip', 'stem'])
 
 export const ProjectStateLibraryItemSchema = z
   .object({
@@ -304,7 +304,7 @@ export const ProjectStateLibraryItemSchema = z
     semitones: z.number().optional(),
     cents: z.number().optional()
   })
-  // Saved clips must carry window pointers; audio-file items omit them.
+  // Saved clips must carry window pointers; stems must point at their source.
   .superRefine((item, ctx) => {
     if (item.kind === 'saved-clip') {
       if (typeof item.sourceInMs !== 'number') {
@@ -313,6 +313,9 @@ export const ProjectStateLibraryItemSchema = z
       if (typeof item.sourceDurationMs !== 'number') {
         ctx.addIssue({ code: 'custom', path: ['sourceDurationMs'], message: 'required when kind === saved-clip' })
       }
+    }
+    if (item.kind === 'stem' && (item.sourceItemId === undefined || item.sourceItemId === '')) {
+      ctx.addIssue({ code: 'custom', path: ['sourceItemId'], message: 'required when kind === stem' })
     }
   })
 export type ProjectStateLibraryItem = z.infer<typeof ProjectStateLibraryItemSchema>
@@ -618,6 +621,60 @@ export const TrackLevelsPayloadSchema = z.object({
 })
 export type TrackLevelsPayload = z.infer<typeof TrackLevelsPayloadSchema>
 
+// ─── Stem separation ────────────────────────────────────────────────────────
+
+/** Canonical 4-stem vocabulary; single source of truth for both bridge ends. */
+export const StemNameSchema = z.enum(['vocals', 'drums', 'bass', 'other'])
+export type StemName = z.infer<typeof StemNameSchema>
+
+/** Separation tick; `percent` is 0..100 and monotonic within one job. */
+export const StemProgressPayloadSchema = z.object({
+  jobId: z.string().min(1),
+  // Present only for timeline-clip separations; absent for library-source jobs.
+  clipId: z.string().min(1).optional(),
+  stage: z.enum(['prepare', 'separate', 'write']),
+  percent: z.number(),
+  // Optional context for the current step (e.g. the stem name being separated).
+  detail: z.string().optional()
+})
+export type StemProgressPayload = z.infer<typeof StemProgressPayloadSchema>
+
+/** One separated stem written to disk (non-destructive; the original is untouched). */
+export const StemFileSchema = z.object({
+  stem: StemNameSchema,
+  filePath: z.string().min(1)
+})
+export type StemFile = z.infer<typeof StemFileSchema>
+
+/** Separation success; `stems` are absolute paths the renderer imports as new library items. */
+export const StemReadyPayloadSchema = z.object({
+  jobId: z.string().min(1),
+  clipId: z.string().min(1).optional(),
+  sourceName: z.string(),
+  stems: z.array(StemFileSchema)
+})
+export type StemReadyPayload = z.infer<typeof StemReadyPayloadSchema>
+
+/** One stem finished while the job is still running, so its result can be imported
+ *  immediately for live feedback. The final STEM_READY backfills any not seen. */
+export const StemPartialPayloadSchema = z.object({
+  jobId: z.string().min(1),
+  clipId: z.string().min(1).optional(),
+  sourceName: z.string(),
+  stem: StemNameSchema,
+  filePath: z.string().min(1)
+})
+export type StemPartialPayload = z.infer<typeof StemPartialPayloadSchema>
+
+/** Separation failure; `cancelled` dismisses quietly, other codes surface errors. */
+export const StemFailedPayloadSchema = z.object({
+  jobId: z.string().min(1),
+  clipId: z.string().min(1).optional(),
+  code: z.enum(['cancelled', 'model', 'decode', 'inference', 'io', 'invalid']),
+  error: z.string()
+})
+export type StemFailedPayload = z.infer<typeof StemFailedPayloadSchema>
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PROJECT_STATE: ProjectStatePayload
@@ -659,6 +716,10 @@ export interface BridgeInboundMap {
   MIXDOWN_PROGRESS: MixdownProgressPayload
   MIXDOWN_DONE: MixdownDonePayload
   MIXDOWN_FAILED: MixdownFailedPayload
+  STEM_PROGRESS: StemProgressPayload
+  STEM_PARTIAL: StemPartialPayload
+  STEM_READY: StemReadyPayload
+  STEM_FAILED: StemFailedPayload
   MASTER_LEVEL: MasterLevelPayload
   TRACK_LEVELS: TrackLevelsPayload
   PONG: PongPayload
@@ -715,6 +776,10 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'MIXDOWN_PROGRESS',
   'MIXDOWN_DONE',
   'MIXDOWN_FAILED',
+  'STEM_PROGRESS',
+  'STEM_PARTIAL',
+  'STEM_READY',
+  'STEM_FAILED',
   'MASTER_LEVEL',
   'TRACK_LEVELS',
   'PONG',
@@ -890,6 +955,22 @@ export function isMixdownDonePayload(value: unknown): value is MixdownDonePayloa
 
 export function isMixdownFailedPayload(value: unknown): value is MixdownFailedPayload {
   return MixdownFailedPayloadSchema.safeParse(value).success
+}
+
+export function isStemProgressPayload(value: unknown): value is StemProgressPayload {
+  return StemProgressPayloadSchema.safeParse(value).success
+}
+
+export function isStemPartialPayload(value: unknown): value is StemPartialPayload {
+  return StemPartialPayloadSchema.safeParse(value).success
+}
+
+export function isStemReadyPayload(value: unknown): value is StemReadyPayload {
+  return StemReadyPayloadSchema.safeParse(value).success
+}
+
+export function isStemFailedPayload(value: unknown): value is StemFailedPayload {
+  return StemFailedPayloadSchema.safeParse(value).success
 }
 
 export function isMasterLevelPayload(value: unknown): value is MasterLevelPayload {

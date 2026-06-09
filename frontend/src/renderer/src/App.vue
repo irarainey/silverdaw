@@ -12,6 +12,9 @@ import PreferencesDialog from '@/components/PreferencesDialog.vue'
 import ProjectPropertiesDialog from '@/components/ProjectPropertiesDialog.vue'
 import ExportMixdownDialog from '@/components/ExportMixdownDialog.vue'
 import MixdownProgressDialog from '@/components/MixdownProgressDialog.vue'
+import StemSeparationProgressDialog from '@/components/StemSeparationProgressDialog.vue'
+import StemModelDownloadDialog from '@/components/StemModelDownloadDialog.vue'
+import StemSelectionDialog from '@/components/StemSelectionDialog.vue'
 import { useMixdownState } from '@/lib/mixdownState'
 import AudioDeviceUnavailableDialog from '@/components/AudioDeviceUnavailableDialog.vue'
 import SampleRateMismatchDialog from '@/components/SampleRateMismatchDialog.vue'
@@ -346,6 +349,12 @@ const { handleMenuAction } = useAppMenuActions({
     />
 
     <MixdownProgressDialog />
+
+    <StemSelectionDialog />
+
+    <StemModelDownloadDialog />
+
+    <StemSeparationProgressDialog />
 
     <AudioDeviceUnavailableDialog
       :open="audioUnavailableOpen"

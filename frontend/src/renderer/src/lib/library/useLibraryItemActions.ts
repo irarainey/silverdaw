@@ -7,6 +7,7 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { reanalyseLibraryItem } from '@/lib/importAudio'
+import { requestStemSeparationForLibraryItem } from '@/lib/stems/stemSeparationFlow'
 import { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 
 export interface LibraryItemActionsDeps {
@@ -57,6 +58,13 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     ]
     if (item.kind === 'audio-file') {
       items.push({ command: 'library.reanalyse', label: 'Reanalyse File' })
+      items.push({
+        command: 'library.separateStems',
+        label: 'Separate Stems',
+        title:
+          'Extract vocals, drums, bass, and other into separate stems added to the library. ' +
+          'Add them to the timeline yourself afterwards.'
+      })
     } else if (item.kind === 'saved-clip') {
       items.push({
         command: 'library.saveSample',
@@ -157,6 +165,11 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     if (command === 'library.reanalyse') {
       closeItemContextMenu()
       void reanalyseLibraryItem(item.id)
+      return
+    }
+    if (command === 'library.separateStems') {
+      closeItemContextMenu()
+      requestStemSeparationForLibraryItem(item.id)
       return
     }
     if (command === 'library.saveSample') {

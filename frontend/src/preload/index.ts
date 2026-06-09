@@ -1,6 +1,11 @@
 // Least-privilege preload API exposed through context isolation.
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences } from '../shared/types'
+import type {
+  EnsureStemModelResult,
+  StemModelDownloadProgress,
+  StemModelState
+} from '../shared/types'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 
 export type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences }
@@ -192,7 +197,26 @@ const api = {
     }>
   > => ipcRenderer.invoke(IPC.autosave.listRecoverable),
   clearAutosave: (projectId: string): Promise<boolean> =>
-    ipcRenderer.invoke(IPC.autosave.clear, projectId)
+    ipcRenderer.invoke(IPC.autosave.clear, projectId),
+  // ─── Stem-separation model store ────────────────────────────────────────
+  /** Fast presence check for the stem-separation model (size-only, no hashing). */
+  getStemModelState: (): Promise<StemModelState> => ipcRenderer.invoke(IPC.stems.getModelState),
+  /** Directory the backend loads the ONNX sessions from. */
+  getStemModelDir: (): Promise<string> => ipcRenderer.invoke(IPC.stems.getModelDir),
+  /** Download + integrity-verify any missing model files; honour an in-flight cancel. */
+  ensureStemModel: (): Promise<EnsureStemModelResult> => ipcRenderer.invoke(IPC.stems.ensureModel),
+  /** Abort the active model download, if any. */
+  cancelStemModelDownload: (): void => {
+    ipcRenderer.send(IPC.stems.cancelModelDownload)
+  },
+  onStemModelDownloadProgress: (
+    handler: (progress: StemModelDownloadProgress) => void
+  ): (() => void) => {
+    const listener = (_evt: IpcRendererEvent, progress: StemModelDownloadProgress): void =>
+      handler(progress)
+    ipcRenderer.on(IPC.stems.modelDownloadProgress, listener)
+    return () => ipcRenderer.removeListener(IPC.stems.modelDownloadProgress, listener)
+  }
 }as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)

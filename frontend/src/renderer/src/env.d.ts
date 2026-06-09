@@ -4,7 +4,10 @@ import type {
   AudioMetadata as SharedAudioMetadata,
   DebugPreferences as SharedDebugPreferences,
   OpenedAudioFile as SharedOpenedAudioFile,
-  UiPreferences as SharedUiPreferences
+  UiPreferences as SharedUiPreferences,
+  EnsureStemModelResult as SharedEnsureStemModelResult,
+  StemModelDownloadProgress as SharedStemModelDownloadProgress,
+  StemModelState as SharedStemModelState
 } from '@shared/types'
 import type { BackendStatus } from '@shared/ipc-channels'
 
@@ -110,6 +113,14 @@ declare global {
         }>
       >
       clearAutosave(projectId: string): Promise<boolean>
+      // ── Stem-separation model store ───────────────────────────────────
+      getStemModelState(): Promise<SharedStemModelState>
+      getStemModelDir(): Promise<string>
+      ensureStemModel(): Promise<SharedEnsureStemModelResult>
+      cancelStemModelDownload(): void
+      onStemModelDownloadProgress(
+        handler: (progress: SharedStemModelDownloadProgress) => void
+      ): () => void
     }
   }
 }

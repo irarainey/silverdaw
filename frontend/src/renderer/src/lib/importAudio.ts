@@ -6,6 +6,7 @@ import { log } from '@/lib/log'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
+import type { LibraryItem } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { promptSampleRateMismatch, type RateBucket } from '@/lib/sampleRatePrompt'
@@ -115,6 +116,52 @@ export async function preflightSampleRates(filePaths: readonly string[]): Promis
   }
 }
 
+/** Map a library item to the placement payload `addClipFromLibrary` expects, so
+ *  warp, saved-clip, and tempo handling stay aligned across every caller. */
+export function libraryItemToClipPlacement(audio: LibraryItem): {
+  id: string
+  filePath: string
+  fileName: string
+  durationMs: number
+  sampleRate: number
+  channelCount: number
+  peaks: Float32Array
+  peaksPerSecond?: number
+  playbackFilePath?: string
+  kind?: LibraryItem['kind']
+  name?: string
+  derivedFrom?: LibraryItem['derivedFrom']
+  bpm?: number
+  variableTempo?: boolean
+  warpEnabled?: boolean
+  warpMode?: LibraryItem['warpMode']
+  tempoRatio?: number
+  semitones?: number
+  cents?: number
+} {
+  return {
+    id: audio.id,
+    filePath: audio.filePath,
+    fileName: libraryItemDisplayName(audio),
+    durationMs: audio.durationMs,
+    sampleRate: audio.sampleRate,
+    channelCount: audio.channelCount,
+    peaks: audio.peaks,
+    peaksPerSecond: audio.peaksPerSecond,
+    playbackFilePath: audio.playbackFilePath,
+    kind: audio.kind,
+    name: audio.name,
+    derivedFrom: audio.derivedFrom,
+    bpm: audio.bpm,
+    variableTempo: audio.variableTempo,
+    warpEnabled: audio.warpEnabled,
+    warpMode: audio.warpMode,
+    tempoRatio: audio.tempoRatio,
+    semitones: audio.semitones,
+    cents: audio.cents
+  }
+}
+
 /** Open one file and add it to the library, then place it on `trackId`. */
 export async function importAudioIntoTrack(
   trackId: string,
@@ -152,39 +199,22 @@ export async function importAudioIntoTrack(
     `importAudioIntoTrack → addClipFromLibrary itemId=${audio.id} bpm=${audio.bpm ?? 'undef'} ` +
       `variableTempo=${audio.variableTempo ?? false} kind=${audio.kind ?? 'audio'}`
   )
-  return project.addClipFromLibrary(
-    trackId,
-    {
-      id: audio.id,
-      filePath: audio.filePath,
-      fileName: libraryItemDisplayName(audio),
-      durationMs: audio.durationMs,
-      sampleRate: audio.sampleRate,
-      channelCount: audio.channelCount,
-      peaks: audio.peaks,
-      peaksPerSecond: audio.peaksPerSecond,
-      playbackFilePath: audio.playbackFilePath,
-      kind: audio.kind,
-      name: audio.name,
-      derivedFrom: audio.derivedFrom,
-      bpm: audio.bpm,
-      variableTempo: audio.variableTempo,
-      warpEnabled: audio.warpEnabled,
-      warpMode: audio.warpMode,
-      tempoRatio: audio.tempoRatio,
-      semitones: audio.semitones,
-      cents: audio.cents
-    },
-    resolvedStartMs
-  )
+  return project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), resolvedStartMs)
 }
 
 /** Add an opened file to the library, de-duping by path and always draining import progress. */
-export async function importAudioIntoLibrary(opened: {
-  filePath: string
-  fileName: string
-  data: ArrayBuffer
-}): Promise<string | null> {
+export async function importAudioIntoLibrary(
+  opened: {
+    filePath: string
+    fileName: string
+    data: ArrayBuffer
+  },
+  options?: {
+    kind?: LibraryItem['kind']
+    name?: string
+    derivedFrom?: LibraryItem['derivedFrom']
+  }
+): Promise<string | null> {
   const library = useLibraryStore()
   const importEntryId = library.beginImport(opened.fileName)
 
@@ -214,7 +244,10 @@ export async function importAudioIntoLibrary(opened: {
       peaks: decoded.peaks,
       peaksPerSecond: decoded.peaksPerSecond,
       playbackFilePath,
-      key: enrichedMetadata?.key
+      key: enrichedMetadata?.key,
+      kind: options?.kind,
+      name: options?.name,
+      derivedFrom: options?.derivedFrom
     })
     if (decoded.channelPeaks.length > 0) {
       library.setItemChannelPeaks(itemId, decoded.channelPeaks, decoded.peaksPerSecond)

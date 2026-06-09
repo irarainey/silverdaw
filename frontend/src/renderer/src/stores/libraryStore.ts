@@ -115,17 +115,23 @@ export const useLibraryStore = defineStore('library', {
         log.warn('library', `addItem refused saved clip without source window file=${audio.filePath}`)
         return ''
       }
+      if (kind === 'stem' && !audio.derivedFrom?.sourceItemId) {
+        log.warn('library', `addItem refused stem without source item file=${audio.filePath}`)
+        return ''
+      }
       const existing =
         kind === 'audio-file'
           ? this.items.find((i) => i.kind === 'audio-file' && i.filePath === audio.filePath)
-          : this.items.find(
-              (i) =>
-                i.kind === 'saved-clip' &&
-                i.filePath === audio.filePath &&
-                i.derivedFrom?.sourceItemId === audio.derivedFrom?.sourceItemId &&
-                i.derivedFrom?.inMs === audio.derivedFrom?.inMs &&
-                i.derivedFrom?.durationMs === audio.derivedFrom?.durationMs
-            )
+          : kind === 'stem'
+            ? this.items.find((i) => i.kind === 'stem' && i.filePath === audio.filePath)
+            : this.items.find(
+                (i) =>
+                  i.kind === 'saved-clip' &&
+                  i.filePath === audio.filePath &&
+                  i.derivedFrom?.sourceItemId === audio.derivedFrom?.sourceItemId &&
+                  i.derivedFrom?.inMs === audio.derivedFrom?.inMs &&
+                  i.derivedFrom?.durationMs === audio.derivedFrom?.durationMs
+              )
       if (existing) {
         this.setItemAudioDetails(existing.id, audio.durationMs, audio.sampleRate, audio.channelCount)
         if (audio.key && !existing.key) existing.key = audio.key
@@ -339,9 +345,9 @@ export const useLibraryStore = defineStore('library', {
       const item = this.items[idx]
       if (!item) return false
 
-      // Source audio stays blocked while timeline clips depend on it.
-      if (item.kind === 'audio-file' && this.isItemInUse(itemId)) {
-        log.warn('library', `removeItem refused (audio-file in use) id=${itemId}`)
+      // Source audio and stems stay blocked while timeline clips depend on them.
+      if ((item.kind === 'audio-file' || item.kind === 'stem') && this.isItemInUse(itemId)) {
+        log.warn('library', `removeItem refused (${item.kind} in use) id=${itemId}`)
         return false
       }
 

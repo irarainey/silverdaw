@@ -30,6 +30,7 @@ import { registerProjectHandlers } from './ipc/projectHandlers'
 import { registerMixdownHandlers } from './ipc/mixdownHandlers'
 import { registerRuntimeHandlers } from './ipc/runtimeHandlers'
 import { registerPeaksHandlers } from './ipc/peaksHandlers'
+import { registerStemHandlers } from './ipc/stemHandlers'
 
 let backendSupervisor: BackendSupervisor | null = null
 let mainWindow: BrowserWindow | null = null
@@ -231,6 +232,8 @@ app.whenReady().then(async () => {
   registerAutosaveHandlers()
 
   registerPeaksHandlers()
+
+  registerStemHandlers({ getMainWindow: () => mainWindow })
 
   // Honour explicit dev port; otherwise probe past leftover processes.
   if (!bridgePortEnvOverridden) {

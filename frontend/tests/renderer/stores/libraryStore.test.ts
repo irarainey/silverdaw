@@ -105,6 +105,105 @@ describe('libraryStore', () => {
     })
   })
 
+  it('adds a stem item derived from its source and dedupes by file path', () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\song.wav',
+      fileName: 'song.wav',
+      durationMs: 10_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    sendMock.mockClear()
+
+    const stemInput = {
+      filePath: 'C:\\stems\\job1\\vocals.wav',
+      fileName: 'vocals.wav',
+      kind: 'stem' as const,
+      name: 'Vocals',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId!, sourceClipId: 'c1', inMs: 0, durationMs: 0 }
+    }
+    const stemId = library.addItem(stemInput)
+    const duplicateId = library.addItem(stemInput)
+
+    expect(duplicateId).toBe(stemId)
+    expect(library.items).toHaveLength(2)
+    expect(library.items[1]).toMatchObject({
+      id: stemId,
+      kind: 'stem',
+      name: 'Vocals',
+      derivedFrom: { sourceItemId: sourceId, sourceClipId: 'c1' }
+    })
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ADD', expect.objectContaining({
+      itemId: stemId,
+      kind: 'stem',
+      sourceItemId: sourceId
+    }))
+  })
+
+  it('refuses a stem item that lacks a source item', () => {
+    const library = useLibraryStore()
+    const stemId = library.addItem({
+      filePath: 'C:\\stems\\job1\\vocals.wav',
+      fileName: 'vocals.wav',
+      kind: 'stem',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    expect(stemId).toBe('')
+    expect(library.items).toHaveLength(0)
+  })
+
+  it('refuses to remove a stem while its timeline clip is still present', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\song.wav',
+      fileName: 'song.wav',
+      durationMs: 10_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const stemId = library.addItem({
+      filePath: 'C:\\stems\\job1\\vocals.wav',
+      fileName: 'vocals.wav',
+      kind: 'stem',
+      name: 'Vocals',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId!, sourceClipId: 'c1', inMs: 0, durationMs: 0 }
+    })
+    const trackId = project.addTrack()
+    project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: stemId ?? '',
+        filePath: 'C:\\stems\\job1\\vocals.wav',
+        fileName: 'vocals.wav',
+        durationMs: 10_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+
+    expect(library.removeItem(stemId!)).toBe(false)
+    expect(library.getItem(stemId!)).not.toBeNull()
+  })
+
   it('saves reusable clips as derived library children of their source', () => {
     const library = useLibraryStore()
     const sourceId = library.addItem({
