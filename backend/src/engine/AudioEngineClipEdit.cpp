@@ -225,6 +225,19 @@ bool AudioEngine::setClipEdgeFade(const juce::String& clipId,
         track->retiredEdgeFades.push_back(std::move(track->edgeFadeSnapshot));
     }
     track->edgeFadeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
+
+    // The edge fade is applied upstream of the JUCE read-ahead buffer, so already-buffered samples
+    // carry the old shape. Rebuild the prefetch so the new fade is audible from the first played
+    // block rather than only after the stale buffer drains.
+    if (master.isPlaying())
+    {
+        rebuildTrackPrefetch(*track);
+    }
+    else
+    {
+        track->prefetchDirty = true;
+        rebuildTimer.startTimer(kRebuildDebounceMs);
+    }
     return true;
 }
 
