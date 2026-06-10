@@ -211,6 +211,8 @@ export function useTimelineViewController(
     pxPerSecond: () => pxPerSecond.value,
     scrollX,
     maxScrollX: () => maxScrollX.value,
+    scrollY,
+    maxScrollY: () => maxScrollY.value,
     trackAreaWidth: () => trackAreaWidth.value,
     setPxPerSecond: (value) => geometry.setPxPerSecond(value),
     getPlayheadPositionMs: () => transport.positionMs,

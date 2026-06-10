@@ -3,8 +3,9 @@
 // pixel after the zoom" math:
 //   - applyZoomRequest — keyboard shortcut / View-menu request; anchors on the
 //     playhead when visible, otherwise the viewport centre.
-//   - onWheel          — Ctrl-free wheel = zoom anchored under the pointer;
-//     horizontal / Shift-wheel = horizontal pan.
+//   - onWheel          — Ctrl-wheel = zoom anchored under the pointer; plain
+//     vertical wheel = vertical track scroll; horizontal / Shift-wheel =
+//     horizontal pan.
 // The SFC keeps the watch that forwards `ui.timelineZoomRequest` here.
 import type { Ref } from 'vue'
 import type { TimelineZoomRequest } from '@/stores/uiStore'
@@ -24,6 +25,9 @@ export interface TimelineZoomDeps {
   // Horizontal scroll offset — read and written during a re-pin.
   scrollX: Ref<number>
   maxScrollX: () => number
+  // Vertical scroll offset — written when a plain wheel scrolls the tracks.
+  scrollY: Ref<number>
+  maxScrollY: () => number
   trackAreaWidth: () => number
   // Commits a new zoom and returns the clamped px/sec actually applied.
   setPxPerSecond: (value: number) => number
@@ -80,9 +84,15 @@ export function useTimelineZoom(deps: TimelineZoomDeps): TimelineZoom {
     e.preventDefault()
     if (deps.getTrackCount() === 0) return
 
-    // Treat as a horizontal pan when the dominant axis is horizontal OR
-    // the user is holding Shift. Both branches consume the event so the
-    // OS-level scroll bubbling doesn't move the page.
+    // Ctrl-wheel = zoom, anchored under the pointer.
+    if (e.ctrlKey) {
+      zoomAtPointer(e, hostRect)
+      return
+    }
+
+    // Treat as a horizontal pan when the dominant axis is horizontal OR the
+    // user is holding Shift. Both branches consume the event so the OS-level
+    // scroll bubbling doesn't move the page.
     const absX = Math.abs(e.deltaX)
     const absY = Math.abs(e.deltaY)
     const wantsPan = absX > absY || (e.shiftKey && absY > 0)
@@ -98,6 +108,15 @@ export function useTimelineZoom(deps: TimelineZoomDeps): TimelineZoom {
       return
     }
 
+    // Plain vertical wheel = scroll the track stack vertically.
+    if (e.deltaY === 0) return
+    const nextY = Math.max(0, Math.min(deps.maxScrollY(), deps.scrollY.value + e.deltaY))
+    if (nextY === deps.scrollY.value) return
+    deps.scrollY.value = nextY
+    deps.applyScroll()
+  }
+
+  function zoomAtPointer(e: WheelEvent, hostRect: DOMRect): void {
     const delta = e.deltaY
     if (delta === 0) return
 

@@ -5,6 +5,7 @@ import { useTimelineZoom, type TimelineZoomDeps } from '@/lib/timeline/useTimeli
 function makeDeps(overrides: Partial<TimelineZoomDeps> = {}): {
   deps: TimelineZoomDeps
   scrollX: ReturnType<typeof ref<number>>
+  scrollY: ReturnType<typeof ref<number>>
   spies: {
     setPxPerSecond: ReturnType<typeof vi.fn>
     applyScroll: ReturnType<typeof vi.fn>
@@ -14,6 +15,7 @@ function makeDeps(overrides: Partial<TimelineZoomDeps> = {}): {
   pxPerSecond: { value: number }
 } {
   const scrollX = ref(0)
+  const scrollY = ref(0)
   const pxPerSecond = { value: 100 }
   const spies = {
     setPxPerSecond: vi.fn((v: number) => v),
@@ -28,6 +30,8 @@ function makeDeps(overrides: Partial<TimelineZoomDeps> = {}): {
     pxPerSecond: () => pxPerSecond.value,
     scrollX,
     maxScrollX: () => 100_000,
+    scrollY,
+    maxScrollY: () => 100_000,
     trackAreaWidth: () => 800,
     setPxPerSecond: spies.setPxPerSecond as TimelineZoomDeps['setPxPerSecond'],
     getPlayheadPositionMs: () => 0,
@@ -37,7 +41,7 @@ function makeDeps(overrides: Partial<TimelineZoomDeps> = {}): {
     updatePlayhead: spies.updatePlayhead,
     ...overrides
   }
-  return { deps, scrollX, spies, pxPerSecond }
+  return { deps, scrollX, scrollY, spies, pxPerSecond }
 }
 
 function wheel(opts: Partial<WheelEvent> = {}): WheelEvent {
@@ -45,6 +49,7 @@ function wheel(opts: Partial<WheelEvent> = {}): WheelEvent {
     deltaX: 0,
     deltaY: 0,
     shiftKey: false,
+    ctrlKey: false,
     clientX: 400,
     preventDefault: vi.fn(),
     ...opts
@@ -60,14 +65,14 @@ describe('useTimelineZoom — onWheel', () => {
   it('no-ops when there are no tracks', () => {
     h = makeDeps({ getTrackCount: () => 0 })
     const { onWheel } = useTimelineZoom(h.deps)
-    onWheel(wheel({ deltaY: -100 }))
+    onWheel(wheel({ deltaY: -100, ctrlKey: true }))
     expect(h.spies.setPxPerSecond).not.toHaveBeenCalled()
   })
 
   it('no-ops when the host is not mounted', () => {
     h = makeDeps({ getHostRect: () => null })
     const { onWheel } = useTimelineZoom(h.deps)
-    onWheel(wheel({ deltaY: -100 }))
+    onWheel(wheel({ deltaY: -100, ctrlKey: true }))
     expect(h.spies.setPxPerSecond).not.toHaveBeenCalled()
   })
 
@@ -86,19 +91,48 @@ describe('useTimelineZoom — onWheel', () => {
     expect(h.spies.applyScroll).toHaveBeenCalledTimes(1)
   })
 
-  it('vertical wheel zooms in and repaints', () => {
+  it('plain vertical wheel scrolls the tracks vertically', () => {
+    const { onWheel } = useTimelineZoom(h.deps)
+    onWheel(wheel({ deltaY: 60 }))
+    expect(h.scrollY.value).toBe(60)
+    expect(h.spies.applyScroll).toHaveBeenCalledTimes(1)
+    expect(h.spies.setPxPerSecond).not.toHaveBeenCalled()
+  })
+
+  it('plain vertical wheel clamps to maxScrollY', () => {
+    h = makeDeps({ maxScrollY: () => 30 })
+    const { onWheel } = useTimelineZoom(h.deps)
+    onWheel(wheel({ deltaY: 100 }))
+    expect(h.scrollY.value).toBe(30)
+  })
+
+  it('plain vertical wheel is a no-op when already at the scroll limit', () => {
+    h = makeDeps({ maxScrollY: () => 0 })
+    const { onWheel } = useTimelineZoom(h.deps)
+    onWheel(wheel({ deltaY: 100 }))
+    expect(h.spies.applyScroll).not.toHaveBeenCalled()
+  })
+
+  it('Ctrl + vertical wheel zooms in and repaints', () => {
     h = makeDeps({ setPxPerSecond: vi.fn(() => 110) })
     const { onWheel } = useTimelineZoom(h.deps)
-    onWheel(wheel({ deltaY: -100 }))
+    onWheel(wheel({ deltaY: -100, ctrlKey: true }))
     expect(h.deps.setPxPerSecond).toHaveBeenCalled()
     expect(h.spies.redraw).toHaveBeenCalledTimes(1)
     expect(h.spies.updatePlayhead).toHaveBeenCalledTimes(1)
   })
 
-  it('vertical wheel is a no-op when the zoom clamps to the same value', () => {
+  it('Ctrl + vertical wheel does not scroll vertically', () => {
+    h = makeDeps({ setPxPerSecond: vi.fn(() => 110) })
+    const { onWheel } = useTimelineZoom(h.deps)
+    onWheel(wheel({ deltaY: 100, ctrlKey: true }))
+    expect(h.scrollY.value).toBe(0)
+  })
+
+  it('Ctrl + vertical wheel is a no-op when the zoom clamps to the same value', () => {
     h = makeDeps({ setPxPerSecond: vi.fn(() => 100) })
     const { onWheel } = useTimelineZoom(h.deps)
-    onWheel(wheel({ deltaY: -100 }))
+    onWheel(wheel({ deltaY: -100, ctrlKey: true }))
     expect(h.spies.redraw).not.toHaveBeenCalled()
   })
 })
