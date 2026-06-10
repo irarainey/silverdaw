@@ -63,11 +63,25 @@ export function createClipRenderer(ctx: ClipRendererContext) {
   type PooledGraphics = InstanceType<NonNullable<typeof GraphicsCtor.value>>
   const graphicsPool: PooledGraphics[] = []
   let poolCursor = 0
+  // Identity of the tracks layer the pool was built against. A GPU reset (TDR)
+  // loses the WebGL context, so `usePixiApp` tears the Pixi app down and rebuilds
+  // it with brand-new layers; the previous frame's pooled Graphics were children
+  // of the destroyed app and are destroyed with it. Reusing those dead instances
+  // paints nothing (missing waveforms) and churns garbage frames (flicker). Track
+  // the layer so we can drop the stale pool when the app is rebuilt.
+  let pooledLayer: Container | null = null
 
   // Reset the pool cursor at the start of each redraw — call AFTER the caller has
   // detached the previous frame's children. Acquired instances are re-added in
   // draw order, so child z-ordering is identical to fresh allocation.
   function beginFrame(): void {
+    const layer = tracksLayer.value
+    if (layer !== pooledLayer) {
+      // App was rebuilt: forget the destroyed Graphics (no destroy() — the old
+      // app already disposed them) so this frame allocates fresh instances.
+      graphicsPool.length = 0
+      pooledLayer = layer
+    }
     poolCursor = 0
   }
 

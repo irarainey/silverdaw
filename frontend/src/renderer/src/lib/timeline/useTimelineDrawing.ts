@@ -430,6 +430,20 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
   let playheadGfx: Graphics | null = null
   let playheadDrawnHeight = -1
+  // Identity of the playhead layer the caches were built against. A GPU reset
+  // (TDR) rebuilds the Pixi app with new layers and destroys the old playhead /
+  // drop-preview Graphics; drop the stale references when the layer is swapped so
+  // they are re-created instead of reused dead (blank playhead / flicker).
+  let playheadCacheLayer: Container | null = null
+
+  function syncPlayheadCacheLayer(): void {
+    if (playheadLayer.value !== playheadCacheLayer) {
+      playheadGfx = null
+      playheadDrawnHeight = -1
+      dropPreviewGfx = null
+      playheadCacheLayer = playheadLayer.value
+    }
+  }
 
   function ensurePlayheadGfx(bottomY: number): Graphics | null {
     const G = GraphicsCtor.value
@@ -462,6 +476,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const a = app.value
     const playhead = playheadLayer.value
     if (!a || !playhead) return
+    syncPlayheadCacheLayer()
 
     const width = a.renderer.screen.width - SCROLLBAR_WIDTH
     const posMs = displayPositionMs || transport.positionMs
@@ -552,6 +567,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const G = GraphicsCtor.value
     const dp = dropPreview.value
     if (!a || !playhead || !G || !dp) return
+    syncPlayheadCacheLayer()
 
     if (dp.trackIndex < 0 || dp.trackIndex >= project.tracks.length) return
 
