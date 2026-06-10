@@ -189,8 +189,10 @@ bool ProjectState::setTrackSoloed(const juce::String& trackId, bool soloed)
     return true;
 }
 
-// Must match renderer resize limits so backend rejects out-of-range heights.
-static constexpr double kMinTrackHeightPx = 60.0;
+// Must match renderer resize limits (MIN_TRACK_HEIGHT / MAX_TRACK_HEIGHT) so the
+// backend rejects out-of-range heights. The minimum is the smallest row that
+// still fits the stacked header controls without overlap.
+static constexpr double kMinTrackHeightPx = 80.0;
 static constexpr double kMaxTrackHeightPx = 400.0;
 
 double ProjectState::getTrackHeightPx(const juce::String& trackId) const

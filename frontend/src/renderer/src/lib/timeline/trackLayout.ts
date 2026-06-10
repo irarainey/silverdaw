@@ -8,18 +8,20 @@
 // canvas, headers, drag handlers, drop zones, and scroll geometry stay
 // pixel-aligned.
 
-import { RULER_HEIGHT, TRACK_GAP, TRACK_HEIGHT } from './constants'
+import { MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, RULER_HEIGHT, TRACK_GAP, TRACK_HEIGHT } from './constants'
 
 interface TrackLike {
   heightPx?: number
 }
 
-/** Effective vertical height of a single track row in CSS pixels. */
+/** Effective vertical height of a single track row in CSS pixels. A stored
+ *  override is clamped to [MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT] so legacy or
+ *  out-of-range values never render the header controls overlapped. */
 export function trackHeightOf(track: TrackLike | undefined | null): number {
   if (!track) return TRACK_HEIGHT
   const h = track.heightPx
   if (typeof h !== 'number' || !Number.isFinite(h) || h <= 0) return TRACK_HEIGHT
-  return h
+  return Math.min(MAX_TRACK_HEIGHT, Math.max(MIN_TRACK_HEIGHT, h))
 }
 
 /** World-space (i.e. unscrolled) top y of track at `index`, including
