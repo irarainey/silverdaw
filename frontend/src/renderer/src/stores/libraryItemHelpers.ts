@@ -10,6 +10,26 @@
 import type { LibraryItem, SavedClipSource } from './libraryTypes'
 
 /**
+ * Separator between a stem's part label and its source name in the stem's
+ * library/track name, e.g. "Drums — Long Train". Shared so the name is built
+ * and parsed consistently.
+ */
+export const STEM_NAME_SEPARATOR = '—'
+
+/**
+ * Extract the part label (Vocals / Drums / …) from a stem item's name. Stem
+ * names are built as "<part> {separator} <source>", so the part is everything
+ * before the first separator. Falls back to the trimmed whole name (e.g. after
+ * a custom rename) and finally to "Stem".
+ */
+export function stemPartLabel(item: { name?: string }): string {
+  const name = item.name?.trim()
+  if (!name) return 'Stem'
+  const part = name.split(` ${STEM_NAME_SEPARATOR} `)[0]?.trim()
+  return part || name
+}
+
+/**
  * Resolve a library item to the label that should be used wherever it's
  * shown to the user as a single line (clip name on the timeline, drag
  * ghost text, etc.). Prefers the tag title; falls back to the file name

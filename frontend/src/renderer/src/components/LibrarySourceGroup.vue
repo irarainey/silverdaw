@@ -6,6 +6,7 @@ import LibrarySavedClipRow from '@/components/LibrarySavedClipRow.vue'
 const props = defineProps<{
   source: LibraryItem
   children: readonly LibraryItem[]
+  coverArtUrl?: string
   showTileImages: boolean
   editingItemId: string | null
   savedClipPillClass: string
@@ -32,17 +33,15 @@ const emit = defineEmits<{
 
 const editingValue = defineModel<string>('editingValue', { required: true })
 
-const stemChildren = computed(() => props.children.filter((item) => item.kind === 'stem'))
+const isStem = computed(() => props.source.kind === 'stem')
+const tileCoverArtUrl = computed(() => props.coverArtUrl ?? props.source.coverArtUrl)
 const savedClipChildren = computed(() => props.children.filter((item) => item.kind === 'saved-clip'))
 
-/** Compact summary for the collapse header, e.g. "2 stems · 3 clips". */
+/** Compact summary for the collapse header, e.g. "3 saved clips". */
 const childSummary = computed(() => {
-  const parts: string[] = []
-  const stemCount = stemChildren.value.length
   const clipCount = savedClipChildren.value.length
-  if (stemCount > 0) parts.push(`${stemCount} ${stemCount === 1 ? 'stem' : 'stems'}`)
-  if (clipCount > 0) parts.push(`${clipCount} saved ${clipCount === 1 ? 'clip' : 'clips'}`)
-  return parts.join(' · ')
+  if (clipCount === 0) return ''
+  return `${clipCount} saved ${clipCount === 1 ? 'clip' : 'clips'}`
 })
 </script>
 
@@ -61,11 +60,11 @@ const childSummary = computed(() => {
     >
       <div
         v-if="props.showTileImages"
-        class="flex aspect-square w-18.75 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
+        class="relative flex aspect-square w-18.75 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
       >
         <img
-          v-if="props.source.coverArtUrl"
-          :src="props.source.coverArtUrl"
+          v-if="tileCoverArtUrl"
+          :src="tileCoverArtUrl"
           alt=""
           class="h-full w-full object-cover"
           draggable="false"
@@ -80,6 +79,21 @@ const childSummary = computed(() => {
         >
           <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
         </svg>
+        <span
+          v-if="isStem"
+          class="absolute bottom-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-sm bg-zinc-950/85 ring-1 ring-zinc-700"
+          title="Stem"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            class="h-3 w-3 text-zinc-100"
+            aria-hidden="true"
+          >
+            <path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z" />
+          </svg>
+        </span>
       </div>
       <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">
         <input
@@ -168,26 +182,6 @@ const childSummary = computed(() => {
         <span>{{ childSummary }}</span>
       </button>
       <template v-if="!props.source.collapsed">
-        <LibrarySavedClipRow
-          v-for="item in stemChildren"
-          :key="item.id"
-          v-model:editing-value="editingValue"
-          :item="item"
-          :editing-item-id="props.editingItemId"
-          row-class="saved-clip group relative flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 pr-1 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
-          marker-class="h-6 w-1 shrink-0 rounded-sm bg-violet-500/70"
-          :saved-clip-bpm="props.savedClipEffectiveBpm(item)"
-          :saved-clip-bpm-pill-class="props.savedClipBpmPillClass"
-          :format-clip-duration="props.formatClipDuration"
-          :display-title="props.displayTitle"
-          :key-badge-class="props.keyBadgeClass"
-          :set-name-input-el="props.setNameInputEl"
-          @drag-start="(e, draggedItem) => emit('dragStart', e, draggedItem)"
-          @drag-end="emit('dragEnd')"
-          @open-editor="(editedItem) => emit('openEditor', editedItem)"
-          @open-context-menu="(e, menuItem) => emit('openContextMenu', e, menuItem)"
-          @start-rename="(renamedItem) => emit('startRename', renamedItem)"
-        />
         <LibrarySavedClipRow
           v-for="item in savedClipChildren"
           :key="item.id"

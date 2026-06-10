@@ -48,6 +48,7 @@ const {
   displayTitle,
   displayArtist,
   childItems,
+  groupCoverArtUrl,
   savedClipEffectiveBpm,
   keyBadgeClass,
   tileIsSample,
@@ -103,6 +104,7 @@ const {
         :display-title="displayTitle"
         :display-artist="displayArtist"
         :child-items="childItems"
+        :group-cover-art-url="groupCoverArtUrl"
         :saved-clip-effective-bpm="savedClipEffectiveBpm"
         :key-badge-class="keyBadgeClass"
         :tile-is-sample="tileIsSample"

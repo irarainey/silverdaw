@@ -18,6 +18,7 @@
 import { importAudioIntoLibrary, libraryItemToClipPlacement } from '@/lib/importAudio'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { STEM_NAME_SEPARATOR } from '@/stores/libraryItemHelpers'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 import type { StemName, StemPartialPayload, StemReadyPayload } from '@shared/bridge-protocol'
@@ -73,7 +74,10 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
     delegatedImport = true
     const itemId = await importAudioIntoLibrary(opened, {
       kind: 'stem',
-      name: label,
+      // Name mirrors the stem's track name ("<part> — <source>") so the library
+      // item reads as a distinct, source-tagged file. The leading part (before
+      // the first " — ") is what the info dialog extracts as the stem type.
+      name: `${label} ${STEM_NAME_SEPARATOR} ${target.sourceName}`,
       derivedFrom: {
         sourceItemId: target.sourceItemId,
         sourceClipId: target.clipId,
@@ -99,7 +103,7 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
     // timeline is a manual step the user takes later.
     if (target.clipId !== undefined) {
       const trackId = project.addTrack()
-      project.setTrackName(trackId, `${label} — ${target.sourceName}`)
+      project.setTrackName(trackId, `${label} ${STEM_NAME_SEPARATOR} ${target.sourceName}`)
       project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), target.startMs ?? 0)
     }
     return true

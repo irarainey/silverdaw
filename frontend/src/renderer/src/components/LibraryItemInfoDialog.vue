@@ -11,6 +11,11 @@ const {
   clip,
   sourceItem,
   displayTitle,
+  isStem,
+  stemSummary,
+  typeLabel,
+  coverArtUrl,
+  headerArtist,
   isSample,
   classificationMode,
   setClassification,
@@ -61,22 +66,37 @@ const {
               {{ displayTitle }}
             </h2>
             <p
-              v-if="item.metadata?.artist"
+              v-if="headerArtist"
               class="mt-0.5 truncate text-xs text-zinc-400"
             >
-              {{ item.metadata.artist }}
+              {{ headerArtist }}
             </p>
           </div>
         </header>
 
         <div class="silverdaw-scroll min-h-0 overflow-y-auto px-5 py-4 text-xs">
+          <p
+            v-if="isStem"
+            class="mb-3 flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-zinc-300"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              class="h-4 w-4 shrink-0 text-zinc-400"
+              aria-hidden="true"
+            >
+              <path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z" />
+            </svg>
+            <span class="min-w-0">{{ stemSummary }}</span>
+          </p>
           <section class="grid gap-3 md:grid-cols-[160px_1fr]">
             <div
-              class="flex h-36 items-center justify-center overflow-hidden rounded border border-zinc-800 bg-zinc-950"
+              class="relative flex h-36 items-center justify-center overflow-hidden rounded border border-zinc-800 bg-zinc-950"
             >
               <img
-                v-if="item.coverArtUrl"
-                :src="item.coverArtUrl"
+                v-if="coverArtUrl"
+                :src="coverArtUrl"
                 alt=""
                 class="h-full w-full object-cover"
                 draggable="false"
@@ -91,13 +111,29 @@ const {
               >
                 <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
               </svg>
+              <span
+                v-if="isStem"
+                class="absolute bottom-1 right-1 flex items-center gap-1 rounded bg-zinc-950/85 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-100"
+                title="This is a separated stem"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="h-3 w-3"
+                  aria-hidden="true"
+                >
+                  <path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z" />
+                </svg>
+                Stem
+              </span>
             </div>
 
             <dl class="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
               <dt class="text-zinc-500">
                 Type
               </dt>
-              <dd>{{ item.kind === 'saved-clip' ? 'Saved clip' : 'Audio file' }}</dd>
+              <dd>{{ typeLabel }}</dd>
               <template v-if="clip">
                 <template
                   v-for="row in instanceRows"
@@ -113,18 +149,21 @@ const {
                 v-if="sourceItem"
                 class="text-zinc-500"
               >
-                Source
+                {{ isStem ? 'Separated from' : 'Source' }}
               </dt>
-              <dd v-if="sourceItem">
+              <dd
+                v-if="sourceItem"
+                :class="isStem ? 'text-zinc-100' : undefined"
+              >
                 {{ libraryItemDisplayName(sourceItem) }}
               </dd>
               <dt
-                v-if="item.derivedFrom"
+                v-if="item.derivedFrom && !isStem"
                 class="text-zinc-500"
               >
                 Source window
               </dt>
-              <dd v-if="item.derivedFrom">
+              <dd v-if="item.derivedFrom && !isStem">
                 {{ formatTime(item.derivedFrom.inMs) }} - {{ formatTime(item.derivedFrom.inMs + item.derivedFrom.durationMs) }}
               </dd>
               <dt class="text-zinc-500">
@@ -307,11 +346,11 @@ const {
           </section>
 
           <section
-            v-if="item.kind === 'audio-file'"
+            v-if="item.kind === 'audio-file' || isStem"
             class="mt-5"
           >
             <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-              Metadata
+              Metadata{{ isStem ? ' (from original)' : '' }}
             </h3>
             <dl
               v-if="metadataRows.length > 0"

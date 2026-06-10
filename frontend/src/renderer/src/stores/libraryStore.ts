@@ -28,7 +28,7 @@ export type {
   LibraryItem,
   SavedClipSource
 } from './libraryTypes'
-export { libraryItemDisplayName, libraryItemIsSample, libraryItemSourceBpm } from './libraryItemHelpers'
+export { libraryItemDisplayName, libraryItemIsSample, libraryItemSourceBpm, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
 
 import { savedClipActions } from './librarySavedClipActions'
 import { importActions } from './libraryImportActions'

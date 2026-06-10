@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
-import { libraryItemDisplayName, libraryItemIsSample, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { libraryItemDisplayName, libraryItemIsSample, stemPartLabel, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { shiftedKey } from '@/lib/pitchKey'
@@ -37,6 +37,47 @@ export function useLibraryItemInfoController(
     return libraryItemDisplayName(item)
   })
   const infoSettings = computed(() => clip.value ?? props.item)
+
+  /** A stem owns its audio but inherits identity from its source. */
+  const isStem = computed(() => props.item?.kind === 'stem')
+
+  /**
+   * Plain-language origin line for a stem, e.g. "Drums stem of Long Train".
+   * The part label is parsed back out of the composite stem name.
+   */
+  const stemSummary = computed(() => {
+    if (!isStem.value) return ''
+    const part = props.item ? stemPartLabel(props.item) : 'Stem'
+    const origin = sourceItem.value ? libraryItemDisplayName(sourceItem.value) : 'the original source'
+    return `${part} stem of ${origin}`
+  })
+
+  /** Human-readable item kind for the "Type" row. */
+  const typeLabel = computed(() => {
+    switch (props.item?.kind) {
+      case 'stem':
+        return 'Stem'
+      case 'saved-clip':
+        return 'Saved clip'
+      default:
+        return 'Audio file'
+    }
+  })
+
+  /**
+   * The item whose tag metadata / cover art should be shown. Stems carry no
+   * embedded tags of their own, so they borrow the original source's identity
+   * (artwork, artist, album, …) — the same source they inherit tempo/key from.
+   */
+  const metadataItem = computed(() => (isStem.value ? sourceItem.value ?? props.item : props.item))
+
+  /** Cover art for the header/thumbnail, falling back to the source's art. */
+  const coverArtUrl = computed(
+    () => props.item?.coverArtUrl ?? sourceItem.value?.coverArtUrl
+  )
+
+  /** Header subtitle (artist), inherited from the source for stems. */
+  const headerArtist = computed(() => metadataItem.value?.metadata?.artist)
 
   /**
    * Whether this library item is currently treated as a non-musical sample.
@@ -164,9 +205,9 @@ export function useLibraryItemInfoController(
   })
 
   const metadataRows = computed(() => {
-    const item = props.item
+    const item = metadataItem.value
     if (!item) return []
-    const m = props.item?.metadata
+    const m = item.metadata
     return [
       ['Title', m?.title],
       ['Artist', m?.artist],
@@ -214,6 +255,11 @@ export function useLibraryItemInfoController(
     clip,
     sourceItem,
     displayTitle,
+    isStem,
+    stemSummary,
+    typeLabel,
+    coverArtUrl,
+    headerArtist,
     isSample,
     classificationMode,
     setClassification,

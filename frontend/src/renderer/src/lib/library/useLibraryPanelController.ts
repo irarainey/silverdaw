@@ -87,7 +87,13 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     `${SAVED_CLIP_PILL_CLASS} border-zinc-700 bg-zinc-800 text-zinc-300`
   const SAMPLE_PILL_CLASS =
     `${SAVED_CLIP_PILL_CLASS} border-indigo-800 bg-indigo-900/60 text-indigo-200`
-  const sourceItems = computed(() => library.items.filter((item) => item.kind === 'audio-file'))
+  // Stems are standalone audio files (their own samples / duration), shown as
+  // top-level items like imported sources — not nested under the original. The
+  // link to the original survives via `derivedFrom` (badge + info-dialog note +
+  // inherited cover art), not via tree nesting.
+  const sourceItems = computed(() =>
+    library.items.filter((item) => item.kind === 'audio-file' || item.kind === 'stem')
+  )
   const orphanSavedClipItems = computed(() =>
     library.items.filter(
       (item) =>
@@ -162,11 +168,29 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
   }
 
   function displayArtist(item: LibraryItem): string {
-    return item.metadata?.artist ?? ''
+    const artist = item.metadata?.artist
+    if (artist) return artist
+    // Stems carry no tags of their own; show the original source's artist so a
+    // stem card reads like the file it came from.
+    const originId = item.derivedFrom?.sourceItemId
+    return (originId ? library.byId[originId]?.metadata?.artist : undefined) ?? ''
   }
 
   function childItems(source: LibraryItem): LibraryItem[] {
-    return library.items.filter((item) => item.derivedFrom?.sourceItemId === source.id)
+    // Stems are top-level items, so only saved clips nest under their source.
+    return library.items.filter(
+      (item) => item.derivedFrom?.sourceItemId === source.id && item.kind !== 'stem'
+    )
+  }
+
+  /**
+   * Cover art shown on a library card. Stems carry no embedded art, so they
+   * borrow the original source's image to read as a clear variant of it.
+   */
+  function groupCoverArtUrl(item: LibraryItem): string | undefined {
+    if (item.coverArtUrl) return item.coverArtUrl
+    const originId = item.derivedFrom?.sourceItemId
+    return originId ? library.byId[originId]?.coverArtUrl : undefined
   }
 
   function savedClipEffectiveBpm(item: LibraryItem): number | undefined {
@@ -265,6 +289,7 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     displayTitle,
     displayArtist,
     childItems,
+    groupCoverArtUrl,
     savedClipEffectiveBpm,
     keyBadgeClass,
     tileIsSample,

@@ -108,7 +108,7 @@ describe('createTracksFromStems (timeline target)', () => {
       expect.anything(),
       {
         kind: 'stem',
-        name: 'Vocals',
+        name: 'Vocals — Song',
         derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 0, durationMs: 0 }
       }
     )
@@ -117,7 +117,7 @@ describe('createTracksFromStems (timeline target)', () => {
       expect.anything(),
       {
         kind: 'stem',
-        name: 'Drums',
+        name: 'Drums — Song',
         derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 0, durationMs: 0 }
       }
     )
@@ -240,7 +240,7 @@ describe('createTracksFromStems (library target)', () => {
       expect.anything(),
       {
         kind: 'stem',
-        name: 'Vocals',
+        name: 'Vocals — Song',
         derivedFrom: {
           sourceItemId: 'src-item',
           sourceClipId: undefined,
