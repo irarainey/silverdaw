@@ -295,6 +295,23 @@ class OnnxStemSeparator : public StemSeparator
         // Split the separate band evenly across the selected specialist models.
         const double stemSpan = (kSeparatePercent - kPreparePercent) / static_cast<double>(selectedCount);
 
+        // Residual-into-other mixture consistency: htdemucs-ft is a bag of four
+        // INDEPENDENT specialists, so the stems don't reconstruct the mixture and
+        // leave a residual of unclaimed signal. When the user is extracting all
+        // four sources, synthesise `other` as the exact residual
+        // mixture - (vocals + drums + bass) instead of running the other
+        // specialist: this folds every unclaimed component back into the catch-all
+        // stem (the full residual) and skips one model run. kStemNames lists
+        // `other` last, so the three extracted sources are always summed first.
+        const bool mixtureConsistency = isSelected("vocals") && isSelected("drums") &&
+                                        isSelected("bass") && isSelected("other");
+        juce::AudioBuffer<float> extractedSum;
+        if (mixtureConsistency)
+        {
+            extractedSum.setSize(kModelChannels, numSamples);
+            extractedSum.clear();
+        }
+
         size_t produced = 0;
         for (size_t s = 0; s < kStemNames.size(); ++s)
         {
@@ -305,16 +322,50 @@ class OnnxStemSeparator : public StemSeparator
             ++produced;
             onProgress("separate", stemBase, stem);
 
-            auto stemBuffer = separateOneStem(request.modelDir, stem, mixture, numSamples, window,
-                                              offsets, memInfo, onProgress, shouldCancel, stemBase,
-                                              stemSpan);
+            const bool synthesiseResidual = mixtureConsistency && juce::String(stem) == "other";
 
-            // Undo the per-track normalisation applied before inference.
-            for (int ch = 0; ch < kModelChannels; ++ch)
+            juce::AudioBuffer<float> stemBuffer;
+            if (synthesiseResidual)
             {
-                float* d = stemBuffer.getWritePointer(ch);
-                for (int i = 0; i < numSamples; ++i)
-                    d[i] = d[i] * norm.std + norm.mean;
+                // other = mixture - Σ(extracted stems). The accumulated sum is in
+                // the time (denormalised) domain, so undo the mixture's
+                // normalisation on the fly to subtract in the same domain.
+                stemBuffer.setSize(kModelChannels, numSamples);
+                for (int ch = 0; ch < kModelChannels; ++ch)
+                {
+                    const float* mix = mixture.getReadPointer(ch);
+                    const float* sum = extractedSum.getReadPointer(ch);
+                    float* d = stemBuffer.getWritePointer(ch);
+                    for (int i = 0; i < numSamples; ++i)
+                        d[i] = (mix[i] * norm.std + norm.mean) - sum[i];
+                }
+            }
+            else
+            {
+                stemBuffer = separateOneStem(request.modelDir, stem, mixture, numSamples, window,
+                                             offsets, memInfo, onProgress, shouldCancel, stemBase,
+                                             stemSpan);
+
+                // Undo the per-track normalisation applied before inference.
+                for (int ch = 0; ch < kModelChannels; ++ch)
+                {
+                    float* d = stemBuffer.getWritePointer(ch);
+                    for (int i = 0; i < numSamples; ++i)
+                        d[i] = d[i] * norm.std + norm.mean;
+                }
+
+                // Accumulate the extracted (denormalised) sources so `other` can be
+                // built as the residual once the three specialists have run.
+                if (mixtureConsistency)
+                {
+                    for (int ch = 0; ch < kModelChannels; ++ch)
+                    {
+                        const float* src = stemBuffer.getReadPointer(ch);
+                        float* acc = extractedSum.getWritePointer(ch);
+                        for (int i = 0; i < numSamples; ++i)
+                            acc[i] += src[i];
+                    }
+                }
             }
 
             const auto outFile = request.outputDir.getChildFile(
