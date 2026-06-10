@@ -236,11 +236,12 @@ export const clipLibraryActions = {
         })
         return
       }
-      // Sample-classified sources skip tempo auto-match; manual warp still works.
+      // Sample-classified sources skip tempo auto-match; manual warp still
+      // works. Low detection confidence no longer counts as a sample, so a
+      // low-confidence musical source still auto-warps to the project tempo.
       const sampleClassified = libraryItemIsSample(
         {
           sampleMode: src.sampleMode,
-          lowConfidence: src.lowConfidence,
           derivedFrom: src.derivedFrom
         },
         useLibraryStore().byId

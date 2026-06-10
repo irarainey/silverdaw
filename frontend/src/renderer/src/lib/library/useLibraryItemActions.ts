@@ -83,7 +83,7 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
       items.push({
         command: 'library.classifyAuto',
         label: auto
-          ? `Auto-classify (currently ${item.lowConfidence ? 'sample' : 'music'})`
+          ? `Auto-classify (currently ${item.lowConfidence ? 'music, tempo unverified' : 'music'})`
           : 'Auto-classify',
         separatorAbove: true,
         disabled: auto

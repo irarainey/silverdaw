@@ -640,6 +640,17 @@ void testExplicitSampleDoesNotSeed()
     require(!state.isBpmSeeded(), "a blocked seed must leave the project unseeded");
 }
 
+void testLibraryItemDurationLookup()
+{
+    silverdaw::ProjectState state;
+    require(state.addLibraryItem("l1", "C:\\audio\\loop.wav", "loop.wav", 4321.0, 48000, 2),
+            "library item with a duration should add");
+    requireNear(state.getLibraryItemDurationMs("l1"), 4321.0, 1e-6,
+                "duration getter should return the stored duration");
+    requireNear(state.getLibraryItemDurationMs("missing"), 0.0, 1e-6,
+                "duration getter should return 0 for an unknown item");
+}
+
 } // namespace
 
 void addProjectStateTests(std::vector<TestCase>& tests)
@@ -658,6 +669,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"Pre-existing library BPMs do not block the first seed", testStemBpmsDoNotBlockFirstSeed});
     tests.push_back({"Seeded project BPM is not overridden by later clips", testSeededProjectIsNotReSeeded});
     tests.push_back({"User-classified sample does not seed project BPM", testExplicitSampleDoesNotSeed});
+    tests.push_back({"Library item duration lookup by id", testLibraryItemDurationLookup});
 }
 
 } // namespace silverdaw::tests

@@ -17,6 +17,7 @@ import { useClipEditorPreview } from '@/lib/clipEditor/useClipEditorPreview'
 import { useClipEditorCropHistory } from '@/lib/clipEditor/useClipEditorCropHistory'
 import { useClipEditorSave } from '@/lib/clipEditor/useClipEditorSave'
 import { useClipEditorCanvasInteraction } from '@/lib/clipEditor/useClipEditorCanvasInteraction'
+import { useClipEditorBeatGrid } from '@/lib/clipEditor/useClipEditorBeatGrid'
 import { useClipEditorKeyboard } from '@/lib/clipEditor/useClipEditorKeyboard'
 import { useClipEditorTransport } from '@/lib/clipEditor/useClipEditorTransport'
 import { sourceMsToVolumeTime } from '@/lib/clipEditor/volumeOverlay'
@@ -61,6 +62,8 @@ export function useClipEditorController(
 
   // Draft warp + pitch state reseeded on each target switch.
   const warpDraft = useClipEditorWarpDraft(sourceBpm)
+  // Manual-tempo fallback: pin a BPM + slide the grid to align it.
+  const beatGrid = useClipEditorBeatGrid({ sourceItem: () => sourceItem.value })
   const {
     draftTempoEnabled,
     draftMode,
@@ -535,6 +538,9 @@ export function useClipEditorController(
     draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
     sourceItem: () => sourceItem.value,
     zoom: () => zoom.value,
+    gridAlignActive: () => beatGrid.alignActive.value,
+    previewGridAnchorSec: (anchorSec: number) => beatGrid.previewAnchorSec(anchorSec),
+    commitGridAnchorSec: (anchorSec: number) => beatGrid.commitAnchorSec(anchorSec),
     setZoomAnchored
   })
 
@@ -619,6 +625,7 @@ export function useClipEditorController(
     preview,
     transport,
     warpDraft,
+    beatGrid,
     titleText,
     warpActive,
     loopEnabled,

@@ -36,6 +36,11 @@ export interface ClipEditorCanvasInteractionDeps {
   sourceItem: () => LibraryItem | null
   zoom: () => number
 
+  // Beat-grid slide-to-align: when active, dragging shifts the grid phase.
+  gridAlignActive: () => boolean
+  previewGridAnchorSec: (anchorSec: number) => void
+  commitGridAnchorSec: (anchorSec: number) => void
+
   setZoomAnchored: (zoom: number, anchorMs: number) => void
 }
 
@@ -71,6 +76,12 @@ export function useClipEditorCanvasInteraction(
     // Volume edit mode owns the canvas pointer before selection logic.
     if (deps.volumeEditActive()) {
       onCanvasEnvelopePointerDown(e, rect, vIn, vDur)
+      return
+    }
+
+    // Beat-grid align mode: drag slides the whole grid phase over the waveform.
+    if (deps.gridAlignActive()) {
+      onCanvasGridAlignPointerDown(e, rect, vIn, vDur, fullIn, fullEnd)
       return
     }
 
@@ -201,6 +212,39 @@ export function useClipEditorCanvasInteraction(
     const onUp = (): void => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  // Beat-grid slide-to-align: drag horizontally to shift the grid phase so the
+  // markers line up with the audio. Live-previews the new anchor on every move
+  // and persists once on release. Requires an existing tempo (guarded upstream).
+  function onCanvasGridAlignPointerDown(
+    e: MouseEvent,
+    rect: DOMRect,
+    vIn: number,
+    vDur: number,
+    fullIn: number,
+    fullEnd: number
+  ): void {
+    const src = deps.sourceItem()
+    const bpm = src?.bpm
+    if (!src || !bpm || bpm <= 0) return
+    const startAnchorSec = src.beatAnchorSec ?? src.beats?.[0] ?? 0
+    e.preventDefault()
+    const xToMs = (clientX: number): number =>
+      Math.max(fullIn, Math.min(fullEnd, vIn + ((clientX - rect.left) / rect.width) * vDur))
+    const startMs = xToMs(e.clientX)
+    const anchorAt = (clientX: number): number => startAnchorSec + (xToMs(clientX) - startMs) / 1000
+
+    const onMove = (ev: MouseEvent): void => {
+      deps.previewGridAnchorSec(anchorAt(ev.clientX))
+    }
+    const onUp = (ev: MouseEvent): void => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      deps.commitGridAnchorSec(anchorAt(ev.clientX))
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)

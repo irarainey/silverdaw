@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import ClipEditorWarpPanel from '@/components/ClipEditorWarpPanel.vue'
 import ClipEditorPitchPanel from '@/components/ClipEditorPitchPanel.vue'
+import ClipEditorBeatGridPanel from '@/components/ClipEditorBeatGridPanel.vue'
 import ClipEditorPlaybackControls from '@/components/ClipEditorPlaybackControls.vue'
 import ClipEditorSelectionInfo from '@/components/ClipEditorSelectionInfo.vue'
 import ClipEditorViewControls from '@/components/ClipEditorViewControls.vue'
@@ -18,6 +19,7 @@ const {
   preview,
   transport,
   warpDraft,
+  beatGrid,
   titleText,
   warpActive,
   loopEnabled,
@@ -68,6 +70,9 @@ const {
   onSaveAsNew,
   onKeydown
 } = useClipEditorController(props, emit, dialogEl, waveformEl)
+
+// Grid-align mode repurposes the canvas drag; reflect it in the cursor.
+const gridAligning = computed(() => beatGrid.alignActive.value)
 </script>
 
 <template>
@@ -130,7 +135,7 @@ const {
             <canvas
               ref="waveformEl"
               class="h-[min(260px,26vh)] w-full rounded border border-zinc-800 bg-zinc-950"
-              :class="volumeEditActive ? 'cursor-pointer' : 'cursor-crosshair'"
+              :class="gridAligning ? 'cursor-grab' : volumeEditActive ? 'cursor-pointer' : 'cursor-crosshair'"
               @mousedown="onCanvasMouseDown"
               @contextmenu="onCanvasContextMenu"
               @wheel="onCanvasWheel"
@@ -211,6 +216,16 @@ const {
                 <ClipEditorPitchPanel
                   :draft="warpDraft"
                   :source-key="sourceKey"
+                />
+              </ClipEffectModule>
+              <ClipEffectModule
+                title="Beat grid"
+                :cols="1"
+                :rows="2"
+              >
+                <ClipEditorBeatGridPanel
+                  :grid="beatGrid"
+                  :source-bpm="sourceBpm"
                 />
               </ClipEffectModule>
             </div>

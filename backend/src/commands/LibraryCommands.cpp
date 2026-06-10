@@ -139,6 +139,28 @@ void handleLibraryItemSetSampleMode(const juce::var& payload, ProjectState& proj
     }
 }
 
+void handleLibraryItemSetManualTempo(const juce::var& payload, AudioEngine& engine,
+                                     ProjectState& projectState, BridgeServer& bridge)
+{
+    const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
+    const double bpm = static_cast<double>(payload.getProperty("bpm", 0.0));
+    const double beatAnchorSec = static_cast<double>(payload.getProperty("beatAnchorSec", 0.0));
+    silverdaw::log::info("bridge", "recv LIBRARY_ITEM_SET_MANUAL_TEMPO itemId=" + itemId
+                                       + " bpm=" + juce::String(bpm, 2)
+                                       + " anchor=" + juce::String(beatAnchorSec, 3) + "s");
+    if (itemId.isEmpty())
+    {
+        silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_MANUAL_TEMPO missing itemId");
+        return;
+    }
+    if (bpm < 20.0 || bpm > 300.0)
+    {
+        silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_MANUAL_TEMPO bpm out of range: " + juce::String(bpm, 2));
+        return;
+    }
+    applyManualTempo(itemId, bpm, beatAnchorSec, engine, projectState, bridge);
+}
+
 
 // Clips reference library items by id, so relink rebuilds each dependent clip.
 void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& engine,

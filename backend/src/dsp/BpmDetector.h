@@ -40,4 +40,18 @@ class BpmDetector
     BpmAnalysis analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager);
 };
 
+// Analysis-internal, exposed for unit testing. Robustly estimates a single
+// constant phase offset between a rigid beat grid (period+anchor) and the onset
+// peaks in `odf` (an onset-detection function sampled at `envRate` Hz). For each
+// grid line within the ODF span it finds the strongest nearby ODF local maximum
+// (within +/- min(maxOffsetSec, 0.25*period)) and collects (peakTime - beatTime);
+// returns the median offset plus the match count and the inter-quartile range
+// (IQR) spread so callers can gate on consistency (the IQR catches bimodal
+// early/late jitter that a median-absolute-deviation would miss). Returns false
+// when there is too little evidence (fewer than the minimum matched grid lines)
+// to trust an offset.
+bool estimateGridPhaseOffset(const std::vector<double>& odf, double envRate, double periodSec,
+                             double anchorSec, double maxOffsetSec, double& outOffsetSec,
+                             int& outMatched, double& outSpread);
+
 } // namespace silverdaw

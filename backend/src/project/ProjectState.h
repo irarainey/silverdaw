@@ -408,6 +408,10 @@ class ProjectState : public juce::ValueTree::Listener
 
     bool hasLibraryItemForPath(const juce::String& filePath) const;
 
+    // Duration in ms for a library item by id, or 0 when unknown. Used to build
+    // a rigid manual beat grid spanning the source.
+    double getLibraryItemDurationMs(const juce::String& itemId) const;
+
     double getLibraryItemBpmForPath(const juce::String& filePath) const;
 
     juce::var libraryAsJson() const;

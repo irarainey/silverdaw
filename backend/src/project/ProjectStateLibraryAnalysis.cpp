@@ -199,6 +199,19 @@ bool ProjectState::setLibraryItemSampleMode(const juce::String& itemId, const ju
     return false;
 }
 
+double ProjectState::getLibraryItemDurationMs(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return 0.0;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+            return static_cast<double>(item.getProperty(kDurationMs, 0.0));
+    }
+    return 0.0;
+}
+
 double ProjectState::getLibraryItemBpmForPath(const juce::String& filePath) const
 {
     const auto library = root.getChildWithName(kLibrary);

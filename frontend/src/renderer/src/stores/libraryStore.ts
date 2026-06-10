@@ -28,7 +28,7 @@ export type {
   LibraryItem,
   SavedClipSource
 } from './libraryTypes'
-export { libraryItemDisplayName, libraryItemIsSample, libraryItemSourceBpm, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
+export { libraryItemDisplayName, libraryItemIsSample, libraryItemTempoUnverified, libraryItemSourceBpm, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
 
 import { savedClipActions } from './librarySavedClipActions'
 import { importActions } from './libraryImportActions'
@@ -250,6 +250,46 @@ export const useLibraryStore = defineStore('library', {
         itemId,
         mode: normalised
       })
+    },
+
+    /**
+     * Manual tempo override for a source item: pins a confident BPM + grid
+     * phase anchor (seconds) and clears the variable / low-confidence flags so
+     * the item is treated as music with a visible, warpable grid. Applied
+     * optimistically; the backend echoes a full `LIBRARY_ITEM_ANALYSIS` grid.
+     * `bpm` outside 20–300 is ignored. Used by the clip-editor manual-tempo
+     * fallback (set BPM + slide the grid to align it to the waveform).
+     */
+    setItemManualTempo(itemId: string, bpm: number, beatAnchorSec: number): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      if (!Number.isFinite(bpm) || bpm < 20 || bpm > 300) return
+      if (!Number.isFinite(beatAnchorSec)) return
+      item.bpm = bpm
+      item.beatAnchorSec = beatAnchorSec
+      // The renderer derives marker positions from (bpm, anchor); a single
+      // presence beat is enough locally. The backend echo replaces it with the
+      // full rigid grid.
+      item.beats = [beatAnchorSec]
+      item.variableTempo = undefined
+      item.lowConfidence = undefined
+      useProjectStore().peaksRevision++
+      sendBridge('LIBRARY_ITEM_SET_MANUAL_TEMPO', { itemId, bpm, beatAnchorSec })
+    },
+
+    /**
+     * Live, local-only beat-grid anchor update (no bridge round-trip). Used
+     * while dragging the grid to slide it over the waveform; the final position
+     * is persisted via `setItemManualTempo` on pointer release. No-op unless the
+     * item already has a BPM (the grid only renders with a tempo).
+     */
+    setItemBeatAnchorLocal(itemId: string, beatAnchorSec: number): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item || !item.bpm || item.bpm <= 0) return
+      if (!Number.isFinite(beatAnchorSec)) return
+      item.beatAnchorSec = beatAnchorSec
+      item.beats = [beatAnchorSec]
+      useProjectStore().peaksRevision++
     },
 
     /** Blank names clear the override; `LIBRARY_ADD` persists the upsert. */

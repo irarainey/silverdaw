@@ -68,6 +68,9 @@ function makeHarness(): Harness {
     draftEffectiveRatio: () => 1,
     sourceItem: () => state.sourceItem,
     zoom: () => state.zoom,
+    gridAlignActive: () => false,
+    previewGridAnchorSec: () => {},
+    commitGridAnchorSec: () => {},
     setZoomAnchored
   }
 
@@ -234,6 +237,9 @@ function makeWheelHarness(
     draftEffectiveRatio: () => 1,
     sourceItem: () => h.state.sourceItem,
     zoom: () => h.state.zoom,
+    gridAlignActive: () => false,
+    previewGridAnchorSec: () => {},
+    commitGridAnchorSec: () => {},
     setZoomAnchored: h.setZoomAnchored
   }
   return useClipEditorCanvasInteraction(deps)

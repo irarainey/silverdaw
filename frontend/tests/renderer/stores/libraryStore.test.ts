@@ -1253,4 +1253,89 @@ describe('libraryStore', () => {
     expect(library.channelPeaksByItemId).toEqual({})
     expect(library.editorHiResPeaks).toBeNull()
   })
+
+  it('applies a manual tempo override and persists it over the bridge', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\manual.wav',
+      fileName: 'manual.wav',
+      durationMs: 4_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    library.setItemSampleMode(id, 'auto')
+    sendMock.mockClear()
+
+    library.setItemManualTempo(id, 128, 0.25)
+
+    const item = library.byId[id]!
+    expect(item.bpm).toBe(128)
+    expect(item.beatAnchorSec).toBe(0.25)
+    expect(item.beats).toEqual([0.25])
+    expect(item.lowConfidence).toBeUndefined()
+    expect(item.variableTempo).toBeUndefined()
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+      itemId: id,
+      bpm: 128,
+      beatAnchorSec: 0.25
+    })
+  })
+
+  it('ignores an out-of-range manual BPM', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\manual2.wav',
+      fileName: 'manual2.wav',
+      durationMs: 4_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    sendMock.mockClear()
+
+    library.setItemManualTempo(id, 5, 0)
+    library.setItemManualTempo(id, 400, 0)
+
+    expect(library.byId[id]!.bpm).toBeUndefined()
+    expect(sendMock).not.toHaveBeenCalledWith(
+      'LIBRARY_ITEM_SET_MANUAL_TEMPO',
+      expect.anything()
+    )
+  })
+
+  it('slides the grid anchor locally without a bridge round-trip', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\manual3.wav',
+      fileName: 'manual3.wav',
+      durationMs: 4_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    library.setItemManualTempo(id, 120, 0)
+    sendMock.mockClear()
+
+    library.setItemBeatAnchorLocal(id, 0.18)
+
+    expect(library.byId[id]!.beatAnchorSec).toBe(0.18)
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('does not slide the grid anchor when the item has no tempo', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\manual4.wav',
+      fileName: 'manual4.wav',
+      durationMs: 4_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+
+    library.setItemBeatAnchorLocal(id, 0.18)
+
+    expect(library.byId[id]!.beatAnchorSec).toBeUndefined()
+  })
 })

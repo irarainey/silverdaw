@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
-import { libraryItemDisplayName, libraryItemIsSample, stemPartLabel, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { libraryItemDisplayName, libraryItemIsSample, libraryItemTempoUnverified, stemPartLabel, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { shiftedKey } from '@/lib/pitchKey'
@@ -88,6 +88,17 @@ export function useLibraryItemInfoController(
     const item = props.item
     if (!item) return false
     return libraryItemIsSample(item, library.byId)
+  })
+
+  /**
+   * Whether the detected tempo grid is unverified (low detection
+   * confidence, no explicit user classification). The grid is still
+   * shown and warpable; the UI flags it as needing review.
+   */
+  const tempoUnverified = computed(() => {
+    const item = props.item
+    if (!item) return false
+    return libraryItemTempoUnverified(item, library.byId)
   })
 
   /** Current classification mode for the radio control: 'auto' when no
@@ -261,6 +272,7 @@ export function useLibraryItemInfoController(
     coverArtUrl,
     headerArtist,
     isSample,
+    tempoUnverified,
     classificationMode,
     setClassification,
     instanceRows,

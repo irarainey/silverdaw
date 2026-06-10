@@ -170,6 +170,7 @@ describe('createTracksFromStems (timeline target)', () => {
         ? {
             id,
             kind: 'audio-file',
+            filePath: 'C:\\music\\Song.mp3',
             bpm: 120,
             beats: [0.5, 1.0, 1.5],
             beatAnchorSec: 0.5,
@@ -202,6 +203,7 @@ describe('createTracksFromStems (timeline target)', () => {
         ? {
             id,
             kind: 'audio-file',
+            filePath: 'C:\\music\\Song.mp3',
             bpm: 120,
             beats: [0.5, 1.0, 1.5],
             beatAnchorSec: 0.5,

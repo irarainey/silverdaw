@@ -140,6 +140,19 @@ export interface LibraryItemSetSampleModePayload {
   mode: 'sample' | 'music' | 'auto'
 }
 
+/**
+ * Manual tempo override for a source item. Sets a confident BPM + grid phase
+ * anchor (seconds), replacing any auto-detected tempo. The backend builds a
+ * rigid metronome grid and clears the variable / low-confidence flags, then
+ * broadcasts `LIBRARY_ITEM_ANALYSIS`. Used by the clip-editor manual-tempo
+ * fallback (set BPM + slide the grid to align it to the waveform).
+ */
+export interface LibraryItemSetManualTempoPayload {
+  itemId: string
+  bpm: number
+  beatAnchorSec: number
+}
+
 export interface TrackAddPayload {
   trackId: string
   /** Initial display name for new tracks. Optional for older clients. */
@@ -372,6 +385,7 @@ export interface BridgeOutboundMap {
   LIBRARY_REMOVE: LibraryRemovePayload
   LIBRARY_REANALYSE: LibraryReanalysePayload
   LIBRARY_ITEM_SET_SAMPLE_MODE: LibraryItemSetSampleModePayload
+  LIBRARY_ITEM_SET_MANUAL_TEMPO: LibraryItemSetManualTempoPayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
   TRACK_RENAME: TrackRenamePayload

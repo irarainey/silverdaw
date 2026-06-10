@@ -34,6 +34,14 @@ void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& fi
                               ProjectState& projectState, BridgeServer& bridge, juce::ThreadPool& peakPool,
                               const DecodedCache& decodedCache);
 
+// Apply a user-supplied manual tempo to a source item: builds a rigid beat grid
+// from (bpm, beatAnchorSec) across the item's duration, clears the variable /
+// low-confidence flags (a manual tempo is treated as confident music), persists
+// it, and broadcasts LIBRARY_ITEM_ANALYSIS so all clients redraw the grid.
+// Runs on the message thread.
+void applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorSec,
+                      AudioEngine& engine, ProjectState& projectState, BridgeServer& bridge);
+
 // Background-decodes missing WAV caches so playback can use cheap PCM.
 void ensureDecodedCache(const juce::String& sourceFilePath, AudioEngine& engine, ProjectState& projectState,
                         juce::ThreadPool& peakPool, const DecodedCache& decodedCache);

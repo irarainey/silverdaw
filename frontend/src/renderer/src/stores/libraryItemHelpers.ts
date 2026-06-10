@@ -61,11 +61,17 @@ export function libraryItemSourceBpm(
  * Effective sample-vs-music classification for a library item.
  * Resolution order (saved-clip-aware):
  *   1. item's own `sampleMode` override, if set
- *   2. item's own `lowConfidence` auto-flag, if set
- *   3. for saved clips, fall back to the SOURCE item's classification
- *      (so cutting a one-shot out of a musical track inherits music
- *      unless explicitly overridden on the saved clip)
- *   4. default to `false` (music)
+ *   2. for saved clips, fall back to the SOURCE item's `sampleMode`
+ *      override (so cutting a one-shot out of a musical track inherits
+ *      music unless explicitly overridden on the saved clip)
+ *   3. default to `false` (music)
+ *
+ * NOTE: low tempo-detection confidence (`lowConfidence`) does NOT make
+ * an item a sample. "Tempo unsure" and "non-musical sample" are distinct
+ * concerns: a low-confidence track still shows its (rigid) beat grid and
+ * stays warpable so the user can verify / correct it. Only the explicit
+ * user override (`sampleMode === 'sample'`) classifies something as a
+ * sample. See `libraryItemTempoUnverified` for the unverified-grid signal.
  *
  * Used to gate beat-marker rendering, library tile BPM/key badges,
  * auto-warp on drop, and the project-BPM seed. Does NOT gate the
@@ -73,20 +79,39 @@ export function libraryItemSourceBpm(
  * speed up / slow down / pitch shift any clip including samples.
  */
 export function libraryItemIsSample(
-  item: { sampleMode?: 'sample' | 'music'; lowConfidence?: boolean; derivedFrom?: SavedClipSource },
+  item: { sampleMode?: 'sample' | 'music'; derivedFrom?: SavedClipSource },
   byId: Readonly<Record<string, LibraryItem>>
 ): boolean {
   if (item.sampleMode === 'sample') return true
   if (item.sampleMode === 'music') return false
-  if (item.lowConfidence === true) return true
   const sourceId = item.derivedFrom?.sourceItemId
   if (sourceId) {
     const source = byId[sourceId]
     if (source) {
       if (source.sampleMode === 'sample') return true
       if (source.sampleMode === 'music') return false
-      if (source.lowConfidence === true) return true
     }
+  }
+  return false
+}
+
+/**
+ * Whether an item's detected tempo grid is unverified — i.e. tempo
+ * detection returned low confidence and the user has not explicitly
+ * confirmed the classification via `sampleMode`. Such items still show
+ * their beat grid (they are not samples) but the UI may flag the grid as
+ * needing review / manual correction.
+ */
+export function libraryItemTempoUnverified(
+  item: { sampleMode?: 'sample' | 'music'; lowConfidence?: boolean; derivedFrom?: SavedClipSource },
+  byId: Readonly<Record<string, LibraryItem>>
+): boolean {
+  if (item.sampleMode) return false
+  if (item.lowConfidence === true) return true
+  const sourceId = item.derivedFrom?.sourceItemId
+  if (sourceId) {
+    const source = byId[sourceId]
+    if (source && !source.sampleMode && source.lowConfidence === true) return true
   }
   return false
 }

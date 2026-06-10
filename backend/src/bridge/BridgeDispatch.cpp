@@ -164,6 +164,10 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleLibraryItemSetSampleMode(payload, projectState);
     }
+    else if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO")
+    {
+        silverdaw::handleLibraryItemSetManualTempo(payload, engine, projectState, bridge);
+    }
     else if (type == "TRANSPORT_PLAY")
     {
         silverdaw::handleTransportPlay(engine, g_mixdownBusy.load());

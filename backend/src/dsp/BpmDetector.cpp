@@ -224,6 +224,82 @@ void scoreGridAgainstBeats(const std::vector<double>& beats, double period, doub
 namespace silverdaw
 {
 
+namespace
+{
+constexpr int kMinPhaseMatches = 8;
+}
+
+bool estimateGridPhaseOffset(const std::vector<double>& odf, double envRate, double periodSec,
+                             double anchorSec, double maxOffsetSec, double& outOffsetSec,
+                             int& outMatched, double& outSpread)
+{
+    outOffsetSec = 0.0;
+    outMatched = 0;
+    outSpread = 0.0;
+    if (odf.size() < 16 || envRate <= 0.0 || periodSec <= 0.0 || maxOffsetSec <= 0.0) return false;
+
+    const double totalSec = static_cast<double>(odf.size()) / envRate;
+    // Search radius below a quarter-beat so we never latch onto a neighbouring
+    // eighth-note onset instead of the beat we are aligning to.
+    const double win = std::min(maxOffsetSec, periodSec * 0.25);
+    const int maxIdx = static_cast<int>(odf.size()) - 2;
+
+    std::vector<double> offsets;
+    const int firstN = static_cast<int>(std::ceil((0.0 - anchorSec) / periodSec));
+    for (int n = firstN;; ++n)
+    {
+        const double beatT = anchorSec + static_cast<double>(n) * periodSec;
+        if (beatT < 0.0) continue;
+        if (beatT > totalSec) break;
+
+        const int lo = std::max(1, static_cast<int>(std::floor((beatT - win) * envRate)));
+        const int hi = std::min(maxIdx, static_cast<int>(std::ceil((beatT + win) * envRate)));
+        if (hi <= lo) continue;
+
+        int bestI = -1;
+        double bestV = 0.0;
+        for (int i = lo; i <= hi; ++i)
+        {
+            const double v = odf[static_cast<size_t>(i)];
+            // Strict local maximum so flat/noise plateaus do not register.
+            if (v > odf[static_cast<size_t>(i - 1)] && v >= odf[static_cast<size_t>(i + 1)] && v > bestV)
+            {
+                bestV = v;
+                bestI = i;
+            }
+        }
+        if (bestI < 0) continue;
+
+        const double y0 = odf[static_cast<size_t>(bestI - 1)];
+        const double y1 = odf[static_cast<size_t>(bestI)];
+        const double y2 = odf[static_cast<size_t>(bestI + 1)];
+        double frac = 0.0;
+        const double denom = y0 - 2.0 * y1 + y2;
+        if (std::abs(denom) > 1e-12)
+        {
+            const double d = 0.5 * (y0 - y2) / denom;
+            if (std::abs(d) <= 1.0) frac = d;
+        }
+        const double peakT = (static_cast<double>(bestI) + frac) / envRate;
+        offsets.push_back(peakT - beatT);
+    }
+
+    if (static_cast<int>(offsets.size()) < kMinPhaseMatches) return false;
+    std::sort(offsets.begin(), offsets.end());
+    const size_t count = offsets.size();
+    const double median = offsets[count / 2];
+    // IQR spread, not median-absolute-deviation: a bimodal early/late jitter
+    // (half the beats consistently early, half late) leaves MAD at zero while
+    // the IQR stays wide, so the caller correctly refuses to shift the grid.
+    const double q1 = offsets[count / 4];
+    const double q3 = offsets[(count * 3) / 4];
+
+    outOffsetSec = median;
+    outMatched = static_cast<int>(count);
+    outSpread = q3 - q1;
+    return true;
+}
+
 BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager)
 {
     BpmAnalysis result;
@@ -371,11 +447,14 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
 
     // Refine via ODF autocorrelation to escape BTrack hop/BPM-grid quantisation.
     // Accept only near-octave candidates that do not worsen the BTrack-beat residual.
+    // The ODF is computed once here and reused for the phase-alignment step below.
+    constexpr int kOdfHop = 256; // ~5.8 ms @ 44.1 kHz
+    std::vector<double> odf;
+    double envRate = 0.0;
     if (!resampled.empty() && beatTimes.size() >= 6 && baselineKept > 0)
     {
-        constexpr int kOdfHop = 256; // ~5.8 ms @ 44.1 kHz
-        const double envRate = kAnalysisSampleRate / static_cast<double>(kOdfHop);
-        const auto odf = computeOdf(resampled, kOdfHop);
+        envRate = kAnalysisSampleRate / static_cast<double>(kOdfHop);
+        odf = computeOdf(resampled, kOdfHop);
         if (odf.size() >= 64)
         {
             const double btrackPeriodSec = (derivedBpm > 0.0) ? (60.0 / derivedBpm) : 0.5;
@@ -437,6 +516,57 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
                              "derived BPM out of range for " + audioFile.getFileName() + ": " +
                                  juce::String(derivedBpm));
         return result;
+    }
+
+    // Phase-align the final grid to onset energy regardless of which period won.
+    // BTrack's reported beats can systematically lag the true transient, leaving
+    // the grid (which still uses the beat-derived anchor whenever the autocorr
+    // period is rejected) consistently off the beats. We correct only a stable,
+    // latency-sized offset measured robustly against ODF onset peaks, so
+    // ambiguous/syncopated material is left untouched (median ~0 => no-op).
+    if (!odf.empty() && envRate > 0.0 && derivedBpm > 0.0)
+    {
+        const double periodSec = 60.0 / derivedBpm;
+        constexpr double kMaxPhaseCorrectionSec = 0.12; // latency-sized, not half-beat
+        constexpr double kMaxConsistentSpreadSec = 0.030; // IQR ceiling
+        constexpr double kMinSignificantSec = 0.004;
+        double offset = 0.0;
+        int matched = 0;
+        double spread = 0.0;
+        if (estimateGridPhaseOffset(odf, envRate, periodSec, anchorSec, kMaxPhaseCorrectionSec, offset,
+                                    matched, spread))
+        {
+            const int expectedBeats = std::max(1, static_cast<int>(std::floor(
+                                                       (static_cast<double>(odf.size()) / envRate) / periodSec)));
+            const double matchFrac = static_cast<double>(matched) / static_cast<double>(expectedBeats);
+            const bool consistent = spread <= kMaxConsistentSpreadSec;
+            const bool plausible = std::abs(offset) <= kMaxPhaseCorrectionSec;
+            const bool significant = std::abs(offset) > kMinSignificantSec;
+            const bool enough = matchFrac >= 0.5;
+            if (consistent && plausible && significant && enough)
+            {
+                silverdaw::log::info("bpm",
+                                     "phase-aligned grid for " + audioFile.getFileName() + " by " +
+                                         juce::String(offset * 1000.0, 2) + "ms (anchor " +
+                                         juce::String(anchorSec, 4) + "s -> " +
+                                         juce::String(anchorSec + offset, 4) + "s, matched " +
+                                         juce::String(matched) + "/" + juce::String(expectedBeats) + ", iqr " +
+                                         juce::String(spread * 1000.0, 2) + "ms)");
+                anchorSec += offset;
+            }
+            else
+            {
+                silverdaw::log::info("bpm",
+                                     "phase alignment skipped for " + audioFile.getFileName() + " (offset " +
+                                         juce::String(offset * 1000.0, 2) + "ms, matched " + juce::String(matched) +
+                                         "/" + juce::String(expectedBeats) + ", iqr " +
+                                         juce::String(spread * 1000.0, 2) + "ms; consistent=" +
+                                         juce::String(consistent ? 1 : 0) + " plausible=" +
+                                         juce::String(plausible ? 1 : 0) + " significant=" +
+                                         juce::String(significant ? 1 : 0) + " enough=" +
+                                         juce::String(enough ? 1 : 0) + ")");
+            }
+        }
     }
 
     // Skip BTrack settling; a loose spread threshold avoids flagging estimator jitter as drift.

@@ -17,6 +17,7 @@ const {
   coverArtUrl,
   headerArtist,
   isSample,
+  tempoUnverified,
   classificationMode,
   setClassification,
   instanceRows,
@@ -189,6 +190,11 @@ const {
                       v-if="!warpedBpm && item.variableTempo"
                       class="text-amber-300"
                     >(variable)</span>
+                    <span
+                      v-if="!warpedBpm && tempoUnverified"
+                      class="text-amber-300"
+                      title="Tempo detection was low-confidence. The beat grid is shown so you can verify or correct it."
+                    >(unverified)</span>
                   </span>
                   <span v-else>Not analysed</span>
                 </dd>
@@ -260,7 +266,7 @@ const {
                   @click="setClassification('auto')"
                 >
                   Auto
-                  <span class="opacity-70">({{ item.lowConfidence ? 'sample' : 'music' }})</span>
+                  <span class="opacity-70">({{ item.lowConfidence ? 'music, tempo unverified' : 'music' }})</span>
                 </button>
                 <button
                   type="button"

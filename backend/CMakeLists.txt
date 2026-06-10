@@ -522,7 +522,8 @@ if(SILVERDAW_BUILD_TESTS)
         tests/LoudnessTests.cpp
         tests/EnvelopeFadeTests.cpp
 tests/MixdownRenderTests.cpp
-        tests/StemSeparationTests.cpp)
+        tests/StemSeparationTests.cpp
+        tests/BpmDetectorTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
 

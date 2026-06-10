@@ -196,8 +196,12 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     }
     bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
 
-    // Late auto-warp preserves the user's drop-time intent once stable BPM is known.
-    if (!variableTempo && !lowConfidence && bpm > 0.0)
+    // Late auto-warp preserves the user's drop-time intent once stable BPM is
+    // known. Low detection confidence no longer blocks this: a low-confidence
+    // grid is still treated as music (shown + warpable), matching the frontend
+    // classification. Only a genuinely variable tempo or an unanalysed BPM skip
+    // the auto-warp, since force-warping those to a single ratio is unsafe.
+    if (!variableTempo && bpm > 0.0)
     {
         const double projectBpm = projectState.getBpm();
         projectState.forEachWarpClip(
@@ -281,6 +285,49 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
         });
 }
 } // namespace
+
+void applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorSec,
+                      AudioEngine& engine, ProjectState& projectState, BridgeServer& bridge)
+{
+    if (bpm <= 0.0)
+    {
+        silverdaw::log::warn("bpmjob", "applyManualTempo ignored non-positive bpm for itemId=" + itemId);
+        return;
+    }
+
+    // Build a rigid metronome grid from the anchor across the source duration.
+    // The renderer derives marker positions from (bpm, anchor) directly and only
+    // needs `beats` to be non-empty; a full grid keeps the info-dialog count and
+    // any beat-position consumers honest.
+    const double durationMs = projectState.getLibraryItemDurationMs(itemId);
+    const double beatSpacingSec = 60.0 / bpm;
+    std::vector<double> beats;
+    if (beatSpacingSec > 0.0)
+    {
+        const double endSec = durationMs > 0.0 ? durationMs / 1000.0 : beatAnchorSec + beatSpacingSec;
+        // First grid beat at or after 0s, phase-locked to the anchor.
+        double firstSec = beatAnchorSec;
+        if (firstSec > 0.0)
+            firstSec -= std::floor(firstSec / beatSpacingSec) * beatSpacingSec;
+        else
+            firstSec += std::ceil(-firstSec / beatSpacingSec) * beatSpacingSec;
+        constexpr int kMaxBeats = 100000;
+        int guard = 0;
+        for (double t = firstSec; t <= endSec + 1.0e-6 && guard < kMaxBeats; t += beatSpacingSec, ++guard)
+            beats.push_back(t);
+    }
+    if (beats.empty())
+        beats.push_back(beatAnchorSec);
+
+    silverdaw::log::info("bpmjob",
+                         "applyManualTempo itemId=" + itemId + " bpm=" + juce::String(bpm, 2)
+                             + " anchor=" + juce::String(beatAnchorSec, 3) + "s beats="
+                             + juce::String(static_cast<int>(beats.size())));
+
+    applyAndBroadcastItemAnalysis(itemId, bpm, beats, beatAnchorSec, /*variableTempo=*/false,
+                                  /*lowConfidence=*/false, /*cachedPath=*/juce::String{}, engine,
+                                  projectState, bridge);
+}
 
 void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, ProjectState& projectState,
                         BridgeServer& bridge, juce::ThreadPool& peakPool, const DecodedCache& decodedCache)

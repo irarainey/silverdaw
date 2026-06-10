@@ -22,5 +22,6 @@ void addLoudnessTests(std::vector<TestCase>& tests);
 void addEnvelopeFadeTests(std::vector<TestCase>& tests);
 void addMixdownRenderTests(std::vector<TestCase>& tests);
 void addStemSeparationTests(std::vector<TestCase>& tests);
+void addBpmDetectorTests(std::vector<TestCase>& tests);
 
 } // namespace silverdaw::tests
