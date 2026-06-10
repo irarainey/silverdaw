@@ -21,6 +21,11 @@ class ProjectState : public juce::ValueTree::Listener
     /** Default name applied to a freshly-constructed project. */
     static const juce::String kDefaultName;
 
+    /** Master volume applied to a brand-new empty project: -10 dB
+        (10^(-10/20)). Opened / loaded projects keep their own stored value
+        (absent == unity for legacy files). */
+    static constexpr float kDefaultMasterVolume = 0.31622776601683794F;
+
     /** Fired when the dirty flag transitions. Set by `Main.cpp` after the bridge exists. */
     using DirtyChangedCallback = std::function<void(bool dirty)>;
 

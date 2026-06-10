@@ -29,8 +29,16 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
 
     juce::ValueTree fresh(juce::Identifier{"PROJECT"});
     fresh.setProperty(juce::Identifier{"name"}, silverdaw::ProjectState::kDefaultName, nullptr);
+    // A brand-new empty project opens slightly below unity so a first mix has
+    // headroom; opened/loaded projects keep their own stored master volume.
+    fresh.setProperty(juce::Identifier{"masterVolume"},
+                      silverdaw::ProjectState::kDefaultMasterVolume, nullptr);
     projectState.replaceTree(fresh);
     session.currentPath.clear();
+
+    // replaceTree does not touch the live engine, so align master gain with the
+    // new project's default (rebuildEngineFromProject only runs on load/clip ops).
+    engine.setMasterGain(projectState.getMasterVolume());
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
 }
