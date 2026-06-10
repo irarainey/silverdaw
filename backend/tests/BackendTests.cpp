@@ -28,7 +28,7 @@ int main()
     addMixdownRenderTests(tests);
     addStemSeparationTests(tests);
 
-    require(tests.size() == 65, "backend test registry should contain 65 tests");
+    require(tests.size() == 66, "backend test registry should contain 66 tests");
 
     int failed = 0;
     for (const auto& test : tests)

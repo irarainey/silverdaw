@@ -8,6 +8,7 @@
 #include <atomic>
 
 #include "BridgeServer.h"
+#include "StemSeparationCommands.h"
 #include "StemSeparationEngine.h"
 #include "StemSeparator.h"
 
@@ -134,6 +135,23 @@ void testDefaultSeparatorFailsFastWithoutModel()
     require(threw, "default separator throws without a usable model");
 }
 
+void testOverlapForStemQuality()
+{
+    // Higher quality = more window overlap = more model runs (slower).
+    require(silverdaw::overlapForStemQuality("fast") < silverdaw::overlapForStemQuality("balanced"),
+            "fast overlaps less than balanced");
+    require(silverdaw::overlapForStemQuality("balanced") < silverdaw::overlapForStemQuality("best"),
+            "balanced overlaps less than best");
+    requireNear(silverdaw::overlapForStemQuality("balanced"), 0.25, 1e-9,
+                "balanced preserves the long-standing default overlap");
+    // Absent / unknown values fall back to the balanced default so a malformed
+    // envelope is safe.
+    requireNear(silverdaw::overlapForStemQuality(""), 0.25, 1e-9,
+                "empty quality falls back to balanced");
+    requireNear(silverdaw::overlapForStemQuality("bogus"), 0.25, 1e-9,
+                "unknown quality falls back to balanced");
+}
+
 } // namespace
 
 void addStemSeparationTests(std::vector<TestCase>& tests)
@@ -142,6 +160,7 @@ void addStemSeparationTests(std::vector<TestCase>& tests)
     tests.push_back({"stem job runs separator and clears busy", testJobRunsSeparatorAndClearsBusy});
     tests.push_back({"stem job propagates cancel", testJobPropagatesCancel});
     tests.push_back({"default separator fails fast without model", testDefaultSeparatorFailsFastWithoutModel});
+    tests.push_back({"stem quality maps to overlap", testOverlapForStemQuality});
 }
 
 } // namespace silverdaw::tests

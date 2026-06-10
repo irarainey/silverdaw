@@ -613,6 +613,10 @@ export type MixdownCancelPayload = undefined
  * ensuring the weights are downloaded). Backend streams STEM_PROGRESS then STEM_READY / STEM_FAILED,
  * correlated by `jobId`.
  */
+/** Quality preset trading separation speed against seam smoothness. Maps to the
+ *  backend inference window overlap (fast = less overlap/faster). */
+export type StemQuality = 'fast' | 'balanced' | 'best'
+
 export interface StemSeparatePayload {
   jobId: string
   /** Resolved top-level audio-file library item to separate. */
@@ -624,6 +628,8 @@ export interface StemSeparatePayload {
   sourceName: string
   /** Stems the user chose to extract (non-empty). */
   stems: StemName[]
+  /** Quality preset; backend defaults to 'balanced' when omitted. */
+  quality: StemQuality
 }
 
 /** Cancel an in-progress separation job; backend aborts and emits STEM_FAILED{cancelled}. */

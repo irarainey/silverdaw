@@ -163,6 +163,7 @@ void handleStemSeparate(const juce::var& payload,
     request.modelDir = modelDir;
     request.outputDir = outputDir;
     request.stems = std::move(selectedStems);
+    request.overlap = overlapForStemQuality(readOptionalString(payload, "quality").value_or(juce::String{}));
 
     activeJobId = jobId;
     silverdaw::log::info("stems", "STEM_SEPARATE job=" + jobId + " item=" + sourceItemId +
@@ -185,6 +186,16 @@ void handleStemSeparateCancel(const juce::var& payload,
     }
     silverdaw::log::info("stems", "STEM_SEPARATE_CANCEL job=" + jobId);
     cancelFlag.store(true);
+}
+
+double overlapForStemQuality(const juce::String& quality)
+{
+    // Window overlap per preset: fast trades seam smoothness for fewer model
+    // runs; best does the opposite. Balanced mirrors the long-standing default
+    // and also covers absent/unknown values.
+    if (quality == "fast") return 0.10;
+    if (quality == "best") return 0.50;
+    return 0.25; // balanced
 }
 
 } // namespace silverdaw

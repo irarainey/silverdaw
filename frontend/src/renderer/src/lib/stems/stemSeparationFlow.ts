@@ -18,7 +18,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
-import type { StemName } from '@shared/bridge-protocol'
+import type { StemName, StemQuality } from '@shared/bridge-protocol'
 
 /** Canonical four-stem order; the selection dialog and dispatch use it. */
 const ALL_STEMS: readonly StemName[] = ['vocals', 'drums', 'bass', 'other']
@@ -29,6 +29,8 @@ export interface StemSelectionState {
   target: StemSeparationTarget
   /** Which stems are currently ticked; at least one is required to start. */
   selected: Record<StemName, boolean>
+  /** Quality preset trading speed against separation smoothness. */
+  quality: StemQuality
 }
 
 const selection: Ref<StemSelectionState | null> = ref(null)
@@ -52,7 +54,8 @@ function openSelection(target: StemSeparationTarget): void {
   if (flow.value !== null || selection.value !== null) return
   selection.value = {
     target,
-    selected: { vocals: true, drums: true, bass: true, other: true }
+    selected: { vocals: true, drums: true, bass: true, other: true },
+    quality: 'balanced'
   }
 }
 
@@ -103,6 +106,12 @@ export function toggleStemSelection(stem: StemName): void {
   }
 }
 
+/** Set the quality preset in the picker. */
+export function setStemQuality(quality: StemQuality): void {
+  if (!selection.value) return
+  selection.value = { ...selection.value, quality }
+}
+
 /** Dismiss the picker without starting anything. */
 export function cancelStemSelection(): void {
   selection.value = null
@@ -115,8 +124,9 @@ export async function confirmStemSelection(): Promise<void> {
   if (!current) return
   const stems = ALL_STEMS.filter((s) => current.selected[s])
   if (stems.length === 0) return
+  const quality = current.quality
   selection.value = null
-  await ensureModelThenDispatch(current.target, stems)
+  await ensureModelThenDispatch(current.target, stems, quality)
 }
 
 // ─── Model-download dialog ──────────────────────────────────────────────────
@@ -127,6 +137,7 @@ export interface StemModelFlowState {
   phase: StemModelFlowPhase
   target: StemSeparationTarget
   stems: readonly StemName[]
+  quality: StemQuality
   receivedBytes: number
   totalBytes: number
   fileName: string
@@ -145,7 +156,8 @@ export function useStemModelFlow(): Readonly<Ref<StemModelFlowState | null>> {
  *  dispatch. */
 async function ensureModelThenDispatch(
   target: StemSeparationTarget,
-  stems: StemName[]
+  stems: StemName[],
+  quality: StemQuality
 ): Promise<void> {
   const notifications = useNotificationsStore()
   let state: { installed: boolean; presentBytes: number; totalBytes: number; fileCount: number }
@@ -158,7 +170,7 @@ async function ensureModelThenDispatch(
   }
 
   if (state.installed) {
-    await dispatchSeparation(target, stems)
+    await dispatchSeparation(target, stems, quality)
     return
   }
 
@@ -166,6 +178,7 @@ async function ensureModelThenDispatch(
     phase: 'confirm',
     target,
     stems,
+    quality,
     receivedBytes: state.presentBytes,
     totalBytes: state.totalBytes,
     fileName: '',
@@ -179,7 +192,7 @@ async function ensureModelThenDispatch(
 export async function confirmModelDownload(): Promise<void> {
   const current = flow.value
   if (!current || current.phase !== 'confirm') return
-  const { target, stems } = current
+  const { target, stems, quality } = current
   flow.value = { ...current, phase: 'downloading', error: '' }
 
   const off = window.silverdaw.onStemModelDownloadProgress((progress) => {
@@ -198,7 +211,7 @@ export async function confirmModelDownload(): Promise<void> {
     const result = await window.silverdaw.ensureStemModel()
     if (result.ok) {
       flow.value = null
-      await dispatchSeparation(target, stems)
+      await dispatchSeparation(target, stems, quality)
     } else if (flow.value) {
       // A concurrent cancelFlow() nulls the state; only surface a real failure.
       flow.value = { ...flow.value, phase: 'error', error: result.error }
@@ -226,7 +239,8 @@ export function cancelModelFlow(): void {
 
 async function dispatchSeparation(
   target: StemSeparationTarget,
-  stems: readonly StemName[]
+  stems: readonly StemName[],
+  quality: StemQuality
 ): Promise<void> {
   const modelDir = await window.silverdaw.getStemModelDir()
   const jobId = crypto.randomUUID()
@@ -238,11 +252,12 @@ async function dispatchSeparation(
     clipId: target.clipId,
     modelDir,
     sourceName: target.sourceName,
-    stems: [...stems]
+    stems: [...stems],
+    quality
   })
   log.info(
     'stems',
     `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
-      `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')}`
+      `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality}`
   )
 }

@@ -4,6 +4,7 @@ import {
   requestStemSeparationForLibraryItem,
   useStemSelection,
   toggleStemSelection,
+  setStemQuality,
   confirmStemSelection,
   cancelStemSelection,
   confirmModelDownload,
@@ -100,6 +101,7 @@ describe('stem selection dialog', () => {
       startMs: 4000
     })
     expect(selection?.selected).toEqual({ vocals: true, drums: true, bass: true, other: true })
+    expect(selection?.quality).toBe('balanced')
   })
 
   it('cancel dismisses without dispatching', () => {
@@ -135,8 +137,26 @@ describe('stem selection dialog', () => {
       clipId: 'c1',
       modelDir: 'C:\\models\\htdemucs-ft',
       sourceName: 'song',
-      stems: ['vocals', 'drums']
+      stems: ['vocals', 'drums'],
+      quality: 'balanced'
     })
+  })
+
+  it('dispatches the chosen quality preset', async () => {
+    api.getStemModelState.mockResolvedValue({
+      installed: true,
+      presentBytes: 100,
+      totalBytes: 100,
+      fileCount: 4
+    })
+    requestStemSeparationForClip('c1')
+    setStemQuality('best')
+    await confirmStemSelection()
+
+    expect(sendMock).toHaveBeenCalledWith(
+      'STEM_SEPARATE',
+      expect.objectContaining({ quality: 'best' })
+    )
   })
 
   it('does not start when no stem is ticked', async () => {
@@ -168,7 +188,8 @@ describe('stemSeparationFlow', () => {
       clipId: 'c1',
       modelDir: 'C:\\models\\htdemucs-ft',
       sourceName: 'song',
-      stems: ALL_STEMS
+      stems: ALL_STEMS,
+      quality: 'balanced'
     })
     expect(snapshotStemSeparationState()?.jobId).toBe('job-123')
   })
@@ -217,7 +238,8 @@ describe('stemSeparationFlow', () => {
       clipId: 'c1',
       modelDir: 'C:\\models\\htdemucs-ft',
       sourceName: 'song',
-      stems: ALL_STEMS
+      stems: ALL_STEMS,
+      quality: 'balanced'
     })
   })
 

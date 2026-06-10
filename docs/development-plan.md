@@ -313,8 +313,12 @@ the library while its timeline clip is still present.
 (`[1, 4, 2, segment]`, source order drums/bass/other/vocals); the backend keeps
 only the source each model is fine-tuned for. A full track is processed
 demucs-style — per-track mean/standard-deviation normalisation, fixed segments
-with 25 % overlap, and triangular-window weighted overlap-add reconstruction
-(`OnnxStemSeparator.cpp`). The segmentation, layout and source-index handling
+with a quality-selectable window overlap, and triangular-window weighted
+overlap-add reconstruction (`OnnxStemSeparator.cpp`). The stem dialog exposes a
+**Fast / Balanced / Best** quality preset that the renderer sends as
+`quality` on `STEM_SEPARATE`; the backend maps it to the inference overlap
+(0.10 / 0.25 / 0.50, balanced being the long-standing default and the fallback
+for an absent value). The segmentation, layout and source-index handling
 were validated against the real htdemucs-ft weights.
 
 **Naming & analysis reuse:** Stem WAV files and their tracks are named from the

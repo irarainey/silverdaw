@@ -32,7 +32,9 @@ constexpr int kModelChannels = 2;
 // track is processed as overlapping windows that are weighted and summed back
 // together (demucs `apply_model` overlap-add).
 constexpr int kSegmentSamples = 343980; // 7.8 s @ 44.1 kHz — the model's fixed input length.
-constexpr double kOverlap = 0.25;       // fraction each window overlaps its neighbour.
+// Overlap is resolved per-request from the quality preset; clamp to a safe
+// range so a malformed value can never produce a zero/negative stride.
+constexpr double kMaxOverlap = 0.95;
 
 // Overall-job progress is a single monotonic 0..100 (the bridge contract). The
 // quick decode/normalise prepare phase and the file-write phase take a thin
@@ -215,7 +217,8 @@ class OnnxStemSeparator : public StemSeparator
         }
 
         const auto window = makeTransitionWindow(kSegmentSamples);
-        const int stride = std::max(1, static_cast<int>(kSegmentSamples * (1.0 - kOverlap)));
+        const double overlap = std::clamp(request.overlap, 0.0, kMaxOverlap);
+        const int stride = std::max(1, static_cast<int>(kSegmentSamples * (1.0 - overlap)));
         std::vector<int> offsets;
         for (int start = 0; start < numSamples; start += stride)
             offsets.push_back(start);

@@ -30,4 +30,10 @@ void handleStemSeparateCancel(const juce::var& payload,
                               std::atomic<bool>& cancelFlag,
                               const juce::String& activeJobId);
 
+// Maps a requested quality preset to the inference window overlap fraction.
+// Higher overlap = smoother seams but more model runs (slower). Unknown or
+// absent values fall back to the "balanced" default so a malformed envelope is
+// safe. Exposed for unit testing.
+double overlapForStemQuality(const juce::String& quality);
+
 } // namespace silverdaw

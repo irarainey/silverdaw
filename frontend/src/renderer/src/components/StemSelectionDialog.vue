@@ -8,10 +8,11 @@ import { computed } from 'vue'
 import {
   useStemSelection,
   toggleStemSelection,
+  setStemQuality,
   confirmStemSelection,
   cancelStemSelection
 } from '@/lib/stems/stemSeparationFlow'
-import type { StemName } from '@shared/bridge-protocol'
+import type { StemName, StemQuality } from '@shared/bridge-protocol'
 
 const selection = useStemSelection()
 
@@ -22,14 +23,27 @@ const STEM_ROWS: ReadonlyArray<{ stem: StemName; label: string }> = [
   { stem: 'other', label: 'Other' }
 ]
 
+const QUALITY_OPTIONS: ReadonlyArray<{ value: StemQuality; label: string; hint: string }> = [
+  { value: 'fast', label: 'Fast', hint: 'Fastest, with slightly rougher separation.' },
+  { value: 'balanced', label: 'Balanced', hint: 'A good balance of quality and speed.' },
+  { value: 'best', label: 'Best', hint: 'Cleanest separation, but noticeably slower.' }
+]
+
 const visible = computed(() => selection.value !== null)
 const sourceName = computed(() => selection.value?.target.sourceName ?? '')
 const canStart = computed(() =>
   STEM_ROWS.some((row) => selection.value?.selected[row.stem])
 )
+const qualityHint = computed(
+  () => QUALITY_OPTIONS.find((o) => o.value === selection.value?.quality)?.hint ?? ''
+)
 
 function onToggle(stem: StemName): void {
   toggleStemSelection(stem)
+}
+
+function onQuality(quality: StemQuality): void {
+  setStemQuality(quality)
 }
 
 function onStart(): void {
@@ -86,6 +100,37 @@ function onCancel(): void {
               </label>
             </li>
           </ul>
+
+          <div class="flex flex-col gap-1.5">
+            <span class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
+              Quality
+            </span>
+            <div
+              class="flex gap-1"
+              role="radiogroup"
+              aria-label="Separation quality"
+            >
+              <button
+                v-for="opt in QUALITY_OPTIONS"
+                :key="opt.value"
+                type="button"
+                role="radio"
+                :aria-checked="selection?.quality === opt.value"
+                class="flex-1 rounded border px-2 py-1.5 text-xs outline-none transition-colors"
+                :class="
+                  selection?.quality === opt.value
+                    ? 'border-sky-500 bg-sky-500/15 text-sky-200'
+                    : 'border-zinc-700 bg-zinc-950 text-zinc-300 hover:bg-zinc-800'
+                "
+                @click="onQuality(opt.value)"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+            <p class="text-xs text-zinc-400">
+              {{ qualityHint }}
+            </p>
+          </div>
         </div>
 
         <div class="dialog-footer">

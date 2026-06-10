@@ -58,6 +58,11 @@ struct StemSeparationRequest
     // Canonical names of the stems the user chose to extract. Empty means all
     // four; implementations skip inference for any stem not listed.
     std::vector<juce::String> stems;
+    // Overlap-add window overlap fraction in [0, 1). Higher overlaps the
+    // inference windows more, smoothing segment seams at the cost of more
+    // model runs (slower). Resolved from the requested quality preset by the
+    // command layer; the default mirrors the "balanced" preset.
+    double overlap = 0.25;
 };
 
 // Progress sink: stage is one of "prepare" / "separate" / "write"; percent 0..100.
