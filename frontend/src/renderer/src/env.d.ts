@@ -7,7 +7,11 @@ import type {
   UiPreferences as SharedUiPreferences,
   EnsureStemModelResult as SharedEnsureStemModelResult,
   StemModelDownloadProgress as SharedStemModelDownloadProgress,
-  StemModelState as SharedStemModelState
+  StemModelState as SharedStemModelState,
+  StemModelInfo as SharedStemModelInfo,
+  StemGpuStatus as SharedStemGpuStatus,
+  StemPrefsDto as SharedStemPrefsDto,
+  LocateStemModelResult as SharedLocateStemModelResult
 } from '@shared/types'
 import type { BackendStatus } from '@shared/ipc-channels'
 
@@ -116,6 +120,11 @@ declare global {
       // ── Stem-separation model store ───────────────────────────────────
       getStemModelState(): Promise<SharedStemModelState>
       getStemModelDir(): Promise<string>
+      getStemModelInfo(): Promise<SharedStemModelInfo>
+      getStemGpuStatus(): Promise<SharedStemGpuStatus>
+      locateStemModel(dir: string): Promise<SharedLocateStemModelResult>
+      getStemPrefs(): Promise<SharedStemPrefsDto>
+      setStemPrefs(partial: Partial<SharedStemPrefsDto>): void
       ensureStemModel(): Promise<SharedEnsureStemModelResult>
       cancelStemModelDownload(): void
       onStemModelDownloadProgress(

@@ -22,7 +22,8 @@ const DEFAULTS = {
   debug: { loggingEnabled: false, devToolsEnabled: false, logDirectory: '' },
   qol: { toasts: { enabled: true }, paths: { defaultProjectDir: 'P:\\', defaultClipDir: 'C:\\' } },
   autosave: { enabled: true, intervalSeconds: 30 },
-  audio: { typeName: null as string | null, deviceName: null as string | null }
+  audio: { typeName: null as string | null, deviceName: null as string | null },
+  stems: { useGpu: false }
 }
 
 function stubSilverdaw(): void {
@@ -32,9 +33,11 @@ function stubSilverdaw(): void {
       getQolPrefs: vi.fn(async () => structuredClone(DEFAULTS.qol)),
       getAutosaveConfig: vi.fn(async () => ({ ...DEFAULTS.autosave })),
       getAudioOutput: vi.fn(async () => ({ ...DEFAULTS.audio })),
+      getStemPrefs: vi.fn(async () => ({ ...DEFAULTS.stems })),
       setQolPrefs: vi.fn(),
       setDebugPreferences: vi.fn(),
       setAutosaveConfig: vi.fn(),
+      setStemPrefs: vi.fn(),
       chooseDirectory: vi.fn()
     }
   }
@@ -116,5 +119,16 @@ describe('usePreferencesForm', () => {
     expect(window.silverdaw.setQolPrefs).not.toHaveBeenCalled()
     expect(window.silverdaw.setDebugPreferences).not.toHaveBeenCalled()
     expect(window.silverdaw.setAutosaveConfig).not.toHaveBeenCalled()
+    expect(window.silverdaw.setStemPrefs).not.toHaveBeenCalled()
+  })
+
+  it('save persists a toggled stem GPU preference', async () => {
+    const form = usePreferencesForm()
+    await form.loadCurrent()
+    expect(form.useGpuForStems.value).toBe(false)
+    form.useGpuForStems.value = true
+    expect(form.hasChanges.value).toBe(true)
+    form.save()
+    expect(window.silverdaw.setStemPrefs).toHaveBeenCalledWith({ useGpu: true })
   })
 })

@@ -46,6 +46,12 @@ export function registerStemJob(jobId: string, target: StemSeparationTarget): vo
   jobs.set(jobId, { target, placed: new Set<StemName>() })
 }
 
+/** Forget a job's placement state without placing anything. Used when a job is
+ *  abandoned (e.g. the backend restarted) so no stale registry entry lingers. */
+export function forgetStemJob(jobId: string): void {
+  jobs.delete(jobId)
+}
+
 /** Import a single stem into the library (and, for timeline jobs, place it on a
  *  new track). Reserves the stem synchronously (before the first await) so
  *  concurrent/duplicate events are skipped; un-reserves on failure so a later

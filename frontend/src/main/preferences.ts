@@ -34,6 +34,22 @@ export interface ToastPrefs {
 export interface PathPrefs {
   defaultProjectDir: string
   defaultClipDir: string
+  /**
+   * Optional override pointing at a user-supplied stem-separation model
+   * directory (the "locate existing model" flow). Empty / undefined means the
+   * app-managed download location is used.
+   */
+  stemModelDir?: string
+}
+
+// Stem-separation preferences. GPU acceleration is OPT-IN (default off): on some
+// GPUs/drivers, running htdemucs through DirectML can trigger a TDR (Timeout
+// Detection and Recovery) driver reset that blacks out / corrupts the desktop,
+// so we never enable it without the user explicitly choosing it. When on, the
+// dispatch path still gates it behind hardware detection AND a DirectML-capable
+// backend build, falling back to the CPU otherwise (see PreferencesStemsTab).
+export interface StemPrefs {
+  useGpu: boolean
 }
 
 // Renderer owns autosave timing; main owns the project-scoped files.
@@ -57,6 +73,7 @@ export interface Preferences {
   paths: PathPrefs
   autosave: AutosavePrefs
   audioOutput: AudioOutputPrefs
+  stems: StemPrefs
   /** MRU `.silverdaw` paths, newest first, capped and case-insensitive. */
   recentProjects: string[]
 }
@@ -108,6 +125,7 @@ export function buildDefaultPrefs(): Preferences {
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
+    stems: { useGpu: false },
     recentProjects: []
   }
 }
@@ -156,6 +174,23 @@ export function sanitiseRecentList(input: unknown): string[] {
     if (out.length >= MAX_RECENT_PROJECTS) break
   }
   return out
+}
+
+// Single source of truth for stem-prefs validation; a partial `prefs:setStems`
+// update or a corrupt prefs file can never inject a wrong-typed value.
+export function sanitiseStemPrefs(partial: unknown, base: StemPrefs): StemPrefs {
+  const p = (partial && typeof partial === 'object' ? partial : {}) as Partial<Record<keyof StemPrefs, unknown>>
+  return {
+    useGpu: boolOr(p.useGpu, base.useGpu)
+  }
+}
+
+// A located model directory is kept only when it is a non-empty string; anything
+// else clears the override so the app-managed download location is used.
+export function sanitiseStemModelDir(input: unknown): string | undefined {
+  if (typeof input !== 'string') return undefined
+  const trimmed = input.trim()
+  return trimmed.length > 0 ? trimmed : undefined
 }
 
 // Defensive UI-layout clamps; mirror the renderer's uiStore bounds so a corrupt

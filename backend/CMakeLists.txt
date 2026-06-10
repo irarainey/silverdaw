@@ -219,6 +219,18 @@ target_link_libraries(rubberband_local PUBLIC SampleRate::samplerate)
 option(SILVERDAW_ENABLE_STEM_SEPARATION
     "Fetch ONNX Runtime and build the stem-separation engine" ON)
 
+# GPU acceleration for stem separation via the DirectML execution provider.
+# ON by default on Windows x64: the DirectML "superset" ONNX Runtime runs on the
+# CPU *and* any DirectX 12 GPU from a single bundled onnxruntime.dll, so one
+# build serves every machine — GPU when present (gated by detection), CPU
+# otherwise. It is sourced from NuGet (the DirectML EP is not in the GitHub CPU
+# release) and ships DirectML.dll alongside the executable. Set this OFF to build
+# against the CPU-only GitHub ONNX Runtime instead (no GPU support, no
+# DirectML.dll). The same .onnx weights run on either, so there is no
+# GPU-specific model. GPU acceleration must be validated on real GPU hardware.
+option(SILVERDAW_ONNXRUNTIME_DIRECTML
+    "Build stem separation against a DirectML-capable ONNX Runtime (GPU)" ON)
+
 if(SILVERDAW_ENABLE_STEM_SEPARATION AND NOT (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8))
     message(WARNING
         "Stem separation currently consumes the win-x64 ONNX Runtime build; "
@@ -227,34 +239,84 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION AND NOT (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL
 endif()
 
 if(SILVERDAW_ENABLE_STEM_SEPARATION)
-    set(ONNXRUNTIME_VERSION "1.26.0"
-        CACHE STRING "ONNX Runtime version to fetch")
-    # SHA-256 of onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip. Bump alongside
-    # ONNXRUNTIME_VERSION; the integrity check makes the fetch reproducible.
-    set(ONNXRUNTIME_SHA256
-        "6ebe99b5564bf4d029b6e93eac9ff423682b6212eade769e9ca3f685eaf500b4"
-        CACHE STRING "SHA-256 of the ONNX Runtime win-x64 release archive")
+    if(SILVERDAW_ONNXRUNTIME_DIRECTML)
+        # GPU build: the DirectML execution provider ships only in the NuGet
+        # ONNX Runtime, which tops out a couple of minor versions behind the
+        # GitHub CPU release. This single "superset" onnxruntime.dll runs on the
+        # CPU *and* any DirectX 12 GPU (the DML EP is compiled into it), so the
+        # same .onnx weights work either way — no GPU-specific model. NuGet
+        # packages are plain zips, so FetchContent extracts them like any archive.
+        # The DML EP has a runtime dependency on DirectML.dll (from the separate
+        # Microsoft.AI.DirectML package), which is copied next to the executable.
+        set(ORT_DML_VERSION "1.24.4"
+            CACHE STRING "Microsoft.ML.OnnxRuntime.DirectML NuGet version")
+        set(ORT_DML_SHA256
+            "57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681"
+            CACHE STRING "SHA-256 of the ORT DirectML .nupkg")
+        set(DIRECTML_VERSION "1.15.4"
+            CACHE STRING "Microsoft.AI.DirectML NuGet version (ORT DML dependency)")
+        set(DIRECTML_SHA256
+            "4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9"
+            CACHE STRING "SHA-256 of the Microsoft.AI.DirectML .nupkg")
 
-    FetchContent_Declare(onnxruntime
-        URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip
-        URL_HASH SHA256=${ONNXRUNTIME_SHA256}
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-    # Prebuilt binary distribution — no CMakeLists, so populate only (mirrors
-    # the Rubber Band block above; FetchContent_MakeAvailable would try to
-    # add_subdirectory and fail).
-    FetchContent_GetProperties(onnxruntime)
-    if(NOT onnxruntime_POPULATED)
-        FetchContent_Populate(onnxruntime)
+        FetchContent_Declare(onnxruntime_dml
+            URL https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/${ORT_DML_VERSION}/microsoft.ml.onnxruntime.directml.${ORT_DML_VERSION}.nupkg
+            URL_HASH SHA256=${ORT_DML_SHA256}
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_GetProperties(onnxruntime_dml)
+        if(NOT onnxruntime_dml_POPULATED)
+            FetchContent_Populate(onnxruntime_dml)
+        endif()
+
+        FetchContent_Declare(directml
+            URL https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/${DIRECTML_VERSION}/microsoft.ai.directml.${DIRECTML_VERSION}.nupkg
+            URL_HASH SHA256=${DIRECTML_SHA256}
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_GetProperties(directml)
+        if(NOT directml_POPULATED)
+            FetchContent_Populate(directml)
+        endif()
+
+        set(ORT_INCLUDE_DIR "${onnxruntime_dml_SOURCE_DIR}/build/native/include")
+        set(ORT_LIB "${onnxruntime_dml_SOURCE_DIR}/runtimes/win-x64/native/onnxruntime.lib")
+        set(SILVERDAW_ONNXRUNTIME_DLL
+            "${onnxruntime_dml_SOURCE_DIR}/runtimes/win-x64/native/onnxruntime.dll"
+            CACHE FILEPATH "Path to the bundled onnxruntime.dll" FORCE)
+        set(SILVERDAW_DIRECTML_DLL "${directml_SOURCE_DIR}/bin/x64-win/DirectML.dll"
+            CACHE FILEPATH "Path to the bundled DirectML.dll" FORCE)
+    else()
+        # CPU build (default): the official ONNX Runtime win-x64 release archive.
+        set(ONNXRUNTIME_VERSION "1.26.0"
+            CACHE STRING "ONNX Runtime version to fetch")
+        # SHA-256 of onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip. Bump alongside
+        # ONNXRUNTIME_VERSION; the integrity check makes the fetch reproducible.
+        set(ONNXRUNTIME_SHA256
+            "6ebe99b5564bf4d029b6e93eac9ff423682b6212eade769e9ca3f685eaf500b4"
+            CACHE STRING "SHA-256 of the ONNX Runtime win-x64 release archive")
+
+        FetchContent_Declare(onnxruntime
+            URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip
+            URL_HASH SHA256=${ONNXRUNTIME_SHA256}
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        # Prebuilt binary distribution — no CMakeLists, so populate only (mirrors
+        # the Rubber Band block above; FetchContent_MakeAvailable would try to
+        # add_subdirectory and fail).
+        FetchContent_GetProperties(onnxruntime)
+        if(NOT onnxruntime_POPULATED)
+            FetchContent_Populate(onnxruntime)
+        endif()
+
+        set(ORT_INCLUDE_DIR "${onnxruntime_SOURCE_DIR}/include")
+        set(ORT_LIB "${onnxruntime_SOURCE_DIR}/lib/onnxruntime.lib")
+        set(SILVERDAW_ONNXRUNTIME_DLL "${onnxruntime_SOURCE_DIR}/lib/onnxruntime.dll"
+            CACHE FILEPATH "Path to the bundled onnxruntime.dll" FORCE)
     endif()
 
-    set(ORT_DIR ${onnxruntime_SOURCE_DIR})
-    set(SILVERDAW_ONNXRUNTIME_DLL "${ORT_DIR}/lib/onnxruntime.dll"
-        CACHE FILEPATH "Path to the bundled onnxruntime.dll" FORCE)
     add_library(onnxruntime SHARED IMPORTED GLOBAL)
     set_target_properties(onnxruntime PROPERTIES
         IMPORTED_LOCATION "${SILVERDAW_ONNXRUNTIME_DLL}"
-        IMPORTED_IMPLIB   "${ORT_DIR}/lib/onnxruntime.lib"
-        INTERFACE_INCLUDE_DIRECTORIES "${ORT_DIR}/include")
+        IMPORTED_IMPLIB   "${ORT_LIB}"
+        INTERFACE_INCLUDE_DIRECTORIES "${ORT_INCLUDE_DIR}")
 endif()
 
 option(SILVERDAW_BUILD_TESTS "Build backend unit tests" OFF)
@@ -370,6 +432,9 @@ target_link_libraries(silverdaw_backend_core PUBLIC
 if(SILVERDAW_ENABLE_STEM_SEPARATION)
     target_link_libraries(silverdaw_backend_core PUBLIC onnxruntime)
     target_compile_definitions(silverdaw_backend_core PUBLIC SILVERDAW_STEM_SEPARATION=1)
+    if(SILVERDAW_ONNXRUNTIME_DIRECTML)
+        target_compile_definitions(silverdaw_backend_core PUBLIC SILVERDAW_ONNXRUNTIME_DIRECTML=1)
+    endif()
     # The real ONNX inference is only compiled when stem separation is enabled;
     # the factory falls back to a stub otherwise.
     target_sources(silverdaw_backend_core PRIVATE src/stems/OnnxStemSeparator.cpp)
@@ -410,6 +475,14 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
             "${SILVERDAW_ONNXRUNTIME_DLL}"
             "$<TARGET_FILE_DIR:SilverdawBackend>/onnxruntime.dll"
         COMMENT "Copying onnxruntime.dll next to backend executable")
+    # The DirectML build's EP depends on DirectML.dll at runtime; ship it too.
+    if(SILVERDAW_ONNXRUNTIME_DIRECTML AND SILVERDAW_DIRECTML_DLL)
+        add_custom_command(TARGET SilverdawBackend POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${SILVERDAW_DIRECTML_DLL}"
+                "$<TARGET_FILE_DIR:SilverdawBackend>/DirectML.dll"
+            COMMENT "Copying DirectML.dll next to backend executable")
+    endif()
 endif()
 
 # ─── LAME MP3 encoder (optional, bundled) ────────────────────────────────

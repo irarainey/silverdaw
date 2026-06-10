@@ -63,6 +63,12 @@ struct StemSeparationRequest
     // model runs (slower). Resolved from the requested quality preset by the
     // command layer; the default mirrors the "balanced" preset.
     double overlap = 0.25;
+    // Request GPU-accelerated inference. Honoured only when the backend was
+    // built with a hardware-accelerated ONNX Runtime (SILVERDAW_ONNXRUNTIME_
+    // DIRECTML); otherwise the separator logs once and runs on the CPU. The
+    // command layer resolves this from the renderer's gated `stems.useGpu`
+    // preference, so a machine without a GPU never sets it.
+    bool useGpu = false;
 };
 
 // Progress sink: stage is one of "prepare" / "separate" / "write"; percent 0..100.

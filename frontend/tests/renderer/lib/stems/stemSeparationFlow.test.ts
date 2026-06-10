@@ -9,7 +9,8 @@ import {
   cancelStemSelection,
   confirmModelDownload,
   cancelModelFlow,
-  useStemModelFlow
+  useStemModelFlow,
+  abandonActiveStemSeparation
 } from '@/lib/stems/stemSeparationFlow'
 import { clearStemSeparationState, snapshotStemSeparationState } from '@/lib/stemSeparationState'
 
@@ -18,8 +19,10 @@ vi.mock('@/lib/bridgeService', () => ({ send: (...args: unknown[]) => sendMock(.
 vi.mock('@/lib/log', () => ({ log: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() } }))
 
 const registerStemJob = vi.fn()
+const forgetStemJob = vi.fn()
 vi.mock('@/lib/stems/createStemTracks', () => ({
   registerStemJob: (...args: unknown[]) => registerStemJob(...args),
+  forgetStemJob: (...args: unknown[]) => forgetStemJob(...args),
   // The real helper walks saved-clips up to their source; tests pass the source
   // id directly, so echo it back.
   resolveSourceItemId: (_library: unknown, itemId: string | undefined) => itemId
@@ -55,6 +58,13 @@ let progressHandler: ProgressHandler | null = null
 const api = {
   getStemModelState: vi.fn(),
   getStemModelDir: vi.fn(async () => 'C:\\models\\htdemucs-ft'),
+  getStemPrefs: vi.fn(async (): Promise<{ useGpu: boolean }> => ({ useGpu: true })),
+  getStemGpuStatus: vi.fn(
+    async (): Promise<{ available: boolean; name: string | null }> => ({
+      available: true,
+      name: 'Test GPU'
+    })
+  ),
   ensureStemModel: vi.fn(),
   cancelStemModelDownload: vi.fn(),
   onStemModelDownloadProgress: vi.fn((handler: ProgressHandler) => {
@@ -82,6 +92,8 @@ beforeEach(() => {
   vi.stubGlobal('window', { silverdaw: api })
   vi.stubGlobal('crypto', { randomUUID: () => 'job-123' })
   api.getStemModelDir.mockResolvedValue('C:\\models\\htdemucs-ft')
+  api.getStemPrefs.mockResolvedValue({ useGpu: true })
+  api.getStemGpuStatus.mockResolvedValue({ available: true, name: 'Test GPU' })
 })
 
 afterEach(() => {
@@ -138,7 +150,8 @@ describe('stem selection dialog', () => {
       modelDir: 'C:\\models\\htdemucs-ft',
       sourceName: 'song',
       stems: ['vocals', 'drums'],
-      quality: 'balanced'
+      quality: 'balanced',
+      useGpu: true
     })
   })
 
@@ -156,6 +169,39 @@ describe('stem selection dialog', () => {
     expect(sendMock).toHaveBeenCalledWith(
       'STEM_SEPARATE',
       expect.objectContaining({ quality: 'best' })
+    )
+  })
+
+  it('dispatches useGpu=false when the GPU preference is off', async () => {
+    api.getStemModelState.mockResolvedValue({
+      installed: true,
+      presentBytes: 100,
+      totalBytes: 100,
+      fileCount: 4
+    })
+    api.getStemPrefs.mockResolvedValue({ useGpu: false })
+    await startClipSeparation()
+
+    expect(sendMock).toHaveBeenCalledWith(
+      'STEM_SEPARATE',
+      expect.objectContaining({ useGpu: false })
+    )
+  })
+
+  it('dispatches useGpu=false when no GPU is detected even if the preference is on', async () => {
+    api.getStemModelState.mockResolvedValue({
+      installed: true,
+      presentBytes: 100,
+      totalBytes: 100,
+      fileCount: 4
+    })
+    api.getStemPrefs.mockResolvedValue({ useGpu: true })
+    api.getStemGpuStatus.mockResolvedValue({ available: false, name: null })
+    await startClipSeparation()
+
+    expect(sendMock).toHaveBeenCalledWith(
+      'STEM_SEPARATE',
+      expect.objectContaining({ useGpu: false })
     )
   })
 
@@ -189,7 +235,8 @@ describe('stemSeparationFlow', () => {
       modelDir: 'C:\\models\\htdemucs-ft',
       sourceName: 'song',
       stems: ALL_STEMS,
-      quality: 'balanced'
+      quality: 'balanced',
+      useGpu: true
     })
     expect(snapshotStemSeparationState()?.jobId).toBe('job-123')
   })
@@ -239,7 +286,8 @@ describe('stemSeparationFlow', () => {
       modelDir: 'C:\\models\\htdemucs-ft',
       sourceName: 'song',
       stems: ALL_STEMS,
-      quality: 'balanced'
+      quality: 'balanced',
+      useGpu: true
     })
   })
 
@@ -304,5 +352,30 @@ describe('stemSeparationFlow', () => {
     expect(useStemSelection().value).toBeNull()
     expect(pushInfo).toHaveBeenCalledWith('A stem separation is already running.')
     expect(sendMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('abandonActiveStemSeparation', () => {
+  it('clears the active job, forgets it, and surfaces the reason', async () => {
+    api.getStemModelState.mockResolvedValue({
+      installed: true,
+      presentBytes: 100,
+      totalBytes: 100,
+      fileCount: 4
+    })
+    await startClipSeparation()
+    expect(snapshotStemSeparationState()?.jobId).toBe('job-123')
+
+    abandonActiveStemSeparation('engine restarted')
+
+    expect(snapshotStemSeparationState()).toBeNull()
+    expect(forgetStemJob).toHaveBeenCalledWith('job-123')
+    expect(pushError).toHaveBeenCalledWith('engine restarted')
+  })
+
+  it('is a no-op when no separation is active', () => {
+    abandonActiveStemSeparation('engine restarted')
+    expect(forgetStemJob).not.toHaveBeenCalled()
+    expect(pushError).not.toHaveBeenCalled()
   })
 })

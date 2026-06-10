@@ -35,6 +35,7 @@ export interface PreferencesForm {
   defaultClipDir: Ref<string>
   autosaveEnabled: Ref<boolean>
   autosaveIntervalSeconds: Ref<number>
+  useGpuForStems: Ref<boolean>
   initialLoggingEnabled: Ref<boolean>
   initialDevToolsEnabled: Ref<boolean>
   initialLogDirectory: Ref<string>
@@ -112,6 +113,7 @@ export function usePreferencesForm(): PreferencesForm {
   const defaultClipDir = ref('')
   const autosaveEnabled = ref(true)
   const autosaveIntervalSeconds = ref(30)
+  const useGpuForStems = ref(false)
 
   // Opening snapshot for change detection and restart notices.
   const initialLoggingEnabled = ref(false)
@@ -128,6 +130,7 @@ export function usePreferencesForm(): PreferencesForm {
   const initialClipDir = ref('')
   const initialAutosaveEnabled = ref(true)
   const initialAutosaveSeconds = ref(30)
+  const initialUseGpuForStems = ref(false)
 
   const hasChanges = computed(
     () =>
@@ -145,6 +148,7 @@ export function usePreferencesForm(): PreferencesForm {
       defaultClipDir.value !== initialClipDir.value ||
       autosaveEnabled.value !== initialAutosaveEnabled.value ||
       autosaveIntervalSeconds.value !== initialAutosaveSeconds.value ||
+      useGpuForStems.value !== initialUseGpuForStems.value ||
       audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
       audioOutputDeviceName.value !== initialAudioOutputDeviceName.value
   )
@@ -168,6 +172,8 @@ export function usePreferencesForm(): PreferencesForm {
       // Seed from the saved preference, not the live device JUCE chose.
       audioOutputTypeName.value = audioPref.typeName
       audioOutputDeviceName.value = audioPref.deviceName
+      const stemPrefs = await window.silverdaw.getStemPrefs()
+      useGpuForStems.value = stemPrefs.useGpu
     } catch {
       loggingEnabled.value = false
       devToolsEnabled.value = false
@@ -179,6 +185,7 @@ export function usePreferencesForm(): PreferencesForm {
       autosaveIntervalSeconds.value = 30
       audioOutputTypeName.value = null
       audioOutputDeviceName.value = null
+      useGpuForStems.value = false
     }
     // UI prefs are already mirrored into uiStore at startup.
     followPlayback.value = ui.followPlayback
@@ -201,6 +208,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialClipDir.value = defaultClipDir.value
     initialAutosaveEnabled.value = autosaveEnabled.value
     initialAutosaveSeconds.value = autosaveIntervalSeconds.value
+    initialUseGpuForStems.value = useGpuForStems.value
     initialAudioOutputTypeName.value = audioOutputTypeName.value
     initialAudioOutputDeviceName.value = audioOutputDeviceName.value
   }
@@ -300,6 +308,9 @@ export function usePreferencesForm(): PreferencesForm {
     ) {
       audioDevices.selectDevice(audioOutputTypeName.value, audioOutputDeviceName.value)
     }
+    if (useGpuForStems.value !== initialUseGpuForStems.value) {
+      window.silverdaw.setStemPrefs({ useGpu: useGpuForStems.value })
+    }
   }
 
   return {
@@ -327,6 +338,7 @@ export function usePreferencesForm(): PreferencesForm {
     defaultClipDir,
     autosaveEnabled,
     autosaveIntervalSeconds,
+    useGpuForStems,
     initialLoggingEnabled,
     initialDevToolsEnabled,
     initialLogDirectory,

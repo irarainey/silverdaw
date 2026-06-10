@@ -164,11 +164,14 @@ void handleStemSeparate(const juce::var& payload,
     request.outputDir = outputDir;
     request.stems = std::move(selectedStems);
     request.overlap = overlapForStemQuality(readOptionalString(payload, "quality").value_or(juce::String{}));
+    const juce::var useGpuVar = payload.getProperty("useGpu", juce::var());
+    request.useGpu = useGpuVar.isBool() && static_cast<bool>(useGpuVar);
 
     activeJobId = jobId;
     silverdaw::log::info("stems", "STEM_SEPARATE job=" + jobId + " item=" + sourceItemId +
                                       " clip=" + (clipId.isNotEmpty() ? clipId : juce::String("(library)")) +
                                       " stems=" + juce::String((int) request.stems.size()) +
+                                      " gpu=" + (request.useGpu ? juce::String("1") : juce::String("0")) +
                                       " source=" + sourceFile.getFullPathName());
     runStemSeparationAsync(std::move(request), separator, pool, bridge, cancelFlag, busyFlag);
 }

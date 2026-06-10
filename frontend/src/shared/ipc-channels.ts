@@ -48,7 +48,9 @@ export const IPC = {
     getAutosaveConfig: 'prefs:getAutosaveConfig',
     setAutosaveConfig: 'prefs:setAutosaveConfig',
     getAudioOutput: 'prefs:getAudioOutput',
-    setAudioOutput: 'prefs:setAudioOutput'
+    setAudioOutput: 'prefs:setAudioOutput',
+    getStems: 'prefs:getStems',
+    setStems: 'prefs:setStems'
   },
   debug: {
     getStartupPrefs: 'debug:getStartupPrefs',
@@ -85,6 +87,9 @@ export const IPC = {
   stems: {
     getModelState: 'stems:getModelState',
     getModelDir: 'stems:getModelDir',
+    getModelInfo: 'stems:getModelInfo',
+    getGpuStatus: 'stems:getGpuStatus',
+    locateModel: 'stems:locateModel',
     ensureModel: 'stems:ensureModel',
     cancelModelDownload: 'stems:cancelModelDownload',
     modelDownloadProgress: 'stems:modelDownloadProgress'

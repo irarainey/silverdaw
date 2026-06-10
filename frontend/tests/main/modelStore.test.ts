@@ -163,6 +163,45 @@ describe('ModelStore', () => {
     await store.ensureDownloaded()
     expect(fetchImpl).not.toHaveBeenCalled()
   })
+
+  describe('inspectDirectory / adoptDirectory', () => {
+    it('reports a fully-present directory as installed without a sentinel', async () => {
+      await writeFile(vocalsPathIn(dir), Buffer.from([1, 2, 3, 4, 5]))
+      await writeFile(join(dir, 'drums.onnx'), Buffer.from([9, 8, 7, 6]))
+      const store = new ModelStore({ manifest, modelDir: '/nonexistent' })
+
+      const state = await store.inspectDirectory(dir)
+      expect(state.installed).toBe(true)
+      expect(state.presentBytes).toBe(manifest.totalBytes)
+      // No sentinel exists yet, so the canonical install check is still false.
+      await expect(stat(join(dir, '.installed'))).rejects.toThrow()
+    })
+
+    it('reports a wrong-sized file as not present', async () => {
+      await writeFile(vocalsPathIn(dir), Buffer.from([1, 2, 3]))
+      const store = new ModelStore({ manifest, modelDir: '/nonexistent' })
+      const state = await store.inspectDirectory(dir)
+      expect(state.installed).toBe(false)
+      expect(state.files.find((f) => f.file.fileName === 'vocals.onnx')?.present).toBe(false)
+    })
+
+    it('adopts a complete directory by stamping the revision sentinel', async () => {
+      await writeFile(vocalsPathIn(dir), Buffer.from([1, 2, 3, 4, 5]))
+      await writeFile(join(dir, 'drums.onnx'), Buffer.from([9, 8, 7, 6]))
+      const store = new ModelStore({ manifest, modelDir: dir })
+
+      await store.adoptDirectory(dir)
+      expect(await readFile(join(dir, '.installed'), 'utf8')).toBe(manifest.revision)
+      expect(await store.isInstalled()).toBe(true)
+    })
+
+    it('refuses to adopt an incomplete directory', async () => {
+      await writeFile(vocalsPathIn(dir), Buffer.from([1, 2, 3, 4, 5]))
+      const store = new ModelStore({ manifest, modelDir: dir })
+      await expect(store.adoptDirectory(dir)).rejects.toBeInstanceOf(ModelDownloadError)
+      await expect(stat(join(dir, '.installed'))).rejects.toThrow()
+    })
+  })
 })
 
 function vocalsPathIn(dir: string): string {

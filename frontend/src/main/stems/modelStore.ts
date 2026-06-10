@@ -119,6 +119,41 @@ export class ModelStore {
   }
 
   /**
+   * Inspect an arbitrary candidate directory (e.g. a user-supplied model the
+   * "locate existing model" flow points at) without consulting or writing the
+   * revision sentinel. Presence is size-only, mirroring `readInstallState`.
+   */
+  async inspectDirectory(dir: string): Promise<ModelInstallState> {
+    const files: ModelFileStatus[] = []
+    let presentBytes = 0
+    for (const file of this.manifest.files) {
+      const present = await fileHasExpectedSizeIn(dir, file)
+      if (present) presentBytes += file.sizeBytes
+      files.push({ file, present })
+    }
+    const allPresent = files.every((f) => f.present)
+    return { installed: allPresent, files, presentBytes, totalBytes: this.manifest.totalBytes }
+  }
+
+  /**
+   * Validate that a user-supplied directory holds every model file at its
+   * expected size, then stamp it with the revision sentinel so subsequent
+   * install checks treat it as a complete install. Throws `ModelDownloadError`
+   * when any file is missing or the wrong size.
+   */
+  async adoptDirectory(dir: string): Promise<void> {
+    const state = await this.inspectDirectory(dir)
+    if (!state.installed) {
+      const missing = state.files.find((f) => !f.present)?.file.fileName ?? ''
+      throw new ModelDownloadError(
+        `selected folder is missing required model files (e.g. ${missing || 'unknown'})`,
+        missing
+      )
+    }
+    await writeFile(join(dir, SENTINEL_FILE), this.manifest.revision, 'utf8')
+  }
+
+  /**
    * Ensure every model file is present and integrity-verified, downloading any
    * that are missing or the wrong size. Re-entrant-safe per call; throws
    * `ModelDownloadError` on network failure or integrity mismatch. Honour an
@@ -219,12 +254,7 @@ export class ModelStore {
   }
 
   private async fileHasExpectedSize(file: ModelFile): Promise<boolean> {
-    try {
-      const { size } = await stat(this.filePath(file))
-      return size === file.sizeBytes
-    } catch {
-      return false
-    }
+    return fileHasExpectedSizeIn(this.modelDir, file)
   }
 
   private async alreadyPresentBytes(): Promise<number> {
@@ -251,6 +281,15 @@ export class ModelStore {
 
 function defaultFetch(url: string, init?: { readonly signal?: AbortSignal }): Promise<FetchResponse> {
   return fetch(url, { signal: init?.signal }) as unknown as Promise<FetchResponse>
+}
+
+async function fileHasExpectedSizeIn(dir: string, file: ModelFile): Promise<boolean> {
+  try {
+    const { size } = await stat(join(dir, file.fileName))
+    return size === file.sizeBytes
+  } catch {
+    return false
+  }
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

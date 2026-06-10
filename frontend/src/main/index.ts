@@ -233,7 +233,7 @@ app.whenReady().then(async () => {
 
   registerPeaksHandlers()
 
-  registerStemHandlers({ getMainWindow: () => mainWindow })
+  registerStemHandlers({ getMainWindow: () => mainWindow, prefs })
 
   // Honour explicit dev port; otherwise probe past leftover processes.
   if (!bridgePortEnvOverridden) {

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 // validation helpers can be unit-tested in the node environment.
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getName: () => 'silverdaw' } }))
 
-import { sanitiseUiPrefs, type UiPrefs } from '@main/preferences'
+import { sanitiseStemModelDir, sanitiseStemPrefs, sanitiseUiPrefs, type StemPrefs, type UiPrefs } from '@main/preferences'
 
 const base: UiPrefs = {
   trackHeaderWidth: 175,
@@ -70,5 +70,33 @@ describe('sanitiseUiPrefs', () => {
     const result = sanitiseUiPrefs({ hax: true, __proto__: { polluted: true } }, base)
     expect(result).toEqual(base)
     expect((result as unknown as Record<string, unknown>).hax).toBeUndefined()
+  })
+})
+
+describe('sanitiseStemPrefs', () => {
+  const stemBase: StemPrefs = { useGpu: false }
+
+  it('keeps the base for a non-object partial', () => {
+    expect(sanitiseStemPrefs(undefined, stemBase)).toEqual(stemBase)
+    expect(sanitiseStemPrefs(42, stemBase)).toEqual(stemBase)
+  })
+
+  it('accepts a valid boolean and falls back for the wrong type', () => {
+    expect(sanitiseStemPrefs({ useGpu: true }, stemBase).useGpu).toBe(true)
+    expect(sanitiseStemPrefs({ useGpu: 'yes' }, stemBase).useGpu).toBe(false)
+    expect(sanitiseStemPrefs({ useGpu: true }, { useGpu: true }).useGpu).toBe(true)
+  })
+})
+
+describe('sanitiseStemModelDir', () => {
+  it('returns a trimmed non-empty string', () => {
+    expect(sanitiseStemModelDir('  C:/models/htdemucs  ')).toBe('C:/models/htdemucs')
+  })
+
+  it('returns undefined for empty / non-string input', () => {
+    expect(sanitiseStemModelDir('')).toBeUndefined()
+    expect(sanitiseStemModelDir('   ')).toBeUndefined()
+    expect(sanitiseStemModelDir(undefined)).toBeUndefined()
+    expect(sanitiseStemModelDir(123)).toBeUndefined()
   })
 })

@@ -10,10 +10,11 @@ import { ref, readonly, type Ref } from 'vue'
 import { send as sendBridge } from '@/lib/bridgeService'
 import {
   beginStemSeparation,
+  clearStemSeparationState,
   snapshotStemSeparationState,
   type StemSeparationTarget
 } from '@/lib/stemSeparationState'
-import { registerStemJob, resolveSourceItemId } from '@/lib/stems/createStemTracks'
+import { forgetStemJob, registerStemJob, resolveSourceItemId } from '@/lib/stems/createStemTracks'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
@@ -39,7 +40,21 @@ export function useStemSelection(): Readonly<Ref<StemSelectionState | null>> {
   return readonly(selection)
 }
 
-/** Strip any trailing file extension from a friendly name. */
+/**
+ * Abandon any in-flight separation, surfacing a clear error. Called when the
+ * audio engine restarts mid-job (e.g. a GPU driver reset / TDR can crash the
+ * backend before it can send STEM_FAILED), so the job never just vanishes from
+ * the UI without explanation.
+ */
+export function abandonActiveStemSeparation(reason: string): void {
+  const active = snapshotStemSeparationState()
+  if (active === null) return
+  forgetStemJob(active.jobId)
+  clearStemSeparationState()
+  useNotificationsStore().pushError(reason)
+  log.warn('stems', `active separation abandoned jobId=${active.jobId}: ${reason}`)
+}
+
 function stripExtension(name: string): string {
   return name.replace(/\.[^.]+$/, '')
 }
@@ -243,6 +258,7 @@ async function dispatchSeparation(
   quality: StemQuality
 ): Promise<void> {
   const modelDir = await window.silverdaw.getStemModelDir()
+  const useGpu = await resolveUseGpu()
   const jobId = crypto.randomUUID()
   registerStemJob(jobId, target)
   beginStemSeparation(jobId, target, stems)
@@ -253,11 +269,35 @@ async function dispatchSeparation(
     modelDir,
     sourceName: target.sourceName,
     stems: [...stems],
-    quality
+    quality,
+    useGpu
   })
   log.info(
     'stems',
     `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
-      `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality}`
+      `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality} ` +
+      `useGpu=${useGpu}`
   )
+}
+
+/**
+ * Effective GPU usage for a separation: the user's persisted `stems.useGpu`
+ * preference, gated by live GPU detection so a machine without a hardware GPU
+ * always runs on the CPU regardless of the stored value. Any lookup failure
+ * falls back to the CPU (false) — the safe default.
+ */
+async function resolveUseGpu(): Promise<boolean> {
+  try {
+    const [prefs, gpu] = await Promise.all([
+      window.silverdaw.getStemPrefs(),
+      window.silverdaw.getStemGpuStatus()
+    ])
+    return prefs.useGpu && gpu.available
+  } catch (err) {
+    log.warn(
+      'stems',
+      `resolveUseGpu failed, defaulting to CPU: ${err instanceof Error ? err.message : String(err)}`
+    )
+    return false
+  }
 }

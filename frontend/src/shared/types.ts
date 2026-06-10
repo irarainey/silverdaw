@@ -93,3 +93,31 @@ export interface StemModelDownloadProgress {
 export type EnsureStemModelResult =
   | { ok: true }
   | { ok: false; error: string; fileName?: string }
+
+/** GPU availability for stem separation, detected in the main process. */
+export interface StemGpuStatus {
+  /** True when a hardware GPU (not a software / basic-render adapter) is present. */
+  available: boolean
+  /** Human-readable adapter name when known, else null. */
+  name: string | null
+}
+
+/** Persisted stem-separation preferences surfaced to the renderer. */
+export interface StemPrefsDto {
+  useGpu: boolean
+}
+
+/** Where the stem model lives and whether it is a user-located copy. */
+export interface StemModelInfo {
+  /** Directory the backend loads the ONNX sessions from. */
+  directory: string
+  /** True when the directory is a user-supplied override (locate flow). */
+  located: boolean
+  /** True when every model file is present at its expected size. */
+  installed: boolean
+}
+
+/** Outcome of a `locateStemModel` request. */
+export type LocateStemModelResult =
+  | { ok: true; directory: string }
+  | { ok: false; error: string }

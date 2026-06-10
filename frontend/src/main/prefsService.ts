@@ -13,6 +13,8 @@ import {
   clampAutosaveSeconds,
   normaliseDebugPrefs,
   sanitiseRecentList,
+  sanitiseStemPrefs,
+  sanitiseStemModelDir,
   sanitiseUiPrefs,
   type AudioOutputPrefs,
   type AutosavePrefs,
@@ -73,7 +75,8 @@ export class PrefsService {
           defaultClipDir:
             typeof savedPaths.defaultClipDir === 'string' && savedPaths.defaultClipDir.length > 0
               ? savedPaths.defaultClipDir
-              : defaults.paths.defaultClipDir
+              : defaults.paths.defaultClipDir,
+          stemModelDir: sanitiseStemModelDir(savedPaths.stemModelDir)
         },
         autosave: {
           enabled:
@@ -96,7 +99,8 @@ export class PrefsService {
               ? (parsed.audioOutput as AudioOutputPrefs).deviceName
               : null
         },
-        recentProjects: sanitiseRecentList(parsed.recentProjects)
+        recentProjects: sanitiseRecentList(parsed.recentProjects),
+        stems: sanitiseStemPrefs(parsed.stems, defaults.stems)
       }
     } catch (err) {
       // Bad prefs should not block startup.

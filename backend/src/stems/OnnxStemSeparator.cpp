@@ -15,6 +15,13 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+// The DirectML execution provider factory ships only with a DirectML-enabled
+// ONNX Runtime build. It is compiled in solely when the backend is built
+// against such a runtime; the CPU runtime lacks this header.
+#include <dml_provider_factory.h>
+#endif
+
 #include "Log.h"
 
 namespace silverdaw
@@ -180,11 +187,7 @@ class OnnxStemSeparator : public StemSeparator
   public:
     OnnxStemSeparator() : env(ORT_LOGGING_LEVEL_WARNING, "silverdaw-stems")
     {
-        // No realtime audio plays during an offline separation, so dedicate every
-        // logical core to inference (never fewer than one).
-        const unsigned int cores = std::thread::hardware_concurrency();
-        sessionOptions.SetIntraOpNumThreads(static_cast<int>(std::max(1u, cores)));
-        sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        applyExecutionProvider(false);
     }
 
     StemSeparationResult separate(const StemSeparationRequest& request,
@@ -192,6 +195,8 @@ class OnnxStemSeparator : public StemSeparator
                                   const StemReadyFn& onStemReady,
                                   const StemCancelFn& shouldCancel) override
     {
+        applyExecutionProvider(request.useGpu);
+
         onProgress("prepare", 0.0, "");
 
         for (const auto* stem : kStemNames)
@@ -378,6 +383,55 @@ class OnnxStemSeparator : public StemSeparator
         return stemBuffer;
     }
 
+    // Configure the session options' execution provider for the requested mode,
+    // rebuilding only when it changes. Switching providers invalidates any cached
+    // sessions (they were optimised for the previous provider), so the cache is
+    // cleared. Separations are single-slot (busyFlag), so this runs serially with
+    // no concurrent session use.
+    void applyExecutionProvider(bool useGpu)
+    {
+        if (epConfigured && epUsesGpu == useGpu) return;
+
+        sessionCache.clear();
+        sessionOptions = Ort::SessionOptions{};
+        // No realtime audio plays during an offline separation, so dedicate every
+        // logical core to inference (never fewer than one).
+        const unsigned int cores = std::thread::hardware_concurrency();
+        sessionOptions.SetIntraOpNumThreads(static_cast<int>(std::max(1u, cores)));
+        sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+        if (useGpu)
+        {
+#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+            // DirectML requires sequential execution and disabled memory pattern
+            // optimisation; the EP itself is vendor-generic (any DirectX 12 GPU).
+            sessionOptions.DisableMemPattern();
+            sessionOptions.SetExecutionMode(ORT_SEQUENTIAL);
+            // htdemucs uses dynamic tensor shapes, which DirectML's whole-graph
+            // fusion cannot compile (it throws E_INVALIDARG / "parameter is
+            // incorrect" in DmlGraphFusionHelper at session init). Disabling
+            // graph fusion makes the DML EP execute node-by-node instead — still
+            // GPU-accelerated, just without the fused-graph optimisation.
+            sessionOptions.AddConfigEntry("ep.dml.disable_graph_fusion", "1");
+            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sessionOptions, 0));
+            silverdaw::log::info("stems", "ONNX execution provider: DirectML (GPU)");
+#else
+            // The bundled runtime is CPU-only: honour the request as best we can
+            // (run on the CPU) and say so once rather than failing the job.
+            silverdaw::log::info(
+                "stems",
+                "GPU separation requested but this build ships the CPU ONNX Runtime; running on CPU.");
+#endif
+        }
+        else
+        {
+            silverdaw::log::info("stems", "ONNX execution provider: CPU");
+        }
+
+        epUsesGpu = useGpu;
+        epConfigured = true;
+    }
+
     // Build a session the first time a model is needed and reuse it for every
     // later job. Loading + graph-optimising each ~80 MB specialist is several
     // seconds, so caching removes that cost from the 2nd job onward. Safe without
@@ -396,6 +450,8 @@ class OnnxStemSeparator : public StemSeparator
 
     Ort::Env env;
     Ort::SessionOptions sessionOptions;
+    bool epConfigured = false;
+    bool epUsesGpu = false;
     // Declared last so cached sessions are destroyed before `env`.
     std::map<std::string, std::unique_ptr<Ort::Session>> sessionCache;
 };

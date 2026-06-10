@@ -630,6 +630,13 @@ export interface StemSeparatePayload {
   stems: StemName[]
   /** Quality preset; backend defaults to 'balanced' when omitted. */
   quality: StemQuality
+  /**
+   * Run inference on the GPU when the backend was built with a hardware-
+   * accelerated ONNX Runtime; the backend falls back to the CPU automatically
+   * when no accelerated engine is present. Resolved from the persisted
+   * `stems.useGpu` preference, gated by GPU detection.
+   */
+  useGpu: boolean
 }
 
 /** Cancel an in-progress separation job; backend aborts and emits STEM_FAILED{cancelled}. */

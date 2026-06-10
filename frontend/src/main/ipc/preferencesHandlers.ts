@@ -13,7 +13,7 @@ import type {
   PathPrefs,
   ToastPrefs
 } from '../preferences'
-import { clampAutosaveSeconds, sanitiseUiPrefs } from '../preferences'
+import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -164,5 +164,16 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     }
     store.audioOutput = { typeName: nextTypeName, deviceName: nextDeviceName }
     prefs.schedulePrefsSave()
+  })
+
+  // ─── Stem-separation preferences (GPU intent) ───────────────────────────
+  ipcMain.handle(IPC.prefs.getStems, () => ({ ...prefs.get().stems }))
+
+  ipcMain.on(IPC.prefs.setStems, (_evt, partial: unknown) => {
+    const store = prefs.get()
+    const next = sanitiseStemPrefs(partial, store.stems)
+    if (next.useGpu === store.stems.useGpu) return
+    store.stems = next
+    prefs.flushSaveSync()
   })
 }

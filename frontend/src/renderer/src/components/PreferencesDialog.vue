@@ -9,6 +9,7 @@ import PreferencesAudioTab from './PreferencesAudioTab.vue'
 import PreferencesDeveloperTab from './PreferencesDeveloperTab.vue'
 import PreferencesGeneralTab from './PreferencesGeneralTab.vue'
 import PreferencesProjectTab from './PreferencesProjectTab.vue'
+import PreferencesStemsTab from './PreferencesStemsTab.vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -39,6 +40,7 @@ const {
   defaultClipDir,
   autosaveEnabled,
   autosaveIntervalSeconds,
+  useGpuForStems,
   initialLoggingEnabled,
   initialDevToolsEnabled,
   initialLogDirectory,
@@ -52,13 +54,14 @@ const {
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 
-type PreferencesTab = 'general' | 'project' | 'audio' | 'developer'
+type PreferencesTab = 'general' | 'project' | 'audio' | 'stems' | 'developer'
 const activeTab = ref<PreferencesTab>('general')
 
 const tabs: Array<{ id: PreferencesTab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'project', label: 'Project' },
   { id: 'audio', label: 'Audio' },
+  { id: 'stems', label: 'Stems' },
   { id: 'developer', label: 'Developer' }
 ]
 
@@ -195,6 +198,10 @@ function onSave(): void {
               :is-bluetooth-heuristic="audioDevices.isBluetoothHeuristic"
               :last-error="audioDevices.lastError"
               :request-rescan="audioDevices.requestRescan"
+            />
+            <PreferencesStemsTab
+              v-else-if="activeTab === 'stems'"
+              v-model:use-gpu-for-stems="useGpuForStems"
             />
             <PreferencesDeveloperTab
               v-else

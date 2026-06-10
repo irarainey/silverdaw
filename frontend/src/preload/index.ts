@@ -3,8 +3,12 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences } from '../shared/types'
 import type {
   EnsureStemModelResult,
+  LocateStemModelResult,
+  StemGpuStatus,
   StemModelDownloadProgress,
-  StemModelState
+  StemModelInfo,
+  StemModelState,
+  StemPrefsDto
 } from '../shared/types'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 
@@ -172,6 +176,12 @@ const api = {
   setAudioOutput: (partial: { typeName: string | null; deviceName: string | null }): void => {
     ipcRenderer.send(IPC.prefs.setAudioOutput, partial)
   },
+  // ─── Stem-separation preferences ────────────────────────────────────────
+  getStemPrefs: (): Promise<StemPrefsDto> => ipcRenderer.invoke(IPC.prefs.getStems),
+  /** Stem GPU intent is gated on detection but persisted regardless. */
+  setStemPrefs: (partial: Partial<StemPrefsDto>): void => {
+    ipcRenderer.send(IPC.prefs.setStems, partial)
+  },
   // ─── Autosave folder + manifest IPCs ────────────────────────────────────
   /** Resolve an autosave bucket after strict `projectId` validation. */
   resolveAutosaveDir: (
@@ -203,6 +213,13 @@ const api = {
   getStemModelState: (): Promise<StemModelState> => ipcRenderer.invoke(IPC.stems.getModelState),
   /** Directory the backend loads the ONNX sessions from. */
   getStemModelDir: (): Promise<string> => ipcRenderer.invoke(IPC.stems.getModelDir),
+  /** Model location + install + located-override status for the preferences UI. */
+  getStemModelInfo: (): Promise<StemModelInfo> => ipcRenderer.invoke(IPC.stems.getModelInfo),
+  /** Whether a hardware GPU is present, gating the "use GPU" preference. */
+  getStemGpuStatus: (): Promise<StemGpuStatus> => ipcRenderer.invoke(IPC.stems.getGpuStatus),
+  /** Adopt an existing on-disk model directory instead of downloading. */
+  locateStemModel: (dir: string): Promise<LocateStemModelResult> =>
+    ipcRenderer.invoke(IPC.stems.locateModel, dir),
   /** Download + integrity-verify any missing model files; honour an in-flight cancel. */
   ensureStemModel: (): Promise<EnsureStemModelResult> => ipcRenderer.invoke(IPC.stems.ensureModel),
   /** Abort the active model download, if any. */

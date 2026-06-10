@@ -5,6 +5,7 @@
 import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { abandonActiveStemSeparation } from '@/lib/stems/stemSeparationFlow'
 import { log } from '@/lib/log'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 
@@ -61,6 +62,11 @@ function beginCycle(): void {
   project.recoveryInFlight = true
   transport.setEngineRecovery('recovering')
   armRecoveryDeadline(recoveryGeneration, RECONNECT_TIMEOUT_MS)
+  // A crash mid-separation (e.g. a GPU driver reset) kills the backend before it
+  // can report STEM_FAILED, so fail the active job here rather than let it vanish.
+  abandonActiveStemSeparation(
+    'Stem separation was interrupted because the audio engine restarted. Please try again.'
+  )
   log.warn(
     'recovery',
     `cycle ${recoveryGeneration} opened — captured projectId=${target.projectId ?? 'null'} ` +

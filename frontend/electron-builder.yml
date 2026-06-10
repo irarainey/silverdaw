@@ -50,6 +50,11 @@ extraResources:
       # stem separation is disabled at build time the DLL is simply absent and
       # this filter entry matches nothing.
       - onnxruntime.dll
+      # DirectML.dll is copied next to SilverdawBackend.exe by the CMake
+      # POST_BUILD step only when the GPU build is enabled
+      # (SILVERDAW_ONNXRUNTIME_DIRECTML). When that option is off the file is
+      # absent and this filter entry matches nothing.
+      - DirectML.dll
       # lame.exe is copied next to SilverdawBackend.exe by the CMake POST_BUILD
       # step (see `SILVERDAW_LAME_EXE` in backend/CMakeLists.txt) when the
       # binary is dropped into `backend/third_party/lame/`. When present it
