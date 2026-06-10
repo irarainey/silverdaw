@@ -10,6 +10,7 @@ import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
+import type { AudioMetadata } from '@shared/types'
 import {
   DEFAULT_PROJECT_NAME,
   DEFAULT_TRACK_LENGTH_MS,
@@ -30,10 +31,40 @@ type SnapshotTarget = ProjectState & {
   setProjectLengthMs(ms: number): void
 }
 
-async function refreshLibraryItemMedia(itemId: string, filePath: string): Promise<void> {
+/** The stem-folder path for a stem WAV (its sibling sidecar lives there). */
+function stemDirOf(filePath: string): string {
+  return filePath.replace(/[\\/][^\\/]*$/, '')
+}
+
+/** Strip the source file's audio geometry from inherited metadata so a stem keeps
+ *  its OWN duration/sample-rate/channel-count (decoded from its own file) while
+ *  still inheriting identity tags + cover art. */
+function withoutAudioGeometry(meta: AudioMetadata): AudioMetadata {
+  const { durationMs: _d, sampleRate: _s, channelCount: _c, ...rest } = meta
+  return rest
+}
+
+async function refreshLibraryItemMedia(
+  itemId: string,
+  filePath: string,
+  opts?: { stem?: boolean }
+): Promise<void> {
   const library = useLibraryStore()
   try {
-    const metadata = await window.silverdaw.readAudioMetadata(filePath)
+    let metadata: AudioMetadata | null = null
+    // A separated stem's WAV carries no tags; prefer the sidecar copy written at
+    // separation time so the inherited identity survives source removal. The
+    // sidecar's audio geometry describes the SOURCE, so drop it and let the
+    // stem's own decode below supply duration/peaks.
+    if (opts?.stem) {
+      try {
+        const sidecar = await window.silverdaw.readStemSidecar(stemDirOf(filePath))
+        if (sidecar) metadata = withoutAudioGeometry(sidecar)
+      } catch (err) {
+        log.warn('library', `readStemSidecar failed for ${filePath}: ${String(err)}`)
+      }
+    }
+    if (!metadata) metadata = await window.silverdaw.readAudioMetadata(filePath)
     library.setItemMetadata(itemId, metadata)
   } catch (err) {
     log.warn('library', `readAudioMetadata failed for ${filePath}: ${String(err)}`)
@@ -264,8 +295,10 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
           // Backfill metadata for older projects missing persisted duration.
           // Stems are standalone files too, so refresh their media like sources.
           const reloadKind = item.kind ?? 'audio-file'
-          if (reloadKind === 'audio-file' || reloadKind === 'stem') {
+          if (reloadKind === 'audio-file') {
             void refreshLibraryItemMedia(libId, item.filePath)
+          } else if (reloadKind === 'stem') {
+            void refreshLibraryItemMedia(libId, item.filePath, { stem: true })
           }
         }
         for (const item of library.items) {

@@ -1,14 +1,15 @@
 // Audio IPC handlers: file open/import dialogs, allow-listed reads, metadata,
 // and the renderer-PCM -> float-WAV transcode cache. Registered from main/index.ts.
 
-import { ipcMain, dialog, type BrowserWindow } from 'electron'
+import { ipcMain, dialog, app, type BrowserWindow } from 'electron'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, relative, isAbsolute } from 'node:path'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { parseFile } from 'music-metadata'
 import { IPC } from '../../shared/ipc-channels'
 import { normalizeMetadata } from '../audioMetadata'
+import type { AudioMetadata } from '../../shared/types'
 import {
   AUDIO_FILE_EXTENSIONS,
   canonicalisePath,
@@ -26,6 +27,43 @@ export interface AudioHandlersContext {
 
 // Cache renderer-side transcodes by source path and decoded geometry.
 const TRANSCODE_CACHE_DIR = join(tmpdir(), 'silverdaw-transcode-cache')
+
+// Stem sidecar: a stem's separated WAV carries no tags, so we copy the source
+// file's metadata + cover art into the stem's output folder at separation time.
+// This makes a stem's inherited identity survive removal of the original source
+// item and a project reload (the live derivedFrom reference dangles once the
+// source is gone).
+const SIDECAR_METADATA_FILE = 'metadata.json'
+
+interface StemSidecar {
+  version: number
+  metadata: AudioMetadata
+  cover?: { file: string; mimeType: string }
+}
+
+const COVER_EXT_BY_MIME: Readonly<Record<string, string>> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif'
+}
+
+function coverExtForMime(mime: string): string {
+  return COVER_EXT_BY_MIME[mime.toLowerCase()] ?? 'img'
+}
+
+// The app-owned stems base dir (JUCE userApplicationDataDirectory == appData on
+// Windows). Sidecar reads/writes are confined to folders beneath it.
+function stemsBaseDir(): string {
+  return canonicalisePath(join(app.getPath('appData'), 'Silverdaw', 'stems'))
+}
+
+function isWithinStemsDir(dir: unknown): dir is string {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
+  const rel = relative(stemsBaseDir(), canonicalisePath(dir))
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+}
 
 export function registerAudioHandlers(ctx: AudioHandlersContext): void {
   function rememberClipDir(pickedFile: string): void {
@@ -132,6 +170,69 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       return normalizeMetadata(meta)
     } catch (err) {
       logMain('WARN ', 'audio:readMetadata', `failed for ${String(filePath)}:`, err)
+      return null
+    }
+  })
+
+  // Write a stem's source metadata + cover art into the stem output folder so the
+  // inherited identity is a real copy, independent of the source file once written.
+  ipcMain.handle(IPC.stems.writeSidecar, async (_evt, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return false
+    const p = payload as { stemDir?: unknown; sourceFilePath?: unknown }
+    if (!isWithinStemsDir(p.stemDir)) {
+      logMain('WARN ', 'stems:writeSidecar', 'rejected stemDir not under stems base:', p.stemDir)
+      return false
+    }
+    if (!isAllowedAudioPath(p.sourceFilePath)) {
+      logMain('WARN ', 'stems:writeSidecar', 'rejected source not on allow-list:', p.sourceFilePath)
+      return false
+    }
+    try {
+      const meta = normalizeMetadata(
+        await parseFile(p.sourceFilePath, { duration: true, skipCovers: false })
+      )
+      const dir = canonicalisePath(p.stemDir)
+      await mkdir(dir, { recursive: true })
+      const { coverArt, ...rest } = meta
+      const sidecar: StemSidecar = { version: 1, metadata: rest }
+      if (coverArt && coverArt.data.byteLength > 0) {
+        const file = `cover.${coverExtForMime(coverArt.mimeType)}`
+        await writeFile(join(dir, file), Buffer.from(coverArt.data))
+        sidecar.cover = { file, mimeType: coverArt.mimeType }
+      }
+      await writeFile(join(dir, SIDECAR_METADATA_FILE), JSON.stringify(sidecar, null, 2), 'utf8')
+      return true
+    } catch (err) {
+      logMain('WARN ', 'stems:writeSidecar', `failed for ${String(p.sourceFilePath)}:`, err)
+      return false
+    }
+  })
+
+  // Read back a stem sidecar as AudioMetadata (cover bytes attached) so the
+  // existing setItemMetadata Blob-URL flow works unchanged. Returns null when no
+  // sidecar is present so the caller can fall back to reading the file's own tags.
+  ipcMain.handle(IPC.stems.readSidecar, async (_evt, stemDir: unknown) => {
+    if (!isWithinStemsDir(stemDir)) {
+      logMain('WARN ', 'stems:readSidecar', 'rejected stemDir not under stems base:', stemDir)
+      return null
+    }
+    try {
+      const dir = canonicalisePath(stemDir)
+      const raw = await readFile(join(dir, SIDECAR_METADATA_FILE), 'utf8')
+      const parsed = JSON.parse(raw) as Partial<StemSidecar>
+      if (!parsed || typeof parsed.metadata !== 'object' || parsed.metadata === null) return null
+      const meta: AudioMetadata = { ...parsed.metadata }
+      if (parsed.cover && typeof parsed.cover.file === 'string') {
+        try {
+          const buf = await readFile(join(dir, basename(parsed.cover.file)))
+          const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+          meta.coverArt = { data, mimeType: parsed.cover.mimeType || 'image/jpeg' }
+        } catch (err) {
+          logMain('WARN ', 'stems:readSidecar', `cover read failed in ${dir}:`, err)
+        }
+      }
+      return meta
+    } catch {
       return null
     }
   })

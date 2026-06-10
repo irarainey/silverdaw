@@ -92,7 +92,9 @@ export const IPC = {
     locateModel: 'stems:locateModel',
     ensureModel: 'stems:ensureModel',
     cancelModelDownload: 'stems:cancelModelDownload',
-    modelDownloadProgress: 'stems:modelDownloadProgress'
+    modelDownloadProgress: 'stems:modelDownloadProgress',
+    writeSidecar: 'stems:writeSidecar',
+    readSidecar: 'stems:readSidecar'
   },
   log: {
     appendBatch: 'log:append-batch'

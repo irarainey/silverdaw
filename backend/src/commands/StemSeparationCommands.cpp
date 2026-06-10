@@ -28,12 +28,27 @@ void failInvalid(BridgeServer& bridge, const juce::String& jobId, const juce::St
     stem_bridge::broadcastFailed(bridge, jobId, clipId, StemFailureCode::Invalid, message);
 }
 
-juce::File stemsOutputDir(const juce::String& jobId)
+juce::File stemsBaseDir()
 {
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
         .getChildFile("Silverdaw")
-        .getChildFile("stems")
-        .getChildFile(jobId);
+        .getChildFile("stems");
+}
+
+// Output folder named after the source file with a "-stems" suffix, e.g.
+// "My Song-stems". A numeric suffix disambiguates repeat separations of the
+// same source ("My Song-stems-2", "-3", ...) so they never overwrite earlier
+// stems or their sidecar metadata.
+juce::File uniqueStemsOutputDir(const juce::String& sourceName)
+{
+    const auto base = stemsBaseDir();
+    auto safe = juce::File::createLegalFileName(sourceName).trim();
+    if (safe.isEmpty()) safe = "stems";
+    const auto rootName = safe + "-stems";
+    auto candidate = base.getChildFile(rootName);
+    for (int n = 2; candidate.exists(); ++n)
+        candidate = base.getChildFile(rootName + "-" + juce::String(n));
+    return candidate;
 }
 
 // Canonical four-stem vocabulary, mirroring the zod schema. Selections are
@@ -145,7 +160,7 @@ void handleStemSeparate(const juce::var& payload,
     if (sourceName.isEmpty() && clipId.isNotEmpty()) sourceName = projectState.getClipName(clipId);
     if (sourceName.isEmpty()) sourceName = juce::File(rawSourcePath).getFileNameWithoutExtension();
 
-    const auto outputDir = stemsOutputDir(jobId);
+    const auto outputDir = uniqueStemsOutputDir(sourceName);
     const auto created = outputDir.createDirectory();
     if (created.failed())
     {

@@ -145,6 +145,8 @@ export async function createTracksFromStems(payload: StemReadyPayload): Promise<
     await importStem(job, stem, filePath)
   }
 
+  await persistStemSidecar(job, payload)
+
   const created = job.placed.size
   const onTimeline = job.target.clipId !== undefined
   const sourceName = job.target.sourceName
@@ -157,6 +159,23 @@ export async function createTracksFromStems(payload: StemReadyPayload): Promise<
     )
   } else {
     notifications.pushError(`Could not create stems from ${sourceName}`)
+  }
+}
+
+/** Copy the source file's metadata + cover art into the stem output folder as a
+ *  sidecar so the inherited identity survives source removal and project reload.
+ *  All stems for a job share one folder, so a single sidecar covers them. */
+async function persistStemSidecar(job: StemJob, payload: StemReadyPayload): Promise<void> {
+  const first = payload.stems[0]
+  if (!first) return
+  const stemDir = first.filePath.replace(/[\\/][^\\/]*$/, '')
+  if (!stemDir) return
+  const source = useLibraryStore().getItem(job.target.sourceItemId)
+  if (!source?.filePath) return
+  try {
+    await window.silverdaw.writeStemSidecar(stemDir, source.filePath)
+  } catch (err) {
+    log.warn('stems', `sidecar write failed for ${stemDir}: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 

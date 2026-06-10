@@ -233,7 +233,13 @@ const api = {
       handler(progress)
     ipcRenderer.on(IPC.stems.modelDownloadProgress, listener)
     return () => ipcRenderer.removeListener(IPC.stems.modelDownloadProgress, listener)
-  }
+  },
+  /** Copy a stem source file's metadata + cover art into the stem output folder. */
+  writeStemSidecar: (stemDir: string, sourceFilePath: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.stems.writeSidecar, { stemDir, sourceFilePath }),
+  /** Read a stem's sidecar metadata (cover bytes attached) or null when absent. */
+  readStemSidecar: (stemDir: string): Promise<AudioMetadata | null> =>
+    ipcRenderer.invoke(IPC.stems.readSidecar, stemDir)
 }as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)
