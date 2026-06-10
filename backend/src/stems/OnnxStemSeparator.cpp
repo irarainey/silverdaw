@@ -182,6 +182,20 @@ Normalisation computeNormalisation(const juce::AudioBuffer<float>& mixture)
     return {static_cast<float>(mean), static_cast<float>(stddev)};
 }
 
+#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+// A DirectML GPU reset (Windows TDR) or driver fault mid-inference surfaces as an
+// Ort::Exception whose message carries a DXGI device-removed/hung/reset HRESULT.
+// Detect those so a job can transparently fall back to the CPU provider rather
+// than failing outright.
+bool isGpuDeviceLost(const Ort::Exception& e)
+{
+    const juce::String msg = juce::String(e.what()).toLowerCase();
+    return msg.contains("device removed") || msg.contains("device hung") ||
+           msg.contains("device reset") || msg.contains("device lost") ||
+           msg.contains("dxgi_error_device") || msg.contains("887a00");
+}
+#endif
+
 class OnnxStemSeparator : public StemSeparator
 {
   public:
@@ -197,6 +211,38 @@ class OnnxStemSeparator : public StemSeparator
     {
         applyExecutionProvider(request.useGpu);
 
+#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+        // On a DirectML GPU reset (Windows TDR) mid-inference, transparently retry
+        // the whole job on the CPU provider so the user still gets their stems
+        // instead of a hard failure. The CPU provider never triggers TDR, so a
+        // single fallback cannot loop. Already-written stems are re-emitted; the
+        // renderer dedupes them per job, so the retry is idempotent.
+        if (epUsesGpu)
+        {
+            try
+            {
+                return runSeparation(request, onProgress, onStemReady, shouldCancel);
+            }
+            catch (const Ort::Exception& e)
+            {
+                if (! isGpuDeviceLost(e)) throw;
+                silverdaw::log::warn("stems",
+                                     juce::String("GPU device lost during separation (") + e.what() +
+                                         "); falling back to CPU and retrying.");
+                applyExecutionProvider(false);
+                return runSeparation(request, onProgress, onStemReady, shouldCancel);
+            }
+        }
+#endif
+        return runSeparation(request, onProgress, onStemReady, shouldCancel);
+    }
+
+  private:
+    StemSeparationResult runSeparation(const StemSeparationRequest& request,
+                                       const StemProgressFn& onProgress,
+                                       const StemReadyFn& onStemReady,
+                                       const StemCancelFn& shouldCancel)
+    {
         onProgress("prepare", 0.0, "");
 
         for (const auto* stem : kStemNames)
