@@ -44,14 +44,15 @@ function findLinkedTimelineClips(savedClipItem: LibraryItem): Clip[] {
 
 export const savedClipActions = {
     addSavedClipFromTimelineClip(clip: Clip): string | null {
-      // Walk saved clips back to their source audio-file.
+      // Walk saved clips back to their underlying source file. An audio-file or
+      // a stem already IS a standalone source file (a stem's derivedFrom only
+      // points at the original track for inherited identity, not its audio), so
+      // it is used directly; only a saved-clip resolves back to its source.
       const direct = this.items.find((item) => item.id === clip.libraryItemId)
       const source =
-        direct?.kind === 'audio-file'
-          ? direct
-          : direct?.derivedFrom?.sourceItemId
-            ? this.items.find((i) => i.id === direct.derivedFrom?.sourceItemId)
-            : direct
+        direct?.kind === 'saved-clip' && direct.derivedFrom?.sourceItemId
+          ? (this.items.find((i) => i.id === direct.derivedFrom?.sourceItemId) ?? direct)
+          : direct
       const sourceItemId = source?.id
       const inMs = Math.max(0, clip.inMs)
       const durationMs = Math.max(0, clip.durationMs)

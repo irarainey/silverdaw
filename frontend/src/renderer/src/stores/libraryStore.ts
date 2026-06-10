@@ -362,11 +362,48 @@ export const useLibraryStore = defineStore('library', {
         }
       }
 
-      // Walk back-to-front so cascading child splices don't invalidate indexes.
+      // An audio-file source lends inherited identity to its stems; promote it
+      // before the source disappears so each stem keeps reading standalone.
       if (item.kind === 'audio-file') {
+        // Stems own their audio but inherit identity (tags, cover art, BPM, key,
+        // beats, sample classification) from the source via live lookups.
+        let coverHandedOff = false
+        for (const child of this.items) {
+          if (child.kind !== 'stem' || child.derivedFrom?.sourceItemId !== itemId) continue
+          if (!child.metadata && item.metadata) child.metadata = item.metadata
+          if ((child.bpm == null || child.bpm <= 0) && typeof item.bpm === 'number') {
+            child.bpm = item.bpm
+          }
+          if (child.beats == null && item.beats) child.beats = item.beats
+          if (child.beatAnchorSec == null && typeof item.beatAnchorSec === 'number') {
+            child.beatAnchorSec = item.beatAnchorSec
+          }
+          if (child.variableTempo == null && item.variableTempo != null) {
+            child.variableTempo = item.variableTempo
+          }
+          if (child.sampleMode == null && item.sampleMode) child.sampleMode = item.sampleMode
+          if (child.lowConfidence == null && item.lowConfidence != null) {
+            child.lowConfidence = item.lowConfidence
+          }
+          if (!child.key && item.key) child.key = item.key
+          if (!child.coverArtUrl && item.coverArtUrl) {
+            child.coverArtUrl = item.coverArtUrl
+            coverHandedOff = true
+          }
+        }
+        // The cover Blob is now shared by the surviving stems; drop the source's
+        // claim so the revoke below can't free an object URL still in use.
+        if (coverHandedOff) item.coverArtUrl = undefined
+      }
+
+      // Saved clips replay their source's file (an audio-file OR a stem), so
+      // they cannot outlive it. Walk back-to-front so splices stay valid.
+      if (item.kind === 'audio-file' || item.kind === 'stem') {
         for (let i = this.items.length - 1; i >= 0; i--) {
           const child = this.items[i]
-          if (!child || child.derivedFrom?.sourceItemId !== itemId) continue
+          if (!child || child.kind !== 'saved-clip' || child.derivedFrom?.sourceItemId !== itemId) {
+            continue
+          }
           revokeItemCoverArt(child)
           this.items.splice(i, 1)
           delete this.channelPeaksByItemId[child.id]
@@ -377,8 +414,13 @@ export const useLibraryStore = defineStore('library', {
       // Re-locate the source row after cascade splices.
       const finalIdx = this.items.findIndex((i) => i.id === itemId)
       if (finalIdx < 0) return true
-      revokeItemCoverArt(this.items[finalIdx])
+      const removed = this.items[finalIdx]
       this.items.splice(finalIdx, 1)
+      // Revoke cover art only when no surviving item (e.g. a stem we just handed
+      // ownership to) still references the same Blob URL.
+      if (removed?.coverArtUrl && !this.items.some((i) => i.coverArtUrl === removed.coverArtUrl)) {
+        revokeItemCoverArt(removed)
+      }
       delete this.channelPeaksByItemId[itemId]
       sendBridge('LIBRARY_REMOVE', { itemId })
       log.info('library', `removeItem id=${itemId}`)
@@ -393,10 +435,13 @@ export const useLibraryStore = defineStore('library', {
       for (const id in project.clips) {
         if (project.clips[id]?.libraryItemId === itemId) return true
       }
-      // Only active saved-clip descendants block source removal.
-      if (item.kind === 'audio-file') {
+      // Only active saved-clip descendants block removal. Stems are standalone
+      // WAV files that merely inherit identity (name/tags/art) from the source,
+      // so a stem on the timeline does NOT keep the source in use. But a stem,
+      // like a source, can itself back saved clips that replay its file.
+      if (item.kind === 'audio-file' || item.kind === 'stem') {
         for (const child of this.items) {
-          if (child.derivedFrom?.sourceItemId !== itemId) continue
+          if (child.kind !== 'saved-clip' || child.derivedFrom?.sourceItemId !== itemId) continue
           for (const id in project.clips) {
             if (project.clips[id]?.libraryItemId === child.id) return true
           }

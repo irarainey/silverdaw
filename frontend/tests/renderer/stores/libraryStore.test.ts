@@ -204,6 +204,72 @@ describe('libraryStore', () => {
     expect(library.getItem(stemId!)).not.toBeNull()
   })
 
+  it('saves a cropped stem clip against the stem itself, not the original source', () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\song.wav',
+      fileName: 'song.wav',
+      durationMs: 10_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const stemId = library.addItem({
+      filePath: 'C:\\stems\\job1\\vocals.wav',
+      playbackFilePath: 'C:\\stems\\job1\\vocals.wav',
+      fileName: 'vocals.wav',
+      kind: 'stem',
+      name: 'Vocals — song',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId!, sourceClipId: 'c1', inMs: 0, durationMs: 0 }
+    })
+
+    const savedId = library.addSavedClipFromTimelineClip({
+      id: 'clip-stem',
+      trackId: 't1',
+      libraryItemId: stemId,
+      filePath: 'C:\\stems\\job1\\vocals.wav',
+      playbackFilePath: 'C:\\stems\\job1\\vocals.wav',
+      fileName: 'vocals.wav',
+      startMs: 0,
+      inMs: 2_000,
+      durationMs: 1_500,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      unresolved: false
+    })
+
+    const saved = library.getItem(savedId!)
+    expect(saved?.kind).toBe('saved-clip')
+    // The cropped clip must point back to the stem (its real file), not the
+    // original track — otherwise the library shows "source not found".
+    expect(saved?.derivedFrom?.sourceItemId).toBe(stemId)
+    expect(saved?.filePath).toBe('C:\\stems\\job1\\vocals.wav')
+    expect(saved?.fileName).toBe('vocals.wav')
+    expect(saved?.playbackFilePath).toBe('C:\\stems\\job1\\vocals.wav')
+    // A saved clip derived from the stem keeps the stem in use when on-timeline.
+    const trackId = useProjectStore().addTrack()
+    useProjectStore().addClipToTrack(
+      trackId,
+      {
+        libraryItemId: savedId ?? '',
+        filePath: 'C:\\stems\\job1\\vocals.wav',
+        fileName: 'vocals.wav',
+        durationMs: 1_500,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+    expect(library.isItemInUse(stemId!)).toBe(true)
+  })
+
   it('saves reusable clips as derived library children of their source', () => {
     const library = useLibraryStore()
     const sourceId = library.addItem({
@@ -480,6 +546,73 @@ describe('libraryStore', () => {
     expect(library.removeItem(sourceId)).toBe(false)
     expect(library.items.map((item) => item.id)).toEqual([sourceId, savedId])
     expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_REMOVE', expect.anything())
+  })
+
+  it('removes a source whose only timeline use is a derived stem, baking identity onto the stem', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\anthem.wav',
+      fileName: 'anthem.wav',
+      durationMs: 10_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      key: 'A minor',
+      fromSnapshot: true
+    })
+    library.setItemMetadata(sourceId, {
+      title: 'Anthem',
+      artist: 'The Band',
+      durationMs: 10_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      coverArt: { data: new ArrayBuffer(4), mimeType: 'image/png' }
+    })
+    library.setItemAnalysis(sourceId, 124, 0.1, [0, 0.48, 0.96], false)
+
+    const stemId = library.addItem({
+      filePath: 'C:\\stems\\job1\\drums.wav',
+      fileName: 'drums.wav',
+      kind: 'stem',
+      name: 'Drums — Anthem',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId, sourceClipId: 'c1', inMs: 0, durationMs: 0 }
+    })
+    const trackId = project.addTrack()
+    project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: stemId ?? '',
+        filePath: 'C:\\stems\\job1\\drums.wav',
+        fileName: 'drums.wav',
+        durationMs: 10_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+
+    // The stem is on the timeline, but the source itself is not — a derived
+    // stem owns its own file, so it must not pin the source as in-use.
+    expect(library.isItemInUse(sourceId)).toBe(false)
+    sendMock.mockClear()
+    expect(library.removeItem(sourceId)).toBe(true)
+    expect(library.getItem(sourceId)).toBeNull()
+
+    const stem = library.getItem(stemId!)
+    expect(stem).not.toBeNull()
+    expect(stem?.metadata).toMatchObject({ title: 'Anthem', artist: 'The Band' })
+    expect(stem?.bpm).toBe(124)
+    expect(stem?.beats).toEqual([0, 0.48, 0.96])
+    expect(stem?.key).toBe('A minor')
+    expect(stem?.coverArtUrl).toBe('blob:cover')
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: sourceId })
+    expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: stemId })
   })
 
   it('normalises metadata and display names', () => {
