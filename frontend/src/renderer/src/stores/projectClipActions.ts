@@ -197,6 +197,11 @@ export const clipActions = {
       const newClipDurationMs = clip.durationMs - splitOffsetSourceMs
       const newClipInMs = clip.inMs + splitOffsetSourceMs
       const newClipStartMs = atMs
+      // Derive the right half's own timeline footprint from its source length.
+      // Must be captured before trimClip(), which mutates clip.effectiveDurationMs
+      // in place to the LEFT half's value — copying it afterwards would size the
+      // new clip's rectangle to the left half and mis-stretch its waveform.
+      const newClipEffectiveDurationMs = ratio > 0 ? newClipDurationMs / ratio : newClipDurationMs
 
       this.trimClip(clipId, clip.startMs, clip.inMs, splitOffsetSourceMs)
 
@@ -217,6 +222,10 @@ export const clipActions = {
         sampleRate: clip.sampleRate,
         channelCount: clip.channelCount,
         peaks: clip.peaks,
+        // Carry the source peak-bucket rate; the renderer maps the waveform
+        // window via peaksPerSecond, so without it the new half falls back to
+        // the library default rate and mis-renders (notably stem clips).
+        peaksPerSecond: clip.peaksPerSecond,
         unresolved: clip.unresolved,
         colorIndex: clip.colorIndex,
         name: clip.name,
@@ -226,7 +235,7 @@ export const clipActions = {
         semitones: clip.semitones,
         cents: clip.cents,
         pendingAutoWarp: clip.pendingAutoWarp,
-        effectiveDurationMs: clip.effectiveDurationMs,
+        effectiveDurationMs: newClipEffectiveDurationMs,
         effectiveTempoRatio: clip.effectiveTempoRatio,
         effectiveWarpActive: clip.effectiveWarpActive
       }
@@ -312,6 +321,9 @@ export const clipActions = {
         sampleRate: clip.sampleRate,
         channelCount: clip.channelCount,
         peaks: clip.peaks,
+        // Carry the source peak-bucket rate so the duplicate renders its
+        // waveform window correctly (stem clips use a non-default rate).
+        peaksPerSecond: clip.peaksPerSecond,
         unresolved: clip.unresolved,
         colorIndex: clip.colorIndex,
         name: clip.name,

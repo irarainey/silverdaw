@@ -288,6 +288,55 @@ describe('projectStore', () => {
     expect(sendMock).not.toHaveBeenCalledWith('CLIP_ADD', expect.anything())
   })
 
+  it('gives a split right-half its own effective duration, not the trimmed left half\'s', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const trackId = project.addTrack()
+    library.addItem({
+      id: 'src',
+      kind: 'audio-file',
+      filePath: 'C:\\audio\\song.wav',
+      fileName: 'song.wav',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      fromSnapshot: true
+    })
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'src',
+        filePath: 'C:\\audio\\song.wav',
+        fileName: 'song.wav',
+        durationMs: 10_000,
+        inMs: 0,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array(),
+        peaksPerSecond: 200
+      },
+      0
+    )
+    sendMock.mockClear()
+
+    const rightId = project.splitClipAt(clipId ?? '', 2_000)
+
+    expect(rightId).not.toBeNull()
+    const left = project.clips[clipId ?? '']
+    const right = project.clips[rightId ?? '']
+    // Left keeps 0..2000ms; right covers the remaining 8000ms of source.
+    expect(left?.durationMs).toBeCloseTo(2_000)
+    expect(right?.durationMs).toBeCloseTo(8_000)
+    // trimClip() mutates the source clip's effectiveDurationMs in place to the
+    // left-half value; the right half must size to its own footprint (non-warped
+    // ratio 1 => equals durationMs), never inherit the left half's.
+    expect(right?.effectiveDurationMs).toBeCloseTo(8_000)
+    expect(right?.effectiveDurationMs).not.toBe(left?.effectiveDurationMs)
+    // The right half also carries the source peak-bucket rate for correct rendering.
+    expect(right?.peaksPerSecond).toBe(200)
+  })
+
   it('applies reset snapshots across project, library, transport, and bridge requests', () => {
     const project = useProjectStore()
     const library = useLibraryStore()
