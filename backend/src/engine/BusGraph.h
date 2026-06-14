@@ -215,7 +215,7 @@ public:
         if (toneIt != pendingTone.end())
         {
             const auto& t = toneIt->second;
-            rt->chain.setTone(t.bassDb, t.midDb, t.trebleDb, t.lowCut, t.highCut, /*snap*/ true);
+            rt->chain.setTone(t.bassDb, t.midDb, t.trebleDb, t.filter, /*snap*/ true);
         }
 
         auto levelerIt = pendingLeveler.find(trackId);
@@ -277,17 +277,17 @@ public:
     }
 
     void setTrackTone(const juce::String& trackId,
-                      float bassDb, float midDb, float trebleDb, bool lowCut,
-                      bool highCut, bool snap)
+                      float bassDb, float midDb, float trebleDb, float filter,
+                      bool snap)
     {
         if (trackId.isEmpty()) return;
         // Lock-free: `pendingTone` and the runtime map are message-thread-only (serialised vs
         // attach/detach/clear), and `ToneEq` publishes its params atomically, so the audio
         // thread's read-only map iteration is never raced.
-        pendingTone[trackId] = {bassDb, midDb, trebleDb, lowCut, highCut};
+        pendingTone[trackId] = {bassDb, midDb, trebleDb, filter};
         auto it = runtimes.find(trackId);
         if (it != runtimes.end())
-            it->second->chain.setTone(bassDb, midDb, trebleDb, lowCut, highCut, snap);
+            it->second->chain.setTone(bassDb, midDb, trebleDb, filter, snap);
     }
 
     void setTrackLeveler(const juce::String& trackId, float amount, bool snap)
@@ -425,8 +425,7 @@ private:
         float bassDb = 0.0F;
         float midDb = 0.0F;
         float trebleDb = 0.0F;
-        bool lowCut = false;
-        bool highCut = false;
+        float filter = 0.0F;
     };
     std::unordered_map<juce::String, ToneParams> pendingTone;
 

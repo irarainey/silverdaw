@@ -341,8 +341,7 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
             toneMidDb: typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined,
             toneTrebleDb:
               typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined,
-            toneLowCut: t.toneLowCut === true ? true : undefined,
-            toneHighCut: t.toneHighCut === true ? true : undefined,
+            toneFilter: typeof t.toneFilter === 'number' && t.toneFilter !== 0 ? t.toneFilter : undefined,
             reverbSend:
               typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined,
             delaySend:
@@ -372,8 +371,8 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
             typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined
           track.toneTrebleDb =
             typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined
-          track.toneLowCut = t.toneLowCut === true ? true : undefined
-          track.toneHighCut = t.toneHighCut === true ? true : undefined
+          track.toneFilter =
+            typeof t.toneFilter === 'number' && t.toneFilter !== 0 ? t.toneFilter : undefined
           track.reverbSend =
             typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined
           track.delaySend =

@@ -77,13 +77,10 @@ juce::var ProjectState::tracksAsJson() const
             trackObj->setProperty("toneTrebleDb",
                                   static_cast<double>(track.getProperty(kToneTrebleDb, 0.0)));
         }
-        if (static_cast<bool>(track.getProperty(kToneLowCut, false)))
+        if (static_cast<double>(track.getProperty(kToneFilter, 0.0)) != 0.0)
         {
-            trackObj->setProperty("toneLowCut", true);
-        }
-        if (static_cast<bool>(track.getProperty(kToneHighCut, false)))
-        {
-            trackObj->setProperty("toneHighCut", true);
+            trackObj->setProperty("toneFilter",
+                                  static_cast<double>(track.getProperty(kToneFilter, 0.0)));
         }
         // Emit Leveler only when non-default so flat tracks stay byte-clean.
         if (track.hasProperty(kLevelerAmount))

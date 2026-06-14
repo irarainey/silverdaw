@@ -105,8 +105,7 @@ export const trackClipBridgeHandlers: BridgeInboundHandlers<
         bassDb: payload.bassDb,
         midDb: payload.midDb,
         trebleDb: payload.trebleDb,
-        lowCut: payload.lowCut,
-        highCut: payload.highCut
+        filter: payload.filter
       },
       { localOnly: true }
     )

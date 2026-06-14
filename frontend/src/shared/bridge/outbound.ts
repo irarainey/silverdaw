@@ -260,15 +260,16 @@ export interface TrackSetPanPayload extends GestureHints {
   pan: number
 }
 
-/** Per-track Tone — 3-band shelving EQ (dB [-15,+15]) + low/high-cut. Partial-update;
- *  backend fills missing fields from persisted state. */
+/** Per-track Tone — 3-band shelving EQ (dB [-15,+15]) plus a bipolar DJ-style
+ *  Filter sweep (`filter` in [-1,+1]: <0 low-pass / High Cut, >0 high-pass /
+ *  Low Cut, 0 = off). Partial-update; backend fills missing fields from
+ *  persisted state. */
 export interface TrackSetTonePayload extends GestureHints {
   trackId: string
   bassDb?: number
   midDb?: number
   trebleDb?: number
-  lowCut?: boolean
-  highCut?: boolean
+  filter?: number
 }
 
 /** Per-track Leveler — single "amount" knob in [0,1]. */

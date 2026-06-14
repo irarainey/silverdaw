@@ -201,32 +201,27 @@ void handleTrackSetTone(const juce::var& payload, silverdaw::AudioEngine& engine
         readOptionalNumber(payload, "midDb").value_or(projectState.getTrackToneMidDb(trackId)));
     const float trebleDb = static_cast<float>(
         readOptionalNumber(payload, "trebleDb").value_or(projectState.getTrackToneTrebleDb(trackId)));
-    const bool lowCut =
-        readOptionalBool(payload, "lowCut").value_or(projectState.getTrackToneLowCut(trackId));
-    const bool highCut =
-        readOptionalBool(payload, "highCut").value_or(projectState.getTrackToneHighCut(trackId));
+    const float filter = static_cast<float>(
+        readOptionalNumber(payload, "filter").value_or(projectState.getTrackToneFilter(trackId)));
 
-    const bool changed = projectState.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut, highCut);
+    const bool changed = projectState.setTrackTone(trackId, bassDb, midDb, trebleDb, filter);
     if (!changed) return;
 
     // Re-read canonical values so renderer and engine match persisted truth.
     const float canonBass = projectState.getTrackToneBassDb(trackId);
     const float canonMid = projectState.getTrackToneMidDb(trackId);
     const float canonTreble = projectState.getTrackToneTrebleDb(trackId);
-    const bool canonLowCut = projectState.getTrackToneLowCut(trackId);
-    const bool canonHighCut = projectState.getTrackToneHighCut(trackId);
+    const float canonFilter = projectState.getTrackToneFilter(trackId);
 
     // Live UI gesture → glide (snap=false) to avoid zipper noise.
-    engine.setTrackTone(trackId, canonBass, canonMid, canonTreble, canonLowCut,
-                        canonHighCut, /*snap*/ false);
+    engine.setTrackTone(trackId, canonBass, canonMid, canonTreble, canonFilter, /*snap*/ false);
 
     broadcastApplied(bridge, "TRACK_TONE_APPLIED",
                      {{"trackId", trackId},
                       {"bassDb", canonBass},
                       {"midDb", canonMid},
                       {"trebleDb", canonTreble},
-                      {"lowCut", canonLowCut},
-                      {"highCut", canonHighCut}});
+                      {"filter", canonFilter}});
 }
 
 // Leveler exposes one curated amount knob; raw compressor controls stay hidden.

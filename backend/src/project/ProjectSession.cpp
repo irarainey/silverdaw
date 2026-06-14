@@ -126,10 +126,9 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             const float tBass = projectState.getTrackToneBassDb(toneTrackId);
             const float tMid = projectState.getTrackToneMidDb(toneTrackId);
             const float tTreble = projectState.getTrackToneTrebleDb(toneTrackId);
-            const bool tLowCut = projectState.getTrackToneLowCut(toneTrackId);
-            const bool tHighCut = projectState.getTrackToneHighCut(toneTrackId);
-            if (tBass != 0.0F || tMid != 0.0F || tTreble != 0.0F || tLowCut || tHighCut)
-                engine.setTrackTone(toneTrackId, tBass, tMid, tTreble, tLowCut, tHighCut, /*snap*/ true);
+            const float tFilter = projectState.getTrackToneFilter(toneTrackId);
+            if (tBass != 0.0F || tMid != 0.0F || tTreble != 0.0F || tFilter != 0.0F)
+                engine.setTrackTone(toneTrackId, tBass, tMid, tTreble, tFilter, /*snap*/ true);
 
             // Restore non-zero Leveler only to avoid identity updates on flat projects.
             const float tLeveler = projectState.getTrackLevelerAmount(toneTrackId);

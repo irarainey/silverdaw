@@ -369,25 +369,33 @@ static bool applyClampedDb(juce::ValueTree& tree,
     return true;
 }
 
-static bool applyBoolDefaultFalse(juce::ValueTree& tree,
-                                  const juce::Identifier& id,
-                                  bool value,
-                                  juce::UndoManager* undo)
+// Bipolar Filter sweep in [-1, +1]; the centre (0) is the off default and is
+// suppressed so flat tracks stay byte-clean, mirroring the dB-band suppression.
+static constexpr float kToneFilterEpsilon = 1.0e-4f;
+
+static bool applyClampedFilter(juce::ValueTree& tree,
+                               const juce::Identifier& id,
+                               float value,
+                               juce::UndoManager* undo)
 {
+    const auto clamped = juce::jlimit(-1.0f, 1.0f, std::isfinite(value) ? value : 0.0f);
     const bool hadProperty = tree.hasProperty(id);
-    if (!value)
+    const auto previous = hadProperty
+        ? static_cast<float>(static_cast<double>(tree.getProperty(id)))
+        : 0.0f;
+    if (std::abs(clamped) < kToneFilterEpsilon)
     {
         if (!hadProperty) return false;
         tree.removeProperty(id, undo);
         return true;
     }
-    if (hadProperty && static_cast<bool>(tree.getProperty(id))) return false;
-    tree.setProperty(id, true, undo);
+    if (hadProperty && std::abs(previous - clamped) < kToneFilterEpsilon) return false;
+    tree.setProperty(id, clamped, undo);
     return true;
 }
 
 bool ProjectState::setTrackTone(const juce::String& trackId, float bassDb, float midDb,
-                                float trebleDb, bool lowCut, bool highCut)
+                                float trebleDb, float filter)
 {
     auto track = findTrack(trackId);
     if (!track.isValid()) return false;
@@ -395,8 +403,7 @@ bool ProjectState::setTrackTone(const juce::String& trackId, float bassDb, float
     changed |= applyClampedDb(track, kToneBassDb, bassDb, &undoManager);
     changed |= applyClampedDb(track, kToneMidDb, midDb, &undoManager);
     changed |= applyClampedDb(track, kToneTrebleDb, trebleDb, &undoManager);
-    changed |= applyBoolDefaultFalse(track, kToneLowCut, lowCut, &undoManager);
-    changed |= applyBoolDefaultFalse(track, kToneHighCut, highCut, &undoManager);
+    changed |= applyClampedFilter(track, kToneFilter, filter, &undoManager);
     return changed;
 }
 
@@ -421,18 +428,11 @@ float ProjectState::getTrackToneTrebleDb(const juce::String& trackId) const
     return static_cast<float>(static_cast<double>(track.getProperty(kToneTrebleDb, 0.0)));
 }
 
-bool ProjectState::getTrackToneLowCut(const juce::String& trackId) const
+float ProjectState::getTrackToneFilter(const juce::String& trackId) const
 {
     const auto track = findTrack(trackId);
-    if (!track.isValid()) return false;
-    return static_cast<bool>(track.getProperty(kToneLowCut, false));
-}
-
-bool ProjectState::getTrackToneHighCut(const juce::String& trackId) const
-{
-    const auto track = findTrack(trackId);
-    if (!track.isValid()) return false;
-    return static_cast<bool>(track.getProperty(kToneHighCut, false));
+    if (!track.isValid()) return 0.0f;
+    return static_cast<float>(static_cast<double>(track.getProperty(kToneFilter, 0.0)));
 }
 
 bool ProjectState::setTrackLevelerAmount(const juce::String& trackId, float amount)

@@ -405,10 +405,10 @@ bool AudioEngine::consumeTrackPeaks(const juce::String& trackId, float& outL, fl
 }
 
 void AudioEngine::setTrackTone(const juce::String& trackId,
-                               float bassDb, float midDb, float trebleDb, bool lowCut,
-                               bool highCut, bool snap)
+                               float bassDb, float midDb, float trebleDb, float filter,
+                               bool snap)
 {
-    busGraph.setTrackTone(trackId, bassDb, midDb, trebleDb, lowCut, highCut, snap);
+    busGraph.setTrackTone(trackId, bassDb, midDb, trebleDb, filter, snap);
 }
 
 void AudioEngine::setTrackLeveler(const juce::String& trackId, float amount, bool snap)

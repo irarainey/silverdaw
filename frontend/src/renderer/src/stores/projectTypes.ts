@@ -87,12 +87,12 @@ export interface Track {
   lengthMs: number
   /** Row height (CSS px), user-resizable. Falls back to the default when absent. */
   heightPx?: number
-  /** Tone EQ: 3-band tilt (dB [-15,+15], 0 = flat) + low/high-cut. Suppressed-when-default. */
+  /** Tone EQ: 3-band tilt (dB [-15,+15], 0 = flat). Suppressed-when-default. */
   toneBassDb?: number
   toneMidDb?: number
   toneTrebleDb?: number
-  toneLowCut?: boolean
-  toneHighCut?: boolean
+  /** Bipolar DJ-style Filter sweep ([-1,+1], 0 = off; <0 High Cut, >0 Low Cut). */
+  toneFilter?: number
   /** Send amounts into the shared Reverb/Delay buses (linear [0,1], 0 = no send). */
   reverbSend?: number
   delaySend?: number

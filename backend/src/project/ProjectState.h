@@ -99,13 +99,13 @@ class ProjectState : public juce::ValueTree::Listener
     float getTrackPan(const juce::String& trackId) const;
 
     // Tone defaults are suppressed so flat tracks preserve legacy file shape.
+    // `filter` is the bipolar DJ-style sweep in `[-1, +1]` (0 = off/centre).
     bool setTrackTone(const juce::String& trackId, float bassDb, float midDb, float trebleDb,
-                      bool lowCut, bool highCut);
+                      float filter);
     float getTrackToneBassDb(const juce::String& trackId) const;
     float getTrackToneMidDb(const juce::String& trackId) const;
     float getTrackToneTrebleDb(const juce::String& trackId) const;
-    bool getTrackToneLowCut(const juce::String& trackId) const;
-    bool getTrackToneHighCut(const juce::String& trackId) const;
+    float getTrackToneFilter(const juce::String& trackId) const;
 
     // Zero amount is suppressed until Leveler DSP makes this more than persistence.
     bool setTrackLevelerAmount(const juce::String& trackId, float amount);
@@ -571,8 +571,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kToneBassDb;
     static const juce::Identifier kToneMidDb;
     static const juce::Identifier kToneTrebleDb;
-    static const juce::Identifier kToneLowCut;
-    static const juce::Identifier kToneHighCut;
+    static const juce::Identifier kToneFilter;
 
     // Leveler is currently persisted as the user-facing amount knob.
     static const juce::Identifier kLevelerAmount;

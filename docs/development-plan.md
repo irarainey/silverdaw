@@ -568,7 +568,8 @@ clips[clipId]
   → AudioTransportSource (read-ahead in live; direct read in mixdown)
   → TrackRuntime.preBuffer  (sum of all clips on this track)
   → TrackChain:
-      Tone (3-band EQ + Low Cut + High Cut)
+      Tone (3-band EQ)
+      Filter (bipolar LPF↔HPF sweep)
       Leveler (Compressor)
       gain
       mute / solo gate
@@ -605,8 +606,14 @@ which is what users expect.
 - `gain` (shipped) — linear, presented in dB via `lib/audio/db.ts`, range
   `-∞..+6 dB`.
 - **Tone** — 3-band fixed-frequency shelving / bell EQ (Bass low-shelf,
-  Mid peak, Treble high-shelf) plus one-button Low Cut and High Cut. Each band
-  is `-15..+15 dB` with a 0 dB detent. No sweepable Q, no band count toggle.
+  Mid peak, Treble high-shelf). Each band is `-15..+15 dB` with a 0 dB detent.
+  No sweepable Q, no band count toggle.
+- **Filter** — a single bipolar DJ-style sweep in `[-1, +1]` (0 = off /
+  centre detent). Left of centre engages a 4th-order (24 dB/oct) low-pass
+  (High Cut) gliding its corner down to ~250 Hz; right of centre engages a
+  4th-order high-pass (Low Cut) gliding its corner up to ~2 kHz. A single
+  continuous drag performs the classic LPF→HPF transition. Implemented by the
+  same `ToneEq` cut stages, driven from one control.
 - **Leveler** — single "Amount" knob (0..100 %) driving a curated path
   through a hand-rolled stereo-linked soft-knee compressor, with a
   deterministic static makeup-gain map (no live loudness analysis — see §7.10).
@@ -745,11 +752,15 @@ DSP class in `code`.
 
 - **Tone** — 3-band fixed-frequency EQ: Bass (low shelf @ ~250 Hz),
   Mid (peak @ ~1 kHz, fixed Q), Treble (high shelf @ ~4 kHz), each
-  `-15..+15 dB`. Plus a one-button **Low Cut** (4th-order high-pass @
-  ~120 Hz, 24 dB/oct) and a one-button **High Cut** (4th-order low-pass @
-  ~6 kHz, 24 dB/oct). Implementation: three biquad sections per channel
-  for the shelves/peak + two cascaded biquads each for the high-pass and
-  low-pass. Coefficient updates use smoothed parameter changes on the audio
+  `-15..+15 dB`.
+- **Filter** — one bipolar DJ-style sweep in `[-1, +1]` (0 = off). Left of
+  centre is a 4th-order **low-pass** (High Cut, 24 dB/oct) whose corner
+  glides down to ~250 Hz; right of centre is a 4th-order **high-pass**
+  (Low Cut, 24 dB/oct) whose corner glides up to ~2 kHz. Implementation:
+  three biquad sections per channel for the shelves/peak + two cascaded
+  biquads each for the high-pass and low-pass; the single Filter control maps
+  exponentially to whichever corner is active while the other parks at
+  identity. Coefficient updates use smoothed parameter changes on the audio
   thread to avoid zipper noise.
 - **Leveler** — gentle dynamics control with one user-facing **Amount**
   knob (0..100 %) that drives a curated path through a hand-rolled
@@ -1486,7 +1497,7 @@ playable at every point — no broken-build day):
   Extend
   `ProjectStateClipSchema` (`fadeInMs`, `fadeOutMs`, breakpoints)
   and `ProjectStateTrackSchema` (`toneBassDb`, `toneMidDb`,
-  `toneTrebleDb`, `lowCutEnabled`, `levelerAmount`,
+  `toneTrebleDb`, `toneFilter`, `levelerAmount`,
   `levelerAdvanced{…}`, `reverbSend`, `delaySend`, `pan`, `mute`,
   `solo`) plus `PROJECT_REVERB` / `PROJECT_DELAY` blocks **as
   optional fields with defaults**. Extend
@@ -1571,11 +1582,12 @@ playable at every point — no broken-build day):
   Because the inactive tab is `v-if`-unmounted rather than `v-show`-
   hidden, there is no mid-switch stale-drag-source hazard to guard
   against.
-- [x] **6. Per-track Tone** — 3-band fixed EQ (Bass / Mid /
-  Treble) + Low Cut + High Cut toggles. Three biquad sections for the
+- [x] **6. Per-track Tone + Filter** — Tone is a 3-band fixed EQ (Bass /
+  Mid / Treble); the bipolar **Filter** is a single DJ-style sweep (low-pass
+  left, off centre, high-pass right). Three biquad sections for the
   shelves/peak + two cascaded biquads each for the 4th-order high-pass and
   low-pass, with smoothed coefficient updates. Bridge: `TRACK_SET_TONE`
-  handler activated.
+  handler activated (carries `filter`).
 - [x] **7. Shared project Reverb + Delay** with per-track send
   amounts (sends taken pre-pan, post-mute/solo per §7.9.2).
   Backend: one `juce::Reverb` (Freeverb, `juce_audio_basics`) and one

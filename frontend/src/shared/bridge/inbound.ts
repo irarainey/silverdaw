@@ -105,8 +105,7 @@ export const TrackToneAppliedPayloadSchema = z.object({
   bassDb: z.number(),
   midDb: z.number(),
   trebleDb: z.number(),
-  lowCut: z.boolean(),
-  highCut: z.boolean(),
+  filter: z.number(),
   ok: z.boolean()
 })
 export type TrackToneAppliedPayload = z.infer<typeof TrackToneAppliedPayloadSchema>
@@ -246,8 +245,8 @@ export const ProjectStateTrackSchema = z.object({
   toneBassDb: z.number().optional(),
   toneMidDb: z.number().optional(),
   toneTrebleDb: z.number().optional(),
-  toneLowCut: z.boolean().optional(),
-  toneHighCut: z.boolean().optional(),
+  /** Bipolar DJ-style Filter sweep, `[-1, +1]` (0 = off; <0 High Cut, >0 Low Cut). */
+  toneFilter: z.number().optional(),
   levelerAmount: z.number().optional(),
   /** Equal-power pan, signed `[-1, 1]` (0 = centre). */
   pan: z.number().optional(),

@@ -148,8 +148,9 @@ Silverdaw currently supports the core arrangement workflow:
   Library). With no track selected the **Track FX** tab stays open and shows a
   centred "select a track" hint rather than silently bouncing to the Library, so
   the surface never feels broken. **Track FX** edits the selected track and hosts
-  a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) plus **Low Cut** and
-  **High Cut** filter toggles — a **Pan** control (equal-power, signed
+  a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) — a **Filter** rack
+  (a single bipolar DJ-style sweep, low-pass at the left through off at centre
+  to high-pass at the right), a **Pan** control (equal-power, signed
   `[-1, 1]`, unity at centre), a **Leveler** (a single **Amount** knob `0..1`
   driving a hand-rolled stereo-linked soft-knee compressor; Amount 0 is a
   bit-exact passthrough), and a **Reverb & Delay** rack setting how much the
@@ -303,7 +304,7 @@ The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
 wider mixer / effects / automation work (a deeper per-clip processor chain —
 saturation — applied both live and in mixdown, beyond the per-track Tone EQ +
-Low / High Cut, the per-track Leveler, the project-wide Reverb and Delay sends,
+Filter, the per-track Leveler, the project-wide Reverb and Delay sends,
 and the per-clip Volume Shape that already ship), loop slicing, grouping compound
 operations (split / duplicate) into a single undo step, and a CI matrix that
 enforces a coverage floor over the existing backend and frontend test suites.
@@ -455,7 +456,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         reverbSize?, reverbDecay?, reverbTone?, reverbMix?,
         delayNoteValue?, delayFeedback?, delayTone?, delayMix?]
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
-        toneBassDb?, toneMidDb?, toneTrebleDb?, toneLowCut?, toneHighCut?,
+        toneBassDb?, toneMidDb?, toneTrebleDb?, toneFilter?,
         sendReverb?, sendDelay?, pan?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          locked?, reversed?,
@@ -532,7 +533,9 @@ save when off, and round-trips through `PROJECT_STATE` and the `.silverdaw` file
 **Phase 5 effects properties.** Each `TRACK` carries optional sound-shaping
 fields, all suppressed from save when at their defaults so legacy projects stay
 bit-clean: `toneBassDb` / `toneMidDb` / `toneTrebleDb` are the per-track 3-band
-EQ gains in dB, `toneLowCut` / `toneHighCut` are filter toggles,
+EQ gains in dB, `toneFilter` is the bipolar Filter position, signed
+`[-1, 1]` (`0` = off / centre, negative = low-pass / High Cut, positive =
+high-pass / Low Cut),
 `sendReverb` / `sendDelay` are `[0, 1]` send amounts feeding the project-wide
 Reverb and Delay buses, `pan` is the equal-power pan position, signed
 `[-1, 1]` (`-1` = hard left, `0` = centre, `+1` = hard right), and
@@ -674,7 +677,7 @@ the way in, and the original file is never modified (non-destructive editing).
 
 Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp and
 the per-clip volume-shape multiplier, per-track summing, the per-track
-Tone EQ + Low Cut / High Cut filters and the per-track Leveler
+Tone EQ + bipolar Filter and the per-track Leveler
 ([`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
 [`TrackChain`](../backend/src/dsp/TrackChain.h)),
 the per-track Reverb / Delay sends into the project-wide shared-FX buses,

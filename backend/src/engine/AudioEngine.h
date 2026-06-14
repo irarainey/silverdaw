@@ -70,8 +70,8 @@ class AudioEngine
     bool consumeTrackPeaks(const juce::String& trackId, float& outL, float& outR);
 
     void setTrackTone(const juce::String& trackId,
-                      float bassDb, float midDb, float trebleDb, bool lowCut,
-                      bool highCut, bool snap);
+                      float bassDb, float midDb, float trebleDb, float filter,
+                      bool snap);
 
     void setTrackLeveler(const juce::String& trackId, float amount, bool snap);
 

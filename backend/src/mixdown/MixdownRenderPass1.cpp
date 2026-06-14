@@ -82,8 +82,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     for (const auto& trackSnap : snapshot.tracks)
     {
         busGraph.setTrackTone(trackSnap.id, trackSnap.toneBassDb, trackSnap.toneMidDb,
-                              trackSnap.toneTrebleDb, trackSnap.toneLowCut,
-                              trackSnap.toneHighCut, /*snap*/ true);
+                              trackSnap.toneTrebleDb, trackSnap.toneFilter, /*snap*/ true);
         busGraph.setTrackLeveler(trackSnap.id, trackSnap.levelerAmount, /*snap*/ true);
         busGraph.setTrackSends(trackSnap.id, trackSnap.reverbSend, trackSnap.delaySend);
         busGraph.setTrackPan(trackSnap.id, trackSnap.pan);

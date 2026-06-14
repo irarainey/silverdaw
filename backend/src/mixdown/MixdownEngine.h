@@ -54,8 +54,7 @@ struct MixdownSnapshot
         float toneBassDb{0.0F};
         float toneMidDb{0.0F};
         float toneTrebleDb{0.0F};
-        bool toneLowCut{false};
-        bool toneHighCut{false};
+        float toneFilter{0.0F};
         float levelerAmount{0.0F};
         float reverbSend{0.0F};
         float delaySend{0.0F};

@@ -31,11 +31,11 @@ public:
         leveler.reset();
     }
 
-    /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity. */
-    void setTone(float bassDb, float midDb, float trebleDb, bool lowCut,
-                 bool highCut, bool snap) noexcept
+    /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity.
+     *  `filter` is the bipolar DJ-style sweep in `[-1, +1]` (see `ToneEq::setParams`). */
+    void setTone(float bassDb, float midDb, float trebleDb, float filter, bool snap) noexcept
     {
-        tone.setParams(bassDb, midDb, trebleDb, lowCut, highCut, snap);
+        tone.setParams(bassDb, midDb, trebleDb, filter, snap);
     }
 
     /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity. */

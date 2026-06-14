@@ -185,12 +185,12 @@ void testProjectStateTrackToneJsonRoundTrip()
             require(!json.hasProperty("toneBassDb"), "default bass must be omitted");
             require(!json.hasProperty("toneMidDb"), "default mid must be omitted");
             require(!json.hasProperty("toneTrebleDb"), "default treble must be omitted");
-            require(!json.hasProperty("toneLowCut"), "default lowCut must be omitted");
+            require(!json.hasProperty("toneFilter"), "default filter must be omitted");
         }
 
         // Set a non-default tone and confirm every field round-trips
         // through the snapshot the renderer reads on PROJECT_STATE.
-        require(state.setTrackTone("t-tone", 3.5F, -2.0F, 6.0F, true, true),
+        require(state.setTrackTone("t-tone", 3.5F, -2.0F, 6.0F, -0.5F),
                 "non-default tone should report changed");
         {
             const auto json = findTrackJson(state.tracksAsJson(), "t-tone");
@@ -201,14 +201,12 @@ void testProjectStateTrackToneJsonRoundTrip()
                         "mid should round-trip through tracksAsJson");
             requireNear(static_cast<double>(json.getProperty("toneTrebleDb", 0.0)), 6.0, 0.0001,
                         "treble should round-trip through tracksAsJson");
-            require(static_cast<bool>(json.getProperty("toneLowCut", false)),
-                    "lowCut=true should round-trip through tracksAsJson");
-            require(static_cast<bool>(json.getProperty("toneHighCut", false)),
-                    "highCut=true should round-trip through tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("toneFilter", 0.0)), -0.5, 0.0001,
+                        "filter should round-trip through tracksAsJson");
         }
 
         // Reset to defaults: the snapshot must drop the fields again.
-        require(state.setTrackTone("t-tone", 0.0F, 0.0F, 0.0F, false, false),
+        require(state.setTrackTone("t-tone", 0.0F, 0.0F, 0.0F, 0.0F),
                 "reset to default should report changed");
         {
             const auto json = findTrackJson(state.tracksAsJson(), "t-tone");
@@ -216,8 +214,7 @@ void testProjectStateTrackToneJsonRoundTrip()
             require(!json.hasProperty("toneBassDb"), "reset bass must be omitted");
             require(!json.hasProperty("toneMidDb"), "reset mid must be omitted");
             require(!json.hasProperty("toneTrebleDb"), "reset treble must be omitted");
-            require(!json.hasProperty("toneLowCut"), "reset lowCut must be omitted");
-            require(!json.hasProperty("toneHighCut"), "reset highCut must be omitted");
+            require(!json.hasProperty("toneFilter"), "reset filter must be omitted");
         }
 }
 

@@ -52,8 +52,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   clip down to a fresh sample when you want to commit its current sound.
 - **Track, project, and master controls.** Per-track volume faders, mute, solo,
   and a collapsible bottom panel with **Track FX**, **Project FX**, and
-  **Library** tabs. Track FX gives each track a Tone EQ (Bass / Mid / Treble)
-  with Low Cut / High Cut filters, an equal-power Pan control, a single-knob
+  **Library** tabs. Track FX gives each track a Tone EQ (Bass / Mid / Treble),
+  a bipolar **Filter** (a single DJ-style sweep from low-pass through off to
+  high-pass), an equal-power Pan control, a single-knob
   Leveler (a gentle compressor), plus Reverb and Delay sends; Project FX hosts
   the song-wide Reverb and Delay those sends feed. Plus drag-to-resize and
   reorder tracks, and a master output with live metering.
@@ -96,7 +97,7 @@ are not part of the current feature set. See the
 [Development Plan](docs/development-plan.md) for detail and status.
 
 - **More built-in effects and transitions.** Building on the per-track Tone EQ
-  and Low Cut / High Cut filters, the equal-power pan, the per-track Leveler, the
+  and bipolar Filter, the equal-power pan, the per-track Leveler, the
   project-wide Reverb and Delay sends, and the per-clip volume shaping that
   already ship, a wider set of mixing effects, clip-to-clip transitions, and
   stereo width controls for polishing a mix.

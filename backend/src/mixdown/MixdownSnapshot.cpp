@@ -62,8 +62,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         track.toneBassDb = project.getTrackToneBassDb(track.id);
         track.toneMidDb = project.getTrackToneMidDb(track.id);
         track.toneTrebleDb = project.getTrackToneTrebleDb(track.id);
-        track.toneLowCut = project.getTrackToneLowCut(track.id);
-        track.toneHighCut = project.getTrackToneHighCut(track.id);
+        track.toneFilter = project.getTrackToneFilter(track.id);
         track.levelerAmount = project.getTrackLevelerAmount(track.id);
         track.reverbSend = project.getTrackReverbSend(track.id);
         track.delaySend = project.getTrackDelaySend(track.id);

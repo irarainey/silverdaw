@@ -32,15 +32,20 @@ public:
     /** Clears filter histories on stop/seek without changing targets. */
     void reset() noexcept { clearState(); }
 
-    /** Lock-free message-thread setter; publishes targets and (on snap) a deferred snap flag. */
-    void setParams(float bassDb, float midDb, float trebleDb, bool lowCutOn,
-                   bool highCutOn, bool snap) noexcept
+    /** Lock-free message-thread setter; publishes targets and (on snap) a deferred snap flag.
+     *  `filter` is the bipolar DJ-style sweep in `[-1, +1]`: negative engages the low-pass
+     *  (High Cut), positive engages the high-pass (Low Cut), centre (0) is transparent. */
+    void setParams(float bassDb, float midDb, float trebleDb, float filter, bool snap) noexcept
     {
         targetBassDb.store(sanitizeDb(bassDb), std::memory_order_relaxed);
         targetMidDb.store(sanitizeDb(midDb), std::memory_order_relaxed);
         targetTrebleDb.store(sanitizeDb(trebleDb), std::memory_order_relaxed);
-        targetLowCutHz.store(lowCutOn ? kLowCutOnHz : kLowCutOffHz, std::memory_order_relaxed);
-        targetHighCutHz.store(highCutOn ? kHighCutOnHz : kHighCutOffHz, std::memory_order_relaxed);
+
+        float lowCutHz = kLowCutOffHz;
+        float highCutHz = kHighCutOffHz;
+        filterToCorners(filter, lowCutHz, highCutHz);
+        targetLowCutHz.store(lowCutHz, std::memory_order_relaxed);
+        targetHighCutHz.store(highCutHz, std::memory_order_relaxed);
 
         // Release pairs with the acquire in `process`, so a consumed snap also sees the targets.
         if (snap) snapRequested.store(true, std::memory_order_release);
@@ -99,14 +104,23 @@ private:
     static constexpr double kButterQ2 = 1.30656296;
 
     // Glide the corner instead of dry/wet blending to avoid clicks and combing; off resolves to identity.
-    static constexpr float kLowCutOnHz = 120.0F;
     static constexpr float kLowCutOffHz = 0.0F;
     static constexpr float kLowCutIdentityHz = 12.0F;
 
     // High-cut mirrors low-cut; the high off-sentinel resolves to identity.
-    static constexpr float kHighCutOnHz = 6000.0F;
     static constexpr float kHighCutOffHz = 24000.0F;
     static constexpr float kHighCutIdentityHz = 20000.0F;
+
+    // Bipolar DJ-style Filter sweep endpoints. A single control engages one
+    // corner at a time and parks the other at its off sentinel:
+    //   filter > 0 → high-pass (Low Cut)  corner glides kHpfMinHz → kHpfMaxHz
+    //   filter < 0 → low-pass  (High Cut) corner glides kLpfMaxHz → kLpfMinHz
+    // The exponential map keeps perceptually even steps across the throw.
+    static constexpr float kHpfMinHz = 20.0F;
+    static constexpr float kHpfMaxHz = 2000.0F;
+    static constexpr float kLpfMinHz = 250.0F;
+    static constexpr float kLpfMaxHz = 20000.0F;
+    static constexpr float kFilterEpsilon = 1.0e-3F;
 
     static constexpr float kDbEpsilon = 1.0e-3F;
     static constexpr double kSmoothTauSeconds = 0.02; // 20 ms glide
@@ -163,6 +177,29 @@ private:
     {
         if (! std::isfinite(db)) return 0.0F;
         return juce::jlimit(-15.0F, 15.0F, db);
+    }
+
+    // Maps the bipolar Filter control to the corner-frequency pair the biquads
+    // consume. Only one side is ever engaged; the other parks at its off
+    // sentinel so the unused stage resolves to identity in `recomputeCoeffs`.
+    static void filterToCorners(float filter, float& lowCutHz, float& highCutHz) noexcept
+    {
+        const float f = std::isfinite(filter) ? juce::jlimit(-1.0F, 1.0F, filter) : 0.0F;
+        if (f > kFilterEpsilon)
+        {
+            lowCutHz = kHpfMinHz * std::pow(kHpfMaxHz / kHpfMinHz, f);
+            highCutHz = kHighCutOffHz;
+        }
+        else if (f < -kFilterEpsilon)
+        {
+            highCutHz = kLpfMaxHz * std::pow(kLpfMinHz / kLpfMaxHz, -f);
+            lowCutHz = kLowCutOffHz;
+        }
+        else
+        {
+            lowCutHz = kLowCutOffHz;
+            highCutHz = kHighCutOffHz;
+        }
     }
 
     float blockAlpha(int numSamples) const noexcept

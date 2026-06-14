@@ -32,10 +32,10 @@ export const trackActions = {
       return trackId
     },
 
-    /** Update Tone EQ; localOnly reconciles backend acks without echoing gestures. */
+    /** Update Tone EQ / Filter; localOnly reconciles backend acks without echoing gestures. */
     setTrackTone(
       trackId: string,
-      patch: { bassDb?: number; midDb?: number; trebleDb?: number; lowCut?: boolean; highCut?: boolean },
+      patch: { bassDb?: number; midDb?: number; trebleDb?: number; filter?: number },
       opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
     ): void {
       const track = this.tracks.find((t) => t.id === trackId)
@@ -54,11 +54,9 @@ export const trackActions = {
         const v = clampDb(patch.trebleDb)
         track.toneTrebleDb = v !== 0 ? v : undefined
       }
-      if (patch.lowCut !== undefined) {
-        track.toneLowCut = patch.lowCut ? true : undefined
-      }
-      if (patch.highCut !== undefined) {
-        track.toneHighCut = patch.highCut ? true : undefined
+      if (patch.filter !== undefined) {
+        const v = Math.max(-1, Math.min(1, Number.isFinite(patch.filter) ? patch.filter : 0))
+        track.toneFilter = v !== 0 ? v : undefined
       }
       if (!opts?.localOnly) {
         sendBridge('TRACK_SET_TONE', {
@@ -66,8 +64,7 @@ export const trackActions = {
           bassDb: patch.bassDb,
           midDb: patch.midDb,
           trebleDb: patch.trebleDb,
-          lowCut: patch.lowCut,
-          highCut: patch.highCut,
+          filter: patch.filter,
           gestureId: opts?.gestureId,
           gestureEnd: opts?.gestureEnd
         })

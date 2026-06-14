@@ -53,13 +53,13 @@ double toneRms(const juce::AudioBuffer<float>& buf, int startSample, int numSamp
     return count > 0 ? std::sqrt(sum / count) : 0.0;
 }
 
-double toneGainRatio(float bassDb, float midDb, float trebleDb, bool lowCut, bool highCut,
+double toneGainRatio(float bassDb, float midDb, float trebleDb, float filter,
                      double freq)
 {
     constexpr double sr = 44100.0;
     silverdaw::ToneEq eq;
     eq.prepare(sr, 2);
-    eq.setParams(bassDb, midDb, trebleDb, lowCut, highCut, /*snap*/ true);
+    eq.setParams(bassDb, midDb, trebleDb, filter, /*snap*/ true);
 
     constexpr int n = 16384;
     juce::AudioBuffer<float> buf(2, n);
@@ -80,52 +80,57 @@ double toneGainRatio(float bassDb, float midDb, float trebleDb, bool lowCut, boo
 
 void testToneEqLowCutDirectionAndShelfRange()
 {
-    // Low Cut is a 4th-order (24 dB/oct) high-pass @ 120 Hz: 1 kHz passes
-    // ~unchanged while lows are strongly removed. The inverted (low-pass)
+    // The bipolar Filter sweeps one corner at a time. Positive (+1) is a
+    // 4th-order (24 dB/oct) high-pass (Low Cut) reaching ~2 kHz: highs above
+    // the corner pass while lows are strongly removed. The inverted (low-pass)
     // regression fails the direction guard; a too-gentle 2nd-order voicing
-    // fails the 60 Hz slope guard below.
-    const double passHigh = toneGainRatio(0.0F, 0.0F, 0.0F, true, false, 1000.0);
-    const double cutLow = toneGainRatio(0.0F, 0.0F, 0.0F, true, false, 40.0);
-    const double cut60 = toneGainRatio(0.0F, 0.0F, 0.0F, true, false, 60.0);
-    require(passHigh > 0.9, "Low Cut must pass 1 kHz roughly unchanged");
-    require(cutLow < 0.1, "Low Cut must strongly attenuate 40 Hz");
-    // A 2nd-order 120 Hz high-pass leaves 60 Hz near -6 dB (~0.25); the
-    // 4th-order slope pushes it well below, so this locks in 24 dB/oct.
-    require(cut60 < 0.15, "Low Cut must have a 24 dB/oct slope (60 Hz well below 2nd-order)");
+    // fails the octave-slope guard below.
+    const double passHigh = toneGainRatio(0.0F, 0.0F, 0.0F, 1.0F, 8000.0);
+    const double cutLow = toneGainRatio(0.0F, 0.0F, 0.0F, 1.0F, 200.0);
+    const double cutOctave = toneGainRatio(0.0F, 0.0F, 0.0F, 1.0F, 1000.0);
+    require(passHigh > 0.9, "Low Cut (filter +1) must pass 8 kHz roughly unchanged");
+    require(cutLow < 0.05, "Low Cut (filter +1) must strongly attenuate 200 Hz");
+    // One octave below the ~2 kHz corner sits well under a 2nd-order voicing,
+    // locking in the 24 dB/oct slope.
+    require(cutOctave < 0.15, "Low Cut must have a 24 dB/oct slope (1 kHz well below 2nd-order)");
     require(passHigh > cutLow + 0.3, "Low Cut must pass highs more than lows (not inverted)");
 
-    // High Cut is a 4th-order (24 dB/oct) low-pass @ 6 kHz: 1 kHz passes
-    // ~unchanged while highs are strongly removed (mirror of Low Cut).
-    const double passLow = toneGainRatio(0.0F, 0.0F, 0.0F, false, true, 1000.0);
-    const double cutHigh = toneGainRatio(0.0F, 0.0F, 0.0F, false, true, 12000.0);
-    const double cut9k = toneGainRatio(0.0F, 0.0F, 0.0F, false, true, 9000.0);
-    require(passLow > 0.9, "High Cut must pass 1 kHz roughly unchanged");
-    require(cutHigh < 0.1, "High Cut must strongly attenuate 12 kHz");
-    // A 2nd-order 6 kHz low-pass leaves 9 kHz near -8 dB (~0.41); the
-    // 4th-order slope pushes it well below, so this locks in 24 dB/oct.
-    require(cut9k < 0.3, "High Cut must have a 24 dB/oct slope (9 kHz well below 2nd-order)");
+    // Negative (-1) is a 4th-order (24 dB/oct) low-pass (High Cut) reaching
+    // ~250 Hz: lows pass while highs are strongly removed (mirror of Low Cut).
+    const double passLow = toneGainRatio(0.0F, 0.0F, 0.0F, -1.0F, 80.0);
+    const double cutHigh = toneGainRatio(0.0F, 0.0F, 0.0F, -1.0F, 2000.0);
+    const double cutOctaveHi = toneGainRatio(0.0F, 0.0F, 0.0F, -1.0F, 500.0);
+    require(passLow > 0.9, "High Cut (filter -1) must pass 80 Hz roughly unchanged");
+    require(cutHigh < 0.05, "High Cut (filter -1) must strongly attenuate 2 kHz");
+    // One octave above the ~250 Hz corner sits well below a 2nd-order voicing.
+    require(cutOctaveHi < 0.15, "High Cut must have a 24 dB/oct slope (500 Hz well below 2nd-order)");
     require(passLow > cutHigh + 0.3, "High Cut must pass lows more than highs (not inverted)");
+
+    // The sweep is monotonic: a half-throw Low Cut cuts a low tone less than
+    // the full throw (corner glides up with the control).
+    const double halfCutLow = toneGainRatio(0.0F, 0.0F, 0.0F, 0.5F, 200.0);
+    require(halfCutLow > cutLow, "A weaker filter must attenuate the band less than a stronger one");
 
     // Shelves / peak must deliver real range at the full ±15 dB. +15 dB ≈
     // 5.6× linear; assert clearly above unity. The clamp must also hold:
     // an over-range request resolves to the same gain as the +15 dB limit.
-    const double bassMax = toneGainRatio(15.0F, 0.0F, 0.0F, false, false, 40.0);
+    const double bassMax = toneGainRatio(15.0F, 0.0F, 0.0F, 0.0F, 40.0);
     require(bassMax > 3.0, "Bass +15 dB should strongly boost 40 Hz");
-    require(toneGainRatio(-15.0F, 0.0F, 0.0F, false, false, 40.0) < 0.4, "Bass -15 dB should strongly cut 40 Hz");
-    require(toneGainRatio(0.0F, 0.0F, 15.0F, false, false, 12000.0) > 3.0, "Treble +15 dB should strongly boost 12 kHz");
-    require(toneGainRatio(0.0F, 15.0F, 0.0F, false, false, 1000.0) > 3.0, "Mid +15 dB should strongly boost 1 kHz");
-    const double bassOverdriven = toneGainRatio(40.0F, 0.0F, 0.0F, false, false, 40.0);
+    require(toneGainRatio(-15.0F, 0.0F, 0.0F, 0.0F, 40.0) < 0.4, "Bass -15 dB should strongly cut 40 Hz");
+    require(toneGainRatio(0.0F, 0.0F, 15.0F, 0.0F, 12000.0) > 3.0, "Treble +15 dB should strongly boost 12 kHz");
+    require(toneGainRatio(0.0F, 15.0F, 0.0F, 0.0F, 1000.0) > 3.0, "Mid +15 dB should strongly boost 1 kHz");
+    const double bassOverdriven = toneGainRatio(40.0F, 0.0F, 0.0F, 0.0F, 40.0);
     require(std::abs(bassOverdriven - bassMax) < 0.05, "Tone gain must clamp at +15 dB");
 
     // Revoiced corners: Bass shelf (250 Hz) lifts low-mid body at 200 Hz;
     // Treble shelf (4 kHz) adds presence at 5 kHz — neither is parked out
     // at the spectral extremes where the controls felt inert.
-    require(toneGainRatio(12.0F, 0.0F, 0.0F, false, false, 200.0) > 1.5, "Bass should act on low-mid body (~200 Hz)");
-    require(toneGainRatio(0.0F, 0.0F, 12.0F, false, false, 5000.0) > 1.5, "Treble should act on presence (~5 kHz)");
+    require(toneGainRatio(12.0F, 0.0F, 0.0F, 0.0F, 200.0) > 1.5, "Bass should act on low-mid body (~200 Hz)");
+    require(toneGainRatio(0.0F, 0.0F, 12.0F, 0.0F, 5000.0) > 1.5, "Treble should act on presence (~5 kHz)");
 
-    // Flat with both cuts off must be transparent (export-parity guarantee).
-    const double flat = toneGainRatio(0.0F, 0.0F, 0.0F, false, false, 1000.0);
-    require(std::abs(flat - 1.0) < 0.02, "Flat tone with both cuts off should be transparent");
+    // Flat with the filter centred must be transparent (export-parity guarantee).
+    const double flat = toneGainRatio(0.0F, 0.0F, 0.0F, 0.0F, 1000.0);
+    require(std::abs(flat - 1.0) < 0.02, "Flat tone with the filter centred should be transparent");
 }
 
 void testLevelerPassthroughAndCompression()
@@ -439,7 +444,7 @@ void testBusGraphConcurrentParamUpdatesAreSafe()
             const float pan = (static_cast<float>(i % 200) / 100.0F) - 1.0F; // sweep -1..1
             bg.setTrackPan("t1", pan);
             bg.setTrackSends("t1", 0.3F, 0.2F);
-            bg.setTrackTone("t1", 2.0F, -1.0F, 1.5F, false, false, false);
+            bg.setTrackTone("t1", 2.0F, -1.0F, 1.5F, 0.0F, false);
             bg.drainAllTrackPeaks(peaks);
             ++i;
         }
@@ -497,7 +502,7 @@ void testBusGraphLockFreeProjectFxUpdatesAreSafe()
             bg.setProjectReverb(u, 1.0F - u, u, u, /*snap*/ (i % 7) == 0);
             bg.setProjectDelay(50.0 + 200.0 * u, 0.4F * u, u, u, /*snap*/ (i % 11) == 0,
                                /*applyTimeNow*/ (i % 3) == 0);
-            bg.setTrackTone("t1", 6.0F * u, -3.0F * u, 4.0F * u, (i & 1) != 0, (i & 2) != 0,
+            bg.setTrackTone("t1", 6.0F * u, -3.0F * u, 4.0F * u, 2.0F * u - 1.0F,
                             (i % 13) == 0);
             bg.setTrackLeveler("t1", u, (i % 17) == 0);
             if ((i % 5) == 0) bg.resetSharedFx();
@@ -570,7 +575,7 @@ void testToneEqSnapAppliesOnFirstBlock()
 
     silverdaw::ToneEq snapped;
     snapped.prepare(sr, 2);
-    snapped.setParams(0.0F, 15.0F, 0.0F, false, false, /*snap*/ true); // +15 dB mid @1 kHz
+    snapped.setParams(0.0F, 15.0F, 0.0F, 0.0F, /*snap*/ true); // +15 dB mid @1 kHz
     juce::AudioBuffer<float> a(2, n);
     sine(a);
     snapped.process(a, 0, n);
@@ -578,7 +583,7 @@ void testToneEqSnapAppliesOnFirstBlock()
 
     silverdaw::ToneEq glided;
     glided.prepare(sr, 2);
-    glided.setParams(0.0F, 15.0F, 0.0F, false, false, /*snap*/ false);
+    glided.setParams(0.0F, 15.0F, 0.0F, 0.0F, /*snap*/ false);
     juce::AudioBuffer<float> b(2, n);
     sine(b);
     glided.process(b, 0, n);
