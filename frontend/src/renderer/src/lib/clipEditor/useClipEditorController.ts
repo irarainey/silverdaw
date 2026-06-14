@@ -605,6 +605,9 @@ export function useClipEditorController(
   const { onKeydown, onWindowKeydownCapture } = useClipEditorKeyboard({
     isOpen: () => props.open,
     hasPlaybackSelection: () => hasPlaybackSelection.value,
+    canGateSelection: () => canGateSelection.value,
+    silenceSelection: onSilenceSelection,
+    fullSelection: onFullSelection,
     close: () => emit('close'),
     clearSelection,
     extendSelection,

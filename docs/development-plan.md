@@ -936,7 +936,9 @@ the **Clip Editor** (§7.14), in the cropped Clip view:
 - The **Silence** and **Full** toolbar buttons act as a **region gate**:
   with a sub-selection active they flatten that range to silence or full
   volume with **hard step edges**, leaving the rest of the shape untouched.
-  This is the quickest way to chop a clean, non-fading section.
+  This is the quickest way to chop a clean, non-fading section. The **S** and
+  **F** keys are shortcuts for the same gate, so a selection can be silenced or
+  restored without drawing the envelope.
 - The breakpoint time axis spans the whole (cropped) clip, so it is obvious
   which part of the audio each breakpoint affects.
 - In the **stereo** waveform display the single envelope line is mirrored

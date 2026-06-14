@@ -6,9 +6,11 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
   spies: Record<string, ReturnType<typeof vi.fn>>
   open: { value: boolean }
   hasSel: { value: boolean }
+  canGate: { value: boolean }
 } {
   const open = { value: true }
   const hasSel = { value: false }
+  const canGate = { value: false }
   const spies = {
     close: vi.fn(),
     clearSelection: vi.fn(),
@@ -20,11 +22,16 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     zoomOut: vi.fn(),
     resetZoom: vi.fn(),
     undoCropLocal: vi.fn(),
-    redoCropLocal: vi.fn()
+    redoCropLocal: vi.fn(),
+    silenceSelection: vi.fn(),
+    fullSelection: vi.fn()
   }
   const deps: ClipEditorKeyboardDeps = {
     isOpen: () => open.value,
     hasPlaybackSelection: () => hasSel.value,
+    canGateSelection: () => canGate.value,
+    silenceSelection: spies.silenceSelection,
+    fullSelection: spies.fullSelection,
     close: spies.close,
     clearSelection: spies.clearSelection,
     extendSelection: spies.extendSelection as ClipEditorKeyboardDeps['extendSelection'],
@@ -38,7 +45,7 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     redoCropLocal: spies.redoCropLocal,
     ...overrides
   }
-  return { deps, spies, open, hasSel }
+  return { deps, spies, open, hasSel, canGate }
 }
 
 interface KeyOpts {
@@ -171,6 +178,27 @@ describe('useClipEditorKeyboard — onKeydown', () => {
     expect(h.spies.resetZoom).toHaveBeenCalled()
     kb.onKeydown(makeKey({ key: 'l' }).e)
     expect(h.spies.toggleLoop).toHaveBeenCalled()
+  })
+
+  it('S silences and F restores the selection when a range is gateable', () => {
+    h.canGate.value = true
+    kb.onKeydown(makeKey({ key: 's' }).e)
+    expect(h.spies.silenceSelection).toHaveBeenCalledTimes(1)
+    kb.onKeydown(makeKey({ key: 'F' }).e)
+    expect(h.spies.fullSelection).toHaveBeenCalledTimes(1)
+  })
+
+  it('S / F do nothing without a gateable selection', () => {
+    kb.onKeydown(makeKey({ key: 's' }).e)
+    kb.onKeydown(makeKey({ key: 'f' }).e)
+    expect(h.spies.silenceSelection).not.toHaveBeenCalled()
+    expect(h.spies.fullSelection).not.toHaveBeenCalled()
+  })
+
+  it('Ctrl+S does not trigger the silence shortcut', () => {
+    h.canGate.value = true
+    kb.onKeydown(makeKey({ key: 's', ctrlKey: true }).e)
+    expect(h.spies.silenceSelection).not.toHaveBeenCalled()
   })
 })
 

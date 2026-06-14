@@ -8,6 +8,9 @@
 export interface ClipEditorKeyboardDeps {
   isOpen: () => boolean
   hasPlaybackSelection: () => boolean
+  canGateSelection: () => boolean
+  silenceSelection: () => void
+  fullSelection: () => void
   close: () => void
   clearSelection: () => void
   extendSelection: (direction: -1 | 1, snapToBeats: boolean) => void
@@ -147,6 +150,22 @@ export function useClipEditorKeyboard(deps: ClipEditorKeyboardDeps): ClipEditorK
     if (e.key === 'l' || e.key === 'L') {
       e.preventDefault()
       deps.toggleLoop()
+      return
+    }
+    // Quick region gate on the current selection, mirroring the Silence / Full
+    // view-control buttons so a range can be flattened without drawing the
+    // volume envelope. Plain keys only — modifier combos (e.g. Ctrl+S save)
+    // pass through untouched.
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && deps.canGateSelection()) {
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault()
+        deps.silenceSelection()
+        return
+      }
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault()
+        deps.fullSelection()
+      }
     }
   }
 

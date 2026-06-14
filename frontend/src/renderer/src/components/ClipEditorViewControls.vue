@@ -77,7 +77,7 @@ defineEmits<{
       :disabled="!canGateSelection"
       :title="
         canGateSelection
-          ? 'Silence the selected range with hard edges'
+          ? 'Silence the selected range with hard edges (S)'
           : 'Select a range on the waveform first'
       "
       @click="$emit('silence-selection')"
@@ -91,7 +91,7 @@ defineEmits<{
       :disabled="!canGateSelection"
       :title="
         canGateSelection
-          ? 'Set the selected range to full volume with hard edges'
+          ? 'Set the selected range to full volume with hard edges (F)'
           : 'Select a range on the waveform first'
       "
       @click="$emit('full-selection')"
