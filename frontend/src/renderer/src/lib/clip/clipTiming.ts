@@ -4,6 +4,13 @@
 // so there is no module cycle; the store re-exports the `effective*` helpers as
 // a stable facade for existing importers.
 
+/** Sub-millisecond tolerance for clip-fit/overlap tests. Clip durations are
+ *  derived from sample counts while drag/snap positions come from the BPM grid,
+ *  so an "exact-size" gap can be off by a fraction of a millisecond. Anything
+ *  within this tolerance is treated as a perfect fit rather than an overlap
+ *  (1 ms ≈ 44 samples at 44.1 kHz — imperceptible and far below any usable gap). */
+export const CLIP_FIT_EPSILON_MS = 1
+
 /** A clip's warp-scaled timeline footprint, in ms. Prefers the backend-derived
  *  `effectiveDurationMs` (set when a tempo warp is active) and falls back to
  *  the raw source `durationMs` for un-warped clips. */
@@ -91,9 +98,12 @@ export function findClipSlot(
   let bestDist = Number.POSITIVE_INFINITY
   for (const g of gaps) {
     const gapLen = g.end - g.start
-    if (gapLen < durationMs) continue
+    if (gapLen < durationMs - CLIP_FIT_EPSILON_MS) continue
     const lo = g.start
-    const hi = g.end === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : g.end - durationMs
+    const hi =
+      g.end === Number.POSITIVE_INFINITY
+        ? Number.POSITIVE_INFINITY
+        : Math.max(lo, g.end - durationMs)
     const candidate = Math.min(Math.max(desired, lo), hi)
     const dist = Math.abs(candidate - desired)
     if (dist < bestDist) {

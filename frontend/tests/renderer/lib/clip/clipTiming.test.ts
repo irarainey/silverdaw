@@ -85,4 +85,22 @@ describe('findClipSlot', () => {
     // Desired 1700 would overflow the gap → clamp to 1500 (2000 - 500).
     expect(findClipSlot(s, 't1', 'x', 1700, 500)).toBe(1500)
   })
+
+  it('fits a clip into an exact-size gap despite sub-ms float drift', () => {
+    const s = state(
+      { a: { startMs: 0, durationMs: 1000 }, b: { startMs: 1999.6, durationMs: 1000 } },
+      ['a', 'b']
+    )
+    // Gap [1000,1999.6) is 999.6ms — within tolerance of a 1000ms clip → fits at 1000.
+    expect(findClipSlot(s, 't1', 'x', 1000, 1000)).toBe(1000)
+  })
+
+  it('still rejects a gap that is genuinely too small', () => {
+    const s = state(
+      { a: { startMs: 0, durationMs: 1000 }, b: { startMs: 1500, durationMs: 1000 } },
+      ['a', 'b']
+    )
+    // Gap [1000,1500) is 500ms — well short of a 1000ms clip → next gap after b.
+    expect(findClipSlot(s, 't1', 'x', 1000, 1000)).toBe(2500)
+  })
 })

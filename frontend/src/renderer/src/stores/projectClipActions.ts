@@ -8,7 +8,8 @@ import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
   isClipTempoWarpActive,
-  findClipSlot
+  findClipSlot,
+  CLIP_FIT_EPSILON_MS
 } from '@/lib/clip/clipTiming'
 import { sanitizeEnvelopePoints, envelopesEqual } from '@/lib/envelope'
 import { useNotificationsStore } from '@/stores/notificationsStore'
@@ -301,7 +302,9 @@ export const clipActions = {
         if (!c) continue
         const cEffDur = effectiveClipDurationMs(c)
         const cEnd = c.startMs + cEffDur
-        if (newStartMs < cEnd && newStartMs + clipEffDur > c.startMs) {
+        // Tolerance keeps an exact-size gap (grid vs sample-derived ms) from
+        // reading as a sub-millisecond overlap.
+        if (newStartMs < cEnd - CLIP_FIT_EPSILON_MS && newStartMs + clipEffDur > c.startMs + CLIP_FIT_EPSILON_MS) {
           useNotificationsStore().pushError('Not enough space to duplicate clip after the last duplicate.')
           log.info('project', `duplicateClip rejected: source=${clipId} tail=${tail.id} overlaps clip ${id}`)
           return null
@@ -463,7 +466,9 @@ export const clipActions = {
         if (!c) continue
         const cEffDur = effectiveClipDurationMs(c)
         const cEnd = c.startMs + cEffDur
-        if (targetStartMs < cEnd && targetStartMs + cbEffDur > c.startMs) {
+        // Tolerance keeps an exact-size gap (grid vs sample-derived ms) from
+        // reading as a sub-millisecond overlap.
+        if (targetStartMs < cEnd - CLIP_FIT_EPSILON_MS && targetStartMs + cbEffDur > c.startMs + CLIP_FIT_EPSILON_MS) {
           useNotificationsStore().pushError('Not enough space to paste clip on this track.')
           log.info(
             'project',
