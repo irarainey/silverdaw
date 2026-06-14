@@ -30,9 +30,10 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
     const juce::String playbackPath = tryGetRequiredString(payload, "playbackFilePath").value_or(juce::String{});
     const juce::String key = tryGetRequiredString(payload, "key").value_or(juce::String{});
     const juce::String kind = tryGetRequiredString(payload, "kind").value_or(juce::String{});
-    const juce::String displayName = tryGetRequiredString(payload, "name").value_or(juce::String{});
-    const juce::String sourceItemId = tryGetRequiredString(payload, "sourceItemId").value_or(juce::String{});
-    const juce::String sourceClipId = tryGetRequiredString(payload, "sourceClipId").value_or(juce::String{});
+    // name/sourceItemId/sourceClipId are optional: only saved-clips and stems carry provenance.
+    const juce::String displayName = readOptionalString(payload, "name").value_or(juce::String{});
+    const juce::String sourceItemId = readOptionalString(payload, "sourceItemId").value_or(juce::String{});
+    const juce::String sourceClipId = readOptionalString(payload, "sourceClipId").value_or(juce::String{});
     const double sourceInMs = payload.hasProperty("sourceInMs")
                                   ? static_cast<double>(payload.getProperty("sourceInMs", 0.0))
                                   : -1.0;

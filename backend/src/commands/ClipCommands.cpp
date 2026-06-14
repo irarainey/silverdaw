@@ -13,6 +13,7 @@
 namespace silverdaw
 {
 
+using silverdaw::bridge::readOptionalString;
 using silverdaw::bridge::tryGetNumber;
 using silverdaw::bridge::tryGetRequiredString;
 
@@ -34,7 +35,8 @@ void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, si
         engine.commitClipOffset(clipId);
     }
     // Reapply destination track gain so cross-track moves preserve mute/solo audibility.
-    const juce::String newTrackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    // trackId is optional: present only for cross-track moves, absent for same-track drags.
+    const juce::String newTrackId = readOptionalString(payload, "trackId").value_or(juce::String{});
     if (newTrackId.isNotEmpty())
     {
         if (projectState.setClipTrack(clipId, newTrackId))
