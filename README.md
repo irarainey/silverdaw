@@ -40,7 +40,12 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   delete clips across multiple tracks. Clips snap to the beat grid by default,
   with a modifier for fine, free placement.
 - **Automatic analysis.** Imported audio is analysed for key, tempo (BPM), and
-  beat positions, so clips can line up musically.
+  beat positions, so clips can line up musically. When detection is uncertain you
+  can set a BPM by hand and slide the beat grid over the waveform to line it up.
+- **Stem separation.** Split a track into vocals, drums, bass, and other parts
+  and drop each onto its own track to remix and recombine — non-destructive, with
+  optional GPU acceleration. Each stem keeps the original's tempo, key, and
+  artwork.
 - **Tempo and pitch.** Clips can automatically match the project tempo and be
   pitch-shifted independently, all without changing the source file.
 - **Saved clips and samples.** Save reusable clips to the library and bake any
@@ -90,15 +95,13 @@ application is heading — they are **planned directions, not yet available**, a
 are not part of the current feature set. See the
 [Development Plan](docs/development-plan.md) for detail and status.
 
-- **Stem separation.** Split a track into parts, such as vocals and
-  instrumental, to remix and recombine.
 - **More built-in effects and transitions.** Building on the per-track Tone EQ
   and Low Cut / High Cut filters, the equal-power pan, the per-track Leveler, the
   project-wide Reverb and Delay sends, and the per-clip volume shaping that
   already ship, a wider set of mixing effects, clip-to-clip transitions, and
   stereo width controls for polishing a mix.
-- **More editing power.** Extra clip actions and manual
-  correction of the detected beat grid.
+- **More editing power.** Extra clip actions, phrase-aware snapping, and
+  finer manual correction of the detected beat grid.
 - **MIDI devices and scratch authoring.** Support for external MIDI controllers
   and DJ decks, including a studio tool for crafting reusable "scratch" clips to
   drop into a mix (not a live-performance mode).

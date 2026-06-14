@@ -72,7 +72,7 @@ The Electron process launches the JUCE backend as a child process on startup and
 | Key detection                | Renderer Web Audio analysis           | Implemented. The renderer decodes audio, builds a chroma profile and stores detected keys on library items.                                                   |
 | FFT                          | KISS FFT                              | Implemented as part of the BTrack vendor copy. No FFTW dependency.                                                                                            |
 | Time-stretch / pitch shift   | Rubber Band Library                   | Implemented for real-time per-clip warp / pitch-shift playback.                                                                                               |
-| Stem separation              | Demucs v4 (htdemucs) via ONNX Runtime | Planned; see Section 6.                                                                                                                                       |
+| Stem separation              | Demucs v4 (htdemucs-ft) via ONNX Runtime | Implemented; see Section 6. CPU by default, optional DirectML GPU acceleration. Model weights downloaded on first use.                                       |
 | Decoding unsupported formats | Renderer Web Audio + temp WAV today; ffmpeg later | Web Audio covers many unsupported-by-JUCE formats today. ffmpeg is a later compatibility / robustness upgrade, not a core workflow blocker. |
 
 > **Note:** JUCE UI subsystems (`Component`, `AudioThumbnail`, `OpenGLContext`) are not used. All rendering is handled by the Electron frontend.
@@ -173,7 +173,7 @@ whether the renderer draws the single summary lane or the stacked L/R lanes.
 | Warping and pitch shift                     | JUCE backend (Rubber Band)                      |
 | BPM / beat detection                        | JUCE backend (BTrack)                           |
 | Key detection                               | Electron renderer (Web Audio chroma analysis)   |
-| Future stem separation                      | JUCE backend (ONNX / Demucs)                    |
+| Stem separation                             | JUCE backend (ONNX Runtime / Demucs), model download in Electron main |
 | File reading / writing                      | JUCE backend                                    |
 | Project state (source of truth)             | JUCE backend (ValueTree)                        |
 | UI state (zoom, selections, scroll)         | Electron / Pinia                                |
@@ -257,9 +257,16 @@ models, one per source — so 4-stem is native, not derived). They are downloade
 on first use and the stem-separation UI stays disabled until the model is
 present.
 
-**Integration:** ONNX Runtime C++ API. The `.onnx` model files and
-`onnxruntime.dll` are the only runtime dependencies. GPU acceleration via
-DirectML on Windows is a Phase 8 optimisation after the CPU path is stable.
+**Integration:** ONNX Runtime C++ API. The runtime dependencies that ship beside
+`SilverdawBackend.exe` are the `.onnx` model files, `onnxruntime.dll`, and — for
+the default DirectML build — `DirectML.dll`. GPU acceleration via the DirectML
+execution provider on Windows is **implemented**: the bundled ONNX Runtime is a
+DirectML build (a CPU+GPU superset — a single `onnxruntime.dll` serves both EPs),
+and the renderer threads a `useGpu` flag through to the backend's session options
+so the DirectML EP is appended when the user opts in. The GPU runtime is bundled
+by default, but **using** the GPU is opt-in: the `stems.useGpu` preference
+defaults off and is honoured only when a compatible adapter is detected (gated in
+the renderer and surfaced in Preferences ▸ Stems).
 
 | Approach          | Pros                                      | Cons                                  |
 | ----------------- | ----------------------------------------- | ------------------------------------- |
@@ -268,18 +275,23 @@ DirectML on Windows is a Phase 8 optimisation after the CPU path is stable.
 | LibTorch          | Faithful to original weights              | ~500MB, complex build                 |
 
 **Dependency acquisition (implemented):** ONNX Runtime is pulled in entirely
-through CMake — no DLL is vendored into the source tree. `backend/CMakeLists.txt`
-fetches the official prebuilt `onnxruntime-win-x64` release archive at configure
-time via `FetchContent` (pinned version + SHA-256 integrity check, behind the
-`SILVERDAW_ENABLE_STEM_SEPARATION` option, default `ON`), exposes it as an
-`IMPORTED` target, and defines `SILVERDAW_STEM_SEPARATION=1` for the backend
-core. This mirrors how JUCE, IXWebSocket and Rubber Band are already obtained.
+through CMake — no DLL is vendored into the source tree. By default
+(`SILVERDAW_ONNXRUNTIME_DIRECTML=ON`) `backend/CMakeLists.txt` fetches the
+DirectML-capable ONNX Runtime from NuGet (the DirectML EP is not in the GitHub CPU
+release) plus the `Microsoft.AI.DirectML` package it depends on; setting that
+option `OFF` falls back to the official prebuilt `onnxruntime-win-x64` GitHub
+archive (CPU-only). Either way the fetch is at configure time via `FetchContent`
+(pinned versions + SHA-256 integrity checks, behind the
+`SILVERDAW_ENABLE_STEM_SEPARATION` option, default `ON`), exposed as an `IMPORTED`
+target, with `SILVERDAW_STEM_SEPARATION=1` defined for the backend core. This
+mirrors how JUCE, IXWebSocket and Rubber Band are already obtained.
 
 **Packaging (implemented):** A CMake `POST_BUILD` step copies `onnxruntime.dll`
-next to `SilverdawBackend.exe`, and `frontend/electron-builder.yml` ships it as
-an `extraResource`, so the installer carries everything required to run — ONNX
-Runtime is MIT-licensed, which permits redistribution alongside the app. The
-~1.2 GB model weights are kept out of the installer and downloaded on first use.
+(and, for the DirectML build, `DirectML.dll`) next to `SilverdawBackend.exe`, and
+`frontend/electron-builder.yml` ships them as `extraResource`, so the installer
+carries everything required to run — ONNX Runtime and DirectML are MIT-licensed,
+which permits redistribution alongside the app. The ~1.2 GB model weights are kept
+out of the installer and downloaded on first use.
 
 **Model store (implemented):** The model files are fetched on first use by the
 Electron main process (the headless backend has no network stack —
@@ -319,7 +331,21 @@ overlap-add reconstruction (`OnnxStemSeparator.cpp`). The stem dialog exposes a
 `quality` on `STEM_SEPARATE`; the backend maps it to the inference overlap
 (0.10 / 0.25 / 0.50, balanced being the long-standing default and the fallback
 for an absent value). The segmentation, layout and source-index handling
-were validated against the real htdemucs-ft weights.
+were validated against the real htdemucs-ft weights. When all four stems are
+requested the backend skips the `other` model run and synthesises
+`other = mixture − (vocals + drums + bass)` (a mixture-consistency residual that
+is mathematically identical to adding the full residual to the model's `other`,
+captures any energy the three specialists miss, and runs ~25 % faster).
+
+**On-disk layout & sidecar (implemented):** Each separation writes its WAVs into a
+folder named after the source — `<appData>/Silverdaw/stems/<sourceName>-stems`,
+with a `-2`/`-3`… suffix when a folder for that source already exists, so repeat
+separations never collide. Because separated WAVs carry no tags and the original
+source can later be removed from the library, the renderer also writes a
+`metadata.json` + `cover.<ext>` **sidecar** into that folder (via guarded main-
+process IPC scoped to the stems directory). On reload the stem items re-read the
+sidecar, so they keep the source's tags and artwork even after the source item is
+gone — the metadata is **copied, not merely referenced**.
 
 **Naming & analysis reuse:** Stem WAV files and their tracks are named from the
 source's friendly library name (e.g. "Song - Vocals" / "Vocals — Song"), never the
@@ -335,8 +361,8 @@ sample/music (low-confidence) flag: it has no independent confidence measurement
 so its classification defers to the source via `derivedFrom`. Marking the source
 as **music** therefore reveals the beat grid on every derived stem clip.
 
-**Phase 8:** GPU acceleration (DirectML) and an optional experimental 6-stem
-model (adds guitar + piano) once the 4-stem CPU pipeline is proven.
+**Future:** an optional experimental 6-stem model (adds guitar + piano) and an
+fp16 GPU compute path (prototyped) once the shipped 4-stem pipeline is proven.
 
 ---
 
@@ -387,10 +413,23 @@ The primary interaction model for placing and organising audio:
 ### 7.4 Beat & Key Detection
 Runs automatically on every import, in the background:
 
-- BTrack: BPM and beat-position markers
+- BTrack: BPM and beat-position markers, refined by a least-squares period+anchor
+  fit and an onset-detection-function (ODF) autocorrelation pass. A guarded,
+  robust phase-correction step then nudges the beat anchor onto the true onsets
+  (median offset to nearby ODF peaks, applied only when consistent, plausible,
+  significant and enough beats match) so the rigid grid lands on the beats rather
+  than inheriting BTrack's causal lag.
 - Renderer Web Audio analysis: root note and mode
 - Sample rate is read from the file header on import and stored on the clip; no detection needed (always exact)
 - Results are merged into library metadata and stored in `ValueTree`
+- **Confidence ≠ sample.** Low tempo confidence no longer reclassifies a track as
+  a non-musical "sample" — it shows the grid as **tempo-unverified** (visible,
+  warpable) instead of hiding it. Only an explicit per-source **Auto / Music /
+  Sample** override marks a true sample.
+- **Manual fallback.** The user can set a BPM by hand on a source (rigid-metronome
+  grid) and **slide the grid over the waveform** in the Clip Editor to correct its
+  phase (`LIBRARY_ITEM_SET_MANUAL_TEMPO`). Manual values are treated as verified
+  music with the grid shown and warp enabled.
 - User can override BPM / key in the clip inspector
 - **Project BPM bootstrap:** when the *first* clip is added to an empty project, the detected BPM seeds the project BPM (one-shot — subsequent imports don't change it). User can override later via the transport bar.
 
@@ -1625,6 +1664,12 @@ playable at every point — no broken-build day):
 - [x] 4-stem htdemucs-ft inference pipeline on background thread (issue #15) — backend `StemSeparator` subsystem + ONNX session loading wired and unit-tested; segmented (343 980-sample, 25 % overlap) normalised overlap-add inference implemented and validated against the real model
 - [x] `STEM_PROGRESS` / `STEM_READY` / `STEM_FAILED` handling; non-blocking separation progress dialog, plus a first-use model-download dialog gated on `stems:` IPC
 - [x] Stem output as new tracks (one per stem) beneath the source — `STEM_READY` reuses the existing library-import / track-add / clip-add flows; each stem lands on its own new track aligned to the source clip start, non-destructively
+- [x] Incremental placement — `STEM_PARTIAL` lands each stem the instant its WAV is written; `STEM_READY` backfills the rest (per-job dedupe)
+- [x] Stems nested in the library as `stem` items under their source group; they inherit the source's analysis (BPM, beat grid, key, variable-tempo) instead of being re-analysed
+- [x] Quality presets (**Fast / Balanced / Best** → inference overlap 0.10 / 0.25 / 0.50) sent as `quality` on `STEM_SEPARATE`
+- [x] Mixture-consistency residual — when all four stems are requested, synthesise `other = mixture − (vocals + drums + bass)` and skip the `other` model run (~25 % faster)
+- [x] DirectML GPU acceleration (issue tracked) — DirectML-build ONNX Runtime bundled (`onnxruntime.dll` + `DirectML.dll`); `useGpu` threaded to session options, opt-in and adapter-gated (Preferences ▸ Stems), TDR/timeout-recovery hardened
+- [x] Per-separation stem folder `<appData>/Silverdaw/stems/<sourceName>-stems` (disambiguated) with a `metadata.json` + `cover.<ext>` sidecar, so stems keep the source's tags/artwork after the source is removed
 - [ ] Loop slicer: transient and grid markers in PixiJS
 - [ ] Slice-to-timeline and slice-to-sample flows
 - [x] Fine-clip editor — shipped as the in-app **Clip Editor** dialog (§7.14): full-source waveform, sample-accurate selection, looped audition through a backend preview voice, Save-as-new-clip and Apply-trim with linked-clip propagation, hi-res peaks on demand. A dedicated BrowserWindow surface remains a future option.
@@ -2017,11 +2062,12 @@ Implementation increments (foundations first; each keeps build + tests green):
 
 - [ ] **Tap tempo** — inline transport-bar control to set/confirm
   project BPM as a fallback to detection. No dialog.
-- [ ] **Minimal beat-grid correction** — set/nudge
-  the first-downbeat anchor, BPM halve/double, manual BPM override, reanalyse.
-  **Explicitly not** full variable-tempo maps, per-beat warp markers, or time
-  signatures. Define one authority (project grid vs clip warp anchor) before
-  exposing controls.
+- [x] **Minimal beat-grid correction** — manual BPM override plus a slide-the-grid
+  drag in the Clip Editor that re-anchors the first downbeat
+  (`LIBRARY_ITEM_SET_MANUAL_TEMPO`), and a guarded detector phase-correction step.
+  Deliberately **not** full variable-tempo maps, per-beat warp markers, or time
+  signatures. The single authority is the source's `(bpm, beatAnchorSec)`, which
+  the rigid project grid follows.
 - [ ] **Phrase-aware snapping** — snap drops/moves to 1/2/4/8/16/32-bar
   phrase boundaries, not only beats. Big speed win for mashups.
 - [ ] **Camelot / Open-Key display + compatibility badges** — convert existing root+mode detection to Camelot/Open-Key notation and

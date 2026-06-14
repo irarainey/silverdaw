@@ -22,6 +22,7 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [Confidence and sample classification](#confidence-and-sample-classification)
   - [Beat markers and source-beat snap](#beat-markers-and-source-beat-snap)
   - [Processing progress panel](#processing-progress-panel)
+- [Stem separation](#stem-separation)
 - [Library panel](#library-panel)
 - [Preferences](#preferences)
   - [Audio output device](#audio-output-device)
@@ -59,7 +60,7 @@ Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engi
 |  + Electron main (IPC)    |       text JSON envelopes         |  AudioEngine + ProjectState |
 +---------------------------+                                   +-----------------------------+
             ^                                                                    |
-            |   bulk data (peaks, future stems) on disk                          |
+            |   bulk data (peaks, stems) on disk                                 |
             +--------------------- %APPDATA%/Silverdaw/peaks/ <------------------+
 ```
 
@@ -263,14 +264,16 @@ Silverdaw currently supports the core arrangement workflow:
   paths (Cancel / Convert to project rate / Switch project rate) when the
   source doesn't match. The transport bar's **RATE** column shows the
   effective project rate at all times. See [Project sample rate](#project-sample-rate).
-- **Sample-vs-music classification.** Files whose BPM analysis comes back at
-  low confidence (rain ambience, vocal one-shots, sound effects) are
-  auto-classified as non-musical samples: BPM / key / beat markers and
-  badges are hidden, auto-warp on drop is skipped, and the project-BPM
-  seed refuses to fire from them. Library tile context menu and the Info
-  dialog offer a per-source-item **Auto / Music / Sample** override (saved
-  clips inherit from their source). Warp and Pitch dialogs continue to
-  work on samples for explicit speed / pitch changes.
+- **Tempo confidence and sample classification.** When BPM analysis comes back at
+  low confidence the grid is shown as **tempo-unverified** (an amber hint) rather
+  than hidden — it stays visible and warpable. A track is only treated as a
+  non-musical **sample** (badges and beat markers hidden, auto-warp on drop
+  skipped, project-BPM seed suppressed) through an explicit per-source-item
+  **Auto / Music / Sample** override from the library tile context menu or the
+  Info dialog (saved clips inherit from their source). When detection is unsure
+  the user can also set a BPM by hand and slide the beat grid over the waveform in
+  the Clip Editor to line it up. Warp and Pitch dialogs work regardless for
+  explicit speed / pitch changes.
 - Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
   file association. The backend is statically linked against the MSVC runtime, so
   a clean Windows install does not need a separate Visual C++ Redistributable.
@@ -301,10 +304,9 @@ search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
 wider mixer / effects / automation work (a deeper per-clip processor chain —
 saturation — applied both live and in mixdown, beyond the per-track Tone EQ +
 Low / High Cut, the per-track Leveler, the project-wide Reverb and Delay sends,
-and the per-clip Volume Shape that already ship), stem separation,
-loop slicing, grouping compound operations (split / duplicate) into a single undo
-step, and a CI matrix that enforces a coverage floor over the existing backend
-and frontend test suites.
+and the per-clip Volume Shape that already ship), loop slicing, grouping compound
+operations (split / duplicate) into a single undo step, and a CI matrix that
+enforces a coverage floor over the existing backend and frontend test suites.
 
 ## Bridge protocol
 
@@ -339,7 +341,7 @@ ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond,
 envelope. The cache file at `cachePath` (under `%APPDATA%/Silverdaw/peaks/`) holds the peaks
 themselves; the renderer reads it via main's `peaks:readCacheFile` IPC and parses the 28-byte
 header + float32 payload locally. This mirrors how the same architecture treats audio files,
-project files, and (future) stems / mixdowns — the WebSocket carries the control plane, the
+project files, stems and mixdowns — the WebSocket carries the control plane, the
 filesystem carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight text-only path
 it was designed for.
 
@@ -776,7 +778,9 @@ beat positions. The key and BPM are shown on the library tile. A stable-tempo
 file shows a badge such as `124.37 BPM`; a variable-tempo file shows an amber
 `~ 124.37 BPM` badge. Beat analysis drives faint vertical beat markers on the
 clip waveform and — on the first import into a project — seeds the project
-tempo so the timeline grid lines up with the source.
+tempo so the timeline grid lines up with the source. When automatic detection is
+uncertain the user can set a BPM by hand and slide the beat grid over the
+waveform to align it (see [BPM and beat detection](#bpm-and-beat-detection)).
 
 ### Key detection
 
@@ -816,25 +820,52 @@ libsamplerate → feed BTrack frame-by-frame at hop=256 (~5.8 ms steps) recordin
 `beatDueInCurrentFrame()` event. Analysis is capped at the first 60 seconds of audio;
 estimates outside `[40, 240]` BPM are dropped as implausible.
 
-The reported BPM is derived from the **median of beat-to-beat intervals** (not from
-BTrack's running tempo estimate, which can drift a fraction of a BPM from the
-implied beat spacing). This guarantees the project grid we later seed lines up
-exactly with the source's beats. A `variableTempo` flag is also computed by
-checking the spread of per-beat tempo samples (after a short settling period) — if
-it's > 5 % of the mean, the library tile shows the amber `~ BPM` warning badge.
+The reported BPM starts from the **median of beat-to-beat intervals** (more stable
+than BTrack's running tempo estimate, which can drift a fraction of a BPM from the
+implied spacing) and is then refined by a least-squares period+anchor fit and a
+guarded onset-detection-function (ODF) autocorrelation pass. This keeps the
+project grid we later seed lined up with the source's beats. A `variableTempo`
+flag is also computed by checking the spread of per-beat tempo samples (after a
+short settling period) — if it's > 5 % of the mean, the library tile shows the
+amber `~ BPM` warning badge.
+
+The grid is rendered as a **rigid metronome** from a single `(bpm, beatAnchorSec)`
+pair, so the anchor's phase matters as much as the period. After the period is
+final the detector runs a guarded **phase correction**: `estimateGridPhaseOffset`
+measures, for each grid beat, the offset to the strongest nearby onset-detection-
+function (ODF) peak and takes the **median**. The anchor is shifted by that median
+only when the offsets are *consistent* (IQR ≤ 30 ms — chosen over median-absolute-
+deviation, which is blind to a bimodal early/late split), *plausible* (≤ 120 ms,
+latency-sized), *significant* (> 4 ms) and backed by *enough* matched beats
+(≥ 50 %). This pulls the anchor off BTrack's causal lag onto the true transients
+without ever locking the grid to off-beat energy on ambiguous material; it is a
+no-op on already-aligned tracks. The behaviour is covered by unit tests in
+`backend/tests/BpmDetectorTests.cpp`.
 
 When detection finishes the worker `MessageManager::callAsync`s back to the JUCE
 message thread to write `bpm`, `beats`, `beatAnchorSec`, `variableTempo`, `lowConfidence`,
 and the decoded playback cache path onto the matching `LIBRARY > ITEM` node and broadcast
 `LIBRARY_ITEM_ANALYSIS { itemId, bpm, beatAnchorSec, beats, variableTempo, lowConfidence,
-playbackFilePath }`. If the project has no other clips on tracks yet AND no other
-library item has been analysed, the project BPM is seeded too and a
-`PROJECT_BPM_APPLIED { bpm }` envelope is broadcast — the renderer mirrors both
-into `libraryStore` and `transportStore`. The seed runs even for variable-tempo
-sources (an approximate tempo is more useful than the default 100) but is
-suppressed for low-confidence / classified-as-sample items so a rain ambience
-can't drag the project tempo to 116 BPM. The user can fine-tune from the
+playbackFilePath }`. The project BPM is seeded once, from the first musical clip
+placed **on a track**: the seed fires only when at least one clip is on a track
+and `ProjectState::isBpmSeeded()` is still false (the flag — not a count of
+analysed library items — is the authoritative once-only signal, and derived stems
+inherit a BPM without ever seeding). When it fires a `PROJECT_BPM_APPLIED { bpm }`
+envelope is broadcast and the renderer mirrors both into `libraryStore` and
+`transportStore`. Seeding runs even for variable-tempo and low-confidence sources
+(an approximate tempo is more useful than the default 100) but is suppressed for
+items **explicitly classified as a sample**, so a rain ambience the user has
+marked as a sample can't drag the project tempo. The user can fine-tune from the
 Transport bar afterwards.
+
+**Manual tempo.** When detection is wrong or absent the user can set a BPM by hand
+on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`
+builds a rigid grid across the item's duration on the backend and re-broadcasts
+`LIBRARY_ITEM_ANALYSIS` with `variableTempo` and `lowConfidence` cleared, so the
+item reads as verified music. In the Clip Editor a **slide-the-grid** drag gesture
+shifts `beatAnchorSec` live (local-only preview, committed on release) to correct
+the downbeat phase. Manual values survive save / load because `ensureBpmDetection`
+is idempotent and skips a source that already has a BPM.
 
 ### Confidence and sample classification
 
@@ -847,18 +878,21 @@ Specifically the analysis is flagged when *both* of these hold:
 
 `variableTempo` alone is intentionally not sufficient — live performances and
 rubato music can drift more than 5 % per beat without being non-musical. The
-combined gate avoids false-positive classifications on real music while still
-catching rain ambience, vocal one-shots and sound effects that BTrack would
-otherwise report bogus tempo / beat positions for.
+combined gate avoids false-positive flags on real music while still catching rain
+ambience, vocal one-shots and sound effects that BTrack would otherwise report
+bogus tempo / beat positions for.
 
-The renderer treats a library item as a non-musical "sample" via a single
+Crucially, **`lowConfidence` no longer classifies an item as a sample.** It is a
+*tempo-unverified* signal: the grid is still drawn (and the clip is still
+warpable), but the library tile and Info dialog mark the BPM as unverified (an
+amber hint) via `libraryItemTempoUnverified(item, byId)`. This avoids the previous
+behaviour where any musical track BTrack was merely unsure about lost its beat
+grid. The renderer treats a library item as a non-musical "sample" via a single
 helper, `libraryItemIsSample(item, byId)`, with the resolution order:
 
 1. user override `item.sampleMode` (`'sample'` / `'music'`),
-2. own `item.lowConfidence` (auto),
-3. for saved clips, fall back to the source item's classification (so a
-   one-shot cut from a musical track inherits music unless overridden), then
-4. default to `false` (music).
+2. for saved clips, fall back to the source item's `sampleMode`, then
+3. default to `false` (music).
 
 When an item is classified as a sample the library tile shows a small indigo
 **Sample** pill in place of the BPM / key / variable-tempo badges, clip beat
@@ -868,21 +902,22 @@ late-pending-auto-warp loop both refuse to fire from it. **Warp and Pitch
 dialogs continue to work** so the user can still speed up, slow down, or
 pitch-shift the clip manually.
 
-Override the auto-classification from the library tile's right-click menu
+Set the classification from the library tile's right-click menu
 (**Auto-classify** / **Treat as music** / **Treat as sample** — audio-file
 items only; saved clips inherit) or from the **Treat as** radio in the
-Library Item Info dialog. The new `LIBRARY_ITEM_SET_SAMPLE_MODE { itemId, mode }`
-envelope round-trips the choice (undoable) and `mode = 'auto'` clears the
-override so `lowConfidence` takes back over.
+Library Item Info dialog. The `LIBRARY_ITEM_SET_SAMPLE_MODE { itemId, mode }`
+envelope round-trips the choice (undoable); `mode = 'auto'` clears the override so
+the item falls back to music (tempo-unverified if `lowConfidence`).
 
 ### Beat markers and source-beat snap
 
 The renderer overlays faint white vertical lines on every clip at the source's
 detected beats. The markers are **synthesised on a source-global beat grid**
-anchored on `beats[0]` and spaced by `60 / sourceBPM`, not on each raw detected
-position. This makes them survive a split / duplicate / trim without drifting —
-both halves of a split clip share one coordinate system, so the markers stay in
-lockstep across the split point.
+anchored on the regression-derived `beatAnchorSec` (older projects fall back to
+`beats[0]`) and spaced by `60 / sourceBPM`, not on each raw detected position.
+This makes them survive a split / duplicate / trim without drifting — both halves
+of a split clip share one coordinate system, so the markers stay in lockstep
+across the split point.
 
 Drag-snap on a clip with a known source tempo locks onto the same grid: instead
 of snapping the clip's left edge to the project sub-beat, it snaps the first
@@ -910,6 +945,47 @@ job with three sequential stages so the long-tail analysis isn't invisible:
    auto-warp after analysis.
 
 The OS busy cursor stays in its `progress` state through these stages.
+
+## Stem separation
+
+Stem separation splits a track into **vocals, drums, bass and other** using the
+MIT-licensed `htdemucs-ft` ONNX export (a "bag" of four specialist models, one per
+source) run through ONNX Runtime in the backend (`OnnxStemSeparator.cpp`). ONNX
+Runtime is fetched and bundled via CMake (`onnxruntime.dll` ships beside the
+backend); the ~1.2 GB model weights are **not** shipped — the Electron main
+process (`src/main/stems/`, a pinned manifest + a dependency-injected `ModelStore`)
+downloads them on first use, verifies each file's SHA-256 + size, and commits
+atomically.
+
+Each specialist model processes fixed 7.8 s stereo segments with a
+quality-selectable overlap (**Fast / Balanced / Best** → 0.10 / 0.25 / 0.50,
+sent as `quality` on `STEM_SEPARATE`) and triangular-window weighted overlap-add.
+When all four stems are requested the `other` model run is skipped and
+`other = mixture − (vocals + drums + bass)` is synthesised instead — a
+mixture-consistency residual that is faster and loses no energy. Separation runs
+on a background thread and never touches the audio callback; progress is reported
+via `STEM_PROGRESS`, each stem lands the instant its WAV is written
+(`STEM_PARTIAL`), and `STEM_READY` backfills the rest.
+
+GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
+Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`
+shipped alongside); the renderer threads a `useGpu` flag through to the backend
+session options. Using the GPU is **opt-in** — the `stems.useGpu` preference
+defaults off and is honoured only when a compatible adapter is detected
+(Preferences ▸ Stems). The path is hardened against GPU timeout/TDR recovery.
+
+A **timeline** separation (started from a placed clip) also lands each stem on its
+own new track aligned to the source clip's start; a **library** separation
+(started from a library source) imports the stems to the library only, leaving it
+to the user to drag them onto the timeline. Either way the source is untouched
+(non-destructive) and each stem is added to the library as a nested **stem** item
+under its source group. Because each stem is sample-aligned with its source it
+**inherits** the source's analysis (BPM, beat grid, key, variable-tempo flag)
+rather than being re-analysed. On disk each separation writes its WAVs into
+`<appData>/Silverdaw/stems/<sourceName>-stems` (disambiguated with `-2`/`-3`… for
+repeat runs) alongside a `metadata.json` + `cover.<ext>` **sidecar**, written
+through guarded main-process IPC scoped to the stems directory, so a stem keeps
+the original's tags and artwork even after the source item is removed.
 
 ## Library panel
 
