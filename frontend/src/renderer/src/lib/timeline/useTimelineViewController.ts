@@ -21,6 +21,7 @@ import { useTimelineContextMenu } from '@/lib/timeline/useTimelineContextMenu'
 import { useClipRename } from '@/lib/timeline/useClipRename'
 import { useTimelineRulerInteraction } from '@/lib/timeline/useTimelineRulerInteraction'
 import { useTimelineZoom } from '@/lib/timeline/useTimelineZoom'
+import { createRedrawScheduler } from '@/lib/timeline/useRedrawScheduler'
 
 
 export function useTimelineViewController(
@@ -34,7 +35,11 @@ export function useTimelineViewController(
   const ui = useUiStore()
 
   // Late-bound so lifecycle callbacks can call drawing after composables wire up.
+  // `redraw` is the rAF-coalesced entry point used by watchers and interaction
+  // handlers; `redrawNow` is the synchronous rebuild for paths that must paint in
+  // the same frame (resize/first paint, where the renderer renders immediately).
   let redraw: () => void = () => { }
+  let redrawNow: () => void = () => { }
   let updatePlayhead: () => void = () => { }
 
   // ─── Composables ──────────────────────────────────────────────────────────
@@ -55,8 +60,8 @@ export function useTimelineViewController(
 
   const pixi = usePixiApp({
     host, viewportWidth, viewportHeight,
-    onResize: () => { clampScroll(); redraw(); updatePlayhead() },
-    onReady: () => { redraw(); updatePlayhead() }
+    onResize: () => { clampScroll(); redrawNow(); updatePlayhead() },
+    onReady: () => { redrawNow(); updatePlayhead() }
   })
 
   const { isDraggingPlayhead, hoverCursor } = useDragHandlers({
@@ -87,7 +92,10 @@ export function useTimelineViewController(
     clampScroll,
     clipHitRegions, isDraggingPlayhead, dropPreview
   })
-  redraw = drawing.redraw
+  redrawNow = drawing.redraw
+  // All watcher / interaction redraw requests coalesce to one rebuild per frame.
+  const redrawScheduler = createRedrawScheduler(redrawNow)
+  redraw = redrawScheduler.schedule
   updatePlayhead = drawing.updatePlayhead
   const applyScroll = drawing.applyScroll
   const setDisplayPositionMs = drawing.setDisplayPositionMs
@@ -131,6 +139,7 @@ export function useTimelineViewController(
     document.removeEventListener('keydown', onRenameDocumentKeyDown, { capture: true })
     document.removeEventListener('pointerdown', onRenameDocumentPointerDown, { capture: true })
     stopPlayheadRaf()
+    redrawScheduler.cancel()
   })
 
   // ─── Clip context menu + dialogs ──────────────────────────────────────────
@@ -322,10 +331,16 @@ export function useTimelineViewController(
     () => redraw()
   )
 
-  // Vertical scroll changes which rows fall inside the culled draw window, so the
-  // scene graph must be rebuilt (applyScroll only translates already-built rows and
-  // would leave previously off-screen tracks blank). Horizontal scroll stays
-  // translate-only because clips are built across the full project width.
+  // Both scroll axes change which content falls inside the culled draw window
+  // (vertical = which rows; horizontal = which clip/grid/tick band). Vertical
+  // scroll always rebuilds. Horizontal scroll translates the band immediately
+  // (O(1), crisp this frame) and only schedules a coalesced rebuild once it
+  // drifts past the overscan threshold — so panning and playback auto-follow
+  // stay translate-only per frame instead of rebuilding the scene each tick.
+  watch(scrollX, () => {
+    applyScroll()
+    if (drawing.horizontalRebuildNeeded()) redraw()
+  })
   watch(scrollY, () => redraw())
 
   watch(

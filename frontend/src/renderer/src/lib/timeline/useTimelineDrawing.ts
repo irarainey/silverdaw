@@ -30,6 +30,11 @@ import type { ClipHitRegion } from './useDragHandlers'
 import type { DropPreview } from './useDropZone'
 import type { GridGeometry } from './useGridGeometry'
 import { createClipRenderer } from './clipRenderer'
+import {
+  exceedsRebuildThreshold,
+  horizontalOverscanPx,
+  visibleSubRange
+} from './timelineWindow'
 
 export interface TimelineDrawingOptions {
   app: ShallowRef<Application | null>
@@ -66,6 +71,8 @@ export interface TimelineDrawing {
   updatePlayhead: () => void
   /** Override visual playhead ms for RAF interpolation between backend ticks. */
   setDisplayPositionMs: (ms: number) => void
+  /** True when horizontal scroll has left the built band and needs a rebuild. */
+  horizontalRebuildNeeded: () => boolean
 }
 
 export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawing {
@@ -104,9 +111,23 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
   // RAF interpolator writes here to smooth backend playhead ticks.
   let displayPositionMs = 0
   let redrawCount = 0
-  let lastRedrawStats = { rows: 0, clips: 0, durationMs: 0 }
+  let lastRedrawStats = {
+    rows: 0,
+    clips: 0,
+    durationMs: 0,
+    rulerMs: 0,
+    tracksMs: 0,
+    columns: 0,
+    lanes: 0,
+    graphics: 0,
+    rects: 0
+  }
   // Auto-follow uses wall-clock deltas so scroll feel is refresh-rate independent.
   let lastUpdateMs = 0
+  // Horizontal scroll position the current scene band was built at; horizontal
+  // scroll translates the band (O(1)) and only rebuilds once it drifts past the
+  // overscan threshold (see `horizontalRebuildNeeded`). NaN until the first draw.
+  let lastBuiltScrollX = Number.NaN
 
   function setDisplayPositionMs(ms: number): void {
     displayPositionMs = ms
@@ -125,6 +146,22 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     rulerTicks.x = -sx
     // Playhead lives in viewport coordinates.
     updatePlayhead()
+  }
+
+  /** Width of the scrollable content area (excludes the pinned header column). */
+  function viewportWidth(): number {
+    const a = app.value
+    if (!a) return 0
+    return a.renderer.screen.width - SCROLLBAR_WIDTH - headerWidth()
+  }
+
+  /**
+   * True when horizontal scroll has drifted far enough from the built band that
+   * it must be rebuilt; false means an O(1) `applyScroll` translate still covers
+   * the viewport. Keeps playback auto-follow and panning rebuild-free per frame.
+   */
+  function horizontalRebuildNeeded(): boolean {
+    return exceedsRebuildThreshold(scrollX.value, lastBuiltScrollX, viewportWidth())
   }
 
   function redraw(): void {
@@ -148,24 +185,41 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // `screen.width` is Pixi's CSS-pixel drawing width, independent of DPR.
     const width = a.renderer.screen.width
 
+    const rulerStart = performance.now()
     drawRulerChrome(width)
     drawRulerTicks(width)
     drawMarkers()
+    const tracksStart = performance.now()
     drawTracks(width)
+    const tracksEnd = performance.now()
     drawHeaderDivider()
 
     // Full redraws reset layer transforms, so reapply current scroll.
     tracks.x = -Math.round(scrollX.value)
     tracks.y = -Math.round(scrollY.value)
     rulerTicks.x = -Math.round(scrollX.value)
-    lastRedrawStats.durationMs = performance.now() - redrawStart
+    lastBuiltScrollX = scrollX.value
+    const waveStats = clipRenderer.getFrameStats()
+    lastRedrawStats = {
+      ...lastRedrawStats,
+      durationMs: performance.now() - redrawStart,
+      rulerMs: tracksStart - rulerStart,
+      tracksMs: tracksEnd - tracksStart,
+      columns: waveStats.columns,
+      lanes: waveStats.lanes,
+      graphics: waveStats.graphics,
+      rects: waveStats.rects
+    }
     ++redrawCount
     if (redrawCount % 20 === 0 || lastRedrawStats.durationMs > 16) {
       log.debug(
         'perf.timeline',
-        `redraw#${redrawCount} ms=${lastRedrawStats.durationMs.toFixed(2)} rows=${lastRedrawStats.rows} ` +
-          `clips=${lastRedrawStats.clips} totalClips=${Object.keys(project.clips).length} ` +
-          `pxPerSecond=${pxPerSecond.value.toFixed(2)}`
+        `redraw#${redrawCount} ms=${lastRedrawStats.durationMs.toFixed(2)} ` +
+          `(ruler=${lastRedrawStats.rulerMs.toFixed(2)} tracks=${lastRedrawStats.tracksMs.toFixed(2)}) ` +
+          `rows=${lastRedrawStats.rows} clips=${lastRedrawStats.clips} ` +
+          `totalClips=${Object.keys(project.clips).length} ` +
+          `waveCols=${lastRedrawStats.columns} rects=${lastRedrawStats.rects} lanes=${lastRedrawStats.lanes} ` +
+          `gfx=${lastRedrawStats.graphics} pxPerSecond=${pxPerSecond.value.toFixed(2)}`
       )
     }
   }
@@ -248,16 +302,24 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const pxPerSub = pxPerBeat / SUBDIVISIONS_PER_BEAT
     const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
 
-    // Cover project duration plus one viewport margin for translate-only scroll.
+    // Project extent in subdivisions, used as the clamp ceiling for the band.
     const viewWidth = rightEdge - headerWidth()
     const projectPx = (project.durationMs / 1000) * pxPerSecond.value
     const lastSub = Math.ceil((projectPx + viewWidth) / pxPerSub)
+    // Window to the visible band: at high zoom a long project spans thousands of
+    // ticks/labels, almost all off-screen. Horizontal scroll rebuilds the band.
+    const { first: firstSub, last: lastVisibleSub } = visibleSubRange(
+      scrollX.value,
+      viewWidth,
+      pxPerSub,
+      lastSub
+    )
 
     const subTicks = new G()
     const beatTicks = new G()
     const barTicks = new G()
 
-    for (let s = 0; s <= lastSub; s++) {
+    for (let s = firstSub; s <= lastVisibleSub; s++) {
       const x = headerWidth() + s * pxPerSub + 0.5
       const isBar = s % subsPerBar === 0
       const isBeat = s % SUBDIVISIONS_PER_BEAT === 0
@@ -275,7 +337,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     // Bar labels: barCounterStart is the first bar's number (default 1; 0 or lower for lead-in).
     if (T) {
       const barCounterStart = project.barCounterStart
-      for (let s = 0; s <= lastSub; s += subsPerBar) {
+      const firstBarSub = Math.ceil(firstSub / subsPerBar) * subsPerBar
+      for (let s = firstBarSub; s <= lastVisibleSub; s += subsPerBar) {
         const x = headerWidth() + s * pxPerSub + 0.5
         const barNumber = s / subsPerBar + barCounterStart
         const label = new T({
@@ -314,12 +377,19 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const viewWidth = rightEdge - gridLeft
     const projectPx = (project.durationMs / 1000) * pxPerSecond.value
     const lastSub = Math.ceil((projectPx + viewWidth) / pxPerSub)
+    // Window to the visible band (see drawRulerTicks); horizontal scroll rebuilds.
+    const { first: firstSub, last: lastVisibleSub } = visibleSubRange(
+      scrollX.value,
+      viewWidth,
+      pxPerSub,
+      lastSub
+    )
 
     const subLines = new G()
     const beatLines = new G()
     const barLines = new G()
 
-    for (let s = 0; s <= lastSub; s++) {
+    for (let s = firstSub; s <= lastVisibleSub; s++) {
       const x = gridLeft + s * pxPerSub + 0.5
       const isBar = s % subsPerBar === 0
       const isBeat = s % SUBDIVISIONS_PER_BEAT === 0
@@ -357,8 +427,14 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const viewWidth = rightEdge - headerWidth()
     const projectPx = (project.durationMs / 1000) * pxPerSecond.value
     const worldRowRight = headerWidth() + projectPx + viewWidth
-    const worldLeft = 0
-    const worldRight = worldRowRight
+    // Horizontal virtualization: build clip geometry only within the visible
+    // viewport plus half a viewport of overscan each side, so redraw cost scales
+    // with the viewport — not the whole project × zoom. Horizontal scroll fires a
+    // coalesced redraw to re-centre this band (mirroring vertical scroll); the
+    // overscan covers the small distance scrolled before that redraw lands.
+    const overscan = horizontalOverscanPx(viewWidth)
+    const worldLeft = Math.max(0, scrollX.value + headerWidth() - overscan)
+    const worldRight = scrollX.value + rightEdge + overscan
     const rowLayout = buildTrackRowLayout(tracks)
     const visibleRows: {
       track: (typeof tracks)[number]
@@ -617,5 +693,5 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     dropPreviewGfx = g
   }
 
-  return { redraw, applyScroll, updatePlayhead, setDisplayPositionMs }
+  return { redraw, applyScroll, updatePlayhead, setDisplayPositionMs, horizontalRebuildNeeded }
 }

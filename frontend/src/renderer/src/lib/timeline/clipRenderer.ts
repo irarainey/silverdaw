@@ -22,7 +22,12 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { pickPeaksLod } from '@/lib/peaksLod'
 import { envelopeGainAtMs } from '@/lib/envelope'
-import { waveformColumnExcursion } from './waveformColumn'
+import {
+  waveformColumnUp,
+  waveformColumnDown,
+  visibleColumnRange,
+  createWaveformRunMerger
+} from './waveformColumn'
 import {
   TRANSITION_FILL,
   TRANSITION_FILL_ALPHA,
@@ -71,6 +76,16 @@ export function createClipRenderer(ctx: ClipRendererContext) {
   // the layer so we can drop the stale pool when the app is rebuilt.
   let pooledLayer: Container | null = null
 
+  // Per-frame draw counters for performance instrumentation. `columnsEmitted` is
+  // the key metric: today it scales with full clip width (project length × zoom),
+  // not the viewport, which is the dominant redraw cost.
+  let frameColumns = 0
+  let frameLanes = 0
+  // Rects actually emitted after run-length merging equal-height adjacent
+  // columns. At high zoom (many px per peak) this is far below frameColumns,
+  // which is where the per-rebuild geometry cost is saved.
+  let frameRects = 0
+
   // Reset the pool cursor at the start of each redraw — call AFTER the caller has
   // detached the previous frame's children. Acquired instances are re-added in
   // draw order, so child z-ordering is identical to fresh allocation.
@@ -83,6 +98,14 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       pooledLayer = layer
     }
     poolCursor = 0
+    frameColumns = 0
+    frameLanes = 0
+    frameRects = 0
+  }
+
+  /** Waveform draw counts for the frame just rendered (read after `drawClip`s). */
+  function getFrameStats(): { columns: number; lanes: number; graphics: number; rects: number } {
+    return { columns: frameColumns, lanes: frameLanes, graphics: poolCursor, rects: frameRects }
   }
 
   // Hand back a cleared, reusable Graphics. Grows the pool to the peak number of
@@ -220,7 +243,20 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       const peaksPerPixel = windowSize / w
       const reversed = clip.reversed === true
       let didDraw = false
-      for (let px = 0; px < w; px++) {
+      let drawnColumns = 0
+      let emittedRects = 0
+      // Merge consecutive columns with identical top/bottom into one wider rect.
+      // At high zoom many adjacent pixels read the same peak (and, with no volume
+      // envelope, the same gain), collapsing to a single rect — pixel-identical
+      // output, far fewer rects to tessellate per rebuild.
+      const merger = createWaveformRunMerger((sx, ex, yt, yb) => {
+        target.rect(absX + sx, yt, ex - sx, yb - yt)
+        ++emittedRects
+      })
+      // Only emit columns inside the horizontal draw band; columns outside the
+      // viewport (+overscan) are never visible, so building them is pure waste.
+      const { from: pxFrom, to: pxTo } = visibleColumnRange(absX, w, worldLeft, worldRight)
+      for (let px = pxFrom; px < pxTo; px++) {
         // Reversed clips read the source window back-to-front; the volume
         // envelope below stays oriented to clip-time, so only the peak read
         // is mirrored here.
@@ -232,6 +268,8 @@ export function createClipRenderer(ctx: ClipRendererContext) {
           Math.max(startIdx + 1, startPeak + Math.ceil((srcPx + 1) * peaksPerPixel))
         )
         if (startIdx >= endPeak) {
+          // Out-of-data column: close the current run so it never spans the gap.
+          merger.breakRun(px)
           if (reversed) continue
           break
         }
@@ -246,13 +284,22 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         }
 
         // Apply per-column envelope gain so waveform height follows clip volume.
+        // Scalar excursion helpers avoid allocating a {up,down} object per
+        // column (~20k/redraw) — that GC churn was the main per-rebuild jitter.
         const colGain = columnGain ? columnGain(px) : 1
-        const { up, down } = waveformColumnExcursion(min, max, laneHalf, colGain)
-        const yTop = laneMidY - up
-        const yBot = laneMidY + down
-        target.moveTo(absX + px + 0.5, yTop).lineTo(absX + px + 0.5, yBot < yTop + 1 ? yTop + 1 : yBot)
+        const yTop = laneMidY - waveformColumnUp(max, laneHalf, colGain)
+        const rawBot = laneMidY + waveformColumnDown(min, laneHalf, colGain)
+        // Equivalent pixel coverage to a 1px stroked vertical line, with a 1px
+        // minimum so silent columns stay visible.
+        const yBot = rawBot < yTop + 1 ? yTop + 1 : rawBot
+        merger.push(px, yTop, yBot)
         didDraw = true
+        ++drawnColumns
       }
+      merger.finish(pxTo)
+      frameColumns += drawnColumns
+      frameRects += emittedRects
+      if (drawnColumns > 0) ++frameLanes
       return didDraw
     }
 
@@ -295,14 +342,14 @@ export function createClipRenderer(ctx: ClipRendererContext) {
           volumeColumnGain
         )
         if (drew) {
-          laneGfx.stroke({ color: waveColour, width: 1, alpha: 0.95 * (0.25 + 0.75 * gain) })
+          laneGfx.fill({ color: waveColour, alpha: 0.95 * (0.25 + 0.75 * gain) })
           tracksL.addChild(laneGfx)
         }
       }
     } else {
       const wave = acquireGraphics(G)
       if (drawLane(wave, peaks, peaksPerSecond, midY, innerH / 2 - 2, volumeColumnGain)) {
-        wave.stroke({ color: waveColour, width: 1, alpha: 0.95 })
+        wave.fill({ color: waveColour, alpha: 0.95 })
         tracksL.addChild(wave)
       }
     }
@@ -337,6 +384,8 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         const offsetInClipMs = beatMs - inMs
         if (offsetInClipMs < 0) continue
         const x = absX + (offsetInClipMs / warpRatio) * pxPerMs
+        if (x < worldLeft) continue
+        if (x > worldRight) break
         markers.moveTo(x + 0.5, innerY + 1).lineTo(x + 0.5, innerY + innerH - 1)
         ++drew
         if (stepMs <= 0) break
@@ -724,5 +773,5 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     }
   }
 
-  return { drawClip, drawClipOverlaps, drawTrackTransitions, beginFrame }
+  return { drawClip, drawClipOverlaps, drawTrackTransitions, beginFrame, getFrameStats }
 }

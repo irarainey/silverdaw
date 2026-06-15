@@ -22,14 +22,105 @@
  *   so the drawn line can never spill outside the clip block; a non-positive
  *   gain collapses the column to zero excursion.
  */
+/**
+ * Upward excursion (pixels above the lane centre) for one waveform column.
+ * Allocation-free scalar form for the per-column hot loop; see
+ * {@link waveformColumnExcursion} for the semantics of each argument.
+ */
+export function waveformColumnUp(maxPeak: number, laneHalf: number, gain: number): number {
+  const g = gain > 0 ? gain : 0
+  return Math.min(laneHalf, Math.max(0, maxPeak) * laneHalf * g)
+}
+
+/**
+ * Downward excursion (pixels below the lane centre) for one waveform column.
+ * Allocation-free scalar form for the per-column hot loop.
+ */
+export function waveformColumnDown(minPeak: number, laneHalf: number, gain: number): number {
+  const g = gain > 0 ? gain : 0
+  return Math.min(laneHalf, Math.max(0, -minPeak) * laneHalf * g)
+}
+
 export function waveformColumnExcursion(
   minPeak: number,
   maxPeak: number,
   laneHalf: number,
   gain: number
 ): { up: number; down: number } {
-  const g = gain > 0 ? gain : 0
-  const up = Math.min(laneHalf, Math.max(0, maxPeak) * laneHalf * g)
-  const down = Math.min(laneHalf, Math.max(0, -minPeak) * laneHalf * g)
-  return { up, down }
+  return {
+    up: waveformColumnUp(maxPeak, laneHalf, gain),
+    down: waveformColumnDown(minPeak, laneHalf, gain)
+  }
+}
+
+/**
+ * Half-open pixel-column range `[from, to)` of a clip lane that intersects the
+ * horizontal draw band, expressed in the lane's own `0..w` column space.
+ *
+ * - `absX` is the lane's left edge in world pixels; `w` its full pixel width.
+ * - `worldLeft`/`worldRight` are the draw-band edges in world pixels.
+ *
+ * Columns outside the band are never on screen, so the draw loop skips them —
+ * this is what makes redraw cost scale with the viewport instead of the whole
+ * clip width. The range is clamped to `[0, w]`, so a clip entirely outside the
+ * band yields an empty range (`from >= to`).
+ */
+export function visibleColumnRange(
+  absX: number,
+  w: number,
+  worldLeft: number,
+  worldRight: number
+): { from: number; to: number } {
+  const from = Math.max(0, Math.floor(worldLeft - absX))
+  const to = Math.min(w, worldRight - absX + 1)
+  return { from, to }
+}
+
+/** Emits one merged waveform rect spanning `[startPx, endPxExclusive)`. */
+export type WaveformRectSink = (
+  startPx: number,
+  endPxExclusive: number,
+  yTop: number,
+  yBot: number
+) => void
+
+export interface WaveformRunMerger {
+  /** Add the column at `px`; extends the open run if its height is identical. */
+  push: (px: number, yTop: number, yBot: number) => void
+  /** Close the open run at `px` (exclusive) for a data gap; starts no new run. */
+  breakRun: (endPxExclusive: number) => void
+  /** Flush any open run at `endPxExclusive`; call once after the last column. */
+  finish: (endPxExclusive: number) => void
+}
+
+/**
+ * Merges consecutive waveform columns that share identical top/bottom pixels
+ * into a single wider rect, emitting via `sink`. At high zoom many adjacent
+ * pixels read the same peak (and gain), so they collapse to one rect — the
+ * output is pixel-identical to one rect per column but far cheaper to tessellate.
+ *
+ * Allocation-free per column (number compares only); allocate one merger per
+ * lane. A run is contiguous in `px`, so callers must call `breakRun` at any
+ * skipped/out-of-data column so a run never spans a gap.
+ */
+export function createWaveformRunMerger(sink: WaveformRectSink): WaveformRunMerger {
+  let startPx = -1
+  let top = 0
+  let bot = 0
+  const flush = (endPxExclusive: number): void => {
+    if (startPx < 0) return
+    sink(startPx, endPxExclusive, top, bot)
+    startPx = -1
+  }
+  return {
+    push(px, yTop, yBot) {
+      if (startPx >= 0 && yTop === top && yBot === bot) return
+      flush(px)
+      startPx = px
+      top = yTop
+      bot = yBot
+    },
+    breakRun: flush,
+    finish: flush
+  }
 }
