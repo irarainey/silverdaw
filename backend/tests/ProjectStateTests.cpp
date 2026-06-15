@@ -698,6 +698,29 @@ void testLibraryItemDurationLookup()
                 "duration getter should return 0 for an unknown item");
 }
 
+void testProjectStateRenameIsNotUndoable()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+
+    // Make a normal undoable edit so there is undo history to walk.
+    state.getUndoManager().beginNewTransaction();
+    require(state.addTrack("t1"), "addTrack should succeed");
+    require(state.getUndoManager().canUndo(), "addTrack must push an undo entry");
+
+    // Renaming marks the project dirty but must not enter the undo stack.
+    state.getUndoManager().beginNewTransaction();
+    state.setName("My Mashup");
+    requireEqual(state.getName(), "My Mashup", "setName should update the project name");
+    require(state.isDirty(), "setName should mark the project dirty");
+
+    // Undo should revert the track edit, leaving the renamed name untouched.
+    require(state.getUndoManager().undo(), "undo should walk the prior transaction");
+    requireEqual(state.getName(), "My Mashup",
+                 "undo after a rename must not revert the project name");
+    require(!state.hasTrack("t1"), "undo should have removed the track");
+}
+
 } // namespace
 
 void addProjectStateTests(std::vector<TestCase>& tests)
@@ -718,6 +741,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"Seeded project BPM is not overridden by later clips", testSeededProjectIsNotReSeeded});
     tests.push_back({"User-classified sample does not seed project BPM", testExplicitSampleDoesNotSeed});
     tests.push_back({"Library item duration lookup by id", testLibraryItemDurationLookup});
+    tests.push_back({"ProjectState rename is not undoable", testProjectStateRenameIsNotUndoable});
 }
 
 } // namespace silverdaw::tests

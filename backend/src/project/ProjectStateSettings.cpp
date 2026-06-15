@@ -14,7 +14,10 @@ juce::String ProjectState::getName() const
 void ProjectState::setName(const juce::String& name)
 {
     const auto trimmed = name.trim();
-    root.setProperty(kName, trimmed.isEmpty() ? kDefaultName : trimmed, &undoManager);
+    // Renaming is a project-identity edit, not a content edit: it marks the
+    // project dirty (via the ValueTree listener) but must stay off the undo
+    // stack so Ctrl+Z after a rename never reverts the name.
+    root.setProperty(kName, trimmed.isEmpty() ? kDefaultName : trimmed, nullptr);
 }
 
 double ProjectState::getViewPxPerSecond() const
