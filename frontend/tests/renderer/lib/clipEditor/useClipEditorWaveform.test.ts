@@ -22,7 +22,6 @@ interface Harness {
 
 function makeWaveform(h: Harness): ReturnType<typeof useClipEditorWaveform> {
   const deps: ClipEditorWaveformDeps = {
-    getCanvas: () => null,
     sourceItem: () => h.source.value,
     sourceDurationMs: () => 0,
     zoom: () => h.zoom.value,
@@ -45,7 +44,8 @@ function makeWaveform(h: Harness): ReturnType<typeof useClipEditorWaveform> {
     editorHiResPeaks: () => h.hiRes.value,
     channelPeaksByItemId: () => ({}) as Record<string, ItemChannelPeaks>,
     waveformDisplayMode: () => 'summary',
-    waveformStereoLanes: ref(false)
+    waveformStereoLanes: ref(false),
+    canvasCssWidth: ref(0)
   }
   return useClipEditorWaveform(deps)
 }

@@ -13,7 +13,7 @@ const props = defineProps<ClipEditorProps>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const dialogEl = ref<HTMLDivElement | null>(null)
-const waveformEl = ref<HTMLCanvasElement | null>(null)
+const waveformHost = ref<HTMLDivElement | null>(null)
 
 const {
   preview,
@@ -69,7 +69,7 @@ const {
   canSaveAsNew,
   onSaveAsNew,
   onKeydown
-} = useClipEditorController(props, emit, dialogEl, waveformEl)
+} = useClipEditorController(props, emit, dialogEl, waveformHost)
 
 // Grid-align mode repurposes the canvas drag; reflect it in the cursor.
 const gridAligning = computed(() => beatGrid.alignActive.value)
@@ -132,9 +132,9 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
 
         <div class="flex min-h-0 flex-1 flex-col gap-4 px-5 py-4">
           <div class="flex min-w-0 flex-col gap-3">
-            <canvas
-              ref="waveformEl"
-              class="h-[min(260px,26vh)] w-full rounded border border-zinc-800 bg-zinc-950"
+            <div
+              ref="waveformHost"
+              class="relative h-[min(260px,26vh)] w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950"
               :class="gridAligning ? 'cursor-grab' : volumeEditActive ? 'cursor-pointer' : 'cursor-crosshair'"
               @mousedown="onCanvasMouseDown"
               @contextmenu="onCanvasContextMenu"

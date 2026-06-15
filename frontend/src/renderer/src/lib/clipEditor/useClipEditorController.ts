@@ -33,7 +33,7 @@ export function useClipEditorController(
   props: Readonly<ClipEditorProps>,
   emit: (e: 'close') => void,
   dialogEl: Ref<HTMLDivElement | null>,
-  waveformEl: Ref<HTMLCanvasElement | null>
+  waveformHost: Ref<HTMLDivElement | null>
 ) {
   const preview = usePreviewStore()
   const project = useProjectStore()
@@ -286,13 +286,17 @@ export function useClipEditorController(
         resetCropHistory()
         library.setEditorHiResPeaks(null)
         await nextTick()
-        if (waveformEl.value) {
-          canvasCssWidth.value = waveformEl.value.getBoundingClientRect().width
+        const host = waveformHost.value
+        if (host) {
+          await mountScene(host)
+          canvasCssWidth.value = host.getBoundingClientRect().width
         }
         drawWaveform()
+        startPlayheadRaf()
         dialogEl.value?.focus()
         loadPreviewForView()
       } else {
+        stopPlayheadRaf()
         clearPreviewWarpUpdateTimer()
         clearPreviewEnvelopeUpdateTimer()
         preview.unload()
@@ -300,6 +304,7 @@ export function useClipEditorController(
         library.setEditorHiResPeaks(null)
         resetHiResRequestKey()
         resetCropHistory()
+        unmountScene()
       }
     }
   )
@@ -402,14 +407,26 @@ export function useClipEditorController(
     loadPreviewForView()
   })
 
-  watch(
-    [() => preview.positionMs, () => preview.isPlaying],
-    () => {
+  // Playhead/scroll are painted on a per-frame rAF loop (vsync-aligned), mirroring
+  // the timeline. Driving them off the discrete positionMs watcher instead repainted
+  // at the backend tick cadence — off-vsync and irregular — which read as periodic
+  // freeze/jitter. The helpers below early-return when paused, so the loop is cheap
+  // while idle and Pixi already renders every frame regardless.
+  let playheadRafId: number | null = null
+  function startPlayheadRaf(): void {
+    if (playheadRafId !== null) return
+    const tick = (): void => {
+      playheadRafId = requestAnimationFrame(tick)
       enforceSelectionPlaybackBounds()
       autoFollowPlayhead()
-      drawWaveform()
+      applyScroll()
     }
-  )
+    playheadRafId = requestAnimationFrame(tick)
+  }
+  function stopPlayheadRaf(): void {
+    if (playheadRafId !== null) cancelAnimationFrame(playheadRafId)
+    playheadRafId = null
+  }
 
   watch(
     [
@@ -418,7 +435,6 @@ export function useClipEditorController(
       cropViewInMs,
       cropViewDurationMs,
       zoom,
-      scrollMs,
       canvasCssWidth,
       () => ui.zoomPxPerSecond,
       () => ui.waveformDisplayMode,
@@ -428,6 +444,9 @@ export function useClipEditorController(
       drawWaveform()
     }
   )
+
+  // Scroll (manual or auto-follow) is repainted by the per-frame rAF loop while the
+  // editor is open, so no separate scrollMs watcher is needed.
 
   // endedCount is the reliable loop restart signal after natural preview end.
   watch(
@@ -461,7 +480,7 @@ export function useClipEditorController(
   })
 
   watch(
-    () => waveformEl.value,
+    () => waveformHost.value,
     (el) => {
       if (!resizeObserver) return
       resizeObserver.disconnect()
@@ -474,6 +493,7 @@ export function useClipEditorController(
 
   onBeforeUnmount(() => {
     ui.clipEditorOpen = false
+    stopPlayheadRaf()
     clearPreviewWarpUpdateTimer()
     clearPreviewEnvelopeUpdateTimer()
     preview.unload()
@@ -490,8 +510,15 @@ export function useClipEditorController(
 
 
   // Waveform renderer writes lane layout back for pointer hit-testing.
-  const { drawWaveform, ensureEditorHiResPeaks, resetHiResRequestKey } = useClipEditorWaveform({
-    getCanvas: () => waveformEl.value,
+  const {
+    drawWaveform,
+    applyScroll,
+    mountScene,
+    unmountScene,
+    getCanvas,
+    ensureEditorHiResPeaks,
+    resetHiResRequestKey
+  } = useClipEditorWaveform({
     sourceItem: () => sourceItem.value,
     sourceDurationMs: () => sourceDurationMs.value,
     zoom: () => zoom.value,
@@ -514,7 +541,8 @@ export function useClipEditorController(
     editorHiResPeaks: () => library.editorHiResPeaks,
     channelPeaksByItemId: () => library.channelPeaksByItemId,
     waveformDisplayMode: () => ui.waveformDisplayMode,
-    waveformStereoLanes
+    waveformStereoLanes,
+    canvasCssWidth
   })
 
   watch(zoom, () => ensureEditorHiResPeaks())
@@ -528,7 +556,7 @@ export function useClipEditorController(
     extendSelection,
     clearSelection
   } = useClipEditorCanvasInteraction({
-    getCanvas: () => waveformEl.value,
+    getCanvas: () => getCanvas(),
     preview,
     volumeShapeDraft,
     selectionInMs,
