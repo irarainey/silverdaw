@@ -22,6 +22,11 @@ export interface StemSeparationTarget {
   clipId?: string
   /** Start of the source clip (ms) used to align placed stem clips. */
   startMs?: number
+  /** The source clip's trim-in (ms) at separation time. A clip-scoped separation
+   *  extracts only [inMs, inMs+duration) of the source, so the stem WAV's sample 0
+   *  is source-time `inMs`. The inherited beat grid is shifted back by this so it
+   *  lands on the stem's own timeline. Absent/0 for full-source separations. */
+  sourceInMs?: number
 }
 
 export interface StemSeparationActiveState {

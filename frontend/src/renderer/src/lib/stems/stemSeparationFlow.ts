@@ -113,7 +113,8 @@ export function requestStemSeparationForClip(clipId: string): void {
     sourceItemId,
     sourceName: stripExtension(name),
     clipId,
-    startMs: clip.startMs
+    startMs: clip.startMs,
+    sourceInMs: clip.inMs
   })
 }
 

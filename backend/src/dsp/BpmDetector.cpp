@@ -300,6 +300,97 @@ bool estimateGridPhaseOffset(const std::vector<double>& odf, double envRate, dou
     return true;
 }
 
+// Refine period+anchor by least-squares over sub-frame ODF onset peaks across
+// the whole analysed span. BTrack beats are hop-quantised (256 samples) with a
+// structured, phase-correlated latency that biases the LSQ slope; the
+// parabolically-interpolated ODF peaks give sub-sample, slope-unbiased positions
+// with a long lever arm, which sharpens the period. groupDelaySec removes the
+// ODF's constant onset latency so the fitted anchor lands on the transient.
+// Returns false when too few grid lines find a confident onset peak.
+bool refineGridFromOdfPeaks(const std::vector<double>& odf, double envRate, double groupDelaySec,
+                            double periodSec, double anchorSec, double& outPeriod, double& outAnchor,
+                            int& outMatched)
+{
+    outMatched = 0;
+    if (odf.size() < 16 || envRate <= 0.0 || periodSec <= 0.0) return false;
+
+    const int maxIdx = static_cast<int>(odf.size()) - 2;
+    const double totalSec = static_cast<double>(odf.size()) / envRate;
+    const double win = std::min(periodSec * 0.25, 0.12);
+
+    std::vector<std::pair<int, double>> pts; // (beat index n, de-biased onset time)
+    const int firstN = static_cast<int>(std::ceil((0.0 - anchorSec) / periodSec));
+    for (int n = firstN;; ++n)
+    {
+        const double gridT = anchorSec + static_cast<double>(n) * periodSec;
+        if (gridT < 0.0) continue;
+        if (gridT > totalSec) break;
+
+        const int lo = std::max(1, static_cast<int>(std::floor((gridT - win) * envRate)));
+        const int hi = std::min(maxIdx, static_cast<int>(std::ceil((gridT + win) * envRate)));
+        if (hi <= lo) continue;
+
+        int bestI = -1;
+        double bestV = 0.0;
+        for (int i = lo; i <= hi; ++i)
+        {
+            const double v = odf[static_cast<size_t>(i)];
+            if (v > odf[static_cast<size_t>(i - 1)] && v >= odf[static_cast<size_t>(i + 1)] && v > bestV)
+            {
+                bestV = v;
+                bestI = i;
+            }
+        }
+        if (bestI < 0) continue;
+
+        const double y0 = odf[static_cast<size_t>(bestI - 1)];
+        const double y1 = odf[static_cast<size_t>(bestI)];
+        const double y2 = odf[static_cast<size_t>(bestI + 1)];
+        double frac = 0.0;
+        const double denom = y0 - 2.0 * y1 + y2;
+        if (std::abs(denom) > 1e-12)
+        {
+            const double d = 0.5 * (y0 - y2) / denom;
+            if (std::abs(d) <= 1.0) frac = d;
+        }
+        const double peakT = (static_cast<double>(bestI) + frac) / envRate - groupDelaySec;
+        pts.emplace_back(n, peakT);
+    }
+
+    if (pts.size() < 8) return false;
+
+    // Two robust LSQ passes; drop points >0.25*period from the fitted line.
+    double period = periodSec;
+    double anchor = anchorSec;
+    for (int iter = 0; iter < 2; ++iter)
+    {
+        long double sumN = 0, sumT = 0, sumNN = 0, sumNT = 0;
+        int k = 0;
+        for (auto& [n, t] : pts)
+        {
+            const double predicted = anchor + n * period;
+            if (iter > 0 && std::abs(t - predicted) > period * 0.25) continue;
+            sumN += n;
+            sumT += t;
+            sumNN += static_cast<long double>(n) * n;
+            sumNT += static_cast<long double>(n) * t;
+            ++k;
+        }
+        if (k < 6) return false;
+        const long double K = static_cast<long double>(k);
+        const long double det = K * sumNN - sumN * sumN;
+        if (det <= 0.0L) return false;
+        period = static_cast<double>((K * sumNT - sumN * sumT) / det);
+        anchor = static_cast<double>((sumT - static_cast<long double>(period) * sumN) / K);
+        outMatched = k;
+        if (period < 0.05 || period > 2.0) return false;
+    }
+
+    outPeriod = period;
+    outAnchor = anchor;
+    return true;
+}
+
 BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager)
 {
     BpmAnalysis result;
@@ -449,6 +540,14 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     // Accept only near-octave candidates that do not worsen the BTrack-beat residual.
     // The ODF is computed once here and reused for the phase-alignment step below.
     constexpr int kOdfHop = 256; // ~5.8 ms @ 44.1 kHz
+    // The complex-spectral-difference ODF is computed over a Hanning-windowed
+    // kOdfFrame-sample frame whose newest hop trails the analysis instant, so a
+    // sharp onset's ODF peak lands a fixed group delay after the true transient.
+    // Measured across every sub-hop phase (1024-frame / 256-hop CSD-HWR) the peak
+    // is ~0.53 ODF frames (~3 ms @ 44.1 kHz) late. Subtract it wherever the ODF
+    // defines grid phase so the rendered beat grid sits on the onset instead of
+    // consistently late. Re-measure if kOdfFrame or kOdfHop change.
+    constexpr double kOdfGroupDelayFrames = 0.53;
     std::vector<double> odf;
     double envRate = 0.0;
     if (!resampled.empty() && beatTimes.size() >= 6 && baselineKept > 0)
@@ -493,7 +592,10 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
                                                  juce::String(acRms * 1000.0, 2) + "ms, kept " + juce::String(acKept) +
                                                  "/" + juce::String(baselineKept) + ")");
                         derivedBpm = acBpm;
-                        anchorSec = acAnchor;
+                        // findBestAnchor reports the ODF onset phase, which is
+                        // late by the ODF group delay; de-bias so the grid sits
+                        // on the transient.
+                        anchorSec = acAnchor - kOdfGroupDelayFrames / envRate;
                     }
                     else
                     {
@@ -539,25 +641,31 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
             const int expectedBeats = std::max(1, static_cast<int>(std::floor(
                                                        (static_cast<double>(odf.size()) / envRate) / periodSec)));
             const double matchFrac = static_cast<double>(matched) / static_cast<double>(expectedBeats);
+            // estimateGridPhaseOffset returns the raw ODF-peak-minus-grid offset;
+            // the ODF peaks are themselves group-delay late, so the true grid
+            // correction is the measured offset minus that delay.
+            const double correction = offset - kOdfGroupDelayFrames / envRate;
             const bool consistent = spread <= kMaxConsistentSpreadSec;
-            const bool plausible = std::abs(offset) <= kMaxPhaseCorrectionSec;
-            const bool significant = std::abs(offset) > kMinSignificantSec;
+            const bool plausible = std::abs(correction) <= kMaxPhaseCorrectionSec;
+            const bool significant = std::abs(correction) > kMinSignificantSec;
             const bool enough = matchFrac >= 0.5;
             if (consistent && plausible && significant && enough)
             {
                 silverdaw::log::info("bpm",
                                      "phase-aligned grid for " + audioFile.getFileName() + " by " +
-                                         juce::String(offset * 1000.0, 2) + "ms (anchor " +
+                                         juce::String(correction * 1000.0, 2) + "ms (anchor " +
                                          juce::String(anchorSec, 4) + "s -> " +
-                                         juce::String(anchorSec + offset, 4) + "s, matched " +
+                                         juce::String(anchorSec + correction, 4) + "s, raw offset " +
+                                         juce::String(offset * 1000.0, 2) + "ms, matched " +
                                          juce::String(matched) + "/" + juce::String(expectedBeats) + ", iqr " +
                                          juce::String(spread * 1000.0, 2) + "ms)");
-                anchorSec += offset;
+                anchorSec += correction;
             }
             else
             {
                 silverdaw::log::info("bpm",
-                                     "phase alignment skipped for " + audioFile.getFileName() + " (offset " +
+                                     "phase alignment skipped for " + audioFile.getFileName() + " (correction " +
+                                         juce::String(correction * 1000.0, 2) + "ms, raw offset " +
                                          juce::String(offset * 1000.0, 2) + "ms, matched " + juce::String(matched) +
                                          "/" + juce::String(expectedBeats) + ", iqr " +
                                          juce::String(spread * 1000.0, 2) + "ms; consistent=" +
@@ -565,6 +673,36 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
                                          juce::String(plausible ? 1 : 0) + " significant=" +
                                          juce::String(significant ? 1 : 0) + " enough=" +
                                          juce::String(enough ? 1 : 0) + ")");
+            }
+        }
+    }
+
+    // Sharpen the period with a full-span LSQ over sub-frame ODF onset peaks.
+    // BTrack beats are hop-quantised with a phase-correlated latency that biases
+    // the baseline slope (leaving a slight period error that tilts the grid:
+    // late at the start, early at the end); the interpolated ODF peaks remove
+    // that bias. Only adopt a near-octave refinement so a spurious fit cannot
+    // hijack the tempo.
+    if (!odf.empty() && envRate > 0.0 && derivedBpm > 0.0)
+    {
+        double refinedPeriod = 0.0;
+        double refinedAnchor = 0.0;
+        int refinedMatched = 0;
+        if (refineGridFromOdfPeaks(odf, envRate, kOdfGroupDelayFrames / envRate, 60.0 / derivedBpm, anchorSec,
+                                   refinedPeriod, refinedAnchor, refinedMatched))
+        {
+            const double refinedBpm = 60.0 / refinedPeriod;
+            const double drift = std::abs(refinedBpm - derivedBpm) / juce::jmax(1.0, derivedBpm);
+            if (drift < 0.05)
+            {
+                silverdaw::log::info("bpm",
+                                     "odf-peak grid refit for " + audioFile.getFileName() + ": " +
+                                         juce::String(derivedBpm, 4) + " -> " + juce::String(refinedBpm, 4) +
+                                         " BPM (anchor " + juce::String(anchorSec, 4) + "s -> " +
+                                         juce::String(refinedAnchor, 4) + "s, matched " +
+                                         juce::String(refinedMatched) + ")");
+                derivedBpm = refinedBpm;
+                anchorSec = refinedAnchor;
             }
         }
     }

@@ -197,6 +197,46 @@ describe('createTracksFromStems (timeline target)', () => {
     expect(setItemAnalysis).toHaveBeenCalledTimes(2)
   })
 
+  it('shifts the inherited grid by the source clip trim and records the offset', async () => {
+    registerStemJob('job-1', { ...timelineTarget, sourceInMs: 200 })
+    getItem.mockImplementation((id: string) =>
+      id === 'src-item'
+        ? {
+            id,
+            kind: 'audio-file',
+            filePath: 'C:\\music\\Song.mp3',
+            bpm: 120,
+            beats: [0.1, 0.5, 1.0, 1.5],
+            beatAnchorSec: 0.5,
+            variableTempo: false,
+            key: 'A min'
+          }
+        : { id }
+    )
+
+    await createTracksFromStems(payload())
+
+    // The stem WAV starts 200 ms into the source, so the grid shifts back by 0.2 s
+    // and any beat that lands before the stem's start is dropped (0.1 → -0.1).
+    expect(setItemAnalysis).toHaveBeenNthCalledWith(
+      1,
+      'item-1',
+      120,
+      0.3,
+      [0.3, 0.8, 1.3],
+      false,
+      undefined,
+      false
+    )
+    // The window start is recorded on the stem's provenance so the backend can
+    // apply the same shift authoritatively.
+    expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(1, expect.anything(), {
+      kind: 'stem',
+      name: 'Vocals \u2014 Song',
+      derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 200, durationMs: 0 }
+    })
+  })
+
   it('never copies a low-confidence source flag onto the stem (defers to the source)', async () => {
     getItem.mockImplementation((id: string) =>
       id === 'src-item'

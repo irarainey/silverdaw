@@ -87,7 +87,12 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
       derivedFrom: {
         sourceItemId: target.sourceItemId,
         sourceClipId: target.clipId,
-        inMs: 0,
+        // The separation extracted [inMs, …) of the source, so the stem WAV begins
+        // at source-time `inMs`. Recording it here (a) lets the backend shift the
+        // inherited beat grid onto the stem's timeline and (b) keeps provenance
+        // accurate. Stem clip placement still uses inMs 0 (only saved-clips read
+        // this for placement), so the stem plays from its own start.
+        inMs: target.sourceInMs ?? 0,
         durationMs: 0
       }
     })
@@ -96,9 +101,11 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
       return false
     }
     // Stems are sample-aligned with the source, so reuse its analysis instead of
-    // re-detecting: instant, accurate, and resolves any pending auto-warp.
+    // re-detecting: instant, accurate, and resolves any pending auto-warp. A
+    // clip-scoped separation only covers [inMs, …) of the source, so the grid is
+    // shifted back by that window start (see inheritSourceAnalysis).
     // (Sample/music classification is NOT copied — it defers to the source.)
-    inheritSourceAnalysis(library, itemId, sourceItem)
+    inheritSourceAnalysis(library, itemId, sourceItem, (target.sourceInMs ?? 0) / 1000)
     const audio = library.getItem(itemId)
     if (!audio) {
       job.placed.delete(stem)
@@ -180,13 +187,22 @@ async function persistStemSidecar(job: StemJob, payload: StemReadyPayload): Prom
 }
 
 /** Copy the source item's beat grid and key onto a freshly imported stem so its
- *  clip warps to the project grid on add (no re-analysis, no pending state). */
+ *  clip warps to the project grid on add (no re-analysis, no pending state).
+ *  `windowStartSec` is the source clip's trim-in: a clip-scoped separation only
+ *  covers [windowStart, …) of the source, so the stem WAV's sample 0 is
+ *  source-time `windowStart`. The grid (anchor + beats) is in source time, so
+ *  shift it back to land on the stem's own timeline. This mirrors the backend's
+ *  authoritative inheritance (LibraryAnalysis.cpp) so the two never diverge. */
 function inheritSourceAnalysis(
   library: ReturnType<typeof useLibraryStore>,
   stemId: string,
-  source: ReturnType<ReturnType<typeof useLibraryStore>['getItem']> | undefined
+  source: ReturnType<ReturnType<typeof useLibraryStore>['getItem']> | undefined,
+  windowStartSec: number
 ): void {
   if (!source || !(source.bpm && source.bpm > 0)) return
+  const shift = windowStartSec > 0 ? windowStartSec : 0
+  const anchor = (source.beatAnchorSec ?? source.beats?.[0] ?? 0) - shift
+  const beats = source.beats ? source.beats.map((b) => b - shift).filter((b) => b >= 0) : []
   // Deliberately do NOT copy the source's `lowConfidence` auto-flag onto the
   // stem: a stem has no independent confidence measurement, and its own flag
   // would short-circuit `libraryItemIsSample` before the `derivedFrom` branch.
@@ -195,8 +211,8 @@ function inheritSourceAnalysis(
   library.setItemAnalysis(
     stemId,
     source.bpm,
-    source.beatAnchorSec ?? source.beats?.[0] ?? 0,
-    source.beats ? source.beats.slice() : [],
+    anchor,
+    beats,
     source.variableTempo === true,
     undefined,
     false

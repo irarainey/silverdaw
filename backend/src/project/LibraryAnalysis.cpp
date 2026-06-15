@@ -359,14 +359,13 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
     if (!library.isValid()) return;
 
     juce::ValueTree source;
+    juce::ValueTree stem;
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(juce::Identifier{"id"}).toString() == sourceItemId)
-        {
-            source = item;
-            break;
-        }
+        const auto id = item.getProperty(juce::Identifier{"id"}).toString();
+        if (id == sourceItemId) source = item;
+        if (id == itemId) stem = item;
     }
     if (!source.isValid())
     {
@@ -374,9 +373,20 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
         return;
     }
 
-    // Stems are sample-aligned with the source file, so its beat grid applies directly.
+    // A clip-scoped separation extracts only the source clip's window
+    // ([inMs, inMs+durationMs)), so the stem WAV's sample 0 is source-time
+    // `inMs`, not 0. The source's grid is expressed in source time, so shift it
+    // back by the window start to land on the stem's own timeline. The shift
+    // always derives from the (unshifted) source, so re-running this is
+    // idempotent. A full-source/library separation has no offset (shift = 0).
+    const double windowStartSec =
+        stem.isValid()
+            ? juce::jmax(0.0, static_cast<double>(stem.getProperty(juce::Identifier{"sourceInMs"}, 0.0))) / 1000.0
+            : 0.0;
+
     const double bpm = static_cast<double>(source.getProperty(juce::Identifier{"bpm"}, 0.0));
-    const double beatAnchorSec = static_cast<double>(source.getProperty(juce::Identifier{"beatAnchorSec"}, 0.0));
+    const double beatAnchorSec =
+        static_cast<double>(source.getProperty(juce::Identifier{"beatAnchorSec"}, 0.0)) - windowStartSec;
     const bool variableTempo = static_cast<bool>(source.getProperty(juce::Identifier{"variableTempo"}, false));
     const juce::String key = source.getProperty(juce::Identifier{"key"}, juce::String{}).toString();
 
@@ -386,7 +396,11 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
         if (auto* arr = beatsVar.getArray())
         {
             beats.reserve(static_cast<size_t>(arr->size()));
-            for (const auto& b : *arr) beats.push_back(static_cast<double>(b));
+            for (const auto& b : *arr)
+            {
+                const double shifted = static_cast<double>(b) - windowStartSec;
+                if (shifted >= 0.0) beats.push_back(shifted);
+            }
         }
     }
 
@@ -398,7 +412,9 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
     applyAndBroadcastItemAnalysis(itemId, bpm, beats, beatAnchorSec, variableTempo, /*lowConfidence=*/false,
                                   juce::String{}, engine, projectState, bridge);
     silverdaw::log::info("bpmjob", "inherited analysis for stem " + itemId + " from source "
-                                       + sourceItemId + " bpm=" + juce::String(bpm, 4));
+                                       + sourceItemId + " bpm=" + juce::String(bpm, 4)
+                                       + " windowStart=" + juce::String(windowStartSec, 4) + "s"
+                                       + " anchor=" + juce::String(beatAnchorSec, 4) + "s");
 }
 
 void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& filePath, AudioEngine& engine,
