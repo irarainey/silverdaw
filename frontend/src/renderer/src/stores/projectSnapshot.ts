@@ -331,7 +331,7 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
             id: t.id,
             name: persistedName && persistedName.length > 0 ? persistedName : `Track ${index + 1}`,
             clipIds: [],
-            muted: t.muted === true,
+            muted: t.muted === true && t.soloed !== true,
             soloed: t.soloed === true,
             volume: Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain)),
             colorIndex: index % TRACK_PALETTE.length,
@@ -361,8 +361,9 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
           if (typeof t.heightPx === 'number' && t.heightPx > 0) {
             track.heightPx = t.heightPx
           }
-          // Mute/solo acks arrive as PROJECT_STATE refreshes.
-          track.muted = t.muted === true
+          // Mute/solo acks arrive as PROJECT_STATE refreshes. Mute and solo are mutually
+          // exclusive; if a legacy project carries both, solo wins (clears mute).
+          track.muted = t.muted === true && t.soloed !== true
           track.soloed = t.soloed === true
           track.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain))
           track.toneBassDb =

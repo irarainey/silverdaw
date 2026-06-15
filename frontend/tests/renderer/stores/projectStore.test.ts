@@ -1124,4 +1124,34 @@ describe('projectStore', () => {
     project.maybeCreateTransitionAfterTrim('c1', 'right')
     expect(sendMock).not.toHaveBeenCalledWith('TRANSITION_CREATE', expect.anything())
   })
+
+  it('clears solo when a soloed track is muted (mute and solo are mutually exclusive)', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    project.toggleSolo(trackId)
+    sendMock.mockClear()
+
+    project.toggleMute(trackId)
+
+    const track = project.tracks.find((t) => t.id === trackId)
+    expect(track?.muted).toBe(true)
+    expect(track?.soloed).toBe(false)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_MUTE', { trackId, muted: true })
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SOLO', { trackId, soloed: false })
+  })
+
+  it('clears mute when a muted track is soloed (mute and solo are mutually exclusive)', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    project.toggleMute(trackId)
+    sendMock.mockClear()
+
+    project.toggleSolo(trackId)
+
+    const track = project.tracks.find((t) => t.id === trackId)
+    expect(track?.soloed).toBe(true)
+    expect(track?.muted).toBe(false)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SOLO', { trackId, soloed: true })
+    expect(sendMock).toHaveBeenCalledWith('TRACK_MUTE', { trackId, muted: false })
+  })
 })
