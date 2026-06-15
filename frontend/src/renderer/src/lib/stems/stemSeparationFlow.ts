@@ -36,8 +36,28 @@ export interface StemSelectionState {
 
 const selection: Ref<StemSelectionState | null> = ref(null)
 
+// The last-used separation quality, persisted with application preferences so the
+// picker reopens on the user's choice instead of resetting each time. Cached in the
+// module (and primed once at startup via loadStemQualityPreference) so the dialog can
+// seed it synchronously when it opens; setStemQuality keeps it and the store in sync.
+let preferredQuality: StemQuality = 'balanced'
+
 export function useStemSelection(): Readonly<Ref<StemSelectionState | null>> {
   return readonly(selection)
+}
+
+/** Prime the cached quality preference from persisted app preferences. Call once at
+ *  app startup; failures leave the default ('balanced') in place. */
+export async function loadStemQualityPreference(): Promise<void> {
+  try {
+    const prefs = await window.silverdaw.getStemPrefs()
+    preferredQuality = prefs.quality
+  } catch (err) {
+    log.warn(
+      'stems',
+      `loadStemQualityPreference failed, keeping default: ${err instanceof Error ? err.message : String(err)}`
+    )
+  }
 }
 
 /**
@@ -59,7 +79,9 @@ function stripExtension(name: string): string {
   return name.replace(/\.[^.]+$/, '')
 }
 
-/** Open the stem picker, unless a separation is already running or pending. */
+/** Open the stem picker, unless a separation is already running or pending. The
+ *  quality preset is seeded from the persisted preference (see
+ *  `loadStemQualityPreference`) so the dialog reopens on the user's last choice. */
 function openSelection(target: StemSeparationTarget): void {
   const notifications = useNotificationsStore()
   if (snapshotStemSeparationState() !== null) {
@@ -70,7 +92,7 @@ function openSelection(target: StemSeparationTarget): void {
   selection.value = {
     target,
     selected: { vocals: true, drums: true, bass: true, other: true },
-    quality: 'balanced'
+    quality: preferredQuality
   }
 }
 
@@ -121,10 +143,13 @@ export function toggleStemSelection(stem: StemName): void {
   }
 }
 
-/** Set the quality preset in the picker. */
+/** Set the quality preset in the picker and persist it as the new default so the
+ *  dialog reopens on this choice next time (this session and after restart). */
 export function setStemQuality(quality: StemQuality): void {
   if (!selection.value) return
   selection.value = { ...selection.value, quality }
+  preferredQuality = quality
+  window.silverdaw.setStemPrefs({ quality })
 }
 
 /** Dismiss the picker without starting anything. */

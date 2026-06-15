@@ -1,5 +1,7 @@
 // Cross-process IPC/contextBridge shapes shared by main, preload and renderer.
 
+import type { StemQuality } from './bridge/outbound'
+
 export interface OpenedAudioFile {
   filePath: string
   fileName: string
@@ -105,6 +107,7 @@ export interface StemGpuStatus {
 /** Persisted stem-separation preferences surfaced to the renderer. */
 export interface StemPrefsDto {
   useGpu: boolean
+  quality: StemQuality
 }
 
 /** Where the stem model lives and whether it is a user-located copy. */

@@ -172,7 +172,7 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
   ipcMain.on(IPC.prefs.setStems, (_evt, partial: unknown) => {
     const store = prefs.get()
     const next = sanitiseStemPrefs(partial, store.stems)
-    if (next.useGpu === store.stems.useGpu) return
+    if (next.useGpu === store.stems.useGpu && next.quality === store.stems.quality) return
     store.stems = next
     prefs.flushSaveSync()
   })

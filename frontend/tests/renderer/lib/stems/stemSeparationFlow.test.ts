@@ -10,7 +10,8 @@ import {
   confirmModelDownload,
   cancelModelFlow,
   useStemModelFlow,
-  abandonActiveStemSeparation
+  abandonActiveStemSeparation,
+  loadStemQualityPreference
 } from '@/lib/stems/stemSeparationFlow'
 import { clearStemSeparationState, snapshotStemSeparationState } from '@/lib/stemSeparationState'
 
@@ -58,7 +59,12 @@ let progressHandler: ProgressHandler | null = null
 const api = {
   getStemModelState: vi.fn(),
   getStemModelDir: vi.fn(async () => 'C:\\models\\htdemucs-ft'),
-  getStemPrefs: vi.fn(async (): Promise<{ useGpu: boolean }> => ({ useGpu: true })),
+  getStemPrefs: vi.fn(
+    async (): Promise<{ useGpu: boolean; quality: 'fast' | 'balanced' | 'best' }> => ({
+      useGpu: true,
+      quality: 'balanced'
+    })
+  ),
   getStemGpuStatus: vi.fn(
     async (): Promise<{ available: boolean; name: string | null }> => ({
       available: true,
@@ -67,6 +73,7 @@ const api = {
   ),
   ensureStemModel: vi.fn(),
   cancelStemModelDownload: vi.fn(),
+  setStemPrefs: vi.fn(),
   onStemModelDownloadProgress: vi.fn((handler: ProgressHandler) => {
     progressHandler = handler
     return () => {
@@ -83,7 +90,7 @@ async function startClipSeparation(): Promise<void> {
   await confirmStemSelection()
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
   clearStemSeparationState()
   cancelStemSelection()
@@ -92,8 +99,11 @@ beforeEach(() => {
   vi.stubGlobal('window', { silverdaw: api })
   vi.stubGlobal('crypto', { randomUUID: () => 'job-123' })
   api.getStemModelDir.mockResolvedValue('C:\\models\\htdemucs-ft')
-  api.getStemPrefs.mockResolvedValue({ useGpu: true })
+  api.getStemPrefs.mockResolvedValue({ useGpu: true, quality: 'balanced' })
   api.getStemGpuStatus.mockResolvedValue({ available: true, name: 'Test GPU' })
+  // Reset the module-cached preferred quality to the default before each test.
+  await loadStemQualityPreference()
+  vi.clearAllMocks()
 })
 
 afterEach(() => {
@@ -172,6 +182,19 @@ describe('stem selection dialog', () => {
     )
   })
 
+  it('persists the chosen quality to preferences', () => {
+    requestStemSeparationForClip('c1')
+    setStemQuality('fast')
+    expect(api.setStemPrefs).toHaveBeenCalledWith({ quality: 'fast' })
+  })
+
+  it('seeds the picker from the persisted quality preference', async () => {
+    api.getStemPrefs.mockResolvedValue({ useGpu: true, quality: 'best' })
+    await loadStemQualityPreference()
+    requestStemSeparationForClip('c1')
+    expect(useStemSelection().value?.quality).toBe('best')
+  })
+
   it('dispatches useGpu=false when the GPU preference is off', async () => {
     api.getStemModelState.mockResolvedValue({
       installed: true,
@@ -179,7 +202,7 @@ describe('stem selection dialog', () => {
       totalBytes: 100,
       fileCount: 4
     })
-    api.getStemPrefs.mockResolvedValue({ useGpu: false })
+    api.getStemPrefs.mockResolvedValue({ useGpu: false, quality: 'balanced' })
     await startClipSeparation()
 
     expect(sendMock).toHaveBeenCalledWith(
@@ -195,7 +218,7 @@ describe('stem selection dialog', () => {
       totalBytes: 100,
       fileCount: 4
     })
-    api.getStemPrefs.mockResolvedValue({ useGpu: true })
+    api.getStemPrefs.mockResolvedValue({ useGpu: true, quality: 'balanced' })
     api.getStemGpuStatus.mockResolvedValue({ available: false, name: null })
     await startClipSeparation()
 

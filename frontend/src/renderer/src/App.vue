@@ -15,6 +15,7 @@ import MixdownProgressDialog from '@/components/MixdownProgressDialog.vue'
 import StemSeparationProgressDialog from '@/components/StemSeparationProgressDialog.vue'
 import StemModelDownloadDialog from '@/components/StemModelDownloadDialog.vue'
 import StemSelectionDialog from '@/components/StemSelectionDialog.vue'
+import { loadStemQualityPreference } from '@/lib/stems/stemSeparationFlow'
 import { useMixdownState } from '@/lib/mixdownState'
 import AudioDeviceUnavailableDialog from '@/components/AudioDeviceUnavailableDialog.vue'
 import SampleRateMismatchDialog from '@/components/SampleRateMismatchDialog.vue'
@@ -106,6 +107,8 @@ onMounted(() => {
   startBridgeConnectionTimer()
   // Hydrate persisted panel sizes after first paint.
   void ui.hydrate()
+  // Seed the stem-separation quality picker from the persisted preference.
+  void loadStemQualityPreference()
   // Start autosave; it stays idle until the project is dirty.
   const pinia = getActivePinia()
   if (pinia) startAutosaveManager(pinia)

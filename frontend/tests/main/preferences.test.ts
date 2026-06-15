@@ -74,7 +74,7 @@ describe('sanitiseUiPrefs', () => {
 })
 
 describe('sanitiseStemPrefs', () => {
-  const stemBase: StemPrefs = { useGpu: false }
+  const stemBase: StemPrefs = { useGpu: false, quality: 'balanced' }
 
   it('keeps the base for a non-object partial', () => {
     expect(sanitiseStemPrefs(undefined, stemBase)).toEqual(stemBase)
@@ -84,7 +84,14 @@ describe('sanitiseStemPrefs', () => {
   it('accepts a valid boolean and falls back for the wrong type', () => {
     expect(sanitiseStemPrefs({ useGpu: true }, stemBase).useGpu).toBe(true)
     expect(sanitiseStemPrefs({ useGpu: 'yes' }, stemBase).useGpu).toBe(false)
-    expect(sanitiseStemPrefs({ useGpu: true }, { useGpu: true }).useGpu).toBe(true)
+    expect(sanitiseStemPrefs({ useGpu: true }, { useGpu: true, quality: 'best' }).useGpu).toBe(true)
+  })
+
+  it('accepts a valid quality preset and falls back for an unknown value', () => {
+    expect(sanitiseStemPrefs({ quality: 'best' }, stemBase).quality).toBe('best')
+    expect(sanitiseStemPrefs({ quality: 'fast' }, stemBase).quality).toBe('fast')
+    expect(sanitiseStemPrefs({ quality: 'ultra' }, stemBase).quality).toBe('balanced')
+    expect(sanitiseStemPrefs({ quality: 99 }, { useGpu: false, quality: 'best' }).quality).toBe('best')
   })
 })
 

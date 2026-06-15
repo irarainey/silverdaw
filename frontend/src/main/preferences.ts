@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { dirname, join, resolve as pathResolve } from 'node:path'
 import type { DebugPreferences, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
+import type { StemQuality } from '../shared/bridge/outbound'
 
 export interface WindowPrefs {
   x?: number
@@ -48,9 +49,14 @@ export interface PathPrefs {
 // so we never enable it without the user explicitly choosing it. When on, the
 // dispatch path still gates it behind hardware detection AND a DirectML-capable
 // backend build, falling back to the CPU otherwise (see PreferencesStemsTab).
+// `quality` persists the last-used separation preset so the picker dialog
+// reopens on the user's preferred choice instead of resetting each time.
 export interface StemPrefs {
   useGpu: boolean
+  quality: StemQuality
 }
+
+const STEM_QUALITIES: readonly StemQuality[] = ['fast', 'balanced', 'best']
 
 // Renderer owns autosave timing; main owns the project-scoped files.
 export interface AutosavePrefs {
@@ -125,7 +131,7 @@ export function buildDefaultPrefs(): Preferences {
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
-    stems: { useGpu: false },
+    stems: { useGpu: false, quality: 'balanced' },
     recentProjects: []
   }
 }
@@ -181,7 +187,10 @@ export function sanitiseRecentList(input: unknown): string[] {
 export function sanitiseStemPrefs(partial: unknown, base: StemPrefs): StemPrefs {
   const p = (partial && typeof partial === 'object' ? partial : {}) as Partial<Record<keyof StemPrefs, unknown>>
   return {
-    useGpu: boolOr(p.useGpu, base.useGpu)
+    useGpu: boolOr(p.useGpu, base.useGpu),
+    quality: STEM_QUALITIES.includes(p.quality as StemQuality)
+      ? (p.quality as StemQuality)
+      : base.quality
   }
 }
 
