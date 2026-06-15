@@ -211,22 +211,39 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     const MG = MeshGeometryCtor.value
     const tex = whiteTexture.value
     if (!layer || !M || !MG || !tex || waveIndices === 0) return false
-    // MeshGeometry copies these into GPU buffers; exact-length views keep the
-    // upload tight and let it fill the UVs (all zero → samples the white pixel).
+    // Exact-length copies: each geometry buffer keeps its own backing array (the
+    // scratch builders are reused by the next lane/frame). UVs are all zero, so
+    // every vertex samples the 1×1 white pixel and is tinted to the wave colour.
     const positions = waveXY.slice(0, waveVerts * 2)
     const indices = waveIdx.slice(0, waveIndices)
-    const geometry = new MG({ positions, indices })
     const existing = meshPool[meshCursor]
     if (existing) {
-      // Reuse the Mesh shell; swap in fresh geometry and release the previous
-      // frame's GPU buffers so per-rebuild geometry doesn't leak VRAM.
-      const old = existing.geometry
-      existing.geometry = geometry
-      old?.destroy()
+      // Reuse BOTH the Mesh shell AND its geometry, updating the buffers in
+      // place rather than allocating a fresh MeshGeometry and destroying the old
+      // one every flush. This removes per-frame geometry/GPU-buffer churn and the
+      // VRAM leak the default Geometry.destroy() left behind (it never frees the
+      // position/uv buffers). Pixi's Buffer `data` setter handles both in-place
+      // re-upload and resize, so no geometry lifecycle teardown occurs per frame.
+      const geo = existing.geometry as MeshGeometry
+      geo.positions = positions
+      geo.uvs = new Float32Array(positions.length)
+      geo.indices = indices
       existing.tint = tint
       existing.alpha = alpha
       layer.addChild(existing)
     } else {
+      // `no-batch`: keep these waveform meshes off Pixi's batcher entirely. Small
+      // meshes (≤100 verts) default to `batchMode:'auto'` → batched, but the
+      // batcher path crashes here: when a pooled shell is detached
+      // (`removeChildren` each redraw) and re-added, its cached BatchableMesh can
+      // be left with a null `_batcher`, so the next `MeshPipe.updateRenderable`
+      // throws `Cannot read properties of null (reading 'updateElement')` INSIDE
+      // Pixi's render loop — aborting the frame and leaving every waveform black
+      // permanently. We already pack each lane into a single mesh, so batching
+      // buys nothing; the direct (non-batched) path renders our Uint32 geometry
+      // robustly.
+      const geometry = new MG({ positions, indices })
+      geometry.batchMode = 'no-batch'
       const mesh = new M({ geometry, texture: tex })
       mesh.tint = tint
       mesh.alpha = alpha

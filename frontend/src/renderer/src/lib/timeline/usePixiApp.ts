@@ -120,7 +120,17 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
         // Destroying GPU resources on an already-lost context can throw; guard so
         // teardown always completes and the canvas is removed (avoids stacked,
         // flickering leftover canvases across rebuilds).
-        instance.destroy(true, { children: true, texture: true })
+        //
+        // `texture: false` is deliberate: the waveform meshes tint the PROCESS-
+        // GLOBAL `Texture.WHITE` singleton, which is ALSO used by the clip-editor
+        // renderer. Passing `texture: true` here would destroy that shared
+        // singleton's GPU source on teardown/rebuild, leaving every Mesh in both
+        // surfaces sampling a dead texture — invisible (black) forever, with no
+        // error and no recovery. The clip-editor teardown already uses
+        // `texture: false` for the same reason. On a real context loss the GPU
+        // textures are already invalid, so not freeing them here leaks nothing
+        // live; on unmount the process is ending anyway.
+        instance.destroy(true, { children: true, texture: false })
       } catch (err) {
         log.warn('timeline',
           `Pixi teardown error (continuing): ${err instanceof Error ? err.message : String(err)}`)
@@ -161,7 +171,9 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
 
       // And again — host might have unmounted while init was awaiting.
       if (destroyed || !opts.host.value) {
-        instance.destroy(true, { children: true, texture: true })
+        // `texture: false` for the same shared-`Texture.WHITE` reason as in
+        // `teardownApp` — never destroy the process-global white singleton.
+        instance.destroy(true, { children: true, texture: false })
         return false
       }
 

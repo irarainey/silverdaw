@@ -105,21 +105,31 @@ export function createWaveMeshBuilder(ctors: WaveMeshCtors): WaveMeshBuilder {
     const MG = ctors.MeshGeometryCtor
     const tex = ctors.whiteTexture
     if (!M || !MG || !tex || indices === 0) return false
-    // Exact-length views keep the GPU upload tight; zero UVs sample the white pixel.
+    // Exact-length copies: each geometry buffer keeps its own backing array; zero
+    // UVs sample the 1×1 white pixel, tinted to the wave colour.
     const positions = xy.slice(0, verts * 2)
     const meshIndices = idx.slice(0, indices)
-    const geometry = new MG({ positions, indices: meshIndices })
     const existing = meshPool[cursor]
     if (existing && !existing.destroyed) {
-      // Reuse the Mesh shell; swap in fresh geometry and release the previous
-      // frame's GPU buffers so per-rebuild geometry doesn't leak VRAM.
-      const old = existing.geometry
-      existing.geometry = geometry
-      old?.destroy()
+      // Reuse BOTH the Mesh shell AND its geometry, updating the buffers in place
+      // instead of allocating a new MeshGeometry and destroying the old one each
+      // flush. This removes per-frame geometry/GPU-buffer churn and the VRAM leak
+      // the default Geometry.destroy() left behind. Pixi's Buffer `data` setter
+      // handles in-place re-upload and resize, so no geometry teardown per frame.
+      const geo = existing.geometry as MeshGeometry
+      geo.positions = positions
+      geo.uvs = new Float32Array(positions.length)
+      geo.indices = meshIndices
       existing.tint = tint
       existing.alpha = alpha
       layer.addChild(existing)
     } else {
+      // `no-batch`: keep waveform meshes off Pixi's batcher (see clipRenderer for
+      // the full rationale) — a reused/re-added pooled shell can hit a null
+      // `_batcher` in `MeshPipe.updateRenderable` and throw inside Pixi's render
+      // loop, blanking the waveform permanently. The direct path is robust.
+      const geometry = new MG({ positions, indices: meshIndices })
+      geometry.batchMode = 'no-batch'
       const mesh = new M({ geometry, texture: tex })
       mesh.tint = tint
       mesh.alpha = alpha

@@ -3,7 +3,25 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import './assets/style.css'
 import { useAppStore } from './stores/appStore'
-import { setLogEnabled } from './lib/log'
+import { log, setLogEnabled } from './lib/log'
+
+// Surface otherwise-invisible failures. Exceptions thrown inside rAF callbacks
+// (e.g. a timeline redraw) reach neither Vue's error handler nor any try/catch,
+// so without these listeners they only appear in the DevTools console and never
+// in the diagnostic logs — which is exactly what made the "waveforms go black"
+// blackout impossible to diagnose from log files alone.
+function installGlobalErrorLogging(): void {
+  window.addEventListener('error', (event) => {
+    const e = event.error
+    const detail = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(event.message)
+    log.error('renderer', `uncaught error: ${detail}`)
+  })
+  window.addEventListener('unhandledrejection', (event) => {
+    const r = event.reason
+    const detail = r instanceof Error ? `${r.message}\n${r.stack ?? ''}` : String(r)
+    log.error('renderer', `unhandled rejection: ${detail}`)
+  })
+}
 
 // Bootstrap order matters here: the appStore caches the startup developer
 // prefs and the renderer logger gates on them. Both need to be settled
@@ -31,6 +49,7 @@ async function bootstrap(): Promise<void> {
   const appStore = useAppStore()
   await appStore.hydrate()
   setLogEnabled(appStore.loggingEnabled)
+  installGlobalErrorLogging()
 
   app.mount('#app')
 }
