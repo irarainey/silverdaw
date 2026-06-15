@@ -25,6 +25,8 @@ defineProps<Readonly<{
         <input
           v-model.number="mixdownStartBar"
           type="number"
+          min="-64"
+          max="4096"
           step="1"
           class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-right font-mono text-xs text-zinc-100 outline-none focus:border-cyan-500"
         >

@@ -215,4 +215,17 @@ describe('useExportMixdownForm', () => {
     expect(startCall?.[1]).toMatchObject({ format: 'mp3', bitrateKbps: 320 })
     expect(startCall?.[1]).not.toHaveProperty('bitDepth')
   })
+
+  it('clamps the start-bar render offset to the persisted property range', () => {
+    const f = makeForm()
+    f.draftMixdownStartBar.value = 4096
+    const atMax = f.mixdownStartMs.value
+    expect(atMax).toBeGreaterThan(0)
+    // Beyond the upper bound renders from the same offset as the clamped maximum.
+    f.draftMixdownStartBar.value = 999_999
+    expect(f.mixdownStartMs.value).toBe(atMax)
+    // Far below the lower bound renders from the project start (offset floored at 0).
+    f.draftMixdownStartBar.value = -999_999
+    expect(f.mixdownStartMs.value).toBe(0)
+  })
 })

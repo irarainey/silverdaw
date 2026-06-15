@@ -38,7 +38,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   straight onto the timeline. Files are grouped and easy to reuse.
 - **Timeline arranging.** Move, split, duplicate, cut, copy, trim, colour, and
   delete clips across multiple tracks. Clips snap to the beat grid by default,
-  with a modifier for fine, free placement.
+  with a modifier for fine, free placement. Bar numbering starts at 1 by default,
+  or you can start it at 0 or lower to leave lead-in bars before bar one for clips
+  with a silent intro.
 - **Automatic analysis.** Imported audio is analysed for key, tempo (BPM), and
   beat positions, so clips can line up musically. When detection is uncertain you
   can set a BPM by hand and slide the beat grid over the waveform to line it up.
@@ -75,7 +77,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Per-project sample rate.** Pin a project to 44.1 or 48 kHz; imports are
   checked against the project rate and offer a clear path when they differ.
 - **Mixdown export.** Render the whole project to a single stereo file in WAV,
-  FLAC, AIFF, or MP3, with optional loudness normalisation.
+  FLAC, AIFF, or MP3, with optional loudness normalisation and a choice of which
+  bar to start the render from.
 - **Autosave and crash recovery.** Work is snapshotted in the background and
   offered back to you after an unexpected exit.
 - **Stay in flow.** Choose any audio output device and hot-swap it without

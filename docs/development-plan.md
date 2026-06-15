@@ -1660,6 +1660,17 @@ playable at every point — no broken-build day):
   bit-equivalent to live device output — the parity guarantee
   stops at the internal master bus. The live transport is
   force-paused for the duration and `TRANSPORT_PLAY` is rejected.
+- [x] **Render start bar + timeline bar numbering.** A project
+  `barCounterStart` (default `1`, range `-64..1`) sets the number shown
+  for the first timeline bar — leave it at `1` for `1, 2, 3, …` or set
+  `0` or lower to reveal lead-in bars before bar one (edited in Project
+  Properties via `PROJECT_SET_BAR_COUNTER_START`). The Export Mixdown
+  dialog's **Start from bar** field (`mixdownStartBar`, default `1`,
+  range `-64..4096`, `PROJECT_SET_MIXDOWN_START_BAR`) renders only from
+  the chosen displayed bar onward — skipping
+  `max(0, mixdownStartBar - barCounterStart)` bars of project time.
+  Both persist independently on the `PROJECT` node, are suppressed from
+  save at the default `1`, and changing one never moves the other.
 
 **Explicitly deferred to Phase 8** (do not implement in Phase 5):
 

@@ -194,10 +194,14 @@ Silverdaw currently supports the core arrangement workflow:
   16-bit targets, configurable silence tail, file-level tags (mapped per-format
   to ID3 / RIFF INFO / VORBIS_COMMENT / AIFF text chunks) and ITU-R BS.1770-4
   loudness analysis with optional two-pass normalisation to a target LUFS with
-  true-peak ceiling. Dialog choices (format, sample rate, bit depth, bitrate /
+  true-peak ceiling. A **Start from bar** field renders only from a chosen bar
+  onward (the displayed bar number, defaulting to `1`); earlier bars are skipped
+  from the output. Dialog choices (format, sample rate, bit depth, bitrate /
   quality, dither, tail, loudness mode + target, tags, output path) are
-  persisted at the *project* level via `PROJECT_SET_EXPORT_SETTINGS` so a
-  reopened project remembers how it was last exported. The live transport is
+  persisted at the *project* level via `PROJECT_SET_EXPORT_SETTINGS`, while the
+  start bar persists separately as `PROJECT.mixdownStartBar`
+  (`PROJECT_SET_MIXDOWN_START_BAR`), so a reopened project remembers how it was
+  last exported. The live transport is
   force-paused and `TRANSPORT_PLAY` is rejected for the duration of a render.
 - **Clip lock** (Ctrl+L or right-click ▸ Lock / Unlock) freezes a single
   timeline clip against accidental move / trim / split. Locked clips show a
@@ -452,7 +456,7 @@ possibly-imperfect edit is preferred over a dead engine.
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         viewSelectedTrack?, viewFxPanelOpen?,
         audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
-        masterVolume?, exportSettingsJson?,
+        masterVolume?, exportSettingsJson?, barCounterStart?, mixdownStartBar?,
         reverbSize?, reverbDecay?, reverbTone?, reverbMix?,
         delayNoteValue?, delayFeedback?, delayTone?, delayMix?]
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
@@ -522,6 +526,20 @@ holding the last-used mixdown export dialog choices for this project; it is
 written via `PROJECT_SET_EXPORT_SETTINGS`, parsed with field-level whitelist /
 clamp / schema-version guards on load, and does not generate undo entries
 (only a dirty-mark) so re-exporting doesn't clutter the undo history.
+`PROJECT.barCounterStart` is the number shown for the **first** bar on the
+timeline ruler (default `1`); the ruler labels each bar as
+`barIndex + barCounterStart`, so the default shows `1, 2, 3, …` and setting it to
+`0` or lower (down to `-64`) reveals lead-in bars (`0, 1, 2, …`) before bar one —
+useful when a clip has a silent intro and should sit against the timeline start
+without trimming. `PROJECT.mixdownStartBar` is the displayed bar number the
+mixdown render begins from (default `1`, range `-64..4096`); it is converted to a
+project-time offset as `max(0, mixdownStartBar - barCounterStart)` bars, so bars
+before it are skipped from the exported file. Both are integers, set via
+`PROJECT_SET_BAR_COUNTER_START` / `PROJECT_SET_MIXDOWN_START_BAR`, suppressed from
+save when at the default `1`, and round-trip through `PROJECT_STATE` and the
+`.silverdaw` file. `barCounterStart` is user-editable from the Project Properties
+dialog; `mixdownStartBar` is edited in the Export Mixdown dialog and changing it
+does not affect `barCounterStart` (and vice versa).
 `CLIP.locked` is an optional boolean (absent == unlocked) that freezes a clip
 against move / trim / split gestures on the timeline; the lock is per-clip,
 not propagated across linked-saved-clip siblings, and round-trips through
@@ -935,7 +953,9 @@ builds a rigid grid across the item's duration on the backend and re-broadcasts
 `LIBRARY_ITEM_ANALYSIS` with `variableTempo` and `lowConfidence` cleared, so the
 item reads as verified music. In the Clip Editor a **slide-the-grid** drag gesture
 shifts `beatAnchorSec` live (local-only preview, committed on release) to correct
-the downbeat phase. Manual values survive save / load because `ensureBpmDetection`
+the downbeat phase; the markers track the drag in real time and the commit marks
+the Clip Editor dirty so its **Save** button stays available to confirm and close.
+Manual values survive save / load because `ensureBpmDetection`
 is idempotent and skips a source that already has a BPM.
 
 ### Confidence and sample classification
@@ -1368,10 +1388,16 @@ fields stored directly on the `PROJECT` ValueTree node:
   `PROJECT_SET_TARGET_SAMPLE_RATE` and the transport-bar **RATE** column
   updates immediately. See [Project sample rate](#project-sample-rate) for the
   import-time and mismatch behaviour.
+- **Bar counter start** (`-64`…`1`, whole numbers) — the number shown for the
+  first bar on the timeline ruler. `1` (the default) shows `1, 2, 3, …`; set `0`
+  or lower to reveal lead-in bars before bar one. Committing pushes
+  `PROJECT_SET_BAR_COUNTER_START`, the ruler relabels immediately, and the
+  project is marked dirty (it does not change the Export Mixdown **Start from
+  bar** value).
 
 The dialog uses per-field validation: the Save button refuses to commit when
-BPM or duration parses outside its allowed range. Cancel (and Esc) discard
-the working copy without touching the project.
+BPM, duration, or the bar-counter start parses outside its allowed range. Cancel
+(and Esc) discard the working copy without touching the project.
 
 ## Project sample rate
 

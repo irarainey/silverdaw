@@ -231,13 +231,13 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
 
   // Convert the displayed start bar to a project-time offset. The ruler labels internal bar
   // index i as `i + barCounterStart`, so the inverse gives the internal index to skip to.
+  // Clamp to the persisted property's range so an out-of-range typed value can't drive the
+  // render past what `PROJECT.mixdownStartBar` will store.
   const mixdownStartMs = computed<number>(() => {
     const msPerBar =
       msPerSubBeat(transport.bpm) * DEFAULT_SUBS_PER_BEAT * DEFAULT_BEATS_PER_BAR
-    const internalBarIndex = Math.max(
-      0,
-      Math.round(draftMixdownStartBar.value) - project.barCounterStart
-    )
+    const clampedStartBar = Math.min(4096, Math.max(-64, Math.round(draftMixdownStartBar.value)))
+    const internalBarIndex = Math.max(0, clampedStartBar - project.barCounterStart)
     return internalBarIndex * msPerBar
   })
 
