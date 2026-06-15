@@ -1,7 +1,7 @@
 // Clip rendering for timeline blocks, waveforms, beat markers, badges, and transitions.
 
 import { type ShallowRef } from 'vue'
-import type { Container, Graphics, Text } from 'pixi.js'
+import type { Container, Graphics, Mesh, MeshGeometry, Text, Texture } from 'pixi.js'
 import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
@@ -48,6 +48,9 @@ export interface ClipRendererContext {
   tracksLayer: ShallowRef<Container | null>
   GraphicsCtor: ShallowRef<typeof Graphics | null>
   TextCtor: ShallowRef<typeof Text | null>
+  MeshCtor: ShallowRef<typeof Mesh | null>
+  MeshGeometryCtor: ShallowRef<typeof MeshGeometry | null>
+  whiteTexture: ShallowRef<Texture | null>
   geometry: Pick<GridGeometry, 'pxPerSecond' | 'headerWidth'>
   /** Output sink for visible clip hit rectangles. */
   clipHitRegions: ClipHitRegion[]
@@ -58,7 +61,8 @@ export function createClipRenderer(ctx: ClipRendererContext) {
   const library = useLibraryStore()
   const transport = useTransportStore()
   const ui = useUiStore()
-  const { tracksLayer, GraphicsCtor, TextCtor, clipHitRegions } = ctx
+  const { tracksLayer, GraphicsCtor, TextCtor, MeshCtor, MeshGeometryCtor, whiteTexture, clipHitRegions } =
+    ctx
   const { pxPerSecond, headerWidth } = ctx.geometry
 
   // Per-frame Graphics pool. `redraw()` detaches every child via the layer's
@@ -93,19 +97,34 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     const layer = tracksLayer.value
     if (layer !== pooledLayer) {
       // App was rebuilt: forget the destroyed Graphics (no destroy() — the old
-      // app already disposed them) so this frame allocates fresh instances.
+      // app already disposed them) so this frame allocates fresh instances. The
+      // waveform Mesh pool is tied to the same layer, so drop it in lock-step.
       graphicsPool.length = 0
+      meshPool.length = 0
       pooledLayer = layer
     }
     poolCursor = 0
+    meshCursor = 0
     frameColumns = 0
     frameLanes = 0
     frameRects = 0
   }
 
   /** Waveform draw counts for the frame just rendered (read after `drawClip`s). */
-  function getFrameStats(): { columns: number; lanes: number; graphics: number; rects: number } {
-    return { columns: frameColumns, lanes: frameLanes, graphics: poolCursor, rects: frameRects }
+  function getFrameStats(): {
+    columns: number
+    lanes: number
+    graphics: number
+    rects: number
+    meshes: number
+  } {
+    return {
+      columns: frameColumns,
+      lanes: frameLanes,
+      graphics: poolCursor,
+      rects: frameRects,
+      meshes: meshCursor
+    }
   }
 
   // Hand back a cleared, reusable Graphics. Grows the pool to the peak number of
@@ -124,6 +143,98 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     graphicsPool[poolCursor] = created
     poolCursor++
     return created
+  }
+
+  // Batched waveform geometry. Emitting ~20k `Graphics.rect()` commands per lane
+  // allocated an instruction object per rect and re-tessellated the whole context
+  // every rebuild — the source of the periodic GC/upload spikes. Instead, each
+  // lane's bars are packed into ONE Mesh: a single position/index buffer (two
+  // triangles per merged rect, no earcut) uploaded once. The Mesh tints a shared
+  // 1×1 white texture to the wave colour.
+  type PooledMesh = InstanceType<NonNullable<typeof MeshCtor.value>>
+  const meshPool: PooledMesh[] = []
+  let meshCursor = 0
+
+  // Scratch geometry buffers, grown to the busiest lane and reused every frame.
+  let waveXY = new Float32Array(8192) // 2 floats per vertex
+  let waveIdx = new Uint32Array(12288) // 6 indices per quad
+  let waveVerts = 0 // vertices written so far this lane
+  let waveIndices = 0
+
+  function resetWaveBuilder(): void {
+    waveVerts = 0
+    waveIndices = 0
+  }
+
+  function pushWaveQuad(x0: number, y0: number, x1: number, y1: number): void {
+    const needFloats = (waveVerts + 4) * 2
+    if (needFloats > waveXY.length) {
+      let len = waveXY.length
+      while (len < needFloats) len *= 2
+      const grown = new Float32Array(len)
+      grown.set(waveXY)
+      waveXY = grown
+    }
+    if (waveIndices + 6 > waveIdx.length) {
+      let len = waveIdx.length
+      while (len < waveIndices + 6) len *= 2
+      const grown = new Uint32Array(len)
+      grown.set(waveIdx)
+      waveIdx = grown
+    }
+    const base = waveVerts
+    let p = waveVerts * 2
+    waveXY[p++] = x0
+    waveXY[p++] = y0
+    waveXY[p++] = x1
+    waveXY[p++] = y0
+    waveXY[p++] = x1
+    waveXY[p++] = y1
+    waveXY[p++] = x0
+    waveXY[p++] = y1
+    waveVerts += 4
+    let q = waveIndices
+    waveIdx[q++] = base
+    waveIdx[q++] = base + 1
+    waveIdx[q++] = base + 2
+    waveIdx[q++] = base
+    waveIdx[q++] = base + 2
+    waveIdx[q++] = base + 3
+    waveIndices = q
+  }
+
+  // Upload the current builder contents as a pooled, tinted Mesh on the tracks
+  // layer. Returns false when there's nothing to draw or Pixi isn't ready.
+  function flushWaveMesh(tint: number, alpha: number): boolean {
+    const layer = tracksLayer.value
+    const M = MeshCtor.value
+    const MG = MeshGeometryCtor.value
+    const tex = whiteTexture.value
+    if (!layer || !M || !MG || !tex || waveIndices === 0) return false
+    // MeshGeometry copies these into GPU buffers; exact-length views keep the
+    // upload tight and let it fill the UVs (all zero → samples the white pixel).
+    const positions = waveXY.slice(0, waveVerts * 2)
+    const indices = waveIdx.slice(0, waveIndices)
+    const geometry = new MG({ positions, indices })
+    const existing = meshPool[meshCursor]
+    if (existing) {
+      // Reuse the Mesh shell; swap in fresh geometry and release the previous
+      // frame's GPU buffers so per-rebuild geometry doesn't leak VRAM.
+      const old = existing.geometry
+      existing.geometry = geometry
+      old?.destroy()
+      existing.tint = tint
+      existing.alpha = alpha
+      layer.addChild(existing)
+    } else {
+      const mesh = new M({ geometry, texture: tex })
+      mesh.tint = tint
+      mesh.alpha = alpha
+      meshPool[meshCursor] = mesh
+      layer.addChild(mesh)
+    }
+    meshCursor++
+    return true
   }
 
   function drawClip(
@@ -223,15 +334,17 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       channelEntry.channels.length === 2 &&
       innerH >= MIN_STEREO_LANE_HEIGHT * 2
 
-    // Draw one lane from the clip's source-time peak window across its pixel width.
+    // Build one lane's bars into the shared Mesh vertex buffer. Returns true when
+    // at least one column produced geometry; the caller then uploads it as a
+    // tinted Mesh via `flushWaveMesh`.
     const drawLane = (
-      target: InstanceType<NonNullable<typeof GraphicsCtor.value>>,
       lanePeaks: Float32Array,
       lanePps: number,
       laneMidY: number,
       laneHalf: number,
       columnGain?: (px: number) => number
     ): boolean => {
+      resetWaveBuilder()
       const lanePeakCount = lanePeaks.length / 2
       if (lanePeakCount <= 0 || w <= 0) return false
       const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * lanePps))
@@ -247,10 +360,10 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       let emittedRects = 0
       // Merge consecutive columns with identical top/bottom into one wider rect.
       // At high zoom many adjacent pixels read the same peak (and, with no volume
-      // envelope, the same gain), collapsing to a single rect — pixel-identical
-      // output, far fewer rects to tessellate per rebuild.
+      // envelope, the same gain), collapsing to a single quad — pixel-identical
+      // output, fewer triangles per rebuild.
       const merger = createWaveformRunMerger((sx, ex, yt, yb) => {
-        target.rect(absX + sx, yt, ex - sx, yb - yt)
+        pushWaveQuad(absX + sx, yt, absX + ex, yb)
         ++emittedRects
       })
       // Only emit columns inside the horizontal draw band; columns outside the
@@ -332,25 +445,18 @@ export function createClipRenderer(ctx: ClipRendererContext) {
           }
         }
         const gain = laneGains[ch]!
-        const laneGfx = acquireGraphics(G)
         const drew = drawLane(
-          laneGfx,
           lanePeaks,
           lanePps,
           innerY + laneH * ch + laneH / 2,
           fullHalf * gain,
           volumeColumnGain
         )
-        if (drew) {
-          laneGfx.fill({ color: waveColour, alpha: 0.95 * (0.25 + 0.75 * gain) })
-          tracksL.addChild(laneGfx)
-        }
+        if (drew) flushWaveMesh(waveColour, 0.95 * (0.25 + 0.75 * gain))
       }
     } else {
-      const wave = acquireGraphics(G)
-      if (drawLane(wave, peaks, peaksPerSecond, midY, innerH / 2 - 2, volumeColumnGain)) {
-        wave.fill({ color: waveColour, alpha: 0.95 })
-        tracksL.addChild(wave)
+      if (drawLane(peaks, peaksPerSecond, midY, innerH / 2 - 2, volumeColumnGain)) {
+        flushWaveMesh(waveColour, 0.95)
       }
     }
 

@@ -2,7 +2,7 @@
 // Owns ruler/grid/rows/playhead/drop-preview painting; hit regions are host-owned.
 
 import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
-import type { Application, Container, Graphics, Text } from 'pixi.js'
+import type { Application, Container, Graphics, Mesh, MeshGeometry, Text, Texture } from 'pixi.js'
 import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -45,6 +45,9 @@ export interface TimelineDrawingOptions {
   playheadLayer: ShallowRef<Container | null>
   GraphicsCtor: ShallowRef<typeof Graphics | null>
   TextCtor: ShallowRef<typeof Text | null>
+  MeshCtor: ShallowRef<typeof Mesh | null>
+  MeshGeometryCtor: ShallowRef<typeof MeshGeometry | null>
+  whiteTexture: ShallowRef<Texture | null>
   geometry: GridGeometry
   scrollX: Ref<number>
   scrollY: Ref<number>
@@ -88,6 +91,9 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     playheadLayer,
     GraphicsCtor,
     TextCtor,
+    MeshCtor,
+    MeshGeometryCtor,
+    whiteTexture,
     geometry,
     scrollX,
     scrollY,
@@ -104,6 +110,9 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     tracksLayer,
     GraphicsCtor,
     TextCtor,
+    MeshCtor,
+    MeshGeometryCtor,
+    whiteTexture,
     geometry,
     clipHitRegions
   })
@@ -120,7 +129,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     columns: 0,
     lanes: 0,
     graphics: 0,
-    rects: 0
+    rects: 0,
+    meshes: 0
   }
   // Auto-follow uses wall-clock deltas so scroll feel is refresh-rate independent.
   let lastUpdateMs = 0
@@ -208,7 +218,8 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       columns: waveStats.columns,
       lanes: waveStats.lanes,
       graphics: waveStats.graphics,
-      rects: waveStats.rects
+      rects: waveStats.rects,
+      meshes: waveStats.meshes
     }
     ++redrawCount
     if (redrawCount % 20 === 0 || lastRedrawStats.durationMs > 16) {
@@ -219,7 +230,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
           `rows=${lastRedrawStats.rows} clips=${lastRedrawStats.clips} ` +
           `totalClips=${Object.keys(project.clips).length} ` +
           `waveCols=${lastRedrawStats.columns} rects=${lastRedrawStats.rects} lanes=${lastRedrawStats.lanes} ` +
-          `gfx=${lastRedrawStats.graphics} pxPerSecond=${pxPerSecond.value.toFixed(2)}`
+          `meshes=${lastRedrawStats.meshes} gfx=${lastRedrawStats.graphics} pxPerSecond=${pxPerSecond.value.toFixed(2)}`
       )
     }
   }

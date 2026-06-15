@@ -1,7 +1,7 @@
 // PixiJS application lifecycle and layer setup for the timeline canvas.
 
 import { onBeforeUnmount, onMounted, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
-import type { Application, Container, Graphics, Text } from 'pixi.js'
+import type { Application, Container, Graphics, Mesh, MeshGeometry, Text, Texture } from 'pixi.js'
 import { BG } from './constants'
 import { log } from '@/lib/log'
 
@@ -22,6 +22,11 @@ export interface PixiApp {
   GraphicsCtor: ShallowRef<typeof Graphics | null>
   ContainerCtor: ShallowRef<typeof Container | null>
   TextCtor: ShallowRef<typeof Text | null>
+  /** Mesh + geometry constructors for the batched waveform renderer. */
+  MeshCtor: ShallowRef<typeof Mesh | null>
+  MeshGeometryCtor: ShallowRef<typeof MeshGeometry | null>
+  /** Shared 1×1 white texture; waveform meshes tint it to the wave colour. */
+  whiteTexture: ShallowRef<Texture | null>
 }
 
 export interface PixiAppOptions {
@@ -45,6 +50,9 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
   const GraphicsCtor = shallowRef<typeof Graphics | null>(null)
   const ContainerCtor = shallowRef<typeof Container | null>(null)
   const TextCtor = shallowRef<typeof Text | null>(null)
+  const MeshCtor = shallowRef<typeof Mesh | null>(null)
+  const MeshGeometryCtor = shallowRef<typeof MeshGeometry | null>(null)
+  const whiteTexture = shallowRef<Texture | null>(null)
 
   let resizeObserver: ResizeObserver | null = null
   let pixiNs: typeof import('pixi.js') | null = null
@@ -135,6 +143,9 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
       GraphicsCtor.value = pixi.Graphics
       ContainerCtor.value = pixi.Container
       TextCtor.value = pixi.Text
+      MeshCtor.value = pixi.Mesh
+      MeshGeometryCtor.value = pixi.MeshGeometry
+      whiteTexture.value = pixi.Texture.WHITE
 
       // The component could have unmounted while pixi was loading.
       if (destroyed || !opts.host.value) return false
@@ -236,6 +247,9 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
     playheadLayer,
     GraphicsCtor,
     ContainerCtor,
-    TextCtor
+    TextCtor,
+    MeshCtor,
+    MeshGeometryCtor,
+    whiteTexture
   }
 }
