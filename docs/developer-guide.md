@@ -1605,6 +1605,27 @@ On the backend, `BridgeServer::broadcast` suppresses per-envelope log writes for
 `PLAYHEAD_UPDATE` and `PREVIEW_POSITION` (the only 60 Hz envelopes), so a playing transport
 does not generate 60 log lines / second.
 
+**Clip Editor uses the same renderer discipline.** The Clip Editor waveform
+(`lib/clipEditor/useClipEditorWaveform.ts`) is also PixiJS, mirroring the timeline rather
+than its own draw model. The scene (`useClipEditorScene.ts`) has a static ruler-background
+layer, a `worldLayer` and a `rulerTicksLayer` — both translated by `-scrollPx` on scroll /
+playback frames until scroll drifts past the overscan threshold, at which point a rebuild is
+scheduled instead — plus a viewport-space `playheadLayer`. Translating the already-built band
+is an O(1) layer move, not a repaint. The waveform is a batched `Mesh` per lane built by
+`clipEditorWaveMesh.ts` (one in summary mode, two in stereo), and the beat grid, selection,
+volume overlay and ruler ticks draw into pooled `Graphics` / `Text` (acquired via
+`beginFrame()` + `acquireGraphics()` / `acquireText()`, which `removeChildren()` rather than
+destroy) so pooled display objects are detached and reused between frames instead of being
+recreated. A full `redraw()` only fires on content, zoom, selection, or scroll drifting past
+the horizontal overscan (`exceedsRebuildThreshold` / `horizontalOverscanPx`, shared with the
+timeline). The playhead position is the authoritative `preview.positionMs` (from inbound
+`PREVIEW_POSITION`); a per-frame `requestAnimationFrame` loop in `useClipEditorController.ts`
+(`startPlayheadRaf`) repaints the playhead and eases the follow-scroll, matching the main
+timeline's smooth catch-up. Time-anchored draw loops are clamped to the visible band so their
+cost is O(visible width), independent of zoom — including the volume overlay, whose unity line
+and envelope curve are inverted back through the linear `envX` to the on-screen millisecond
+window.
+
 ## Prerequisites
 
 Silverdaw is Windows-only. Developed in Visual Studio Code.
