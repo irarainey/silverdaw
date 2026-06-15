@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   isAllowedAudioPath,
+  isWithinStemsWriteRoot,
   registerIssuedPath,
+  registerStemsWriteRoot,
   registerTrustedReadRoot
 } from '@main/audioPaths'
 
@@ -53,5 +55,25 @@ describe('audioPaths allow-list', () => {
     const root = abs('confined')
     registerTrustedReadRoot(root)
     expect(isAllowedAudioPath(abs('confined', '..', 'escape.wav'))).toBe(false)
+  })
+
+  it('treats a registered stems write root as both a sidecar root and a read root', () => {
+    const stemsRoot = abs('ProjectFolder', 'Stems')
+    const stemDir = abs('ProjectFolder', 'Stems', 'song - vocals')
+    const stemWav = abs('ProjectFolder', 'Stems', 'song - vocals', 'vocals.wav')
+    expect(isWithinStemsWriteRoot(stemDir)).toBe(false)
+    expect(isAllowedAudioPath(stemWav)).toBe(false)
+    registerStemsWriteRoot(stemsRoot)
+    // Sidecar metadata may be written here, and the stem WAVs may be read.
+    expect(isWithinStemsWriteRoot(stemDir)).toBe(true)
+    expect(isAllowedAudioPath(stemWav)).toBe(true)
+  })
+
+  it('confines the stems write root (no `..` traversal, rejects non-absolute)', () => {
+    const stemsRoot = abs('Confined', 'Stems')
+    registerStemsWriteRoot(stemsRoot)
+    expect(isWithinStemsWriteRoot(abs('Confined', 'Stems', '..', 'escape'))).toBe(false)
+    expect(isWithinStemsWriteRoot('relative/Stems')).toBe(false)
+    expect(isWithinStemsWriteRoot(42)).toBe(false)
   })
 })

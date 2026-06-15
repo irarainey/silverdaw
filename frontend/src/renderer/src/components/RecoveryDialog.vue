@@ -26,6 +26,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'restored', entry: RecoverableEntry): void
+  (e: 'discarded', projectId: string): void
   (e: 'close'): void
 }>()
 
@@ -90,10 +91,9 @@ async function discard(entry: RecoverableEntry): Promise<void> {
   try {
     await window.silverdaw.clearAutosave(entry.projectId)
     log.info('recovery', `discarded projectId=${entry.projectId}`)
-    // Locally narrow the visible list so the row vanishes immediately.
-    // App.vue will refresh on dialog close.
-    const next = props.entries.filter((e) => e.projectId !== entry.projectId)
-    if (next.length === 0) emit('close')
+    // The parent owns the entries list; tell it to drop this row so it vanishes
+    // immediately. App.vue closes the dialog once the list empties.
+    emit('discarded', entry.projectId)
   } finally {
     busyId.value = null
   }

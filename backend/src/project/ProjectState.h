@@ -438,6 +438,12 @@ class ProjectState : public juce::ValueTree::Listener
     // Preserves root node identity for listeners; clears undo because loads are a new baseline.
     juce::Result replaceTree(const juce::ValueTree& newTree);
 
+    // Rewrite every absolute filePath/playbackFilePath that lives under `oldRoot`
+    // so it points at the same relative location under `newRoot`. Used when a
+    // project's temporary generated artifacts are relocated into its saved folder.
+    // Returns the number of paths rewritten. Does not touch the undo history.
+    int rebaseArtifactPaths(const juce::File& oldRoot, const juce::File& newRoot);
+
     /** Access the shared undo manager (Phase 7 will surface this in the UI). */
     juce::UndoManager& getUndoManager() noexcept
     {

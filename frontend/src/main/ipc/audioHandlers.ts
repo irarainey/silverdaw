@@ -14,6 +14,7 @@ import {
   AUDIO_FILE_EXTENSIONS,
   canonicalisePath,
   isAllowedAudioPath,
+  isWithinStemsWriteRoot,
   registerIssuedPath
 } from '../audioPaths'
 import { logMain } from '../log'
@@ -59,10 +60,13 @@ function stemsBaseDir(): string {
   return canonicalisePath(join(app.getPath('appData'), 'Silverdaw', 'stems'))
 }
 
+// Sidecar reads/writes are confined to the central stems base or a registered
+// per-project stems folder (a saved project's portable "Stems" subfolder).
 function isWithinStemsDir(dir: unknown): dir is string {
   if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
   const rel = relative(stemsBaseDir(), canonicalisePath(dir))
-  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+  if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return true
+  return isWithinStemsWriteRoot(dir)
 }
 
 export function registerAudioHandlers(ctx: AudioHandlersContext): void {

@@ -14,26 +14,18 @@ type ImportThis = LibraryState & {
 }
 
 export const importActions = {
-    async saveLibraryItemAsSample(itemId: string): Promise<void> {
+    saveLibraryItemAsSample(itemId: string): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
       if (item.kind !== 'saved-clip') {
         useNotificationsStore().pushError('Only saved clips can be saved as samples from the library.')
         return
       }
-      const project = useProjectStore()
       const sampleId = `sample-${crypto.randomUUID()}`
-      const slash = project.currentFilePath
-        ? Math.max(project.currentFilePath.lastIndexOf('\\'), project.currentFilePath.lastIndexOf('/'))
-        : -1
-      const projectDir = slash > 0 && project.currentFilePath ? project.currentFilePath.slice(0, slash) : ''
-      const qol = await window.silverdaw.getQolPrefs().catch(() => null)
-      const base = projectDir || qol?.paths.defaultProjectDir || ''
       sendBridge('LIBRARY_ITEM_SAVE_AS_SAMPLE', {
         libraryItemId: itemId,
         itemId: sampleId,
-        sampleName: libraryItemDisplayName(item),
-        outputDir: base ? `${base}\\Samples` : 'Samples'
+        sampleName: libraryItemDisplayName(item)
       })
       useNotificationsStore().pushInfo('Saving sample…')
     },

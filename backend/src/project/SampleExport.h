@@ -13,8 +13,10 @@ class PeaksCache;
 // Sample export renders on the worker pool; project mutation and broadcast return to the message thread.
 
 void handleClipSaveAsSample(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
-                            BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache);
+                            BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
+                            const juce::String& projectPath);
 void handleLibraryItemSaveAsSample(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
-                                   BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache);
+                                   BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
+                                   const juce::String& projectPath);
 
 } // namespace silverdaw

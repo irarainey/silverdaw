@@ -211,6 +211,12 @@ function onRecoveryClose(): void {
   finishStartupFlow()
 }
 
+/** Drop a discarded autosave row; closing once the list empties. */
+function onRecoveryDiscarded(projectId: string): void {
+  recoveryEntries.value = recoveryEntries.value.filter((e) => e.projectId !== projectId)
+  if (recoveryEntries.value.length === 0) onRecoveryClose()
+}
+
 /** Open `.silverdaw` hand-offs through the same guard as File > Open. */
 async function openProjectByPath(filePath: string): Promise<void> {
   if (!filePath) return
@@ -257,6 +263,13 @@ function onStartScreenOpen(): void {
 function onStartScreenRecent(filePath: string): void {
   // Dismissal is driven by the project-loaded gate.
   void openRecentPath(filePath)
+}
+
+/** Forget a recent project from the start-screen list (persisted removal). */
+async function onStartScreenRemoveRecent(filePath: string): Promise<void> {
+  if (!filePath) return
+  window.silverdaw.removeRecentProject(filePath)
+  await appStore.refreshRecentProjects()
 }
 
 /** Startup stays visible until a project loads or the user explicitly dismisses it. */
@@ -387,6 +400,7 @@ const { handleMenuAction } = useAppMenuActions({
       :open="recoveryDialogOpen"
       :entries="recoveryEntries"
       @restored="onRecoveryRestored"
+      @discarded="onRecoveryDiscarded"
       @close="onRecoveryClose"
     />
 
@@ -397,6 +411,7 @@ const { handleMenuAction } = useAppMenuActions({
       @new-project="onStartScreenNew"
       @open-project="onStartScreenOpen"
       @open-recent="onStartScreenRecent"
+      @remove-recent="onStartScreenRemoveRecent"
     />
 
     <!-- Mid-session audio-engine recovery gate. -->

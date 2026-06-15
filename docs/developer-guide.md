@@ -587,6 +587,38 @@ existing `.silverdaw` file, so view state survives reopen without saving unrelat
 project edits or changing the dirty flag. Logic lives in
 [`backend/src/project/ProjectFile.cpp`](../backend/src/project/ProjectFile.cpp).
 
+**Portable project folder** — Save / Save As nests the project into its own folder
+(`<chosen dir>/<Name>/<Name>.silverdaw`) so all generated artifacts can live beside it
+(`Stems\`, `Samples\`). At the disk boundary `ProjectFile.cpp` rewrites path properties
+(`filePath`, `playbackFilePath`) **relative to the project folder** when they point inside
+it, and keeps them absolute otherwise — so original source files and machine-local caches
+stay absolute while project-internal stems/samples become relative. The in-memory tree and
+the `PROJECT_STATE` snapshot always hold absolute paths; the conversion happens only on
+save (absolute → relative) and load (relative → absolute, resolved against the file's
+location). The net effect: moving or syncing the project folder (e.g. via cloud storage)
+carries the project with its stems and samples intact, as long as the original source files
+sit at the same absolute path on the other machine. Peaks are deliberately **not** stored
+with the project — they are a regenerable cache (`<appData>/Silverdaw/peaks`) rebuilt from
+source on demand.
+
+**Temporary workspace + migrate-on-save** — until a project is first saved it has no
+folder, so generated stems and samples are written to a shared temp workspace
+(`<temp>/Silverdaw/{Stems,Samples}`; the backend derives this from `juce::File::tempDirectory`
+and the renderer trusts `<temp>/Silverdaw/Stems` for reads/sidecars via
+`registerStemsWriteRoot`). Unsaved work is therefore **temporary — lost if the project is
+never saved**. On the first save (`handleProjectSave` when `session.currentPath` was empty),
+`migrateTempArtifactsIntoProject` runs *before* serialization: it stops the engine,
+`removeClip`s every clip (releasing the open WAV file handles Windows would otherwise lock),
+merge-moves the temp `Stems`/`Samples` into the project folder, rebases the in-memory path
+properties (`ProjectState::rebaseArtifactPaths`), rebuilds the engine at the new paths,
+restores the playhead, and deletes the whole temp root. The subsequent `PROJECT_STATE`
+broadcast re-syncs the renderer's library/clip paths and re-reads stem media from the new
+location. Starting a New project (`handleProjectNew`) also purges the temp workspace, since
+a new project abandons any unsaved artifacts. The artifact base directories are chosen by a
+single backend helper, `projectArtifactsBaseDir(projectPath, subdir)` — `<projectDir>/<subdir>`
+when saved, else `<temp>/Silverdaw/<subdir>` — so stems (`StemSeparationCommands`) and samples
+(`SampleExport`) share the same temp-vs-project decision and no path is passed over the bridge.
+
 **Missing files** — on every `tracksAsJson` / `libraryAsJson` call, the backend resolves
 each clip's library item and stat()s the underlying source path. Anything that's gone
 gets an `unresolved: true` flag in the `PROJECT_STATE` snapshot. The renderer:
@@ -984,11 +1016,16 @@ to the user to drag them onto the timeline. Either way the source is untouched
 (non-destructive) and each stem is added to the library as a nested **stem** item
 under its source group. Because each stem is sample-aligned with its source it
 **inherits** the source's analysis (BPM, beat grid, key, variable-tempo flag)
-rather than being re-analysed. On disk each separation writes its WAVs into
-`<appData>/Silverdaw/stems/<sourceName>-stems` (disambiguated with `-2`/`-3`… for
-repeat runs) alongside a `metadata.json` + `cover.<ext>` **sidecar**, written
-through guarded main-process IPC scoped to the stems directory, so a stem keeps
-the original's tags and artwork even after the source item is removed.
+rather than being re-analysed. On disk each separation writes its WAVs into a
+`Stems\<sourceName>-stems` folder (disambiguated with `-2`/`-3`… for repeat runs)
+**beside the saved project file**, so they travel with the project folder when it
+is moved or synced between machines; an **unsaved** project writes them to the
+temporary workspace (`<temp>/Silverdaw/Stems`) and they are migrated into the
+project folder on the first save (or discarded if the project is never saved).
+Each folder also
+carries a `metadata.json` + `cover.<ext>` **sidecar**, written through guarded
+main-process IPC scoped to the stems directory, so a stem keeps the original's
+tags and artwork even after the source item is removed.
 
 ## Library panel
 
@@ -1009,8 +1046,10 @@ saved clip describes.
 
 **Samples** — right-click a timeline clip or a saved-clip library tile and choose
 **Save as sample** to bake a new WAV. Silverdaw writes the file to
-`Samples\<name>-sample-001.wav` under the current project folder, or under the
-default project folder when the project has not been saved yet. The numeric
+`Samples\<name>-sample-001.wav` under the current project folder, or to the
+temporary workspace (`<temp>/Silverdaw/Samples`) when the project has not been
+saved yet — temp samples migrate into the project folder on the first save. The
+numeric
 suffix increments for duplicate base names. The baked WAV is added as a normal
 audio-file library item; deleting that library item removes the reference from
 the project but leaves the WAV file on disk. Warped clips are rendered through

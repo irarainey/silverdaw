@@ -108,6 +108,41 @@ void ProjectState::markClean()
     if (dirty) setDirty(false);
 }
 
+namespace
+{
+// Recursively rewrite filePath/playbackFilePath properties that live under
+// `oldRoot` to the matching relative location under `newRoot`. Operates on the
+// shared ValueTree data in place; `node` is taken by value (a reference handle).
+int rebasePathProperties(juce::ValueTree node, const juce::File& oldRoot, const juce::File& newRoot)
+{
+    static const juce::Identifier pathKeys[] = {juce::Identifier{"filePath"},
+                                                juce::Identifier{"playbackFilePath"}};
+    int rewritten = 0;
+    for (const auto& key : pathKeys)
+    {
+        if (! node.hasProperty(key)) continue;
+        const juce::String stored = node.getProperty(key).toString();
+        if (stored.isEmpty() || ! juce::File::isAbsolutePath(stored)) continue;
+        const juce::File current(stored);
+        if (! current.isAChildOf(oldRoot)) continue;
+        const auto rel = current.getRelativePathFrom(oldRoot);
+        node.setProperty(key, newRoot.getChildFile(rel).getFullPathName(), nullptr);
+        ++rewritten;
+    }
+    for (int i = 0; i < node.getNumChildren(); ++i)
+        rewritten += rebasePathProperties(node.getChild(i), oldRoot, newRoot);
+    return rewritten;
+}
+} // namespace
+
+int ProjectState::rebaseArtifactPaths(const juce::File& oldRoot, const juce::File& newRoot)
+{
+    if (oldRoot.getFullPathName().isEmpty() || newRoot.getFullPathName().isEmpty())
+        return 0;
+    const SuppressDirtyScope suppress(*this);
+    return rebasePathProperties(root, oldRoot, newRoot);
+}
+
 void ProjectState::markDirty()
 {
     if (!dirty) setDirty(true);

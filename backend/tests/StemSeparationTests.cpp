@@ -8,6 +8,7 @@
 #include <atomic>
 
 #include "BridgeServer.h"
+#include "ProjectSession.h"
 #include "StemSeparationCommands.h"
 #include "StemSeparationEngine.h"
 #include "StemSeparator.h"
@@ -135,6 +136,24 @@ void testDefaultSeparatorFailsFastWithoutModel()
     require(threw, "default separator throws without a usable model");
 }
 
+void testStemsOutputBaseDir()
+{
+    // Unsaved project -> the disposable temp workspace (…/Temp/Silverdaw/Stems).
+    const auto temp = silverdaw::stemsOutputBaseDir(juce::String{});
+    require(temp.getFileName() == "Stems", "unsaved project writes stems to the temp workspace");
+    requireEqual(temp.getFullPathName(),
+                 silverdaw::tempArtifactsRoot().getChildFile("Stems").getFullPathName(),
+                 "unsaved stems live under the temp artifacts root");
+
+    // Saved project -> a portable "Stems" subfolder beside the project file.
+    const auto projectDir = makeTempDir("stem-base");
+    const auto projectFile = projectDir.getChildFile("My Mix.silverdaw");
+    const auto base = silverdaw::stemsOutputBaseDir(projectFile.getFullPathName());
+    requireEqual(base.getFullPathName(), projectDir.getChildFile("Stems").getFullPathName(),
+                 "saved project keeps stems beside the project file");
+    projectDir.deleteRecursively();
+}
+
 void testOverlapForStemQuality()
 {
     // Higher quality = more window overlap = more model runs (slower).
@@ -161,6 +180,7 @@ void addStemSeparationTests(std::vector<TestCase>& tests)
     tests.push_back({"stem job propagates cancel", testJobPropagatesCancel});
     tests.push_back({"default separator fails fast without model", testDefaultSeparatorFailsFastWithoutModel});
     tests.push_back({"stem quality maps to overlap", testOverlapForStemQuality});
+    tests.push_back({"stems output base dir follows the project", testStemsOutputBaseDir});
 }
 
 } // namespace silverdaw::tests

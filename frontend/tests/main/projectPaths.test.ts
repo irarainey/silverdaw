@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isAbsolute } from 'node:path'
-import { canonicaliseProjectPath, PROJECT_FILE_EXTENSION } from '@main/projectPaths'
+import { canonicaliseProjectPath, projectFolderPath, PROJECT_FILE_EXTENSION } from '@main/projectPaths'
 
 // Use platform-appropriate absolute roots so the test is valid on Windows and POSIX.
 const ROOT = process.platform === 'win32' ? 'C:\\projects' : '/projects'
@@ -56,5 +56,26 @@ describe('canonicaliseProjectPath', () => {
 
   it('rejects a traversal path that resolves to a non-.silverdaw file', () => {
     expect(canonicaliseProjectPath(abs('a', '..', 'secret.txt'))).toBeNull()
+  })
+})
+
+describe('projectFolderPath', () => {
+  it('nests a chosen project file into a folder named after the project', () => {
+    expect(projectFolderPath(abs('MyMix.silverdaw'))).toBe(abs('MyMix', 'MyMix.silverdaw'))
+  })
+
+  it('does not double-nest when the parent folder already matches the name', () => {
+    const already = abs('MyMix', 'MyMix.silverdaw')
+    expect(projectFolderPath(already)).toBe(already)
+  })
+
+  it('treats the folder-name match case-insensitively', () => {
+    const p = abs('mymix', 'MyMix.silverdaw')
+    expect(projectFolderPath(p)).toBe(p)
+  })
+
+  it('preserves the chosen parent directory when nesting', () => {
+    const chosen = abs('Songs', '2026', 'Anthem.silverdaw')
+    expect(projectFolderPath(chosen)).toBe(abs('Songs', '2026', 'Anthem', 'Anthem.silverdaw'))
   })
 })

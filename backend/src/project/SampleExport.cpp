@@ -6,6 +6,7 @@
 #include "Log.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
+#include "ProjectSession.h"
 #include "ProjectState.h"
 #include "WarpProcessor.h"
 #include "Waveform.h"
@@ -263,13 +264,17 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
 
 void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& engine,
                             silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                            juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
+                            juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                            const juce::String& projectPath)
 {
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
     const juce::String sampleName = tryGetRequiredString(payload, "sampleName").value_or(juce::String{});
-    const juce::String outputDir = tryGetRequiredString(payload, "outputDir").value_or(juce::String{});
-    if (clipId.isEmpty() || itemId.isEmpty() || outputDir.isEmpty()) return;
+    // The samples folder is derived, not renderer-supplied, so it tracks the
+    // project's portable location (or the temp workspace while unsaved).
+    const juce::String outputDir =
+        silverdaw::projectArtifactsBaseDir(projectPath, "Samples").getFullPathName();
+    if (clipId.isEmpty() || itemId.isEmpty()) return;
     std::optional<SampleWarpOptions> sampleWarp;
     projectState.forEachWarpClip(
         [&](const silverdaw::ProjectState::WarpClipInfo& info)
@@ -301,13 +306,15 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
 
 void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& engine,
                                    silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                                   juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
+                                   juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                                   const juce::String& projectPath)
 {
     const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
     const juce::String sampleName = tryGetRequiredString(payload, "sampleName").value_or(juce::String{});
-    const juce::String outputDir = tryGetRequiredString(payload, "outputDir").value_or(juce::String{});
-    if (libraryItemId.isEmpty() || itemId.isEmpty() || outputDir.isEmpty()) return;
+    const juce::String outputDir =
+        silverdaw::projectArtifactsBaseDir(projectPath, "Samples").getFullPathName();
+    if (libraryItemId.isEmpty() || itemId.isEmpty()) return;
     juce::var found;
     const auto library = projectState.libraryAsJson();
     if (auto* arr = library.getArray())

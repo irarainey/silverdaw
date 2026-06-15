@@ -3,11 +3,11 @@
 // pending launch path. Registered from main/index.ts.
 
 import { ipcMain, dialog, type BrowserWindow } from 'electron'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFile, mkdir } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
-import { registerIssuedPath } from '../audioPaths'
-import { canonicaliseProjectPath } from '../projectPaths'
+import { registerIssuedPath, registerStemsWriteRoot } from '../audioPaths'
+import { canonicaliseProjectPath, projectFolderPath } from '../projectPaths'
 import type { PrefsService } from '../prefsService'
 import { logMain } from '../log'
 
@@ -69,7 +69,12 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
         filters: [{ name: 'Silverdaw project', extensions: ['silverdaw'] }]
       })
       if (result.canceled || !result.filePath) return null
-      return result.filePath
+      const target = projectFolderPath(result.filePath)
+      await mkdir(dirname(target), { recursive: true })
+      // The backend writes this project's stems beside the file; trust that folder
+      // for renderer reads + sidecar writes ahead of the first separation.
+      registerStemsWriteRoot(join(dirname(target), 'Stems'))
+      return target
     }
   )
 
@@ -79,7 +84,12 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
     if (canonical === null) return false
     try {
       const content = await readFile(canonical, 'utf8')
-      // Project JSON may contain `filePath` anywhere in the tree.
+      // Project JSON may contain `filePath` anywhere in the tree. Project-internal
+      // artifact paths are stored relative to the project folder (portability);
+      // resolve them against it before allow-listing so the renderer can read them.
+      const projectDir = dirname(canonical)
+      // Stems for this project live beside it; trust that folder for reads + sidecar.
+      registerStemsWriteRoot(join(projectDir, 'Stems'))
       let parsed: unknown
       try {
         parsed = JSON.parse(content)
@@ -95,7 +105,7 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
         if (node !== null && typeof node === 'object') {
           for (const [k, v] of Object.entries(node)) {
             if (k === 'filePath' && typeof v === 'string' && v.length > 0) {
-              registerIssuedPath(v)
+              registerIssuedPath(isAbsolute(v) ? v : join(projectDir, v))
             } else {
               visit(v)
             }

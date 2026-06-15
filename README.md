@@ -50,6 +50,10 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   pitch-shifted independently, all without changing the source file.
 - **Saved clips and samples.** Save reusable clips to the library and bake any
   clip down to a fresh sample when you want to commit its current sound.
+- **Portable projects.** Saving a project nests it in its own folder and keeps
+  its generated stems and samples beside the project file, so the whole folder
+  can be moved or synced between machines (for example via cloud storage) and
+  still open — as long as the original source files sit at the same location.
 - **Track, project, and master controls.** Per-track volume faders, mute, solo,
   and a collapsible bottom panel with **Track FX**, **Project FX**, and
   **Library** tabs. Track FX gives each track a Tone EQ (Bass / Mid / Treble),

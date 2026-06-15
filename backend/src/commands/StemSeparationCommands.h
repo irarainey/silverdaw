@@ -23,7 +23,8 @@ void handleStemSeparate(const juce::var& payload,
                         StemSeparator& separator,
                         std::atomic<bool>& busyFlag,
                         std::atomic<bool>& cancelFlag,
-                        juce::String& activeJobId);
+                        juce::String& activeJobId,
+                        const juce::String& projectPath);
 
 void handleStemSeparateCancel(const juce::var& payload,
                               std::atomic<bool>& busyFlag,
@@ -35,5 +36,11 @@ void handleStemSeparateCancel(const juce::var& payload,
 // absent values fall back to the "balanced" default so a malformed envelope is
 // safe. Exposed for unit testing.
 double overlapForStemQuality(const juce::String& quality);
+
+// Base folder a project's separated stems are written under: a "Stems" subfolder
+// beside the project file when it has been saved (so the whole project folder is
+// portable), otherwise the disposable temporary workspace for unsaved projects.
+// Exposed for testing.
+juce::File stemsOutputBaseDir(const juce::String& projectPath);
 
 } // namespace silverdaw

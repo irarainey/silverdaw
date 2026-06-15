@@ -20,6 +20,7 @@ const emit = defineEmits<{
   (e: 'newProject'): void
   (e: 'openProject'): void
   (e: 'openRecent', filePath: string): void
+  (e: 'removeRecent', filePath: string): void
 }>()
 
 const app = useAppStore()
@@ -114,6 +115,10 @@ function openProject(): void {
 
 function openRecent(filePath: string): void {
   emit('openRecent', filePath)
+}
+
+function removeRecent(filePath: string): void {
+  emit('removeRecent', filePath)
 }
 
 function quit(): void {
@@ -303,19 +308,40 @@ onBeforeUnmount(() => {
               v-for="(path, idx) in recents"
               :key="path"
               :class="[
-                'flex items-center gap-3 px-3 py-2 text-sm hover:bg-zinc-800',
+                'group relative flex items-center gap-3 px-3 py-2 text-sm hover:bg-zinc-800',
                 idx === 0 ? '' : 'border-t border-zinc-800'
               ]"
             >
               <button
                 type="button"
                 data-borderless-button="true"
-                class="flex min-w-0 flex-1 flex-col bg-transparent p-0 text-left"
+                class="flex min-w-0 flex-1 flex-col bg-transparent p-0 pr-7 text-left"
                 :title="path"
                 @click="openRecent(path)"
               >
                 <span class="truncate text-zinc-100">{{ basename(path) }}</span>
                 <span class="truncate text-[11px] text-zinc-500">{{ path }}</span>
+              </button>
+              <button
+                type="button"
+                data-borderless-button="true"
+                class="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded text-zinc-500 opacity-0 hover:bg-zinc-700 hover:text-red-400 focus:opacity-100 focus:outline-none focus-visible:opacity-100 group-hover:opacity-100"
+                :aria-label="`Remove ${basename(path)} from recent projects`"
+                title="Remove from recent projects"
+                @click="removeRecent(path)"
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  class="h-3 w-3"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M4.25 4.25l7.5 7.5M11.75 4.25l-7.5 7.5"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                  />
+                </svg>
               </button>
             </li>
           </ul>

@@ -12,7 +12,9 @@
 #include "MixdownEngine.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
+#include "DecodedCache.h"
 #include "ProjectFile.h"
+#include "ProjectSession.h"
 #include "ProjectState.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
@@ -125,6 +127,132 @@ void testProjectFileSaveLoadAndViewState()
     dir.deleteRecursively();
 }
 
+// Project-internal artifact paths (inside the folder) save relative for portability;
+// original sources outside the folder stay absolute and resolve unchanged.
+void testProjectFilePortablePaths()
+{
+    const auto dir = makeTempDir("portable-paths");
+    const auto file = dir.getChildFile("Mix.silverdaw");
+
+    const juce::String insideAbs = dir.getChildFile("Samples").getChildFile("clip.wav").getFullPathName();
+    const juce::String outsideAbs = "C:\\audio\\loop.wav";
+
+    juce::ValueTree project(juce::Identifier{"PROJECT"});
+    project.setProperty("name", "Portable", nullptr);
+
+    juce::ValueTree library(juce::Identifier{"LIBRARY"});
+    juce::ValueTree inside(juce::Identifier{"ITEM"});
+    inside.setProperty("id", "libInside", nullptr);
+    inside.setProperty("filePath", insideAbs, nullptr);
+    inside.setProperty("kind", "sample", nullptr);
+    library.appendChild(inside, nullptr);
+    juce::ValueTree outside(juce::Identifier{"ITEM"});
+    outside.setProperty("id", "libOutside", nullptr);
+    outside.setProperty("filePath", outsideAbs, nullptr);
+    outside.setProperty("kind", "audio-file", nullptr);
+    library.appendChild(outside, nullptr);
+    project.appendChild(library, nullptr);
+    project.appendChild(juce::ValueTree(juce::Identifier{"MARKERS"}), nullptr);
+
+    silverdaw::ProjectState state;
+    state.replaceTree(project);
+    state.markClean();
+
+    require(silverdaw::ProjectFile::save(file, state).wasOk(), "portable save should succeed");
+
+    // JSON escapes backslashes; compare against the escaped form of each path.
+    const auto json = file.loadFileAsString();
+    require(!json.contains(insideAbs.replace("\\", "\\\\")),
+            "internal artifact path should be stored relative, not absolute");
+    require(json.contains("Samples"), "internal artifact should keep its relative subfolder");
+    require(json.contains(outsideAbs.replace("\\", "\\\\")),
+            "external source path should stay absolute on disk");
+
+    silverdaw::ProjectState loaded;
+    require(silverdaw::ProjectFile::load(file, loaded).ok, "portable load should succeed");
+    requireEqual(loaded.getLibraryItemFilePath("libInside"), insideAbs,
+                 "internal artifact path should resolve back to absolute on load");
+    requireEqual(loaded.getLibraryItemFilePath("libOutside"), outsideAbs,
+                 "external source path should remain absolute on load");
+
+    dir.deleteRecursively();
+}
+
+void testProjectArtifactsBaseDir()
+{
+    // Unsaved -> temp workspace; saved -> a subfolder beside the project file.
+    const auto tempStems = silverdaw::projectArtifactsBaseDir(juce::String{}, "Stems");
+    requireEqual(tempStems.getFullPathName(),
+                 silverdaw::tempArtifactsRoot().getChildFile("Stems").getFullPathName(),
+                 "unsaved artifacts live under the temp workspace");
+
+    const auto projectDir = makeTempDir("artifacts-base");
+    const auto projectFile = projectDir.getChildFile("Mix.silverdaw");
+    const auto samples = silverdaw::projectArtifactsBaseDir(projectFile.getFullPathName(), "Samples");
+    requireEqual(samples.getFullPathName(), projectDir.getChildFile("Samples").getFullPathName(),
+                 "saved project keeps samples beside the project file");
+    projectDir.deleteRecursively();
+}
+
+void testMigrateTempArtifactsIntoProject()
+{
+    const auto projectDir = makeTempDir("migrate-project");
+    const auto projectFile = projectDir.getChildFile("Mix.silverdaw");
+
+    // Seed a temp-workspace stem (WAV + sidecar) as if separated before first save.
+    const auto tempRoot = silverdaw::tempArtifactsRoot();
+    const auto tempStemDir = tempRoot.getChildFile("Stems").getChildFile("song-stems");
+    require(tempStemDir.createDirectory().wasOk(), "temp stem dir should create");
+    const auto tempStemWav = tempStemDir.getChildFile("vocals.wav");
+    require(tempStemWav.replaceWithText("placeholder stem audio"), "temp stem file should write");
+    require(tempStemDir.getChildFile("metadata.json").replaceWithText("{}"), "temp sidecar should write");
+
+    const juce::String outsideAbs = "C:\\audio\\loop.wav";
+
+    juce::ValueTree project(juce::Identifier{"PROJECT"});
+    project.setProperty("name", "Migrate", nullptr);
+    juce::ValueTree library(juce::Identifier{"LIBRARY"});
+    juce::ValueTree stem(juce::Identifier{"ITEM"});
+    stem.setProperty("id", "libStem", nullptr);
+    stem.setProperty("filePath", tempStemWav.getFullPathName(), nullptr);
+    stem.setProperty("playbackFilePath", tempStemWav.getFullPathName(), nullptr);
+    library.appendChild(stem, nullptr);
+    juce::ValueTree outside(juce::Identifier{"ITEM"});
+    outside.setProperty("id", "libOutside", nullptr);
+    outside.setProperty("filePath", outsideAbs, nullptr);
+    library.appendChild(outside, nullptr);
+    project.appendChild(library, nullptr);
+    project.appendChild(juce::ValueTree(juce::Identifier{"MARKERS"}), nullptr);
+
+    silverdaw::ProjectState state;
+    state.replaceTree(project);
+
+    silverdaw::AudioEngine engine;
+    engine.initialise({}, {}, nullptr);
+    juce::ThreadPool pool;
+    silverdaw::DecodedCache decodedCache;
+
+    silverdaw::migrateTempArtifactsIntoProject(projectFile.getFullPathName(), engine, state, pool,
+                                               decodedCache);
+
+    const auto movedDir = projectDir.getChildFile("Stems").getChildFile("song-stems");
+    require(movedDir.getChildFile("vocals.wav").existsAsFile(), "stem WAV should move beside the project");
+    require(movedDir.getChildFile("metadata.json").existsAsFile(),
+            "stem sidecar should move with the stem folder");
+    require(! tempRoot.isDirectory(), "temp workspace should be purged after migration");
+    requireEqual(state.getLibraryItemFilePath("libStem"),
+                 movedDir.getChildFile("vocals.wav").getFullPathName(),
+                 "stem filePath should be rewritten beside the project");
+    requireEqual(state.getLibraryItemPlaybackPath("libStem"),
+                 movedDir.getChildFile("vocals.wav").getFullPathName(),
+                 "stem playbackFilePath should be rewritten beside the project");
+    requireEqual(state.getLibraryItemFilePath("libOutside"), outsideAbs,
+                 "external source path should stay absolute through migration");
+
+    engine.shutdown();
+    projectDir.deleteRecursively();
+}
+
 void testPeaksCacheRoundTripAndValidation()
 {
     const auto dir = makeTempDir("peaks-cache");
@@ -188,6 +316,9 @@ void addPersistenceTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"ValueTreeJson round-trip and validation", testValueTreeJsonRoundTripAndValidation});
     tests.push_back({"ProjectFile save/load and view-state update", testProjectFileSaveLoadAndViewState});
+    tests.push_back({"ProjectFile portable relative paths", testProjectFilePortablePaths});
+    tests.push_back({"project artifacts base dir follows the project", testProjectArtifactsBaseDir});
+    tests.push_back({"migrate temp artifacts into project folder", testMigrateTempArtifactsIntoProject});
     tests.push_back({"PeaksCache round-trip and validation", testPeaksCacheRoundTripAndValidation});
 }
 

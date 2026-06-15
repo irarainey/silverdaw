@@ -142,11 +142,13 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     }
     else if (type == "CLIP_SAVE_AS_SAMPLE")
     {
-        silverdaw::handleClipSaveAsSample(payload, engine, projectState, bridge, peakPool, cache);
+        silverdaw::handleClipSaveAsSample(payload, engine, projectState, bridge, peakPool, cache,
+                                          session.currentPath);
     }
     else if (type == "LIBRARY_ITEM_SAVE_AS_SAMPLE")
     {
-        silverdaw::handleLibraryItemSaveAsSample(payload, engine, projectState, bridge, peakPool, cache);
+        silverdaw::handleLibraryItemSaveAsSample(payload, engine, projectState, bridge, peakPool, cache,
+                                                 session.currentPath);
     }
     else if (type == "LIBRARY_ADD")
     {
@@ -341,12 +343,14 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "PROJECT_SAVE")
     {
         silverdaw::log::info("bridge", "recv PROJECT_SAVE");
-        silverdaw::handleProjectSave(payload, engine, projectState, bridge, session, /*isSaveAs*/ false);
+        silverdaw::handleProjectSave(payload, engine, projectState, bridge, session, /*isSaveAs*/ false,
+                                     peakPool, decodedCache);
     }
     else if (type == "PROJECT_SAVE_AS")
     {
         silverdaw::log::info("bridge", "recv PROJECT_SAVE_AS path=" + payload.getProperty("filePath", "").toString());
-        silverdaw::handleProjectSave(payload, engine, projectState, bridge, session, /*isSaveAs*/ true);
+        silverdaw::handleProjectSave(payload, engine, projectState, bridge, session, /*isSaveAs*/ true,
+                                     peakPool, decodedCache);
     }
     else if (type == "PROJECT_SAVE_VIEW_STATE")
     {
@@ -444,7 +448,8 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     else if (type == "STEM_SEPARATE")
     {
         silverdaw::handleStemSeparate(payload, projectState, bridge, peakPool, decodedCache,
-                                      stemSeparator(), g_stemBusy, g_stemCancel, g_stemActiveJobId);
+                                      stemSeparator(), g_stemBusy, g_stemCancel, g_stemActiveJobId,
+                                      session.currentPath);
     }
     else if (type == "STEM_SEPARATE_CANCEL")
     {

@@ -338,11 +338,15 @@ is mathematically identical to adding the full residual to the model's `other`,
 captures any energy the three specialists miss, and runs ~25 % faster).
 
 **On-disk layout & sidecar (implemented):** Each separation writes its WAVs into a
-folder named after the source — `<appData>/Silverdaw/stems/<sourceName>-stems`,
-with a `-2`/`-3`… suffix when a folder for that source already exists, so repeat
-separations never collide. Because separated WAVs carry no tags and the original
-source can later be removed from the library, the renderer also writes a
-`metadata.json` + `cover.<ext>` **sidecar** into that folder (via guarded main-
+folder named after the source — `Stems\<sourceName>-stems` beside the saved project
+file (or the temporary workspace `<temp>/Silverdaw/Stems` when the project has not
+been saved yet, migrated into the project folder on the first save), with a `-2`/`-3`…
+suffix when a folder for that source already
+exists, so repeat separations never collide. Keeping stems inside the project folder
+lets the whole project travel with them when the folder is moved or synced. Because
+separated WAVs carry no tags and the original source can later be removed from the
+library, the renderer also writes a `metadata.json` + `cover.<ext>` **sidecar** into
+that folder (via guarded main-
 process IPC scoped to the stems directory). On reload the stem items re-read the
 sidecar, so they keep the source's tags and artwork even after the source item is
 gone — the metadata is **copied, not merely referenced**.
@@ -381,11 +385,12 @@ the backend and driven from the shared master transport clock.
 - Multi-track sync via shared master transport clock with per-track latency compensation
 
 ### 7.2 Sample Creation from Clip
-Users turn any clip or selected region into a reusable sample in one action:
+Users turn a timeline clip or a saved-clip library item into a reusable sample in
+one action (region-to-sample arrives with the selection primitive in §7.2.1):
 
 - Select a timeline clip or saved-clip library tile → right-click → "Save as sample"
 - Backend writes a WAV slice to a `Samples` folder under the project directory
-  (or default project folder for unsaved projects)
+  (or the temporary workspace for unsaved projects, migrated on first save)
 - Browser updates immediately on receipt of `SAMPLE_SAVED` event
 - Non-warped clips: sliced directly from source file, no render required
 - Warped clips: offline Rubber Band render before write so the WAV matches the
@@ -1331,9 +1336,10 @@ library, transport, UI layout and per-clip edits — from a single
   drives title bar + "Save" vs "Save As" behaviour
 
 **State coverage:**
-- [x] Persist track structural fields (id, name, gain) and clip fields
-  (id, source path, offsetMs, inMs, durationMs, colorIndex). Track
-  mute/solo remain UI/audio-session state rather than project file state.
+- [x] Persist track structural fields (id, name, gain, mute, solo) and clip
+  fields (id, source path, offsetMs, inMs, durationMs, colorIndex). Mute/solo
+  are stored on the track node and serialised with the project tree
+  (`ProjectState::setTrackMuted` / `setTrackSoloed`; suppressed when false).
 - [x] Persist transport playhead position; loop region + metronome flag
   deferred until those features exist.
 - [x] Persist project metadata: name (with rename), BPM (2 d.p.), project
@@ -1683,7 +1689,7 @@ playable at every point — no broken-build day):
 - [x] Quality presets (**Fast / Balanced / Best** → inference overlap 0.10 / 0.25 / 0.50) sent as `quality` on `STEM_SEPARATE`
 - [x] Mixture-consistency residual — when all four stems are requested, synthesise `other = mixture − (vocals + drums + bass)` and skip the `other` model run (~25 % faster)
 - [x] DirectML GPU acceleration (issue tracked) — DirectML-build ONNX Runtime bundled (`onnxruntime.dll` + `DirectML.dll`); `useGpu` threaded to session options, opt-in and adapter-gated (Preferences ▸ Stems), TDR/timeout-recovery hardened
-- [x] Per-separation stem folder `<appData>/Silverdaw/stems/<sourceName>-stems` (disambiguated) with a `metadata.json` + `cover.<ext>` sidecar, so stems keep the source's tags/artwork after the source is removed
+- [x] Per-separation stem folder `Stems\<sourceName>-stems` (disambiguated) beside the saved project file — written to a temporary workspace (`<temp>/Silverdaw/Stems`) for unsaved projects and migrated into the project folder on first save — with a `metadata.json` + `cover.<ext>` sidecar, so stems travel with the portable project folder and keep the source's tags/artwork after the source is removed
 - [ ] Loop slicer: transient and grid markers in PixiJS
 - [ ] Slice-to-timeline and slice-to-sample flows
 - [x] Fine-clip editor — shipped as the in-app **Clip Editor** dialog (§7.14): full-source waveform, sample-accurate selection, looped audition through a backend preview voice, Save-as-new-clip and Apply-trim with linked-clip propagation, hi-res peaks on demand. A dedicated BrowserWindow surface remains a future option.

@@ -8,6 +8,7 @@
 #include "EnginePlaybackPath.h"
 #include "Log.h"
 #include "PayloadHelpers.h"
+#include "ProjectSession.h"
 #include "ProjectState.h"
 #include "StemBroadcast.h"
 #include "StemSeparationEngine.h"
@@ -28,20 +29,13 @@ void failInvalid(BridgeServer& bridge, const juce::String& jobId, const juce::St
     stem_bridge::broadcastFailed(bridge, jobId, clipId, StemFailureCode::Invalid, message);
 }
 
-juce::File stemsBaseDir()
-{
-    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("Silverdaw")
-        .getChildFile("stems");
-}
 
 // Output folder named after the source file with a "-stems" suffix, e.g.
 // "My Song-stems". A numeric suffix disambiguates repeat separations of the
 // same source ("My Song-stems-2", "-3", ...) so they never overwrite earlier
 // stems or their sidecar metadata.
-juce::File uniqueStemsOutputDir(const juce::String& sourceName)
+juce::File uniqueStemsOutputDir(const juce::String& sourceName, const juce::File& base)
 {
-    const auto base = stemsBaseDir();
     auto safe = juce::File::createLegalFileName(sourceName).trim();
     if (safe.isEmpty()) safe = "stems";
     const auto rootName = safe + "-stems";
@@ -89,6 +83,11 @@ bool parseSelectedStems(const juce::var& payload, std::vector<juce::String>& out
 
 } // namespace
 
+juce::File stemsOutputBaseDir(const juce::String& projectPath)
+{
+    return projectArtifactsBaseDir(projectPath, "Stems");
+}
+
 void handleStemSeparate(const juce::var& payload,
                         ProjectState& projectState,
                         BridgeServer& bridge,
@@ -97,7 +96,8 @@ void handleStemSeparate(const juce::var& payload,
                         StemSeparator& separator,
                         std::atomic<bool>& busyFlag,
                         std::atomic<bool>& cancelFlag,
-                        juce::String& activeJobId)
+                        juce::String& activeJobId,
+                        const juce::String& projectPath)
 {
     using silverdaw::bridge::readOptionalString;
 
@@ -160,7 +160,7 @@ void handleStemSeparate(const juce::var& payload,
     if (sourceName.isEmpty() && clipId.isNotEmpty()) sourceName = projectState.getClipName(clipId);
     if (sourceName.isEmpty()) sourceName = juce::File(rawSourcePath).getFileNameWithoutExtension();
 
-    const auto outputDir = uniqueStemsOutputDir(sourceName);
+    const auto outputDir = uniqueStemsOutputDir(sourceName, stemsOutputBaseDir(projectPath));
     const auto created = outputDir.createDirectory();
     if (created.failed())
     {

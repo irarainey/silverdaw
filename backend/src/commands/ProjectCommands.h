@@ -20,7 +20,8 @@ void handleProjectLoad(const juce::var& payload, AudioEngine& engine, ProjectSta
                        BridgeServer& bridge, ProjectSession& session, juce::ThreadPool& peakPool,
                        const DecodedCache& decodedCache);
 void handleProjectSave(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
-                       BridgeServer& bridge, ProjectSession& session, bool isSaveAs);
+                       BridgeServer& bridge, ProjectSession& session, bool isSaveAs,
+                       juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
 void handleProjectSaveViewState(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                                 BridgeServer& bridge, const ProjectSession& session);
 void handleProjectRename(const juce::var& payload, ProjectState& projectState, BridgeServer& bridge);

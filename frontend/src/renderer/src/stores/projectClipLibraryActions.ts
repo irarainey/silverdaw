@@ -8,18 +8,10 @@ import { useLibraryStore, libraryItemIsSample } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
-import { fileStem, parentDir } from './projectHelpers'
+import { fileStem } from './projectHelpers'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
 import type { ProjectClipThis } from './projectClipContract'
-
-async function defaultSamplesDir(currentFilePath: string | null): Promise<string> {
-  const projectDir = parentDir(currentFilePath)
-  if (projectDir) return `${projectDir}\\Samples`
-  const qol = await window.silverdaw.getQolPrefs().catch(() => null)
-  const base = qol?.paths.defaultProjectDir || ''
-  return base ? `${base}\\Samples` : 'Samples'
-}
 
 export const clipLibraryActions = {
     /** Relink once per library item; referenced clips follow that binding. */
@@ -43,15 +35,14 @@ export const clipLibraryActions = {
       return itemId
     },
 
-    async saveClipAsSample(clipId: string): Promise<void> {
+    saveClipAsSample(clipId: string): void {
       const clip = this.clips[clipId]
       if (!clip) return
       const itemId = `sample-${crypto.randomUUID()}`
       sendBridge('CLIP_SAVE_AS_SAMPLE', {
         clipId,
         itemId,
-        sampleName: clip.name?.trim() || fileStem(clip.fileName),
-        outputDir: await defaultSamplesDir(this.currentFilePath)
+        sampleName: clip.name?.trim() || fileStem(clip.fileName)
       })
       useNotificationsStore().pushInfo('Saving sample…')
     },

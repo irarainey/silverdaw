@@ -21,7 +21,7 @@ import { ModelStore, ModelDownloadError } from '../stems/modelStore'
 import { detectGpuFromInfo } from '../stems/gpuDetect'
 import { sanitiseStemModelDir } from '../preferences'
 import type { PrefsService } from '../prefsService'
-import { registerTrustedReadRoot } from '../audioPaths'
+import { registerStemsWriteRoot } from '../audioPaths'
 
 export interface StemHandlersContext {
   getMainWindow(): BrowserWindow | null
@@ -31,9 +31,11 @@ export interface StemHandlersContext {
 export function registerStemHandlers(ctx: StemHandlersContext): void {
   const { prefs } = ctx
   const managedModelDir = join(app.getPath('userData'), 'models', HTDEMUCS_FT_MANIFEST.id)
-  // The backend writes separated stems under this app-owned tree; trust it so the
-  // renderer can read them on STEM_READY (those paths are never issued via a dialog).
-  registerTrustedReadRoot(join(app.getPath('userData'), 'stems'))
+  // Unsaved projects write separated stems into a temporary workspace; trust it
+  // for renderer reads and sidecar writes until the project is saved (at which
+  // point the backend migrates them beside the project file). Saved-project Stems
+  // dirs are registered separately in projectHandlers.
+  registerStemsWriteRoot(join(app.getPath('temp'), 'Silverdaw', 'Stems'))
   // The backend separator is single-slot, so at most one download is in flight.
   let activeDownload: AbortController | null = null
 

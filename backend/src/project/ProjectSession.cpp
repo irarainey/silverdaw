@@ -8,6 +8,7 @@
 #include "ProjectState.h"
 #include "SharedFx.h"
 
+#include <algorithm>
 #include <optional>
 
 namespace silverdaw
@@ -254,6 +255,92 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
         silverdaw::delayNoteToMs(projectState.getProjectDelayNoteValue(), projectState.getBpm()),
         projectState.getProjectDelayFeedback(), projectState.getProjectDelayTone(),
         projectState.getProjectDelayMix(), /*snap*/ true);
+}
+
+juce::File tempArtifactsRoot()
+{
+    return juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Silverdaw");
+}
+
+juce::File projectArtifactsBaseDir(const juce::String& projectPath, const juce::String& subdir)
+{
+    if (projectPath.isNotEmpty())
+    {
+        const auto projectDir = juce::File(projectPath).getParentDirectory();
+        if (projectDir.getFullPathName().isNotEmpty())
+            return projectDir.getChildFile(subdir);
+    }
+    return tempArtifactsRoot().getChildFile(subdir);
+}
+
+namespace
+{
+// Move every child of `src` into `dest` (created on demand), recursing into
+// subdirectories so an existing destination folder is merged, not replaced.
+bool mergeMoveDirectory(const juce::File& src, const juce::File& dest)
+{
+    if (! src.isDirectory()) return true;
+    if (! dest.isDirectory() && ! dest.createDirectory().wasOk()) return false;
+    bool ok = true;
+    for (const auto& child : src.findChildFiles(juce::File::findFilesAndDirectories, false))
+    {
+        const auto target = dest.getChildFile(child.getFileName());
+        if (child.isDirectory())
+        {
+            ok = mergeMoveDirectory(child, target) && ok;
+        }
+        else
+        {
+            target.deleteFile();
+            ok = child.moveFileTo(target) && ok;
+        }
+    }
+    return ok;
+}
+} // namespace
+
+void migrateTempArtifactsIntoProject(const juce::String& projectFilePath, AudioEngine& engine,
+                                     ProjectState& projectState, juce::ThreadPool& peakPool,
+                                     const DecodedCache& decodedCache)
+{
+    static const char* kCategories[] = {"Stems", "Samples"};
+
+    const auto tempRoot = tempArtifactsRoot();
+    const auto projectDir = juce::File(projectFilePath).getParentDirectory();
+    if (! tempRoot.isDirectory() || projectDir.getFullPathName().isEmpty())
+        return;
+
+    const bool hasArtifacts = std::any_of(std::begin(kCategories), std::end(kCategories),
+                                          [&](const char* c) { return tempRoot.getChildFile(c).isDirectory(); });
+    if (! hasArtifacts)
+    {
+        // Stray empty workspace from a prior session: nothing to relocate, just clear it.
+        tempRoot.deleteRecursively();
+        return;
+    }
+
+    // The engine holds open readers on the temp WAVs; release them before the move.
+    engine.stop();
+    for (const auto& id : collectClipIds(projectState))
+        engine.removeClip(id);
+
+    for (const auto* category : kCategories)
+    {
+        const auto src = tempRoot.getChildFile(category);
+        if (src.isDirectory() && ! mergeMoveDirectory(src, projectDir.getChildFile(category)))
+            silverdaw::log::warn("project", juce::String("temp artifact move incomplete for ") + category);
+    }
+
+    const int rewritten = projectState.rebaseArtifactPaths(tempRoot, projectDir);
+
+    // Re-open the relocated clip sources from their new project-folder paths.
+    rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
+
+    // The unsaved session's artifacts are now beside the project; clear the workspace.
+    tempRoot.deleteRecursively();
+
+    silverdaw::log::info("project", "migrated temp artifacts into project dir; rewrote " +
+                                        juce::String(rewritten) + " path(s)");
 }
 
 } // namespace silverdaw

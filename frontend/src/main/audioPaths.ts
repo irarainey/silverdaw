@@ -14,6 +14,11 @@ const issuedAudioPaths: Set<string> = new Set<string>()
 // over its direct bridge socket. The audio-extension check still applies.
 const trustedReadRoots: Set<string> = new Set<string>()
 
+// App-derived folders (never renderer-supplied) where the backend writes a
+// project's separated stems — a "Stems" folder beside a saved project file. Stem
+// sidecar metadata reads/writes are confined to these (or the central stems base).
+const stemsWriteRoots: Set<string> = new Set<string>()
+
 export function canonicalisePath(p: string): string {
   return pathResolve(p)
 }
@@ -49,6 +54,30 @@ function isUnderTrustedRoot(canonical: string): boolean {
     // Empty means the path is the root itself; a non-`..`, non-absolute relative
     // path means it lives inside the root (guards against `..` traversal and
     // different-drive paths, which yield an absolute relative on Windows).
+    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true
+  }
+  return false
+}
+
+// Trust a project's stems output folder (derived by main from a save/open path)
+// for renderer audio reads AND stem sidecar metadata reads/writes. Idempotent.
+export function registerStemsWriteRoot(dir: string): void {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) {
+    logMain('WARN ', 'main', 'refusing to register non-absolute stems root:', dir)
+    return
+  }
+  const canonical = canonicalisePath(dir)
+  stemsWriteRoots.add(canonical)
+  trustedReadRoots.add(canonical)
+}
+
+// A stem sidecar folder is writable only when it sits inside a registered stems
+// write root. (The central stems base is checked separately by the caller.)
+export function isWithinStemsWriteRoot(dir: unknown): dir is string {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
+  const canonical = canonicalisePath(dir)
+  for (const root of stemsWriteRoots) {
+    const rel = relative(root, canonical)
     if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true
   }
   return false

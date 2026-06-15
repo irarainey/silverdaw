@@ -36,6 +36,10 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
     projectState.replaceTree(fresh);
     session.currentPath.clear();
 
+    // A new project abandons any unsaved session's generated artifacts; clear the
+    // temp workspace so stray stems/samples never leak into the next save.
+    silverdaw::tempArtifactsRoot().deleteRecursively();
+
     // replaceTree does not touch the live engine, so align master gain with the
     // new project's default (rebuildEngineFromProject only runs on load/clip ops).
     engine.setMasterGain(projectState.getMasterVolume());
@@ -102,8 +106,14 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
 
 void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
                        silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                       silverdaw::ProjectSession& session, bool isSaveAs)
+                       silverdaw::ProjectSession& session, bool isSaveAs, juce::ThreadPool& peakPool,
+                       const silverdaw::DecodedCache& decodedCache)
 {
+    // An empty current path means this is the project's first save: its generated
+    // artifacts still live in the temp workspace and must be relocated into the
+    // saved project folder before serialising.
+    const bool wasUnsaved = session.currentPath.isEmpty();
+
     juce::String filePath = tryGetRequiredString(payload, "filePath").value_or(juce::String{});
     if (filePath.isEmpty())
     {
@@ -132,7 +142,19 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
     }
 
     // Capture playhead on save without marking it as a user edit.
-    projectState.setPlayheadMs(engine.getPositionMs());
+    const double playheadMs = engine.getPositionMs();
+    projectState.setPlayheadMs(playheadMs);
+
+    if (wasUnsaved)
+    {
+        // Moves temp Stems/Samples beside the project, rebases paths, and rebuilds
+        // the engine (which resets the transport); restore the user's playhead after.
+        silverdaw::migrateTempArtifactsIntoProject(filePath, engine, projectState, peakPool, decodedCache);
+        if (playheadMs > 0.0)
+        {
+            engine.setPositionMs(playheadMs);
+        }
+    }
 
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
     auto* p = new juce::DynamicObject();

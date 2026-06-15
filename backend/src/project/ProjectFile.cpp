@@ -20,6 +20,82 @@ juce::String isoTimestampNowUtc()
     return juce::Time::getCurrentTime().toISO8601(true);
 }
 
+// Properties whose string value is a filesystem path that should travel with the
+// project. The rewrite is location-based: a path inside the project folder is
+// stored relative to it (so the folder is portable across machines / sync roots);
+// anything outside — original source files and machine-local caches — stays
+// absolute. Applied only at the on-disk JSON boundary; the in-memory tree and the
+// bridge snapshot always hold absolute paths.
+const juce::StringArray kPortablePathKeys{"filePath", "playbackFilePath"};
+
+juce::String toPortablePath(const juce::String& stored, const juce::File& projectDir)
+{
+    if (stored.isEmpty() || !juce::File::isAbsolutePath(stored))
+    {
+        return stored;
+    }
+    const juce::String rel = juce::File(stored).getRelativePathFrom(projectDir);
+    // Cross-drive targets come back absolute; targets that escape the project
+    // folder start with ".." — both keep their absolute path.
+    if (juce::File::isAbsolutePath(rel) || rel.startsWith(".."))
+    {
+        return stored;
+    }
+    return rel;
+}
+
+juce::String fromPortablePath(const juce::String& stored, const juce::File& projectDir)
+{
+    if (stored.isEmpty() || juce::File::isAbsolutePath(stored))
+    {
+        return stored;
+    }
+    return projectDir.getChildFile(stored).getFullPathName();
+}
+
+// Recursively rewrite portable path properties throughout the serialised project
+// var. `forSave` chooses the direction (absolute→relative vs relative→absolute).
+void rewritePortablePaths(juce::var& node, const juce::File& projectDir, bool forSave)
+{
+    if (auto* arr = node.getArray())
+    {
+        for (auto& element : *arr)
+        {
+            rewritePortablePaths(element, projectDir, forSave);
+        }
+        return;
+    }
+
+    auto* obj = node.getDynamicObject();
+    if (obj == nullptr)
+    {
+        return;
+    }
+
+    auto& props = obj->getProperties();
+    for (int i = 0; i < props.size(); ++i)
+    {
+        const auto name = props.getName(i);
+        if (kPortablePathKeys.contains(name.toString()))
+        {
+            const juce::String stored = props.getValueAt(i).toString();
+            const juce::String converted =
+                forSave ? toPortablePath(stored, projectDir) : fromPortablePath(stored, projectDir);
+            if (converted != stored)
+            {
+                obj->setProperty(name, converted);
+            }
+        }
+        else
+        {
+            // Child objects/arrays are reference-counted, so mutating through this
+            // copy updates the shared underlying node in place.
+            juce::var child = props.getValueAt(i);
+            rewritePortablePaths(child, projectDir, forSave);
+        }
+    }
+}
+
 juce::Result writeProjectJsonAtomically(const juce::File& file, const juce::var& rootVar)
 {
     const auto& target = file.getFullPathName();
@@ -78,7 +154,11 @@ juce::Result save(const juce::File& file, const ProjectState& project)
     {
         return juce::Result::fail("Failed to serialise project tree to JSON");
     }
-    rootObj->setProperty(kProjectKey, projectVar);
+    // Store project-internal artifact paths relative to the project folder so the
+    // whole folder is portable; sources and machine-local caches stay absolute.
+    juce::var portableVar = projectVar;
+    rewritePortablePaths(portableVar, file.getParentDirectory(), /*forSave=*/true);
+    rootObj->setProperty(kProjectKey, portableVar);
 
     return writeProjectJsonAtomically(file, juce::var(rootObj));
 }
@@ -178,7 +258,12 @@ LoadResult load(const juce::File& file, ProjectState& project)
         return result;
     }
 
-    auto projectTree = ValueTreeJson::fromVar(projectVar);
+    // Resolve project-internal artifact paths (stored relative to the folder) back
+    // to absolute against this file's location before decoding the tree.
+    juce::var resolvedVar = projectVar;
+    rewritePortablePaths(resolvedVar, file.getParentDirectory(), /*forSave=*/false);
+
+    auto projectTree = ValueTreeJson::fromVar(resolvedVar);
     if (!projectTree.isValid())
     {
         result.error = "Failed to decode \"project\" object as a ValueTree";

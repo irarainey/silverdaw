@@ -227,7 +227,6 @@ export interface ClipSaveAsSamplePayload {
   clipId: string
   itemId: string
   sampleName: string
-  outputDir: string
 }
 
 // ─── Effects envelopes (Bass / Mid / Treble / Leveler / Sends / shared FX) ──
@@ -346,7 +345,6 @@ export interface LibraryItemSaveAsSamplePayload {
   libraryItemId: string
   itemId: string
   sampleName: string
-  outputDir: string
 }
 
 export interface TransportSeekPayload {
