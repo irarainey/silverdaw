@@ -322,6 +322,12 @@ export function useTimelineViewController(
     () => redraw()
   )
 
+  // Vertical scroll changes which rows fall inside the culled draw window, so the
+  // scene graph must be rebuilt (applyScroll only translates already-built rows and
+  // would leave previously off-screen tracks blank). Horizontal scroll stays
+  // translate-only because clips are built across the full project width.
+  watch(scrollY, () => redraw())
+
   watch(
     () => ui.waveformDisplayMode,
     () => redraw()
