@@ -70,8 +70,12 @@ juce::File modelFileFor(const juce::File& modelDir, const char* stem)
 }
 
 // Decode the source file into a 2-channel float buffer resampled to the model's
-// fixed 44.1 kHz. Throws StemSeparationError{Decode} on any read failure.
-juce::AudioBuffer<float> decodeStereo44k(const juce::File& sourceFile)
+// fixed 44.1 kHz. An optional source-time window ([startMs, startMs+lengthMs) in
+// the source file's own milliseconds; lengthMs <= 0 means "to the end") decodes
+// only that portion, so clip-scoped separation produces clip-length stems.
+// Throws StemSeparationError{Decode} on any read failure.
+juce::AudioBuffer<float> decodeStereo44k(const juce::File& sourceFile, double startMs = 0.0,
+                                         double lengthMs = 0.0)
 {
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
@@ -81,13 +85,29 @@ juce::AudioBuffer<float> decodeStereo44k(const juce::File& sourceFile)
         throw StemSeparationError(StemFailureCode::Decode,
                                   "Could not read source audio: " + sourceFile.getFullPathName());
 
-    const auto sourceLength = static_cast<int>(reader->lengthInSamples);
-    if (sourceLength <= 0)
+    const auto totalLength = static_cast<juce::int64>(reader->lengthInSamples);
+    if (totalLength <= 0)
         throw StemSeparationError(StemFailureCode::Decode, "Source audio is empty.");
+
+    // Resolve the requested window into [startSample, startSample+numSamples) in the
+    // reader's native sample rate, clamped to the file. A non-positive length spans
+    // to the end (full-track separation).
+    const double readerRate = reader->sampleRate > 0.0 ? reader->sampleRate : kModelSampleRate;
+    juce::int64 startSample = startMs > 0.0
+                                  ? static_cast<juce::int64>(startMs * readerRate / 1000.0)
+                                  : 0;
+    startSample = juce::jlimit<juce::int64>(0, totalLength, startSample);
+    juce::int64 windowSamples = lengthMs > 0.0
+                                    ? static_cast<juce::int64>(lengthMs * readerRate / 1000.0)
+                                    : (totalLength - startSample);
+    windowSamples = juce::jlimit<juce::int64>(0, totalLength - startSample, windowSamples);
+    const auto sourceLength = static_cast<int>(windowSamples);
+    if (sourceLength <= 0)
+        throw StemSeparationError(StemFailureCode::Decode, "Selected source window is empty.");
 
     juce::AudioBuffer<float> decoded(kModelChannels, sourceLength);
     decoded.clear();
-    reader->read(&decoded, 0, sourceLength, 0, true, reader->numChannels > 1);
+    reader->read(&decoded, 0, sourceLength, startSample, true, reader->numChannels > 1);
     // Mono sources fill only channel 0; mirror it so the model sees stereo.
     if (reader->numChannels == 1)
         decoded.copyFrom(1, 0, decoded, 0, 0, sourceLength);
@@ -255,7 +275,7 @@ class OnnxStemSeparator : public StemSeparator
 
         if (shouldCancel()) throw StemSeparationError(StemFailureCode::Cancelled, "Cancelled");
 
-        auto mixture = decodeStereo44k(request.sourceFile);
+        auto mixture = decodeStereo44k(request.sourceFile, request.startMs, request.lengthMs);
         const int numSamples = mixture.getNumSamples();
 
         // Centre + scale by the mono mixture statistics before inference.
@@ -368,8 +388,11 @@ class OnnxStemSeparator : public StemSeparator
                 }
             }
 
+            const auto stemBaseName = request.fileNameToken.isNotEmpty()
+                ? request.sourceName + " - " + stem + " - " + request.fileNameToken
+                : request.sourceName + " - " + stem;
             const auto outFile = request.outputDir.getChildFile(
-                juce::File::createLegalFileName(request.sourceName + " - " + stem + ".wav"));
+                juce::File::createLegalFileName(stemBaseName + ".wav"));
             writeStemWav(outFile, stemBuffer);
             result.stems.push_back({juce::String(stem), outFile});
             // Let the UI import this stem now, before later stems finish.

@@ -331,7 +331,37 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
         {
             continue;
         }
-        track->transportSource->setPosition(trackSeekSecondsFor(*track, master.getPositionSamples()));
+        const double seekSeconds = trackSeekSecondsFor(*track, master.getPositionSamples());
+        track->transportSource->setPosition(seekSeconds);
+        // A track transport that previously played to the end of its source has
+        // auto-stopped (AudioTransportSource clears `playing` at EOF). Repositioning
+        // alone does NOT clear that state, so without restarting it the transport
+        // would emit silence forever. This bit short clips such as separated stems
+        // (which reach their EOF within a bar) after the first full play-through;
+        // long clips rarely hit EOF so never surfaced it. Restart here, before every
+        // play primes, so a re-seek + play always resumes output. start() is
+        // idempotent for an already-playing transport.
+        track->transportSource->start();
+
+        // Settle the transport's internal gain ramp before the master gate opens.
+        // AudioTransportSource ramps from the previous rendered block's gain (lastGain)
+        // to the current gain across the first block it renders, then catches lastGain
+        // up. While the master is gated the audio thread does not pull these transports,
+        // so a gain changed during that window — e.g. a track muted by engaging solo —
+        // leaves lastGain stale (at the old, audible level). The first block after the
+        // gate opens would then ramp the now-muted content from its old gain down to
+        // zero: a one-block fade-out leaking into the output = an audible click on the
+        // first play after the change. Pump a single throwaway sample here (safe: the
+        // gate is closed, so only this message thread touches the transport) to run the
+        // gain-settle so lastGain == gain, then re-seek to undo the one-sample advance.
+        // The pump can reach a short clip's EOF and auto-stop the transport, so restart
+        // again afterwards (only start() clears the EOF-stopped state).
+        juce::AudioSourceChannelInfo settleInfo(&scratch, 0, 1);
+        scratch.clear(0, 1);
+        track->transportSource->getNextAudioBlock(settleInfo);
+        track->transportSource->setPosition(seekSeconds);
+        track->transportSource->start();
+
         notReady.push_back(track.get());
     }
 

@@ -6,6 +6,7 @@
 #include "AudioEngine.h"
 #include "AudioConstants.h"
 #include "BridgeAuth.h"
+#include "DecodedCache.h"
 #include "EdgeFadeSnapshot.h"
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
@@ -156,6 +157,18 @@ void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
     // two must agree.
     require(engine.isPlaying() == ready,
             "play() must open the gate iff priming reports ready (fail-closed)");
+    engine.stop();
+
+    // Mute one clip while the master gate is closed, then prime again: this exercises the
+    // play-start gain-settle (the throwaway one-sample pump that clears a stale transport
+    // gain ramp so a freshly-muted track cannot leak a one-block fade-out on the next play).
+    // It must remain crash-free and bounded with the gain change in flight.
+    require(engine.setClipGain("c1", 0.0F), "muting a clip while gated should succeed");
+    const auto tMute = juce::Time::getMillisecondCounterHiRes();
+    engine.primeTracksForPlayback(silverdaw::kPlayPrimeBudgetMs);
+    require(juce::Time::getMillisecondCounterHiRes() - tMute < 3000.0,
+            "priming after a mute must stay bounded");
+    engine.play();
     engine.stop();
 
     require(engine.removeClip("c1"), "removeClip c1 should succeed");
@@ -441,7 +454,48 @@ void testMasterClockPublishesAudioPerfOffThread()
     require(playSnap.positionSamples == kBlock, "playing advances the transport by the block size");
     require(playSnap.callbackCount == 11, "callback count keeps incrementing");
 
+    // The first played block after the idle→playing transition is declicked: a short fade-in
+    // ramps the constant child (0.1) up from ~0 so the gate opening does not step and click.
+    require(std::abs(buf.getSample(0, 0)) < 0.02F,
+            "the first sample of the first played block must be ramped down by the declick fade-in");
+    float firstBlockPeak = 0.0F;
+    for (int i = 0; i < kBlock; ++i)
+        firstBlockPeak = juce::jmax(firstBlockPeak, std::abs(buf.getSample(0, i)));
+    require(firstBlockPeak > 0.05F,
+            "the declick fade-in must reach (near) full level within the first block");
+    require(std::abs(buf.getSample(0, kBlock - 1) - 0.1F) < 1.0e-4F,
+            "the tail of the first block (past the short ramp) must be at full child level");
+
+    // A subsequent block (still playing, no transition) is full level end-to-end — the ramp is
+    // one-shot per play-start, not per block.
+    buf.clear();
+    master.getNextAudioBlock(info);
+    require(std::abs(buf.getSample(0, 0) - 0.1F) < 1.0e-4F,
+            "later blocks must not be re-ramped (declick is one-shot per play-start)");
+
     master.releaseResources();
+}
+
+// Issue 1: a source that is already a WAV must NOT be transcoded into the central
+// decoded cache — playback should use the original file directly. This removes the
+// wasteful (and, for float stems, lossy) duplicate while leaving non-WAV sources to
+// decode as before.
+void testDecodedCacheSkipsWavSources()
+{
+    const auto dir = makeTempDir("decoded-cache-wav");
+    DecodedCache cache;
+    juce::AudioFormatManager formatManager;
+    formatManager.registerBasicFormats();
+
+    const auto wav = writeTestWav(dir, "loop.wav", 0.25);
+    const auto resolved = cache.ensureDecoded(wav, formatManager);
+
+    requireEqual(resolved.getFullPathName(), wav.getFullPathName(),
+                 "an already-WAV source resolves to itself (no decoded duplicate)");
+    require(! cache.getCacheFilePath(wav).existsAsFile(),
+            "no central cache file is written for a WAV source");
+
+    dir.deleteRecursively();
 }
 
 } // namespace
@@ -452,6 +506,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
     tests.push_back({"OutputKeepAlive floor is post-gain and transport-gated", testOutputKeepAliveFloorIsPostGainAndGated});
     tests.push_back({"MasterClockSource publishes audio-thread timing for off-thread logging", testMasterClockPublishesAudioPerfOffThread});
+    tests.push_back({"DecodedCache skips transcoding WAV sources", testDecodedCacheSkipsWavSources});
 }
 
 } // namespace silverdaw::tests

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AudioConstants.h"
 #include "Log.h"
 #include "OutputKeepAlive.h"
 
@@ -49,11 +50,39 @@ class MasterClockSource : public juce::AudioSource
             // Keep-alive only wakes sleep-prone endpoints; idle output remains true digital
             // silence.
             info.clearActiveBufferRegion();
+            wasPlaying = false;
             publishAudioPerf(startTicks, info.numSamples);
             return;
         }
 
+        // Playback just resumed from the gated/idle state: arm a short declick fade-in so the
+        // gate opening onto programme that begins mid-waveform does not step from digital
+        // silence and click. Audio-thread-local state — no cross-thread access.
+        if (! wasPlaying)
+        {
+            const double sr = sampleRate.load(std::memory_order_acquire);
+            declickTotalSamples = sr > 0.0
+                                      ? static_cast<int>(sr * silverdaw::kPlayStartDeclickSeconds)
+                                      : 0;
+            declickRemainingSamples = declickTotalSamples;
+            wasPlaying = true;
+        }
+
         child.getNextAudioBlock(info);
+
+        if (declickRemainingSamples > 0 && declickTotalSamples > 0 && info.buffer != nullptr)
+        {
+            const int rampN = static_cast<int>(
+                juce::jmin<juce::int64>(declickRemainingSamples, info.numSamples));
+            const float g0 = static_cast<float>(declickTotalSamples - declickRemainingSamples)
+                             / static_cast<float>(declickTotalSamples);
+            const float g1 = static_cast<float>(declickTotalSamples - declickRemainingSamples + rampN)
+                             / static_cast<float>(declickTotalSamples);
+            for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
+                info.buffer->applyGainRamp(ch, info.startSample, rampN, g0, g1);
+            declickRemainingSamples -= rampN;
+        }
+
         positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
         publishAudioPerf(startTicks, info.numSamples);
     }
@@ -137,6 +166,10 @@ class MasterClockSource : public juce::AudioSource
     std::atomic<juce::int64> positionSamples{0};
     std::atomic<double> sampleRate{0.0};
     std::atomic<std::uint64_t> callbackCount{0};
+    // Play-start declick state, touched only on the audio thread.
+    bool wasPlaying{false};
+    int declickTotalSamples{0};
+    juce::int64 declickRemainingSamples{0};
     // Block timing published by the audio thread, drained by a non-RT timer.
     std::atomic<double> maxElapsedMs{0.0};
     std::atomic<int> lastNumSamples{0};

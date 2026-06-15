@@ -51,10 +51,23 @@ struct StemSeparationRequest
     juce::String sourceName;
     // Resolved, decoded source audio to separate (never the user's original).
     juce::File sourceFile;
+    // Optional source window (in source-file milliseconds) to separate. Used for
+    // clip-scoped separation: only the timeline clip's portion of the source is
+    // extracted, so the stem file is clip-length and drops in aligned to the clip.
+    // `startMs` is the clip's in-point within the source; a `lengthMs` of 0 means
+    // "to the end of the file" — i.e. separate the whole track (full-source stems).
+    double startMs = 0.0;
+    double lengthMs = 0.0;
     // Directory holding the four htdemucs-ft .onnx files.
     juce::File modelDir;
     // Directory the stems are written to (created by the command).
     juce::File outputDir;
+    // Short unique token appended to each stem file's basename (a GUID) so
+    // regenerating stems from the same source never overwrites earlier files,
+    // and so each stem stays individually identifiable even if the temp workspace
+    // is later merged into a saved project's Stems folder. Empty keeps the legacy
+    // "<sourceName> - <stem>.wav" name.
+    juce::String fileNameToken;
     // Canonical names of the stems the user chose to extract. Empty means all
     // four; implementations skip inference for any stem not listed.
     std::vector<juce::String> stems;

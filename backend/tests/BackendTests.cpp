@@ -29,7 +29,7 @@ int main()
     addStemSeparationTests(tests);
     addBpmDetectorTests(tests);
 
-    require(tests.size() == 76, "backend test registry should contain 76 tests");
+    require(tests.size() == 77, "backend test registry should contain 77 tests");
 
     int failed = 0;
     for (const auto& test : tests)

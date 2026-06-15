@@ -202,6 +202,7 @@ JUCEBackend (headless)
 ├── BpmDetector                 — BTrack + libsamplerate import analysis
 │
 ├── DecodedCache                — decoded playback WAV cache for analysis/import reuse
+│                                  (non-WAV sources only; WAV sources play directly)
 │
 └── ProjectState
     ├── ValueTree               — all clip, track, library, marker data

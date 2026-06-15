@@ -36,6 +36,23 @@ juce::File DecodedCache::cacheFileFor(const juce::File& sourceFile) const
 
 juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::AudioFormatManager& formatManager) const
 {
+    // A source that is already a readable WAV needs no decoded duplicate: JUCE reads
+    // any PCM/float WAV directly into float buffers, so playback, warping and peak
+    // generation all work straight from the original file. Returning it as-is avoids
+    // a wasteful (and, for 32-bit-float stems, lossy 16-bit) copy in the central
+    // cache — stems already live beside the project as WAVs. Prefer the original over
+    // any (possibly stale) cache entry so the highest-quality source is played.
+    if (sourceFile.existsAsFile() && sourceFile.hasFileExtension("wav"))
+    {
+        std::unique_ptr<juce::AudioFormatReader> probe(formatManager.createReaderFor(sourceFile));
+        if (probe != nullptr && probe->sampleRate > 0.0 && probe->numChannels > 0
+            && probe->lengthInSamples > 0)
+        {
+            silverdaw::log::debug("decodedcache", "skip (already wav) " + sourceFile.getFileName());
+            return sourceFile;
+        }
+    }
+
     const auto cachePath = cacheFileFor(sourceFile);
     if (cachePath.existsAsFile())
     {

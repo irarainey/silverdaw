@@ -759,7 +759,24 @@ device-list changes. Both signals ramp in/out over `kKeepAliveRampSeconds` to st
 click-free; the gate closes — returning the output to **truly silent** digital
 zero — once the device is released or the endpoint is classified as non-sleep-prone.
 `MasterClockSource` still gates the transport and clears the buffer when not
-playing; the keep-alive injection lives downstream in the metering stage.
+playing; the keep-alive injection lives downstream in the metering stage. When
+the gate opens from idle, `MasterClockSource` also applies a one-shot
+**play-start declick** — a short (`kPlayStartDeclickSeconds`, 5 ms) gain ramp on
+the first played block — so opening onto programme that begins mid-waveform (a
+clip, or a separated stem whose first sample is not at a zero crossing) fades in
+rather than stepping discontinuously and clicking. The ramp re-arms on every
+idle→playing transition and is audio-thread-local (no allocation, lock, or
+throw). A second, distinct play-start click comes from `juce::AudioTransportSource`:
+it ramps each track from the previously-rendered block's gain (`lastGain`) to the
+current gain across the first block it renders. Because the per-track transports
+are not pulled while the master is gated, a gain changed during that window — most
+visibly a track muted by engaging **solo** — leaves `lastGain` stale, so the first
+block after the gate opens would fade the now-muted content from its old level down
+to zero, leaking one block of audio. `primeTracksForPlayback` therefore **settles**
+each transport before opening the gate: it pumps a single throwaway sample through
+the transport (the gate is closed, so only the message thread touches it) to make
+`lastGain == gain`, then re-seeks and restarts. A fade-in alone cannot cancel that
+stale fade-out, which is why the settle is needed in addition to the declick.
 
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
 export writer** in [`MixdownExport`](../backend/src/mixdown/MixdownExport.cpp). (The
@@ -1031,7 +1048,11 @@ defaults off and is honoured only when a compatible adapter is detected
 A **timeline** separation (started from a placed clip) also lands each stem on its
 own new track aligned to the source clip's start; a **library** separation
 (started from a library source) imports the stems to the library only, leaving it
-to the user to drag them onto the timeline. Either way the source is untouched
+to the user to drag them onto the timeline. A timeline separation only processes
+the **clip's own time window** of the source (`[inMs, inMs + durationMs)`, sent as
+the `clipId` whose window the backend reads from `ProjectState`), so the stem WAVs
+are clip-length and drop in already aligned; a library separation has no clip and
+separates the **whole track**. Either way the source is untouched
 (non-destructive) and each stem is added to the library as a nested **stem** item
 under its source group. Because each stem is sample-aligned with its source it
 **inherits** the source's analysis (BPM, beat grid, key, variable-tempo flag)
@@ -1041,10 +1062,20 @@ rather than being re-analysed. On disk each separation writes its WAVs into a
 is moved or synced between machines; an **unsaved** project writes them to the
 temporary workspace (`<temp>/Silverdaw/Stems`) and they are migrated into the
 project folder on the first save (or discarded if the project is never saved).
-Each folder also
+Each stem file basename also carries a **unique GUID token**
+(`<sourceName> - <stem> - <guid>.wav`) so regenerating stems from the same source
+never overwrites earlier files — including when an unsaved temp workspace is later
+merged into a saved project's `Stems` folder. Each folder also
 carries a `metadata.json` + `cover.<ext>` **sidecar**, written through guarded
 main-process IPC scoped to the stems directory, so a stem keeps the original's
-tags and artwork even after the source item is removed.
+tags and artwork even after the source item is removed. Because separated stems
+are already WAV, they are played back directly from their project file — the
+`DecodedCache` short-circuits a WAV source (it only transcodes non-WAV formats),
+so no redundant (and, for float stems, lossy) decoded copy is written to the
+central cache. Track transports are restarted on every play-prime, so a short
+stem clip that has played to its end resumes correctly on the next seek + play
+(an `AudioTransportSource` auto-stops at EOF and repositioning alone would not
+clear that, leaving the clip silent until reloaded).
 
 ## Library panel
 

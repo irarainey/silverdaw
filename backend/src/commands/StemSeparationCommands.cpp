@@ -177,8 +177,25 @@ void handleStemSeparate(const juce::var& payload,
     request.sourceFile = sourceFile;
     request.modelDir = modelDir;
     request.outputDir = outputDir;
+    // Stamp each stem file with a unique GUID so regenerated stems never overwrite
+    // earlier ones (including when an unsaved temp workspace is later merged into a
+    // saved project's Stems folder).
+    request.fileNameToken = juce::Uuid().toDashedString();
     request.stems = std::move(selectedStems);
     request.overlap = overlapForStemQuality(readOptionalString(payload, "quality").value_or(juce::String{}));
+    // Clip-scoped separation: when a timeline clip is named, extract only that
+    // clip's window of the source ([inMs, inMs+durationMs)) so the stem files are
+    // clip-length. A library-item separation (no clipId) leaves the window at
+    // 0/0 → the whole track is separated (full-source stems).
+    if (clipId.isNotEmpty())
+    {
+        const auto clipDurationMs = projectState.getClipDurationMs(clipId);
+        if (clipDurationMs > 0.0)
+        {
+            request.startMs = juce::jmax(0.0, projectState.getClipInMs(clipId));
+            request.lengthMs = clipDurationMs;
+        }
+    }
     const juce::var useGpuVar = payload.getProperty("useGpu", juce::var());
     request.useGpu = useGpuVar.isBool() && static_cast<bool>(useGpuVar);
 
@@ -186,6 +203,10 @@ void handleStemSeparate(const juce::var& payload,
     silverdaw::log::info("stems", "STEM_SEPARATE job=" + jobId + " item=" + sourceItemId +
                                       " clip=" + (clipId.isNotEmpty() ? clipId : juce::String("(library)")) +
                                       " stems=" + juce::String((int) request.stems.size()) +
+                                      " window=" + (request.lengthMs > 0.0
+                                                        ? juce::String(request.startMs) + ".." +
+                                                              juce::String(request.startMs + request.lengthMs) + "ms"
+                                                        : juce::String("full")) +
                                       " gpu=" + (request.useGpu ? juce::String("1") : juce::String("0")) +
                                       " source=" + sourceFile.getFullPathName());
     runStemSeparationAsync(std::move(request), separator, pool, bridge, cancelFlag, busyFlag);

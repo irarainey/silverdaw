@@ -38,6 +38,12 @@ inline constexpr double kKeepAliveRampSeconds = 0.01; // 10 ms
 inline constexpr float kWakeTonePeak = 0.05F; // ~-26 dBFS, ultrasonic (inaudible) cold-wake kick
 inline constexpr int kWakePrerollMs = 500;    // one-time first-play wake lead-in
 
+// Short master fade-in applied the instant playback starts (the output gate opening from digital
+// silence onto programme that begins mid-waveform — e.g. a clip, or a separated stem, whose first
+// sample is not at a zero crossing — would otherwise step discontinuously and click). A few
+// milliseconds is musically imperceptible yet removes the transient.
+inline constexpr double kPlayStartDeclickSeconds = 0.005; // 5 ms
+
 inline constexpr int kDefaultSampleRate = 44100;
 inline constexpr int kAltSampleRate = 48000;
 
