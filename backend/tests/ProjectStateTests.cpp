@@ -200,10 +200,10 @@ void testProjectStateBarSettingsRoundTrip()
     silverdaw::ProjectState state;
     state.markClean();
 
-    require(state.getBarCounterStart() == 0,
-            "fresh project should default barCounterStart to 0");
-    require(state.getMixdownStartBar() == 0,
-            "fresh project should default mixdownStartBar to 0");
+    require(state.getBarCounterStart() == 1,
+            "fresh project should default barCounterStart to 1");
+    require(state.getMixdownStartBar() == 1,
+            "fresh project should default mixdownStartBar to 1");
 
     state.setBarCounterStart(-1);
     require(state.getBarCounterStart() == -1, "setBarCounterStart should round-trip");
@@ -213,17 +213,17 @@ void testProjectStateBarSettingsRoundTrip()
     state.setMixdownStartBar(4);
     require(state.getMixdownStartBar() == 4, "setMixdownStartBar should round-trip");
 
-    // Default zero suppresses the property so legacy projects round-trip byte-clean.
-    state.setBarCounterStart(0);
+    // Default value suppresses the property so legacy projects round-trip byte-clean.
+    state.setBarCounterStart(1);
     require(!state.getTree().hasProperty(juce::Identifier{"barCounterStart"}),
             "default barCounterStart should be stored as absent");
-    state.setMixdownStartBar(0);
+    state.setMixdownStartBar(1);
     require(!state.getTree().hasProperty(juce::Identifier{"mixdownStartBar"}),
             "default mixdownStartBar should be stored as absent");
 
     // The two settings are independent.
     state.setBarCounterStart(-1);
-    require(state.getMixdownStartBar() == 0,
+    require(state.getMixdownStartBar() == 1,
             "changing barCounterStart must not change mixdownStartBar");
 
     // ValueTreeJson round-trip.

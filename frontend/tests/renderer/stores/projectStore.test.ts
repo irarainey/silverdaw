@@ -83,8 +83,8 @@ describe('projectStore', () => {
     expect(project.projectName).toBe(DEFAULT_PROJECT_NAME)
     expect(project.isDirty).toBe(false)
     expect(project.durationMs).toBe(0)
-    expect(project.barCounterStart).toBe(0)
-    expect(project.mixdownStartBar).toBe(0)
+    expect(project.barCounterStart).toBe(1)
+    expect(project.mixdownStartBar).toBe(1)
   })
 
   it('sets the bar counter start and notifies the bridge', () => {
@@ -95,15 +95,15 @@ describe('projectStore', () => {
     expect(project.barCounterStart).toBe(-1)
     expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_BAR_COUNTER_START', { barCounterStart: -1 })
 
-    // Clamps to the [-64, 0] range and rounds.
+    // Clamps to the [-64, 1] range and rounds.
     sendMock.mockClear()
     project.setBarCounterStart(5)
-    expect(project.barCounterStart).toBe(0)
-    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_BAR_COUNTER_START', { barCounterStart: 0 })
+    expect(project.barCounterStart).toBe(1)
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_BAR_COUNTER_START', { barCounterStart: 1 })
 
     // No-op when unchanged.
     sendMock.mockClear()
-    project.setBarCounterStart(0)
+    project.setBarCounterStart(1)
     expect(sendMock).not.toHaveBeenCalled()
   })
 

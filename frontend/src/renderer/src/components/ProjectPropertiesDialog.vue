@@ -145,7 +145,7 @@ const {
             </span>
           </label>
 
-          <!-- Bar counter start: shifts ruler labels so a lead-in bar can precede bar one. -->
+          <!-- Bar counter start: the first bar's number; 0 or lower adds lead-in bars before bar one. -->
           <label class="flex flex-col gap-1.5">
             <span class="text-xs font-medium text-zinc-300">Bar counter start</span>
             <input
@@ -165,7 +165,7 @@ const {
             <span
               v-else
               class="text-[11px] text-zinc-500"
-            >0 labels the first bar “1”; -1 labels it “0” for a lead-in before bar one.</span>
+            >The number shown for the first bar. 1 is the default; set 0 or lower to add lead-in bars before bar one.</span>
           </label>
 
           <!-- Audio output: device primary, driver override secondary. -->

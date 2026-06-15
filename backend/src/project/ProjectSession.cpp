@@ -79,12 +79,12 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         if (! juce::approximatelyEqual(masterVolume, 1.0F))
             obj->setProperty("masterVolume", masterVolume);
     }
-    // Omit default (zero) bar settings so legacy projects round-trip byte-clean.
+    // Omit default (one) bar settings so legacy projects round-trip byte-clean.
     {
         const auto barCounterStart = projectState.getBarCounterStart();
-        if (barCounterStart != 0) obj->setProperty("barCounterStart", barCounterStart);
+        if (barCounterStart != 1) obj->setProperty("barCounterStart", barCounterStart);
         const auto mixdownStartBar = projectState.getMixdownStartBar();
-        if (mixdownStartBar != 0) obj->setProperty("mixdownStartBar", mixdownStartBar);
+        if (mixdownStartBar != 1) obj->setProperty("mixdownStartBar", mixdownStartBar);
     }
     // Emit only non-default shared FX so legacy projects stay byte-clean.
     {

@@ -157,7 +157,7 @@ void handleProjectSetBarCounterStart(const juce::var& payload, silverdaw::Projec
     const auto startOpt = tryGetNumber(payload, "barCounterStart");
     if (startOpt.has_value())
     {
-        const int clamped = juce::jlimit(-64, 0, static_cast<int>(std::lround(*startOpt)));
+        const int clamped = juce::jlimit(-64, 1, static_cast<int>(std::lround(*startOpt)));
         projectState.setBarCounterStart(clamped);
     }
 }

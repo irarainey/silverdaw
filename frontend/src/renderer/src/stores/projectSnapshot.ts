@@ -184,17 +184,17 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
         typeof incomingMasterVolume === 'number' && Number.isFinite(incomingMasterVolume)
           ? Math.min(1, Math.max(0, incomingMasterVolume))
           : 1.0
-      // Missing means default 0; the backend omits default bar settings.
+      // Missing means default 1; the backend omits default bar settings.
       const incomingBarCounterStart = snapshot.barCounterStart
       target.barCounterStart =
         typeof incomingBarCounterStart === 'number' && Number.isFinite(incomingBarCounterStart)
-          ? Math.min(0, Math.max(-64, Math.round(incomingBarCounterStart)))
-          : 0
+          ? Math.min(1, Math.max(-64, Math.round(incomingBarCounterStart)))
+          : 1
       const incomingMixdownStartBar = snapshot.mixdownStartBar
       target.mixdownStartBar =
         typeof incomingMixdownStartBar === 'number' && Number.isFinite(incomingMixdownStartBar)
           ? Math.min(4096, Math.max(-64, Math.round(incomingMixdownStartBar)))
-          : 0
+          : 1
       // Mutate FX objects in place so PROJECT_STATE refreshes do not end drags.
       const unit = (v: unknown): number =>
         typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0

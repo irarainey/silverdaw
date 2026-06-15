@@ -343,9 +343,9 @@ export const ProjectStatePayloadSchema = z.object({
   /** Renderer-owned export settings JSON; backend round-trips it opaque. */
   exportSettingsJson: z.string().optional().nullable(),
   masterVolume: z.number().min(0).max(1).optional(),
-  /** Ruler bar-label offset: 0 (default) labels the first bar "1"; -1 labels it "0". */
+  /** First bar number shown on the ruler: 1 (default) labels the first bar "1"; 0 or lower for lead-in. */
   barCounterStart: z.number().optional(),
-  /** Displayed bar marker a mixdown begins from; 0 (default) is the project origin. */
+  /** Displayed bar number a mixdown begins from; 1 (default) is the first bar. */
   mixdownStartBar: z.number().optional(),
   // Project-shared FX bus parameters, stored flat on PROJECT.
   reverbSize: z.number().min(0).max(1).optional(),

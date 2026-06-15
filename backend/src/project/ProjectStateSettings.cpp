@@ -196,13 +196,13 @@ void ProjectState::setMasterVolume(float volume)
 
 int ProjectState::getBarCounterStart() const
 {
-    return static_cast<int>(root.getProperty(kBarCounterStart, 0));
+    return static_cast<int>(root.getProperty(kBarCounterStart, 1));
 }
 
 void ProjectState::setBarCounterStart(int barCounterStart)
 {
-    // Default zero is suppressed so legacy projects round-trip without an extra property.
-    if (barCounterStart == 0)
+    // Default one is suppressed so legacy projects round-trip without an extra property.
+    if (barCounterStart == 1)
     {
         root.removeProperty(kBarCounterStart, &undoManager);
     }
@@ -214,13 +214,13 @@ void ProjectState::setBarCounterStart(int barCounterStart)
 
 int ProjectState::getMixdownStartBar() const
 {
-    return static_cast<int>(root.getProperty(kMixdownStartBar, 0));
+    return static_cast<int>(root.getProperty(kMixdownStartBar, 1));
 }
 
 void ProjectState::setMixdownStartBar(int mixdownStartBar)
 {
-    // Default zero is suppressed so legacy projects round-trip without an extra property.
-    if (mixdownStartBar == 0)
+    // Default one is suppressed so legacy projects round-trip without an extra property.
+    if (mixdownStartBar == 1)
     {
         root.removeProperty(kMixdownStartBar, &undoManager);
     }

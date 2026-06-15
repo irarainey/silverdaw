@@ -1,7 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
-import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import {
@@ -22,7 +21,6 @@ export function useProjectPropertiesController(
 ) {
   const project = useProjectStore()
   const transport = useTransportStore()
-  const notifications = useNotificationsStore()
   const ui = useUiStore()
   const audioDevices = useAudioDeviceStore()
   const uniqueDevices = useUniqueAudioDevices()
@@ -30,14 +28,14 @@ export function useProjectPropertiesController(
   const BPM_MIN = 20
   const BPM_MAX = 300
   const BAR_COUNTER_START_MIN = -64
-  const BAR_COUNTER_START_MAX = 0
+  const BAR_COUNTER_START_MAX = 1
 
   // Drafts are reseeded on open so Cancel discards changes.
   const draftName = ref('')
   const draftBpm = ref(120)
   const draftDurationText = ref('')
   const draftSampleRate = ref<number>(44100)
-  const draftBarCounterStart = ref(0)
+  const draftBarCounterStart = ref(1)
   // `null` pair means no project override; unavailable saved devices remain selectable.
   const draftAudioTypeName = ref<string | null>(null)
   const draftAudioDeviceName = ref<string | null>(null)
@@ -278,9 +276,6 @@ export function useProjectPropertiesController(
     if (hasBarCounterStartChange.value) {
       project.setBarCounterStart(draftBarCounterStart.value)
     }
-    // Properties are applied to the in-memory project; the dirty marker stays
-    // until the project file itself is saved (Ctrl+S), so avoid claiming "saved".
-    notifications.pushInfo('Project properties applied.')
     emit('close')
   }
 

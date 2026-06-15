@@ -255,11 +255,11 @@ export interface ProjectState {
   exportSettingsJson: string | null
   /** Master output volume (0..1 linear), applied to live mix and exports. Persisted. */
   masterVolume: number
-  /** Ruler bar-label offset: 0 (default) labels the first bar "1"; -1 labels it "0" so a
-   *  lead-in bar can sit before bar one. Persisted with the project. */
+  /** First bar number shown on the ruler: 1 (default) labels the first bar "1"; 0 or lower
+   *  adds lead-in bars before bar one. Persisted with the project. */
   barCounterStart: number
-  /** Displayed bar marker a mixdown begins from (independent of barCounterStart). 0 (default)
-   *  is the project origin. Persisted with the project. */
+  /** Displayed bar number a mixdown begins from (independent of barCounterStart). 1 (default)
+   *  is the first bar. Persisted with the project. */
   mixdownStartBar: number
   /** Project-shared Reverb; persisted. Defaults all-zero (inaudible). */
   projectReverb: ProjectReverbState
