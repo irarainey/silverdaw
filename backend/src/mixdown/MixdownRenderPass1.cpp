@@ -113,6 +113,11 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         std::round(clampedTailSeconds * static_cast<double>(snapshot.projectSampleRate)));
     totalProjectFrames += maxTailFrames + sharedFxMaxTailFrames + userTailFrames;
     const int64_t minRenderFrames = totalProjectFrames - sharedFxMaxTailFrames;
+    // Render from frame 0 so clip positions and FX tails advance correctly, but only
+    // push frames at/after the start offset into the output (earlier audio discarded).
+    const int64_t startFrames = juce::jlimit<int64_t>(
+        0, juce::jmax<int64_t>(0, totalProjectFrames),
+        static_cast<int64_t>(std::round(options.startMs * projectFramesPerMs)));
     int64_t projectFramesRendered = 0;
     int64_t outputFramesWritten = 0;
     double peakAmplitude = 0.0;
@@ -241,15 +246,23 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         }
         ++blockIndex;
 
-        if (!finalResampler.push(mixInterleaved.data(), blockFrames,
-                                 /*endOfInput*/ false, writeStereo))
+        // Push only frames at/after the start offset; earlier audio advances state then drops.
+        const int64_t blockStart = projectFramesRendered;
+        const int64_t keepOffset64 = juce::jmax<int64_t>(0, startFrames - blockStart);
+        if (keepOffset64 < blockFrames)
         {
-            pass1File.deleteFile();
-            if (writerError.isNotEmpty())
-                return fail(MixdownFailureCode::Io, writerError);
-            return fail(MixdownFailureCode::Invalid,
-                        juce::String("Final resample failed: ") +
-                            (finalResampler.error() ? finalResampler.error() : "unknown"));
+            const int keepOffset = static_cast<int>(keepOffset64);
+            const int keepFrames = blockFrames - keepOffset;
+            if (!finalResampler.push(mixInterleaved.data() + static_cast<size_t>(keepOffset) * 2,
+                                     keepFrames, /*endOfInput*/ false, writeStereo))
+            {
+                pass1File.deleteFile();
+                if (writerError.isNotEmpty())
+                    return fail(MixdownFailureCode::Io, writerError);
+                return fail(MixdownFailureCode::Invalid,
+                            juce::String("Final resample failed: ") +
+                                (finalResampler.error() ? finalResampler.error() : "unknown"));
+            }
         }
 
         projectFramesRendered += blockFrames;
@@ -285,7 +298,8 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     }
 
     const double effectiveRenderLengthMs =
-        static_cast<double>(projectFramesRendered) / projectFramesPerMs;
+        static_cast<double>(juce::jmax<int64_t>(0, projectFramesRendered - startFrames))
+        / projectFramesPerMs;
 
     busGraph.clear();
 

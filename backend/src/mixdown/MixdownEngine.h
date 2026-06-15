@@ -113,6 +113,9 @@ struct MixdownOptions
     double ceilingDbtp{-1.0};
     int bitrateKbps{192};
     double lengthMs{0.0};
+    // Project-time offset to begin rendering from; earlier audio is rendered then
+    // discarded so clip positions and FX tails stay correct. 0 = project origin.
+    double startMs{0.0};
     ExportMetadata metadata;
 };
 

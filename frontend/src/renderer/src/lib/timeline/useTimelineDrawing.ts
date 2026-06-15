@@ -272,11 +272,12 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     rulerTicks.addChild(beatTicks)
     rulerTicks.addChild(barTicks)
 
-    // Bars are 0-indexed.
+    // Bar labels: offset 0 (default) labels the first bar "1"; -1 labels it "0".
     if (T) {
+      const barCounterStart = project.barCounterStart
       for (let s = 0; s <= lastSub; s += subsPerBar) {
         const x = headerWidth() + s * pxPerSub + 0.5
-        const barNumber = s / subsPerBar
+        const barNumber = s / subsPerBar + 1 + barCounterStart
         const label = new T({
           text: String(barNumber),
           style: {

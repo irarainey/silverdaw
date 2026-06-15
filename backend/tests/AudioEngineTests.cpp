@@ -47,12 +47,15 @@ juce::File writeTestWav(const juce::File& dir, const juce::String& name,
 {
     auto file = dir.getChildFile(name);
     juce::WavAudioFormat format;
-    std::unique_ptr<juce::FileOutputStream> stream(file.createOutputStream());
+    std::unique_ptr<juce::OutputStream> stream(file.createOutputStream());
     require(stream != nullptr, "wav output stream should open");
-    std::unique_ptr<juce::AudioFormatWriter> writer(
-        format.createWriterFor(stream.get(), sampleRate, 2, 16, juce::StringPairArray(), 0));
+    const auto writerOptions = juce::AudioFormatWriterOptions{}
+                                   .withSampleRate(sampleRate)
+                                   .withNumChannels(2)
+                                   .withBitsPerSample(16);
+    std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(stream, writerOptions));
     require(writer != nullptr, "wav writer should create");
-    stream.release(); // writer owns the stream now
+    // The writer took ownership of the stream on success.
 
     const int numSamples = juce::jmax(1, static_cast<int>(seconds * sampleRate));
     juce::AudioBuffer<float> buffer(2, numSamples);

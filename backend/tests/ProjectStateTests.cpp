@@ -195,6 +195,53 @@ void testProjectStateMasterVolumeRoundTrip()
                 "undo should restore the prior master volume");
 }
 
+void testProjectStateBarSettingsRoundTrip()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+
+    require(state.getBarCounterStart() == 0,
+            "fresh project should default barCounterStart to 0");
+    require(state.getMixdownStartBar() == 0,
+            "fresh project should default mixdownStartBar to 0");
+
+    state.setBarCounterStart(-1);
+    require(state.getBarCounterStart() == -1, "setBarCounterStart should round-trip");
+    require(state.isDirty(), "setBarCounterStart should mark the project dirty");
+    require(state.getUndoManager().canUndo(), "setBarCounterStart must push an undo entry");
+
+    state.setMixdownStartBar(4);
+    require(state.getMixdownStartBar() == 4, "setMixdownStartBar should round-trip");
+
+    // Default zero suppresses the property so legacy projects round-trip byte-clean.
+    state.setBarCounterStart(0);
+    require(!state.getTree().hasProperty(juce::Identifier{"barCounterStart"}),
+            "default barCounterStart should be stored as absent");
+    state.setMixdownStartBar(0);
+    require(!state.getTree().hasProperty(juce::Identifier{"mixdownStartBar"}),
+            "default mixdownStartBar should be stored as absent");
+
+    // The two settings are independent.
+    state.setBarCounterStart(-1);
+    require(state.getMixdownStartBar() == 0,
+            "changing barCounterStart must not change mixdownStartBar");
+
+    // ValueTreeJson round-trip.
+    state.setMixdownStartBar(8);
+    const auto encoded = silverdaw::ValueTreeJson::toVar(state.getTree());
+    const auto decoded = silverdaw::ValueTreeJson::fromVar(encoded);
+    require(static_cast<int>(decoded.getProperty(juce::Identifier{"barCounterStart"}, 0)) == -1,
+            "barCounterStart should round-trip through ValueTreeJson");
+    require(static_cast<int>(decoded.getProperty(juce::Identifier{"mixdownStartBar"}, 0)) == 8,
+            "mixdownStartBar should round-trip through ValueTreeJson");
+
+    // Undo restores the prior value.
+    state.getUndoManager().beginNewTransaction();
+    state.setMixdownStartBar(2);
+    state.getUndoManager().undo();
+    require(state.getMixdownStartBar() == 8, "undo should restore the prior mixdownStartBar");
+}
+
 void testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo()
 {
     // Regression: writing playhead / scroll / zoom AFTER markClean used
@@ -659,6 +706,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState view, library, markers, and replaceTree", testProjectStateViewLibraryMarkersAndReplace});
     tests.push_back({"ProjectState export-settings JSON round-trip", testProjectStateExportSettingsRoundTrip});
     tests.push_back({"ProjectState master volume round-trip", testProjectStateMasterVolumeRoundTrip});
+    tests.push_back({"ProjectState bar settings round-trip", testProjectStateBarSettingsRoundTrip});
     tests.push_back({"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});
     tests.push_back({"ProjectState derived library metadata does not mark dirty", testProjectStateDerivedLibraryMetadataDoesNotMarkDirty});

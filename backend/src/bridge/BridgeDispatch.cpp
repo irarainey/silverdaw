@@ -407,6 +407,14 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleProjectSetMasterVolume(payload, engine, projectState);
     }
+    else if (type == "PROJECT_SET_BAR_COUNTER_START")
+    {
+        silverdaw::handleProjectSetBarCounterStart(payload, projectState);
+    }
+    else if (type == "PROJECT_SET_MIXDOWN_START_BAR")
+    {
+        silverdaw::handleProjectSetMixdownStartBar(payload, projectState);
+    }
     else if (type == "PROJECT_MARKER_ADD")
     {
         silverdaw::applyMarkerAdd(payload, projectState);

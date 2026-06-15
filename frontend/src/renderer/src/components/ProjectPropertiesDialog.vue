@@ -14,10 +14,13 @@ const nameInputRef = ref<HTMLInputElement | null>(null)
 const {
   BPM_MIN,
   BPM_MAX,
+  BAR_COUNTER_START_MIN,
+  BAR_COUNTER_START_MAX,
   draftName,
   draftBpm,
   draftDurationText,
   draftSampleRate,
+  draftBarCounterStart,
   draftAudioDeviceName,
   minDurationLabel,
   deviceOptions,
@@ -27,6 +30,7 @@ const {
   nameError,
   bpmError,
   durationError,
+  barCounterStartError,
   canSave,
   onSave,
   onCancel,
@@ -139,6 +143,29 @@ const {
             <span class="text-[11px] text-zinc-500">
               Set the application default for new projects in <span class="text-zinc-300">Preferences ▸ Audio</span>.
             </span>
+          </label>
+
+          <!-- Bar counter start: shifts ruler labels so a lead-in bar can precede bar one. -->
+          <label class="flex flex-col gap-1.5">
+            <span class="text-xs font-medium text-zinc-300">Bar counter start</span>
+            <input
+              v-model.number="draftBarCounterStart"
+              type="number"
+              :min="BAR_COUNTER_START_MIN"
+              :max="BAR_COUNTER_START_MAX"
+              step="1"
+              class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right font-mono text-sm text-zinc-100 focus:border-sky-500 focus:outline-none"
+              :class="barCounterStartError ? 'border-red-500' : ''"
+              @keydown.enter.prevent="onSave"
+            >
+            <span
+              v-if="barCounterStartError"
+              class="text-[11px] text-red-400"
+            >{{ barCounterStartError }}</span>
+            <span
+              v-else
+              class="text-[11px] text-zinc-500"
+            >0 labels the first bar “1”; -1 labels it “0” for a lead-in before bar one.</span>
           </label>
 
           <!-- Audio output: device primary, driver override secondary. -->

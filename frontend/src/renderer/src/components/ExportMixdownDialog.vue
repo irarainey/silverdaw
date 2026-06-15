@@ -25,6 +25,8 @@ const {
   draftCustomCeilingText,
   draftLengthMode,
   draftDurationText,
+  draftMixdownStartBar,
+  mixdownStartMs,
   draftTitle,
   draftArtist,
   draftAlbum,
@@ -136,8 +138,10 @@ watch(
             v-model:length-mode="draftLengthMode"
             v-model:duration-text="draftDurationText"
             v-model:tail-seconds-text="draftTailSecondsText"
+            v-model:mixdown-start-bar="draftMixdownStartBar"
             :last-clip-end-ms="lastClipEndMs"
             :tail-valid="tailValid"
+            :mixdown-start-ms="mixdownStartMs"
           />
           <ExportMetadataTags
             v-model:title="draftTitle"

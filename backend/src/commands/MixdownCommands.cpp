@@ -38,6 +38,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     const int outputSampleRate = static_cast<int>(payload.getProperty("sampleRate", 44100));
     const auto formatStr = tryGetRequiredString(payload, "format").value_or(juce::String("wav"));
     const auto lengthMode = tryGetRequiredString(payload, "lengthMode").value_or(juce::String("trim-to-last-clip"));
+    const double startMsHint = static_cast<double>(payload.getProperty("startMs", 0.0));
     const double lengthMsHint = static_cast<double>(payload.getProperty("lengthMs", 0.0));
     const int bitrateKbps = static_cast<int>(payload.getProperty("bitrateKbps", 192));
     // Optional for older renderer builds; validated before rendering.
@@ -239,6 +240,8 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
                                ? lengthMsHint
                                : projectState.getProjectLengthMs();
     }
+    // Clamp non-negative; the renderer further clamps to the project length.
+    options.startMs = startMsHint > 0.0 ? startMsHint : 0.0;
     const auto md = payload.getProperty("metadata", juce::var());
     if (md.isObject())
     {

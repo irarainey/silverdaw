@@ -423,6 +423,8 @@ export interface BridgeOutboundMap {
   PROJECT_SET_TARGET_SAMPLE_RATE: ProjectSetTargetSampleRatePayload
   PROJECT_SET_EXPORT_SETTINGS: ProjectSetExportSettingsPayload
   PROJECT_SET_MASTER_VOLUME: ProjectSetMasterVolumePayload
+  PROJECT_SET_BAR_COUNTER_START: ProjectSetBarCounterStartPayload
+  PROJECT_SET_MIXDOWN_START_BAR: ProjectSetMixdownStartBarPayload
   AUDIO_FILE_PROBE: AudioFileProbePayload
   MIXDOWN_START: MixdownStartPayload
   MIXDOWN_CANCEL: undefined
@@ -564,6 +566,22 @@ export interface ProjectSetMasterVolumePayload {
 }
 
 /**
+ * Ruler bar-label offset. 0 (default) labels the first bar "1"; -1 labels it "0" so a
+ * lead-in bar can sit before bar one. Persisted with the project; undoable on the backend.
+ */
+export interface ProjectSetBarCounterStartPayload {
+  barCounterStart: number
+}
+
+/**
+ * Displayed bar marker a mixdown begins from (independent of the bar-counter offset).
+ * 0 (default) starts at the project origin. Persisted with the project; undoable.
+ */
+export interface ProjectSetMixdownStartBarPayload {
+  mixdownStartBar: number
+}
+
+/**
  * File-rate probe used by import to detect sample-rate mismatches before adding a file.
  * Backend reads rate/channels/duration from the header and acks via AUDIO_FILE_PROBED.
  * `requestId` is renderer-allocated so concurrent probes don't collide.
@@ -602,6 +620,9 @@ export interface MixdownStartPayload {
   lengthMode: 'trim-to-last-clip' | 'fixed-duration'
   /** Required when `lengthMode === 'fixed-duration'`. Ignored otherwise. */
   lengthMs?: number
+  /** Project-time offset (ms) to begin rendering from. Earlier audio is rendered then
+   *  discarded so clip positions and FX tails stay correct. Default 0 (project origin). */
+  startMs?: number
   /** Optional file-level tags; backend maps them per-format (ID3 / RIFF INFO / VORBIS_COMMENT / AIFF chunks). */
   metadata?: {
     title?: string

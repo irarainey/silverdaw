@@ -366,6 +366,11 @@ export function useTimelineViewController(
     updatePlayhead()
   })
 
+  // Ruler bar labels depend on the project's bar-counter offset.
+  watch(() => project.barCounterStart, () => {
+    redraw()
+  })
+
   // Header width participates in cached x positions.
   watch(headerWidthRef, () => {
     redraw()

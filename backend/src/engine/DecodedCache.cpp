@@ -94,16 +94,18 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
     juce::WavAudioFormat wavFormat;
     // Cache WAVs as 16-bit PCM to keep decoded files small and universally readable.
     constexpr int kBitsPerSample = 16;
-    constexpr int kWriteQuality = 0;
-    std::unique_ptr<juce::AudioFormatWriter> writer(
-        wavFormat.createWriterFor(outStream.get(), reader->sampleRate, reader->numChannels, kBitsPerSample, {},
-                                  kWriteQuality));
+    const auto writerOptions = juce::AudioFormatWriterOptions{}
+                                   .withSampleRate(reader->sampleRate)
+                                   .withNumChannels(static_cast<int>(reader->numChannels))
+                                   .withBitsPerSample(kBitsPerSample);
+    std::unique_ptr<juce::OutputStream> baseStream(std::move(outStream));
+    std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(baseStream, writerOptions));
     if (writer == nullptr)
     {
         silverdaw::log::warn("decodedcache", "createWriterFor failed for " + cachePath.getFileName());
         return {};
     }
-    outStream.release();
+    // The writer took ownership of the stream on success.
 
     constexpr int kBlockSize = 4096;
     if (!writer->writeFromAudioReader(*reader, 0, reader->lengthInSamples))

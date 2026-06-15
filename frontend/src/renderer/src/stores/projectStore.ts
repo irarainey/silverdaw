@@ -97,6 +97,8 @@ export const useProjectStore = defineStore('project', {
     targetSampleRate: null,
     exportSettingsJson: null,
     masterVolume: 1.0,
+    barCounterStart: 0,
+    mixdownStartBar: 0,
     projectReverb: { size: 0, decay: 0, tone: 0, mix: 0 },
     projectDelay: { noteValue: '1/8', feedback: 0, tone: 0, mix: 0 }
   }),
@@ -279,6 +281,26 @@ export const useProjectStore = defineStore('project', {
       if (next === this.masterVolume) return
       this.masterVolume = next
       sendBridge('PROJECT_SET_MASTER_VOLUME', { gain: next })
+    },
+
+    /** Set the ruler bar-label offset (0 or negative; default 0 labels the first bar "1"). */
+    setBarCounterStart(barCounterStart: number): void {
+      const next = Number.isFinite(barCounterStart)
+        ? Math.min(0, Math.max(-64, Math.round(barCounterStart)))
+        : 0
+      if (next === this.barCounterStart) return
+      this.barCounterStart = next
+      sendBridge('PROJECT_SET_BAR_COUNTER_START', { barCounterStart: next })
+    },
+
+    /** Set the displayed bar marker a mixdown begins from (default 0 = project origin). */
+    setMixdownStartBar(mixdownStartBar: number): void {
+      const next = Number.isFinite(mixdownStartBar)
+        ? Math.min(4096, Math.max(-64, Math.round(mixdownStartBar)))
+        : 0
+      if (next === this.mixdownStartBar) return
+      this.mixdownStartBar = next
+      sendBridge('PROJECT_SET_MIXDOWN_START_BAR', { mixdownStartBar: next })
     },
 
     applyProjectStateSnapshot(snapshot: ProjectStatePayload): void {

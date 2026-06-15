@@ -255,6 +255,12 @@ export interface ProjectState {
   exportSettingsJson: string | null
   /** Master output volume (0..1 linear), applied to live mix and exports. Persisted. */
   masterVolume: number
+  /** Ruler bar-label offset: 0 (default) labels the first bar "1"; -1 labels it "0" so a
+   *  lead-in bar can sit before bar one. Persisted with the project. */
+  barCounterStart: number
+  /** Displayed bar marker a mixdown begins from (independent of barCounterStart). 0 (default)
+   *  is the project origin. Persisted with the project. */
+  mixdownStartBar: number
   /** Project-shared Reverb; persisted. Defaults all-zero (inaudible). */
   projectReverb: ProjectReverbState
   /** Project-shared tempo-locked Delay. Defaults 1/8-note, zero feedback/tone/mix (inaudible). */

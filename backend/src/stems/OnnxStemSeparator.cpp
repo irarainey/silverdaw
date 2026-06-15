@@ -133,19 +133,22 @@ void writeStemWav(const juce::File& outputFile, const juce::AudioBuffer<float>& 
     if (outputFile.existsAsFile()) outputFile.deleteFile();
 
     juce::WavAudioFormat wavFormat;
-    std::unique_ptr<juce::FileOutputStream> stream(outputFile.createOutputStream());
+    std::unique_ptr<juce::OutputStream> stream(outputFile.createOutputStream());
     if (stream == nullptr)
         throw StemSeparationError(StemFailureCode::Io,
                                   "Could not open stem output: " + outputFile.getFullPathName());
 
-    std::unique_ptr<juce::AudioFormatWriter> writer(
-        wavFormat.createWriterFor(stream.get(), kModelSampleRate, (unsigned int) kModelChannels, 24,
-                                  {}, 0));
+    const auto writerOptions = juce::AudioFormatWriterOptions{}
+                                   .withSampleRate(kModelSampleRate)
+                                   .withNumChannels(kModelChannels)
+                                   .withBitsPerSample(24);
+
+    std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(stream, writerOptions));
     if (writer == nullptr)
         throw StemSeparationError(StemFailureCode::Io,
                                   "Could not create WAV writer: " + outputFile.getFullPathName());
 
-    stream.release(); // writer owns the stream now
+    // The writer took ownership of the stream on success.
     if (! writer->writeFromAudioSampleBuffer(buffer, 0, buffer.getNumSamples()))
         throw StemSeparationError(StemFailureCode::Io,
                                   "Failed writing stem: " + outputFile.getFullPathName());

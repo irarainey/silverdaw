@@ -1,5 +1,6 @@
 #include "ProjectSettingsCommands.h"
 
+#include <cmath>
 #include <optional>
 
 #include "AudioConstants.h"
@@ -147,6 +148,28 @@ void handleProjectSetMasterVolume(const juce::var& payload, silverdaw::AudioEngi
         const float clamped = juce::jlimit(0.0F, 1.0F, static_cast<float>(*gainOpt));
         projectState.setMasterVolume(clamped);
         engine.setMasterGain(clamped);
+    }
+}
+
+void handleProjectSetBarCounterStart(const juce::var& payload, silverdaw::ProjectState& projectState)
+{
+    // Bar-label offset for the ruler; bounded so a stray value can't shift labels absurdly.
+    const auto startOpt = tryGetNumber(payload, "barCounterStart");
+    if (startOpt.has_value())
+    {
+        const int clamped = juce::jlimit(-64, 0, static_cast<int>(std::lround(*startOpt)));
+        projectState.setBarCounterStart(clamped);
+    }
+}
+
+void handleProjectSetMixdownStartBar(const juce::var& payload, silverdaw::ProjectState& projectState)
+{
+    // Displayed bar marker a mixdown starts from; never negative of the project origin.
+    const auto barOpt = tryGetNumber(payload, "mixdownStartBar");
+    if (barOpt.has_value())
+    {
+        const int clamped = juce::jlimit(-64, 4096, static_cast<int>(std::lround(*barOpt)));
+        projectState.setMixdownStartBar(clamped);
     }
 }
 

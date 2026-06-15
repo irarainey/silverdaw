@@ -109,20 +109,23 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
     }
     outputFile.deleteFile();
     juce::WavAudioFormat wav;
-    std::unique_ptr<juce::FileOutputStream> stream(outputFile.createOutputStream());
+    std::unique_ptr<juce::OutputStream> stream(outputFile.createOutputStream());
     if (stream == nullptr)
     {
         error = "Could not create sample file";
         return false;
     }
-    std::unique_ptr<juce::AudioFormatWriter> writer(
-        wav.createWriterFor(stream.release(), reader->sampleRate,
-                            static_cast<unsigned int>(outChannels), 24, {}, 0));
+    const auto writerOptions = juce::AudioFormatWriterOptions{}
+                                   .withSampleRate(reader->sampleRate)
+                                   .withNumChannels(outChannels)
+                                   .withBitsPerSample(24);
+    std::unique_ptr<juce::AudioFormatWriter> writer(wav.createWriterFor(stream, writerOptions));
     if (writer == nullptr)
     {
         error = "Could not create WAV writer";
         return false;
     }
+    // The writer took ownership of the stream on success.
 
     constexpr int kBlock = 8192;
     juce::AudioBuffer<float> buffer(outChannels, kBlock);

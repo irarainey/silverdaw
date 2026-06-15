@@ -194,4 +194,40 @@ void ProjectState::setMasterVolume(float volume)
     }
 }
 
+int ProjectState::getBarCounterStart() const
+{
+    return static_cast<int>(root.getProperty(kBarCounterStart, 0));
+}
+
+void ProjectState::setBarCounterStart(int barCounterStart)
+{
+    // Default zero is suppressed so legacy projects round-trip without an extra property.
+    if (barCounterStart == 0)
+    {
+        root.removeProperty(kBarCounterStart, &undoManager);
+    }
+    else
+    {
+        root.setProperty(kBarCounterStart, barCounterStart, &undoManager);
+    }
+}
+
+int ProjectState::getMixdownStartBar() const
+{
+    return static_cast<int>(root.getProperty(kMixdownStartBar, 0));
+}
+
+void ProjectState::setMixdownStartBar(int mixdownStartBar)
+{
+    // Default zero is suppressed so legacy projects round-trip without an extra property.
+    if (mixdownStartBar == 0)
+    {
+        root.removeProperty(kMixdownStartBar, &undoManager);
+    }
+    else
+    {
+        root.setProperty(kMixdownStartBar, mixdownStartBar, &undoManager);
+    }
+}
+
 } // namespace silverdaw

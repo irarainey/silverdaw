@@ -83,6 +83,41 @@ describe('projectStore', () => {
     expect(project.projectName).toBe(DEFAULT_PROJECT_NAME)
     expect(project.isDirty).toBe(false)
     expect(project.durationMs).toBe(0)
+    expect(project.barCounterStart).toBe(0)
+    expect(project.mixdownStartBar).toBe(0)
+  })
+
+  it('sets the bar counter start and notifies the bridge', () => {
+    const project = useProjectStore()
+    sendMock.mockReturnValue(true)
+
+    project.setBarCounterStart(-1)
+    expect(project.barCounterStart).toBe(-1)
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_BAR_COUNTER_START', { barCounterStart: -1 })
+
+    // Clamps to the [-64, 0] range and rounds.
+    sendMock.mockClear()
+    project.setBarCounterStart(5)
+    expect(project.barCounterStart).toBe(0)
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_BAR_COUNTER_START', { barCounterStart: 0 })
+
+    // No-op when unchanged.
+    sendMock.mockClear()
+    project.setBarCounterStart(0)
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('sets the mixdown start bar independently and notifies the bridge', () => {
+    const project = useProjectStore()
+    sendMock.mockReturnValue(true)
+
+    project.setMixdownStartBar(4)
+    expect(project.mixdownStartBar).toBe(4)
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_MIXDOWN_START_BAR', { mixdownStartBar: 4 })
+
+    // Changing the bar counter start does not touch the mixdown start bar.
+    project.setBarCounterStart(-1)
+    expect(project.mixdownStartBar).toBe(4)
   })
 
   it('adds tracks and local clips while notifying the bridge about tracks', () => {

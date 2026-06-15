@@ -29,12 +29,15 @@ export function useProjectPropertiesController(
 
   const BPM_MIN = 20
   const BPM_MAX = 300
+  const BAR_COUNTER_START_MIN = -64
+  const BAR_COUNTER_START_MAX = 0
 
   // Drafts are reseeded on open so Cancel discards changes.
   const draftName = ref('')
   const draftBpm = ref(120)
   const draftDurationText = ref('')
   const draftSampleRate = ref<number>(44100)
+  const draftBarCounterStart = ref(0)
   // `null` pair means no project override; unavailable saved devices remain selectable.
   const draftAudioTypeName = ref<string | null>(null)
   const draftAudioDeviceName = ref<string | null>(null)
@@ -173,6 +176,15 @@ export function useProjectPropertiesController(
     return null
   })
 
+  const barCounterStartError = computed(() => {
+    const n = draftBarCounterStart.value
+    if (!Number.isFinite(n) || !Number.isInteger(n)) return 'Bar start must be a whole number.'
+    if (n < BAR_COUNTER_START_MIN || n > BAR_COUNTER_START_MAX) {
+      return `Bar start must be between ${BAR_COUNTER_START_MIN} and ${BAR_COUNTER_START_MAX}.`
+    }
+    return null
+  })
+
   const hasNameChange = computed(() => draftName.value.trim() !== project.projectName)
   const hasBpmChange = computed(() => {
     if (bpmError.value) return false
@@ -191,13 +203,18 @@ export function useProjectPropertiesController(
     const current = project.targetSampleRate ?? ui.defaultProjectSampleRate
     return draftSampleRate.value !== current
   })
+  const hasBarCounterStartChange = computed(() => {
+    if (barCounterStartError.value) return false
+    return draftBarCounterStart.value !== project.barCounterStart
+  })
 
   const hasAnyChange = computed(() =>
     hasNameChange.value || hasBpmChange.value || hasDurationChange.value ||
-    hasAudioChange.value || hasSampleRateChange.value
+    hasAudioChange.value || hasSampleRateChange.value || hasBarCounterStartChange.value
   )
   const hasError = computed(() =>
-    !!(nameError.value || bpmError.value || durationError.value) || audioPairInvalid.value
+    !!(nameError.value || bpmError.value || durationError.value || barCounterStartError.value) ||
+    audioPairInvalid.value
   )
   const canSave = computed(() => hasAnyChange.value && !hasError.value)
 
@@ -209,6 +226,7 @@ export function useProjectPropertiesController(
     draftAudioDeviceName.value = project.audioOutputDeviceName
     // Fall back to the user default without immediately persisting it.
     draftSampleRate.value = project.targetSampleRate ?? ui.defaultProjectSampleRate
+    draftBarCounterStart.value = project.barCounterStart
   }
 
   function onSave(): void {
@@ -257,7 +275,12 @@ export function useProjectPropertiesController(
       // Persist now; playback remains correct via per-track engine resampling.
       project.setTargetSampleRate(draftSampleRate.value)
     }
-    notifications.pushInfo('Project properties saved.')
+    if (hasBarCounterStartChange.value) {
+      project.setBarCounterStart(draftBarCounterStart.value)
+    }
+    // Properties are applied to the in-memory project; the dirty marker stays
+    // until the project file itself is saved (Ctrl+S), so avoid claiming "saved".
+    notifications.pushInfo('Project properties applied.')
     emit('close')
   }
 
@@ -304,10 +327,13 @@ export function useProjectPropertiesController(
   return {
     BPM_MIN,
     BPM_MAX,
+    BAR_COUNTER_START_MIN,
+    BAR_COUNTER_START_MAX,
     draftName,
     draftBpm,
     draftDurationText,
     draftSampleRate,
+    draftBarCounterStart,
     draftAudioDeviceName,
     minDurationLabel,
     deviceOptions,
@@ -317,6 +343,7 @@ export function useProjectPropertiesController(
     nameError,
     bpmError,
     durationError,
+    barCounterStartError,
     canSave,
     onSave,
     onCancel,

@@ -7,7 +7,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { beginMixdown } from '@/lib/mixdownState'
-import { formatTime, parseTime } from '@/lib/musicTime'
+import { formatTime, parseTime, msPerSubBeat, DEFAULT_SUBS_PER_BEAT, DEFAULT_BEATS_PER_BAR } from '@/lib/musicTime'
 import { effectiveClipDurationMs } from '@/stores/projectStore'
 import { log } from '@/lib/log'
 
@@ -63,6 +63,8 @@ export interface ExportMixdownForm {
   draftCustomCeilingText: Ref<string>
   draftLengthMode: Ref<'trim-to-last-clip' | 'fixed-duration'>
   draftDurationText: Ref<string>
+  draftMixdownStartBar: Ref<number>
+  mixdownStartMs: ComputedRef<number>
   draftTitle: Ref<string>
   draftArtist: Ref<string>
   draftAlbum: Ref<string>
@@ -157,6 +159,8 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   }
   const draftLengthMode = ref<'trim-to-last-clip' | 'fixed-duration'>('fixed-duration')
   const draftDurationText = ref('')
+  // Displayed bar marker the mixdown begins from; converted to a project-time offset below.
+  const draftMixdownStartBar = ref(0)
   const draftTitle = ref('')
   const draftArtist = ref('')
   const draftAlbum = ref('')
@@ -223,6 +227,18 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   const durationValid = computed<boolean>(() => {
     if (draftLengthMode.value === 'trim-to-last-clip') return lastClipEndMs.value > 0
     return duration.value > 0
+  })
+
+  // Convert the displayed start bar to a project-time offset. The ruler labels internal bar
+  // index i as `i + 1 + barCounterStart`, so the inverse gives the internal index to skip to.
+  const mixdownStartMs = computed<number>(() => {
+    const msPerBar =
+      msPerSubBeat(transport.bpm) * DEFAULT_SUBS_PER_BEAT * DEFAULT_BEATS_PER_BAR
+    const internalBarIndex = Math.max(
+      0,
+      Math.round(draftMixdownStartBar.value) - 1 - project.barCounterStart
+    )
+    return internalBarIndex * msPerBar
   })
 
   const pathValid = computed<boolean>(
@@ -352,6 +368,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     draftCustomCeilingText.value = '-1'
     draftLengthMode.value = 'fixed-duration'
     draftDurationText.value = formatTime(project.durationMs)
+    draftMixdownStartBar.value = project.mixdownStartBar
     draftTitle.value = project.projectName?.trim() ?? ''
     draftArtist.value = ''
     draftAlbum.value = ''
@@ -466,6 +483,8 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
         lengthMode: draftLengthMode.value,
         lengthMs
       }
+      const startMs = mixdownStartMs.value
+      if (startMs > 0) payload.startMs = startMs
       if (draftFormat.value === 'mp3') {
         payload.bitrateKbps = draftBitrate.value
       } else {
@@ -477,6 +496,9 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
       if (loudness) payload.loudness = loudness
       // Persist just before rendering so aborts still keep the user's export preferences.
       project.setExportSettingsJson(JSON.stringify(snapshotExportSettings()))
+      // Persist the chosen start bar as a first-class project property (independent of the
+      // ruler's bar-counter offset) so it round-trips and prefills next time.
+      project.setMixdownStartBar(Math.round(draftMixdownStartBar.value))
       sendBridge('MIXDOWN_START', payload)
       deps.requestClose()
     } finally {
@@ -497,6 +519,8 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     draftCustomCeilingText,
     draftLengthMode,
     draftDurationText,
+    draftMixdownStartBar,
+    mixdownStartMs,
     draftTitle,
     draftArtist,
     draftAlbum,

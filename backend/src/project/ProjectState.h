@@ -345,6 +345,16 @@ class ProjectState : public juce::ValueTree::Listener
     // Unity is suppressed so legacy projects round-trip without an extra property.
     void setMasterVolume(float volume);
 
+    // Bar-label offset for the timeline ruler. 0 (default) labels the first bar "1";
+    // -1 labels it "0" so a lead-in bar can sit before bar one. Marks dirty.
+    int getBarCounterStart() const;
+    void setBarCounterStart(int barCounterStart);
+
+    // Displayed bar marker a mixdown begins from. 0 (default) starts at the project
+    // origin. Independent of the bar-counter offset. Marks dirty.
+    int getMixdownStartBar() const;
+    void setMixdownStartBar(int mixdownStartBar);
+
     // Library items persist imported sources; rich metadata is re-read by the renderer.
 
     /** Add (or update the file path of) a library item. Marks dirty. */
@@ -538,6 +548,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kTargetSampleRate;
     static const juce::Identifier kExportSettingsJson;
     static const juce::Identifier kMasterVolume;
+    static const juce::Identifier kBarCounterStart;
+    static const juce::Identifier kMixdownStartBar;
     static const juce::Identifier kLibrary;
     static const juce::Identifier kLibraryItem;
     static const juce::Identifier kMarkers;
