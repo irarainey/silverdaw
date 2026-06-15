@@ -67,7 +67,7 @@ const alignActive = props.grid.alignActive
         class="rounded border px-2 py-1 text-xs transition-colors"
         :class="alignActive
           ? 'border-sky-500 bg-sky-600/30 text-zinc-100'
-          : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+          : 'border-zinc-700 bg-zinc-800 text-zinc-200 hover:border-zinc-600 hover:text-zinc-100'
         "
         :aria-pressed="alignActive"
         @click="props.grid.toggleAlign()"

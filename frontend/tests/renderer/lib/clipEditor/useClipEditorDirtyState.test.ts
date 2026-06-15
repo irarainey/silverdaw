@@ -28,6 +28,7 @@ interface HarnessState {
   draftCents: number
   hasVolumeShapeChanged: boolean
   hasReverseChanged: boolean
+  hasGridChanged: boolean
   sourceBpm: number | undefined
   projectBpm: number
 }
@@ -72,6 +73,7 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
     draftCents: 0,
     hasVolumeShapeChanged: false,
     hasReverseChanged: false,
+    hasGridChanged: false,
     sourceBpm: 120,
     projectBpm: 120,
     ...initial
@@ -96,6 +98,7 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
     draftCents: () => state.draftCents,
     hasVolumeShapeChanged: () => state.hasVolumeShapeChanged,
     hasReverseChanged: () => state.hasReverseChanged,
+    hasGridChanged: () => state.hasGridChanged,
     sourceBpm: () => state.sourceBpm,
     projectBpm: () => state.projectBpm
   }
@@ -191,6 +194,29 @@ describe('useClipEditorDirtyState', () => {
       const { dirty } = makeHarness({
         editsTimelineClip: false,
         hasReverseChanged: true
+      })
+      expect(dirty.canSaveChanges.value).toBe(false)
+    })
+  })
+
+  describe('canSaveChanges beat-grid gating', () => {
+    it('enables Save when the source beat grid was changed', () => {
+      const { dirty } = makeHarness({ hasGridChanged: true })
+      expect(dirty.canSaveChanges.value).toBe(true)
+    })
+
+    it('still enables Save for a saved-library clip when only the grid changed', () => {
+      const { dirty } = makeHarness({
+        editsTimelineClip: false,
+        hasGridChanged: true
+      })
+      expect(dirty.canSaveChanges.value).toBe(true)
+    })
+
+    it('does NOT enable Save for a grid change when not editing an existing clip', () => {
+      const { dirty } = makeHarness({
+        editsExistingClip: false,
+        hasGridChanged: true
       })
       expect(dirty.canSaveChanges.value).toBe(false)
     })

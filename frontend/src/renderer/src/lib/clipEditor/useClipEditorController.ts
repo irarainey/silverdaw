@@ -222,6 +222,7 @@ export function useClipEditorController(
     draftCents: () => draftCents.value,
     hasVolumeShapeChanged: () => hasVolumeShapeChanged.value,
     hasReverseChanged: () => hasReverseChanged.value,
+    hasGridChanged: () => beatGrid.hasGridChanged(),
     sourceBpm: () => sourceBpm.value,
     projectBpm: () => transport.bpm
   })
@@ -342,6 +343,16 @@ export function useClipEditorController(
   watch(volumeEditActive, () => {
     drawWaveform()
   })
+
+  // Sliding the beat grid (or applying a manual BPM) mutates the source item's
+  // anchor/tempo locally; redraw so the grid markers track the pointer live
+  // instead of only snapping into place on pointer release.
+  watch(
+    [() => sourceItem.value?.beatAnchorSec, () => sourceItem.value?.bpm],
+    () => {
+      drawWaveform()
+    }
+  )
 
   // Reverse toggle → preview voice. Push immediately so the audition flips,
   // and redraw so the waveform mirrors to match the new state.

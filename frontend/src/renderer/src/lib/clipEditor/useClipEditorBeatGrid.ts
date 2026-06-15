@@ -24,6 +24,12 @@ export interface ClipEditorBeatGrid {
   hasGrid: () => boolean
   /** Whether `manualBpmInput` is a valid, applicable BPM. */
   canApply: () => boolean
+  /**
+   * Whether the user has changed the source grid (set a manual BPM or slid the
+   * anchor) during this editor session. Drives the Clip Editor's dirty / Save
+   * affordance even though the change is already persisted to the source item.
+   */
+  hasGridChanged: () => boolean
   /** Toggle slide-to-align mode (no-op without a grid). */
   toggleAlign: () => void
   /** Apply the typed BPM, keeping the current phase anchor. */
@@ -45,6 +51,10 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   const library = useLibraryStore()
   const alignActive = ref(false)
   const manualBpmInput = ref<number | null>(null)
+  // Set once the user pins a BPM or slides the grid; the source change is
+  // persisted immediately, but the Clip Editor still needs a dirty signal so
+  // Save enables and gives the edit explicit closure.
+  const gridEdited = ref(false)
 
   function hasGrid(): boolean {
     const item = deps.sourceItem()
@@ -54,6 +64,10 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   function canApply(): boolean {
     const bpm = manualBpmInput.value
     return !!deps.sourceItem() && typeof bpm === 'number' && bpm >= MIN_BPM && bpm <= MAX_BPM
+  }
+
+  function hasGridChanged(): boolean {
+    return gridEdited.value
   }
 
   function toggleAlign(): void {
@@ -69,6 +83,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const bpm = manualBpmInput.value
     if (!item || typeof bpm !== 'number' || bpm < MIN_BPM || bpm > MAX_BPM) return
     library.setItemManualTempo(item.id, bpm, currentAnchorSec(item))
+    gridEdited.value = true
   }
 
   function previewAnchorSec(anchorSec: number): void {
@@ -81,6 +96,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const item = deps.sourceItem()
     if (!item || !item.bpm || item.bpm <= 0) return
     library.setItemManualTempo(item.id, item.bpm, anchorSec)
+    gridEdited.value = true
   }
 
   return {
@@ -88,6 +104,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     manualBpmInput,
     hasGrid,
     canApply,
+    hasGridChanged,
     toggleAlign,
     applyManualBpm,
     previewAnchorSec,

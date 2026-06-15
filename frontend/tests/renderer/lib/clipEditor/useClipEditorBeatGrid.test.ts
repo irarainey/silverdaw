@@ -98,4 +98,25 @@ describe('useClipEditorBeatGrid', () => {
       beatAnchorSec: 0.2
     })
   })
+
+  it('reports a grid change only after the user pins a BPM or commits an anchor', () => {
+    const item = addSource(120, 0)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    expect(grid.hasGridChanged()).toBe(false)
+
+    grid.previewAnchorSec(0.1)
+    expect(grid.hasGridChanged()).toBe(false)
+
+    grid.commitAnchorSec(0.2)
+    expect(grid.hasGridChanged()).toBe(true)
+  })
+
+  it('reports a grid change after applying a manual BPM', () => {
+    const item = addSource(120, 0)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    expect(grid.hasGridChanged()).toBe(false)
+    grid.manualBpmInput.value = 96
+    grid.applyManualBpm()
+    expect(grid.hasGridChanged()).toBe(true)
+  })
 })

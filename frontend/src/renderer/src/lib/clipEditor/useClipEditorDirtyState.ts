@@ -28,6 +28,7 @@ export interface ClipEditorDirtyStateDeps {
   draftCents: () => number
   hasVolumeShapeChanged: () => boolean
   hasReverseChanged: () => boolean
+  hasGridChanged: () => boolean
   sourceBpm: () => number | undefined
   projectBpm: () => number
 }
@@ -83,7 +84,15 @@ export function useClipEditorDirtyState(
     // linked edits persist to the shared saved clip and all its instances.
     const volumeShapeDirty = deps.editsTimelineClip() && deps.hasVolumeShapeChanged()
     const reverseDirty = deps.editsTimelineClip() && deps.hasReverseChanged()
-    return hasSelectionChanged.value || hasWarpPitchChanged.value || volumeShapeDirty || reverseDirty
+    // Beat-grid alignment edits the shared source item and is persisted on
+    // commit; surface it as dirty so Save enables and the user can confirm/close.
+    return (
+      hasSelectionChanged.value ||
+      hasWarpPitchChanged.value ||
+      volumeShapeDirty ||
+      reverseDirty ||
+      deps.hasGridChanged()
+    )
   })
 
   // Non-destructive crop is enabled only for a narrowing selection.
