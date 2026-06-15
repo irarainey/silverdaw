@@ -724,23 +724,42 @@ mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 
 To stop sleep-prone audio devices (notably some USB DACs) from soft-muting and
-clipping the first instants of playback, an inaudible **ultrasonic keep-alive
-tone** (`kKeepAliveTonePeak`, ≈0.004 / −48 dBFS, just below Nyquist) is mixed into
-otherwise-silent output. [`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h)
-owns the gate and is injected by the metering stage **after** the master-gain ramp,
-so a low master volume can't attenuate it below the level that keeps the endpoint
-awake. The tone runs whenever an output device is open (`deviceActive`), a
-project is loaded (`contentLoaded`), or playback is active, ramped in/out over
-`kKeepAliveRampSeconds` to stay click-free, and rings out on real programme above
-`kKeepAliveSilenceThreshold` so content is never coloured. Because it runs from
-the moment the device starts streaming, a freshly-opened or reconnected endpoint
-(e.g. a USB DAC plugged in just before launch) is held awake before the user
-loads a project or presses play, so the first play is instant with no audible
-pre-roll and no cold-start window in which the device could auto-mute. The gate
-only closes — returning the output to **truly silent** digital zero — once the
-output device is released. `MasterClockSource` still gates the transport and
-clears the buffer when not playing; the keep-alive injection lives downstream in
-the metering stage.
+clipping the first instants of playback, the engine keeps such endpoints awake
+with two cooperating, inaudible (ultrasonic) signals owned by
+[`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h) and injected by the
+metering stage **after** the master-gain ramp (so a low master volume can't
+attenuate them below the level that keeps the endpoint awake):
+
+1. **Continuous maintenance tone** (`kKeepAliveTonePeak`, ≈0.004 / −48 dBFS, just
+   below Nyquist) mixed into otherwise-silent output whenever a device is open
+   (`deviceActive`), a project is loaded (`contentLoaded`), or playback is active.
+   This keeps an already-**warm** DAC out of auto-mute, so every stop→play in a
+   session is instant — no dropped opening bar, no audible hiss. It rings out on
+   real programme above `kKeepAliveSilenceThreshold` so content is never coloured.
+2. **One-time cold-wake band** (`kWakeTonePeak`, ≈0.05 / −26 dBFS, same ultrasonic
+   frequency). Waking a fully-**cold** endpoint (just plugged in, freshly selected,
+   or woken from deep sleep) needs more than the maintenance tone: a stronger kick
+   plus a little lock time. The band is armed on every device/sample-rate
+   (re)start (`markDeviceStarted`, from `prepare()`) and consumed by a short
+   `kWakePrerollMs` wake pre-roll on the **first** play afterwards (`AudioEngine::play`
+   arms it, sleeps, then starts content), then cleared so every later play is
+   instant. This is the small, acceptable first-play lead-in — and it is silent
+   (ultrasonic) and one-time per device session.
+
+Both signals are gated by a **device-type policy**:
+[`OutputDeviceClassifier`](../backend/src/engine/OutputDeviceClassifier.cpp) walks
+the Windows device tree (MMDevice COM + Config Manager) from the active render
+endpoint up to its physical bus enumerator (`USB` / `HDAUDIO` / `PCI` / `BTH`…) and
+`AudioEngine::updateKeepAwakePolicy` enables keep-awake only for USB endpoints
+(the known offenders). It is **fail-safe**: an unclassifiable endpoint
+(`OutputBus::unknown`) keeps keep-awake on, so a real USB DAC is never left to drop
+a beat, while onboard / Bluetooth / virtual devices incur neither the tone nor the
+first-play lead-in. The policy is re-evaluated on init, device selection, and
+device-list changes. Both signals ramp in/out over `kKeepAliveRampSeconds` to stay
+click-free; the gate closes — returning the output to **truly silent** digital
+zero — once the device is released or the endpoint is classified as non-sleep-prone.
+`MasterClockSource` still gates the transport and clears the buffer when not
+playing; the keep-alive injection lives downstream in the metering stage.
 
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
 export writer** in [`MixdownExport`](../backend/src/mixdown/MixdownExport.cpp). (The

@@ -2,6 +2,7 @@
 #include "AudioConstants.h"
 #include "AudioEngineWarpFactory.h"
 #include "Log.h"
+#include "OutputDeviceClassifier.h"
 
 #include <cmath>
 
@@ -58,6 +59,7 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
     // Avoid full device scans on startup; ASIO probing can block for hundreds of ms.
     rebuildDevicesSnapshot(/*rescan*/ false);
     devicesSnapshot.fellBackToDefault = didFallBack;
+    updateKeepAwakePolicy();
 
     return {};
 }
@@ -89,6 +91,7 @@ juce::String AudioEngine::selectOutputDevice(const juce::String& typeName, const
         const auto err = deviceManager.initialiseWithDefaultDevices(0, 2);
         rebuildDevicesSnapshot(/*rescan*/ false);
         devicesSnapshot.fellBackToDefault = false;
+        updateKeepAwakePolicy();
         return err;
     }
 
@@ -151,11 +154,13 @@ juce::String AudioEngine::selectOutputDevice(const juce::String& typeName, const
             }
         }
         rebuildDevicesSnapshot(/*rescan*/ false);
+        updateKeepAwakePolicy();
         return err;
     }
 
     rebuildDevicesSnapshot(/*rescan*/ false);
     devicesSnapshot.fellBackToDefault = false;
+    updateKeepAwakePolicy();
     return {};
 }
 
@@ -188,6 +193,22 @@ void AudioEngine::rebuildDevicesSnapshot(bool rescan)
     snap.heuristicExtraLatencyMs = getHeuristicExtraLatencyMs();
     snap.fellBackToDefault = devicesSnapshot.fellBackToDefault;
     devicesSnapshot = std::move(snap);
+}
+
+void AudioEngine::updateKeepAwakePolicy()
+{
+    // Classify the active output endpoint by its Windows connection bus and only keep sleep-prone
+    // (USB) endpoints awake — so onboard / Bluetooth / virtual devices never incur the keep-alive
+    // tone or the one-time first-play wake pre-roll. Fail-safe: an unclassifiable device keeps
+    // keep-awake on, so a real USB DAC is never left to drop a beat.
+    const auto setup = deviceManager.getAudioDeviceSetup();
+    const auto bus = silverdaw::classifyOutputEndpoint(setup.outputDeviceName);
+    const bool keepAwake = silverdaw::busPrefersKeepAwake(bus);
+    outputKeepAlive.setKeepAwakeEnabled(keepAwake);
+    silverdaw::log::info("audio",
+                         juce::String("output device '") + setup.outputDeviceName +
+                             "' classified " + silverdaw::toString(bus) + " -> keep-awake " +
+                             (keepAwake ? "on" : "off"));
 }
 
 // Windows under-reports Bluetooth endpoint latency, so known headset names get a conservative
@@ -242,6 +263,8 @@ void AudioEngine::onDeviceListChanged()
         rebuildDevicesSnapshot(/*rescan*/ false);
     }
 
+    updateKeepAwakePolicy();
+
     if (deviceListChangedCallback)
     {
         deviceListChangedCallback();
@@ -264,9 +287,24 @@ void AudioEngine::play()
         return;
     }
 
-    // The endpoint is already awake: while a project is loaded the inaudible keep-alive tone
-    // (MeteringSource / OutputKeepAlive) holds the DAC out of auto-mute, so content opens
-    // instantly with no wake pre-roll and no audible warm-up.
+    // The continuous ultrasonic keep-alive tone holds a *warm* DAC out of auto-mute, so a normal
+    // stop->play opens instantly. But a *cold* endpoint (just plugged in, freshly selected, or
+    // woken from deep sleep) needs a stronger kick and a little lock time, or it swallows the
+    // opening bar. On the FIRST play after a device (re)start — and only on a sleep-prone (USB)
+    // endpoint — run a brief, silent (ultrasonic), one-time wake pre-roll, then start content.
+    // Every later play is instant. The audio device keeps streaming the wake band during the
+    // sleep below (consistent with the existing prime busy-wait).
+    if (outputKeepAlive.isKeepAwakeEnabled() && outputKeepAlive.needsWake())
+    {
+        outputKeepAlive.arm();
+        juce::Thread::sleep(silverdaw::kWakePrerollMs);
+        outputKeepAlive.disarm();
+        outputKeepAlive.clearNeedsWake();
+        silverdaw::log::info("engine",
+                             "first-play wake pre-roll (" + juce::String(silverdaw::kWakePrerollMs) +
+                                 " ms) for sleep-prone output device");
+    }
+
     master.setPlaying(true);
     silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
                                        " pos=" + juce::String(master.getPositionSamples()) + ")");

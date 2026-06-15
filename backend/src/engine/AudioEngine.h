@@ -277,6 +277,10 @@ class AudioEngine
 
     void rebuildDevicesSnapshot(bool rescan);
 
+    // Classify the current output endpoint and enable/disable the keep-awake tone + one-time
+    // first-play wake accordingly (sleep-prone USB endpoints only). Message-thread only.
+    void updateKeepAwakePolicy();
+
     void onDeviceListChanged();
 
     AudioDevicesSnapshot devicesSnapshot;

@@ -363,6 +363,7 @@ add_library(silverdaw_backend_core STATIC
     src/engine/AudioEnginePreview.cpp
     src/engine/DecodedCache.cpp
     src/engine/EnginePlaybackPath.cpp
+    src/engine/OutputDeviceClassifier.cpp
     # mixdown
     src/mixdown/MixdownBroadcast.cpp
     src/mixdown/MixdownEngine.cpp
@@ -428,6 +429,12 @@ target_link_libraries(silverdaw_backend_core PUBLIC
     SampleRate::samplerate
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
+
+if(WIN32)
+    # OutputDeviceClassifier walks the Windows device tree (MMDevice COM + Config Manager) to
+    # detect sleep-prone USB output endpoints.
+    target_link_libraries(silverdaw_backend_core PUBLIC Cfgmgr32 Ole32 Propsys)
+endif()
 
 if(SILVERDAW_ENABLE_STEM_SEPARATION)
     target_link_libraries(silverdaw_backend_core PUBLIC onnxruntime)

@@ -10,6 +10,7 @@
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
 #include "MixdownEngine.h"
+#include "OutputDeviceClassifier.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
@@ -263,6 +264,70 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         ka.setDeviceActive(false);
         require(! ka.shouldRun(),
                 "closing the device with no project and not playing must close the gate");
+
+        // ── Keep-awake policy gate: only sleep-prone (USB) endpoints run the tone ──
+        ka.setDeviceActive(true);
+        require(ka.shouldRun(), "device-active must open the gate when keep-awake is enabled");
+        ka.setKeepAwakeEnabled(false);
+        require(! ka.shouldRun(),
+                "keep-awake disabled (non-USB endpoint) must keep the gate closed");
+        buf.clear();
+        ka.maybeApplyFloor(buf, 0, n, 0.0F); // ramp-out of any residual envelope
+        buf.clear();
+        require(! ka.maybeApplyFloor(buf, 0, n, 0.0F),
+                "keep-awake disabled must inject no tone (true digital silence on non-USB devices)");
+        ka.setKeepAwakeEnabled(true);
+        require(ka.shouldRun(), "re-enabling keep-awake on an open device must reopen the gate");
+
+        // ── One-time cold-wake handshake ──
+        ka.clearNeedsWake();
+        require(! ka.needsWake(), "wake flag starts cleared");
+        ka.markDeviceStarted();
+        require(ka.needsWake(), "a device (re)start must arm the one-time wake");
+        ka.prepare(48000.0); // a device/sample-rate (re)start re-arms the wake
+        require(ka.needsWake(), "prepare() (device start) must arm the one-time wake");
+        ka.clearNeedsWake();
+        require(! ka.needsWake(), "consuming the wake clears the one-shot flag (later plays skip it)");
+
+        // ── Armed cold-wake band is louder than the maintenance tone, still bounded ──
+        ka.arm();
+        require(ka.isArmed(), "arm() must engage the louder cold-wake band");
+        float armedPeak = 0.0F;
+        for (int b = 0; b < 8; ++b)
+        {
+            buf.clear();
+            ka.maybeApplyFloor(buf, 0, n, 0.0F);
+            armedPeak = juce::jmax(armedPeak, blockPeak(buf));
+        }
+        require(armedPeak > tonePeak,
+                "the armed cold-wake band must be louder than the maintenance tone");
+        const float wakePeak = static_cast<float>(silverdaw::kWakeTonePeak);
+        require(armedPeak <= wakePeak * 1.2F, "the cold-wake band must stay bounded near its peak");
+        ka.disarm();
+        require(! ka.isArmed(), "disarm() must drop back toward the maintenance tone");
+        float settledPeak = 0.0F;
+        for (int b = 0; b < 8; ++b)
+        {
+            buf.clear();
+            ka.maybeApplyFloor(buf, 0, n, 0.0F);
+            settledPeak = blockPeak(buf);
+        }
+        require(settledPeak <= tonePeak * 1.2F,
+                "after disarm the level must settle back to the inaudible maintenance tone");
+    }
+
+    // ── Pure keep-awake policy: only USB (and unclassifiable) endpoints are kept awake ──
+    {
+        require(silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::usb),
+                "USB endpoints (the sleep-prone offenders) must be kept awake");
+        require(silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::unknown),
+                "unknown endpoints must be kept awake (fail-safe: never drop a beat)");
+        require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::onboard),
+                "onboard endpoints must not incur the keep-awake tone or wake lead-in");
+        require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::bluetooth),
+                "Bluetooth endpoints must not be kept awake by the ultrasonic tone");
+        require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::other),
+                "other endpoints must not be kept awake");
     }
 
     // ── MeteringSource integration: the tone survives a low master gain ──

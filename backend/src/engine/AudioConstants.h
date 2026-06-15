@@ -29,6 +29,15 @@ inline constexpr float kKeepAliveSilenceThreshold = 1.0e-3F;
 // Click-free fade as the tone engages/disengages across silent/non-silent block boundaries.
 inline constexpr double kKeepAliveRampSeconds = 0.01; // 10 ms
 
+// Waking a *cold* DAC (just plugged in, freshly selected, or woken from deep sleep) needs more
+// than the maintenance tone above: a stronger kick plus a little lock time. On the FIRST play
+// after an output device (re)start — and only on a sleep-prone (USB) endpoint — the engine runs
+// a brief, one-time, still-ultrasonic wake band at this louder level for kWakePrerollMs, then
+// starts content. It is inaudible (ultrasonic) and one-time per device session; every later play
+// is instant. This is the small, acceptable first-play lead-in.
+inline constexpr float kWakeTonePeak = 0.05F; // ~-26 dBFS, ultrasonic (inaudible) cold-wake kick
+inline constexpr int kWakePrerollMs = 500;    // one-time first-play wake lead-in
+
 inline constexpr int kDefaultSampleRate = 44100;
 inline constexpr int kAltSampleRate = 48000;
 
