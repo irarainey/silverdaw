@@ -8,8 +8,11 @@ export const TRACK_HEIGHT = 120
 export const MIN_TRACK_HEIGHT = 80
 /** Maximum row height so one track cannot dominate the viewport. */
 export const MAX_TRACK_HEIGHT = 400
-export const TRACK_GAP = 4
+export const TRACK_GAP = 2
 export const RULER_HEIGHT = 28
+/** Vertical inset (px) between a track row's edges and its clip blocks, applied
+ *  top and bottom. Small so clips fill most of the row height. */
+export const CLIP_VERTICAL_PADDING = 2
 // Reserve the vertical scrollbar lane to avoid layout jitter.
 export const SCROLLBAR_HEIGHT = 12
 export const SCROLLBAR_WIDTH = 12

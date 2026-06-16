@@ -36,7 +36,8 @@ import {
   TRANSITION_LINE_ALPHA,
   OVERLAP_HATCH,
   OVERLAP_HATCH_ALPHA,
-  OVERLAP_HATCH_SPACING_PX
+  OVERLAP_HATCH_SPACING_PX,
+  CLIP_VERTICAL_PADDING
 } from './constants'
 import { isWarpPending } from '@/lib/warp'
 import type { ClipHitRegion } from './useDragHandlers'
@@ -279,7 +280,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     // Cull beyond one viewport margin so translate-only scroll stays smooth.
     if (absX + w < worldLeft || absX > worldRight) return
 
-    const padding = 4
+    const padding = CLIP_VERTICAL_PADDING
     const innerY = rowWorldY + padding
     const innerH = rowHeight - padding * 2
     const midY = innerY + innerH / 2
@@ -535,7 +536,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     const G = GraphicsCtor.value
     if (!tracksL || !G) return
 
-    const padding = 4
+    const padding = CLIP_VERTICAL_PADDING
     const innerY = rowWorldY + padding
     const innerH = rowHeight - padding * 2
     if (innerH <= 0) return
@@ -596,7 +597,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     const G = GraphicsCtor.value
     if (!tracksL || !G) return
 
-    const padding = 4
+    const padding = CLIP_VERTICAL_PADDING
     const innerY = rowWorldY + padding
     const innerH = rowHeight - padding * 2
     if (innerH <= 0) return

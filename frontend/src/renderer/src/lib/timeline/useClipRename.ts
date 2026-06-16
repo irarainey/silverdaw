@@ -22,6 +22,7 @@ import {
 import { useTransportStore } from '@/stores/transportStore'
 import { isWarpPending } from '@/lib/warp'
 import { trackTopWorldYAt } from '@/lib/timeline/trackLayout'
+import { CLIP_VERTICAL_PADDING } from '@/lib/timeline/constants'
 
 /** Must mirror the HEADER_H used inside `useTimelineDrawing.drawClipHeader`. */
 export const CLIP_HEADER_H = 18
@@ -74,7 +75,7 @@ export function useClipRename(deps: ClipRenameDeps): ClipRename {
     // on top of the drawn header strip.
     const absX = deps.headerWidth() + (clip.startMs / 1000) * deps.pxPerSecond()
     const rowWorldY = trackTopWorldYAt(project.tracks, trackIndex)
-    const padding = 4
+    const padding = CLIP_VERTICAL_PADDING
     const innerY = rowWorldY + padding
     const libItem = library.byId[clip.libraryItemId]
     const effectiveDurMs = effectiveClipDurationMs(clip)

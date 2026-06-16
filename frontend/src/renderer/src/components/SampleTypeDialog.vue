@@ -69,37 +69,43 @@ function onKeydown(e: KeyboardEvent): void {
           </h1>
         </div>
 
-        <div class="flex flex-col gap-2 px-5 py-4 text-xs">
-          <button
-            type="button"
-            class="flex flex-col gap-1 rounded border px-3 py-2 text-left transition-colors"
-            :class="choice === 'music'
-              ? 'border-sky-500 bg-sky-500/15'
-              : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'
-            "
-            @click="choice = 'music'"
+        <div class="dialog-body flex flex-col gap-2 text-xs">
+          <label
+            class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
           >
-            <span class="font-medium text-zinc-100">Music sample</span>
-            <span class="text-[11px] leading-4 text-zinc-400">
-              A loop or musical phrase. Keeps the source tempo, beat markers, key,
-              and cover art, and warps to the project tempo when dropped onto a track.
+            <input
+              v-model="choice"
+              type="radio"
+              name="sample-type"
+              value="music"
+              class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            >
+            <span class="flex-1">
+              <span class="block font-medium text-zinc-200">Music sample</span>
+              <span class="mt-0.5 block text-zinc-500">
+                A loop or musical phrase. Keeps the source tempo, beat markers, key,
+                and cover art, and warps to the project tempo when dropped onto a track.
+              </span>
             </span>
-          </button>
-          <button
-            type="button"
-            class="flex flex-col gap-1 rounded border px-3 py-2 text-left transition-colors"
-            :class="choice === 'sample'
-              ? 'border-sky-500 bg-sky-500/15'
-              : 'border-zinc-700 bg-zinc-800 hover:border-zinc-600'
-            "
-            @click="choice = 'sample'"
+          </label>
+          <label
+            class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
           >
-            <span class="font-medium text-zinc-100">Simple sample</span>
-            <span class="text-[11px] leading-4 text-zinc-400">
-              A one-shot sound effect or vocal snippet. Carries no tempo or beat
-              metadata and is never warped when dropped onto a track.
+            <input
+              v-model="choice"
+              type="radio"
+              name="sample-type"
+              value="sample"
+              class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            >
+            <span class="flex-1">
+              <span class="block font-medium text-zinc-200">Simple sample</span>
+              <span class="mt-0.5 block text-zinc-500">
+                A one-shot sound effect or vocal snippet. Carries no tempo or beat
+                metadata and is never warped when dropped onto a track.
+              </span>
             </span>
-          </button>
+          </label>
         </div>
 
         <div class="dialog-footer">

@@ -105,7 +105,7 @@ describe('useTrackReorderDrag', () => {
     seedTracks()
     const { drag } = setup()
     drag.dropIndicatorIndex.value = 1
-    // row1.top (152) - RULER_HEIGHT (28) - 1
-    expect(drag.dropIndicatorTopPx.value).toBe(123)
+    // row1.top (150) - RULER_HEIGHT (28) - 1
+    expect(drag.dropIndicatorTopPx.value).toBe(121)
   })
 })
