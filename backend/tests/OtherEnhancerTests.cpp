@@ -63,6 +63,35 @@ double rms(const juce::AudioBuffer<float>& b, int ch, int start, int count)
     return std::sqrt(sum / juce::jmax(1, count));
 }
 
+// RMS of the mid (mono sum) over a region. The stereo widener preserves the mid
+// exactly, so this isolates what the spectral cleanup actually changed.
+double rmsMid(const juce::AudioBuffer<float>& b, int start, int count)
+{
+    double sum = 0.0;
+    const float* l = b.getReadPointer(0);
+    const float* r = b.getReadPointer(b.getNumChannels() > 1 ? 1 : 0);
+    for (int i = start; i < start + count; ++i)
+    {
+        const double mid = 0.5 * (static_cast<double>(l[i]) + r[i]);
+        sum += mid * mid;
+    }
+    return std::sqrt(sum / juce::jmax(1, count));
+}
+
+// RMS of the side (L-R) over a region: how wide the stereo image is.
+double rmsSide(const juce::AudioBuffer<float>& b, int start, int count)
+{
+    double sum = 0.0;
+    const float* l = b.getReadPointer(0);
+    const float* r = b.getReadPointer(b.getNumChannels() > 1 ? 1 : 0);
+    for (int i = start; i < start + count; ++i)
+    {
+        const double side = 0.5 * (static_cast<double>(l[i]) - r[i]);
+        sum += side * side;
+    }
+    return std::sqrt(sum / juce::jmax(1, count));
+}
+
 double dbfs(double linear) { return 20.0 * std::log10(linear + 1.0e-12); }
 
 bool allFinite(const juce::AudioBuffer<float>& b)
@@ -132,16 +161,57 @@ void testPreservesStrongTonalContent()
 void testAttenuatesBroadbandNoiseFloor()
 {
     // A low-level broadband noise bed (no protected tonal content) should be
-    // pulled down by the spectral gate, but never silenced.
+    // pulled down by the spectral gate, but never silenced. Measured on the mid
+    // (mono sum) because the enhancement stage's widener intentionally boosts the
+    // side — the spectral cleanup is what must reduce the mid.
     const int n = 88200;
     auto buf = makeNoise(0.02, n, 777);
-    const double before = rms(buf, 0, n / 4, n / 2);
+    const double before = rmsMid(buf, n / 4, n / 2);
     OtherEnhancer::process(buf, kSr, {true, OtherEnhanceStrength::Strong});
-    const double after = rms(buf, 0, n / 4, n / 2);
+    const double after = rmsMid(buf, n / 4, n / 2);
     require(allFinite(buf), "output must stay finite");
     require(dbfs(after) < dbfs(before) - 0.5,
             "broadband residual noise should be attenuated by >0.5 dB");
     require(after > 0.0, "the noise floor must be reduced, not gated to silence");
+}
+
+void testWidensDecorrelatedStereoImage()
+{
+    // Two distinct, loud per-channel tones carry real side energy and are
+    // preserved by the spectral cleanup (tonal protection / self-bypass), so the
+    // widener's effect is isolated: it should increase the side energy while
+    // preserving the mid.
+    const int n = 88200;
+    juce::AudioBuffer<float> buf(2, n);
+    for (int i = 0; i < n; ++i)
+    {
+        buf.getWritePointer(0)[i] = static_cast<float>(0.3 * std::sin(kTwoPi * 500.0 * i / kSr));
+        buf.getWritePointer(1)[i] = static_cast<float>(0.3 * std::sin(kTwoPi * 700.0 * i / kSr));
+    }
+    const double sideBefore = rmsSide(buf, n / 4, n / 2);
+    const double midBefore = rmsMid(buf, n / 4, n / 2);
+    OtherEnhancer::process(buf, kSr, {true, OtherEnhanceStrength::Strong});
+    const double sideAfter = rmsSide(buf, n / 4, n / 2);
+    const double midAfter = rmsMid(buf, n / 4, n / 2);
+    require(allFinite(buf), "output must stay finite");
+    require(sideAfter > sideBefore,
+            "the widener should increase the side (stereo) energy");
+    // The mid is preserved by the widener; the gentle cleanup leaves loud tones
+    // essentially untouched, so it must stay close to where it started.
+    require(std::abs(dbfs(midAfter) - dbfs(midBefore)) < 1.0,
+            "the widener must preserve the mid (mono sum)");
+}
+
+void testMonoSignalIsNotWidened()
+{
+    // Identical channels carry no side energy, so the widener must be a no-op:
+    // the output stays mono (side stays at zero) regardless of strength.
+    const int n = 44100;
+    auto buf = makeSine(440.0, 0.2, n); // makeSine writes identical channels
+    OtherEnhancer::process(buf, kSr, {true, OtherEnhanceStrength::Strong});
+    require(rmsSide(buf, n / 4, n / 2) < 1.0e-4,
+            "a mono (identical-channel) signal must not gain side energy");
+    require(allFinite(buf), "output must stay finite");
 }
 
 void testSilenceStaysSilentNoNaN()
@@ -175,6 +245,10 @@ void addOtherEnhancerTests(std::vector<TestCase>& tests)
                      testPreservesStrongTonalContent});
     tests.push_back({"OtherEnhancer attenuates a broadband noise floor",
                      testAttenuatesBroadbandNoiseFloor});
+    tests.push_back({"OtherEnhancer widens a decorrelated stereo image",
+                     testWidensDecorrelatedStereoImage});
+    tests.push_back({"OtherEnhancer does not widen a mono signal",
+                     testMonoSignalIsNotWidened});
     tests.push_back({"OtherEnhancer keeps silence silent without NaN", testSilenceStaysSilentNoNaN});
     tests.push_back({"OtherEnhancer sanitises non-finite input", testNonFiniteInputSanitised});
 }

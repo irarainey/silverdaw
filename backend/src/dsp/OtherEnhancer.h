@@ -1,15 +1,15 @@
 #pragma once
 
-// Offline post-separation cleanup for the *other* stem — the catch-all residual
-// (`other = mixture − vocals − drums − bass`). Unlike the vocal/drum/bass
-// enhancers it does NOT use a wideband expander: the residual is usually dense
-// and continuous (sustained pads, comping guitars, keys, strings) with no note
-// gaps, so a gate would either self-bypass or chew musical content. Instead this
-// runs a deliberately SHALLOW STFT spectral attenuation that shaves the
-// persistent low-level "swirl"/musical-noise floor the residual subtraction
-// leaves behind, while protecting sustained tonal content.
+// Offline post-separation cleanup *and* enhancement for the *other* stem — the
+// catch-all residual (`other = mixture − vocals − drums − bass`). Unlike the
+// vocal/drum/bass enhancers its CLEANUP does NOT use a wideband expander: the
+// residual is usually dense and continuous (sustained pads, comping guitars, keys,
+// strings) with no note gaps, so a gate would either self-bypass or chew musical
+// content. Instead this runs a deliberately SHALLOW STFT spectral attenuation that
+// shaves the persistent low-level "swirl"/musical-noise floor the residual
+// subtraction leaves behind, while protecting sustained tonal content.
 //
-// It is the gentlest-by-intent of the four enhancers: "do little harm". A robust
+// Its cleanup is the gentlest-by-intent of the four: "do little harm". A robust
 // per-bin noise floor is estimated from a low percentile of each bin's magnitude
 // over the active frames, then capped against its frequency neighbours so a
 // sustained pad note can never become its own threshold. A soft-knee per-bin
@@ -17,6 +17,13 @@
 // attenuation (≤6 dB). One shared gain mask (from the louder channel) is applied
 // to every channel so the stereo image is preserved, and the whole STFT pass
 // self-bypasses when the predicted change is inaudible.
+//
+// After cleanup an ENHANCEMENT stage opens up the stereo image with a small,
+// strength-scaled mid/side widener: the mid (mono sum) is preserved exactly so the
+// result stays mono-compatible when the stems are recombined, while the side is
+// gently boosted to give the pads/FX/room more space. A soft-knee limiter follows
+// so the widened side can never hard-clip. The widener is a no-op on mono buffers
+// and where the channels are already identical.
 //
 // Like the other enhancers this is offline worker-thread code (it may allocate
 // and make multiple passes) and is a guaranteed no-op when disabled, empty,

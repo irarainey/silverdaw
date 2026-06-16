@@ -1,13 +1,21 @@
 #pragma once
 
-// Offline post-separation cleanup for the *bass* stem. Like Vocal/DrumEnhancer
-// this runs on a worker thread after htdemucs-ft has produced (and denormalised)
-// a bass buffer and before it is written to disk — it is NOT real-time code, so
-// it may allocate and make multiple passes. It is deliberately the gentlest of
-// the three enhancers: a subsonic high-pass (DC/rumble only — never a musical
-// high-pass, a low-B/808 fundamental sits near 30 Hz) followed by a soft,
-// range-limited downward EXPANDER that pulls down low-level bleed (vocals,
-// cymbals, guitar leaking into the bass stem) in the gaps between notes.
+// Offline post-separation cleanup *and* enhancement for the *bass* stem. Like
+// Vocal/DrumEnhancer this runs on a worker thread after htdemucs-ft has produced
+// (and denormalised) a bass buffer and before it is written to disk — it is NOT
+// real-time code, so it may allocate and make multiple passes.
+//
+// Two stages run in order. (1) CLEANUP — the gentlest of the three: a subsonic
+// high-pass (DC/rumble only — never a musical high-pass, a low-B/808 fundamental
+// sits near 30 Hz) followed by a soft, range-limited downward EXPANDER that pulls
+// down low-level bleed (vocals, cymbals, guitar leaking into the bass stem) in the
+// gaps between notes. (2) ENHANCEMENT — a harmonic exciter that isolates the low
+// band, generates harmonics through a tanh nonlinearity and adds only the UPPER
+// harmonics (high-passed > ~120 Hz) back in parallel at a conservative,
+// strength-scaled amount, so the bass keeps its definition and translates on small
+// speakers without touching the fundamental or sub. A soft-knee limiter follows so
+// the added energy can never hard-clip. The enhancement runs even when the cleanup
+// self-bypasses, and is a no-op on silence.
 //
 // Two choices suit sustained low-frequency material: (1) the detector runs off a
 // low-passed (~600 Hz) copy of the signal so high-frequency bleed cannot hold
@@ -17,10 +25,10 @@
 // bypasses when the stem has little gap contrast (continuous/sustained bass),
 // where gating would only expose separation artefacts.
 //
-// Low-end mono-folding, glue compression, makeup gain, loudness normalisation
-// and any additive "enhancement" are intentionally out of scope here: they turn
-// cleanup into mix processing and would break the relative balance the stems
-// recombine to.
+// Low-end mono-folding, glue compression, makeup gain and loudness normalisation
+// remain out of scope here: they turn cleanup into mix processing and would break
+// the relative balance the stems recombine to. The exciter only adds upper
+// harmonics in parallel — it does not raise the fundamental's level.
 
 #include <juce_audio_basics/juce_audio_basics.h>
 

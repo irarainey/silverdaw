@@ -378,6 +378,64 @@ bool applySpectralCleanup(juce::AudioBuffer<float>& buffer, double sampleRate,
     return true;
 }
 
+// Mid/side stereo widener. The mid (mono sum) is preserved exactly while the side
+// is scaled by a small, strength-scaled amount, opening up the residual's pads /
+// FX / room without affecting the fundamental balance — and because the mid is
+// untouched, the result stays mono-compatible when the stems are recombined. A
+// no-op on mono buffers and naturally a no-op where the channels are already
+// identical (the side is zero). `widthAmount` is the extra side gain (0 = dry).
+void applyStereoWidener(juce::AudioBuffer<float>& buffer, double widthAmount) noexcept
+{
+    if (! (widthAmount > 0.0)) return;
+    if (buffer.getNumChannels() < 2) return;
+
+    const float sideGain = static_cast<float>(1.0 + widthAmount);
+    const int numSamples = buffer.getNumSamples();
+    float* left = buffer.getWritePointer(0);
+    float* right = buffer.getWritePointer(1);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float mid = 0.5F * (left[i] + right[i]);
+        const float side = 0.5F * (left[i] - right[i]) * sideGain;
+        left[i] = mid + side;
+        right[i] = mid - side;
+    }
+}
+
+// Strength-scaled side gain for the widener. Conservative so the image opens up
+// without hollowing the centre or causing phase issues on summation.
+double stereoWidthFor(OtherEnhanceStrength strength) noexcept
+{
+    switch (strength)
+    {
+        case OtherEnhanceStrength::Light: return 0.10;
+        case OtherEnhanceStrength::Strong: return 0.30;
+        case OtherEnhanceStrength::Medium:
+        default: return 0.20;
+    }
+}
+
+// Soft-knee peak safety. Samples below the knee pass through unchanged; only peaks
+// pushed past the knee by the widened side are smoothly compressed toward the
+// ceiling, avoiding hard-clip distortion without altering the rest of the signal.
+void softLimitInPlace(juce::AudioBuffer<float>& buffer) noexcept
+{
+    constexpr float knee = 0.9F;
+    constexpr float ceiling = 0.9999F;
+    const float range = ceiling - knee;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        float* data = buffer.getWritePointer(ch);
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            const float a = std::abs(data[i]);
+            if (a <= knee) continue;
+            const float comp = range * std::tanh((a - knee) / range);
+            data[i] = std::copysign(knee + comp, data[i]);
+        }
+    }
+}
+
 } // namespace
 
 OtherEnhanceStrength otherEnhanceStrengthFromString(const juce::String& text) noexcept
@@ -414,6 +472,12 @@ void OtherEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
 
     applyHighPass(buffer, sampleRate, params.highPassHz);
     applySpectralCleanup(buffer, sampleRate, params);
+
+    // Enhancement: open up the stereo image (mid preserved, so it stays
+    // mono-compatible), with a soft limiter so the widened side can never
+    // hard-clip. No-op on mono and on silence.
+    applyStereoWidener(buffer, stereoWidthFor(options.strength));
+    softLimitInPlace(buffer);
 }
 
 } // namespace silverdaw

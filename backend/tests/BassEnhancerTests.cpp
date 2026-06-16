@@ -45,6 +45,25 @@ double rms(const juce::AudioBuffer<float>& b, int ch, int start, int count)
 
 double dbfs(double linear) { return 20.0 * std::log10(linear + 1.0e-12); }
 
+// Single-frequency magnitude via Goertzel, used to confirm the exciter adds upper
+// harmonics that were not present in a pure low sine.
+double goertzelMag(const juce::AudioBuffer<float>& b, int ch, int start, int count, double freq)
+{
+    const double w = kTwoPi * freq / kSr;
+    const double coeff = 2.0 * std::cos(w);
+    double s1 = 0.0, s2 = 0.0;
+    const float* d = b.getReadPointer(ch);
+    for (int i = start; i < start + count; ++i)
+    {
+        const double s0 = static_cast<double>(d[i]) + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    const double re = s1 - s2 * std::cos(w);
+    const double im = s2 * std::sin(w);
+    return std::sqrt(re * re + im * im) / (0.5 * juce::jmax(1, count));
+}
+
 bool allFinite(const juce::AudioBuffer<float>& b)
 {
     for (int ch = 0; ch < b.getNumChannels(); ++ch)
@@ -153,11 +172,35 @@ void testExpanderAttenuatesBleedKeepsNotes()
             "low-level inter-note HF bleed should be attenuated by >4 dB");
 }
 
+void testExciterAddsUpperHarmonics()
+{
+    // A pure low sine carries no energy at its harmonics. With the expander self-
+    // bypassed (continuous tone), the exciter should add a measurable 3rd harmonic
+    // while leaving the fundamental within ~1 dB.
+    const int n = static_cast<int>(2.0 * kSr);
+    auto buf = makeSine(60.0, 0.3, n);
+    const int s = n / 4, c = n / 2;
+    const double fundBefore = goertzelMag(buf, 0, s, c, 60.0);
+    const double h3Before = goertzelMag(buf, 0, s, c, 180.0);
+
+    BassEnhancer::process(buf, kSr, {true, BassEnhanceStrength::Strong});
+
+    const double fundAfter = goertzelMag(buf, 0, s, c, 60.0);
+    const double h3After = goertzelMag(buf, 0, s, c, 180.0);
+
+    require(h3After > h3Before + 1.0e-4,
+            "exciter should add a 3rd-harmonic component not present in the input");
+    require(std::abs(dbfs(fundAfter) - dbfs(fundBefore)) < 1.0,
+            "the fundamental must be preserved within ~1 dB by the exciter");
+    require(allFinite(buf), "output must stay finite");
+}
+
 void testLowContrastSelfBypass()
 {
     // A near-continuous sustained bass tone has no gaps: the expander must self-
     // bypass and leave the level essentially untouched (only the subsonic high-
-    // pass, inaudible at 80 Hz, applies).
+    // pass, inaudible at 80 Hz, applies; the exciter adds only faint upper
+    // harmonics).
     const int n = static_cast<int>(3.0 * kSr);
     auto buf = makeSine(80.0, 0.2, n);
     const double before = rms(buf, 0, 0, n);
@@ -197,6 +240,8 @@ void addBassEnhancerTests(std::vector<TestCase>& tests)
                      testHighPassRemovesSubsonicKeepsFundamental});
     tests.push_back({"BassEnhancer expander attenuates bleed, keeps notes",
                      testExpanderAttenuatesBleedKeepsNotes});
+    tests.push_back({"BassEnhancer exciter adds upper harmonics",
+                     testExciterAddsUpperHarmonics});
     tests.push_back({"BassEnhancer self-bypasses low-contrast material",
                      testLowContrastSelfBypass});
     tests.push_back({"BassEnhancer keeps silence silent without NaN", testSilenceStaysSilentNoNaN});

@@ -146,6 +146,35 @@ void testExpanderAttenuatesBleedKeepsHits()
             "low-level inter-hit bleed should be attenuated by >4 dB");
 }
 
+void testTransientDesignerEmphasisesAttack()
+{
+    // A burst with a hard onset: amplitude jumps from a quiet bleed straight to a
+    // loud, constant-amplitude tone (makeHitsWithBleed). The constant amplitude
+    // means the only thing the transient designer can latch onto is the leading
+    // edge, so attack emphasis shows up as the onset window gaining level relative
+    // to the sustained body. Measured on the second hit (the buffer opens on the
+    // first, where both envelopes start together).
+    auto buf = makeHitsWithBleed(0.5, 0.005, 200.0);
+    const int hitStart = static_cast<int>(2.0 * kSr);            // start of the 2nd hit
+    const int onsetWin = static_cast<int>(0.008 * kSr);          // first 8 ms
+    const int sustainStart = hitStart + static_cast<int>(0.2 * kSr);
+    const int sustainWin = static_cast<int>(0.2 * kSr);
+
+    const double onsetBefore = rms(buf, 0, hitStart, onsetWin);
+    const double sustainBefore = rms(buf, 0, sustainStart, sustainWin);
+
+    DrumEnhancer::process(buf, kSr, {true, DrumEnhanceStrength::Strong});
+
+    const double onsetAfter = rms(buf, 0, hitStart, onsetWin);
+    const double sustainAfter = rms(buf, 0, sustainStart, sustainWin);
+
+    const double contrastBefore = dbfs(onsetBefore) - dbfs(sustainBefore);
+    const double contrastAfter = dbfs(onsetAfter) - dbfs(sustainAfter);
+    require(contrastAfter > contrastBefore + 1.0,
+            "transient designer should emphasise the attack relative to the sustain");
+    require(allFinite(buf), "output must stay finite");
+}
+
 void testLowContrastSelfBypass()
 {
     // A near-continuous mid-level tone has no gaps: the expander must self-bypass
@@ -190,6 +219,8 @@ void addDrumEnhancerTests(std::vector<TestCase>& tests)
                      testHighPassRemovesSubsonicKeepsKickBand});
     tests.push_back({"DrumEnhancer expander attenuates bleed, keeps hits",
                      testExpanderAttenuatesBleedKeepsHits});
+    tests.push_back({"DrumEnhancer transient designer emphasises the attack",
+                     testTransientDesignerEmphasisesAttack});
     tests.push_back({"DrumEnhancer self-bypasses low-contrast material",
                      testLowContrastSelfBypass});
     tests.push_back({"DrumEnhancer keeps silence silent without NaN", testSilenceStaysSilentNoNaN});

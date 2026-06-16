@@ -41,6 +41,30 @@ StrengthParams paramsFor(BassEnhanceStrength strength) noexcept
     }
 }
 
+// Parallel-blend amount for the harmonic exciter (0 = dry). Scaled by strength and
+// kept conservative so the added upper harmonics read as definition/translation,
+// not as distortion of the fundamental.
+double harmonicBlendFor(BassEnhanceStrength strength) noexcept
+{
+    switch (strength)
+    {
+        case BassEnhanceStrength::Light: return 0.10;
+        case BassEnhanceStrength::Strong: return 0.22;
+        case BassEnhanceStrength::Medium:
+        default: return 0.16;
+    }
+}
+
+// The exciter generates harmonics from content below this corner (the
+// fundamental/low-mid band) and...
+constexpr double kExciterSourceHz = 200.0;
+// ...high-passes the generated harmonics above this corner so only UPPER harmonics
+// are added in parallel — the fundamental and sub are never boosted.
+constexpr double kExciterHarmonicHz = 120.0;
+// Drive into the tanh nonlinearity. High enough that musical bass levels generate
+// audible harmonics, low enough to stay musical.
+constexpr double kExciterDrive = 4.0;
+
 // The detector runs off a copy low-passed to this corner so high-frequency bleed
 // (vocals, cymbals, guitar) cannot hold the expander open during a bass gap.
 constexpr double kDetectorLowPassHz = 600.0;
@@ -267,6 +291,87 @@ void applyExpander(juce::AudioBuffer<float>& buffer, const std::vector<double>& 
     }
 }
 
+// Cleanup stage: builds the low-passed detector, anchors a robust threshold and
+// gates inter-note bleed with the downward expander, self-bypassing on
+// sustained/continuous bass. Implemented as a helper so its early returns skip
+// only the cleanup, never the enhancement stage that follows.
+void applyCleanupExpander(juce::AudioBuffer<float>& buffer, double sampleRate,
+                          const StrengthParams& params) noexcept
+{
+    // Detector runs off a low-passed copy; the threshold is anchored to a robust
+    // high percentile of its windowed RMS so a single loud note cannot skew it,
+    // and the gap floor feeds the contrast guard below.
+    const auto det = buildDetector(buffer, sampleRate);
+    const auto levels = windowRms(det, sampleRate);
+    const double activeLevel = percentile(levels, 0.95);
+    if (activeLevel <= kSilenceFloor) return; // silent after the high-pass
+
+    const double gapFloor = percentile(levels, 0.20);
+    const double activeDb = 20.0 * std::log10(activeLevel + 1.0e-9);
+    const double gapDb = 20.0 * std::log10(std::max(gapFloor, static_cast<double>(kSilenceFloor)));
+    const double contrastDb = activeDb - gapDb;
+
+    // Sustained/continuous bass with no real gaps: gating would only expose
+    // separation artefacts, so bypass entirely (or stay extra gentle near the
+    // boundary).
+    if (contrastDb < kContrastBypassDb) return;
+    const double rangeDb = contrastDb < kContrastHalfRangeDb ? params.rangeDb * 0.5 : params.rangeDb;
+
+    const double thresholdDb = activeDb - params.thresholdBelowDb;
+    applyExpander(buffer, det, sampleRate, thresholdDb, params, rangeDb);
+}
+
+// Harmonic exciter: adds upper harmonics so the bass keeps its definition and
+// translates on small speakers that cannot reproduce the fundamental. Per channel,
+// the low band (< ~200 Hz) is isolated, driven through a tanh nonlinearity to
+// generate harmonics, then high-passed (> ~120 Hz) so only the UPPER harmonics
+// survive — the fundamental and sub are never boosted. The generated harmonics are
+// blended in parallel at a conservative, strength-scaled amount. Applied
+// per-channel so the stereo image is preserved.
+void applyHarmonicExciter(juce::AudioBuffer<float>& buffer, double sampleRate, double blend) noexcept
+{
+    if (! (blend > 0.0)) return;
+    const int numCh = buffer.getNumChannels();
+    const int numSamples = buffer.getNumSamples();
+
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        Biquad sourceLp = designButterLowPass(sampleRate, kExciterSourceHz);
+        Biquad harmonicHp = designButterHighPass(sampleRate, kExciterHarmonicHz);
+        float* data = buffer.getWritePointer(ch);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const double x = static_cast<double>(data[i]);
+            const double low = sourceLp.process(x);
+            const double shaped = std::tanh(kExciterDrive * low) / kExciterDrive;
+            const double harmonics = harmonicHp.process(shaped);
+            data[i] = static_cast<float>(x + blend * harmonics);
+        }
+    }
+}
+
+// Soft-knee peak safety. Samples below the knee pass through unchanged (so the
+// fundamental and steady levels are untouched); only peaks pushed past the knee by
+// the added harmonics are smoothly compressed toward the ceiling, avoiding
+// hard-clip distortion without altering the rest of the signal.
+void softLimitInPlace(juce::AudioBuffer<float>& buffer) noexcept
+{
+    constexpr float knee = 0.9F;
+    constexpr float ceiling = 0.9999F;
+    const float range = ceiling - knee;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        float* data = buffer.getWritePointer(ch);
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            const float a = std::abs(data[i]);
+            if (a <= knee) continue;
+            const float comp = range * std::tanh((a - knee) / range);
+            data[i] = std::copysign(knee + comp, data[i]);
+        }
+    }
+}
+
 } // namespace
 
 BassEnhanceStrength bassEnhanceStrengthFromString(const juce::String& text) noexcept
@@ -301,27 +406,13 @@ void BassEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
     sanitiseInPlace(buffer);
     applyHighPass(buffer, sampleRate, params.highPassHz);
 
-    // Detector runs off a low-passed copy; the threshold is anchored to a robust
-    // high percentile of its windowed RMS so a single loud note cannot skew it,
-    // and the gap floor feeds the contrast guard below.
-    const auto det = buildDetector(buffer, sampleRate);
-    const auto levels = windowRms(det, sampleRate);
-    const double activeLevel = percentile(levels, 0.95);
-    if (activeLevel <= kSilenceFloor) return; // silent after the high-pass
+    // Cleanup first (may self-bypass on sustained/continuous or silent material)...
+    applyCleanupExpander(buffer, sampleRate, params);
 
-    const double gapFloor = percentile(levels, 0.20);
-    const double activeDb = 20.0 * std::log10(activeLevel + 1.0e-9);
-    const double gapDb = 20.0 * std::log10(std::max(gapFloor, static_cast<double>(kSilenceFloor)));
-    const double contrastDb = activeDb - gapDb;
-
-    // Sustained/continuous bass with no real gaps: gating would only expose
-    // separation artefacts, so bypass entirely (or stay extra gentle near the
-    // boundary).
-    if (contrastDb < kContrastBypassDb) return;
-    const double rangeDb = contrastDb < kContrastHalfRangeDb ? params.rangeDb * 0.5 : params.rangeDb;
-
-    const double thresholdDb = activeDb - params.thresholdBelowDb;
-    applyExpander(buffer, det, sampleRate, thresholdDb, params, rangeDb);
+    // ...then always add upper harmonics for definition, with a soft limiter so the
+    // added energy can never hard-clip. Both are no-ops on silence.
+    applyHarmonicExciter(buffer, sampleRate, harmonicBlendFor(options.strength));
+    softLimitInPlace(buffer);
 }
 
 } // namespace silverdaw

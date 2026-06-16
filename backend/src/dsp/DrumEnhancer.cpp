@@ -40,6 +40,20 @@ StrengthParams paramsFor(DrumEnhanceStrength strength) noexcept
     }
 }
 
+// Attack-emphasis amount for the transient designer (dB of extra gain applied to
+// the leading edge of a hit when the fast envelope outruns the slow one). Scaled
+// by strength; kept modest so the punch reads as tighter, not as distortion.
+double transientBoostDbFor(DrumEnhanceStrength strength) noexcept
+{
+    switch (strength)
+    {
+        case DrumEnhanceStrength::Light: return 2.0;
+        case DrumEnhanceStrength::Strong: return 5.0;
+        case DrumEnhanceStrength::Medium:
+        default: return 3.5;
+    }
+}
+
 // Window over which the level envelope is measured for the percentile statistics
 // that anchor the expander threshold. ~10 ms balances transient resolution with
 // a stable estimate.
@@ -229,6 +243,96 @@ void applyExpander(juce::AudioBuffer<float>& buffer, double sampleRate,
     }
 }
 
+// Cleanup stage: the subsonic-cleared buffer is gated by a downward expander
+// anchored to a robust active level, with contrast-based self-bypass for dense or
+// continuous material. Implemented as a helper so its early returns skip only the
+// cleanup, never the enhancement stage that follows.
+void applyCleanupExpander(juce::AudioBuffer<float>& buffer, double sampleRate,
+                          const StrengthParams& params) noexcept
+{
+    // Anchor the threshold to a robust high percentile of the level so a single
+    // loud transient cannot skew it, and read the gap floor for the contrast
+    // guard below.
+    const auto peaks = windowPeaks(buffer, sampleRate);
+    const double activeLevel = percentile(peaks, 0.95);
+    if (activeLevel <= kSilenceFloor) return; // silent after the high-pass
+
+    const double gapFloor = percentile(peaks, 0.20);
+    const double activeDb = 20.0 * std::log10(activeLevel + 1.0e-9);
+    const double gapDb = 20.0 * std::log10(std::max(gapFloor, static_cast<double>(kSilenceFloor)));
+    const double contrastDb = activeDb - gapDb;
+
+    // Too little loud/quiet contrast: gating here would only expose separation
+    // artefacts, so bypass entirely (or stay extra gentle near the boundary).
+    if (contrastDb < kContrastBypassDb) return;
+    const double rangeDb = contrastDb < kContrastHalfRangeDb ? params.rangeDb * 0.5 : params.rangeDb;
+
+    const double thresholdDb = activeDb - params.thresholdBelowDb;
+    applyExpander(buffer, sampleRate, thresholdDb, params, rangeDb);
+}
+
+// Transient designer: emphasises the leading edge of each hit. A fast and a slow
+// envelope follow the cross-channel detector; where the fast envelope outruns the
+// slow one (an onset) a short positive gain is applied, scaled by how far ahead it
+// is. On sustained or steady material the two envelopes converge, so the gain
+// returns to unity and the timbre is left untouched. One shared gain per sample is
+// applied to every channel to preserve the stereo image.
+void applyTransientDesigner(juce::AudioBuffer<float>& buffer, double sampleRate, double boostDb) noexcept
+{
+    if (! (boostDb > 0.0)) return;
+    const double fs = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
+
+    const double fastAtk = std::exp(-1.0 / (0.5 * 0.001 * fs));   // 0.5 ms attack
+    const double fastRel = std::exp(-1.0 / (30.0 * 0.001 * fs));  // 30 ms release
+    const double slowAtk = std::exp(-1.0 / (18.0 * 0.001 * fs));  // 18 ms attack (lags onsets)
+    const double slowRel = std::exp(-1.0 / (180.0 * 0.001 * fs)); // 180 ms release
+
+    const int numCh = buffer.getNumChannels();
+    const int numSamples = buffer.getNumSamples();
+
+    double fastEnv = sampleDetector(buffer, 0);
+    double slowEnv = fastEnv;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const double d = sampleDetector(buffer, i);
+        fastEnv = d > fastEnv ? fastAtk * fastEnv + (1.0 - fastAtk) * d
+                              : fastRel * fastEnv + (1.0 - fastRel) * d;
+        slowEnv = d > slowEnv ? slowAtk * slowEnv + (1.0 - slowAtk) * d
+                              : slowRel * slowEnv + (1.0 - slowRel) * d;
+
+        // How far the fast envelope leads the slow one: 0 at steady state, up to 1
+        // when the fast envelope reaches twice the slow one.
+        const double lead = std::clamp(fastEnv / (slowEnv + 1.0e-9) - 1.0, 0.0, 1.0);
+        const float gain = static_cast<float>(std::pow(10.0, (boostDb * lead) / 20.0));
+
+        for (int ch = 0; ch < numCh; ++ch)
+            buffer.getWritePointer(ch)[i] *= gain;
+    }
+}
+
+// Soft-knee peak safety. Samples below the knee pass through unchanged (so steady
+// levels and the body of the signal are untouched); only peaks pushed past the
+// knee by the transient gain are smoothly compressed toward the ceiling, avoiding
+// hard-clip distortion without altering the rest of the signal.
+void softLimitInPlace(juce::AudioBuffer<float>& buffer) noexcept
+{
+    constexpr float knee = 0.9F;
+    constexpr float ceiling = 0.9999F;
+    const float range = ceiling - knee;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        float* data = buffer.getWritePointer(ch);
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            const float a = std::abs(data[i]);
+            if (a <= knee) continue;
+            const float comp = range * std::tanh((a - knee) / range);
+            data[i] = std::copysign(knee + comp, data[i]);
+        }
+    }
+}
+
 } // namespace
 
 DrumEnhanceStrength drumEnhanceStrengthFromString(const juce::String& text) noexcept
@@ -263,25 +367,13 @@ void DrumEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
     sanitiseInPlace(buffer);
     applyHighPass(buffer, sampleRate, params.highPassHz);
 
-    // Anchor the threshold to a robust high percentile of the level so a single
-    // loud transient cannot skew it, and read the gap floor for the contrast
-    // guard below.
-    const auto peaks = windowPeaks(buffer, sampleRate);
-    const double activeLevel = percentile(peaks, 0.95);
-    if (activeLevel <= kSilenceFloor) return; // silent after the high-pass
+    // Cleanup first (may self-bypass on dense/continuous or silent material)...
+    applyCleanupExpander(buffer, sampleRate, params);
 
-    const double gapFloor = percentile(peaks, 0.20);
-    const double activeDb = 20.0 * std::log10(activeLevel + 1.0e-9);
-    const double gapDb = 20.0 * std::log10(std::max(gapFloor, static_cast<double>(kSilenceFloor)));
-    const double contrastDb = activeDb - gapDb;
-
-    // Too little loud/quiet contrast: gating here would only expose separation
-    // artefacts, so bypass entirely (or stay extra gentle near the boundary).
-    if (contrastDb < kContrastBypassDb) return;
-    const double rangeDb = contrastDb < kContrastHalfRangeDb ? params.rangeDb * 0.5 : params.rangeDb;
-
-    const double thresholdDb = activeDb - params.thresholdBelowDb;
-    applyExpander(buffer, sampleRate, thresholdDb, params, rangeDb);
+    // ...then always shape the transients for punch, with a soft limiter so the
+    // boosted onsets can never hard-clip. Both are no-ops on silence.
+    applyTransientDesigner(buffer, sampleRate, transientBoostDbFor(options.strength));
+    softLimitInPlace(buffer);
 }
 
 } // namespace silverdaw
