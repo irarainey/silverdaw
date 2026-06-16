@@ -58,7 +58,9 @@ class ProjectState : public juce::ValueTree::Listener
     void setName(const juce::String& name);
 
     /** Add an empty track. Idempotent: returns true if `trackId` already exists. */
-    bool addTrack(const juce::String& trackId);
+    // `colorIndex >= 0` persists the track's palette colour so inherited clip
+    // colours stay stable across reloads; `-1` leaves it unset (renderer default).
+    bool addTrack(const juce::String& trackId, int colorIndex = -1);
 
     // Returns removed clip ids so the engine can drop playable sources in lockstep.
     juce::StringArray removeTrack(const juce::String& trackId);

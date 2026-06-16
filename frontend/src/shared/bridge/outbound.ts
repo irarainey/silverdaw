@@ -157,6 +157,8 @@ export interface TrackAddPayload {
   trackId: string
   /** Initial display name for new tracks. Optional for older clients. */
   name?: string
+  /** Palette colour persisted so inherited clip colours stay stable across reloads. */
+  colorIndex?: number
 }
 
 export interface TrackRemovePayload {

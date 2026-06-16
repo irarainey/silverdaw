@@ -238,6 +238,8 @@ export const ProjectStateTrackSchema = z.object({
   muted: z.boolean().optional(),
   soloed: z.boolean().optional(),
   heightPx: z.number().optional(),
+  /** Persisted palette colour; absent falls back to the renderer's positional default. */
+  colorIndex: z.number().optional(),
   // Per-track FX stored flat to match the backend ValueTree.
   sendReverb: z.number().optional(),
   sendDelay: z.number().optional(),

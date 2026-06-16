@@ -61,6 +61,11 @@ juce::var ProjectState::tracksAsJson() const
         {
             trackObj->setProperty("heightPx", static_cast<double>(track.getProperty(kHeightPx, 0.0)));
         }
+        // Persisted per-track colour; absent means the renderer's positional default.
+        if (track.hasProperty(kColorIndex))
+        {
+            trackObj->setProperty("colorIndex", static_cast<int>(track.getProperty(kColorIndex, 0)));
+        }
         // Emit only non-default Tone fields to match renderer default suppression.
         if (track.hasProperty(kToneBassDb))
         {
@@ -230,6 +235,24 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
         root.removeAllProperties(nullptr);
         root.copyPropertiesAndChildrenFrom(newTree, nullptr);
         removeLegacyClipFadeProperties(root);
+        // Backfill a stable per-track colour for legacy projects so inherited
+        // clip colours stop shifting with track order across reloads. The ordinal
+        // mirrors the renderer's positional fallback, so the first load is
+        // visually unchanged; persisting it freezes the colour from then on.
+        int trackOrdinal = 0;
+        for (int i = 0; i < root.getNumChildren(); ++i)
+        {
+            auto child = root.getChild(i);
+            if (!child.hasType(kTrack))
+            {
+                continue;
+            }
+            if (!child.hasProperty(kColorIndex))
+            {
+                child.setProperty(kColorIndex, trackOrdinal, nullptr);
+            }
+            ++trackOrdinal;
+        }
         // Backfill standard containers so add/remove cycles can return to clean.
         if (!root.getChildWithName(kLibrary).isValid())
         {

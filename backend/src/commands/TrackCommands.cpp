@@ -52,7 +52,9 @@ void handleTrackAdd(const juce::var& payload, silverdaw::ProjectState& projectSt
         return;
     }
     const bool existed = projectState.hasTrack(trackId);
-    const bool ok = projectState.addTrack(trackId);
+    const juce::var idxVar = payload.getProperty("colorIndex", juce::var());
+    const int colorIndex = (idxVar.isInt() || idxVar.isInt64()) ? static_cast<int>(idxVar) : -1;
+    const bool ok = projectState.addTrack(trackId, colorIndex);
     const juce::String name = tryGetRequiredString(payload, "name").value_or(juce::String{});
     if (ok && !existed && name.trim().isNotEmpty())
     {

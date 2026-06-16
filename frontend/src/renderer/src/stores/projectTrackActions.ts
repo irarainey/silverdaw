@@ -27,7 +27,8 @@ export const trackActions = {
       }
       this.tracks.push(track)
       // Optimistic; TRACK_ADDED is diagnostic because the renderer already shows it.
-      sendBridge('TRACK_ADD', { trackId, name: track.name })
+      // colorIndex is persisted so the inherited clip colour never drifts on reload.
+      sendBridge('TRACK_ADD', { trackId, name: track.name, colorIndex: track.colorIndex })
       log.info('project', `addTrack id=${trackId}`)
       return trackId
     },

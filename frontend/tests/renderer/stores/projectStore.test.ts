@@ -145,7 +145,7 @@ describe('projectStore', () => {
     expect(project.tracks[0]?.lengthMs).toBe(DEFAULT_TRACK_LENGTH_MS)
     expect(project.clips[clipId ?? '']?.startMs).toBe(500)
     expect(project.durationMs).toBe(DEFAULT_TRACK_LENGTH_MS)
-    expect(sendMock).toHaveBeenCalledWith('TRACK_ADD', { trackId, name: 'Track 1' })
+    expect(sendMock).toHaveBeenCalledWith('TRACK_ADD', { trackId, name: 'Track 1', colorIndex: 0 })
   })
 
   it('clamps same-track clip moves to the nearest non-overlapping slot', () => {

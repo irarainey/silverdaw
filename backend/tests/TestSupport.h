@@ -86,6 +86,7 @@ inline juce::ValueTree makeProjectTree()
     track.setProperty("id", "t1", nullptr);
     track.setProperty("name", "Drums", nullptr);
     track.setProperty("gain", 0.75, nullptr);
+    track.setProperty("colorIndex", 0, nullptr);
 
     juce::ValueTree clip(juce::Identifier{"CLIP"});
     clip.setProperty("id", "c1", nullptr);

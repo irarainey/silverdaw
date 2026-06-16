@@ -6,7 +6,7 @@
 namespace silverdaw
 {
 
-bool ProjectState::addTrack(const juce::String& trackId)
+bool ProjectState::addTrack(const juce::String& trackId, int colorIndex)
 {
     if (trackId.isEmpty())
     {
@@ -19,6 +19,11 @@ bool ProjectState::addTrack(const juce::String& trackId)
     juce::ValueTree track(kTrack);
     track.setProperty(kId, trackId, &undoManager);
     track.setProperty(kGain, 1.0F, &undoManager);
+    // Persist the renderer-assigned colour so it never drifts with track order.
+    if (colorIndex >= 0)
+    {
+        track.setProperty(kColorIndex, colorIndex, &undoManager);
+    }
     root.appendChild(track, &undoManager);
     return true;
 }
