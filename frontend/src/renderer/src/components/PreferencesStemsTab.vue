@@ -160,7 +160,7 @@ onMounted(refresh)
       v-model:strength="drumEnhanceStrength"
       title="Drum cleanup"
       checkbox-label="Clean up the drum stem after separation"
-      description="Applies a subsonic high-pass and a gentle expander to the drum stem only, trimming rumble and quiet bleed in the gaps between hits while leaving the hits untouched. It eases off automatically on dense or continuous material. Off by default. Other stems are always written untouched, and your original files are never changed."
+      description="Applies a subsonic high-pass and a gentle expander to the drum stem only, trimming rumble and quiet bleed in the gaps between hits while leaving the hits untouched, then gently sharpens the attack of each hit so the drums punch a little harder. The cleanup eases off automatically on dense or continuous material. Off by default. Other stems are always written untouched, and your original files are never changed."
       radio-name="drum-enhance-strength"
       :options="DRUM_STRENGTH_OPTIONS"
     />
@@ -170,7 +170,7 @@ onMounted(refresh)
       v-model:strength="bassEnhanceStrength"
       title="Bass cleanup"
       checkbox-label="Clean up the bass stem after separation"
-      description="Applies a subsonic high-pass and a gentle expander to the bass stem only, trimming sub-sonic rumble and the high-frequency bleed that leaks into the gaps between notes while leaving the notes untouched. It eases off automatically on sustained material. Off by default. Other stems are always written untouched, and your original files are never changed."
+      description="Applies a subsonic high-pass and a gentle expander to the bass stem only, trimming sub-sonic rumble and the high-frequency bleed that leaks into the gaps between notes while leaving the notes untouched, then gently adds harmonics so the bass stays clearer on small speakers. The cleanup eases off automatically on sustained material. Off by default. Other stems are always written untouched, and your original files are never changed."
       radio-name="bass-enhance-strength"
       :options="BASS_STRENGTH_OPTIONS"
     />
@@ -180,7 +180,7 @@ onMounted(refresh)
       v-model:strength="otherEnhanceStrength"
       title="Other cleanup"
       checkbox-label="Clean up the other (residual) stem after separation"
-      description="Applies a subsonic high-pass and a shallow spectral cleanup to the other/residual stem only, easing the low-level musical-noise and bleed the separation leaves behind while protecting sustained instruments. It eases off automatically when the change would be inaudible. Off by default. The remaining stems are always written untouched, and your original files are never changed."
+      description="Applies a subsonic high-pass and a shallow spectral cleanup to the other/residual stem only, easing the low-level musical-noise and bleed the separation leaves behind while protecting sustained instruments, then gently widens the stereo image for a little more space. The cleanup eases off automatically when the change would be inaudible. Off by default. The remaining stems are always written untouched, and your original files are never changed."
       radio-name="other-enhance-strength"
       :options="OTHER_STRENGTH_OPTIONS"
     />

@@ -1097,13 +1097,32 @@ stem clip that has played to its end resumes correctly on the next seek + play
 (an `AudioTransportSource` auto-stops at EOF and repositioning alone would not
 clear that, leaving the clip silent until reloaded).
 
-Optionally, each stem can be passed through a light **post-separation cleanup**
-pass before it is written (Preferences ▸ Stems, off by default per stem). The
-vocal cleanup uses **RNNoise** (xiph, BSD-2-Clause; fetched and statically linked
-via CMake) to suppress broadband noise and separation artefacts, while drums,
-bass and `other` use small purpose-built DSP enhancers in `backend/src/dsp/`.
-The pass is non-destructive — it only shapes the freshly written stem WAVs and
-never touches the user's source. See
+Optionally, each stem can be passed through a **post-separation cleanup and
+enhancement** pass before it is written (Preferences ▸ Stems, off by default per
+stem, with a Light / Medium / Strong strength). Drums, bass and the residual each
+have a small purpose-built DSP unit in `backend/src/dsp/` (`DrumEnhancer`,
+`BassEnhancer`, `OtherEnhancer`) that runs a cleanup stage followed by an
+enhancement stage; the vocal path runs an RNNoise denoise and then
+`VocalEnhancer`:
+
+- **Vocals** — **RNNoise** (xiph, BSD-2-Clause; fetched and statically linked via
+  CMake) suppresses broadband noise and separation artefacts, then `VocalEnhancer`
+  applies a subsonic high-pass and a gentle downward expander on the quiet bleed.
+- **Drums** — high-pass + expander cleanup, then a **transient designer** that
+  emphasises the attack of each hit for punch.
+- **Bass** — high-pass + low-passed-detector expander cleanup, then a **harmonic
+  exciter** that adds a high-passed harmonic layer above ~120 Hz (without boosting
+  the sub/fundamental band) so the bass keeps its definition on small speakers.
+- **Other** (the residual) — high-pass + a shallow STFT spectral attenuation that
+  shaves the musical-noise floor, then a mid/side **stereo widener** that opens up
+  the image while preserving the mono sum.
+
+On the drum, bass and residual paths the cleanup stage self-bypasses on dense,
+sustained or low-contrast material, but the enhancement stage still runs
+afterwards (it is a no-op on silence), and a soft-knee limiter on those three
+paths keeps the added energy from clipping. The whole pass is non-destructive — it
+only shapes the freshly written stem WAVs and never touches the user's source, and
+it is a guaranteed no-op when disabled, empty, or silent. See
 [`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md) for RNNoise attribution.
 
 ## Library panel
