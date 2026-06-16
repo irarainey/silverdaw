@@ -19,14 +19,23 @@ void AudioEngine::setPositionMs(double ms)
     busGraph.resetSharedFx();
     // Deep read-ahead priming avoids JUCE BufferingAudioSource dropping cold samples at play
     // start.
+    const bool playing = master.isPlaying();
     for (auto& [id, track] : tracks)
     {
         if (track->transportSource == nullptr) continue;
         track->transportSource->setPosition(trackSeekSecondsFor(*track, masterSamples));
+        // A short clip whose transport already played to EOF earlier in this playback has
+        // auto-stopped (AudioTransportSource clears `playing` at EOF). Repositioning alone does
+        // NOT clear that state, so a backward seek *while playing* (e.g. looping back to replay)
+        // would leave such clips silent for the rest of the pass. play()'s primeTracksForPlayback
+        // restarts transports, but a mid-playback seek bypasses it — so restart here too.
+        // start() is idempotent for an already-playing transport. While paused the master gates
+        // all output and the next play() re-primes, so only the playing case needs this.
+        if (playing) track->transportSource->start();
         track->prefetchDirty = true;
     }
-    rebuildTimer.startTimer(master.isPlaying() ? 1 : kRebuildDebounceMs);
-    if (! master.isPlaying())
+    rebuildTimer.startTimer(playing ? 1 : kRebuildDebounceMs);
+    if (! playing)
     {
         pendingSeekPrewarm = true;
     }

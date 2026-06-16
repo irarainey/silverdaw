@@ -5,6 +5,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
+#include <unordered_map>
 #include <vector>
 
 namespace silverdaw
@@ -49,6 +50,13 @@ class PlayheadEmitter : public juce::Timer
     std::vector<BusGraph::TrackPeakSnapshot> trackPeakScratch;
     // Last observed bus-graph skip count, to log only newly dropped blocks.
     juce::uint64 lastSkippedBlocks = 0;
+    // Wall-clock throttle for the perf.tracks per-track output-peak diagnostic.
+    // Pinpoints which track falls silent (e.g. after a gain/filter change) since the
+    // master meter alone hides a single muted track behind the others. Peaks are
+    // accumulated per track between emissions so short one-shot clips are not missed.
+    static constexpr double kTracksPeakLogIntervalMs = 250.0;
+    double lastTracksPeakLogMs = 0.0;
+    std::unordered_map<juce::String, std::pair<float, float>> tracksPeakLogMax;
 };
 
 } // namespace silverdaw

@@ -140,6 +140,35 @@ void PlayheadEmitter::timerCallback()
             break;
         }
     }
+
+    // perf.tracks: accumulate each track's peak between emissions so a track that
+    // falls silent after a gain/filter change is identifiable in the backend log
+    // (the master meter hides a single muted track). Cleared when idle to avoid
+    // logging stale peaks.
+    if (playing)
+    {
+        for (const auto& snap : trackPeakScratch)
+        {
+            auto& acc = tracksPeakLogMax[snap.trackId];
+            acc.first = juce::jmax(acc.first, snap.peakL);
+            acc.second = juce::jmax(acc.second, snap.peakR);
+        }
+        if ((nowMs - lastTracksPeakLogMs) >= kTracksPeakLogIntervalMs && ! tracksPeakLogMax.empty())
+        {
+            juce::String line("playing=1 posMs=" + juce::String(rawPosMs, 1));
+            for (const auto& kv : tracksPeakLogMax)
+                line << " [" << kv.first << " L=" << juce::String(kv.second.first, 5)
+                     << " R=" << juce::String(kv.second.second, 5) << "]";
+            silverdaw::log::debug("perf.tracks", line);
+            lastTracksPeakLogMs = nowMs;
+            tracksPeakLogMax.clear();
+        }
+    }
+    else if (! tracksPeakLogMax.empty())
+    {
+        tracksPeakLogMax.clear();
+    }
+
     if (anyTrackHasSignal || lastTrackLevelsHadSignal)
     {
         juce::Array<juce::var> tracksVar;
