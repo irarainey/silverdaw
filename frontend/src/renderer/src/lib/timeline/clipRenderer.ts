@@ -726,7 +726,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       style: {
         fontFamily: 'system-ui, -apple-system, sans-serif',
         fontSize: FONT_SIZE,
-        fontWeight: '700',
+        fontWeight: '600',
         fill: 0xffffff,
         stroke: { color: 0x09090b, width: 2 }
       }

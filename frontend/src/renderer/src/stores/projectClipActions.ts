@@ -704,8 +704,11 @@ export const clipActions = {
         if (!other) continue
         const otherEffDur = effectiveClipDurationMs(other)
         const otherEnd = other.startMs + otherEffDur
-        // Touching edges are allowed.
-        if (newStart < otherEnd && newEnd > other.startMs) return true
+        // Touching edges are allowed. Tolerate sub-millisecond float drift so a
+        // clip that exactly fills a gap isn't rejected as a phantom overlap.
+        if (newStart < otherEnd - CLIP_FIT_EPSILON_MS && newEnd > other.startMs + CLIP_FIT_EPSILON_MS) {
+          return true
+        }
       }
       return false
     },
