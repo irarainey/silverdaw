@@ -15,6 +15,7 @@ const {
   project,
   hoverCursor,
   scrollY,
+  onWheel,
   renameOverlayStyle,
   renameInputRef,
   renameValue,
@@ -63,8 +64,14 @@ const {
       :style="{ cursor: hoverCursor }"
     />
 
-    <!-- HTML overlay for track headers (name + M/S/X buttons). -->
-    <TrackHeaderPanel :scroll-y="scrollY" />
+    <!-- HTML overlay for track headers (name + M/S/X buttons). The header rows
+             are pointer-events-auto and would otherwise swallow wheel events, so
+             forward them to the timeline's wheel handler to keep vertical
+             scroll / zoom working when the pointer is over a header. -->
+    <TrackHeaderPanel
+      :scroll-y="scrollY"
+      :on-wheel="onWheel"
+    />
 
     <!-- Inline rename input for a clip's title strip. Floats over the
              drawn header pixels and updates its position reactively as the

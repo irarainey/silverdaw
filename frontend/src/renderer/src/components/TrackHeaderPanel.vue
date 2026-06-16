@@ -18,7 +18,10 @@ import { useTrackResizeDrag } from '@/lib/track/useTrackResizeDrag'
 import { useTrackReorderDrag } from '@/lib/track/useTrackReorderDrag'
 import TrackMeter from '@/components/TrackMeter.vue'
 
-withDefaults(defineProps<{ scrollY?: number }>(), { scrollY: 0 })
+withDefaults(defineProps<{ scrollY?: number; onWheel?: (e: WheelEvent) => void }>(), {
+  scrollY: 0,
+  onWheel: undefined
+})
 
 const project = useProjectStore()
 const ui = useUiStore()
@@ -119,6 +122,7 @@ function isTrackFxShowing(trackId: string): boolean {
   <div
     class="pointer-events-none absolute inset-y-0 left-0 select-none"
     :style="{ width: headerWidth + 'px' }"
+    @wheel="onWheel"
   >
     <!-- Add-track strip aligned with the ruler row. -->
     <button

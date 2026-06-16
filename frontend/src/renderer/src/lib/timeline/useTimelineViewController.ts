@@ -545,6 +545,7 @@ export function useTimelineViewController(
     host,
     hoverCursor,
     scrollY,
+    onWheel,
     renameOverlayStyle,
     renameInputRef,
     renameValue,
