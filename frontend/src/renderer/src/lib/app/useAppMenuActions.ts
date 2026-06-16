@@ -55,10 +55,20 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     }
     // Quit/close must work even during a stuck startup.
     if (action === 'file.exit') {
+      // When the backend isn't connected a save can never complete, so skip the
+      // unsaved-changes prompt (whose Save would fail) and exit directly.
+      if (!transport.bridgeReady) {
+        window.silverdaw.menuAction('file.exitConfirmed')
+        return
+      }
       deps.guardAgainstUnsavedChanges(() => window.silverdaw.menuAction('file.exitConfirmed'))
       return
     }
     if (action === 'app.requestClose') {
+      if (!transport.bridgeReady) {
+        window.silverdaw.menuAction('app.confirmClose')
+        return
+      }
       deps.guardAgainstUnsavedChanges(() => window.silverdaw.menuAction('app.confirmClose'))
       return
     }

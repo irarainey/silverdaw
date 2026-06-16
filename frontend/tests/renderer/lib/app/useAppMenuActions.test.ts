@@ -141,12 +141,36 @@ describe('useAppMenuActions — handleMenuAction', () => {
     expect(h.refs.preferencesOpen.value).toBe(true)
   })
 
-  it('routes file.exit through the unsaved-changes guard', () => {
-    const h = makeDeps({ bridgeReady: false })
+  it('routes file.exit through the unsaved-changes guard when the bridge is ready', () => {
+    const h = makeDeps({ bridgeReady: true })
     const { handleMenuAction } = useAppMenuActions(h.deps)
     handleMenuAction('file.exit')
     expect(h.guard).toHaveBeenCalledTimes(1)
     expect(menuAction).toHaveBeenCalledWith('file.exitConfirmed')
+  })
+
+  it('file.exit bypasses the unsaved-changes guard and exits when the bridge is down', () => {
+    const h = makeDeps({ bridgeReady: false })
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('file.exit')
+    expect(h.guard).not.toHaveBeenCalled()
+    expect(menuAction).toHaveBeenCalledWith('file.exitConfirmed')
+  })
+
+  it('app.requestClose routes through the unsaved-changes guard when the bridge is ready', () => {
+    const h = makeDeps({ bridgeReady: true })
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('app.requestClose')
+    expect(h.guard).toHaveBeenCalledTimes(1)
+    expect(menuAction).toHaveBeenCalledWith('app.confirmClose')
+  })
+
+  it('app.requestClose bypasses the guard and closes when the bridge is down', () => {
+    const h = makeDeps({ bridgeReady: false })
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('app.requestClose')
+    expect(h.guard).not.toHaveBeenCalled()
+    expect(menuAction).toHaveBeenCalledWith('app.confirmClose')
   })
 
   it('drops non-essential actions while the bridge is not ready', () => {
