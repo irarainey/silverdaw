@@ -203,6 +203,84 @@ if(MSVC)
 endif()
 target_link_libraries(rubberband_local PUBLIC SampleRate::samplerate)
 
+# ─── RNNoise (vocal-stem denoise) ────────────────────────────────────────
+# RNNoise is an RNN-based noise/artefact suppressor (BSD-2-Clause, pure C).
+# We use it for offline cleanup of the *vocals* stem after separation. We pin
+# the classic v0.1.1 release because — unlike current `main` — it ships the
+# trained model in-tree (`src/rnn_data.c`), so the build needs no model
+# download step and stays fully reproducible through FetchContent.
+#
+# Populate-only (no add_subdirectory): upstream builds with autotools, so we
+# compile the handful of self-contained C sources ourselves into a static
+# library, exactly like the Rubber Band block above. The default model is the
+# built-in one selected by passing NULL to `rnnoise_create`.
+#
+# Licence: BSD-2-Clause. `_deps/rnnoise-src/COPYING` is picked up by the
+# THIRD_PARTY_LICENSES.md aggregation step.
+set(RNNOISE_GIT_TAG "v0.1.1" CACHE STRING "RNNoise version to fetch")
+
+FetchContent_Declare(rnnoise
+    GIT_REPOSITORY https://github.com/xiph/rnnoise.git
+    GIT_TAG        ${RNNOISE_GIT_TAG}
+    GIT_SHALLOW    TRUE
+    GIT_PROGRESS   TRUE)
+FetchContent_GetProperties(rnnoise)
+if(NOT rnnoise_POPULATED)
+    FetchContent_Populate(rnnoise)
+endif()
+
+set(RNN_DIR ${rnnoise_SOURCE_DIR})
+
+# pitch.c and celt_lpc.c (CELT-derived) declare a handful of C99 variable-length
+# arrays, which the GNU toolchain accepts but MSVC rejects (same incompatibility
+# the vendored BTrack copy is patched for). Rather than fork the upstream tree,
+# we rewrite just those five declarations to `_alloca` at configure time and
+# compile the patched copies; every other source — including the in-tree model —
+# is used verbatim from the pinned checkout. Each VLA declaration is a unique
+# single line, so the replacements are unambiguous.
+set(RNN_PATCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/rnnoise_patched)
+file(MAKE_DIRECTORY ${RNN_PATCH_DIR})
+
+file(READ ${RNN_DIR}/src/pitch.c RNN_PITCH_SRC)
+string(REPLACE "opus_val16 x_lp4[len>>2];"
+    "opus_val16 *x_lp4 = (opus_val16*)_alloca(sizeof(opus_val16)*(len>>2));"
+    RNN_PITCH_SRC "${RNN_PITCH_SRC}")
+string(REPLACE "opus_val16 y_lp4[lag>>2];"
+    "opus_val16 *y_lp4 = (opus_val16*)_alloca(sizeof(opus_val16)*(lag>>2));"
+    RNN_PITCH_SRC "${RNN_PITCH_SRC}")
+string(REPLACE "opus_val32 xcorr[max_pitch>>1];"
+    "opus_val32 *xcorr = (opus_val32*)_alloca(sizeof(opus_val32)*(max_pitch>>1));"
+    RNN_PITCH_SRC "${RNN_PITCH_SRC}")
+string(REPLACE "opus_val32 yy_lookup[maxperiod+1];"
+    "opus_val32 *yy_lookup = (opus_val32*)_alloca(sizeof(opus_val32)*(maxperiod+1));"
+    RNN_PITCH_SRC "${RNN_PITCH_SRC}")
+file(WRITE ${RNN_PATCH_DIR}/pitch.c "#include <malloc.h>\n${RNN_PITCH_SRC}")
+
+file(READ ${RNN_DIR}/src/celt_lpc.c RNN_LPC_SRC)
+string(REPLACE "opus_val16 xx[n];"
+    "opus_val16 *xx = (opus_val16*)_alloca(sizeof(opus_val16)*(n));"
+    RNN_LPC_SRC "${RNN_LPC_SRC}")
+file(WRITE ${RNN_PATCH_DIR}/celt_lpc.c "#include <malloc.h>\n${RNN_LPC_SRC}")
+
+add_library(rnnoise_local STATIC
+    ${RNN_DIR}/src/denoise.c
+    ${RNN_DIR}/src/rnn.c
+    ${RNN_DIR}/src/rnn_data.c
+    ${RNN_DIR}/src/rnn_reader.c
+    ${RNN_PATCH_DIR}/pitch.c
+    ${RNN_PATCH_DIR}/celt_lpc.c
+    ${RNN_DIR}/src/kiss_fft.c)
+# Consumers only need the public C API; the internal CELT-derived headers stay
+# private to the library's own translation units.
+target_include_directories(rnnoise_local PUBLIC ${RNN_DIR}/include)
+target_include_directories(rnnoise_local PRIVATE ${RNN_DIR}/src)
+# `_USE_MATH_DEFINES` exposes M_PI under MSVC (same patch BTrack needs). Silence
+# the third-party C sources' warnings so they don't drown out ours.
+target_compile_definitions(rnnoise_local PRIVATE _USE_MATH_DEFINES)
+if(MSVC)
+    target_compile_options(rnnoise_local PRIVATE /W0 /wd4244 /wd4267 /wd4305 /wd4996)
+endif()
+
 # ─── ONNX Runtime (stem separation inference) ────────────────────────────
 # Phase 6 stem separation runs a Demucs model through ONNX Runtime. Microsoft
 # ships official prebuilt Windows binaries, so rather than vendor a DLL by hand
@@ -354,6 +432,11 @@ add_library(silverdaw_backend_core STATIC
     # dsp
     src/dsp/BpmDetector.cpp
     src/dsp/LoudnessAnalyzer.cpp
+    src/dsp/VocalEnhancer.cpp
+    src/dsp/VocalDenoiser.cpp
+    src/dsp/DrumEnhancer.cpp
+    src/dsp/BassEnhancer.cpp
+    src/dsp/OtherEnhancer.cpp
     src/dsp/WarpProcessor.cpp
     src/dsp/Waveform.cpp
     # engine
@@ -423,9 +506,11 @@ target_link_libraries(silverdaw_backend_core PUBLIC
     juce::juce_audio_formats
     juce::juce_audio_processors
     juce::juce_audio_utils
+    juce::juce_dsp
     ixwebsocket
     btrack_local
     rubberband_local
+    rnnoise_local
     SampleRate::samplerate
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
@@ -530,7 +615,12 @@ if(SILVERDAW_BUILD_TESTS)
         tests/EnvelopeFadeTests.cpp
 tests/MixdownRenderTests.cpp
         tests/StemSeparationTests.cpp
-        tests/BpmDetectorTests.cpp)
+        tests/BpmDetectorTests.cpp
+        tests/VocalEnhancerTests.cpp
+        tests/VocalDenoiserTests.cpp
+        tests/DrumEnhancerTests.cpp
+        tests/BassEnhancerTests.cpp
+        tests/OtherEnhancerTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
 

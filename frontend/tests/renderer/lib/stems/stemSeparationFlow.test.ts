@@ -60,9 +60,28 @@ const api = {
   getStemModelState: vi.fn(),
   getStemModelDir: vi.fn(async () => 'C:\\models\\htdemucs-ft'),
   getStemPrefs: vi.fn(
-    async (): Promise<{ useGpu: boolean; quality: 'fast' | 'balanced' | 'best' }> => ({
+    async (): Promise<{
+      useGpu: boolean
+      quality: 'fast' | 'balanced' | 'best'
+      enhanceVocals: boolean
+      vocalEnhanceStrength: 'light' | 'medium' | 'strong'
+      enhanceDrums: boolean
+      drumEnhanceStrength: 'light' | 'medium' | 'strong'
+      enhanceBass: boolean
+      bassEnhanceStrength: 'light' | 'medium' | 'strong'
+      enhanceOther: boolean
+      otherEnhanceStrength: 'light' | 'medium' | 'strong'
+    }> => ({
       useGpu: true,
-      quality: 'balanced'
+      quality: 'balanced',
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
     })
   ),
   getStemGpuStatus: vi.fn(
@@ -99,7 +118,18 @@ beforeEach(async () => {
   vi.stubGlobal('window', { silverdaw: api })
   vi.stubGlobal('crypto', { randomUUID: () => 'job-123' })
   api.getStemModelDir.mockResolvedValue('C:\\models\\htdemucs-ft')
-  api.getStemPrefs.mockResolvedValue({ useGpu: true, quality: 'balanced' })
+  api.getStemPrefs.mockResolvedValue({
+    useGpu: true,
+    quality: 'balanced',
+    enhanceVocals: false,
+    vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
+  })
   api.getStemGpuStatus.mockResolvedValue({ available: true, name: 'Test GPU' })
   // Reset the module-cached preferred quality to the default before each test.
   await loadStemQualityPreference()
@@ -161,7 +191,15 @@ describe('stem selection dialog', () => {
       sourceName: 'song',
       stems: ['vocals', 'drums'],
       quality: 'balanced',
-      useGpu: true
+      useGpu: true,
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
     })
   })
 
@@ -189,7 +227,18 @@ describe('stem selection dialog', () => {
   })
 
   it('seeds the picker from the persisted quality preference', async () => {
-    api.getStemPrefs.mockResolvedValue({ useGpu: true, quality: 'best' })
+    api.getStemPrefs.mockResolvedValue({
+      useGpu: true,
+      quality: 'best',
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
+    })
     await loadStemQualityPreference()
     requestStemSeparationForClip('c1')
     expect(useStemSelection().value?.quality).toBe('best')
@@ -202,7 +251,18 @@ describe('stem selection dialog', () => {
       totalBytes: 100,
       fileCount: 4
     })
-    api.getStemPrefs.mockResolvedValue({ useGpu: false, quality: 'balanced' })
+    api.getStemPrefs.mockResolvedValue({
+      useGpu: false,
+      quality: 'balanced',
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
+    })
     await startClipSeparation()
 
     expect(sendMock).toHaveBeenCalledWith(
@@ -218,7 +278,18 @@ describe('stem selection dialog', () => {
       totalBytes: 100,
       fileCount: 4
     })
-    api.getStemPrefs.mockResolvedValue({ useGpu: true, quality: 'balanced' })
+    api.getStemPrefs.mockResolvedValue({
+      useGpu: true,
+      quality: 'balanced',
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
+    })
     api.getStemGpuStatus.mockResolvedValue({ available: false, name: null })
     await startClipSeparation()
 
@@ -259,7 +330,15 @@ describe('stemSeparationFlow', () => {
       sourceName: 'song',
       stems: ALL_STEMS,
       quality: 'balanced',
-      useGpu: true
+      useGpu: true,
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
     })
     expect(snapshotStemSeparationState()?.jobId).toBe('job-123')
   })
@@ -310,7 +389,15 @@ describe('stemSeparationFlow', () => {
       sourceName: 'song',
       stems: ALL_STEMS,
       quality: 'balanced',
-      useGpu: true
+      useGpu: true,
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
     })
   })
 

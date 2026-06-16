@@ -28,8 +28,13 @@ int main()
     addMixdownRenderTests(tests);
     addStemSeparationTests(tests);
     addBpmDetectorTests(tests);
+    addVocalEnhancerTests(tests);
+    addVocalDenoiserTests(tests);
+    addDrumEnhancerTests(tests);
+    addBassEnhancerTests(tests);
+    addOtherEnhancerTests(tests);
 
-    require(tests.size() == 80, "backend test registry should contain 80 tests");
+    require(tests.size() == 112, "backend test registry should contain 112 tests");
 
     int failed = 0;
     for (const auto& test : tests)

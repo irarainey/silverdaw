@@ -41,6 +41,14 @@ const {
   autosaveEnabled,
   autosaveIntervalSeconds,
   useGpuForStems,
+  enhanceVocals,
+  vocalEnhanceStrength,
+  enhanceDrums,
+  drumEnhanceStrength,
+  enhanceBass,
+  bassEnhanceStrength,
+  enhanceOther,
+  otherEnhanceStrength,
   initialLoggingEnabled,
   initialDevToolsEnabled,
   initialLogDirectory,
@@ -202,6 +210,14 @@ function onSave(): void {
             <PreferencesStemsTab
               v-else-if="activeTab === 'stems'"
               v-model:use-gpu-for-stems="useGpuForStems"
+              v-model:enhance-vocals="enhanceVocals"
+              v-model:vocal-enhance-strength="vocalEnhanceStrength"
+              v-model:enhance-drums="enhanceDrums"
+              v-model:drum-enhance-strength="drumEnhanceStrength"
+              v-model:enhance-bass="enhanceBass"
+              v-model:bass-enhance-strength="bassEnhanceStrength"
+              v-model:enhance-other="enhanceOther"
+              v-model:other-enhance-strength="otherEnhanceStrength"
             />
             <PreferencesDeveloperTab
               v-else

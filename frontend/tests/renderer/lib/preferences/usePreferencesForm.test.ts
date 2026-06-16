@@ -23,7 +23,18 @@ const DEFAULTS = {
   qol: { toasts: { enabled: true }, paths: { defaultProjectDir: 'P:\\', defaultClipDir: 'C:\\' } },
   autosave: { enabled: true, intervalSeconds: 30 },
   audio: { typeName: null as string | null, deviceName: null as string | null },
-  stems: { useGpu: false, quality: 'balanced' as const }
+  stems: {
+    useGpu: false,
+    quality: 'balanced' as const,
+    enhanceVocals: false,
+    vocalEnhanceStrength: 'medium' as const,
+    enhanceDrums: false,
+    drumEnhanceStrength: 'medium' as const,
+    enhanceBass: false,
+    bassEnhanceStrength: 'medium' as const,
+    enhanceOther: false,
+    otherEnhanceStrength: 'medium' as const
+  }
 }
 
 function stubSilverdaw(): void {

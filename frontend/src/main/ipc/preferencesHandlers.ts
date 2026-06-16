@@ -172,7 +172,12 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
   ipcMain.on(IPC.prefs.setStems, (_evt, partial: unknown) => {
     const store = prefs.get()
     const next = sanitiseStemPrefs(partial, store.stems)
-    if (next.useGpu === store.stems.useGpu && next.quality === store.stems.quality) return
+    const cur = store.stems
+    // Persist when ANY stem preference changed. Comparing every key (not just
+    // useGpu/quality) is essential: the cleanup toggles are saved on their own,
+    // so a guard that ignored them silently dropped enhance* changes.
+    const unchanged = (Object.keys(next) as (keyof typeof next)[]).every((k) => next[k] === cur[k])
+    if (unchanged) return
     store.stems = next
     prefs.flushSaveSync()
   })

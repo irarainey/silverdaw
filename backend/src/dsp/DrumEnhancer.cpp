@@ -1,0 +1,287 @@
+#include "DrumEnhancer.h"
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+namespace silverdaw
+{
+namespace
+{
+
+// Per-strength tuning. The subsonic corner clears DC/rumble only. The expander
+// threshold sits `thresholdBelowDb` under a robust high-percentile "active drum
+// level", so gaps fall below it while hits stay above. `rangeDb` caps the
+// attenuation so the expander can never fully gate (chop) a tail; `ratio` sets
+// how hard it pulls below the threshold; `releaseMs`/`holdMs` shape how it
+// closes into the gaps.
+struct StrengthParams
+{
+    double highPassHz;       // subsonic high-pass corner (DC/rumble only)
+    double thresholdBelowDb; // expander threshold, in dB below the active level
+    double ratio;            // downward-expansion ratio (> 1)
+    double rangeDb;          // maximum attenuation the expander may apply
+    double holdMs;           // hold before the gain starts releasing
+    double releaseMs;        // release time as the gain closes into a gap
+    double kneeDb;           // soft-knee width around the threshold
+};
+
+StrengthParams paramsFor(DrumEnhanceStrength strength) noexcept
+{
+    switch (strength)
+    {
+        case DrumEnhanceStrength::Light:
+            return {20.0, 33.0, 1.4, 6.0, 20.0, 180.0, 6.0};
+        case DrumEnhanceStrength::Strong:
+            return {28.0, 24.0, 2.3, 11.0, 10.0, 110.0, 6.0};
+        case DrumEnhanceStrength::Medium:
+        default:
+            return {25.0, 28.0, 1.8, 9.0, 15.0, 140.0, 6.0};
+    }
+}
+
+// Window over which the level envelope is measured for the percentile statistics
+// that anchor the expander threshold. ~10 ms balances transient resolution with
+// a stable estimate.
+constexpr double kEnvelopeWindowMs = 10.0;
+
+// Below this peak the stem is treated as silent and the expander is skipped: the
+// threshold would be meaningless and we must never divide by (or log) zero.
+constexpr float kSilenceFloor = 1.0e-6F;
+
+// Loud/quiet contrast guards (active p95 minus gap p20, in dB). Below the bypass
+// floor the stem has effectively no gaps (dense rolls, continuous cymbals, brush
+// work) and gating would only expose artefacts, so the expander is skipped.
+// Between the floor and the full threshold the range is halved to stay gentle.
+constexpr double kContrastBypassDb = 6.0;
+constexpr double kContrastHalfRangeDb = 12.0;
+
+// Direct Form I biquad in double precision. Offline use only, so it is a plain
+// per-channel filter with no lock-free/atomic machinery. Coefficients are
+// normalised on assignment.
+struct Biquad
+{
+    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+    double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
+
+    inline double process(double x) noexcept
+    {
+        const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1;
+        x1 = x;
+        y2 = y1;
+        y1 = y;
+        return y;
+    }
+};
+
+// RBJ 2nd-order Butterworth high-pass (Q = 1/sqrt(2)). Corner is clamped safely
+// below Nyquist.
+Biquad designButterHighPass(double sampleRate, double freqHz) noexcept
+{
+    Biquad f;
+    const double fs = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
+    const double freq = std::clamp(freqHz, 10.0, fs * 0.49);
+    const double w0 = 2.0 * juce::MathConstants<double>::pi * freq / fs;
+    const double cw = std::cos(w0);
+    const double sw = std::sin(w0);
+    const double q = 1.0 / std::sqrt(2.0);
+    const double alpha = sw / (2.0 * q);
+    const double a0 = 1.0 + alpha;
+    const double onePlusCw = 1.0 + cw;
+
+    f.b0 = (onePlusCw / 2.0) / a0;
+    f.b1 = (-onePlusCw) / a0;
+    f.b2 = (onePlusCw / 2.0) / a0;
+    f.a1 = (-2.0 * cw) / a0;
+    f.a2 = (1.0 - alpha) / a0;
+    return f;
+}
+
+// Replaces any non-finite sample with zero so a stray NaN/Inf from the model can
+// never poison the filter state, the level statistics, or the output WAV.
+void sanitiseInPlace(juce::AudioBuffer<float>& buffer) noexcept
+{
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        float* data = buffer.getWritePointer(ch);
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+            if (! std::isfinite(data[i]))
+                data[i] = 0.0F;
+    }
+}
+
+void applyHighPass(juce::AudioBuffer<float>& buffer, double sampleRate, double freqHz) noexcept
+{
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        Biquad f = designButterHighPass(sampleRate, freqHz);
+        float* data = buffer.getWritePointer(ch);
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+            data[i] = static_cast<float>(f.process(static_cast<double>(data[i])));
+    }
+}
+
+// Cross-channel sample detector: the loudest channel drives one shared gain so
+// the stereo image and kit balance are preserved. Summing L+R is avoided because
+// phasey separated material can cancel.
+inline double sampleDetector(const juce::AudioBuffer<float>& buffer, int i) noexcept
+{
+    double d = 0.0;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        d = std::max(d, std::abs(static_cast<double>(buffer.getSample(ch, i))));
+    return d;
+}
+
+// One short-window peak level per hop, used to derive robust percentile
+// statistics for the threshold. Returns the window-peak series (linear).
+std::vector<double> windowPeaks(const juce::AudioBuffer<float>& buffer, double sampleRate) noexcept
+{
+    const double fs = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
+    const int win = std::max(1, static_cast<int>(kEnvelopeWindowMs * 0.001 * fs));
+    const int numSamples = buffer.getNumSamples();
+
+    std::vector<double> peaks;
+    peaks.reserve(static_cast<size_t>(numSamples / win) + 1);
+    for (int start = 0; start < numSamples; start += win)
+    {
+        const int end = std::min(start + win, numSamples);
+        double peak = 0.0;
+        for (int i = start; i < end; ++i)
+            peak = std::max(peak, sampleDetector(buffer, i));
+        peaks.push_back(peak);
+    }
+    return peaks;
+}
+
+// Linear value at a [0,1] percentile of a copy-sorted series (nearest-rank).
+double percentile(std::vector<double> values, double p) noexcept
+{
+    if (values.empty()) return 0.0;
+    std::sort(values.begin(), values.end());
+    const double clamped = std::clamp(p, 0.0, 1.0);
+    auto idx = static_cast<size_t>(clamped * static_cast<double>(values.size() - 1) + 0.5);
+    return values[std::min(idx, values.size() - 1)];
+}
+
+// Soft-knee downward-expansion static curve. `over` is the detector level in dB
+// relative to the threshold; returns the gain (dB, <= 0). The knee makes the
+// transition continuous in value and slope so there are no audible steps.
+double expansionGainDb(double overDb, double slope, double kneeDb, double rangeDb) noexcept
+{
+    const double halfKnee = kneeDb * 0.5;
+    double gainDb;
+    if (overDb >= halfKnee)
+        gainDb = 0.0;
+    else if (overDb <= -halfKnee)
+        gainDb = slope * overDb;
+    else
+    {
+        const double d = halfKnee - overDb; // 0..kneeDb across the knee
+        gainDb = -slope * (d * d) / (2.0 * kneeDb);
+    }
+    return std::max(gainDb, -rangeDb);
+}
+
+// Wide-band downward expander with an instant attack + hold + slow release
+// envelope. Instant attack keeps the envelope pinned to the loudest recent peak
+// so transient onsets are never dulled; the hold then release closes the gain
+// smoothly into the gaps. A single shared gain is applied to every channel.
+void applyExpander(juce::AudioBuffer<float>& buffer, double sampleRate,
+                   double thresholdDb, const StrengthParams& params, double rangeDb) noexcept
+{
+    const double fs = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
+    const double slope = params.ratio - 1.0;
+    const double aRel = std::exp(-1.0 / (params.releaseMs * 0.001 * fs));
+    const int holdSamples = std::max(0, static_cast<int>(params.holdMs * 0.001 * fs));
+
+    const int numCh = buffer.getNumChannels();
+    const int numSamples = buffer.getNumSamples();
+
+    // Prime the envelope on the first sample so a stem that opens on a hit does
+    // not fade in late.
+    double env = sampleDetector(buffer, 0);
+    int holdCounter = env > 0.0 ? holdSamples : 0;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const double detector = sampleDetector(buffer, i);
+        if (detector >= env)
+        {
+            env = detector; // instant attack
+            holdCounter = holdSamples;
+        }
+        else if (holdCounter > 0)
+        {
+            --holdCounter; // hold at the recent peak
+        }
+        else
+        {
+            env = aRel * env + (1.0 - aRel) * detector; // slow release
+        }
+
+        const double envDb = 20.0 * std::log10(env + 1.0e-9);
+        const float gain = static_cast<float>(
+            std::pow(10.0, expansionGainDb(envDb - thresholdDb, slope, params.kneeDb, rangeDb) / 20.0));
+
+        for (int ch = 0; ch < numCh; ++ch)
+            buffer.getWritePointer(ch)[i] *= gain;
+    }
+}
+
+} // namespace
+
+DrumEnhanceStrength drumEnhanceStrengthFromString(const juce::String& text) noexcept
+{
+    const auto t = text.trim().toLowerCase();
+    if (t == "light") return DrumEnhanceStrength::Light;
+    if (t == "strong") return DrumEnhanceStrength::Strong;
+    return DrumEnhanceStrength::Medium;
+}
+
+const char* drumEnhanceStrengthToString(DrumEnhanceStrength strength) noexcept
+{
+    switch (strength)
+    {
+        case DrumEnhanceStrength::Light: return "light";
+        case DrumEnhanceStrength::Strong: return "strong";
+        case DrumEnhanceStrength::Medium:
+        default: return "medium";
+    }
+}
+
+void DrumEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
+                           const DrumEnhanceOptions& options)
+{
+    if (! options.enabled) return;
+    if (buffer.getNumChannels() <= 0 || buffer.getNumSamples() <= 0) return;
+    if (! (sampleRate > 0.0) || ! std::isfinite(sampleRate)) return;
+
+    const juce::ScopedNoDenormals noDenormals;
+    const StrengthParams params = paramsFor(options.strength);
+
+    sanitiseInPlace(buffer);
+    applyHighPass(buffer, sampleRate, params.highPassHz);
+
+    // Anchor the threshold to a robust high percentile of the level so a single
+    // loud transient cannot skew it, and read the gap floor for the contrast
+    // guard below.
+    const auto peaks = windowPeaks(buffer, sampleRate);
+    const double activeLevel = percentile(peaks, 0.95);
+    if (activeLevel <= kSilenceFloor) return; // silent after the high-pass
+
+    const double gapFloor = percentile(peaks, 0.20);
+    const double activeDb = 20.0 * std::log10(activeLevel + 1.0e-9);
+    const double gapDb = 20.0 * std::log10(std::max(gapFloor, static_cast<double>(kSilenceFloor)));
+    const double contrastDb = activeDb - gapDb;
+
+    // Too little loud/quiet contrast: gating here would only expose separation
+    // artefacts, so bypass entirely (or stay extra gentle near the boundary).
+    if (contrastDb < kContrastBypassDb) return;
+    const double rangeDb = contrastDb < kContrastHalfRangeDb ? params.rangeDb * 0.5 : params.rangeDb;
+
+    const double thresholdDb = activeDb - params.thresholdBelowDb;
+    applyExpander(buffer, sampleRate, thresholdDb, params, rangeDb);
+}
+
+} // namespace silverdaw

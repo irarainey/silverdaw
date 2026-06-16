@@ -643,7 +643,7 @@ export const StemProgressPayloadSchema = z.object({
   jobId: z.string().min(1),
   // Present only for timeline-clip separations; absent for library-source jobs.
   clipId: z.string().min(1).optional(),
-  stage: z.enum(['prepare', 'separate', 'write']),
+  stage: z.enum(['prepare', 'separate', 'cleanup', 'write']),
   percent: z.number(),
   // Optional context for the current step (e.g. the stem name being separated).
   detail: z.string().optional()

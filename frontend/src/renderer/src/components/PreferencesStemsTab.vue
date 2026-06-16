@@ -1,8 +1,104 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useStemModelManager } from '@/lib/stems/useStemModelManager'
+import StemCleanupSection from '@/components/StemCleanupSection.vue'
+import type { StemEnhanceStrength } from '@shared/bridge-protocol'
 
 const useGpu = defineModel<boolean>('useGpuForStems', { required: true })
+const enhanceVocals = defineModel<boolean>('enhanceVocals', { required: true })
+const vocalEnhanceStrength = defineModel<StemEnhanceStrength>('vocalEnhanceStrength', {
+  required: true
+})
+const enhanceDrums = defineModel<boolean>('enhanceDrums', { required: true })
+const drumEnhanceStrength = defineModel<StemEnhanceStrength>('drumEnhanceStrength', {
+  required: true
+})
+const enhanceBass = defineModel<boolean>('enhanceBass', { required: true })
+const bassEnhanceStrength = defineModel<StemEnhanceStrength>('bassEnhanceStrength', {
+  required: true
+})
+const enhanceOther = defineModel<boolean>('enhanceOther', { required: true })
+const otherEnhanceStrength = defineModel<StemEnhanceStrength>('otherEnhanceStrength', {
+  required: true
+})
+
+interface StrengthOption {
+  readonly value: StemEnhanceStrength
+  readonly label: string
+  readonly hint: string
+}
+
+const VOCAL_STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
+  {
+    value: 'light',
+    label: 'Light',
+    hint: 'A gentle 60 Hz high-pass and the softest expander. Safest for delicate or breathy vocals.'
+  },
+  {
+    value: 'medium',
+    label: 'Medium',
+    hint: 'An 80 Hz high-pass with a moderate expander. A balanced starting point for most vocals.'
+  },
+  {
+    value: 'strong',
+    label: 'Strong',
+    hint: 'A 100 Hz high-pass and the firmest expander. Best when there is noticeable bleed between phrases.'
+  }
+]
+
+const DRUM_STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
+  {
+    value: 'light',
+    label: 'Light',
+    hint: 'The softest expander with a small attenuation range. Safest for busy or roomy kits.'
+  },
+  {
+    value: 'medium',
+    label: 'Medium',
+    hint: 'A moderate expander. A balanced starting point that tidies the gaps between hits.'
+  },
+  {
+    value: 'strong',
+    label: 'Strong',
+    hint: 'The firmest expander. Best when there is noticeable bleed between hits, on punchy material.'
+  }
+]
+
+const BASS_STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
+  {
+    value: 'light',
+    label: 'Light',
+    hint: 'A 20 Hz high-pass and the softest expander. Safest for sustained or sub-heavy bass.'
+  },
+  {
+    value: 'medium',
+    label: 'Medium',
+    hint: 'A 24 Hz high-pass with a moderate expander. A balanced starting point for most basslines.'
+  },
+  {
+    value: 'strong',
+    label: 'Strong',
+    hint: 'A 28 Hz high-pass and the firmest expander. Best when there is noticeable bleed between notes.'
+  }
+]
+
+const OTHER_STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
+  {
+    value: 'light',
+    label: 'Light',
+    hint: 'A 20 Hz high-pass and the gentlest spectral cleanup. Barely touches the stem.'
+  },
+  {
+    value: 'medium',
+    label: 'Medium',
+    hint: 'A 24 Hz high-pass with a moderate spectral cleanup. A balanced starting point for the residual mix.'
+  },
+  {
+    value: 'strong',
+    label: 'Strong',
+    hint: 'A 28 Hz high-pass and the firmest spectral cleanup. Best when the residual has noticeable swirl or hiss.'
+  }
+]
 
 const { gpu, modelInfo, busy, downloadPercent, error, installed, refresh, download, cancelDownload, locate } =
   useStemModelManager()
@@ -48,6 +144,46 @@ onMounted(refresh)
         </span>
       </label>
     </div>
+
+    <StemCleanupSection
+      v-model:enabled="enhanceVocals"
+      v-model:strength="vocalEnhanceStrength"
+      title="Vocal cleanup"
+      checkbox-label="Clean up the vocal stem after separation"
+      description="Applies a sub-bass high-pass and a gentle expander to the vocal stem only, reducing low-frequency rumble and quiet bleed between phrases. Off by default. Other stems are always written untouched, and your original files are never changed."
+      radio-name="vocal-enhance-strength"
+      :options="VOCAL_STRENGTH_OPTIONS"
+    />
+
+    <StemCleanupSection
+      v-model:enabled="enhanceDrums"
+      v-model:strength="drumEnhanceStrength"
+      title="Drum cleanup"
+      checkbox-label="Clean up the drum stem after separation"
+      description="Applies a subsonic high-pass and a gentle expander to the drum stem only, trimming rumble and quiet bleed in the gaps between hits while leaving the hits untouched. It eases off automatically on dense or continuous material. Off by default. Other stems are always written untouched, and your original files are never changed."
+      radio-name="drum-enhance-strength"
+      :options="DRUM_STRENGTH_OPTIONS"
+    />
+
+    <StemCleanupSection
+      v-model:enabled="enhanceBass"
+      v-model:strength="bassEnhanceStrength"
+      title="Bass cleanup"
+      checkbox-label="Clean up the bass stem after separation"
+      description="Applies a subsonic high-pass and a gentle expander to the bass stem only, trimming sub-sonic rumble and the high-frequency bleed that leaks into the gaps between notes while leaving the notes untouched. It eases off automatically on sustained material. Off by default. Other stems are always written untouched, and your original files are never changed."
+      radio-name="bass-enhance-strength"
+      :options="BASS_STRENGTH_OPTIONS"
+    />
+
+    <StemCleanupSection
+      v-model:enabled="enhanceOther"
+      v-model:strength="otherEnhanceStrength"
+      title="Other cleanup"
+      checkbox-label="Clean up the other (residual) stem after separation"
+      description="Applies a subsonic high-pass and a shallow spectral cleanup to the other/residual stem only, easing the low-level musical-noise and bleed the separation leaves behind while protecting sustained instruments. It eases off automatically when the change would be inaudible. Off by default. The remaining stems are always written untouched, and your original files are never changed."
+      radio-name="other-enhance-strength"
+      :options="OTHER_STRENGTH_OPTIONS"
+    />
 
     <div>
       <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">

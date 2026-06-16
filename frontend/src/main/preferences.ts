@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { dirname, join, resolve as pathResolve } from 'node:path'
 import type { DebugPreferences, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
-import type { StemQuality } from '../shared/bridge/outbound'
+import type { StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '../shared/bridge/outbound'
 
 export interface WindowPrefs {
   x?: number
@@ -51,12 +51,27 @@ export interface PathPrefs {
 // backend build, falling back to the CPU otherwise (see PreferencesStemsTab).
 // `quality` persists the last-used separation preset so the picker dialog
 // reopens on the user's preferred choice instead of resetting each time.
+// `enhanceVocals` (default off) gates the optional post-separation vocal
+// cleanup; `vocalEnhanceStrength` persists its intensity. `enhanceDrums` /
+// `drumEnhanceStrength` and `enhanceBass` / `bassEnhanceStrength` do the same
+// for the drums and bass stems, and `enhanceOther` / `otherEnhanceStrength` for
+// the other/residual stem.
 export interface StemPrefs {
   useGpu: boolean
   quality: StemQuality
+  enhanceVocals: boolean
+  vocalEnhanceStrength: VocalEnhanceStrength
+  enhanceDrums: boolean
+  drumEnhanceStrength: DrumEnhanceStrength
+  enhanceBass: boolean
+  bassEnhanceStrength: BassEnhanceStrength
+  enhanceOther: boolean
+  otherEnhanceStrength: OtherEnhanceStrength
 }
 
 const STEM_QUALITIES: readonly StemQuality[] = ['fast', 'balanced', 'best']
+// Shared by the vocal and drum cleanup pickers — both use the same intensity set.
+const STEM_ENHANCE_STRENGTHS: readonly VocalEnhanceStrength[] = ['light', 'medium', 'strong']
 
 // Renderer owns autosave timing; main owns the project-scoped files.
 export interface AutosavePrefs {
@@ -131,7 +146,18 @@ export function buildDefaultPrefs(): Preferences {
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
-    stems: { useGpu: false, quality: 'balanced' },
+    stems: {
+      useGpu: false,
+      quality: 'balanced',
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
+    },
     recentProjects: []
   }
 }
@@ -190,7 +216,23 @@ export function sanitiseStemPrefs(partial: unknown, base: StemPrefs): StemPrefs 
     useGpu: boolOr(p.useGpu, base.useGpu),
     quality: STEM_QUALITIES.includes(p.quality as StemQuality)
       ? (p.quality as StemQuality)
-      : base.quality
+      : base.quality,
+    enhanceVocals: boolOr(p.enhanceVocals, base.enhanceVocals),
+    vocalEnhanceStrength: STEM_ENHANCE_STRENGTHS.includes(p.vocalEnhanceStrength as VocalEnhanceStrength)
+      ? (p.vocalEnhanceStrength as VocalEnhanceStrength)
+      : base.vocalEnhanceStrength,
+    enhanceDrums: boolOr(p.enhanceDrums, base.enhanceDrums),
+    drumEnhanceStrength: STEM_ENHANCE_STRENGTHS.includes(p.drumEnhanceStrength as DrumEnhanceStrength)
+      ? (p.drumEnhanceStrength as DrumEnhanceStrength)
+      : base.drumEnhanceStrength,
+    enhanceBass: boolOr(p.enhanceBass, base.enhanceBass),
+    bassEnhanceStrength: STEM_ENHANCE_STRENGTHS.includes(p.bassEnhanceStrength as BassEnhanceStrength)
+      ? (p.bassEnhanceStrength as BassEnhanceStrength)
+      : base.bassEnhanceStrength,
+    enhanceOther: boolOr(p.enhanceOther, base.enhanceOther),
+    otherEnhanceStrength: STEM_ENHANCE_STRENGTHS.includes(p.otherEnhanceStrength as OtherEnhanceStrength)
+      ? (p.otherEnhanceStrength as OtherEnhanceStrength)
+      : base.otherEnhanceStrength
   }
 }
 

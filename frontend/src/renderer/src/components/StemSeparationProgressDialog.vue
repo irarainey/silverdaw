@@ -14,6 +14,7 @@ const state = useStemSeparationState()
 const STAGE_LABELS: Record<StemStage, string> = {
   prepare: 'Preparing audio…',
   separate: 'Separating stems…',
+  cleanup: 'Cleaning up stems…',
   write: 'Writing files…'
 }
 
@@ -29,15 +30,21 @@ const STEM_LABELS: Record<string, string> = {
 
 const visible = computed(() => state.value !== null)
 const percent = computed(() => Math.round(state.value?.percent ?? 0))
+// Per-stem verbs for the stages that carry a stem name in `detail`.
+const STEM_STAGE_VERBS: Partial<Record<StemStage, string>> = {
+  separate: 'Separating',
+  cleanup: 'Cleaning up'
+}
 const stageLabel = computed(() => {
   const s = state.value?.stage
   if (!s) return ''
   const detail = state.value?.detail
   const selected = state.value?.stems ?? []
-  if (s === 'separate' && detail && STEM_LABELS[detail]) {
+  const verb = STEM_STAGE_VERBS[s]
+  if (verb && detail && STEM_LABELS[detail]) {
     const position = (selected as readonly string[]).indexOf(detail) + 1
     const counter = position > 0 ? ` (${position} of ${selected.length})` : ''
-    return `Separating ${STEM_LABELS[detail]}${counter}…`
+    return `${verb} ${STEM_LABELS[detail]}${counter}…`
   }
   return STAGE_LABELS[s]
 })

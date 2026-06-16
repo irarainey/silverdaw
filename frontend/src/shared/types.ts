@@ -1,6 +1,6 @@
 // Cross-process IPC/contextBridge shapes shared by main, preload and renderer.
 
-import type { StemQuality } from './bridge/outbound'
+import type { StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from './bridge/outbound'
 
 export interface OpenedAudioFile {
   filePath: string
@@ -108,6 +108,14 @@ export interface StemGpuStatus {
 export interface StemPrefsDto {
   useGpu: boolean
   quality: StemQuality
+  enhanceVocals: boolean
+  vocalEnhanceStrength: VocalEnhanceStrength
+  enhanceDrums: boolean
+  drumEnhanceStrength: DrumEnhanceStrength
+  enhanceBass: boolean
+  bassEnhanceStrength: BassEnhanceStrength
+  enhanceOther: boolean
+  otherEnhanceStrength: OtherEnhanceStrength
 }
 
 /** Where the stem model lives and whether it is a user-located copy. */

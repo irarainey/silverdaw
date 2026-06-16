@@ -74,7 +74,18 @@ describe('sanitiseUiPrefs', () => {
 })
 
 describe('sanitiseStemPrefs', () => {
-  const stemBase: StemPrefs = { useGpu: false, quality: 'balanced' }
+  const stemBase: StemPrefs = {
+    useGpu: false,
+    quality: 'balanced',
+    enhanceVocals: false,
+    vocalEnhanceStrength: 'medium',
+    enhanceDrums: false,
+    drumEnhanceStrength: 'medium',
+    enhanceBass: false,
+    bassEnhanceStrength: 'medium',
+    enhanceOther: false,
+    otherEnhanceStrength: 'medium'
+  }
 
   it('keeps the base for a non-object partial', () => {
     expect(sanitiseStemPrefs(undefined, stemBase)).toEqual(stemBase)
@@ -84,14 +95,62 @@ describe('sanitiseStemPrefs', () => {
   it('accepts a valid boolean and falls back for the wrong type', () => {
     expect(sanitiseStemPrefs({ useGpu: true }, stemBase).useGpu).toBe(true)
     expect(sanitiseStemPrefs({ useGpu: 'yes' }, stemBase).useGpu).toBe(false)
-    expect(sanitiseStemPrefs({ useGpu: true }, { useGpu: true, quality: 'best' }).useGpu).toBe(true)
+    expect(
+      sanitiseStemPrefs({ useGpu: true }, { ...stemBase, useGpu: true, quality: 'best' }).useGpu
+    ).toBe(true)
   })
 
   it('accepts a valid quality preset and falls back for an unknown value', () => {
     expect(sanitiseStemPrefs({ quality: 'best' }, stemBase).quality).toBe('best')
     expect(sanitiseStemPrefs({ quality: 'fast' }, stemBase).quality).toBe('fast')
     expect(sanitiseStemPrefs({ quality: 'ultra' }, stemBase).quality).toBe('balanced')
-    expect(sanitiseStemPrefs({ quality: 99 }, { useGpu: false, quality: 'best' }).quality).toBe('best')
+    expect(
+      sanitiseStemPrefs({ quality: 99 }, { ...stemBase, quality: 'best' }).quality
+    ).toBe('best')
+  })
+
+  it('accepts vocal-cleanup settings and falls back for wrong types', () => {
+    expect(sanitiseStemPrefs({ enhanceVocals: true }, stemBase).enhanceVocals).toBe(true)
+    expect(sanitiseStemPrefs({ enhanceVocals: 'yes' }, stemBase).enhanceVocals).toBe(false)
+    expect(
+      sanitiseStemPrefs({ vocalEnhanceStrength: 'strong' }, stemBase).vocalEnhanceStrength
+    ).toBe('strong')
+    expect(
+      sanitiseStemPrefs({ vocalEnhanceStrength: 'ultra' }, stemBase).vocalEnhanceStrength
+    ).toBe('medium')
+  })
+
+  it('accepts drum-cleanup settings and falls back for wrong types', () => {
+    expect(sanitiseStemPrefs({ enhanceDrums: true }, stemBase).enhanceDrums).toBe(true)
+    expect(sanitiseStemPrefs({ enhanceDrums: 'yes' }, stemBase).enhanceDrums).toBe(false)
+    expect(
+      sanitiseStemPrefs({ drumEnhanceStrength: 'strong' }, stemBase).drumEnhanceStrength
+    ).toBe('strong')
+    expect(
+      sanitiseStemPrefs({ drumEnhanceStrength: 'ultra' }, stemBase).drumEnhanceStrength
+    ).toBe('medium')
+  })
+
+  it('accepts bass-cleanup settings and falls back for wrong types', () => {
+    expect(sanitiseStemPrefs({ enhanceBass: true }, stemBase).enhanceBass).toBe(true)
+    expect(sanitiseStemPrefs({ enhanceBass: 'yes' }, stemBase).enhanceBass).toBe(false)
+    expect(
+      sanitiseStemPrefs({ bassEnhanceStrength: 'strong' }, stemBase).bassEnhanceStrength
+    ).toBe('strong')
+    expect(
+      sanitiseStemPrefs({ bassEnhanceStrength: 'ultra' }, stemBase).bassEnhanceStrength
+    ).toBe('medium')
+  })
+
+  it('accepts other-cleanup settings and falls back for wrong types', () => {
+    expect(sanitiseStemPrefs({ enhanceOther: true }, stemBase).enhanceOther).toBe(true)
+    expect(sanitiseStemPrefs({ enhanceOther: 'yes' }, stemBase).enhanceOther).toBe(false)
+    expect(
+      sanitiseStemPrefs({ otherEnhanceStrength: 'strong' }, stemBase).otherEnhanceStrength
+    ).toBe('strong')
+    expect(
+      sanitiseStemPrefs({ otherEnhanceStrength: 'ultra' }, stemBase).otherEnhanceStrength
+    ).toBe('medium')
   })
 })
 

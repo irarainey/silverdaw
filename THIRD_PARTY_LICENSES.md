@@ -54,6 +54,21 @@ satisfy the attribution requirements of those licences.
   [`backend/third_party/btrack/PATCHES.md`](backend/third_party/btrack/PATCHES.md)
   for the local MSVC-compatibility changes.
 
+### RNNoise — © 2017 Mozilla; © 2018 Gregor Richards
+
+- **Licence**: BSD 2-Clause.
+- **Project**: <https://jmvalin.ca/demo/rnnoise/>
+- **Source**: <https://github.com/xiph/rnnoise>
+- **Notice**: Used by the backend for optional post-separation **vocal-stem
+  denoise** (the RNN noise-suppression network; see `backend/src/dsp/`). The
+  pinned `v0.1.1` release is obtained via CMake `FetchContent`, and its bundled
+  trained model (`src/rnn_data.c`) ships under the same BSD-2-Clause licence. To
+  build under MSVC, five C99 variable-length-array declarations in `pitch.c` /
+  `celt_lpc.c` are rewritten to `_alloca` at configure time (a mechanical change,
+  no behaviour difference); all other sources are used verbatim. The upstream
+  licence text is included with the fetched source at
+  `backend/build/_deps/rnnoise-src/COPYING`.
+
 ### LAME MP3 encoder — © The LAME Project
 
 - **Licence**: GNU Lesser General Public License v2.1 or later (LGPL-2.1+).

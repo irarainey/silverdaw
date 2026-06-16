@@ -73,6 +73,7 @@ The Electron process launches the JUCE backend as a child process on startup and
 | FFT                          | KISS FFT                              | Implemented as part of the BTrack vendor copy. No FFTW dependency.                                                                                            |
 | Time-stretch / pitch shift   | Rubber Band Library                   | Implemented for real-time per-clip warp / pitch-shift playback.                                                                                               |
 | Stem separation              | Demucs v4 (htdemucs-ft) via ONNX Runtime | Implemented; see Section 6. CPU by default, optional DirectML GPU acceleration. Model weights downloaded on first use.                                       |
+| Vocal-stem denoise           | RNNoise (xiph, v0.1.1)                | Implemented as an optional post-separation vocal cleanup (BSD-2-Clause). Fetched and statically linked via CMake `FetchContent`; the bundled trained model ships with the source. |
 | Decoding unsupported formats | Renderer Web Audio + temp WAV today; ffmpeg later | Web Audio covers many unsupported-by-JUCE formats today. ffmpeg is a later compatibility / robustness upgrade, not a core workflow blocker. |
 
 > **Note:** JUCE UI subsystems (`Component`, `AudioThumbnail`, `OpenGLContext`) are not used. All rendering is handled by the Electron frontend.

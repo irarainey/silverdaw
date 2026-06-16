@@ -658,6 +658,18 @@ export type MixdownCancelPayload = undefined
  *  backend inference window overlap (fast = less overlap/faster). */
 export type StemQuality = 'fast' | 'balanced' | 'best'
 
+/** How hard an optional post-separation stem cleanup leans on the stem. Maps to
+ *  the backend enhancers (high-pass corner + downward-expander amount). */
+export type StemEnhanceStrength = 'light' | 'medium' | 'strong'
+/** Vocal-cleanup intensity (alias of {@link StemEnhanceStrength}). */
+export type VocalEnhanceStrength = StemEnhanceStrength
+/** Drum-cleanup intensity (alias of {@link StemEnhanceStrength}). */
+export type DrumEnhanceStrength = StemEnhanceStrength
+/** Bass-cleanup intensity (alias of {@link StemEnhanceStrength}). */
+export type BassEnhanceStrength = StemEnhanceStrength
+/** Other/residual-cleanup intensity (alias of {@link StemEnhanceStrength}). */
+export type OtherEnhanceStrength = StemEnhanceStrength
+
 export interface StemSeparatePayload {
   jobId: string
   /** Resolved top-level audio-file library item to separate. */
@@ -678,9 +690,47 @@ export interface StemSeparatePayload {
    * `stems.useGpu` preference, gated by GPU detection.
    */
   useGpu: boolean
+  /**
+   * Apply post-separation cleanup to the VOCALS stem only (sub-bass high-pass +
+   * gentle downward expander to tame inter-phrase bleed). Off by default;
+   * resolved from the persisted `stems.enhanceVocals` preference. Other stems
+   * are always written untouched.
+   */
+  enhanceVocals?: boolean
+  /** Cleanup intensity; backend defaults to 'medium' when omitted. */
+  vocalEnhanceStrength?: VocalEnhanceStrength
+  /**
+   * Apply post-separation cleanup to the DRUMS stem only (subsonic high-pass +
+   * percentile-anchored downward expander that tames inter-hit bleed and
+   * self-bypasses on dense/continuous material). Off by default; resolved from
+   * the persisted `stems.enhanceDrums` preference. Other stems are always
+   * written untouched.
+   */
+  enhanceDrums?: boolean
+  /** Drum-cleanup intensity; backend defaults to 'medium' when omitted. */
+  drumEnhanceStrength?: DrumEnhanceStrength
+  /**
+   * Apply post-separation cleanup to the BASS stem only (subsonic high-pass +
+   * low-passed-detector downward expander that tames high-frequency bleed in the
+   * gaps between notes and self-bypasses on sustained material). Off by default;
+   * resolved from the persisted `stems.enhanceBass` preference. Other stems are
+   * always written untouched.
+   */
+  enhanceBass?: boolean
+  /** Bass-cleanup intensity; backend defaults to 'medium' when omitted. */
+  bassEnhanceStrength?: BassEnhanceStrength
+  /**
+   * Apply post-separation cleanup to the OTHER/residual stem only (subsonic
+   * high-pass + a shallow STFT spectral cleanup that eases the low-level
+   * musical-noise and bleed the separation leaves behind while protecting
+   * sustained instruments, and self-bypasses when the change would be
+   * inaudible). Off by default; resolved from the persisted `stems.enhanceOther`
+   * preference. Other stems are always written untouched.
+   */
+  enhanceOther?: boolean
+  /** Other-cleanup intensity; backend defaults to 'medium' when omitted. */
+  otherEnhanceStrength?: OtherEnhanceStrength
 }
-
-/** Cancel an in-progress separation job; backend aborts and emits STEM_FAILED{cancelled}. */
 export interface StemSeparateCancelPayload {
   jobId: string
 }

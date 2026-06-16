@@ -199,6 +199,26 @@ void handleStemSeparate(const juce::var& payload,
     const juce::var useGpuVar = payload.getProperty("useGpu", juce::var());
     request.useGpu = useGpuVar.isBool() && static_cast<bool>(useGpuVar);
 
+    const juce::var enhanceVar = payload.getProperty("enhanceVocals", juce::var());
+    request.vocalEnhance.enabled = enhanceVar.isBool() && static_cast<bool>(enhanceVar);
+    request.vocalEnhance.strength = vocalEnhanceStrengthFromString(
+        readOptionalString(payload, "vocalEnhanceStrength").value_or(juce::String{}));
+
+    const juce::var enhanceDrumsVar = payload.getProperty("enhanceDrums", juce::var());
+    request.drumEnhance.enabled = enhanceDrumsVar.isBool() && static_cast<bool>(enhanceDrumsVar);
+    request.drumEnhance.strength = drumEnhanceStrengthFromString(
+        readOptionalString(payload, "drumEnhanceStrength").value_or(juce::String{}));
+
+    const juce::var enhanceBassVar = payload.getProperty("enhanceBass", juce::var());
+    request.bassEnhance.enabled = enhanceBassVar.isBool() && static_cast<bool>(enhanceBassVar);
+    request.bassEnhance.strength = bassEnhanceStrengthFromString(
+        readOptionalString(payload, "bassEnhanceStrength").value_or(juce::String{}));
+
+    const juce::var enhanceOtherVar = payload.getProperty("enhanceOther", juce::var());
+    request.otherEnhance.enabled = enhanceOtherVar.isBool() && static_cast<bool>(enhanceOtherVar);
+    request.otherEnhance.strength = otherEnhanceStrengthFromString(
+        readOptionalString(payload, "otherEnhanceStrength").value_or(juce::String{}));
+
     activeJobId = jobId;
     silverdaw::log::info("stems", "STEM_SEPARATE job=" + jobId + " item=" + sourceItemId +
                                       " clip=" + (clipId.isNotEmpty() ? clipId : juce::String("(library)")) +
@@ -208,6 +228,18 @@ void handleStemSeparate(const juce::var& payload,
                                                               juce::String(request.startMs + request.lengthMs) + "ms"
                                                         : juce::String("full")) +
                                       " gpu=" + (request.useGpu ? juce::String("1") : juce::String("0")) +
+                                      " enhanceVocals=" + (request.vocalEnhance.enabled
+                                          ? juce::String(vocalEnhanceStrengthToString(request.vocalEnhance.strength))
+                                          : juce::String("0")) +
+                                      " enhanceDrums=" + (request.drumEnhance.enabled
+                                          ? juce::String(drumEnhanceStrengthToString(request.drumEnhance.strength))
+                                          : juce::String("0")) +
+                                      " enhanceBass=" + (request.bassEnhance.enabled
+                                          ? juce::String(bassEnhanceStrengthToString(request.bassEnhance.strength))
+                                          : juce::String("0")) +
+                                      " enhanceOther=" + (request.otherEnhance.enabled
+                                          ? juce::String(otherEnhanceStrengthToString(request.otherEnhance.strength))
+                                          : juce::String("0")) +
                                       " source=" + sourceFile.getFullPathName());
     runStemSeparationAsync(std::move(request), separator, pool, bridge, cancelFlag, busyFlag);
 }

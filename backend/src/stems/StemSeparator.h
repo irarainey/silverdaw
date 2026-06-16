@@ -13,6 +13,16 @@
 
 #include <juce_core/juce_core.h>
 
+#include "VocalEnhancer.h"
+
+#include "VocalDenoiser.h"
+
+#include "DrumEnhancer.h"
+
+#include "BassEnhancer.h"
+
+#include "OtherEnhancer.h"
+
 namespace silverdaw
 {
 
@@ -82,6 +92,33 @@ struct StemSeparationRequest
     // command layer resolves this from the renderer's gated `stems.useGpu`
     // preference, so a machine without a GPU never sets it.
     bool useGpu = false;
+    // Optional post-separation cleanup applied to the VOCALS stem only (other
+    // stems are written untouched). Off by default; resolved by the command
+    // layer from the `stems.enhanceVocals`/`stems.vocalEnhanceStrength`
+    // preferences. Applied in OnnxStemSeparator after the vocal buffer is
+    // denormalised and after it is accumulated for the `other` residual, so the
+    // residual stays mixture-consistent against the unprocessed vocal.
+    VocalEnhanceOptions vocalEnhance{};
+    // Optional post-separation cleanup applied to the DRUMS stem only. Off by
+    // default; resolved by the command layer from the `stems.enhanceDrums`/
+    // `stems.drumEnhanceStrength` preferences. Applied in OnnxStemSeparator after
+    // the drum buffer is denormalised and after it is accumulated for the `other`
+    // residual, so the residual stays mixture-consistent against the unprocessed
+    // drums.
+    DrumEnhanceOptions drumEnhance{};
+    // Optional post-separation cleanup applied to the BASS stem only. Off by
+    // default; resolved by the command layer from the `stems.enhanceBass`/
+    // `stems.bassEnhanceStrength` preferences. Applied in OnnxStemSeparator after
+    // the bass buffer is denormalised and after it is accumulated for the `other`
+    // residual, so the residual stays mixture-consistent against the unprocessed
+    // bass.
+    BassEnhanceOptions bassEnhance{};
+    // Optional post-separation cleanup applied to the OTHER (residual) stem only.
+    // Off by default; resolved by the command layer from the `stems.enhanceOther`/
+    // `stems.otherEnhanceStrength` preferences. `other` is the last stem produced
+    // and nothing downstream depends on it, so this is applied to the residual
+    // buffer just before it is written.
+    OtherEnhanceOptions otherEnhance{};
 };
 
 // Progress sink: stage is one of "prepare" / "separate" / "write"; percent 0..100.

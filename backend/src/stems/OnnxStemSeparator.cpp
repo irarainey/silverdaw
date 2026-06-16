@@ -49,6 +49,12 @@ constexpr double kMaxOverlap = 0.95;
 constexpr double kPreparePercent = 2.0;
 constexpr double kSeparatePercent = 98.0;
 
+// When a stem has post-separation cleanup enabled, the tail of that stem's
+// progress band is reserved for the cleanup pass so the bar (and the "Cleaning
+// up …" message) keep moving instead of freezing at the top of the separation
+// band while the enhancer/denoiser runs.
+constexpr double kCleanupFraction = 0.15;
+
 // Output filenames + STEM_READY stem vocabulary. Order here is independent of the
 // model's internal source order (handled by sourceIndexForStem below).
 const std::array<const char*, 4> kStemNames{"vocals", "drums", "bass", "other"};
@@ -335,6 +341,16 @@ class OnnxStemSeparator : public StemSeparator
             extractedSum.clear();
         }
 
+        // Whether a given stem has its optional post-separation cleanup enabled.
+        const auto cleanupEnabledFor = [&request](const juce::String& st) -> bool
+        {
+            if (st == "vocals") return request.vocalEnhance.enabled;
+            if (st == "drums") return request.drumEnhance.enabled;
+            if (st == "bass") return request.bassEnhance.enabled;
+            if (st == "other") return request.otherEnhance.enabled;
+            return false;
+        };
+
         size_t produced = 0;
         for (size_t s = 0; s < kStemNames.size(); ++s)
         {
@@ -344,6 +360,13 @@ class OnnxStemSeparator : public StemSeparator
             const double stemBase = kPreparePercent + stemSpan * static_cast<double>(produced);
             ++produced;
             onProgress("separate", stemBase, stem);
+
+            // Reserve the tail of this stem's band for its cleanup pass (if any),
+            // so the bar keeps advancing while the enhancer/denoiser runs.
+            const bool cleanupEnabled = cleanupEnabledFor(juce::String(stem));
+            const double cleanupSpan = cleanupEnabled ? stemSpan * kCleanupFraction : 0.0;
+            const double sepSpan = stemSpan - cleanupSpan;
+            const double cleanupBase = stemBase + sepSpan;
 
             const bool synthesiseResidual = mixtureConsistency && juce::String(stem) == "other";
 
@@ -362,12 +385,15 @@ class OnnxStemSeparator : public StemSeparator
                     for (int i = 0; i < numSamples; ++i)
                         d[i] = (mix[i] * norm.std + norm.mean) - sum[i];
                 }
+                // The residual is synthesised in one quick pass (no per-window
+                // ticks), so close out its separation band explicitly.
+                onProgress("separate", cleanupBase, stem);
             }
             else
             {
                 stemBuffer = separateOneStem(request.modelDir, stem, mixture, numSamples, window,
                                              offsets, memInfo, onProgress, shouldCancel, stemBase,
-                                             stemSpan);
+                                             sepSpan);
 
                 // Undo the per-track normalisation applied before inference.
                 for (int ch = 0; ch < kModelChannels; ++ch)
@@ -396,6 +422,63 @@ class OnnxStemSeparator : public StemSeparator
                 : request.sourceName + " - " + stem;
             const auto outFile = request.outputDir.getChildFile(
                 juce::File::createLegalFileName(stemBaseName + ".wav"));
+            // Optional vocal cleanup. Applied only to the vocals stem and only
+            // after the (unprocessed) vocal has been folded into `extractedSum`,
+            // so the `other` residual stays mixture-consistent. RNNoise removes
+            // broadband noise/separation artefacts; the high-pass + expander
+            // stage then pushes down residual sub-bass and inter-phrase bleed.
+            if (request.vocalEnhance.enabled && juce::String(stem) == "vocals")
+            {
+                const float wet = vocalDenoiseWetFor(request.vocalEnhance.strength);
+                silverdaw::log::info("stems",
+                                     juce::String("applied vocal cleanup strength=")
+                                         + vocalEnhanceStrengthToString(request.vocalEnhance.strength)
+                                         + " denoiseWet=" + juce::String(wet, 2));
+                onProgress("cleanup", cleanupBase, stem);
+                // The denoiser is the slow cleanup path; tick the bar across the
+                // reserved slice as it runs (it owns the first 90% of the slice,
+                // leaving room for the quick expander stage that follows).
+                VocalDenoiser::process(
+                    stemBuffer, kModelSampleRate, wet,
+                    [&](double f) {
+                        onProgress("cleanup", cleanupBase + cleanupSpan * 0.90 * f, stem);
+                    });
+                VocalEnhancer::process(stemBuffer, kModelSampleRate, request.vocalEnhance);
+                onProgress("cleanup", stemBase + stemSpan, stem);
+            }
+            // Optional drum cleanup. Same contract: drums only, applied after the
+            // raw drum buffer has been folded into the residual sum.
+            if (request.drumEnhance.enabled && juce::String(stem) == "drums")
+            {
+                silverdaw::log::info("stems",
+                                     juce::String("applied drum cleanup strength=")
+                                         + drumEnhanceStrengthToString(request.drumEnhance.strength));
+                onProgress("cleanup", cleanupBase, stem);
+                DrumEnhancer::process(stemBuffer, kModelSampleRate, request.drumEnhance);
+                onProgress("cleanup", stemBase + stemSpan, stem);
+            }
+            // Optional bass cleanup. Same contract: bass only, applied after the
+            // raw bass buffer has been folded into the residual sum.
+            if (request.bassEnhance.enabled && juce::String(stem) == "bass")
+            {
+                silverdaw::log::info("stems",
+                                     juce::String("applied bass cleanup strength=")
+                                         + bassEnhanceStrengthToString(request.bassEnhance.strength));
+                onProgress("cleanup", cleanupBase, stem);
+                BassEnhancer::process(stemBuffer, kModelSampleRate, request.bassEnhance);
+                onProgress("cleanup", stemBase + stemSpan, stem);
+            }
+            // Optional residual cleanup. Applied to the synthesised `other` stem
+            // only, just before it is written (nothing downstream depends on it).
+            if (request.otherEnhance.enabled && juce::String(stem) == "other")
+            {
+                silverdaw::log::info("stems",
+                                     juce::String("applied other cleanup strength=")
+                                         + otherEnhanceStrengthToString(request.otherEnhance.strength));
+                onProgress("cleanup", cleanupBase, stem);
+                OtherEnhancer::process(stemBuffer, kModelSampleRate, request.otherEnhance);
+                onProgress("cleanup", stemBase + stemSpan, stem);
+            }
             writeStemWav(outFile, stemBuffer);
             result.stems.push_back({juce::String(stem), outFile});
             // Let the UI import this stem now, before later stems finish.

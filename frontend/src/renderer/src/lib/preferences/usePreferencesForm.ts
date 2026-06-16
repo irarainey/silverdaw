@@ -1,5 +1,6 @@
 // Transactional form model for PreferencesDialog; nothing persists until `save()`.
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import type { VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
 import { useAppStore } from '@/stores/appStore'
 import { useUiStore, type SkipButtonTarget, type WaveformDisplayMode } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
@@ -36,6 +37,14 @@ export interface PreferencesForm {
   autosaveEnabled: Ref<boolean>
   autosaveIntervalSeconds: Ref<number>
   useGpuForStems: Ref<boolean>
+  enhanceVocals: Ref<boolean>
+  vocalEnhanceStrength: Ref<VocalEnhanceStrength>
+  enhanceDrums: Ref<boolean>
+  drumEnhanceStrength: Ref<DrumEnhanceStrength>
+  enhanceBass: Ref<boolean>
+  bassEnhanceStrength: Ref<BassEnhanceStrength>
+  enhanceOther: Ref<boolean>
+  otherEnhanceStrength: Ref<OtherEnhanceStrength>
   initialLoggingEnabled: Ref<boolean>
   initialDevToolsEnabled: Ref<boolean>
   initialLogDirectory: Ref<string>
@@ -114,6 +123,14 @@ export function usePreferencesForm(): PreferencesForm {
   const autosaveEnabled = ref(true)
   const autosaveIntervalSeconds = ref(30)
   const useGpuForStems = ref(false)
+  const enhanceVocals = ref(false)
+  const vocalEnhanceStrength = ref<VocalEnhanceStrength>('medium')
+  const enhanceDrums = ref(false)
+  const drumEnhanceStrength = ref<DrumEnhanceStrength>('medium')
+  const enhanceBass = ref(false)
+  const bassEnhanceStrength = ref<BassEnhanceStrength>('medium')
+  const enhanceOther = ref(false)
+  const otherEnhanceStrength = ref<OtherEnhanceStrength>('medium')
 
   // Opening snapshot for change detection and restart notices.
   const initialLoggingEnabled = ref(false)
@@ -131,6 +148,14 @@ export function usePreferencesForm(): PreferencesForm {
   const initialAutosaveEnabled = ref(true)
   const initialAutosaveSeconds = ref(30)
   const initialUseGpuForStems = ref(false)
+  const initialEnhanceVocals = ref(false)
+  const initialVocalEnhanceStrength = ref<VocalEnhanceStrength>('medium')
+  const initialEnhanceDrums = ref(false)
+  const initialDrumEnhanceStrength = ref<DrumEnhanceStrength>('medium')
+  const initialEnhanceBass = ref(false)
+  const initialBassEnhanceStrength = ref<BassEnhanceStrength>('medium')
+  const initialEnhanceOther = ref(false)
+  const initialOtherEnhanceStrength = ref<OtherEnhanceStrength>('medium')
 
   const hasChanges = computed(
     () =>
@@ -149,6 +174,14 @@ export function usePreferencesForm(): PreferencesForm {
       autosaveEnabled.value !== initialAutosaveEnabled.value ||
       autosaveIntervalSeconds.value !== initialAutosaveSeconds.value ||
       useGpuForStems.value !== initialUseGpuForStems.value ||
+      enhanceVocals.value !== initialEnhanceVocals.value ||
+      vocalEnhanceStrength.value !== initialVocalEnhanceStrength.value ||
+      enhanceDrums.value !== initialEnhanceDrums.value ||
+      drumEnhanceStrength.value !== initialDrumEnhanceStrength.value ||
+      enhanceBass.value !== initialEnhanceBass.value ||
+      bassEnhanceStrength.value !== initialBassEnhanceStrength.value ||
+      enhanceOther.value !== initialEnhanceOther.value ||
+      otherEnhanceStrength.value !== initialOtherEnhanceStrength.value ||
       audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
       audioOutputDeviceName.value !== initialAudioOutputDeviceName.value
   )
@@ -174,6 +207,14 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputDeviceName.value = audioPref.deviceName
       const stemPrefs = await window.silverdaw.getStemPrefs()
       useGpuForStems.value = stemPrefs.useGpu
+      enhanceVocals.value = stemPrefs.enhanceVocals
+      vocalEnhanceStrength.value = stemPrefs.vocalEnhanceStrength
+      enhanceDrums.value = stemPrefs.enhanceDrums
+      drumEnhanceStrength.value = stemPrefs.drumEnhanceStrength
+      enhanceBass.value = stemPrefs.enhanceBass
+      bassEnhanceStrength.value = stemPrefs.bassEnhanceStrength
+      enhanceOther.value = stemPrefs.enhanceOther
+      otherEnhanceStrength.value = stemPrefs.otherEnhanceStrength
     } catch {
       loggingEnabled.value = false
       devToolsEnabled.value = false
@@ -186,6 +227,14 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputTypeName.value = null
       audioOutputDeviceName.value = null
       useGpuForStems.value = false
+      enhanceVocals.value = false
+      vocalEnhanceStrength.value = 'medium'
+      enhanceDrums.value = false
+      drumEnhanceStrength.value = 'medium'
+      enhanceBass.value = false
+      bassEnhanceStrength.value = 'medium'
+      enhanceOther.value = false
+      otherEnhanceStrength.value = 'medium'
     }
     // UI prefs are already mirrored into uiStore at startup.
     followPlayback.value = ui.followPlayback
@@ -209,6 +258,14 @@ export function usePreferencesForm(): PreferencesForm {
     initialAutosaveEnabled.value = autosaveEnabled.value
     initialAutosaveSeconds.value = autosaveIntervalSeconds.value
     initialUseGpuForStems.value = useGpuForStems.value
+    initialEnhanceVocals.value = enhanceVocals.value
+    initialVocalEnhanceStrength.value = vocalEnhanceStrength.value
+    initialEnhanceDrums.value = enhanceDrums.value
+    initialDrumEnhanceStrength.value = drumEnhanceStrength.value
+    initialEnhanceBass.value = enhanceBass.value
+    initialBassEnhanceStrength.value = bassEnhanceStrength.value
+    initialEnhanceOther.value = enhanceOther.value
+    initialOtherEnhanceStrength.value = otherEnhanceStrength.value
     initialAudioOutputTypeName.value = audioOutputTypeName.value
     initialAudioOutputDeviceName.value = audioOutputDeviceName.value
   }
@@ -311,6 +368,42 @@ export function usePreferencesForm(): PreferencesForm {
     if (useGpuForStems.value !== initialUseGpuForStems.value) {
       window.silverdaw.setStemPrefs({ useGpu: useGpuForStems.value })
     }
+    if (
+      enhanceVocals.value !== initialEnhanceVocals.value ||
+      vocalEnhanceStrength.value !== initialVocalEnhanceStrength.value
+    ) {
+      window.silverdaw.setStemPrefs({
+        enhanceVocals: enhanceVocals.value,
+        vocalEnhanceStrength: vocalEnhanceStrength.value
+      })
+    }
+    if (
+      enhanceDrums.value !== initialEnhanceDrums.value ||
+      drumEnhanceStrength.value !== initialDrumEnhanceStrength.value
+    ) {
+      window.silverdaw.setStemPrefs({
+        enhanceDrums: enhanceDrums.value,
+        drumEnhanceStrength: drumEnhanceStrength.value
+      })
+    }
+    if (
+      enhanceBass.value !== initialEnhanceBass.value ||
+      bassEnhanceStrength.value !== initialBassEnhanceStrength.value
+    ) {
+      window.silverdaw.setStemPrefs({
+        enhanceBass: enhanceBass.value,
+        bassEnhanceStrength: bassEnhanceStrength.value
+      })
+    }
+    if (
+      enhanceOther.value !== initialEnhanceOther.value ||
+      otherEnhanceStrength.value !== initialOtherEnhanceStrength.value
+    ) {
+      window.silverdaw.setStemPrefs({
+        enhanceOther: enhanceOther.value,
+        otherEnhanceStrength: otherEnhanceStrength.value
+      })
+    }
   }
 
   return {
@@ -339,6 +432,14 @@ export function usePreferencesForm(): PreferencesForm {
     autosaveEnabled,
     autosaveIntervalSeconds,
     useGpuForStems,
+    enhanceVocals,
+    vocalEnhanceStrength,
+    enhanceDrums,
+    drumEnhanceStrength,
+    enhanceBass,
+    bassEnhanceStrength,
+    enhanceOther,
+    otherEnhanceStrength,
     initialLoggingEnabled,
     initialDevToolsEnabled,
     initialLogDirectory,

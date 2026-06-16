@@ -19,7 +19,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
-import type { StemName, StemQuality } from '@shared/bridge-protocol'
+import type { StemName, StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
 
 /** Canonical four-stem order; the selection dialog and dispatch use it. */
 const ALL_STEMS: readonly StemName[] = ['vocals', 'drums', 'bass', 'other']
@@ -285,6 +285,7 @@ async function dispatchSeparation(
 ): Promise<void> {
   const modelDir = await window.silverdaw.getStemModelDir()
   const useGpu = await resolveUseGpu()
+  const enhance = await resolveStemEnhance()
   const jobId = crypto.randomUUID()
   registerStemJob(jobId, target)
   beginStemSeparation(jobId, target, stems)
@@ -296,14 +297,70 @@ async function dispatchSeparation(
     sourceName: target.sourceName,
     stems: [...stems],
     quality,
-    useGpu
+    useGpu,
+    enhanceVocals: enhance.enhanceVocals,
+    vocalEnhanceStrength: enhance.vocalEnhanceStrength,
+    enhanceDrums: enhance.enhanceDrums,
+    drumEnhanceStrength: enhance.drumEnhanceStrength,
+    enhanceBass: enhance.enhanceBass,
+    bassEnhanceStrength: enhance.bassEnhanceStrength,
+    enhanceOther: enhance.enhanceOther,
+    otherEnhanceStrength: enhance.otherEnhanceStrength
   })
   log.info(
     'stems',
     `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
       `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality} ` +
-      `useGpu=${useGpu}`
+      `useGpu=${useGpu} enhanceVocals=${enhance.enhanceVocals ? enhance.vocalEnhanceStrength : 'off'} ` +
+      `enhanceDrums=${enhance.enhanceDrums ? enhance.drumEnhanceStrength : 'off'} ` +
+      `enhanceBass=${enhance.enhanceBass ? enhance.bassEnhanceStrength : 'off'} ` +
+      `enhanceOther=${enhance.enhanceOther ? enhance.otherEnhanceStrength : 'off'}`
   )
+}
+
+/**
+ * Resolves the optional per-stem cleanup settings from the persisted stem prefs.
+ * Any lookup failure disables cleanup — the safe default that never alters a
+ * stem the user didn't ask to process.
+ */
+async function resolveStemEnhance(): Promise<{
+  enhanceVocals: boolean
+  vocalEnhanceStrength: VocalEnhanceStrength
+  enhanceDrums: boolean
+  drumEnhanceStrength: DrumEnhanceStrength
+  enhanceBass: boolean
+  bassEnhanceStrength: BassEnhanceStrength
+  enhanceOther: boolean
+  otherEnhanceStrength: OtherEnhanceStrength
+}> {
+  try {
+    const prefs = await window.silverdaw.getStemPrefs()
+    return {
+      enhanceVocals: prefs.enhanceVocals,
+      vocalEnhanceStrength: prefs.vocalEnhanceStrength,
+      enhanceDrums: prefs.enhanceDrums,
+      drumEnhanceStrength: prefs.drumEnhanceStrength,
+      enhanceBass: prefs.enhanceBass,
+      bassEnhanceStrength: prefs.bassEnhanceStrength,
+      enhanceOther: prefs.enhanceOther,
+      otherEnhanceStrength: prefs.otherEnhanceStrength
+    }
+  } catch (err) {
+    log.warn(
+      'stems',
+      `resolveStemEnhance failed, disabling cleanup: ${err instanceof Error ? err.message : String(err)}`
+    )
+    return {
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium',
+      enhanceDrums: false,
+      drumEnhanceStrength: 'medium',
+      enhanceBass: false,
+      bassEnhanceStrength: 'medium',
+      enhanceOther: false,
+      otherEnhanceStrength: 'medium'
+    }
+  }
 }
 
 /**

@@ -1097,6 +1097,15 @@ stem clip that has played to its end resumes correctly on the next seek + play
 (an `AudioTransportSource` auto-stops at EOF and repositioning alone would not
 clear that, leaving the clip silent until reloaded).
 
+Optionally, each stem can be passed through a light **post-separation cleanup**
+pass before it is written (Preferences ▸ Stems, off by default per stem). The
+vocal cleanup uses **RNNoise** (xiph, BSD-2-Clause; fetched and statically linked
+via CMake) to suppress broadband noise and separation artefacts, while drums,
+bass and `other` use small purpose-built DSP enhancers in `backend/src/dsp/`.
+The pass is non-destructive — it only shapes the freshly written stem WAVs and
+never touches the user's source. See
+[`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md) for RNNoise attribution.
+
 ## Library panel
 
 The bottom library panel stores imported audio files and saved clips as draggable tiles.
