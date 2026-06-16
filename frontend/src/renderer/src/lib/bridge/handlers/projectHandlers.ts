@@ -51,7 +51,6 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
       // Explicit save makes the current autosave bucket redundant.
       if (project.projectId) void window.silverdaw.clearAutosave(project.projectId)
       void useAppStore().refreshRecentProjects()
-      notifications.pushInfo('Project saved')
     } else {
       log.warn('bridge', `PROJECT_SAVED failed: ${payload.error ?? 'unknown'}`)
       notifications.pushError(`Save failed: ${payload.error ?? 'unknown error'}`)
