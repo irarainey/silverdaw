@@ -370,7 +370,7 @@ const {
                 <dt class="text-zinc-500">
                   {{ label }}
                 </dt>
-                <dd class="break-words text-zinc-200">
+                <dd class="wrap-break-word text-zinc-200">
                   {{ value }}
                 </dd>
               </template>
