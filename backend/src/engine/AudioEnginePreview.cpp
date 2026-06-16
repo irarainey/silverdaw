@@ -272,6 +272,11 @@ bool AudioEngine::isPreviewPlaying() const
     return preview.transportSource != nullptr && preview.transportSource->isPlaying();
 }
 
+bool AudioEngine::isPreviewFinished() const
+{
+    return preview.transportSource != nullptr && preview.transportSource->hasStreamFinished();
+}
+
 bool AudioEngine::isPreviewLoaded() const
 {
     return preview.transportSource != nullptr;

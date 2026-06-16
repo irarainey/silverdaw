@@ -15,6 +15,7 @@ import {
   canonicalisePath,
   isAllowedAudioPath,
   isWithinStemsWriteRoot,
+  isWithinSamplesWriteRoot,
   registerIssuedPath
 } from '../audioPaths'
 import { logMain } from '../log'
@@ -29,17 +30,23 @@ export interface AudioHandlersContext {
 // Cache renderer-side transcodes by source path and decoded geometry.
 const TRANSCODE_CACHE_DIR = join(tmpdir(), 'silverdaw-transcode-cache')
 
-// Stem sidecar: a stem's separated WAV carries no tags, so we copy the source
-// file's metadata + cover art into the stem's output folder at separation time.
-// This makes a stem's inherited identity survive removal of the original source
-// item and a project reload (the live derivedFrom reference dangles once the
-// source is gone).
+// Media sidecar: a generated WAV (a separated stem, or a music sample saved from
+// a clip) carries no embedded tags, so we copy the source file's metadata + cover
+// art into the generated file's folder at creation time. This makes the inherited
+// identity a real, self-contained copy that survives removal of the original
+// source item and a project reload (the live `derivedFrom`/source reference
+// dangles once the source is gone). Stems and music samples share this format.
 const SIDECAR_METADATA_FILE = 'metadata.json'
 
-interface StemSidecar {
+interface MediaSidecar {
   version: number
   metadata: AudioMetadata
   cover?: { file: string; mimeType: string }
+}
+
+interface SidecarCover {
+  data: ArrayBuffer
+  mimeType: string
 }
 
 const COVER_EXT_BY_MIME: Readonly<Record<string, string>> = {
@@ -67,6 +74,101 @@ function isWithinStemsDir(dir: unknown): dir is string {
   const rel = relative(stemsBaseDir(), canonicalisePath(dir))
   if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return true
   return isWithinStemsWriteRoot(dir)
+}
+
+// Write an already-resolved identity (tags + optional cover bytes) as a sidecar
+// (metadata.json plus a cover.<ext>) into an app-owned `dir`. Shared by both the
+// stem and sample writers — the difference is only how the identity is sourced:
+// stems re-parse the original tagged source file; samples pass the in-memory
+// inherited identity (their source may be a tagless stem/saved-clip, so the file
+// on disk has nothing to parse).
+async function writeSidecarData(
+  dir: string,
+  metadata: AudioMetadata,
+  cover?: SidecarCover
+): Promise<boolean> {
+  await mkdir(dir, { recursive: true })
+  const { coverArt: _omitCover, ...rest } = metadata
+  const sidecar: MediaSidecar = { version: 1, metadata: rest }
+  if (cover && cover.data.byteLength > 0) {
+    const file = `cover.${coverExtForMime(cover.mimeType)}`
+    await writeFile(join(dir, file), Buffer.from(cover.data))
+    sidecar.cover = { file, mimeType: cover.mimeType }
+  }
+  await writeFile(join(dir, SIDECAR_METADATA_FILE), JSON.stringify(sidecar, null, 2), 'utf8')
+  return true
+}
+
+// Parse a tagged source file's metadata + cover art and persist it as a sidecar
+// into an already-validated `dir`. Used by the stem writer (the source is the
+// original imported file, which carries real tags).
+async function writeSidecarToDir(dir: string, sourceFilePath: string): Promise<boolean> {
+  const meta = normalizeMetadata(await parseFile(sourceFilePath, { duration: true, skipCovers: false }))
+  const { coverArt, ...rest } = meta
+  const cover =
+    coverArt && coverArt.data.byteLength > 0
+      ? { data: coverArt.data, mimeType: coverArt.mimeType }
+      : undefined
+  return writeSidecarData(dir, rest, cover)
+}
+
+// Read a sidecar from an already-validated `dir` back into `AudioMetadata` (cover
+// bytes attached) so the existing setItemMetadata Blob-URL flow works unchanged.
+// Returns null when no sidecar is present so the caller can fall back to the
+// file's own tags. Shared by the stem and sample read handlers.
+async function readSidecarFromDir(dir: string): Promise<AudioMetadata | null> {
+  const raw = await readFile(join(dir, SIDECAR_METADATA_FILE), 'utf8')
+  const parsed = JSON.parse(raw) as Partial<MediaSidecar>
+  if (!parsed || typeof parsed.metadata !== 'object' || parsed.metadata === null) return null
+  const meta: AudioMetadata = { ...parsed.metadata }
+  if (parsed.cover && typeof parsed.cover.file === 'string') {
+    try {
+      const buf = await readFile(join(dir, basename(parsed.cover.file)))
+      const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+      meta.coverArt = { data, mimeType: parsed.cover.mimeType || 'image/jpeg' }
+    } catch (err) {
+      logMain('WARN ', 'sidecar:read', `cover read failed in ${dir}:`, err)
+    }
+  }
+  return meta
+}
+
+// Resolve a music sample's inherited identity (tags + cover art) from its source's
+// on-disk representation, mirroring however the source itself stores its identity:
+//  - a separated stem (or a music sample) is a tagless WAV whose identity lives in
+//    its OWN sidecar beside it — prefer that (this is the common case);
+//  - an imported audio file carries embedded tags + cover — parse them.
+// Returns null only when neither yields anything usable. The source sidecar lookup
+// is gated to app-owned folders so an unrelated metadata.json beside a user's music
+// file can never be mistaken for the source's identity.
+async function resolveSourceIdentity(
+  sourceFilePath: string
+): Promise<{ metadata: AudioMetadata; cover?: SidecarCover } | null> {
+  const splitCover = (meta: AudioMetadata): { metadata: AudioMetadata; cover?: SidecarCover } => {
+    const { coverArt, ...rest } = meta
+    return {
+      metadata: rest,
+      cover:
+        coverArt && coverArt.data.byteLength > 0
+          ? { data: coverArt.data, mimeType: coverArt.mimeType }
+          : undefined
+    }
+  }
+  const sourceDir = canonicalisePath(dirname(sourceFilePath))
+  if (isWithinStemsDir(sourceDir) || isWithinSamplesWriteRoot(sourceDir)) {
+    try {
+      const sidecar = await readSidecarFromDir(sourceDir)
+      if (sidecar) return splitCover(sidecar)
+    } catch {
+      /* fall through to parsing the file's own tags */
+    }
+  }
+  try {
+    return splitCover(normalizeMetadata(await parseFile(sourceFilePath, { duration: true, skipCovers: false })))
+  } catch (err) {
+    logMain('WARN ', 'samples:writeSidecar', `could not resolve identity for ${sourceFilePath}:`, err)
+    return null
+  }
 }
 
 export function registerAudioHandlers(ctx: AudioHandlersContext): void {
@@ -192,50 +294,68 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       return false
     }
     try {
-      const meta = normalizeMetadata(
-        await parseFile(p.sourceFilePath, { duration: true, skipCovers: false })
-      )
-      const dir = canonicalisePath(p.stemDir)
-      await mkdir(dir, { recursive: true })
-      const { coverArt, ...rest } = meta
-      const sidecar: StemSidecar = { version: 1, metadata: rest }
-      if (coverArt && coverArt.data.byteLength > 0) {
-        const file = `cover.${coverExtForMime(coverArt.mimeType)}`
-        await writeFile(join(dir, file), Buffer.from(coverArt.data))
-        sidecar.cover = { file, mimeType: coverArt.mimeType }
-      }
-      await writeFile(join(dir, SIDECAR_METADATA_FILE), JSON.stringify(sidecar, null, 2), 'utf8')
-      return true
+      return await writeSidecarToDir(canonicalisePath(p.stemDir), p.sourceFilePath)
     } catch (err) {
       logMain('WARN ', 'stems:writeSidecar', `failed for ${String(p.sourceFilePath)}:`, err)
       return false
     }
   })
 
-  // Read back a stem sidecar as AudioMetadata (cover bytes attached) so the
-  // existing setItemMetadata Blob-URL flow works unchanged. Returns null when no
-  // sidecar is present so the caller can fall back to reading the file's own tags.
+  // Read back a stem sidecar as AudioMetadata (cover bytes attached). Returns null
+  // when no sidecar is present so the caller can fall back to the file's own tags.
   ipcMain.handle(IPC.stems.readSidecar, async (_evt, stemDir: unknown) => {
     if (!isWithinStemsDir(stemDir)) {
       logMain('WARN ', 'stems:readSidecar', 'rejected stemDir not under stems base:', stemDir)
       return null
     }
     try {
-      const dir = canonicalisePath(stemDir)
-      const raw = await readFile(join(dir, SIDECAR_METADATA_FILE), 'utf8')
-      const parsed = JSON.parse(raw) as Partial<StemSidecar>
-      if (!parsed || typeof parsed.metadata !== 'object' || parsed.metadata === null) return null
-      const meta: AudioMetadata = { ...parsed.metadata }
-      if (parsed.cover && typeof parsed.cover.file === 'string') {
-        try {
-          const buf = await readFile(join(dir, basename(parsed.cover.file)))
-          const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-          meta.coverArt = { data, mimeType: parsed.cover.mimeType || 'image/jpeg' }
-        } catch (err) {
-          logMain('WARN ', 'stems:readSidecar', `cover read failed in ${dir}:`, err)
-        }
-      }
-      return meta
+      return await readSidecarFromDir(canonicalisePath(stemDir))
+    } catch {
+      return null
+    }
+  })
+
+  // Music samples persist their inherited identity (tags + cover) as a sidecar
+  // beside the WAV, the same format stems use. The renderer passes only the sample
+  // WAV path + its source path; main resolves the identity from the source's
+  // on-disk representation (its own sidecar when the source is a tagless stem/
+  // sample, else the file's embedded tags) — the renderer cannot supply the cover
+  // bytes (the library store keeps only a Blob URL the renderer CSP can't fetch).
+  // The sidecar folder is the WAV's parent dir (the per-source subdir the backend
+  // wrote into), confined to a Samples write root.
+  ipcMain.handle(IPC.samples.writeSidecar, async (_evt, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return false
+    const p = payload as { sampleFilePath?: unknown; sourceFilePath?: unknown }
+    if (typeof p.sampleFilePath !== 'string' || typeof p.sourceFilePath !== 'string') return false
+    if (!isAllowedAudioPath(p.sourceFilePath)) {
+      logMain('WARN ', 'samples:writeSidecar', 'rejected source not on allow-list:', p.sourceFilePath)
+      return false
+    }
+    const dir = canonicalisePath(dirname(p.sampleFilePath))
+    if (!isWithinSamplesWriteRoot(dir)) {
+      logMain('WARN ', 'samples:writeSidecar', 'rejected sampleDir not under samples root:', dir)
+      return false
+    }
+    try {
+      const identity = await resolveSourceIdentity(p.sourceFilePath)
+      if (!identity) return false
+      return await writeSidecarData(dir, identity.metadata, identity.cover)
+    } catch (err) {
+      logMain('WARN ', 'samples:writeSidecar', `failed for ${String(p.sampleFilePath)}:`, err)
+      return false
+    }
+  })
+
+  // Read back a music sample's sidecar as AudioMetadata (cover bytes attached) on
+  // project reload. Returns null when absent so the caller falls back to basic
+  // file info.
+  ipcMain.handle(IPC.samples.readSidecar, async (_evt, sampleDir: unknown) => {
+    if (!isWithinSamplesWriteRoot(sampleDir)) {
+      logMain('WARN ', 'samples:readSidecar', 'rejected sampleDir not under samples root:', sampleDir)
+      return null
+    }
+    try {
+      return await readSidecarFromDir(canonicalisePath(sampleDir))
     } catch {
       return null
     }

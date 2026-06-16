@@ -1,10 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import {
   libraryItemIsSample,
+  libraryItemShowsLinkBadge,
   libraryItemTempoUnverified,
   stemPartLabel,
   STEM_NAME_SEPARATOR
 } from '@/stores/libraryItemHelpers'
+
+describe('libraryItemShowsLinkBadge', () => {
+  it('returns false for an undefined item', () => {
+    expect(libraryItemShowsLinkBadge(undefined)).toBe(false)
+    expect(libraryItemShowsLinkBadge(null)).toBe(false)
+  })
+
+  it('flags saved clips as linked', () => {
+    expect(libraryItemShowsLinkBadge({ kind: 'saved-clip' })).toBe(true)
+  })
+
+  it('flags both music and simple sample assets as linked', () => {
+    expect(libraryItemShowsLinkBadge({ kind: 'audio-file', sampleMode: 'sample' })).toBe(true)
+    expect(libraryItemShowsLinkBadge({ kind: 'audio-file', sampleMode: 'music' })).toBe(true)
+  })
+
+  it('does not flag a plain imported source file', () => {
+    expect(libraryItemShowsLinkBadge({ kind: 'audio-file' })).toBe(false)
+    expect(libraryItemShowsLinkBadge({ kind: 'stem' })).toBe(false)
+  })
+})
 
 describe('libraryItemIsSample', () => {
   it('treats a low-confidence detection as music, not a sample', () => {

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   isAllowedAudioPath,
+  isWithinSamplesWriteRoot,
   isWithinStemsWriteRoot,
   registerIssuedPath,
+  registerSamplesWriteRoot,
   registerStemsWriteRoot,
   registerTrustedReadRoot
 } from '@main/audioPaths'
@@ -75,5 +77,26 @@ describe('audioPaths allow-list', () => {
     expect(isWithinStemsWriteRoot(abs('Confined', 'Stems', '..', 'escape'))).toBe(false)
     expect(isWithinStemsWriteRoot('relative/Stems')).toBe(false)
     expect(isWithinStemsWriteRoot(42)).toBe(false)
+  })
+
+  it('treats a registered samples write root as both a sidecar root and a read root', () => {
+    const samplesRoot = abs('ProjectFolder', 'Samples')
+    const sampleDir = abs('ProjectFolder', 'Samples', 'Funky President')
+    const sampleWav = abs('ProjectFolder', 'Samples', 'Funky President', 'Drums-sample-001.wav')
+    expect(isWithinSamplesWriteRoot(sampleDir)).toBe(false)
+    expect(isAllowedAudioPath(sampleWav)).toBe(false)
+    registerSamplesWriteRoot(samplesRoot)
+    // A music-sample sidecar may be written into the per-source subdir, and the
+    // sample WAVs under the Samples root may be read.
+    expect(isWithinSamplesWriteRoot(sampleDir)).toBe(true)
+    expect(isAllowedAudioPath(sampleWav)).toBe(true)
+  })
+
+  it('confines the samples write root (no `..` traversal, rejects non-absolute)', () => {
+    const samplesRoot = abs('ConfinedS', 'Samples')
+    registerSamplesWriteRoot(samplesRoot)
+    expect(isWithinSamplesWriteRoot(abs('ConfinedS', 'Samples', '..', 'escape'))).toBe(false)
+    expect(isWithinSamplesWriteRoot('relative/Samples')).toBe(false)
+    expect(isWithinSamplesWriteRoot(42)).toBe(false)
   })
 })

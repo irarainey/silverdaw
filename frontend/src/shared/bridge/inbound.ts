@@ -436,6 +436,12 @@ const SampleSavedSuccessSchema = z.object({
   peakCount: z.number(),
   laneCount: z.number().int().min(1).max(8).optional().default(1),
   peaksPerSecond: z.number(),
+  // Echoed back so the renderer classifies the new item and (for music)
+  // inherits the source's display metadata / cover art.
+  sampleMode: z.enum(['sample', 'music']).optional(),
+  sourceItemId: z.string().optional(),
+  /** Source window start in ms; shifts the inherited beat grid for a music sample. */
+  sourceInMs: z.number().optional(),
   error: z.string().optional()
 })
 export const SampleSavedPayloadSchema = z.discriminatedUnion('ok', [

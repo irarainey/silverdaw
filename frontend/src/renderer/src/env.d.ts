@@ -132,6 +132,8 @@ declare global {
       ): () => void
       writeStemSidecar(stemDir: string, sourceFilePath: string): Promise<boolean>
       readStemSidecar(stemDir: string): Promise<AudioMetadata | null>
+      writeSampleSidecar(sampleFilePath: string, sourceFilePath: string): Promise<boolean>
+      readSampleSidecar(sampleDir: string): Promise<AudioMetadata | null>
     }
   }
 }

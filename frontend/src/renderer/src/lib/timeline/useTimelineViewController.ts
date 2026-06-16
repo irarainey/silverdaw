@@ -154,6 +154,8 @@ export function useTimelineViewController(
     warpDialogOpen,
     warpDialogClipId,
     warpDialogPanel,
+    sampleTypeOpen,
+    sampleTypeClipId,
     editorItem,
     infoItem
   } = dialogs
@@ -580,6 +582,8 @@ export function useTimelineViewController(
     warpDialogOpen,
     warpDialogClipId,
     warpDialogPanel,
+    sampleTypeOpen,
+    sampleTypeClipId,
     dialogs,
     infoClipId,
     infoItem,

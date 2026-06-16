@@ -183,4 +183,22 @@ describe('useClipEditorPreview — selection playback bounds', () => {
     expect(preview.pause).toHaveBeenCalledTimes(1)
     expect(preview.seek).toHaveBeenCalledWith(200)
   })
+
+  it('loops the whole window for a standalone item with no selection when loop is on', () => {
+    const preview = fakePreview()
+    preview.isPlaying = true
+    preview.positionMs = 1000
+    const p = useClipEditorPreview(
+      makeDeps(preview, {
+        editsExistingClip: () => false,
+        hasPlaybackSelection: () => false,
+        loopEnabled: () => true,
+        playbackStartMs: () => 0,
+        playbackEndMs: () => 1000
+      })
+    )
+    p.enforceSelectionPlaybackBounds()
+    expect(preview.seek).toHaveBeenCalledWith(0)
+    expect(preview.pause).not.toHaveBeenCalled()
+  })
 })

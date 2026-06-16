@@ -166,12 +166,12 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
     if (!preview.isPlaying) return
 
     if (!deps.editorItem()) return
-    const isSavedClip = deps.editsExistingClip()
     const hasSel = deps.hasPlaybackSelection()
-    // Loop applies whenever there's a selection, OR for a saved clip with
-    // no selection (loops the whole clip). Source files only loop when
-    // there is an explicit selection.
-    const looping = deps.loopEnabled() && (hasSel || isSavedClip)
+    // When loop is enabled, loop the active playback window: the selection if
+    // there is one, otherwise the whole preview window. This applies to any
+    // editor item (timeline clips, saved clips, and standalone library samples
+    // opened directly), so a music/simple sample loops just like a clip.
+    const looping = deps.loopEnabled()
 
     // While playing, enforce the selection bounds before reaching the
     // natural end of the preview window.

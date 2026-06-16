@@ -121,16 +121,26 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
         // teardown always completes and the canvas is removed (avoids stacked,
         // flickering leftover canvases across rebuilds).
         //
-        // `texture: false` is deliberate: the waveform meshes tint the PROCESS-
-        // GLOBAL `Texture.WHITE` singleton, which is ALSO used by the clip-editor
-        // renderer. Passing `texture: true` here would destroy that shared
-        // singleton's GPU source on teardown/rebuild, leaving every Mesh in both
-        // surfaces sampling a dead texture — invisible (black) forever, with no
-        // error and no recovery. The clip-editor teardown already uses
-        // `texture: false` for the same reason. On a real context loss the GPU
-        // textures are already invalid, so not freeing them here leaks nothing
-        // live; on unmount the process is ending anyway.
-        instance.destroy(true, { children: true, texture: false })
+        // The renderer-destroy options are `{ removeView: true }`, NOT `true`.
+        // Passing `true` makes Pixi call `GlobalResourceRegistry.release()`, which
+        // destroys the PROCESS-GLOBAL batch pool (and texture/canvas pools) shared
+        // by every live PixiJS renderer. While the clip-editor renderer is open,
+        // that nukes Batch objects its render still references — and vice-versa:
+        // the clip-editor closing while this timeline is alive would leave the
+        // timeline's cached instructions holding a destroyed Batch with a null
+        // `batcher`, throwing in `BatcherPipe.execute` inside the auto-ticker and
+        // freezing the canvas black. `{ removeView: true }` removes the canvas
+        // without releasing those shared globals (they persist for the process,
+        // which is fine for a long-lived app).
+        //
+        // `texture: false` is also deliberate: the waveform meshes tint the
+        // PROCESS-GLOBAL `Texture.WHITE` singleton, which is ALSO used by the
+        // clip-editor renderer. Passing `texture: true` here would destroy that
+        // shared singleton's GPU source on teardown/rebuild, leaving every Mesh in
+        // both surfaces sampling a dead texture — invisible (black) forever, with
+        // no error and no recovery. The clip-editor teardown uses the same options
+        // for the same reasons.
+        instance.destroy({ removeView: true }, { children: true, texture: false })
       } catch (err) {
         log.warn('timeline',
           `Pixi teardown error (continuing): ${err instanceof Error ? err.message : String(err)}`)
@@ -171,9 +181,10 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
 
       // And again — host might have unmounted while init was awaiting.
       if (destroyed || !opts.host.value) {
-        // `texture: false` for the same shared-`Texture.WHITE` reason as in
-        // `teardownApp` — never destroy the process-global white singleton.
-        instance.destroy(true, { children: true, texture: false })
+        // `{ removeView: true }` (not `true`) and `texture: false` for the same
+        // shared-global reasons as in `teardownApp` — never release the global
+        // batch pool or destroy the process-global white singleton.
+        instance.destroy({ removeView: true }, { children: true, texture: false })
         return false
       }
 

@@ -96,6 +96,20 @@ export function libraryItemIsSample(
 }
 
 /**
+ * Whether a timeline clip sourced from `item` should show the "linked to
+ * library" badge in its header. True for saved clips and for sample assets
+ * (both music and simple samples) — reusable library entries a placed clip
+ * stays linked to, as opposed to a plain imported source file. Mirrored by the
+ * clip renderer and the rename overlay so badge width stays in sync.
+ */
+export function libraryItemShowsLinkBadge(
+  item: { kind?: LibraryItem['kind']; sampleMode?: LibraryItem['sampleMode'] } | undefined | null
+): boolean {
+  if (!item) return false
+  return item.kind === 'saved-clip' || item.sampleMode === 'sample' || item.sampleMode === 'music'
+}
+
+/**
  * Whether an item's detected tempo grid is unverified — i.e. tempo
  * detection returned low confidence and the user has not explicitly
  * confirmed the classification via `sampleMode`. Such items still show

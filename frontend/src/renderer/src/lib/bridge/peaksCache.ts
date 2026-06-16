@@ -9,6 +9,7 @@ import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
 import type { SampleSavedPayload, WaveformReadyPayload } from '@shared/bridge-protocol'
 
 /**
@@ -152,6 +153,38 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
   })
   if (parsed && parsed.channels.length > 0) {
     library.setItemChannelPeaks(payload.itemId, parsed.channels, payload.peaksPerSecond)
+  }
+  // Classify the new sample and, for music samples, inherit the source's musical
+  // identity so it shows its grid and warps on drop. The backend persists the
+  // same grid (and may re-broadcast it via LIBRARY_ITEM_ANALYSIS); applying it
+  // here too keeps the renderer correct regardless of message ordering.
+  if (payload.sampleMode) {
+    const item = library.byId[payload.itemId]
+    if (item) item.sampleMode = payload.sampleMode
+    if (payload.sampleMode === 'music' && payload.sourceItemId) {
+      const source = library.byId[payload.sourceItemId] ?? null
+      inheritSourceAnalysis(library, payload.itemId, source, (payload.sourceInMs ?? 0) / 1000)
+      // A music sample inherits its parent's tags and cover art for display.
+      // The cover-art object URL is shared (the store's revoke guard refcounts
+      // it), mirroring the stem-source hand-off.
+      if (item && source) {
+        if (!item.metadata && source.metadata) item.metadata = source.metadata
+        if (!item.coverArtUrl && source.coverArtUrl) item.coverArtUrl = source.coverArtUrl
+        // Persist the inherited identity to a sidecar beside the sample WAV so the
+        // cover art + tags survive a project reload — the in-memory copy above is
+        // lost otherwise, and a sample must never depend on its origin once saved.
+        // Main resolves the identity from the source's on-disk representation (its
+        // own sidecar if the source is a tagless stem, else the file's own tags).
+        if (source.filePath) {
+          void window.silverdaw
+            .writeSampleSidecar(payload.filePath, source.filePath)
+            .catch((err) =>
+              log.warn('bridge', `writeSampleSidecar failed for ${payload.itemId}: ${String(err)}`)
+            )
+        }
+      }
+    }
+    useProjectStore().peaksRevision++
   }
   notifications.pushInfo(`Saved sample "${payload.name}".`)
   log.info('bridge', `SAMPLE_SAVED itemId=${payload.itemId} file=${payload.fileName}`)

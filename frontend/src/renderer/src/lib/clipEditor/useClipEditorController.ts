@@ -454,7 +454,9 @@ export function useClipEditorController(
     (n, prev) => {
       if (n === prev) return
       if (!editorItem.value) return
-      const looping = loopEnabled.value && (hasPlaybackSelection.value || editsExistingClip.value)
+      // Loop the active window (selection or whole preview) for any editor item
+      // when loop is enabled, so standalone library samples loop like clips.
+      const looping = loopEnabled.value
       if (!looping) return
       const startRel = Math.max(0, playbackStartMs.value - viewInMs.value)
       preview.seek(startRel)

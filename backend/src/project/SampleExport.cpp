@@ -3,6 +3,7 @@
 #include "AudioEngine.h"
 #include "BridgeServer.h"
 #include "EditUndoState.h"
+#include "LibraryAnalysis.h"
 #include "Log.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
@@ -22,6 +23,7 @@ namespace silverdaw
 {
 
 using silverdaw::bridge::tryGetRequiredString;
+using silverdaw::bridge::tryGetString;
 
 namespace
 {
@@ -35,6 +37,22 @@ juce::String sanitiseSampleFileName(juce::String name)
     for (int i = 0; bad[i] != '\0'; ++i)
         name = name.replaceCharacter(bad[i], '_');
     return name.trim().isNotEmpty() ? name.trim() : juce::String("Sample");
+}
+
+// A music sample is an independent loop that inherits its parent's identity
+// (cover art + tags), persisted as a sidecar beside the WAV (mirroring stems).
+// Group these under a per-source-parent subdir of Samples/ so all music samples
+// from one source share a single sidecar AND so the sidecar is locatable on
+// reload purely from the sample's own file path (dirname), with no surviving
+// link to the source item. Simple samples carry no inherited identity, so they
+// stay flat in Samples/.
+juce::String sampleOutputDir(const juce::String& projectPath, bool isMusic, const juce::String& sourcePath)
+{
+    const auto base = silverdaw::projectArtifactsBaseDir(projectPath, "Samples");
+    if (isMusic && sourcePath.isNotEmpty())
+        return base.getChildFile(sanitiseSampleFileName(juce::File(sourcePath).getFileNameWithoutExtension()))
+            .getFullPathName();
+    return base.getFullPathName();
 }
 
 juce::File uniqueWavFile(const juce::File& dir, const juce::String& baseName)
@@ -199,11 +217,12 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                              double inMs, double durationMs, silverdaw::AudioEngine& engine,
                              silverdaw::ProjectState& projectState, juce::ThreadPool& peakPool,
                              const silverdaw::PeaksCache& cache, silverdaw::BridgeServer& bridge,
-                             std::optional<SampleWarpOptions> warpOptions = std::nullopt)
+                             std::optional<SampleWarpOptions> warpOptions = std::nullopt,
+                             juce::String sampleMode = {}, juce::String sourceItemId = {})
 {
     peakPool.addJob(
         [clipId, libraryItemId, newItemId, sampleName, outputDir, sourceFile, inMs, durationMs,
-         warpOptions, &engine, &projectState, &cache, &bridge]
+         warpOptions, sampleMode, sourceItemId, &engine, &projectState, &cache, &bridge]
         {
             const auto safeName = sanitiseSampleFileName(sampleName);
             const auto outDir = juce::File(outputDir);
@@ -229,7 +248,7 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
 
             juce::MessageManager::callAsync(
                 [clipId, libraryItemId, newItemId, safeName, outFile, actualDurationMs, sampleRate, channels,
-                 ok, error, peaks, peaksFile, &projectState, &bridge]
+                 ok, error, peaks, peaksFile, inMs, sampleMode, sourceItemId, &engine, &projectState, &bridge]
                 {
                     auto* obj = new juce::DynamicObject();
                     if (clipId.isNotEmpty()) obj->setProperty("clipId", clipId);
@@ -243,10 +262,19 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                         return;
                     }
 
+                    const bool isMusic = (sampleMode == "music");
                     projectState.getUndoManager().beginNewTransaction("Save sample");
+                    // A music sample is a standalone loop: it carries the source's
+                    // beat grid (set below), so persist its window start to shift
+                    // the inherited beats. A simple sample stores no musical metadata.
                     projectState.addLibraryItem(newItemId, outFile.getFullPathName(), outFile.getFileName(),
                                                 actualDurationMs, static_cast<int>(sampleRate), channels,
-                                                outFile.getFullPathName(), {}, "audio-file", safeName);
+                                                outFile.getFullPathName(), {}, "audio-file", safeName,
+                                                {}, {}, isMusic ? inMs : -1.0, -1.0, -1);
+                    if (isMusic)
+                        projectState.setLibraryItemSampleMode(newItemId, "music");
+                    else if (sampleMode == "sample")
+                        projectState.setLibraryItemSampleMode(newItemId, "sample");
                     obj->setProperty("filePath", outFile.getFullPathName());
                     obj->setProperty("fileName", outFile.getFileName());
                     obj->setProperty("name", safeName);
@@ -257,7 +285,18 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     obj->setProperty("peakCount", peaks.bucketsPerLane());
                     obj->setProperty("laneCount", peaks.laneCount);
                     obj->setProperty("peaksPerSecond", silverdaw::effectivePeaksPerSecond(peaks));
+                    if (sampleMode.isNotEmpty()) obj->setProperty("sampleMode", sampleMode);
+                    if (isMusic && sourceItemId.isNotEmpty())
+                    {
+                        obj->setProperty("sourceItemId", sourceItemId);
+                        obj->setProperty("sourceInMs", inMs);
+                    }
                     bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
+                    // Inherit the source's tempo/beats/key onto the new music sample so
+                    // it warps on drop and shows its grid; persisted for save/reload.
+                    // Runs after the broadcast so the renderer has created the item.
+                    if (isMusic && sourceItemId.isNotEmpty())
+                        silverdaw::inheritAnalysisFromSource(newItemId, sourceItemId, engine, projectState, bridge);
                     silverdaw::broadcastEditUndoState(projectState, bridge);
                 });
         });
@@ -273,38 +312,45 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
     const juce::String sampleName = tryGetRequiredString(payload, "sampleName").value_or(juce::String{});
-    // The samples folder is derived, not renderer-supplied, so it tracks the
-    // project's portable location (or the temp workspace while unsaved).
-    const juce::String outputDir =
-        silverdaw::projectArtifactsBaseDir(projectPath, "Samples").getFullPathName();
+    const juce::String sampleMode = tryGetString(payload, "sampleMode").value_or(juce::String{});
+    const bool isMusic = (sampleMode == "music");
     if (clipId.isEmpty() || itemId.isEmpty()) return;
-    std::optional<SampleWarpOptions> sampleWarp;
-    projectState.forEachWarpClip(
-        [&](const silverdaw::ProjectState::WarpClipInfo& info)
-        {
-            if (info.clipId == clipId)
-            {
-                SampleWarpOptions opts;
-                opts.enabled = info.warpEnabled;
-                opts.mode = info.warpMode;
-                opts.tempoRatio = info.tempoRatioPinned ? info.tempoRatio : 1.0;
-                if (info.warpEnabled && !info.tempoRatioPinned)
-                {
-                    const auto sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
-                    const auto projectBpm = projectState.getBpm();
-                    if (sourceBpm > 0.0 && projectBpm > 0.0) opts.tempoRatio = projectBpm / sourceBpm;
-                }
-                opts.semitones = info.semitones;
-                opts.cents = info.cents;
-                sampleWarp = opts;
-            }
-        });
     const juce::String libraryItemId = projectState.getClipLibraryItemId(clipId);
     auto sourcePath = projectState.getLibraryItemPlaybackPath(libraryItemId);
     if (sourcePath.isEmpty()) sourcePath = projectState.getClipFilePath(clipId);
+    // The samples folder is derived, not renderer-supplied, so it tracks the
+    // project's portable location (or the temp workspace while unsaved).
+    const juce::String outputDir = sampleOutputDir(projectPath, isMusic, sourcePath);
+    // A music sample stays at its source tempo (warp/pitch are not baked) so it
+    // can inherit the source grid and re-warp on drop. A simple sample bakes the
+    // clip's current warp/pitch into a flat one-shot.
+    std::optional<SampleWarpOptions> sampleWarp;
+    if (!isMusic)
+    {
+        projectState.forEachWarpClip(
+            [&](const silverdaw::ProjectState::WarpClipInfo& info)
+            {
+                if (info.clipId == clipId)
+                {
+                    SampleWarpOptions opts;
+                    opts.enabled = info.warpEnabled;
+                    opts.mode = info.warpMode;
+                    opts.tempoRatio = info.tempoRatioPinned ? info.tempoRatio : 1.0;
+                    if (info.warpEnabled && !info.tempoRatioPinned)
+                    {
+                        const auto sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
+                        const auto projectBpm = projectState.getBpm();
+                        if (sourceBpm > 0.0 && projectBpm > 0.0) opts.tempoRatio = projectBpm / sourceBpm;
+                    }
+                    opts.semitones = info.semitones;
+                    opts.cents = info.cents;
+                    sampleWarp = opts;
+                }
+            });
+    }
     saveWindowAsSampleAsync(clipId, {}, itemId, sampleName, outputDir, juce::File(sourcePath),
                             projectState.getClipInMs(clipId), projectState.getClipDurationMs(clipId),
-                            engine, projectState, peakPool, cache, bridge, sampleWarp);
+                            engine, projectState, peakPool, cache, bridge, sampleWarp, sampleMode, libraryItemId);
 }
 
 void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& engine,
@@ -315,8 +361,8 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
     const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
     const juce::String sampleName = tryGetRequiredString(payload, "sampleName").value_or(juce::String{});
-    const juce::String outputDir =
-        silverdaw::projectArtifactsBaseDir(projectPath, "Samples").getFullPathName();
+    const juce::String sampleMode = tryGetString(payload, "sampleMode").value_or(juce::String{});
+    const bool isMusic = (sampleMode == "music");
     if (libraryItemId.isEmpty() || itemId.isEmpty()) return;
     juce::var found;
     const auto library = projectState.libraryAsJson();
@@ -338,8 +384,11 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
     auto sourcePath = projectState.getLibraryItemPlaybackPath(sourceItemId);
     if (sourcePath.isEmpty()) sourcePath = projectState.getLibraryItemFilePath(sourceItemId);
     if (sourcePath.isEmpty()) sourcePath = found.getProperty("filePath", juce::var()).toString();
+    const juce::String outputDir = sampleOutputDir(projectPath, isMusic, sourcePath);
+    // See handleClipSaveAsSample: music keeps source tempo (no bake) so it can
+    // inherit the source grid; simple bakes the saved clip's warp/pitch.
     std::optional<SampleWarpOptions> sampleWarp;
-    if (static_cast<bool>(found.getProperty("warpEnabled", false)))
+    if (!isMusic && static_cast<bool>(found.getProperty("warpEnabled", false)))
     {
         SampleWarpOptions opts;
         opts.enabled = true;
@@ -360,7 +409,8 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
         sampleWarp = opts;
     }
     saveWindowAsSampleAsync({}, libraryItemId, itemId, sampleName, outputDir, juce::File(sourcePath),
-                            sourceInMs, sourceDurationMs, engine, projectState, peakPool, cache, bridge, sampleWarp);
+                            sourceInMs, sourceDurationMs, engine, projectState, peakPool, cache, bridge,
+                            sampleWarp, sampleMode, sourceItemId);
 }
 
 } // namespace silverdaw

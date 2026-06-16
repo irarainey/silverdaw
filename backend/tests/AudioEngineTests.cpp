@@ -90,6 +90,7 @@ void testAudioEngineSetPreviewWarpUnderRapidCalls()
         {
             (void) engine.isPreviewLoaded();
             (void) engine.isPreviewPlaying();
+            (void) engine.isPreviewFinished();
             (void) engine.getPreviewPositionMs();
             (void) engine.getPreviewDurationMs();
             (void) engine.getPreviewGeneration();

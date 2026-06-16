@@ -239,7 +239,14 @@ const api = {
     ipcRenderer.invoke(IPC.stems.writeSidecar, { stemDir, sourceFilePath }),
   /** Read a stem's sidecar metadata (cover bytes attached) or null when absent. */
   readStemSidecar: (stemDir: string): Promise<AudioMetadata | null> =>
-    ipcRenderer.invoke(IPC.stems.readSidecar, stemDir)
+    ipcRenderer.invoke(IPC.stems.readSidecar, stemDir),
+  /** Persist a music sample's inherited identity (tags + cover) as a sidecar,
+   *  resolved in main from the source's on-disk representation. */
+  writeSampleSidecar: (sampleFilePath: string, sourceFilePath: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.samples.writeSidecar, { sampleFilePath, sourceFilePath }),
+  /** Read a music sample's sidecar metadata (cover bytes attached) or null when absent. */
+  readSampleSidecar: (sampleDir: string): Promise<AudioMetadata | null> =>
+    ipcRenderer.invoke(IPC.samples.readSidecar, sampleDir)
 }as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)

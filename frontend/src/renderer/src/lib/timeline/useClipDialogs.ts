@@ -13,6 +13,7 @@ export interface ClipDialogActions {
   openEditor(clipId: string): void
   openInfo(clipId: string): void
   openWarp(clipId: string, panel: WarpDialogPanel): void
+  openSampleType(clipId: string): void
 }
 
 export interface ClipDialogs extends ClipDialogActions {
@@ -21,11 +22,14 @@ export interface ClipDialogs extends ClipDialogActions {
   warpDialogOpen: Ref<boolean>
   warpDialogClipId: Ref<string | null>
   warpDialogPanel: Ref<WarpDialogPanel>
+  sampleTypeOpen: Ref<boolean>
+  sampleTypeClipId: Ref<string | null>
   editorItem: ComputedRef<LibraryItem | null>
   infoItem: ComputedRef<LibraryItem | null>
   closeEditor(): void
   closeInfo(): void
   closeWarp(): void
+  closeSampleType(): void
 }
 
 export function useClipDialogs(): ClipDialogs {
@@ -37,6 +41,8 @@ export function useClipDialogs(): ClipDialogs {
   const warpDialogOpen = ref(false)
   const warpDialogClipId = ref<string | null>(null)
   const warpDialogPanel = ref<WarpDialogPanel>('tempo')
+  const sampleTypeOpen = ref(false)
+  const sampleTypeClipId = ref<string | null>(null)
 
   function resolveItem(clipId: string | null): LibraryItem | null {
     if (!clipId) return null
@@ -71,12 +77,22 @@ export function useClipDialogs(): ClipDialogs {
     warpDialogOpen.value = false
   }
 
+  function openSampleType(clipId: string): void {
+    sampleTypeClipId.value = clipId
+    sampleTypeOpen.value = true
+  }
+  function closeSampleType(): void {
+    sampleTypeOpen.value = false
+  }
+
   return {
     editorClipId,
     infoClipId,
     warpDialogOpen,
     warpDialogClipId,
     warpDialogPanel,
+    sampleTypeOpen,
+    sampleTypeClipId,
     editorItem,
     infoItem,
     openEditor,
@@ -84,6 +100,8 @@ export function useClipDialogs(): ClipDialogs {
     openInfo,
     closeInfo,
     openWarp,
-    closeWarp
+    closeWarp,
+    openSampleType,
+    closeSampleType
   }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ComponentPublicInstance } from 'vue'
+import { computed, type ComponentPublicInstance } from 'vue'
 import type { LibraryItem } from '@/stores/libraryStore'
 
 const props = defineProps<{
@@ -9,10 +9,12 @@ const props = defineProps<{
   markerClass: string
   missingSource?: boolean
   savedClipBpm?: number
+  savedClipPillClass: string
   savedClipBpmPillClass: string
   formatClipDuration: (ms: number) => string
   displayTitle: (item: LibraryItem) => string
   keyBadgeClass: (key: string) => string
+  tileUseCount: (item: LibraryItem) => number
   setNameInputEl: (el: Element | ComponentPublicInstance | null) => void
 }>()
 
@@ -25,6 +27,13 @@ const emit = defineEmits<{
 }>()
 
 const editingValue = defineModel<string>('editingValue', { required: true })
+const useCount = computed(() => props.tileUseCount(props.item))
+const isInUse = computed(() => useCount.value > 0)
+// Same chrome as the BPM badge (shared base class), recoloured by in-use state.
+const inUsePillClass = computed(
+  () =>
+    `${props.savedClipPillClass} ${isInUse.value ? 'border-emerald-700 bg-emerald-900/60 text-emerald-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`
+)
 </script>
 
 <template>
@@ -78,9 +87,15 @@ const editingValue = defineModel<string>('editingValue', { required: true })
     </div>
     <span
       v-if="props.missingSource"
-      class="shrink-0 font-mono text-[10px] tabular-nums text-zinc-400"
+      class="ml-auto flex shrink-0 items-center gap-1.5"
     >
-      {{ props.formatClipDuration(props.item.durationMs) }}
+      <span class="font-mono text-[10px] tabular-nums text-zinc-400">
+        {{ props.formatClipDuration(props.item.durationMs) }}
+      </span>
+      <span
+        :class="inUsePillClass"
+        :title="isInUse ? `Used on ${useCount} ${useCount === 1 ? 'track clip' : 'track clips'}` : 'Not used on a track'"
+      >{{ useCount }}</span>
     </span>
     <div
       v-else
@@ -100,6 +115,10 @@ const editingValue = defineModel<string>('editingValue', { required: true })
       >
         {{ props.savedClipBpm.toFixed(2) }} BPM
       </span>
+      <span
+        :class="inUsePillClass"
+        :title="isInUse ? `Used on ${useCount} ${useCount === 1 ? 'track clip' : 'track clips'}` : 'Not used on a track'"
+      >{{ useCount }}</span>
     </div>
   </div>
 </template>

@@ -14,7 +14,7 @@ type ImportThis = LibraryState & {
 }
 
 export const importActions = {
-    saveLibraryItemAsSample(itemId: string): void {
+    saveLibraryItemAsSample(itemId: string, sampleType: 'sample' | 'music'): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
       if (item.kind !== 'saved-clip') {
@@ -25,7 +25,8 @@ export const importActions = {
       sendBridge('LIBRARY_ITEM_SAVE_AS_SAMPLE', {
         libraryItemId: itemId,
         itemId: sampleId,
-        sampleName: libraryItemDisplayName(item)
+        sampleName: libraryItemDisplayName(item),
+        sampleMode: sampleType
       })
       useNotificationsStore().pushInfo('Saving sample…')
     },

@@ -224,12 +224,12 @@ export function useTimelineContextMenu(
     }
     items.push({
       command: 'clip.saveSample',
-      label: 'Save as Sample',
+      label: 'Save as Sample\u2026',
       title:
-        'Bakes the clip\u2019s current trim, warp, and pitch into a new independent WAV file ' +
-        'under the project\u2019s Samples folder. Re-running it always creates another fresh ' +
-        'sample \u2014 baked samples are not linked back to this clip, so future edits do not ' +
-        'affect previously-baked samples.'
+        'Create a new independent WAV sample from the clip\u2019s current trim, under the ' +
+        'project\u2019s Samples folder. You choose whether it is a music sample (keeps the ' +
+        'source tempo, beats, and key so it warps on drop) or a simple one-shot (no musical ' +
+        'metadata, never warps). Samples are not linked back to this clip.'
     })
     return items
   })
@@ -286,7 +286,7 @@ export function useTimelineContextMenu(
     } else if (command === 'clip.saveToLibrary') {
       project.saveClipToLibrary(clipId)
     } else if (command === 'clip.saveSample') {
-      void project.saveClipAsSample(clipId)
+      inputs.dialogs.openSampleType(clipId)
     } else if (command === 'clip.unlink') {
       project.unlinkClipFromLibrary(clipId)
     } else if (command === 'clip.warp') {

@@ -229,6 +229,9 @@ export interface ClipSaveAsSamplePayload {
   clipId: string
   itemId: string
   sampleName: string
+  /** 'music' inherits the source bpm/beats/key (warps on drop); 'sample' is a
+   *  bare one-shot with no musical metadata (never auto-warps on drop). */
+  sampleMode?: 'sample' | 'music'
 }
 
 // ─── Effects envelopes (Bass / Mid / Treble / Leveler / Sends / shared FX) ──
@@ -347,6 +350,8 @@ export interface LibraryItemSaveAsSamplePayload {
   libraryItemId: string
   itemId: string
   sampleName: string
+  /** See ClipSaveAsSamplePayload.sampleMode. */
+  sampleMode?: 'sample' | 'music'
 }
 
 export interface TransportSeekPayload {

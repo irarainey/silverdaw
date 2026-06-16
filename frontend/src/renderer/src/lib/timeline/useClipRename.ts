@@ -15,6 +15,7 @@ import {
 } from '@/stores/projectStore'
 import {
   libraryItemDisplayName,
+  libraryItemShowsLinkBadge,
   libraryItemSourceBpm,
   useLibraryStore
 } from '@/stores/libraryStore'
@@ -81,7 +82,7 @@ export function useClipRename(deps: ClipRenameDeps): ClipRename {
     const displayName = clip.name?.trim()
       ? clip.name
       : libItem ? libraryItemDisplayName(libItem) : clip.fileName
-    const isLinked = libItem?.kind === 'saved-clip'
+    const isLinked = libraryItemShowsLinkBadge(libItem)
     const sourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
     const warpPending = isWarpPending({
       warpEnabled: clip.warpEnabled,

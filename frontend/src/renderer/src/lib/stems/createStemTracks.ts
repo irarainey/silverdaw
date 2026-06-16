@@ -19,6 +19,7 @@ import { importAudioIntoLibrary, libraryItemToClipPlacement } from '@/lib/import
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { STEM_NAME_SEPARATOR } from '@/stores/libraryItemHelpers'
+import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 import type { StemName, StemPartialPayload, StemReadyPayload } from '@shared/bridge-protocol'
@@ -184,40 +185,6 @@ async function persistStemSidecar(job: StemJob, payload: StemReadyPayload): Prom
   } catch (err) {
     log.warn('stems', `sidecar write failed for ${stemDir}: ${err instanceof Error ? err.message : String(err)}`)
   }
-}
-
-/** Copy the source item's beat grid and key onto a freshly imported stem so its
- *  clip warps to the project grid on add (no re-analysis, no pending state).
- *  `windowStartSec` is the source clip's trim-in: a clip-scoped separation only
- *  covers [windowStart, …) of the source, so the stem WAV's sample 0 is
- *  source-time `windowStart`. The grid (anchor + beats) is in source time, so
- *  shift it back to land on the stem's own timeline. This mirrors the backend's
- *  authoritative inheritance (LibraryAnalysis.cpp) so the two never diverge. */
-function inheritSourceAnalysis(
-  library: ReturnType<typeof useLibraryStore>,
-  stemId: string,
-  source: ReturnType<ReturnType<typeof useLibraryStore>['getItem']> | undefined,
-  windowStartSec: number
-): void {
-  if (!source || !(source.bpm && source.bpm > 0)) return
-  const shift = windowStartSec > 0 ? windowStartSec : 0
-  const anchor = (source.beatAnchorSec ?? source.beats?.[0] ?? 0) - shift
-  const beats = source.beats ? source.beats.map((b) => b - shift).filter((b) => b >= 0) : []
-  // Deliberately do NOT copy the source's `lowConfidence` auto-flag onto the
-  // stem: a stem has no independent confidence measurement, and its own flag
-  // would short-circuit `libraryItemIsSample` before the `derivedFrom` branch.
-  // Leaving it unset lets the stem defer its sample/music classification to the
-  // source live — so setting the source to "music" reveals the stem's beat grid.
-  library.setItemAnalysis(
-    stemId,
-    source.bpm,
-    anchor,
-    beats,
-    source.variableTempo === true,
-    undefined,
-    false
-  )
-  if (source.key) library.setItemKey(stemId, source.key)
 }
 
 /** Resolve the top-level audio-file source a clip or library item ultimately

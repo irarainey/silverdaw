@@ -213,6 +213,11 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     return libraryItemIsSample(item, library.byId)
   }
 
+  /** Number of timeline placements of a library item (drives the in-use count pill). */
+  function tileUseCount(item: LibraryItem): number {
+    return library.itemUseCount(item.id)
+  }
+
   // ─── Resize handle (top edge of the panel) ────────────────────────────────
 
   const MIN_PANEL_HEIGHT = 80
@@ -293,6 +298,7 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     savedClipEffectiveBpm,
     keyBadgeClass,
     tileIsSample,
+    tileUseCount,
     COLLAPSED_PANEL_HEIGHT,
     isResizing,
     onResizePointerDown

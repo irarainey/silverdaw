@@ -31,14 +31,15 @@ type SnapshotTarget = ProjectState & {
   setProjectLengthMs(ms: number): void
 }
 
-/** The stem-folder path for a stem WAV (its sibling sidecar lives there). */
-function stemDirOf(filePath: string): string {
+/** The folder holding a generated WAV's sibling sidecar (stem or music sample). */
+function sidecarDirOf(filePath: string): string {
   return filePath.replace(/[\\/][^\\/]*$/, '')
 }
 
-/** Strip the source file's audio geometry from inherited metadata so a stem keeps
- *  its OWN duration/sample-rate/channel-count (decoded from its own file) while
- *  still inheriting identity tags + cover art. */
+/** Strip the source file's audio geometry from inherited metadata so the
+ *  generated file (stem or music sample) keeps its OWN duration/sample-rate/
+ *  channel-count (decoded from its own file) while still inheriting identity
+ *  tags + cover art. */
 function withoutAudioGeometry(meta: AudioMetadata): AudioMetadata {
   const { durationMs: _d, sampleRate: _s, channelCount: _c, ...rest } = meta
   return rest
@@ -47,21 +48,26 @@ function withoutAudioGeometry(meta: AudioMetadata): AudioMetadata {
 async function refreshLibraryItemMedia(
   itemId: string,
   filePath: string,
-  opts?: { stem?: boolean }
+  opts?: { sidecar?: 'stem' | 'sample' }
 ): Promise<void> {
   const library = useLibraryStore()
   try {
     let metadata: AudioMetadata | null = null
-    // A separated stem's WAV carries no tags; prefer the sidecar copy written at
-    // separation time so the inherited identity survives source removal. The
-    // sidecar's audio geometry describes the SOURCE, so drop it and let the
-    // stem's own decode below supply duration/peaks.
-    if (opts?.stem) {
+    // A separated stem's WAV — and a saved music sample's WAV — carries no tags,
+    // so prefer the sidecar copy written at creation time: it makes the inherited
+    // identity (cover art + tags) survive source removal and reload. The sidecar's
+    // audio geometry describes the SOURCE, so drop it and let the file's own decode
+    // below supply duration/peaks.
+    if (opts?.sidecar) {
       try {
-        const sidecar = await window.silverdaw.readStemSidecar(stemDirOf(filePath))
+        const dir = sidecarDirOf(filePath)
+        const sidecar =
+          opts.sidecar === 'stem'
+            ? await window.silverdaw.readStemSidecar(dir)
+            : await window.silverdaw.readSampleSidecar(dir)
         if (sidecar) metadata = withoutAudioGeometry(sidecar)
       } catch (err) {
-        log.warn('library', `readStemSidecar failed for ${filePath}: ${String(err)}`)
+        log.warn('library', `read ${opts.sidecar} sidecar failed for ${filePath}: ${String(err)}`)
       }
     }
     if (!metadata) metadata = await window.silverdaw.readAudioMetadata(filePath)
@@ -71,21 +77,33 @@ async function refreshLibraryItemMedia(
   }
 
   const item = library.getItem(itemId)
-  if (!item || item.durationMs > 0) return
+  if (!item) return
+  // A saved sample (and any library audio file) is a standalone source: its peaks
+  // must come from decoding its OWN file, not from a timeline clip that happens to
+  // share the path. So decode whenever the item is missing its audio geometry OR
+  // its peaks — otherwise a sample that was never placed on the timeline would have
+  // no waveform in the library or clip editor after a project reload.
+  const needsDetails = item.durationMs <= 0
+  const needsPeaks = item.peaks.length === 0
+  if (!needsDetails && !needsPeaks) return
 
   try {
     const opened = await window.silverdaw.readAudioFile(filePath)
     if (!opened) return
     const decoded = await decodeAudioToPeaks(opened.data)
-    library.setItemAudioDetails(itemId, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
-    if (item.peaks.length === 0) {
-      library.setItemPeaks(itemId, decoded.peaks, decoded.sampleRate, decoded.peaksPerSecond)
+    if (needsDetails) {
+      library.setItemAudioDetails(itemId, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
     }
-    // Populate the stereo display map from the renderer-side decode so the
-    // L/R lanes are available without waiting for a backend WAVEFORM_READY.
-    // Non-stereo decodes pass an empty array, which clears any prior entry.
-    if (decoded.peaksPerSecond > 0) {
-      library.setItemChannelPeaks(itemId, decoded.channelPeaks ?? [], decoded.peaksPerSecond)
+    // Re-check inside the async gap: a concurrent WAVEFORM_READY route may have
+    // filled the peaks while we were decoding, so don't clobber them.
+    if (library.getItem(itemId)?.peaks.length === 0) {
+      library.setItemPeaks(itemId, decoded.peaks, decoded.sampleRate, decoded.peaksPerSecond)
+      // Populate the stereo display map from the renderer-side decode so the
+      // L/R lanes are available without waiting for a backend WAVEFORM_READY.
+      // Non-stereo decodes pass an empty array, which clears any prior entry.
+      if (decoded.peaksPerSecond > 0) {
+        library.setItemChannelPeaks(itemId, decoded.channelPeaks ?? [], decoded.peaksPerSecond)
+      }
     }
   } catch (err) {
     log.warn('library', `readAudioFile/decode failed for ${filePath}: ${String(err)}`)
@@ -304,12 +322,17 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
             if (target) target.sampleMode = item.sampleMode
           }
           // Backfill metadata for older projects missing persisted duration.
-          // Stems are standalone files too, so refresh their media like sources.
+          // Stems and music samples are standalone files that inherit identity
+          // from a source; read their sidecar so cover art + tags survive reload.
           const reloadKind = item.kind ?? 'audio-file'
           if (reloadKind === 'audio-file') {
-            void refreshLibraryItemMedia(libId, item.filePath)
+            void refreshLibraryItemMedia(
+              libId,
+              item.filePath,
+              item.sampleMode === 'music' ? { sidecar: 'sample' } : undefined
+            )
           } else if (reloadKind === 'stem') {
-            void refreshLibraryItemMedia(libId, item.filePath, { stem: true })
+            void refreshLibraryItemMedia(libId, item.filePath, { sidecar: 'stem' })
           }
         }
         for (const item of library.items) {

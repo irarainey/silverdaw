@@ -28,7 +28,7 @@ export type {
   LibraryItem,
   SavedClipSource
 } from './libraryTypes'
-export { libraryItemDisplayName, libraryItemIsSample, libraryItemTempoUnverified, libraryItemSourceBpm, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
+export { libraryItemDisplayName, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
 
 import { savedClipActions } from './librarySavedClipActions'
 import { importActions } from './libraryImportActions'
@@ -488,6 +488,16 @@ export const useLibraryStore = defineStore('library', {
         }
       }
       return false
+    },
+
+    /** Number of timeline clips that directly reference this library item. */
+    itemUseCount(itemId: string): number {
+      const project = useProjectStore()
+      let count = 0
+      for (const id in project.clips) {
+        if (project.clips[id]?.libraryItemId === itemId) count++
+      }
+      return count
     },
 
     getItem(itemId: string): LibraryItem | null {

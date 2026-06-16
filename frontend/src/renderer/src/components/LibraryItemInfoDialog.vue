@@ -27,6 +27,7 @@ const {
   bpmLabel,
   keyLabel,
   displayDecodedCachePath,
+  playbackPathDistinct,
   metadataRows,
   libraryItemDisplayName,
   keyBadgeClass,
@@ -403,17 +404,19 @@ const {
                 {{ item.fileName }}
               </dd>
               <dt class="text-zinc-500">
-                Source file
+                {{ playbackPathDistinct ? 'Source file' : 'File path' }}
               </dt>
               <dd class="break-all font-mono text-[11px] text-zinc-300">
                 {{ item.filePath }}
               </dd>
-              <dt class="text-zinc-500">
-                Playback cache
-              </dt>
-              <dd class="break-all font-mono text-[11px] text-zinc-300">
-                {{ displayDecodedCachePath }}
-              </dd>
+              <template v-if="playbackPathDistinct">
+                <dt class="text-zinc-500">
+                  Playback cache
+                </dt>
+                <dd class="break-all font-mono text-[11px] text-zinc-300">
+                  {{ displayDecodedCachePath }}
+                </dd>
+              </template>
             </dl>
           </section>
         </div>

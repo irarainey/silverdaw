@@ -35,14 +35,15 @@ export const clipLibraryActions = {
       return itemId
     },
 
-    saveClipAsSample(clipId: string): void {
+    saveClipAsSample(clipId: string, sampleType: 'sample' | 'music'): void {
       const clip = this.clips[clipId]
       if (!clip) return
       const itemId = `sample-${crypto.randomUUID()}`
       sendBridge('CLIP_SAVE_AS_SAMPLE', {
         clipId,
         itemId,
-        sampleName: clip.name?.trim() || fileStem(clip.fileName)
+        sampleName: clip.name?.trim() || fileStem(clip.fileName),
+        sampleMode: sampleType
       })
       useNotificationsStore().pushInfo('Saving sample…')
     },
@@ -90,6 +91,8 @@ export const clipLibraryActions = {
         tempoRatio?: number
         semitones?: number
         cents?: number
+        /** 'sample'-classified items never auto-warp on drop. */
+        sampleMode?: 'sample' | 'music'
       },
       startMs: number
     ): string | null {
@@ -112,6 +115,10 @@ export const clipLibraryActions = {
           projectHasOtherClips &&
           libraryItem.kind !== 'saved-clip' &&
           libraryItem.variableTempo !== true &&
+          !libraryItemIsSample(
+            { sampleMode: libraryItem.sampleMode, derivedFrom: libraryItem.derivedFrom },
+            useLibraryStore().byId
+          ) &&
           typeof libraryItem.bpm === 'number' && libraryItem.bpm > 0 &&
           typeof projectBpm === 'number' && projectBpm > 0)
       let effectiveClipDurationMs = clipDurationMs

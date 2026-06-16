@@ -52,6 +52,7 @@ const {
   savedClipEffectiveBpm,
   keyBadgeClass,
   tileIsSample,
+  tileUseCount,
   COLLAPSED_PANEL_HEIGHT,
   isResizing,
   onResizePointerDown
@@ -108,6 +109,7 @@ const {
         :saved-clip-effective-bpm="savedClipEffectiveBpm"
         :key-badge-class="keyBadgeClass"
         :tile-is-sample="tileIsSample"
+        :tile-use-count="tileUseCount"
         :set-name-input-el="setNameInputEl"
         @drag-start="onItemDragStart"
         @drag-end="onItemDragEnd"

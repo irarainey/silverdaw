@@ -170,7 +170,15 @@ export function useClipEditorScene(opts: ClipEditorSceneOptions): ClipEditorScen
     if (instance) {
       instance.canvas.removeEventListener('webglcontextlost', handleContextLost)
       try {
-        instance.destroy(true, { children: true, texture: false })
+        // `{ removeView: true }`, NOT `true`: passing `true` makes Pixi call
+        // `GlobalResourceRegistry.release()`, destroying the PROCESS-GLOBAL batch
+        // pool shared with the still-alive timeline renderer. Pixi's pool keeps
+        // checked-out Batch objects in the global array, so release() destroys
+        // Batches the timeline's cached instructions still reference (nulling their
+        // `batcher`) — the next timeline ticker frame then throws in
+        // `BatcherPipe.execute`, stopping the ticker and freezing the timeline
+        // black. `texture: false` likewise preserves the shared `Texture.WHITE`.
+        instance.destroy({ removeView: true }, { children: true, texture: false })
       } catch (err) {
         log.warn(
           'clipEditor',

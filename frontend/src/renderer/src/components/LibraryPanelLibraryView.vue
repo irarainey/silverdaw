@@ -23,6 +23,7 @@ const props = defineProps<{
   savedClipEffectiveBpm: (item: LibraryItem) => number | undefined
   keyBadgeClass: (key: string) => string
   tileIsSample: (item: LibraryItem) => boolean
+  tileUseCount: (item: LibraryItem) => number
   setNameInputEl: (el: Element | ComponentPublicInstance | null) => void
 }>()
 
@@ -69,6 +70,7 @@ const editingValue = defineModel<string>('editingValue', { required: true })
         :saved-clip-effective-bpm="props.savedClipEffectiveBpm"
         :key-badge-class="props.keyBadgeClass"
         :tile-is-sample="props.tileIsSample"
+        :tile-use-count="props.tileUseCount"
         :set-name-input-el="props.setNameInputEl"
         @drag-start="(e, item) => emit('dragStart', e, item)"
         @drag-end="emit('dragEnd')"
@@ -94,10 +96,12 @@ const editingValue = defineModel<string>('editingValue', { required: true })
           row-class="saved-clip group flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
           marker-class="h-6 w-1 shrink-0 rounded-sm bg-amber-500/60"
           missing-source
+          :saved-clip-pill-class="props.savedClipPillClass"
           :saved-clip-bpm-pill-class="props.savedClipBpmPillClass"
           :format-clip-duration="props.formatClipDuration"
           :display-title="props.displayTitle"
           :key-badge-class="props.keyBadgeClass"
+          :tile-use-count="props.tileUseCount"
           :set-name-input-el="props.setNameInputEl"
           @drag-start="(e, item) => emit('dragStart', e, item)"
           @drag-end="emit('dragEnd')"

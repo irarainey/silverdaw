@@ -30,11 +30,21 @@ void PlayheadEmitter::timerCallback()
         lastPosMs = posMs;
     }
 
-    // Preview transport is independent; stop here because the source only emits silence past duration.
+    // Preview transport is independent. A trimmed clip/saved-clip preview keeps
+    // streaming past its window (still inside the file) so `isPreviewPlaying()`
+    // stays true and the position check below catches the window end. A full-file
+    // sample preview, however, hits true end-of-file at exactly `durationMs`: JUCE
+    // auto-stops the transport, so `isPreviewPlaying()` has already flipped false
+    // by the time the position reaches the end. Without also checking the
+    // stream-finished flag, that case never emits `PREVIEW_ENDED`, so the clip
+    // editor's loop never restarts. `stopPreview()` resets the position (and the
+    // stream-finished flag), so this fires exactly once per natural end.
     const bool previewPlaying = engine.isPreviewPlaying();
     const double previewPos = engine.getPreviewPositionMs();
     const double previewDur = engine.getPreviewDurationMs();
-    if (previewPlaying && previewDur > 0.0 && previewPos >= previewDur)
+    const bool reachedWindowEnd = previewPlaying && previewDur > 0.0 && previewPos >= previewDur;
+    const bool streamFinished = engine.isPreviewFinished();
+    if (reachedWindowEnd || streamFinished)
     {
         engine.stopPreview();
         auto* endedObj = new juce::DynamicObject();

@@ -19,6 +19,7 @@ const props = defineProps<{
   savedClipEffectiveBpm: (item: LibraryItem) => number | undefined
   keyBadgeClass: (key: string) => string
   tileIsSample: (item: LibraryItem) => boolean
+  tileUseCount: (item: LibraryItem) => number
   setNameInputEl: (el: Element | ComponentPublicInstance | null) => void
 }>()
 
@@ -33,8 +34,15 @@ const emit = defineEmits<{
 
 const editingValue = defineModel<string>('editingValue', { required: true })
 
-const isStem = computed(() => props.source.kind === 'stem')
+const useCount = computed(() => props.tileUseCount(props.source))
+const isInUse = computed(() => useCount.value > 0)
+// Same chrome as the BPM badge (shared base class), recoloured by in-use state.
+const inUsePillClass = computed(
+  () =>
+    `${props.savedClipPillClass} ${isInUse.value ? 'border-emerald-700 bg-emerald-900/60 text-emerald-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`
+)
 const tileCoverArtUrl = computed(() => props.coverArtUrl ?? props.source.coverArtUrl)
+const isSampleTile = computed(() => props.tileIsSample(props.source))
 const savedClipChildren = computed(() => props.children.filter((item) => item.kind === 'saved-clip'))
 
 /** Compact summary for the collapse header, e.g. "3 saved clips". */
@@ -60,7 +68,8 @@ const childSummary = computed(() => {
     >
       <div
         v-if="props.showTileImages"
-        class="relative flex aspect-square w-18.75 shrink-0 items-center justify-center border-r border-zinc-800 bg-zinc-900"
+        class="relative flex aspect-square w-18.75 shrink-0 items-center justify-center border-r border-zinc-800"
+        :class="isSampleTile ? 'bg-indigo-900/40' : 'bg-zinc-900'"
       >
         <img
           v-if="tileCoverArtUrl"
@@ -69,6 +78,50 @@ const childSummary = computed(() => {
           class="h-full w-full object-cover"
           draggable="false"
         >
+        <svg
+          v-else-if="isSampleTile"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          class="h-6 w-6 text-indigo-400"
+          aria-hidden="true"
+        >
+          <rect
+            x="2.5"
+            y="9"
+            width="2"
+            height="6"
+            rx="1"
+          />
+          <rect
+            x="7"
+            y="6"
+            width="2"
+            height="12"
+            rx="1"
+          />
+          <rect
+            x="11.5"
+            y="3"
+            width="2"
+            height="18"
+            rx="1"
+          />
+          <rect
+            x="16"
+            y="7"
+            width="2"
+            height="10"
+            rx="1"
+          />
+          <rect
+            x="20"
+            y="10"
+            width="2"
+            height="4"
+            rx="1"
+          />
+        </svg>
         <svg
           v-else
           xmlns="http://www.w3.org/2000/svg"
@@ -79,21 +132,6 @@ const childSummary = computed(() => {
         >
           <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
         </svg>
-        <span
-          v-if="isStem"
-          class="absolute bottom-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-sm bg-zinc-950/85 ring-1 ring-zinc-700"
-          title="Stem"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            class="h-3 w-3 text-zinc-100"
-            aria-hidden="true"
-          >
-            <path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z" />
-          </svg>
-        </span>
       </div>
       <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">
         <input
@@ -120,12 +158,14 @@ const childSummary = computed(() => {
         </div>
         <div
           v-if="props.displayArtist(props.source)"
-          class="min-w-0 truncate text-[11px] text-zinc-400"
+          class="-mt-px min-w-0 truncate text-[11px] text-zinc-400"
         >
           {{ props.displayArtist(props.source) }}
         </div>
-        <div class="mt-auto flex items-center justify-between gap-2 text-[10px] text-zinc-500">
-          <span class="font-mono tabular-nums">{{ props.formatDuration(props.source.durationMs) }}</span>
+        <div class="-mt-px min-w-0 truncate font-mono text-[10px] tabular-nums text-zinc-500">
+          {{ props.formatDuration(props.source.durationMs) }}
+        </div>
+        <div class="mt-auto flex items-center text-[10px] text-zinc-500">
           <span class="ml-auto flex items-center gap-1">
             <span
               v-if="props.tileIsSample(props.source)"
@@ -153,6 +193,10 @@ const childSummary = computed(() => {
                 >~</span>{{ props.source.bpm.toFixed(2) }} BPM
               </span>
             </template>
+            <span
+              :class="inUsePillClass"
+              :title="isInUse ? `Used on ${useCount} ${useCount === 1 ? 'track clip' : 'track clips'}` : 'Not used on a track'"
+            >{{ useCount }}</span>
           </span>
         </div>
       </div>
@@ -191,10 +235,12 @@ const childSummary = computed(() => {
           row-class="saved-clip group relative flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 pr-1 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
           marker-class="h-6 w-1 shrink-0 rounded-sm bg-cyan-500/60"
           :saved-clip-bpm="props.savedClipEffectiveBpm(item)"
+          :saved-clip-pill-class="props.savedClipPillClass"
           :saved-clip-bpm-pill-class="props.savedClipBpmPillClass"
           :format-clip-duration="props.formatClipDuration"
           :display-title="props.displayTitle"
           :key-badge-class="props.keyBadgeClass"
+          :tile-use-count="props.tileUseCount"
           :set-name-input-el="props.setNameInputEl"
           @drag-start="(e, draggedItem) => emit('dragStart', e, draggedItem)"
           @drag-end="emit('dragEnd')"

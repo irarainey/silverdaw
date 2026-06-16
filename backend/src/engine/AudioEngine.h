@@ -150,6 +150,13 @@ class AudioEngine
 
     bool isPreviewPlaying() const;
 
+    /** True once the preview transport has played to the end of its source and
+     *  auto-stopped (JUCE's stream-finished signal). A full-file sample preview
+     *  reaches true EOF at exactly `durationMs`, so `isPreviewPlaying()` flips
+     *  false before the position-based end check can observe it; this exposes the
+     *  canonical EOF flag so the emitter can still raise `PREVIEW_ENDED`. */
+    bool isPreviewFinished() const;
+
     bool isPreviewLoaded() const;
 
     bool setPreviewWarp(std::optional<bool> enabled,

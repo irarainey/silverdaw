@@ -19,6 +19,12 @@ const trustedReadRoots: Set<string> = new Set<string>()
 // sidecar metadata reads/writes are confined to these (or the central stems base).
 const stemsWriteRoots: Set<string> = new Set<string>()
 
+// App-derived "Samples" folders beside a project (or in the temp workspace while
+// unsaved) where the backend writes exported samples. Music samples persist an
+// inherited metadata/cover sidecar in a per-source subdir here; those sidecar
+// reads/writes are confined to these roots.
+const samplesWriteRoots: Set<string> = new Set<string>()
+
 export function canonicalisePath(p: string): string {
   return pathResolve(p)
 }
@@ -77,6 +83,31 @@ export function isWithinStemsWriteRoot(dir: unknown): dir is string {
   if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
   const canonical = canonicalisePath(dir)
   for (const root of stemsWriteRoots) {
+    const rel = relative(root, canonical)
+    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true
+  }
+  return false
+}
+
+// Trust a project's Samples output folder (derived by main from a save/open path)
+// for renderer audio reads AND sample sidecar metadata reads/writes. Idempotent.
+export function registerSamplesWriteRoot(dir: string): void {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) {
+    logMain('WARN ', 'main', 'refusing to register non-absolute samples root:', dir)
+    return
+  }
+  const canonical = canonicalisePath(dir)
+  samplesWriteRoots.add(canonical)
+  trustedReadRoots.add(canonical)
+}
+
+// A sample sidecar folder is writable only when it sits inside a registered
+// samples write root (a project's portable "Samples" subfolder or the temp
+// workspace one used before the project is saved).
+export function isWithinSamplesWriteRoot(dir: unknown): dir is string {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
+  const canonical = canonicalisePath(dir)
+  for (const root of samplesWriteRoots) {
     const rel = relative(root, canonical)
     if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true
   }

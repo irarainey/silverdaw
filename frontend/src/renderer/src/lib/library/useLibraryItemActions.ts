@@ -67,12 +67,20 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
       })
     } else if (item.kind === 'saved-clip') {
       items.push({
-        command: 'library.saveSample',
-        label: 'Save as Sample',
+        command: 'library.saveMusicSample',
+        label: 'Save as Music Sample',
         title:
-          'Bakes the saved clip\u2019s current trim, warp, and pitch into a new independent WAV file. ' +
-          'Re-running it always creates another fresh sample \u2014 baked samples are not linked back ' +
-          'to this clip, so future edits to the saved clip do not affect previously-baked samples.'
+          'Create a new independent WAV sample from the saved clip that keeps the source ' +
+          'tempo, beat markers, key, and cover art, so it warps to the project tempo when ' +
+          'dropped onto a track. Samples are not linked back to this clip.'
+      })
+      items.push({
+        command: 'library.saveSimpleSample',
+        label: 'Save as Simple Sample',
+        title:
+          'Create a new independent WAV sample from the saved clip as a bare one-shot \u2014 ' +
+          'a sound effect or vocal snippet with no tempo or beat metadata that is never ' +
+          'warped when dropped onto a track. Samples are not linked back to this clip.'
       })
     }
     // Sample / music classification submenu. Audio-file items only —
@@ -172,9 +180,14 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
       requestStemSeparationForLibraryItem(item.id)
       return
     }
-    if (command === 'library.saveSample') {
+    if (command === 'library.saveMusicSample') {
       closeItemContextMenu()
-      void library.saveLibraryItemAsSample(item.id)
+      void library.saveLibraryItemAsSample(item.id, 'music')
+      return
+    }
+    if (command === 'library.saveSimpleSample') {
+      closeItemContextMenu()
+      void library.saveLibraryItemAsSample(item.id, 'sample')
       return
     }
     if (command === 'library.classifyAuto') {

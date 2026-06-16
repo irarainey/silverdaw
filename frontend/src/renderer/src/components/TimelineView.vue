@@ -5,6 +5,7 @@ import ClipContextMenu from '@/components/ClipContextMenu.vue'
 import ClipWarpDialog from '@/components/ClipWarpDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
+import SampleTypeDialog from '@/components/SampleTypeDialog.vue'
 import { useTimelineViewController } from '@/lib/timeline/useTimelineViewController'
 
 const host = ref<HTMLDivElement | null>(null)
@@ -48,6 +49,8 @@ const {
   warpDialogOpen,
   warpDialogClipId,
   warpDialogPanel,
+  sampleTypeOpen,
+  sampleTypeClipId,
   dialogs,
   infoClipId,
   infoItem,
@@ -193,6 +196,11 @@ const {
       :item="editorItem"
       :clip-id="editorClipId"
       @close="dialogs.closeEditor()"
+    />
+    <SampleTypeDialog
+      :open="sampleTypeOpen"
+      :clip-id="sampleTypeClipId"
+      @close="dialogs.closeSampleType()"
     />
   </div>
 </template>

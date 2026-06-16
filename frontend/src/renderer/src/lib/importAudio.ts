@@ -138,6 +138,7 @@ export function libraryItemToClipPlacement(audio: LibraryItem): {
   tempoRatio?: number
   semitones?: number
   cents?: number
+  sampleMode?: 'sample' | 'music'
 } {
   return {
     id: audio.id,
@@ -158,7 +159,8 @@ export function libraryItemToClipPlacement(audio: LibraryItem): {
     warpMode: audio.warpMode,
     tempoRatio: audio.tempoRatio,
     semitones: audio.semitones,
-    cents: audio.cents
+    cents: audio.cents,
+    sampleMode: audio.sampleMode
   }
 }
 

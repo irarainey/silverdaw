@@ -96,6 +96,10 @@ export const IPC = {
     writeSidecar: 'stems:writeSidecar',
     readSidecar: 'stems:readSidecar'
   },
+  samples: {
+    writeSidecar: 'samples:writeSidecar',
+    readSidecar: 'samples:readSidecar'
+  },
   log: {
     appendBatch: 'log:append-batch'
   }

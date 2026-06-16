@@ -29,6 +29,22 @@ function seedAudioFile(): LibraryItem {
   return library.byId[id]!
 }
 
+function seedSavedClip(): LibraryItem {
+  const library = useLibraryStore()
+  const sourceId = seedAudioFile().id
+  const id = library.addItem({
+    kind: 'saved-clip',
+    filePath: `C:\\audio\\clip-${++counter}.wav`,
+    fileName: `clip-${counter}.wav`,
+    durationMs: 1_000,
+    sampleRate: 44_100,
+    channelCount: 2,
+    peaks: new Float32Array([0, 1]),
+    derivedFrom: { sourceItemId: sourceId, inMs: 0, durationMs: 1_000 }
+  })
+  return library.byId[id]!
+}
+
 describe('useLibraryItemActions', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -56,6 +72,24 @@ describe('useLibraryItemActions', () => {
     expect(commands).toContain('library.classifySample')
     expect(commands).toContain('library.delete')
     expect(commands).not.toContain('library.saveSample')
+  })
+
+  it('offers music + simple sample rows for a saved clip and dispatches the chosen mode', () => {
+    const item = seedSavedClip()
+    const library = useLibraryStore()
+    const saveSpy = vi.spyOn(library, 'saveLibraryItemAsSample').mockImplementation(() => {})
+    const actions = useLibraryItemActions({ startRename: vi.fn() })
+    actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
+    const commands = actions.contextMenuItems.value.map((row) => row.command)
+    expect(commands).toContain('library.saveMusicSample')
+    expect(commands).toContain('library.saveSimpleSample')
+
+    actions.onContextMenuCommand('library.saveMusicSample')
+    expect(saveSpy).toHaveBeenCalledWith(item.id, 'music')
+
+    actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
+    actions.onContextMenuCommand('library.saveSimpleSample')
+    expect(saveSpy).toHaveBeenCalledWith(item.id, 'sample')
   })
 
   it('returns no rows when no item is targeted', () => {

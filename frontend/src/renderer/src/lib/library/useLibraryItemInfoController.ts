@@ -215,6 +215,19 @@ export function useLibraryItemInfoController(
     )
   })
 
+  /**
+   * Whether the playback file is a distinct path from the source file. A sample
+   * (and any file that plays directly without a transcode) IS its own playback
+   * file, so the two paths coincide — the dialog then shows a single "File path"
+   * row instead of redundant "Source file" + "Playback cache" rows.
+   */
+  const playbackPathDistinct = computed(() => {
+    const item = props.item
+    if (!item) return false
+    const cache = displayDecodedCachePath.value
+    return cache !== 'Not available yet' && cache !== item.filePath
+  })
+
   const metadataRows = computed(() => {
     const item = metadataItem.value
     if (!item) return []
@@ -282,6 +295,7 @@ export function useLibraryItemInfoController(
     bpmLabel,
     keyLabel,
     displayDecodedCachePath,
+    playbackPathDistinct,
     metadataRows,
     libraryItemDisplayName,
     keyBadgeClass,

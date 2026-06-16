@@ -6,7 +6,7 @@ import { ipcMain, dialog, type BrowserWindow } from 'electron'
 import { readFile, mkdir } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
-import { registerIssuedPath, registerStemsWriteRoot } from '../audioPaths'
+import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot } from '../audioPaths'
 import { canonicaliseProjectPath, projectFolderPath } from '../projectPaths'
 import type { PrefsService } from '../prefsService'
 import { logMain } from '../log'
@@ -74,6 +74,9 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       // The backend writes this project's stems beside the file; trust that folder
       // for renderer reads + sidecar writes ahead of the first separation.
       registerStemsWriteRoot(join(dirname(target), 'Stems'))
+      // Likewise the project's Samples folder, where music samples persist their
+      // inherited metadata/cover sidecar.
+      registerSamplesWriteRoot(join(dirname(target), 'Samples'))
       return target
     }
   )
@@ -90,6 +93,8 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       const projectDir = dirname(canonical)
       // Stems for this project live beside it; trust that folder for reads + sidecar.
       registerStemsWriteRoot(join(projectDir, 'Stems'))
+      // Samples (and their music-sample sidecars) likewise live beside the project.
+      registerSamplesWriteRoot(join(projectDir, 'Samples'))
       let parsed: unknown
       try {
         parsed = JSON.parse(content)

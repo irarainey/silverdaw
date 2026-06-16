@@ -16,6 +16,7 @@ import {
   libraryItemDisplayName,
   libraryItemSourceBpm,
   libraryItemIsSample,
+  libraryItemShowsLinkBadge,
   type LibraryItem
 } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
@@ -681,7 +682,9 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     if (clipW < 20) return
 
     // Reuse per-clip library/source-BPM resolution from `drawClip`.
-    const isLinked = libItem?.kind === 'saved-clip'
+    // Saved clips and sample assets (music or simple) are reusable library
+    // entries a placed clip stays linked to — show the link badge for both.
+    const isLinked = libraryItemShowsLinkBadge(libItem)
     const isLocked = clip.locked === true
     const warpIsPending = isWarpPending({
       warpEnabled: clip.warpEnabled,
