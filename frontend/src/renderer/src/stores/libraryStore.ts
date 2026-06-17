@@ -28,7 +28,7 @@ export type {
   LibraryItem,
   SavedClipSource
 } from './libraryTypes'
-export { libraryItemDisplayName, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
+export { libraryItemDisplayName, libraryItemIsSample, libraryItemIsSampleAsset, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
 
 import { savedClipActions } from './librarySavedClipActions'
 import { importActions } from './libraryImportActions'
@@ -172,7 +172,8 @@ export const useLibraryStore = defineStore('library', {
         tempoRatio: kind === 'saved-clip' ? audio.tempoRatio : undefined,
         semitones: kind === 'saved-clip' ? audio.semitones : undefined,
         cents: kind === 'saved-clip' ? audio.cents : undefined,
-        unresolved: audio.unresolved === true ? true : undefined
+        unresolved: audio.unresolved === true ? true : undefined,
+        mediaId: audio.mediaId
       })
       log.info(
         'library',
@@ -195,6 +196,7 @@ export const useLibraryStore = defineStore('library', {
           sourceClipId: audio.derivedFrom?.sourceClipId,
           sourceInMs: audio.derivedFrom?.inMs,
           sourceDurationMs: audio.derivedFrom?.durationMs,
+          mediaId: audio.mediaId,
           collapsed: audio.collapsed,
           warpEnabled: kind === 'saved-clip' ? audio.warpEnabled : undefined,
           warpMode: kind === 'saved-clip' ? audio.warpMode : undefined,

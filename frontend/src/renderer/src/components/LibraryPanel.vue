@@ -52,6 +52,7 @@ const {
   savedClipEffectiveBpm,
   keyBadgeClass,
   tileIsSample,
+  tileIsSampleAsset,
   tileUseCount,
   COLLAPSED_PANEL_HEIGHT,
   isResizing,
@@ -109,6 +110,7 @@ const {
         :saved-clip-effective-bpm="savedClipEffectiveBpm"
         :key-badge-class="keyBadgeClass"
         :tile-is-sample="tileIsSample"
+        :tile-is-sample-asset="tileIsSampleAsset"
         :tile-use-count="tileUseCount"
         :set-name-input-el="setNameInputEl"
         @drag-start="onItemDragStart"

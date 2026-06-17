@@ -10,6 +10,8 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
+import { getProjectMedia } from '@/lib/library/projectMedia'
+import { resolveLibraryItemMediaId } from '@/stores/libraryStore'
 import type { SampleSavedPayload, WaveformReadyPayload } from '@shared/bridge-protocol'
 
 /**
@@ -137,6 +139,11 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
   const peaks = parsed?.summary ?? new Float32Array()
 
   const library = useLibraryStore()
+  // The sample shares its source's media GUID, so its cover art + tags resolve from
+  // the one project media-store entry the source already wrote at import. The source
+  // may be a derived item (e.g. a saved-clip region), so walk its chain to the origin.
+  const mediaSource = payload.sourceItemId ? (library.byId[payload.sourceItemId] ?? null) : null
+  const sampleMediaId = resolveLibraryItemMediaId(mediaSource, library.byId)
   library.addItem({
     id: payload.itemId,
     kind: 'audio-file',
@@ -149,41 +156,28 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     peaks,
     peaksPerSecond: payload.peaksPerSecond,
     playbackFilePath: payload.filePath,
+    mediaId: sampleMediaId,
     fromSnapshot: true
   })
   if (parsed && parsed.channels.length > 0) {
     library.setItemChannelPeaks(payload.itemId, parsed.channels, payload.peaksPerSecond)
   }
-  // Classify the new sample and, for music samples, inherit the source's musical
-  // identity so it shows its grid and warps on drop. The backend persists the
-  // same grid (and may re-broadcast it via LIBRARY_ITEM_ANALYSIS); applying it
-  // here too keeps the renderer correct regardless of message ordering.
+  // Classify the new sample. Only a MUSIC sample additionally inherits the musical grid
+  // (tempo / key / beats) so it shows its grid and warps on drop — the lack of pitch +
+  // BPM is the ONLY thing that distinguishes a simple sample. The backend persists the
+  // same grid (and may re-broadcast it via LIBRARY_ITEM_ANALYSIS); applying it here too
+  // keeps the renderer correct regardless of message ordering.
   if (payload.sampleMode) {
     const item = library.byId[payload.itemId]
     if (item) item.sampleMode = payload.sampleMode
-    if (payload.sampleMode === 'music' && payload.sourceItemId) {
-      const source = library.byId[payload.sourceItemId] ?? null
-      inheritSourceAnalysis(library, payload.itemId, source, (payload.sourceInMs ?? 0) / 1000)
-      // A music sample inherits its parent's tags and cover art for display.
-      // The cover-art object URL is shared (the store's revoke guard refcounts
-      // it), mirroring the stem-source hand-off.
-      if (item && source) {
-        if (!item.metadata && source.metadata) item.metadata = source.metadata
-        if (!item.coverArtUrl && source.coverArtUrl) item.coverArtUrl = source.coverArtUrl
-        // Persist the inherited identity to a sidecar beside the sample WAV so the
-        // cover art + tags survive a project reload — the in-memory copy above is
-        // lost otherwise, and a sample must never depend on its origin once saved.
-        // Main resolves the identity from the source's on-disk representation (its
-        // own sidecar if the source is a tagless stem, else the file's own tags).
-        if (source.filePath) {
-          void window.silverdaw
-            .writeSampleSidecar(payload.filePath, source.filePath)
-            .catch((err) =>
-              log.warn('bridge', `writeSampleSidecar failed for ${payload.itemId}: ${String(err)}`)
-            )
-        }
-      }
+    if (payload.sampleMode === 'music' && mediaSource) {
+      inheritSourceAnalysis(library, payload.itemId, mediaSource, (payload.sourceInMs ?? 0) / 1000)
     }
+    // Resolve the shared cover art + tags from the project media store by the GUID the
+    // sample carries over from its source — works for both music and simple samples,
+    // and regardless of whether the in-memory source still holds its own cover.
+    const media = await getProjectMedia(item?.mediaId)
+    if (item && media) library.setItemMetadata(payload.itemId, media)
     useProjectStore().peaksRevision++
   }
   notifications.pushInfo(`Saved sample "${payload.name}".`)

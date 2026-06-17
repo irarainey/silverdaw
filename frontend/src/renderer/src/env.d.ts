@@ -134,6 +134,8 @@ declare global {
       readStemSidecar(stemDir: string): Promise<AudioMetadata | null>
       writeSampleSidecar(sampleFilePath: string, sourceFilePath: string): Promise<boolean>
       readSampleSidecar(sampleDir: string): Promise<AudioMetadata | null>
+      saveProjectMedia(mediaId: string, sourceFilePath: string): Promise<boolean>
+      getProjectMedia(mediaId: string): Promise<AudioMetadata | null>
     }
   }
 }

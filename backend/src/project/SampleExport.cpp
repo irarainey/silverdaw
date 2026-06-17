@@ -267,10 +267,14 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     // A music sample is a standalone loop: it carries the source's
                     // beat grid (set below), so persist its window start to shift
                     // the inherited beats. A simple sample stores no musical metadata.
+                    // Both flavours carry over the source's media GUID so their cover
+                    // art + tags resolve from the project's central metadata/covers store.
+                    const juce::String sampleMediaId =
+                        sourceItemId.isNotEmpty() ? projectState.getLibraryItemMediaId(sourceItemId) : juce::String{};
                     projectState.addLibraryItem(newItemId, outFile.getFullPathName(), outFile.getFileName(),
                                                 actualDurationMs, static_cast<int>(sampleRate), channels,
                                                 outFile.getFullPathName(), {}, "audio-file", safeName,
-                                                {}, {}, isMusic ? inMs : -1.0, -1.0, -1);
+                                                {}, {}, isMusic ? inMs : -1.0, -1.0, -1, sampleMediaId);
                     if (isMusic)
                         projectState.setLibraryItemSampleMode(newItemId, "music");
                     else if (sampleMode == "sample")
@@ -286,7 +290,11 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     obj->setProperty("laneCount", peaks.laneCount);
                     obj->setProperty("peaksPerSecond", silverdaw::effectivePeaksPerSecond(peaks));
                     if (sampleMode.isNotEmpty()) obj->setProperty("sampleMode", sampleMode);
-                    if (isMusic && sourceItemId.isNotEmpty())
+                    // Echo the source id for BOTH music and simple samples so the renderer can
+                    // inherit the source's cover art + tags and persist them to a sidecar. Only a
+                    // music sample additionally inherits the musical grid (tempo/key, below) — that
+                    // is the sole difference between the two sample flavours.
+                    if (sourceItemId.isNotEmpty())
                     {
                         obj->setProperty("sourceItemId", sourceItemId);
                         obj->setProperty("sourceInMs", inMs);

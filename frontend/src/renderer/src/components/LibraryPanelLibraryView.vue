@@ -23,6 +23,7 @@ const props = defineProps<{
   savedClipEffectiveBpm: (item: LibraryItem) => number | undefined
   keyBadgeClass: (key: string) => string
   tileIsSample: (item: LibraryItem) => boolean
+  tileIsSampleAsset: (item: LibraryItem) => boolean
   tileUseCount: (item: LibraryItem) => number
   setNameInputEl: (el: Element | ComponentPublicInstance | null) => void
 }>()
@@ -70,6 +71,7 @@ const editingValue = defineModel<string>('editingValue', { required: true })
         :saved-clip-effective-bpm="props.savedClipEffectiveBpm"
         :key-badge-class="props.keyBadgeClass"
         :tile-is-sample="props.tileIsSample"
+        :tile-is-sample-asset="props.tileIsSampleAsset"
         :tile-use-count="props.tileUseCount"
         :set-name-input-el="props.setNameInputEl"
         @drag-start="(e, item) => emit('dragStart', e, item)"

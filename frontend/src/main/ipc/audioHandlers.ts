@@ -16,6 +16,7 @@ import {
   isAllowedAudioPath,
   isWithinStemsWriteRoot,
   isWithinSamplesWriteRoot,
+  getProjectMediaDirs,
   registerIssuedPath
 } from '../audioPaths'
 import { logMain } from '../log'
@@ -128,6 +129,57 @@ async function readSidecarFromDir(dir: string): Promise<AudioMetadata | null> {
       meta.coverArt = { data, mimeType: parsed.cover.mimeType || 'image/jpeg' }
     } catch (err) {
       logMain('WARN ', 'sidecar:read', `cover read failed in ${dir}:`, err)
+    }
+  }
+  return meta
+}
+
+// ── Central project media store (keyed by media GUID) ────────────────────────
+// One `metadata/<guid>.json` (tags) + `covers/<guid>.<ext>` (cover image) per
+// source file, beside the project. Reuses the sidecar record shape; the only
+// difference from the per-item sidecars is the GUID filename and the flat folders,
+// so an imported file and every stem/sample derived from it share one entry.
+async function writeProjectMediaFiles(
+  metadataDir: string,
+  coversDir: string,
+  guid: string,
+  metadata: AudioMetadata,
+  cover?: SidecarCover
+): Promise<boolean> {
+  await mkdir(metadataDir, { recursive: true })
+  const { coverArt: _omitCover, ...rest } = metadata
+  const record: MediaSidecar = { version: 1, metadata: rest }
+  if (cover && cover.data.byteLength > 0) {
+    await mkdir(coversDir, { recursive: true })
+    const file = `${guid}.${coverExtForMime(cover.mimeType)}`
+    await writeFile(join(coversDir, file), Buffer.from(cover.data))
+    record.cover = { file, mimeType: cover.mimeType }
+  }
+  await writeFile(join(metadataDir, `${guid}.json`), JSON.stringify(record, null, 2), 'utf8')
+  return true
+}
+
+async function readProjectMediaFiles(
+  metadataDir: string,
+  coversDir: string,
+  guid: string
+): Promise<AudioMetadata | null> {
+  let raw: string
+  try {
+    raw = await readFile(join(metadataDir, `${guid}.json`), 'utf8')
+  } catch {
+    return null
+  }
+  const parsed = JSON.parse(raw) as Partial<MediaSidecar>
+  if (!parsed || typeof parsed.metadata !== 'object' || parsed.metadata === null) return null
+  const meta: AudioMetadata = { ...parsed.metadata }
+  if (parsed.cover && typeof parsed.cover.file === 'string') {
+    try {
+      const buf = await readFile(join(coversDir, basename(parsed.cover.file)))
+      const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+      meta.coverArt = { data, mimeType: parsed.cover.mimeType || 'image/jpeg' }
+    } catch (err) {
+      logMain('WARN ', 'media:get', `cover read failed for ${guid}:`, err)
     }
   }
   return meta
@@ -356,6 +408,49 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
     }
     try {
       return await readSidecarFromDir(canonicalisePath(sampleDir))
+    } catch {
+      return null
+    }
+  })
+
+  // ── Central project media store (keyed by media GUID) ──────────────────────
+  // Save a source file's tags + cover art into the active project's metadata/covers
+  // store under its media GUID. The renderer passes the GUID it minted at import and
+  // the source file path; main resolves the identity from the source's on-disk form
+  // (embedded tags for an imported file, or a sidecar for a tagless stem/sample) so
+  // the renderer never needs the cover bytes. Confined to the registered project
+  // media dirs; the source must be on the audio allow-list.
+  ipcMain.handle(IPC.media.save, async (_evt, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return false
+    const p = payload as { mediaId?: unknown; sourceFilePath?: unknown }
+    if (typeof p.mediaId !== 'string' || p.mediaId === '' || typeof p.sourceFilePath !== 'string') return false
+    if (!isAllowedAudioPath(p.sourceFilePath)) {
+      logMain('WARN ', 'media:save', 'rejected source not on allow-list:', p.sourceFilePath)
+      return false
+    }
+    const dirs = getProjectMediaDirs()
+    if (!dirs) {
+      logMain('WARN ', 'media:save', 'no active project media store')
+      return false
+    }
+    try {
+      const identity = await resolveSourceIdentity(p.sourceFilePath)
+      if (!identity) return false
+      return await writeProjectMediaFiles(dirs.metadataDir, dirs.coversDir, p.mediaId, identity.metadata, identity.cover)
+    } catch (err) {
+      logMain('WARN ', 'media:save', `failed for ${String(p.mediaId)}:`, err)
+      return false
+    }
+  })
+
+  // Read a source's media back as AudioMetadata (cover bytes attached) by GUID, for
+  // any imported file / stem / sample that shares it. Returns null when absent.
+  ipcMain.handle(IPC.media.get, async (_evt, mediaId: unknown) => {
+    if (typeof mediaId !== 'string' || mediaId === '') return null
+    const dirs = getProjectMediaDirs()
+    if (!dirs) return null
+    try {
+      return await readProjectMediaFiles(dirs.metadataDir, dirs.coversDir, mediaId)
     } catch {
       return null
     }

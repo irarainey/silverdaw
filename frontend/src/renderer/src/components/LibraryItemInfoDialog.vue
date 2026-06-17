@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useLibraryItemInfoController, type LibraryItemInfoEmit, type LibraryItemInfoProps } from '@/lib/library/useLibraryItemInfoController'
+import LibraryTypeBadge from '@/components/LibraryTypeBadge.vue'
 
 const props = defineProps<LibraryItemInfoProps>()
 const emit = defineEmits<LibraryItemInfoEmit>()
@@ -12,7 +13,9 @@ const {
   sourceItem,
   displayTitle,
   isStem,
+  isSampleAsset,
   stemSummary,
+  sampleSummary,
   typeLabel,
   coverArtUrl,
   headerArtist,
@@ -92,6 +95,21 @@ const {
             </svg>
             <span class="min-w-0">{{ stemSummary }}</span>
           </p>
+          <p
+            v-else-if="sampleSummary"
+            class="mb-3 flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-zinc-300"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              class="h-4 w-4 shrink-0 text-zinc-400"
+              aria-hidden="true"
+            >
+              <path d="M7 18h2V6H7v12zm4 4h2V2h-2v20zm-8-8h2v-4H3v4zm12 4h2V6h-2v12zm4-8v4h2v-4h-2z" />
+            </svg>
+            <span class="min-w-0">{{ sampleSummary }}</span>
+          </p>
           <section class="grid gap-3 md:grid-cols-[160px_1fr]">
             <div
               class="relative flex h-36 items-center justify-center overflow-hidden rounded border border-zinc-800 bg-zinc-950"
@@ -113,22 +131,16 @@ const {
               >
                 <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
               </svg>
-              <span
+              <LibraryTypeBadge
                 v-if="isStem"
-                class="absolute bottom-1 right-1 flex items-center gap-1 rounded bg-zinc-950/85 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-100"
-                title="This is a separated stem"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  class="h-3 w-3"
-                  aria-hidden="true"
-                >
-                  <path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z" />
-                </svg>
-                Stem
-              </span>
+                kind="stem"
+                show-label
+              />
+              <LibraryTypeBadge
+                v-else-if="isSampleAsset"
+                kind="sample"
+                show-label
+              />
             </div>
 
             <dl class="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
@@ -384,7 +396,7 @@ const {
           </section>
 
           <section
-            v-if="item.kind === 'audio-file'"
+            v-if="item.kind === 'audio-file' || isStem"
             class="mt-5"
           >
             <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">

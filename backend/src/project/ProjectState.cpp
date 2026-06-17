@@ -56,6 +56,7 @@ const juce::Identifier ProjectState::kSourceItemId{"sourceItemId"};
 const juce::Identifier ProjectState::kSourceClipId{"sourceClipId"};
 const juce::Identifier ProjectState::kSourceInMs{"sourceInMs"};
 const juce::Identifier ProjectState::kSourceDurationMs{"sourceDurationMs"};
+const juce::Identifier ProjectState::kMediaId{"mediaId"};
 const juce::Identifier ProjectState::kDisplayName{"displayName"};
 const juce::Identifier ProjectState::kClipName{"clipName"};
 const juce::Identifier ProjectState::kCollapsed{"collapsed"};

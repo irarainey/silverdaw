@@ -102,6 +102,9 @@ export interface LibraryAddPayload {
   channelCount?: number
   playbackFilePath?: string
   key?: string
+  /** Media GUID minted at first import; the key into the project's metadata/covers store.
+   *  Carried over to every derived stem/sample so they share the source's cover art + tags. */
+  mediaId?: string
   sourceItemId?: string
   sourceClipId?: string
   sourceInMs?: number

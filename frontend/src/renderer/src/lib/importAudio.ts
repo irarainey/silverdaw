@@ -5,11 +5,12 @@ import { send as sendBridge, probeAudioFile } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
-import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName, resolveLibraryItemMediaId } from '@/stores/libraryStore'
 import type { LibraryItem } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { promptSampleRateMismatch, type RateBucket } from '@/lib/sampleRatePrompt'
+import { saveProjectMedia, getProjectMedia } from '@/lib/library/projectMedia'
 
 /** Backend-native formats; AAC/M4A/MP4 need renderer decode + temp WAV on Windows. */
 const BACKEND_NATIVE_EXTS: ReadonlySet<string> = new Set([
@@ -237,6 +238,17 @@ export async function importAudioIntoLibrary(
     const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
     const enrichedMetadata = withDetectedKey(metadata, detectedKey)
     const playbackFilePath = await resolvePlaybackPath(opened.filePath, decoded)
+    // Media GUID: a root import mints a new one and saves the file's tags + cover into
+    // the project media store; a derived item (a stem) carries over its source's GUID,
+    // whose media was already saved at the source's import — so cover art + tags are
+    // shared from one entry and survive the origin being removed.
+    const sourceMediaId = options?.derivedFrom?.sourceItemId
+      ? resolveLibraryItemMediaId(library.byId[options.derivedFrom.sourceItemId], library.byId)
+      : undefined
+    const mediaId = sourceMediaId ?? crypto.randomUUID()
+    if (!sourceMediaId) {
+      await saveProjectMedia(mediaId, opened.filePath)
+    }
     const itemId = library.addItem({
       filePath: opened.filePath,
       fileName: opened.fileName,
@@ -249,12 +261,20 @@ export async function importAudioIntoLibrary(
       key: enrichedMetadata?.key,
       kind: options?.kind,
       name: options?.name,
-      derivedFrom: options?.derivedFrom
+      derivedFrom: options?.derivedFrom,
+      mediaId
     })
     if (decoded.channelPeaks.length > 0) {
       library.setItemChannelPeaks(itemId, decoded.channelPeaks, decoded.peaksPerSecond)
     }
-    library.setItemMetadata(itemId, enrichedMetadata)
+    // Display identity: a root import already holds the file's own tags + cover; a
+    // derived item is a tagless WAV, so resolve the shared cover from the media store.
+    if (sourceMediaId) {
+      const media = await getProjectMedia(mediaId)
+      library.setItemMetadata(itemId, media ?? enrichedMetadata)
+    } else {
+      library.setItemMetadata(itemId, enrichedMetadata)
+    }
     library.markImportAnalyzing(importEntryId, itemId)
     return itemId
   } catch (err) {

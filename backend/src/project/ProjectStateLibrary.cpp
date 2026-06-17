@@ -11,7 +11,7 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
                                    const juce::String& kind, const juce::String& displayName,
                                    const juce::String& sourceItemId, const juce::String& sourceClipId,
                                    double sourceInMs, double sourceDurationMs,
-                                   int collapsedFlag)
+                                   int collapsedFlag, const juce::String& mediaId)
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return false;
     // 'stem' joins 'saved-clip' as a recognised derived kind; anything else is a source.
@@ -74,6 +74,10 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
             {
                 item.setProperty(kSourceDurationMs, sourceDurationMs, &undoManager);
             }
+            if (mediaId.isNotEmpty())
+            {
+                item.setProperty(kMediaId, mediaId, &undoManager);
+            }
             if (collapsedFlag == 1)
             {
                 item.setProperty(kCollapsed, true, &undoManager);
@@ -133,6 +137,10 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
     {
         item.setProperty(kSourceDurationMs, sourceDurationMs, nullptr);
     }
+    if (mediaId.isNotEmpty())
+    {
+        item.setProperty(kMediaId, mediaId, nullptr);
+    }
     if (collapsedFlag == 1)
     {
         item.setProperty(kCollapsed, true, nullptr);
@@ -188,6 +196,35 @@ juce::String ProjectState::getLibraryItemFilePath(const juce::String& itemId) co
         {
             return item.getProperty(kFilePath, {}).toString();
         }
+    }
+    return {};
+}
+
+juce::String ProjectState::getLibraryItemMediaId(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return {};
+    // Walk the derived-from chain (a sample saved from a saved-clip region, etc.) back
+    // to the origin that actually carries a media GUID.
+    juce::String currentId = itemId;
+    juce::StringArray seen;
+    while (currentId.isNotEmpty() && ! seen.contains(currentId))
+    {
+        seen.add(currentId);
+        juce::ValueTree found;
+        for (int i = 0; i < library.getNumChildren(); ++i)
+        {
+            const auto item = library.getChild(i);
+            if (item.getProperty(kId).toString() == currentId)
+            {
+                found = item;
+                break;
+            }
+        }
+        if (! found.isValid()) break;
+        const auto mid = found.getProperty(kMediaId, {}).toString();
+        if (mid.isNotEmpty()) return mid;
+        currentId = found.getProperty(kSourceItemId, {}).toString();
     }
     return {};
 }
@@ -284,6 +321,10 @@ juce::var ProjectState::libraryAsJson() const
         if (item.hasProperty(kSourceDurationMs))
         {
             obj->setProperty("sourceDurationMs", static_cast<double>(item.getProperty(kSourceDurationMs, 0.0)));
+        }
+        if (item.hasProperty(kMediaId))
+        {
+            obj->setProperty("mediaId", item.getProperty(kMediaId).toString());
         }
         if (item.hasProperty(kCollapsed) && bool(item.getProperty(kCollapsed)))
         {

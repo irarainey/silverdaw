@@ -4,54 +4,38 @@
 import { decodeAudioToPeaks } from '@/lib/audioDecode'
 import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { getProjectMedia } from '@/lib/library/projectMedia'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 import type { AudioMetadata } from '@shared/types'
 import { filePathToBasename } from './projectHelpers'
 import type { SnapshotTarget } from './projectSnapshotTypes'
 
-/** The folder holding a generated WAV's sibling sidecar (stem or music sample). */
-function sidecarDirOf(filePath: string): string {
-  return filePath.replace(/[\\/][^\\/]*$/, '')
-}
-
-/** Strip the source file's audio geometry from inherited metadata so the
- *  generated file (stem or music sample) keeps its OWN duration/sample-rate/
- *  channel-count (decoded from its own file) while still inheriting identity
- *  tags + cover art. */
+/** Strip the source file's audio geometry from inherited metadata so a derived item
+ *  (stem or sample) keeps its OWN duration/sample-rate/channel-count (decoded from its
+ *  own file) while still inheriting identity tags + cover art from the media store. */
 function withoutAudioGeometry(meta: AudioMetadata): AudioMetadata {
   const { durationMs: _d, sampleRate: _s, channelCount: _c, ...rest } = meta
   return rest
 }
 
-async function refreshLibraryItemMedia(
+export async function refreshLibraryItemMedia(
   itemId: string,
   filePath: string,
-  opts?: { sidecar?: 'stem' | 'sample' }
+  mediaId?: string
 ): Promise<void> {
   const library = useLibraryStore()
   try {
-    let metadata: AudioMetadata | null = null
-    // A separated stem's WAV — and a saved music sample's WAV — carries no tags,
-    // so prefer the sidecar copy written at creation time: it makes the inherited
-    // identity (cover art + tags) survive source removal and reload. The sidecar's
-    // audio geometry describes the SOURCE, so drop it and let the file's own decode
-    // below supply duration/peaks.
-    if (opts?.sidecar) {
-      try {
-        const dir = sidecarDirOf(filePath)
-        const sidecar =
-          opts.sidecar === 'stem'
-            ? await window.silverdaw.readStemSidecar(dir)
-            : await window.silverdaw.readSampleSidecar(dir)
-        if (sidecar) metadata = withoutAudioGeometry(sidecar)
-      } catch (err) {
-        log.warn('library', `read ${opts.sidecar} sidecar failed for ${filePath}: ${String(err)}`)
-      }
-    }
-    if (!metadata) metadata = await window.silverdaw.readAudioMetadata(filePath)
+    // Cover art + tags come from the project media store, keyed by the item's media
+    // GUID — shared by the imported source and every stem/sample derived from it,
+    // surviving reload and removal of the origin. The store holds the SOURCE's
+    // geometry, so strip it (the item keeps its own, decoded below). Items without a
+    // GUID (older projects) fall back to the file's own embedded tags.
+    let metadata: AudioMetadata | null = mediaId ? await getProjectMedia(mediaId) : null
+    if (metadata) metadata = withoutAudioGeometry(metadata)
+    else metadata = await window.silverdaw.readAudioMetadata(filePath)
     library.setItemMetadata(itemId, metadata)
   } catch (err) {
-    log.warn('library', `readAudioMetadata failed for ${filePath}: ${String(err)}`)
+    log.warn('library', `media refresh failed for ${filePath}: ${String(err)}`)
   }
 
   const item = library.getItem(itemId)
@@ -142,6 +126,7 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
         cents: item.kind === 'saved-clip' && typeof item.cents === 'number'
           ? item.cents
           : undefined,
+        mediaId: item.mediaId,
         fromSnapshot: true
       })
       // Persisted analysis hydrates immediately; new imports use LIBRARY_ITEM_ANALYSIS.
@@ -165,18 +150,13 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
         const target = library.items.find((i) => i.id === libId)
         if (target) target.sampleMode = item.sampleMode
       }
-      // Backfill metadata for older projects missing persisted duration.
-      // Stems and music samples are standalone files that inherit identity
-      // from a source; read their sidecar so cover art + tags survive reload.
+      // Resolve cover art + tags from the project media store by the item's media GUID
+      // (shared by the imported source and every stem/sample derived from it). Items
+      // without a GUID — older projects, or a plain audio file — fall back to the file's
+      // own embedded tags inside refreshLibraryItemMedia.
       const reloadKind = item.kind ?? 'audio-file'
-      if (reloadKind === 'audio-file') {
-        void refreshLibraryItemMedia(
-          libId,
-          item.filePath,
-          item.sampleMode === 'music' ? { sidecar: 'sample' } : undefined
-        )
-      } else if (reloadKind === 'stem') {
-        void refreshLibraryItemMedia(libId, item.filePath, { sidecar: 'stem' })
+      if (reloadKind === 'audio-file' || reloadKind === 'stem') {
+        void refreshLibraryItemMedia(libId, item.filePath, item.mediaId)
       }
     }
     for (const item of library.items) {

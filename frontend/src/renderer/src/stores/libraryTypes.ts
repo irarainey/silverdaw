@@ -34,6 +34,10 @@ export interface AddLibraryItemInput {
   semitones?: number
   cents?: number
   unresolved?: boolean
+  /** Media GUID minted at first import; key into the project's central metadata/covers
+   *  store. Carried over to every derived stem/sample so they share the source's cover
+   *  art + tags, however many levels down. */
+  mediaId?: string
 }
 
 export interface LibraryItem {
@@ -83,6 +87,9 @@ export interface LibraryItem {
   tempoRatio?: number
   semitones?: number
   cents?: number
+  /** Media GUID minted at first import; key into the project's central metadata/covers
+   *  store, carried over to every derived stem/sample. */
+  mediaId?: string
 }
 
 /** Per-file import progress shown while decoding, analysing, or warping. */

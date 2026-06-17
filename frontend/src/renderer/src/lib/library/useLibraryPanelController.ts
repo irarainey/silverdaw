@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useLibraryStore, libraryItemDisplayName, libraryItemIsSample, type LibraryItem } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName, libraryItemIsSample, libraryItemIsSampleAsset, type LibraryItem } from '@/stores/libraryStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { importAudioIntoLibrary, preflightSampleRates } from '@/lib/importAudio'
@@ -213,6 +213,12 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     return libraryItemIsSample(item, library.byId)
   }
 
+  /** Saved sample asset (music OR simple) — drives the cover-art type badge and tile
+   *  styling. Distinct from `tileIsSample`, which is the narrower non-musical flag. */
+  function tileIsSampleAsset(item: LibraryItem): boolean {
+    return libraryItemIsSampleAsset(item, library.byId)
+  }
+
   /** Number of timeline placements of a library item (drives the in-use count pill). */
   function tileUseCount(item: LibraryItem): number {
     return library.itemUseCount(item.id)
@@ -298,6 +304,7 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     savedClipEffectiveBpm,
     keyBadgeClass,
     tileIsSample,
+    tileIsSampleAsset,
     tileUseCount,
     COLLAPSED_PANEL_HEIGHT,
     isResizing,

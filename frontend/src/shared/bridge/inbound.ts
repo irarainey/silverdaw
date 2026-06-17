@@ -296,6 +296,8 @@ export const ProjectStateLibraryItemSchema = z
     sourceClipId: z.string().optional(),
     sourceInMs: z.number().optional(),
     sourceDurationMs: z.number().optional(),
+    /** Media GUID minted at first import; key into the project's metadata/covers store. */
+    mediaId: z.string().optional(),
     collapsed: z.boolean().optional(),
     unresolved: z.boolean().optional(),
     /** Saved-clip warp defaults are copy-on-drop, not live-linked. */

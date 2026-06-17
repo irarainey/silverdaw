@@ -366,7 +366,7 @@ class ProjectState : public juce::ValueTree::Listener
                         const juce::String& kind = {}, const juce::String& displayName = {},
                         const juce::String& sourceItemId = {}, const juce::String& sourceClipId = {},
                         double sourceInMs = -1.0, double sourceDurationMs = -1.0,
-                        int collapsedFlag = -1);
+                        int collapsedFlag = -1, const juce::String& mediaId = {});
 
     /** Remove a library item by id. Returns true if it existed. Marks dirty. */
     bool removeLibraryItem(const juce::String& itemId);
@@ -388,6 +388,9 @@ class ProjectState : public juce::ValueTree::Listener
 
     /** Read a library item's source file path. */
     juce::String getLibraryItemFilePath(const juce::String& itemId) const;
+
+    /** Read a library item's media GUID (the key into the project's metadata/covers store). */
+    juce::String getLibraryItemMediaId(const juce::String& itemId) const;
 
     juce::String getLibraryItemPlaybackPath(const juce::String& itemId) const;
 
@@ -569,6 +572,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kSourceClipId;
     static const juce::Identifier kSourceInMs;
     static const juce::Identifier kSourceDurationMs;
+    static const juce::Identifier kMediaId;
     static const juce::Identifier kDisplayName;
     static const juce::Identifier kClipName;
     static const juce::Identifier kCollapsed;

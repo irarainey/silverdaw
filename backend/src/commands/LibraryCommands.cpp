@@ -43,10 +43,11 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
     const int collapsedFlag = payload.hasProperty("collapsed")
                                   ? (bool(payload.getProperty("collapsed", false)) ? 1 : 0)
                                   : -1;
+    const juce::String mediaId = readOptionalString(payload, "mediaId").value_or(juce::String{});
     silverdaw::log::info("bridge", "recv LIBRARY_ADD itemId=" + itemId);
     projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath, key,
                                 kind, displayName, sourceItemId, sourceClipId, sourceInMs, sourceDurationMs,
-                                collapsedFlag);
+                                collapsedFlag, mediaId);
     if (kind == "saved-clip")
     {
         // Saved-clip warp fields are partial; missing fields keep identity defaults.

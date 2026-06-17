@@ -246,7 +246,14 @@ const api = {
     ipcRenderer.invoke(IPC.samples.writeSidecar, { sampleFilePath, sourceFilePath }),
   /** Read a music sample's sidecar metadata (cover bytes attached) or null when absent. */
   readSampleSidecar: (sampleDir: string): Promise<AudioMetadata | null> =>
-    ipcRenderer.invoke(IPC.samples.readSidecar, sampleDir)
+    ipcRenderer.invoke(IPC.samples.readSidecar, sampleDir),
+  /** Save a source's tags + cover into the project's central metadata/covers store under
+   *  its media GUID; main resolves the identity from the source file on disk. */
+  saveProjectMedia: (mediaId: string, sourceFilePath: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.media.save, { mediaId, sourceFilePath }),
+  /** Read a source's media (tags + cover bytes) back by media GUID, or null when absent. */
+  getProjectMedia: (mediaId: string): Promise<AudioMetadata | null> =>
+    ipcRenderer.invoke(IPC.media.get, mediaId)
 }as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)

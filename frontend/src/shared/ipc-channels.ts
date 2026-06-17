@@ -100,6 +100,10 @@ export const IPC = {
     writeSidecar: 'samples:writeSidecar',
     readSidecar: 'samples:readSidecar'
   },
+  media: {
+    save: 'media:save',
+    get: 'media:get'
+  },
   log: {
     appendBatch: 'log:append-batch'
   }

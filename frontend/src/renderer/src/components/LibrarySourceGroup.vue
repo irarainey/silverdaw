@@ -2,6 +2,7 @@
 import { computed, type ComponentPublicInstance } from 'vue'
 import type { LibraryItem } from '@/stores/libraryStore'
 import LibrarySavedClipRow from '@/components/LibrarySavedClipRow.vue'
+import LibraryTypeBadge from '@/components/LibraryTypeBadge.vue'
 
 const props = defineProps<{
   source: LibraryItem
@@ -19,6 +20,7 @@ const props = defineProps<{
   savedClipEffectiveBpm: (item: LibraryItem) => number | undefined
   keyBadgeClass: (key: string) => string
   tileIsSample: (item: LibraryItem) => boolean
+  tileIsSampleAsset: (item: LibraryItem) => boolean
   tileUseCount: (item: LibraryItem) => number
   setNameInputEl: (el: Element | ComponentPublicInstance | null) => void
 }>()
@@ -42,7 +44,12 @@ const inUsePillClass = computed(
     `${props.savedClipPillClass} ${isInUse.value ? 'border-emerald-700 bg-emerald-900/60 text-emerald-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`
 )
 const tileCoverArtUrl = computed(() => props.coverArtUrl ?? props.source.coverArtUrl)
-const isSampleTile = computed(() => props.tileIsSample(props.source))
+// Drives the sample tint, fallback waveform icon, and cover-art badge: a saved sample
+// asset (music OR simple) gets the sample treatment. The narrower `tileIsSample`
+// (non-musical) still drives the "Sample"-vs-BPM/key metadata pill below, so a music
+// sample shows its pitch + BPM while still reading as a sample at a glance.
+const isSampleTile = computed(() => props.tileIsSampleAsset(props.source))
+const isStemTile = computed(() => props.source.kind === 'stem')
 const savedClipChildren = computed(() => props.children.filter((item) => item.kind === 'saved-clip'))
 
 /** Compact summary for the collapse header, e.g. "3 saved clips". */
@@ -86,41 +93,7 @@ const childSummary = computed(() => {
           class="h-6 w-6 text-indigo-400"
           aria-hidden="true"
         >
-          <rect
-            x="2.5"
-            y="9"
-            width="2"
-            height="6"
-            rx="1"
-          />
-          <rect
-            x="7"
-            y="6"
-            width="2"
-            height="12"
-            rx="1"
-          />
-          <rect
-            x="11.5"
-            y="3"
-            width="2"
-            height="18"
-            rx="1"
-          />
-          <rect
-            x="16"
-            y="7"
-            width="2"
-            height="10"
-            rx="1"
-          />
-          <rect
-            x="20"
-            y="10"
-            width="2"
-            height="4"
-            rx="1"
-          />
+          <path d="M7 18h2V6H7v12zm4 4h2V2h-2v20zm-8-8h2v-4H3v4zm12 4h2V6h-2v12zm4-8v4h2v-4h-2z" />
         </svg>
         <svg
           v-else
@@ -132,6 +105,14 @@ const childSummary = computed(() => {
         >
           <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
         </svg>
+        <LibraryTypeBadge
+          v-if="isStemTile"
+          kind="stem"
+        />
+        <LibraryTypeBadge
+          v-else-if="isSampleTile"
+          kind="sample"
+        />
       </div>
       <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">
         <input

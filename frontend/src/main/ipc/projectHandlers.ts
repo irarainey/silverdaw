@@ -3,10 +3,10 @@
 // pending launch path. Registered from main/index.ts.
 
 import { ipcMain, dialog, type BrowserWindow } from 'electron'
-import { readFile, mkdir } from 'node:fs/promises'
+import { readFile, mkdir, cp } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
-import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot } from '../audioPaths'
+import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot, registerProjectMediaRoots, getProjectMediaDirs } from '../audioPaths'
 import { canonicaliseProjectPath, projectFolderPath } from '../projectPaths'
 import type { PrefsService } from '../prefsService'
 import { logMain } from '../log'
@@ -15,6 +15,21 @@ export interface ProjectHandlersContext {
   getMainWindow(): BrowserWindow | null
   prefs: PrefsService
   consumePendingOpenPath(): string | null
+}
+
+// Copy every file in the central media store's source folder into the destination
+// (used to carry cover art + tags from the temp workspace / previous project folder
+// into the project folder on save). A missing source means no media yet — that's fine.
+async function copyDirContents(src: string, dest: string): Promise<void> {
+  try {
+    await mkdir(dest, { recursive: true })
+    await cp(src, dest, { recursive: true, force: true })
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code !== 'ENOENT') {
+      logMain('WARN ', 'project:saveMedia', `media copy ${src} -> ${dest} failed:`, err)
+    }
+  }
 }
 
 export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
@@ -77,6 +92,16 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       // Likewise the project's Samples folder, where music samples persist their
       // inherited metadata/cover sidecar.
       registerSamplesWriteRoot(join(dirname(target), 'Samples'))
+      // Carry the central media store (cover art + tags) into the project folder so it
+      // survives the save: items imported while the project was unsaved wrote it to the
+      // temp workspace, and a "Save As" copies it from the previous project folder.
+      const previousMedia = getProjectMediaDirs()
+      registerProjectMediaRoots(dirname(target))
+      const nextMedia = getProjectMediaDirs()
+      if (previousMedia && nextMedia && previousMedia.metadataDir !== nextMedia.metadataDir) {
+        await copyDirContents(previousMedia.metadataDir, nextMedia.metadataDir)
+        await copyDirContents(previousMedia.coversDir, nextMedia.coversDir)
+      }
       return target
     }
   )
@@ -95,6 +120,8 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       registerStemsWriteRoot(join(projectDir, 'Stems'))
       // Samples (and their music-sample sidecars) likewise live beside the project.
       registerSamplesWriteRoot(join(projectDir, 'Samples'))
+      // Central per-source metadata/cover store (keyed by media GUID) beside the project.
+      registerProjectMediaRoots(projectDir)
       let parsed: unknown
       try {
         parsed = JSON.parse(content)

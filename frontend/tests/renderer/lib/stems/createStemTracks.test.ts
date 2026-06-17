@@ -44,7 +44,6 @@ vi.mock('@/stores/notificationsStore', () => ({
 }))
 
 const readAudioFile = vi.fn()
-const writeStemSidecar = vi.fn()
 
 const timelineTarget: StemSeparationTarget = {
   sourceItemId: 'src-item',
@@ -82,9 +81,8 @@ function partial(stem: 'vocals' | 'drums'): StemPartialPayload {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.stubGlobal('window', { silverdaw: { readAudioFile, writeStemSidecar } })
+  vi.stubGlobal('window', { silverdaw: { readAudioFile } })
   readAudioFile.mockResolvedValue({ filePath: 'x', fileName: 'x.wav', data: new ArrayBuffer(0) })
-  writeStemSidecar.mockResolvedValue(true)
   importAudioIntoLibrary.mockResolvedValue('item-1')
 })
 
@@ -155,13 +153,6 @@ describe('createTracksFromStems (timeline target)', () => {
     expect(addTrack).toHaveBeenCalledTimes(2)
     expect(setTrackName).toHaveBeenNthCalledWith(2, 'track-new', 'Drums — Song')
     expect(pushInfo).toHaveBeenCalledWith('Added 2 stem tracks from Song')
-  })
-
-  it('writes a metadata sidecar from the source into the stem folder once per job', async () => {
-    await createTracksFromStems(payload())
-
-    expect(writeStemSidecar).toHaveBeenCalledTimes(1)
-    expect(writeStemSidecar).toHaveBeenCalledWith('C:\\stems', 'C:\\music\\Song.mp3')
   })
 
   it('inherits the source beat grid and key onto each stem instead of re-analysing', async () => {

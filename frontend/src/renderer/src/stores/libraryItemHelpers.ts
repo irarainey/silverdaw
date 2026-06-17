@@ -96,6 +96,53 @@ export function libraryItemIsSample(
 }
 
 /**
+ * Resolve the media GUID for a (possibly derived) library item by walking its
+ * `derivedFrom` chain back to the origin that actually carries one. A saved clip or
+ * a sample saved from one inherits no GUID of its own, so follow the source links
+ * until a `mediaId` is found. Returns undefined if none in the chain has one.
+ */
+export function resolveLibraryItemMediaId(
+  item: { mediaId?: string; derivedFrom?: SavedClipSource } | undefined | null,
+  byId: Readonly<Record<string, LibraryItem>>
+): string | undefined {
+  let cur = item
+  const seen = new Set<string>()
+  while (cur) {
+    if (cur.mediaId) return cur.mediaId
+    const srcId = cur.derivedFrom?.sourceItemId
+    if (!srcId || seen.has(srcId)) return undefined
+    seen.add(srcId)
+    cur = byId[srcId]
+  }
+  return undefined
+}
+
+/**
+ * Whether a library item is a saved sample asset — a reusable WAV saved into the
+ * project's Samples folder — in either flavour:
+ *   - a "music sample" (`sampleMode === 'music'`), which inherits the source's
+ *     tempo + key so it warps and shows its grid, OR
+ *   - a "simple sample" (`sampleMode === 'sample'`), a non-musical one-shot.
+ * Both share identical provenance handling (cover art + tags + sidecar); the ONLY
+ * difference is that a music sample carries pitch + BPM. Use this for the
+ * at-a-glance provenance treatment — the cover-art type badge, the "Sample" type
+ * label, and tile styling. For the narrower "non-musical, hide the tempo/key grid"
+ * concern use `libraryItemIsSample` instead.
+ */
+export function libraryItemIsSampleAsset(
+  item: { sampleMode?: 'sample' | 'music'; derivedFrom?: SavedClipSource },
+  byId: Readonly<Record<string, LibraryItem>>
+): boolean {
+  if (item.sampleMode === 'sample' || item.sampleMode === 'music') return true
+  const sourceId = item.derivedFrom?.sourceItemId
+  if (sourceId) {
+    const source = byId[sourceId]
+    if (source?.sampleMode === 'sample' || source?.sampleMode === 'music') return true
+  }
+  return false
+}
+
+/**
  * Whether a timeline clip sourced from `item` should show the "linked to
  * library" badge in its header. True for saved clips and for sample assets
  * (both music and simple samples) — reusable library entries a placed clip

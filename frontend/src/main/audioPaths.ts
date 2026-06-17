@@ -1,4 +1,4 @@
-import { extname, isAbsolute, relative, resolve as pathResolve } from 'node:path'
+import { extname, isAbsolute, join, relative, resolve as pathResolve } from 'node:path'
 import { logMain } from './log'
 
 // Keep accepted audio extensions aligned with backend decoder support.
@@ -112,6 +112,30 @@ export function isWithinSamplesWriteRoot(dir: unknown): dir is string {
     if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true
   }
   return false
+}
+
+// The active project's central media store: one `metadata/` (per-source tag JSON)
+// and one `covers/` (per-source cover image) folder beside the project file, both
+// keyed by the source's media GUID. Tracks the most-recently opened/saved project
+// (Silverdaw is single-project), or the temp workspace while unsaved. The store is
+// the single source of truth for cover art + tags, shared by an imported file and
+// every stem/sample derived from it.
+let currentMetadataDir: string | null = null
+let currentCoversDir: string | null = null
+
+export function registerProjectMediaRoots(projectDir: string): void {
+  if (typeof projectDir !== 'string' || projectDir === '' || !isAbsolute(projectDir)) {
+    logMain('WARN ', 'main', 'refusing to register non-absolute project media root:', projectDir)
+    return
+  }
+  currentMetadataDir = canonicalisePath(join(projectDir, 'metadata'))
+  currentCoversDir = canonicalisePath(join(projectDir, 'covers'))
+}
+
+export function getProjectMediaDirs(): { metadataDir: string; coversDir: string } | null {
+  return currentMetadataDir !== null && currentCoversDir !== null
+    ? { metadataDir: currentMetadataDir, coversDir: currentCoversDir }
+    : null
 }
 
 // Re-check the audio extension at read time as defence in depth.
