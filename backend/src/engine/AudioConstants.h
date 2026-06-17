@@ -16,38 +16,39 @@ inline constexpr int kPrimePerTrackTimeoutMs = 250;
 inline constexpr int kPlayPrimeBudgetMs = 3000;
 inline constexpr int kLoadPrimeBudgetMs = 1500;
 
-// Sub-LSB "fluctuate" keep-alive holds sleep-prone USB DACs awake while Silverdaw is open, so
-// every stop->play is instant — without the audible hiss of a broadband floor or the latency of
-// a wake pre-roll. Rather than a near-Nyquist tone (which a DAC's reconstruction filter attenuates
-// before its auto-mute detector ever sees it), it emits isolated, sign-alternating, minimal-
-// amplitude impulses. An impulse is broadband: it puts a sliver of energy across the whole
-// spectrum — including the band the DAC's "audio present" detector actually monitors — so the
-// endpoint reliably registers it as non-silence and stays awake. Each impulse sits near the
-// format noise floor, so the stream is inaudible. Injected POST master-gain, so the project's
+// Continuous, inaudible keep-alive dither holds sleep-prone USB DACs awake while the device is the
+// selected output. Unlike a near-Nyquist tone (which a DAC's reconstruction filter strips before
+// its auto-mute detector, so the endpoint sleeps anyway), continuous broadband dither keeps *every*
+// sample non-zero with steady in-band energy the detector registers as "audio present", while
+// sitting at the format noise floor so it is inaudible. Injected POST master-gain, so the project's
 // own volume never attenuates it (only the OS endpoint volume can).
-inline constexpr float kKeepAliveImpulse = 1.0F / 8192.0F; // ~-78 dBFS, broadband, inaudible
+//
+// Amplitude is the single tuning knob: ~2 LSB of a 16-bit endpoint (1/16384 ~= -84 dBFS peak) — at
+// the noise floor, inaudible. Raise it if a particularly aggressive endpoint still sleeps; lower it
+// if a sensitive IEM reveals a faint hiss in true silence.
+inline constexpr float kKeepAliveDitherPeak = 1.0F / 16384.0F; // ~2 LSB @16-bit, inaudible
 
 // Only inject on otherwise-silent blocks; real programme above this passes through untouched.
 inline constexpr float kKeepAliveSilenceThreshold = 1.0e-3F;
 
-// Maintenance impulse rate: a few impulses per audio block is enough to hold a *warm* endpoint
-// out of auto-mute (50 fluctuations/second is a well-proven rate for this).
-inline constexpr double kKeepAliveFluctuateHz = 50.0;
-
-// Waking a *cold* DAC (just plugged in, freshly selected, or woken from deep sleep) needs a
-// stronger "signal present" kick plus a little lock time. On the FIRST play after an output
-// device (re)start — and only on a sleep-prone (USB) endpoint — the engine arms a *denser* impulse
-// stream (the same inaudible amplitude, many more non-zero frames per second) for kWakePrerollMs,
-// then starts content. One-time per device session; every later play is instant. This is the
-// small, acceptable first-play lead-in.
-inline constexpr double kWakeFluctuateHz = 1000.0; // denser cold-wake kick (same amplitude)
-inline constexpr int kWakePrerollMs = 500;         // one-time first-play wake lead-in
-
-// Short master fade-in applied the instant playback starts (the output gate opening from digital
-// silence onto programme that begins mid-waveform — e.g. a clip, or a separated stem, whose first
-// sample is not at a zero crossing — would otherwise step discontinuously and click). A few
-// milliseconds is musically imperceptible yet removes the transient.
-inline constexpr double kPlayStartDeclickSeconds = 0.005; // 5 ms
+// One-time wake burst to rouse a *cold* sleep-prone endpoint — e.g. a USB DAC that auto-muted its
+// amp while Silverdaw was closed, was just (re)connected, or relaxed back to mute between plays. The
+// continuous dither above HOLDS a warm device awake but is far too quiet to *wake a cold one*, so
+// without a kick the first play after the amp mutes is swallowed (heard as a click + missing first
+// beat). A brief, decaying *broadband* burst is emitted (a) once at every device (re)start, and
+// (b) as a short audio-thread pre-roll at the start of each play on a sleep-prone endpoint (see
+// MasterClockSource) — both running while the amp is muted, so the burst itself is inaudible yet
+// carries enough in-band energy to cross the hardware's auto-mute wake threshold. The pre-roll runs
+// entirely on the audio thread (the message thread never blocks) and does not advance the transport,
+// so the downbeat is preserved and plays at full level the instant the amp is awake.
+//
+// Amplitude/length are empirical: raise kWakeBurstPeak if a stubborn amp still swallows the opening;
+// lower it (or shorten the pre-roll) if a rapid replay onto an already-warm amp produces an audible
+// tick. The burst sits in the audible band (a near-Nyquist tone is filtered out by a DAC's
+// reconstruction filter before its detector ever sees it), but is masked by the muted amp.
+inline constexpr float kWakeBurstPeak = 0.05F; // ~-26 dBFS broadband; rouses a cold/muted amp
+inline constexpr int kWakeBurstMs = 300;       // burst decays to the holding dither over this time
+inline constexpr int kWakePrerollMs = 250;     // per-play audio-thread wake lead-in (USB endpoints)
 
 inline constexpr int kDefaultSampleRate = 44100;
 inline constexpr int kAltSampleRate = 48000;

@@ -741,59 +741,63 @@ seam shared by live playback and mixdown, running Tone → Leveler → gain →
 mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 
-To stop sleep-prone audio devices (notably some USB DACs) from soft-muting and
-clipping the first instants of playback, the engine keeps such endpoints awake
-with two cooperating, inaudible signals owned by
+To stop sleep-prone audio devices (notably generic USB-Audio-Class dongle DACs)
+from soft-muting and clipping the first instants of playback, the engine keeps such
+endpoints awake with a single continuous, inaudible signal owned by
 [`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h) and injected by the
 metering stage **after** the master-gain ramp (so a low master volume can't
-attenuate them below the level that keeps the endpoint awake). Rather than a
-near-Nyquist tone — which a DAC's reconstruction filter attenuates before its
-"audio present" detector ever sees it — both signals are streams of isolated,
-sign-alternating, minimal-amplitude **impulses**. An impulse is broadband, so it
-puts a sliver of energy across the whole spectrum (including the band the detector
-actually monitors) and reliably registers as non-silence, while sitting near the
-format noise floor so it stays inaudible:
+attenuate it below the level that keeps the endpoint awake).
 
-1. **Continuous maintenance stream** (`kKeepAliveImpulse`, ≈1/8192 / −78 dBFS, one
-   impulse every `kKeepAliveFluctuateHz` of a second) mixed into otherwise-silent
-   output whenever a device is open (`deviceActive`), a project is loaded
-   (`contentLoaded`), or playback is active. This keeps an already-**warm** DAC out
-   of auto-mute, so every stop→play in a session is instant — no dropped opening
-   bar, no audible hiss. It stops entirely on real programme above
-   `kKeepAliveSilenceThreshold` so content is never coloured.
-2. **One-time cold-wake stream** (same `kKeepAliveImpulse` amplitude, but **denser**
-   — `kWakeFluctuateHz` impulses per second). Waking a fully-**cold** endpoint (just
-   plugged in, freshly selected, or woken from deep sleep) needs more than the
-   sparse maintenance stream: a stronger "signal present" kick plus a little lock
-   time. The denser stream is armed on every device/sample-rate (re)start
-   (`markDeviceStarted`, from `prepare()`) and consumed by a short `kWakePrerollMs`
-   wake pre-roll on the **first** play afterwards (`AudioEngine::play` arms it,
-   sleeps, then starts content), then cleared so every later play is instant. This
-   is the small, acceptable first-play lead-in — and it is inaudible and one-time
-   per device session.
+The signal has two tiers, both owned by `OutputKeepAlive`:
 
-Both signals are gated by a **device-type policy**:
+- **Holding dither** — continuous TPDF dither (`kKeepAliveDitherPeak`, ≈1/16384 / −84 dBFS
+  peak, about 2 LSB of a 16-bit endpoint), per-channel and zero-mean, mixed into
+  otherwise-silent output whenever the device is open (`deviceActive`), a project is
+  loaded (`contentLoaded`), or playback is active. A generic dongle DAC auto-mutes on
+  silence — commonly on runs of exact-zero PCM, and/or on energy below a short-window
+  threshold. A near-Nyquist ultrasonic tone is stripped by the DAC's reconstruction
+  filter before its detector ever sees it (so the endpoint sleeps anyway); continuous
+  dither instead keeps **every sample non-zero** with steady in-band energy the detector
+  registers as "audio present", while sitting at the format noise floor so it stays
+  inaudible. It stops entirely on real programme above `kKeepAliveSilenceThreshold`, so
+  content is never coloured.
+
+- **Wake burst** — the holding dither *holds a warm device awake* but is too quiet to
+  *wake a cold one* (an amp that auto-muted while Silverdaw was closed, was just
+  (re)connected, or relaxed back to mute between plays). So a brief, decaying broadband
+  burst (`kWakeBurstPeak`, ≈−26 dBFS, over `kWakeBurstMs`) is emitted (a) once at every
+  device (re)start, and (b) as a short pre-roll at the start of each play (see below).
+  Both run while the amp is muted, so the burst itself is inaudible yet carries enough
+  in-band energy to cross the hardware's auto-mute wake threshold.
+
+Amplitudes are the tuning knobs: raise `kKeepAliveDitherPeak` / `kWakeBurstPeak` if an
+endpoint still sleeps or swallows the opening; lower them if a sensitive IEM reveals hiss
+in true silence or a rapid replay onto a warm amp produces a tick.
+
+The wake burst is delivered to programme via a **per-play, audio-thread pre-roll** in
+[`MasterClockSource`](../backend/src/engine/MasterClockSource.h): on a stopped→playing
+transition onto a sleep-prone endpoint, the master emits silence (which the metering
+stage fills with the re-armed wake burst) for `kWakePrerollMs` **without advancing the
+transport**, then opens to programme. The amp is roused before the downbeat, the opening
+beat is never swallowed, the transport position (and therefore the downbeat) is preserved,
+and — crucially — it runs entirely on the audio thread, so the message thread never blocks
+(an earlier 500 ms `Thread::sleep` pre-roll froze the UI). Non-sleep-prone endpoints skip
+the pre-roll and play from the first sample.
+
+The dither is gated by a **device-type policy**:
 [`OutputDeviceClassifier`](../backend/src/engine/OutputDeviceClassifier.cpp) walks
 the Windows device tree (MMDevice COM + Config Manager) from the active render
 endpoint up to its physical bus enumerator (`USB` / `HDAUDIO` / `PCI` / `BTH`…) and
 `AudioEngine::updateKeepAwakePolicy` enables keep-awake only for USB endpoints
 (the known offenders). It is **fail-safe**: an unclassifiable endpoint
 (`OutputBus::unknown`) keeps keep-awake on, so a real USB DAC is never left to drop
-a beat, while onboard / Bluetooth / virtual devices incur neither the impulse
-stream nor the first-play lead-in. The policy is re-evaluated on init, device
-selection, and device-list changes. The impulses are sparse and minimal-amplitude,
-so they are inherently click-free with no ramping; the gate simply stops writing —
-returning the output to **truly silent** digital zero — once the device is released
-or the endpoint is classified as non-sleep-prone.
+a beat, while onboard / Bluetooth / virtual devices incur no dither at all. The policy
+is re-evaluated on init, device selection, and device-list changes; the dither only
+ever runs for the **currently selected** output, and only if it is sleep-prone. The
+gate simply stops writing — returning the output to **truly silent** digital zero —
+once the device is released or classified non-sleep-prone.
 `MasterClockSource` still gates the transport and clears the buffer when not
-playing; the keep-alive injection lives downstream in the metering stage. When
-the gate opens from idle, `MasterClockSource` also applies a one-shot
-**play-start declick** — a short (`kPlayStartDeclickSeconds`, 5 ms) gain ramp on
-the first played block — so opening onto programme that begins mid-waveform (a
-clip, or a separated stem whose first sample is not at a zero crossing) fades in
-rather than stepping discontinuously and clicking. The ramp re-arms on every
-idle→playing transition and is audio-thread-local (no allocation, lock, or
-throw). A second, distinct play-start click comes from `juce::AudioTransportSource`:
+playing; the keep-alive injection lives downstream in the metering stage. A play-start click can come from `juce::AudioTransportSource`:
 it ramps each track from the previously-rendered block's gain (`lastGain`) to the
 current gain across the first block it renders. Because the per-track transports
 are not pulled while the master is gated, a gain changed during that window — most
@@ -802,8 +806,9 @@ block after the gate opens would fade the now-muted content from its old level d
 to zero, leaking one block of audio. `primeTracksForPlayback` therefore **settles**
 each transport before opening the gate: it pumps a single throwaway sample through
 the transport (the gate is closed, so only the message thread touches it) to make
-`lastGain == gain`, then re-seeks and restarts. A fade-in alone cannot cancel that
-stale fade-out, which is why the settle is needed in addition to the declick.
+`lastGain == gain`, then re-seeks and restarts. (An earlier design also included a 5 ms
+master play-start declick fade, but it was removed because it softened the attack
+transients of drum hits played from the timeline.)
 
 Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
 export writer** in [`MixdownExport`](../backend/src/mixdown/MixdownExport.cpp). (The

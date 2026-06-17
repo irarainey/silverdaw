@@ -185,7 +185,7 @@ void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
 void testOutputKeepAliveFloorIsPostGainAndGated()
 {
     const float threshold = static_cast<float>(silverdaw::kKeepAliveSilenceThreshold);
-    const float impulsePeak = static_cast<float>(silverdaw::kKeepAliveImpulse);
+    const float ditherPeak = static_cast<float>(silverdaw::kKeepAliveDitherPeak);
 
     auto blockPeak = [](const juce::AudioBuffer<float>& buf) {
         float p = 0.0F;
@@ -205,42 +205,61 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
     // ── Direct OutputKeepAlive checks ──
     {
         silverdaw::OutputKeepAlive ka;
-        ka.prepare(48000.0); // tune the fluctuate impulse intervals for the sample rate
+        ka.prepare(48000.0); // reseed the dither PRNG for the device start
         require(! ka.shouldRun(), "default gate must be closed (no project, not playing)");
 
         juce::AudioBuffer<float> buf(2, 1024);
         const int n = buf.getNumSamples();
         buf.clear();
-        require(! ka.maybeApplyFloor(buf, 0, n, 0.0F), "gate closed must not inject impulses");
+        require(! ka.maybeApplyFloor(buf, 0, n, 0.0F), "gate closed must not inject dither");
         require(blockPeak(buf) == 0.0F, "gate closed must leave true digital silence");
 
-        // A loaded project NOW opens the gate: the inaudible, broadband fluctuate stream holds the
-        // DAC awake so the first play is instant (this is the fix — the impulse is broadband so it
-        // reaches the DAC's auto-mute detector, and sits near the format noise floor so it is
-        // inaudible).
+        // A loaded project NOW opens the gate: the continuous, inaudible dither holds the DAC
+        // awake. Continuous noise keeps every sample non-zero with real energy the DAC's auto-mute
+        // detector registers, while sitting at the format noise floor so it is inaudible.
         ka.setContentLoaded(true);
         require(ka.shouldRun(), "a loaded project must open the keep-alive gate");
 
-        // The stream injects sparse minimal-amplitude impulses immediately (no ramp): each block
-        // carries at least one, and the peak sits at the inaudible impulse amplitude — BELOW the
-        // silence threshold (the whole point: it must not register as programme audio).
+        // A fresh device start (prepare()) arms a one-time wake burst to rouse a *cold* amp: the
+        // first silent blocks carry elevated — but still low — broadband energy that decays into the
+        // holding dither. Verify the burst is present and bounded, then drain it before checking the
+        // steady-state holding contract below.
+        const float wakeBurstPeak = static_cast<float>(silverdaw::kWakeBurstPeak);
+        buf.clear();
+        require(ka.maybeApplyFloor(buf, 0, n, 0.0F), "armed wake burst must inject on the first block");
+        const float firstBurstPeak = blockPeak(buf);
+        require(firstBurstPeak > ditherPeak,
+                "the wake burst must start above the holding-dither floor (to rouse a cold amp)");
+        require(firstBurstPeak <= wakeBurstPeak,
+                "the wake burst must not exceed its configured peak");
+        const int burstBlocks = (48000 * silverdaw::kWakeBurstMs) / 1000 / n + 2;
+        for (int b = 0; b < burstBlocks; ++b)
+        {
+            buf.clear();
+            ka.maybeApplyFloor(buf, 0, n, 0.0F);
+        }
+
+        // The stream injects continuous dither immediately (no ramp): every block is filled, the
+        // peak stays at/under the configured inaudible amplitude, BELOW the silence threshold.
         float peak = 0.0F;
         for (int b = 0; b < 4; ++b)
         {
             buf.clear();
             require(ka.maybeApplyFloor(buf, 0, n, 0.0F),
-                    "loaded + silent: each block must carry a keep-alive impulse");
+                    "loaded + silent: each block must carry the keep-alive dither");
             peak = juce::jmax(peak, blockPeak(buf));
+            require(countNonZero(buf) > (n * 9) / 10,
+                    "the dither must be continuous — essentially every sample non-zero");
         }
-        requireNear(peak, impulsePeak, 1.0e-6,
-                    "the keep-alive impulse must sit at the configured inaudible amplitude");
+        require(peak > 0.0F && peak <= ditherPeak,
+                "the keep-alive dither must stay at/under the configured inaudible amplitude");
         require(peak < threshold,
-                "the keep-alive impulse must stay below the silence threshold (inaudible, "
+                "the keep-alive dither must stay below the silence threshold (inaudible, "
                 "non-programme)");
 
-        // The impulses alternate sign across the stream (DC-free), so they cannot build a DC
-        // offset that would thump a speaker. Accumulate over several blocks since impulses are
-        // sparse (~1 per block at 50 Hz / 48 kHz).
+        // The dither is zero-mean (DC-free): accumulate over several blocks; the mean sits ~0.
+        double sum = 0.0;
+        int count = 0;
         float mn = 0.0F;
         float mx = 0.0F;
         for (int b = 0; b < 8; ++b)
@@ -250,12 +269,16 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
             for (int i = 0; i < n; ++i)
             {
                 const float s = buf.getSample(0, i);
+                sum += s;
+                ++count;
                 mn = juce::jmin(mn, s);
                 mx = juce::jmax(mx, s);
             }
         }
         require(mx > 0.0F && mn < 0.0F,
-                "the keep-alive impulses must alternate sign (DC-free), not bias the output");
+                "the keep-alive dither must swing both signs (AC), not bias the output");
+        require(std::abs(sum / juce::jmax(1, count)) < ditherPeak * 0.2,
+                "the keep-alive dither must be DC-free (mean ~ 0)");
 
         // Real content (program peak above the threshold) is not coloured: the keep-alive stops
         // writing entirely under sustained content (no fade — it simply emits nothing).
@@ -270,13 +293,13 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         ka.setPlaying(true);
         require(ka.shouldRun(), "playing must open the gate");
         buf.clear();
-        require(ka.maybeApplyFloor(buf, 0, n, 0.0F), "playing + silent block must inject impulses");
+        require(ka.maybeApplyFloor(buf, 0, n, 0.0F), "playing + silent block must inject dither");
 
         // Closing the gate returns immediately to true digital silence (no decaying tail).
         ka.setPlaying(false);
         require(! ka.shouldRun(), "stopped with no project must close the gate");
         buf.clear();
-        require(! ka.maybeApplyFloor(buf, 0, n, 0.0F), "closed gate must stop injecting impulses");
+        require(! ka.maybeApplyFloor(buf, 0, n, 0.0F), "closed gate must stop injecting dither");
         require(blockPeak(buf) == 0.0F, "closed gate must leave true digital silence");
 
         // An open output device opens the gate too — even with no project loaded and not
@@ -287,7 +310,7 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         require(ka.shouldRun(), "an open output device must open the keep-alive gate");
         buf.clear();
         require(ka.maybeApplyFloor(buf, 0, n, 0.0F),
-                "device-active + silent block must inject keep-alive impulses");
+                "device-active + silent block must inject the keep-alive dither");
 
         ka.setDeviceActive(false);
         require(! ka.shouldRun(),
@@ -304,42 +327,6 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
                 "keep-awake disabled must inject nothing (true digital silence on non-USB devices)");
         ka.setKeepAwakeEnabled(true);
         require(ka.shouldRun(), "re-enabling keep-awake on an open device must reopen the gate");
-
-        // ── One-time cold-wake handshake ──
-        ka.clearNeedsWake();
-        require(! ka.needsWake(), "wake flag starts cleared");
-        ka.markDeviceStarted();
-        require(ka.needsWake(), "a device (re)start must arm the one-time wake");
-        ka.prepare(48000.0); // a device/sample-rate (re)start re-arms the wake
-        require(ka.needsWake(), "prepare() (device start) must arm the one-time wake");
-        ka.clearNeedsWake();
-        require(! ka.needsWake(), "consuming the wake clears the one-shot flag (later plays skip it)");
-
-        // ── Armed cold-wake stream is DENSER than maintenance, at the SAME amplitude ──
-        ka.setContentLoaded(true);
-        buf.clear();
-        ka.maybeApplyFloor(buf, 0, n, 0.0F);
-        const int maintNonZero = countNonZero(buf);
-        const float maintPeak = blockPeak(buf);
-
-        ka.arm();
-        require(ka.isArmed(), "arm() must engage the denser cold-wake stream");
-        buf.clear();
-        ka.maybeApplyFloor(buf, 0, n, 0.0F);
-        const int armedNonZero = countNonZero(buf);
-        const float armedPeak = blockPeak(buf);
-
-        require(armedNonZero > maintNonZero,
-                "the armed cold-wake stream must emit MORE impulses per block than maintenance");
-        requireNear(armedPeak, maintPeak, 1.0e-6,
-                    "the cold-wake stream must use the same inaudible amplitude (denser, not louder)");
-        require(armedPeak < threshold, "the cold-wake stream must stay below the silence threshold");
-        ka.disarm();
-        require(! ka.isArmed(), "disarm() must drop back to the sparse maintenance stream");
-        buf.clear();
-        ka.maybeApplyFloor(buf, 0, n, 0.0F);
-        require(countNonZero(buf) < armedNonZero,
-                "after disarm the stream must settle back to the sparse maintenance rate");
     }
 
     // ── Pure keep-awake policy: only USB (and unclassifiable) endpoints are kept awake ──
@@ -349,14 +336,14 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         require(silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::unknown),
                 "unknown endpoints must be kept awake (fail-safe: never drop a beat)");
         require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::onboard),
-                "onboard endpoints must not incur the keep-awake stream or wake lead-in");
+                "onboard endpoints must not incur the keep-awake tone");
         require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::bluetooth),
-                "Bluetooth endpoints must not be kept awake by the fluctuate stream");
+                "Bluetooth endpoints must not be kept awake by the keep-alive dither");
         require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::other),
                 "other endpoints must not be kept awake");
     }
 
-    // ── MeteringSource integration: the stream survives a low master gain ──
+    // ── MeteringSource integration: the tone survives a low master gain ──
     struct ConstantSource : juce::AudioSource
     {
         explicit ConstantSource(float v) : value(v) {}
@@ -373,7 +360,7 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
 
     constexpr float lowGain = 0.25F;
     {
-        // Silent program + loaded project + low master gain. The stream is injected POST-gain,
+        // Silent program + loaded project + low master gain. The dither is injected POST-gain,
         // so a low master volume must NOT attenuate it (regression guard).
         silverdaw::OutputKeepAlive ka;
         ka.setContentLoaded(true);
@@ -384,21 +371,30 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
 
         juce::AudioBuffer<float> buf(2, 1024);
         juce::AudioSourceChannelInfo info(&buf, 0, buf.getNumSamples());
+        // prepareToPlay arms the one-time wake burst; drain it so this guard measures the settled,
+        // post-gain holding dither (not the louder opening burst).
+        const int burstBlocks = (48000 * silverdaw::kWakeBurstMs) / 1000 / buf.getNumSamples() + 3;
+        for (int b = 0; b < burstBlocks; ++b)
+        {
+            buf.clear();
+            meter.getNextAudioBlock(info);
+        }
+        buf.clear();
         meter.getNextAudioBlock(info);
 
         const float peak = blockPeak(buf);
-        requireNear(peak, impulsePeak, 1.0e-6,
-                    "post-gain impulse must NOT be attenuated by a low master gain (regression guard)");
+        require(peak > ditherPeak * 0.5F && peak <= ditherPeak,
+                "post-gain dither must NOT be attenuated by a low master gain (regression guard)");
 
         float ml = 0.0F;
         float mr = 0.0F;
         meter.consumePeaks(ml, mr);
         require(juce::jmax(ml, mr) <= threshold,
-                "UI meter must exclude the keep-alive stream (silent program reads ~silent)");
+                "UI meter must exclude the keep-alive dither (silent program reads ~silent)");
     }
 
     {
-        // Real program at a low master gain: content passes through at gain, the stream stays
+        // Real program at a low master gain: content passes through at gain, the dither stays
         // off, and the meter reflects the post-gain program.
         silverdaw::OutputKeepAlive ka;
         ka.setPlaying(true);
@@ -413,7 +409,7 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
 
         const float expected = 0.5F * lowGain; // 0.125
         requireNear(blockPeak(buf), expected, 1.0e-4,
-                    "real content must pass through at the master gain, uncoloured by the stream");
+                    "real content must pass through at the master gain, uncoloured by the tone");
 
         float ml = 0.0F;
         float mr = 0.0F;
@@ -421,6 +417,65 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         requireNear(juce::jmax(ml, mr), expected, 1.0e-4,
                     "UI meter must reflect the post-gain program peak");
     }
+}
+
+// A cold sleep-prone endpoint needs more than the inaudible holding dither to un-mute its amp.
+// Every device (re)start arms a brief, decaying wake burst: verify it starts well above the holding
+// floor, never exceeds its configured peak, decays back to the floor, and re-arms on the next start.
+void testOutputKeepAliveWakeBurstRousesColdDeviceThenSettles()
+{
+    const float ditherPeak = static_cast<float>(silverdaw::kKeepAliveDitherPeak);
+    const float wakeBurstPeak = static_cast<float>(silverdaw::kWakeBurstPeak);
+    require(wakeBurstPeak > ditherPeak, "the wake burst must be louder than the holding dither");
+
+    auto blockPeak = [](const juce::AudioBuffer<float>& buf) {
+        float p = 0.0F;
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            p = juce::jmax(p, buf.getMagnitude(ch, 0, buf.getNumSamples()));
+        return p;
+    };
+
+    constexpr int n = 256;
+    constexpr double sr = 48000.0;
+    silverdaw::OutputKeepAlive ka;
+    ka.setContentLoaded(true); // gate open (loaded project)
+    ka.prepare(sr);            // device start — arms the wake burst
+
+    juce::AudioBuffer<float> buf(2, n);
+
+    // First block after a fresh device start carries the elevated wake burst.
+    buf.clear();
+    require(ka.maybeApplyFloor(buf, 0, n, 0.0F), "armed + silent: first block must inject the burst");
+    const float firstPeak = blockPeak(buf);
+    require(firstPeak > ditherPeak * 2.0F,
+            "the wake burst must clearly exceed the holding floor on the first block (rouse a cold amp)");
+    require(firstPeak <= wakeBurstPeak, "the wake burst must never exceed its configured peak");
+
+    // Drain past the burst length; the floor must settle back to the inaudible holding dither.
+    const int burstSamples = static_cast<int>(sr * (silverdaw::kWakeBurstMs / 1000.0));
+    const int drainBlocks = burstSamples / n + 4;
+    for (int b = 0; b < drainBlocks; ++b)
+    {
+        buf.clear();
+        ka.maybeApplyFloor(buf, 0, n, 0.0F);
+    }
+    float settledPeak = 0.0F;
+    for (int b = 0; b < 8; ++b)
+    {
+        buf.clear();
+        ka.maybeApplyFloor(buf, 0, n, 0.0F);
+        settledPeak = juce::jmax(settledPeak, blockPeak(buf));
+    }
+    require(settledPeak > 0.0F && settledPeak <= ditherPeak,
+            "after the burst, the keep-alive must settle to the inaudible holding dither");
+    require(firstPeak > settledPeak,
+            "the burst must decay: the opening block must be louder than the settled floor");
+
+    // A subsequent device (re)start (e.g. the DAC is unplugged and replugged) must re-arm the burst.
+    ka.prepare(sr);
+    buf.clear();
+    ka.maybeApplyFloor(buf, 0, n, 0.0F);
+    require(blockPeak(buf) > ditherPeak * 2.0F, "a later device restart must re-arm the wake burst");
 }
 
 // MasterClockSource must publish block timing to atomics for off-thread logging
@@ -465,32 +520,353 @@ void testMasterClockPublishesAudioPerfOffThread()
     require(playSnap.positionSamples == kBlock, "playing advances the transport by the block size");
     require(playSnap.callbackCount == 11, "callback count keeps incrementing");
 
-    // The first played block after the idle→playing transition is declicked: a short fade-in
-    // ramps the constant child (0.1) up from ~0 so the gate opening does not step and click.
-    require(std::abs(buf.getSample(0, 0)) < 0.02F,
-            "the first sample of the first played block must be ramped down by the declick fade-in");
-    float firstBlockPeak = 0.0F;
-    for (int i = 0; i < kBlock; ++i)
-        firstBlockPeak = juce::jmax(firstBlockPeak, std::abs(buf.getSample(0, i)));
-    require(firstBlockPeak > 0.05F,
-            "the declick fade-in must reach (near) full level within the first block");
-    require(std::abs(buf.getSample(0, kBlock - 1) - 0.1F) < 1.0e-4F,
-            "the tail of the first block (past the short ramp) must be at full child level");
+    // The first played block must be at full level immediately — the MasterClockSource does not
+    // apply a declick fade-in, so the opening transient is perfectly preserved.
+    require(std::abs(buf.getSample(0, 0) - 0.1F) < 1.0e-4F,
+            "the first sample of the first played block must be at full level (no declick fade)");
 
-    // A subsequent block (still playing, no transition) is full level end-to-end — the ramp is
-    // one-shot per play-start, not per block.
     buf.clear();
     master.getNextAudioBlock(info);
     require(std::abs(buf.getSample(0, 0) - 0.1F) < 1.0e-4F,
-            "later blocks must not be re-ramped (declick is one-shot per play-start)");
+            "subsequent blocks remain at full level");
 
     master.releaseResources();
 }
 
+// Reproduces the "missing first beat" symptom deterministically: after the device has been
+// pulling silent idle blocks, the very first PLAYING block through the MasterClockSource ->
+// MeteringSource chain must already be at full master gain. If the master gain smoother starts
+// from ~0 at play-start, the opening transient is swallowed (the bug under investigation).
+void testMasterGainIsSettledAtPlayStart()
+{
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+    constexpr float kGain = 0.3F;
+    constexpr float kSource = 0.5F;
+
+    struct FullSource : juce::AudioSource
+    {
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
+                juce::FloatVectorOperations::fill(
+                    info.buffer->getWritePointer(ch, info.startSample), kSource, info.numSamples);
+        }
+    };
+
+    silverdaw::OutputKeepAlive keepAlive;
+    FullSource src;
+    silverdaw::MasterClockSource master(src, keepAlive);
+    silverdaw::MeteringSource meter(master, keepAlive);
+    meter.setTargetGain(kGain);
+    meter.prepareToPlay(kBlock, kRate);
+
+    juce::AudioBuffer<float> buf(2, kBlock);
+    juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+    // Idle: the device pulls continuously. MasterClockSource clears to silence; MeteringSource
+    // still applies gain (to silence) and ticks its gain smoother toward the target.
+    for (int i = 0; i < 20; ++i)
+    {
+        buf.clear();
+        meter.getNextAudioBlock(info);
+    }
+
+    // Play: the very first played block must already be at the full master gain
+    // (kSource * kGain = 0.15), not ramped up from ~0.
+    keepAlive.setPlaying(true);
+    buf.clear();
+    meter.getNextAudioBlock(info);
+    requireNear(std::abs(buf.getSample(0, 0)), kSource * kGain, 1.0e-3,
+                "the first played block must already be at full master gain (no play-start fade)");
+
+    meter.releaseResources();
+}
+
+// The cold-DAC fix: on a sleep-prone (USB) endpoint, the start of each play runs a short, audio-
+// thread wake pre-roll — the master emits silence (which MeteringSource fills with the wake burst)
+// WITHOUT advancing the transport — so the amp is roused before the downbeat and the opening beat is
+// never swallowed. Non-sleep-prone endpoints skip the pre-roll and play from the first block.
+void testMasterClockWakePrerollRousesUsbThenPlays()
+{
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+    constexpr float kSource = 0.5F;
+
+    struct FullSource : juce::AudioSource
+    {
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
+                juce::FloatVectorOperations::fill(
+                    info.buffer->getWritePointer(ch, info.startSample), kSource, info.numSamples);
+        }
+    };
+
+    const int prerollSamples = static_cast<int>(kRate * (silverdaw::kWakePrerollMs / 1000.0));
+    const int prerollBlocks = (prerollSamples + kBlock - 1) / kBlock;
+
+    // ── USB (keep-awake on by default): a wake pre-roll precedes programme without advancing time ──
+    {
+        silverdaw::OutputKeepAlive ka; // keep-awake defaults on (USB / unclassified)
+        FullSource src;
+        silverdaw::MasterClockSource master(src, ka);
+        master.prepareToPlay(kBlock, kRate);
+        juce::AudioBuffer<float> buf(2, kBlock);
+        juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+        master.setPlaying(true);
+        // First block is pre-roll: the master source emits silence and the transport stays put.
+        buf.clear();
+        buf.setSample(0, 0, 1.0F); // poison; must be cleared by the pre-roll
+        master.getNextAudioBlock(info);
+        require(buf.getSample(0, 0) == 0.0F, "wake pre-roll must emit silence from the master source");
+        require(master.getPositionSamples() == 0, "wake pre-roll must not advance the transport");
+
+        for (int b = 1; b < prerollBlocks; ++b)
+        {
+            buf.clear();
+            master.getNextAudioBlock(info);
+        }
+        require(master.getPositionSamples() == 0,
+                "the transport must stay put for the whole wake pre-roll");
+
+        // After the pre-roll, programme plays at full level and the transport advances.
+        buf.clear();
+        master.getNextAudioBlock(info);
+        requireNear(std::abs(buf.getSample(0, 0)), kSource, 1.0e-4,
+                    "programme must play at full level immediately after the wake pre-roll");
+        require(master.getPositionSamples() == kBlock,
+                "the transport must advance once programme starts");
+        master.releaseResources();
+    }
+
+    // ── Non-USB (keep-awake off): no pre-roll, programme from the very first block ──
+    {
+        silverdaw::OutputKeepAlive ka;
+        ka.setKeepAwakeEnabled(false);
+        FullSource src;
+        silverdaw::MasterClockSource master(src, ka);
+        master.prepareToPlay(kBlock, kRate);
+        juce::AudioBuffer<float> buf(2, kBlock);
+        juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+        master.setPlaying(true);
+        buf.clear();
+        master.getNextAudioBlock(info);
+        requireNear(std::abs(buf.getSample(0, 0)), kSource, 1.0e-4,
+                    "non-sleep-prone endpoints must play instantly (no wake pre-roll)");
+        require(master.getPositionSamples() == kBlock,
+                "non-sleep-prone endpoints advance the transport from the first block");
+        master.releaseResources();
+    }
+}
+
+// Reproduces the prime->play path at the JUCE buffering/transport level to check whether the
+// FIRST played block delivers programme audio or silence. Mirrors primeTracksForPlayback:
+// setPosition -> start -> settle-pump 1 sample -> re-seek -> start -> wait for read-ahead, then
+// pulls block 0 and asserts it carries the source's audio (the "missing first beat" check).
+void testPrimedTransportDeliversFirstBlock()
+{
+    const auto dir = makeTempDir("prime-first-block");
+    const double sr = 44100.0;
+    const auto wav = writeTestWav(dir, "tone.wav", 2.0, sr);
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    auto* reader = fm.createReaderFor(wav);
+    require(reader != nullptr, "reader should open the test wav");
+
+    juce::TimeSliceThread readAhead("test-read-ahead");
+    readAhead.startThread();
+    {
+        juce::AudioFormatReaderSource readerSource(reader, true);
+        juce::BufferingAudioSource buffering(&readerSource, readAhead, false, 8192, 2);
+        juce::AudioTransportSource transport;
+        transport.setSource(&buffering, 0, nullptr, sr, 2);
+        transport.setGain(1.0F);
+        transport.prepareToPlay(480, sr);
+
+        constexpr double seekSeconds = 0.5; // mid-tone, far from the zero-crossing start
+        // Mirror primeTracksForPlayback exactly.
+        transport.setPosition(seekSeconds);
+        transport.start();
+        juce::AudioBuffer<float> scratch(2, 480);
+        juce::AudioSourceChannelInfo settleInfo(&scratch, 0, 1);
+        scratch.clear(0, 1);
+        transport.getNextAudioBlock(settleInfo);
+        transport.setPosition(seekSeconds);
+        transport.start();
+
+        // Wait for the read-ahead to cover the seek position (bounded).
+        const double deadline = juce::Time::getMillisecondCounterHiRes() + 2000.0;
+        juce::AudioBuffer<float> waitBuf(2, 4096);
+        juce::AudioSourceChannelInfo waitInfo(&waitBuf, 0, 4096);
+        while (! buffering.waitForNextAudioBlockReady(waitInfo, 50) &&
+               juce::Time::getMillisecondCounterHiRes() < deadline)
+        {
+        }
+
+        // Pull the first played block and measure its peak.
+        juce::AudioBuffer<float> block(2, 480);
+        block.clear();
+        juce::AudioSourceChannelInfo blockInfo(&block, 0, 480);
+        transport.getNextAudioBlock(blockInfo);
+        float peak = 0.0F;
+        for (int ch = 0; ch < 2; ++ch)
+            peak = juce::jmax(peak, block.getMagnitude(ch, 0, 480));
+
+        require(peak > 0.05F,
+                "the first primed transport block must carry the source audio (~0.1), not silence — "
+                "if this fails, the prime/buffering path drops the opening block");
+
+        transport.releaseResources();
+    }
+    readAhead.stopThread(2000);
+    dir.deleteRecursively();
+}
+
+// Narrows the "missing first beat" to the live bus path: pulls the primed transport through a
+// juce::MixerAudioSource (as BusGraph's per-track innerMixer does), in the engine's order
+// (prepare mixer -> addInputSource -> prime -> pull). If the FIRST mixer block is silent while a
+// directly-pulled transport is full, the mixer/attach order is dropping the opening block.
+void testPrimedMixerDeliversFirstBlock()
+{
+    const auto dir = makeTempDir("prime-mixer-first-block");
+    const double sr = 44100.0;
+    const auto wav = writeTestWav(dir, "tone.wav", 2.0, sr);
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    auto* reader = fm.createReaderFor(wav);
+    require(reader != nullptr, "reader should open the test wav");
+
+    juce::TimeSliceThread readAhead("test-read-ahead-mix");
+    readAhead.startThread();
+    {
+        juce::AudioFormatReaderSource readerSource(reader, true);
+        juce::BufferingAudioSource buffering(&readerSource, readAhead, false, 8192, 2);
+        juce::AudioTransportSource transport;
+        transport.setSource(&buffering, 0, nullptr, sr, 2);
+        transport.setGain(1.0F);
+
+        // Engine order: the per-track MixerAudioSource is prepared, then the transport is attached
+        // (which re-prepares it), and only afterwards does play-time priming run.
+        juce::MixerAudioSource mixer;
+        mixer.prepareToPlay(480, sr);
+        mixer.addInputSource(&transport, false);
+
+        constexpr double seekSeconds = 0.5;
+        transport.setPosition(seekSeconds);
+        transport.start();
+        juce::AudioBuffer<float> scratch(2, 480);
+        juce::AudioSourceChannelInfo settleInfo(&scratch, 0, 1);
+        scratch.clear(0, 1);
+        transport.getNextAudioBlock(settleInfo);
+        transport.setPosition(seekSeconds);
+        transport.start();
+
+        const double deadline = juce::Time::getMillisecondCounterHiRes() + 2000.0;
+        juce::AudioBuffer<float> waitBuf(2, 4096);
+        juce::AudioSourceChannelInfo waitInfo(&waitBuf, 0, 4096);
+        while (! buffering.waitForNextAudioBlockReady(waitInfo, 50) &&
+               juce::Time::getMillisecondCounterHiRes() < deadline)
+        {
+        }
+
+        // Pull the first played block THROUGH THE MIXER (as the bus graph would).
+        juce::AudioBuffer<float> block(2, 480);
+        block.clear();
+        juce::AudioSourceChannelInfo blockInfo(&block, 0, 480);
+        mixer.getNextAudioBlock(blockInfo);
+        float peak = 0.0F;
+        for (int ch = 0; ch < 2; ++ch)
+            peak = juce::jmax(peak, block.getMagnitude(ch, 0, 480));
+
+        require(peak > 0.05F,
+                "the first block pulled THROUGH THE MIXER must carry the source audio (~0.1), not "
+                "silence — if this fails, the mixer/attach drops the opening block (the live bug)");
+
+        mixer.removeAllInputs();
+        mixer.releaseResources();
+        transport.releaseResources();
+    }
+    readAhead.stopThread(2000);
+    dir.deleteRecursively();
+}
+
+// Final isolation: reproduce the EXACT engine source chain reader -> OffsetSource -> buffering ->
+// transport and pull the first block after a deep mid-clip seek (no silent-leading region, like the
+// reported case: playhead ~31 ms inside the clip). If block 0 is silent here, OffsetSource drops
+// the opening block after a discontinuous seek.
+void testPrimedOffsetSourceDeliversFirstBlock()
+{
+    const auto dir = makeTempDir("prime-offset-first-block");
+    const double sr = 44100.0;
+    const auto wav = writeTestWav(dir, "tone.wav", 3.0, sr);
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    auto* reader = fm.createReaderFor(wav);
+    require(reader != nullptr, "reader should open the test wav");
+
+    juce::TimeSliceThread readAhead("test-read-ahead-offset");
+    readAhead.startThread();
+    {
+        juce::AudioFormatReaderSource readerSource(reader, true);
+        silverdaw::OffsetSource offset(&readerSource);
+        offset.setOffsetSamples(0);                                   // clip at timeline 0
+        offset.setInSourceSamples(0);
+        offset.setClipDurationSamples(static_cast<juce::int64>(3.0 * sr)); // whole file
+
+        juce::BufferingAudioSource buffering(&offset, readAhead, false, 8192, 2);
+        juce::AudioTransportSource transport;
+        transport.setSource(&buffering, 0, nullptr, sr, 2);
+        transport.setGain(1.0F);
+        transport.prepareToPlay(480, sr);
+
+        constexpr double seekSeconds = 1.5; // deep inside the clip, no silent-leading
+        transport.setPosition(seekSeconds);
+        transport.start();
+        juce::AudioBuffer<float> scratch(2, 480);
+        juce::AudioSourceChannelInfo settleInfo(&scratch, 0, 1);
+        scratch.clear(0, 1);
+        transport.getNextAudioBlock(settleInfo);
+        transport.setPosition(seekSeconds);
+        transport.start();
+
+        const double deadline = juce::Time::getMillisecondCounterHiRes() + 2000.0;
+        juce::AudioBuffer<float> waitBuf(2, 4096);
+        juce::AudioSourceChannelInfo waitInfo(&waitBuf, 0, 4096);
+        while (! buffering.waitForNextAudioBlockReady(waitInfo, 50) &&
+               juce::Time::getMillisecondCounterHiRes() < deadline)
+        {
+        }
+
+        juce::AudioBuffer<float> block(2, 480);
+        block.clear();
+        juce::AudioSourceChannelInfo blockInfo(&block, 0, 480);
+        transport.getNextAudioBlock(blockInfo);
+        float peak = 0.0F;
+        for (int ch = 0; ch < 2; ++ch)
+            peak = juce::jmax(peak, block.getMagnitude(ch, 0, 480));
+
+        require(peak > 0.05F,
+                "the first block through OffsetSource (deep mid-clip seek) must carry the source "
+                "audio (~0.1), not silence — if this fails, OffsetSource drops the opening block");
+
+        transport.releaseResources();
+    }
+    readAhead.stopThread(2000);
+    dir.deleteRecursively();
+}
+
 // Issue 1: a source that is already a WAV must NOT be transcoded into the central
-// decoded cache — playback should use the original file directly. This removes the
-// wasteful (and, for float stems, lossy) duplicate while leaving non-WAV sources to
-// decode as before.
+// decoded cache — playback should use the original file directly.
 void testDecodedCacheSkipsWavSources()
 {
     const auto dir = makeTempDir("decoded-cache-wav");
@@ -516,7 +892,13 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
     tests.push_back({"OutputKeepAlive floor is post-gain and transport-gated", testOutputKeepAliveFloorIsPostGainAndGated});
+    tests.push_back({"OutputKeepAlive wake burst rouses a cold device then settles", testOutputKeepAliveWakeBurstRousesColdDeviceThenSettles});
     tests.push_back({"MasterClockSource publishes audio-thread timing for off-thread logging", testMasterClockPublishesAudioPerfOffThread});
+    tests.push_back({"Master gain is settled at play-start (no first-block fade)", testMasterGainIsSettledAtPlayStart});
+    tests.push_back({"MasterClockSource wake pre-roll rouses a USB endpoint then plays", testMasterClockWakePrerollRousesUsbThenPlays});
+    tests.push_back({"Primed transport delivers the first played block", testPrimedTransportDeliversFirstBlock});
+    tests.push_back({"Primed mixer delivers the first played block", testPrimedMixerDeliversFirstBlock});
+    tests.push_back({"Primed OffsetSource delivers the first played block", testPrimedOffsetSourceDeliversFirstBlock});
     tests.push_back({"DecodedCache skips transcoding WAV sources", testDecodedCacheSkipsWavSources});
 }
 

@@ -9,20 +9,19 @@
 namespace silverdaw
 {
 
-// Real-time-safe keep-alive for sleep-prone output endpoints. Two cooperating parts:
-//   1. A CONTINUOUS, inaudible "fluctuate" stream — isolated, sign-alternating, minimal-amplitude
-//      impulses added on otherwise-silent blocks whenever an output device is open. An impulse is
-//      broadband, so unlike a near-Nyquist tone (which a DAC's reconstruction filter strips before
-//      its auto-mute detector sees it) it actually reaches the detector and keeps an already-*warm*
-//      DAC out of auto-mute. Every stop->play in a session is then instant — no dropped opening
-//      bar, no audible hiss.
-//   2. A ONE-TIME, *denser* impulse stream (same inaudible amplitude, many more non-zero frames),
-//      armed by the engine for a short pre-roll on the FIRST play after a device (re)start. Waking
-//      a fully-*cold* DAC (just plugged in / selected / woken from deep sleep) needs a stronger
-//      "signal present" kick + lock time; the denser stream provides it. One-time per device
-//      session; later plays skip it. This is the small, acceptable first-play lead-in.
-// Both are gated by keep-awake-enabled, so only sleep-prone (USB) endpoints incur the stream or the
-// lead-in. A released or non-sleep-prone device outputs true digital silence.
+// Real-time-safe keep-alive for sleep-prone output endpoints. A CONTINUOUS, inaudible dither
+// stream is added on otherwise-silent blocks whenever a sleep-prone output device is the selected
+// output. A generic USB-Audio-Class dongle DAC auto-mutes its headphone amp on silence (commonly
+// on runs of exact-zero PCM, and/or on energy below a short-window threshold); continuous broadband
+// dither keeps *every* sample non-zero with steady in-band energy the detector registers as "audio
+// present", while sitting at the format noise floor so it stays inaudible. The endpoint is held
+// awake from the moment the device opens — before any project is even loaded — so playback is
+// instant: programme audio starts at full level from the first sample, with no wake pre-roll.
+// Because the holding dither can keep a *warm* device awake but is too quiet to *wake a cold one*,
+// every device (re)start also emits a brief, decaying broadband wake burst (see prepare()) to rouse
+// an amp that auto-muted while the app was closed — finishing long before the user presses play.
+// Gated by keep-awake-enabled, so only sleep-prone (USB) endpoints incur the dither; a released or
+// non-sleep-prone device outputs true digital silence.
 class OutputKeepAlive
 {
   public:
@@ -47,9 +46,8 @@ class OutputKeepAlive
     bool isDeviceActive() const noexcept { return deviceActive.load(std::memory_order_acquire); }
 
     // Keep-awake policy gate, driven by output-device classification. Only sleep-prone (USB)
-    // endpoints get the fluctuate stream and the one-time first-play wake; everything else stays
-    // true digital silence and plays instantly. Defaults to true so a USB DAC is covered before
-    // classification has run.
+    // endpoints get the dither; everything else stays true digital silence and plays instantly.
+    // Defaults to true so a USB DAC is covered before classification has run.
     void setKeepAwakeEnabled(bool enabled) noexcept
     {
         keepAwakeEnabled.store(enabled, std::memory_order_release);
@@ -58,17 +56,6 @@ class OutputKeepAlive
     {
         return keepAwakeEnabled.load(std::memory_order_acquire);
     }
-
-    // One-time cold-wake handshake. markDeviceStarted() arms it on every device/sample-rate
-    // (re)start (called from prepareToPlay); the engine consumes it with a short wake pre-roll on
-    // the first subsequent play, then clearNeedsWake() so later plays are instant. arm()/disarm()
-    // bracket the pre-roll, switching the injected stream to the denser cold-wake rate.
-    void markDeviceStarted() noexcept { needsWakePreroll.store(true, std::memory_order_release); }
-    bool needsWake() const noexcept { return needsWakePreroll.load(std::memory_order_acquire); }
-    void clearNeedsWake() noexcept { needsWakePreroll.store(false, std::memory_order_release); }
-    void arm() noexcept { wakeArmed.store(true, std::memory_order_release); }
-    void disarm() noexcept { wakeArmed.store(false, std::memory_order_release); }
-    bool isArmed() const noexcept { return wakeArmed.load(std::memory_order_acquire); }
 
     // An open output device keeps the endpoint warm; once the device closes the gate shuts and
     // the output returns to true digital silence. Non-sleep-prone endpoints never open the gate.
@@ -81,76 +68,102 @@ class OutputKeepAlive
                || deviceActive.load(std::memory_order_acquire);
     }
 
-    // Called from prepareToPlay (device/sample-rate start): tune the impulse intervals for the
-    // active rate so the maintenance and cold-wake streams keep their per-second impulse rates.
+    // Called from prepareToPlay (device/sample-rate start). The dither is rate-independent; this
+    // reseeds the audio-thread PRNG so the stream starts cleanly, and arms a one-time wake burst so
+    // a *cold* endpoint (auto-muted while the app was closed, or freshly (re)connected) is roused
+    // before the user ever presses play. JUCE serialises prepareToPlay against the IO callback (the
+    // stream is stopped across a device/SR restart), so the audio-thread-only burst counters are
+    // safe to set here.
     void prepare(double sampleRate) noexcept
     {
-        const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
-        maintInterval = intervalFrames(sr, kKeepAliveFluctuateHz);
-        wakeInterval = intervalFrames(sr, kWakeFluctuateHz);
-        frame = 0;
-        // A device/sample-rate (re)start means the endpoint may be cold: arm the one-time wake so
-        // the next play runs the wake pre-roll.
-        markDeviceStarted();
+        rngState = kRngSeed;
+        wakeBurstSamples =
+            sampleRate > 0.0 ? static_cast<int>(sampleRate * (kWakeBurstMs / 1000.0)) : 0;
+        wakeBurstRemaining = wakeBurstSamples;
     }
 
-    // Audio thread: add the inaudible fluctuate stream on otherwise-silent blocks while the gate
-    // is open. Impulses are isolated, minimal-amplitude, and sign-alternating (DC-free); the
-    // denser cold-wake rate is used while the one-time wake band is armed. Returns true if any
-    // impulse was written this block. There is no envelope to fade — a sparse minimal-amplitude
-    // impulse stream is inherently click-free, and stopping simply means writing nothing.
+    // Re-arm the decaying wake burst from full. Called at the start of each play on a sleep-prone
+    // endpoint (via MasterClockSource's audio-thread pre-roll) so the amp is roused before the
+    // downbeat even if it relaxed back to mute since the last play. Audio-thread only.
+    void armWakeBurst() noexcept { wakeBurstRemaining = wakeBurstSamples; }
+
+    // Audio thread: add the keep-alive signal on otherwise-silent blocks while the gate is open. A
+    // decaying wake burst rouses a cold amp on the first blocks after a device (re)start, falling to
+    // the continuous, inaudible holding dither. The signal is per-channel, zero-mean (DC-free), and
+    // non-zero every sample so it defeats both energy- and zero-run-based auto-mute detectors.
+    // Returns true if anything was written this block. No fade on stop — stopping writes nothing.
     bool maybeApplyFloor(juce::AudioBuffer<float>& buffer, int startSample, int numSamples,
                          float programPeak) noexcept
     {
         const bool active = shouldRun() && programPeak <= silverdaw::kKeepAliveSilenceThreshold;
-        if (! active)
+        if (! active || numSamples <= 0)
             return false;
-
-        const std::int64_t interval =
-            wakeArmed.load(std::memory_order_acquire) ? wakeInterval : maintInterval;
 
         constexpr int kMaxChannels = 32;
         const int numChannels = juce::jmin(buffer.getNumChannels(), kMaxChannels);
-        float* dest[kMaxChannels];
-        for (int ch = 0; ch < numChannels; ++ch)
-            dest[ch] = buffer.getWritePointer(ch, startSample);
+        if (numChannels <= 0)
+            return false;
 
-        bool wrote = false;
-        for (int i = 0; i < numSamples; ++i)
+        // Snapshot the burst countdown so every channel decays identically; advance it once per
+        // sample-frame after all channels are written.
+        const int startRemaining = wakeBurstRemaining;
+        for (int ch = 0; ch < numChannels; ++ch)
         {
-            if (frame % interval == 0)
+            float* dest = buffer.getWritePointer(ch, startSample);
+            int rem = startRemaining;
+            for (int i = 0; i < numSamples; ++i)
             {
-                // Alternate the sign of successive impulses so the stream carries no DC bias.
-                const bool negative = ((frame / interval) & std::int64_t{1}) != 0;
-                const float sample = negative ? -kKeepAliveImpulse : kKeepAliveImpulse;
-                for (int ch = 0; ch < numChannels; ++ch)
-                    dest[ch][i] += sample;
-                wrote = true;
+                dest[i] += nextTpdf() * wakeAmplitude(rem);
+                if (rem > 0)
+                    --rem;
             }
-            ++frame;
         }
-        return wrote;
+        wakeBurstRemaining = juce::jmax(0, startRemaining - numSamples);
+        return true;
     }
 
   private:
-    static std::int64_t intervalFrames(double sampleRate, double hz) noexcept
+    // Per-sample amplitude: linearly decays from the wake-burst peak (at the start of a device
+    // session) down to the holding dither over kWakeBurstMs, then stays at the dither floor.
+    float wakeAmplitude(int remaining) const noexcept
     {
-        const std::int64_t frames = static_cast<std::int64_t>(sampleRate / hz + 0.5);
-        return frames < 2 ? std::int64_t{2} : frames;
+        if (remaining <= 0 || wakeBurstSamples <= 0)
+            return silverdaw::kKeepAliveDitherPeak;
+        const float fraction = static_cast<float>(remaining) / static_cast<float>(wakeBurstSamples);
+        return silverdaw::kKeepAliveDitherPeak +
+               (silverdaw::kWakeBurstPeak - silverdaw::kKeepAliveDitherPeak) * fraction;
     }
+
+    // xorshift32 — fast, audio-thread-local PRNG (no allocation, lock, or syscall).
+    float nextUniform() noexcept
+    {
+        std::uint32_t x = rngState;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        rngState = x;
+        return static_cast<float>(x) * (1.0F / 4294967296.0F); // [0, 1)
+    }
+
+    // TPDF (triangular) noise in (-1, 1), zero mean — the difference of two uniforms. Scaled by the
+    // caller to the holding-dither or wake-burst amplitude.
+    float nextTpdf() noexcept { return nextUniform() - nextUniform(); }
+
+    static constexpr std::uint32_t kRngSeed = 0x9E3779B9u;
 
     std::atomic<bool> playing{false};
     std::atomic<bool> contentLoaded{false};
     std::atomic<bool> deviceActive{false};
     std::atomic<bool> keepAwakeEnabled{true};
-    std::atomic<bool> needsWakePreroll{false};
-    std::atomic<bool> wakeArmed{false};
-    // Impulse-stream state — audio-thread only. prepare() runs from prepareToPlay during a
-    // device/sample-rate (re)start, which JUCE serialises against the IO callback (the stream is
-    // stopped across the restart), so these are never touched concurrently.
-    std::int64_t frame{0};
-    std::int64_t maintInterval{960};  // 50 Hz @ 48 kHz until prepare() tunes it
-    std::int64_t wakeInterval{48};    // 1000 Hz @ 48 kHz until prepare() tunes it
+    // PRNG state — audio-thread only. prepare() runs from prepareToPlay during a device/sample-rate
+    // (re)start, which JUCE serialises against the IO callback (the stream is stopped across the
+    // restart), so this is never touched concurrently.
+    std::uint32_t rngState{kRngSeed};
+    // One-time wake-burst counters — audio-thread only, set by prepare() during a serialised
+    // device/SR restart (see prepare()). wakeBurstSamples is the armed length; wakeBurstRemaining
+    // counts down to zero as the burst decays into the holding dither.
+    int wakeBurstSamples{0};
+    int wakeBurstRemaining{0};
 };
 
 } // namespace silverdaw

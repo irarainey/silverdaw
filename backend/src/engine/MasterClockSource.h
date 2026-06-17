@@ -29,6 +29,8 @@ class MasterClockSource : public juce::AudioSource
             positionSamples.store(rescaled, std::memory_order_relaxed);
         }
         sampleRate.store(newSampleRate, std::memory_order_release);
+        prerollSamples =
+            newSampleRate > 0.0 ? static_cast<int>(newSampleRate * (silverdaw::kWakePrerollMs / 1000.0)) : 0;
         silverdaw::log::info("master",
                              "prepareToPlay block=" + juce::String(blockSize) + " sr=" + juce::String(newSampleRate));
         child.prepareToPlay(blockSize, newSampleRate);
@@ -48,40 +50,44 @@ class MasterClockSource : public juce::AudioSource
         if (! keepAlive.isPlaying())
         {
             // Keep-alive only wakes sleep-prone endpoints; idle output remains true digital
-            // silence.
+            // silence. Drop any half-run wake pre-roll so the next play re-arms cleanly.
+            wakePrerollRemaining = 0;
             info.clearActiveBufferRegion();
-            wasPlaying = false;
             publishAudioPerf(startTicks, info.numSamples);
             return;
         }
 
-        // Playback just resumed from the gated/idle state: arm a short declick fade-in so the
-        // gate opening onto programme that begins mid-waveform does not step from digital
-        // silence and click. Audio-thread-local state — no cross-thread access.
-        if (! wasPlaying)
+        // First block of a new play: on a sleep-prone (USB) endpoint, arm a short wake pre-roll so
+        // the DAC's auto-mute amp is roused before the downbeat. Non-sleep-prone devices skip it and
+        // play instantly. The pre-roll runs entirely here on the audio thread — the message thread
+        // never blocks.
+        if (playStartPending.exchange(false, std::memory_order_acq_rel))
         {
-            const double sr = sampleRate.load(std::memory_order_acquire);
-            declickTotalSamples = sr > 0.0
-                                      ? static_cast<int>(sr * silverdaw::kPlayStartDeclickSeconds)
-                                      : 0;
-            declickRemainingSamples = declickTotalSamples;
-            wasPlaying = true;
+            if (keepAlive.isKeepAwakeEnabled())
+            {
+                wakePrerollRemaining = prerollSamples;
+                keepAlive.armWakeBurst();
+            }
+            else
+            {
+                wakePrerollRemaining = 0;
+            }
         }
 
+        if (wakePrerollRemaining > 0)
+        {
+            // Emit silence (which MeteringSource fills with the armed, decaying wake burst) without
+            // pulling the source or advancing the transport, so the downbeat is preserved and plays
+            // at full level the instant the amp is awake.
+            info.clearActiveBufferRegion();
+            wakePrerollRemaining = juce::jmax(0, wakePrerollRemaining - info.numSamples);
+            publishAudioPerf(startTicks, info.numSamples);
+            return;
+        }
+
+        // Playing: deliver the source to the output verbatim. We do NOT apply a master declick
+        // fade-in, so opening transients (e.g. a drum hit on beat 1) are preserved exactly.
         child.getNextAudioBlock(info);
-
-        if (declickRemainingSamples > 0 && declickTotalSamples > 0 && info.buffer != nullptr)
-        {
-            const int rampN = static_cast<int>(
-                juce::jmin<juce::int64>(declickRemainingSamples, info.numSamples));
-            const float g0 = static_cast<float>(declickTotalSamples - declickRemainingSamples)
-                             / static_cast<float>(declickTotalSamples);
-            const float g1 = static_cast<float>(declickTotalSamples - declickRemainingSamples + rampN)
-                             / static_cast<float>(declickTotalSamples);
-            for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
-                info.buffer->applyGainRamp(ch, info.startSample, rampN, g0, g1);
-            declickRemainingSamples -= rampN;
-        }
 
         positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
         publishAudioPerf(startTicks, info.numSamples);
@@ -89,7 +95,12 @@ class MasterClockSource : public juce::AudioSource
 
     void setPlaying(bool p) noexcept
     {
+        // Arm the one-time wake pre-roll on a stopped->playing transition only (idempotent restarts
+        // must not re-trigger it mid-playback).
+        const bool wasPlaying = keepAlive.isPlaying();
         keepAlive.setPlaying(p);
+        if (p && ! wasPlaying)
+            playStartPending.store(true, std::memory_order_release);
     }
     bool isPlaying() const noexcept
     {
@@ -166,10 +177,13 @@ class MasterClockSource : public juce::AudioSource
     std::atomic<juce::int64> positionSamples{0};
     std::atomic<double> sampleRate{0.0};
     std::atomic<std::uint64_t> callbackCount{0};
-    // Play-start declick state, touched only on the audio thread.
-    bool wasPlaying{false};
-    int declickTotalSamples{0};
-    juce::int64 declickRemainingSamples{0};
+    // Set on a stopped->playing transition (message thread), consumed by the audio thread on the
+    // first block of the play to arm the wake pre-roll.
+    std::atomic<bool> playStartPending{false};
+    // Wake pre-roll state — audio-thread only. prerollSamples is the armed length (set in
+    // prepareToPlay for the active rate); wakePrerollRemaining counts down the current pre-roll.
+    int prerollSamples{0};
+    int wakePrerollRemaining{0};
     // Block timing published by the audio thread, drained by a non-RT timer.
     std::atomic<double> maxElapsedMs{0.0};
     std::atomic<int> lastNumSamples{0};

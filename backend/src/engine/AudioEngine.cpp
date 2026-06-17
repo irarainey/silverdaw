@@ -287,27 +287,17 @@ void AudioEngine::play()
         return;
     }
 
-    // The continuous ultrasonic keep-alive tone holds a *warm* DAC out of auto-mute, so a normal
-    // stop->play opens instantly. But a *cold* endpoint (just plugged in, freshly selected, or
-    // woken from deep sleep) needs a stronger kick and a little lock time, or it swallows the
-    // opening bar. On the FIRST play after a device (re)start — and only on a sleep-prone (USB)
-    // endpoint — run a brief, silent (ultrasonic), one-time wake pre-roll, then start content.
-    // Every later play is instant. The audio device keeps streaming the wake band during the
-    // sleep below (consistent with the existing prime busy-wait).
-    if (outputKeepAlive.isKeepAwakeEnabled() && outputKeepAlive.needsWake())
-    {
-        outputKeepAlive.arm();
-        juce::Thread::sleep(silverdaw::kWakePrerollMs);
-        outputKeepAlive.disarm();
-        outputKeepAlive.clearNeedsWake();
-        silverdaw::log::info("engine",
-                             "first-play wake pre-roll (" + juce::String(silverdaw::kWakePrerollMs) +
-                                 " ms) for sleep-prone output device");
-    }
-
+    // On a sleep-prone (USB) endpoint, MasterClockSource runs a short audio-thread wake pre-roll
+    // here (it emits the louder wake burst without advancing the transport) so the DAC's auto-mute
+    // amp is roused before the downbeat — the opening beat is never swallowed. The holding dither
+    // keeps a warm device awake but is too quiet to wake a cold/relaxed amp on its own. The pre-roll
+    // runs entirely on the audio thread (no message-thread block) and preserves the downbeat
+    // position; non-sleep-prone endpoints skip it and play instantly.
     master.setPlaying(true);
     silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
-                                       " pos=" + juce::String(master.getPositionSamples()) + ")");
+                                       " pos=" + juce::String(master.getPositionSamples()) +
+                                       " wakePreroll=" +
+                                       (outputKeepAlive.isKeepAwakeEnabled() ? "on" : "off") + ")");
 }
 
 bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
