@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
 import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot, registerProjectMediaRoots, getProjectMediaDirs } from '../audioPaths'
 import { canonicaliseProjectPath, projectFolderPath } from '../projectPaths'
+import { sweepEmptyArtifactSubdirs } from '../projectFileCleanup'
 import type { PrefsService } from '../prefsService'
 import { logMain } from '../log'
 
@@ -92,6 +93,9 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       // Likewise the project's samples folder, where music samples persist their
       // inherited metadata/cover sidecar.
       registerSamplesWriteRoot(join(dirname(target), 'samples'))
+      // Clear any empty per-source artifact folder left behind by an earlier removal.
+      void sweepEmptyArtifactSubdirs(join(dirname(target), 'stems'))
+      void sweepEmptyArtifactSubdirs(join(dirname(target), 'samples'))
       // Carry the central media store (cover art + tags) into the project folder so it
       // survives the save: items imported while the project was unsaved wrote it to the
       // temp workspace, and a "Save As" copies it from the previous project folder.
@@ -117,9 +121,16 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       // resolve them against it before allow-listing so the renderer can read them.
       const projectDir = dirname(canonical)
       // Stems for this project live beside it; trust that folder for reads + sidecar.
-      registerStemsWriteRoot(join(projectDir, 'stems'))
+      const stemsRoot = join(projectDir, 'stems')
+      const samplesRoot = join(projectDir, 'samples')
+      registerStemsWriteRoot(stemsRoot)
       // Samples (and their music-sample sidecars) likewise live beside the project.
-      registerSamplesWriteRoot(join(projectDir, 'samples'))
+      registerSamplesWriteRoot(samplesRoot)
+      // Clear any empty per-source artifact folder left behind by a removal whose
+      // folder couldn't be deleted last session (a transient sync/scan lock that has
+      // since cleared). Best-effort; never touches folders that still hold files.
+      void sweepEmptyArtifactSubdirs(stemsRoot)
+      void sweepEmptyArtifactSubdirs(samplesRoot)
       // Central per-source metadata/cover store (keyed by media GUID) beside the project.
       registerProjectMediaRoots(projectDir)
       let parsed: unknown

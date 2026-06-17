@@ -2,7 +2,7 @@
 // and the renderer-PCM -> float-WAV transcode cache. Registered from main/index.ts.
 
 import { ipcMain, dialog, app, type BrowserWindow } from 'electron'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises'
 import { basename, dirname, join, relative, isAbsolute } from 'node:path'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -20,6 +20,7 @@ import {
   registerIssuedPath
 } from '../audioPaths'
 import { logMain } from '../log'
+import { cleanupArtifactWavs } from '../projectFileCleanup'
 
 /** Singletons the audio handlers reach back into main for. */
 export interface AudioHandlersContext {
@@ -183,6 +184,30 @@ async function readProjectMediaFiles(
     }
   }
   return meta
+}
+
+// A media GUID names exactly one `<guid>.json` + one `<guid>.<ext>` cover. Reject
+// anything that could escape the store directories (path separators / traversal).
+function isSafeMediaGuid(guid: unknown): guid is string {
+  return typeof guid === 'string' && guid.length > 0 && /^[A-Za-z0-9._-]+$/.test(guid)
+}
+
+// Delete a media-store entry (`<guid>.json` + its cover) when the renderer has
+// determined no remaining library item references the GUID. Best-effort.
+async function deleteOrphanMedia(guid: string, metadataDir: string, coversDir: string): Promise<void> {
+  if (!isSafeMediaGuid(guid)) return
+  // Read the record first so we delete the exact cover file it points at.
+  try {
+    const raw = await readFile(join(metadataDir, `${guid}.json`), 'utf8')
+    const parsed = JSON.parse(raw) as Partial<MediaSidecar>
+    const coverFile = parsed?.cover?.file
+    if (typeof coverFile === 'string' && coverFile.length > 0) {
+      await unlink(join(coversDir, basename(coverFile))).catch(() => {})
+    }
+  } catch {
+    // No record (or unreadable) — still try to remove the json below.
+  }
+  await unlink(join(metadataDir, `${guid}.json`)).catch(() => {})
 }
 
 // Resolve a music sample's inherited identity (tags + cover art) from its source's
@@ -454,6 +479,29 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
     } catch {
       return null
     }
+  })
+
+  // Delete a removed library item's generated files: stem/sample WAVs (confined to
+  // the stems/samples write roots, with empty per-source folders pruned) and any
+  // media-store entries the renderer found are no longer referenced. Gated behind
+  // the renderer's "clean up project files" preference; best-effort and never
+  // touches a user's original imported audio.
+  ipcMain.handle(IPC.media.cleanup, async (_evt, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return false
+    const p = payload as { wavPaths?: unknown; mediaIds?: unknown }
+    const wavPaths = Array.isArray(p.wavPaths) ? p.wavPaths : []
+    const mediaIds = Array.isArray(p.mediaIds) ? p.mediaIds : []
+    // Delete the artifact WAVs and prune any emptied per-source folders.
+    await cleanupArtifactWavs(wavPaths)
+    if (mediaIds.length > 0) {
+      const dirs = getProjectMediaDirs()
+      if (dirs) {
+        for (const id of mediaIds) {
+          if (typeof id === 'string') await deleteOrphanMedia(id, dirs.metadataDir, dirs.coversDir)
+        }
+      }
+    }
+    return true
   })
 
   // Transcode renderer-decoded PCM for formats the backend cannot decode natively.

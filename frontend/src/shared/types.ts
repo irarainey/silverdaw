@@ -51,6 +51,10 @@ export interface UiPreferences {
   /** Auto-warp library drops to project BPM when source BPM is usable. */
   matchProjectTempoOnDrop: boolean
 
+  /** Delete a removed library item's generated project files (stems/samples WAVs
+   *  and orphaned cover/tag media) instead of only unlinking it. */
+  cleanupProjectFiles: boolean
+
   /** Default `targetSampleRate` for new projects; only 44 100 and 48 000 are supported. */
   defaultProjectSampleRate: number
 

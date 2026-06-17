@@ -632,7 +632,15 @@ and samples — **carries the source's GUID** (the backend resolves it by walkin
 `sourceItemId` provenance chain) so it reads the same cover art and tags from that one
 store entry, even after the original library item is removed. The renderer reads/writes the
 store through guarded main-process IPC (`media:get` / `media:save`, roots registered by
-`registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`.
+`registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`. When the
+optional **Clean up project files** preference is on, removing a library item also runs
+`media:cleanup`, which deletes a stem/sample's generated WAV (confined to the
+stems/samples write roots, removing the whole per-source folder once it is empty) and the
+`<guid>` media entry once no remaining item references it — a user's original imported
+audio is never deleted. A just-emptied folder on a synced drive can briefly refuse removal
+(a cloud-filter/scanner lock that no process holds — confirmed via the Restart Manager);
+that is not fatal — the folder is queued for short background retries and, as a backstop,
+any empty per-source folder is also swept when its project next opens.
 
 **Temporary workspace + migrate-on-save** — until a project is first saved it has no
 folder, so generated stems and samples are written to a shared temp workspace
@@ -1195,7 +1203,10 @@ audio-file library item that **records its source** (`sourceItemId`, persisted i
 the project file): that provenance both inherits the source's cover art + tags via
 the shared media GUID and marks the item as a saved sample rather than an ordinary
 import. Deleting that library item removes the reference from
-the project but leaves the WAV file on disk. A simple sample bakes the clip's
+the project and, by default, leaves the WAV file on disk; enabling **Clean up
+project files** (Preferences ▸ General) instead deletes the generated WAV — and
+prunes its now-empty per-source folder, plus any shared cover/tag media nothing
+else still references. A simple sample bakes the clip's
 warp/pitch through Rubber Band during export so the one-shot sounds like the clip did
 on the timeline; a music sample is exported at the source tempo/pitch so it can
 re-warp on drop.

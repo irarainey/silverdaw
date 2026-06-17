@@ -18,6 +18,9 @@ export interface UiPrefs {
   showLibraryTileImages: boolean
   /** Auto-warp library drops to project BPM when source BPM is usable. */
   matchProjectTempoOnDrop: boolean
+  /** Delete a removed library item's generated project files (stems/samples WAVs
+   *  and orphaned cover/tag media). Off by default — removal only unlinks. */
+  cleanupProjectFiles: boolean
   /** Default `targetSampleRate` for new projects; only 44 100 and 48 000 are accepted. */
   defaultProjectSampleRate: number
   skipButtonTarget: SkipButtonTarget
@@ -132,6 +135,7 @@ export function buildDefaultPrefs(): Preferences {
       followPlayback: true,
       showLibraryTileImages: true,
       matchProjectTempoOnDrop: true,
+      cleanupProjectFiles: false,
       defaultProjectSampleRate: 44100,
       skipButtonTarget: 'timelineEnds',
       waveformDisplayMode: 'summary',
@@ -286,6 +290,7 @@ export function sanitiseUiPrefs(partial: unknown, base: UiPrefs): UiPrefs {
     followPlayback: boolOr(p.followPlayback, base.followPlayback),
     showLibraryTileImages: boolOr(p.showLibraryTileImages, base.showLibraryTileImages),
     matchProjectTempoOnDrop: boolOr(p.matchProjectTempoOnDrop, base.matchProjectTempoOnDrop),
+    cleanupProjectFiles: boolOr(p.cleanupProjectFiles, base.cleanupProjectFiles),
     defaultProjectSampleRate:
       typeof p.defaultProjectSampleRate === 'number' &&
       SUPPORTED_PROJECT_SAMPLE_RATES.has(p.defaultProjectSampleRate)

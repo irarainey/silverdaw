@@ -102,7 +102,8 @@ export const IPC = {
   },
   media: {
     save: 'media:save',
-    get: 'media:get'
+    get: 'media:get',
+    cleanup: 'media:cleanup'
   },
   log: {
     appendBatch: 'log:append-batch'

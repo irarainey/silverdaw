@@ -33,6 +33,7 @@ const {
   followPlayback,
   showLibraryTileImages,
   matchProjectTempoOnDrop,
+  cleanupProjectFiles,
   skipButtonTarget,
   waveformDisplayMode,
   defaultProjectSampleRate,
@@ -175,6 +176,7 @@ function onSave(): void {
               v-model:follow-playback="followPlayback"
               v-model:show-library-tile-images="showLibraryTileImages"
               v-model:match-project-tempo-on-drop="matchProjectTempoOnDrop"
+              v-model:cleanup-project-files="cleanupProjectFiles"
               v-model:skip-button-target="skipButtonTarget"
               v-model:waveform-display-mode="waveformDisplayMode"
             />

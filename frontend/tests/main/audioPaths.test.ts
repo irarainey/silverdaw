@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isAllowedAudioPath,
+  isPrunableArtifactSubdir,
   isWithinSamplesWriteRoot,
   isWithinStemsWriteRoot,
   registerIssuedPath,
@@ -98,5 +99,23 @@ describe('audioPaths allow-list', () => {
     expect(isWithinSamplesWriteRoot(abs('ConfinedS', 'Samples', '..', 'escape'))).toBe(false)
     expect(isWithinSamplesWriteRoot('relative/Samples')).toBe(false)
     expect(isWithinSamplesWriteRoot(42)).toBe(false)
+  })
+
+  it('marks only strict per-source subfolders of write roots as prunable', () => {
+    const stemsRoot = abs('Prune', 'stems')
+    const samplesRoot = abs('Prune', 'samples')
+    registerStemsWriteRoot(stemsRoot)
+    registerSamplesWriteRoot(samplesRoot)
+    // The roots themselves must never be prunable.
+    expect(isPrunableArtifactSubdir(stemsRoot)).toBe(false)
+    expect(isPrunableArtifactSubdir(samplesRoot)).toBe(false)
+    // A per-source subfolder inside either root is prunable.
+    expect(isPrunableArtifactSubdir(abs('Prune', 'stems', 'song-stems'))).toBe(true)
+    expect(isPrunableArtifactSubdir(abs('Prune', 'samples', 'song'))).toBe(true)
+    // Outside / traversal / non-absolute are rejected.
+    expect(isPrunableArtifactSubdir(abs('Prune', 'elsewhere'))).toBe(false)
+    expect(isPrunableArtifactSubdir(abs('Prune', 'stems', '..', 'escape'))).toBe(false)
+    expect(isPrunableArtifactSubdir('relative/stems/x')).toBe(false)
+    expect(isPrunableArtifactSubdir(42)).toBe(false)
   })
 })

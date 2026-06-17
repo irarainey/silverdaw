@@ -10,6 +10,7 @@
 
 import { defineStore } from 'pinia'
 import { useProjectStore } from '@/stores/projectStore'
+import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import type {
@@ -17,7 +18,8 @@ import type {
   LibraryItem,
   LibraryState
 } from './libraryTypes'
-import { revokeItemCoverArt } from './libraryItemHelpers'
+import { revokeItemCoverArt, libraryItemIsSampleAsset, resolveLibraryItemMediaId } from './libraryItemHelpers'
+import { cleanupRemovedItemFiles, removedItemFileInfo, type RemovedItemFile } from '@/lib/library/projectFileCleanup'
 
 // Stable facade for existing `@/stores/libraryStore` imports.
 export type {
@@ -393,6 +395,22 @@ export const useLibraryStore = defineStore('library', {
         return false
       }
 
+      // Capture deletable-file info for every item this call removes (the target plus
+      // any cascaded saved clips) BEFORE the splices, while the source chain is intact.
+      // Only acted on later when the "clean up project files" preference is on.
+      const cleanupFiles = useUiStore().cleanupProjectFiles
+      const removedForCleanup: RemovedItemFile[] = []
+      const captureForCleanup = (removed: LibraryItem): void => {
+        if (!cleanupFiles) return
+        removedForCleanup.push(
+          removedItemFileInfo(
+            removed,
+            libraryItemIsSampleAsset(removed),
+            resolveLibraryItemMediaId(removed, this.byId)
+          )
+        )
+      }
+
       if (item.kind === 'saved-clip') {
         const project = useProjectStore()
         const linkedClipIds: string[] = []
@@ -447,6 +465,7 @@ export const useLibraryStore = defineStore('library', {
             continue
           }
           revokeItemCoverArt(child)
+          captureForCleanup(child)
           this.items.splice(i, 1)
           delete this.channelPeaksByItemId[child.id]
           sendBridge('LIBRARY_REMOVE', { itemId: child.id })
@@ -455,8 +474,12 @@ export const useLibraryStore = defineStore('library', {
       }
       // Re-locate the source row after cascade splices.
       const finalIdx = this.items.findIndex((i) => i.id === itemId)
-      if (finalIdx < 0) return true
+      if (finalIdx < 0) {
+        if (cleanupFiles) cleanupRemovedItemFiles(removedForCleanup, this.items, this.byId)
+        return true
+      }
       const removed = this.items[finalIdx]
+      if (removed) captureForCleanup(removed)
       this.items.splice(finalIdx, 1)
       // Revoke cover art only when no surviving item (e.g. a stem we just handed
       // ownership to) still references the same Blob URL.
@@ -466,6 +489,8 @@ export const useLibraryStore = defineStore('library', {
       delete this.channelPeaksByItemId[itemId]
       sendBridge('LIBRARY_REMOVE', { itemId })
       log.info('library', `removeItem id=${itemId}`)
+      // After all splices the remaining items are the orphan-reference baseline.
+      if (cleanupFiles) cleanupRemovedItemFiles(removedForCleanup, this.items, this.byId)
       return true
     },
 

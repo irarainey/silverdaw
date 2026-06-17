@@ -22,6 +22,8 @@ interface UiState {
   followPlayback: boolean
   showLibraryTileImages: boolean
   matchProjectTempoOnDrop: boolean
+  /** Delete a removed library item's generated project files instead of only unlinking it. */
+  cleanupProjectFiles: boolean
   /** Application default for new projects; existing projects keep their stored rate. */
   defaultProjectSampleRate: number
   skipButtonTarget: SkipButtonTarget
@@ -46,6 +48,7 @@ const DEFAULTS = {
   followPlayback: true,
   showLibraryTileImages: true,
   matchProjectTempoOnDrop: true,
+  cleanupProjectFiles: false,
   defaultProjectSampleRate: 44100,
   skipButtonTarget: 'timelineEnds',
   waveformDisplayMode: 'summary',
@@ -83,6 +86,7 @@ let pendingPush: {
   followPlayback?: boolean
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
+  cleanupProjectFiles?: boolean
   skipButtonTarget?: SkipButtonTarget
   waveformDisplayMode?: WaveformDisplayMode
   libraryPanelCollapsed?: boolean
@@ -94,6 +98,7 @@ interface UiPushPayload {
   followPlayback?: boolean
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
+  cleanupProjectFiles?: boolean
   defaultProjectSampleRate?: number
   skipButtonTarget?: SkipButtonTarget
   waveformDisplayMode?: WaveformDisplayMode
@@ -119,6 +124,7 @@ export const useUiStore = defineStore('ui', {
     followPlayback: DEFAULTS.followPlayback,
     showLibraryTileImages: DEFAULTS.showLibraryTileImages,
     matchProjectTempoOnDrop: DEFAULTS.matchProjectTempoOnDrop,
+    cleanupProjectFiles: DEFAULTS.cleanupProjectFiles,
     defaultProjectSampleRate: DEFAULTS.defaultProjectSampleRate,
     skipButtonTarget: DEFAULTS.skipButtonTarget,
     waveformDisplayMode: DEFAULTS.waveformDisplayMode,
@@ -147,6 +153,10 @@ export const useUiStore = defineStore('ui', {
           typeof saved.matchProjectTempoOnDrop === 'boolean'
             ? saved.matchProjectTempoOnDrop
             : DEFAULTS.matchProjectTempoOnDrop
+        this.cleanupProjectFiles =
+          typeof saved.cleanupProjectFiles === 'boolean'
+            ? saved.cleanupProjectFiles
+            : DEFAULTS.cleanupProjectFiles
         this.defaultProjectSampleRate = sanitiseProjectSampleRate(saved.defaultProjectSampleRate)
         this.skipButtonTarget =
           saved.skipButtonTarget === 'markers' || saved.skipButtonTarget === 'timelineEnds'
@@ -207,6 +217,12 @@ export const useUiStore = defineStore('ui', {
       if (this.matchProjectTempoOnDrop === value) return
       this.matchProjectTempoOnDrop = value
       if (this.hydrated) schedulePush({ matchProjectTempoOnDrop: value })
+    },
+
+    setCleanupProjectFiles(value: boolean): void {
+      if (this.cleanupProjectFiles === value) return
+      this.cleanupProjectFiles = value
+      if (this.hydrated) schedulePush({ cleanupProjectFiles: value })
     },
 
     setSkipButtonTarget(value: SkipButtonTarget): void {

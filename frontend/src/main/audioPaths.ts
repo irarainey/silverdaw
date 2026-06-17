@@ -114,6 +114,20 @@ export function isWithinSamplesWriteRoot(dir: unknown): dir is string {
   return false
 }
 
+// True only for a path STRICTLY inside a stems or samples write root — i.e. a
+// per-source subfolder, never a root itself. Used to safely prune an emptied
+// per-source artifact folder after its files are cleaned up, without ever
+// removing the top-level stems/samples folder.
+export function isPrunableArtifactSubdir(dir: unknown): dir is string {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
+  const canonical = canonicalisePath(dir)
+  for (const root of [...stemsWriteRoots, ...samplesWriteRoots]) {
+    const rel = relative(root, canonical)
+    if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return true
+  }
+  return false
+}
+
 // The active project's central media store: one `metadata/` (per-source tag JSON)
 // and one `covers/` (per-source cover image) folder beside the project file, both
 // keyed by the source's media GUID. Tracks the most-recently opened/saved project

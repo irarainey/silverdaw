@@ -5,6 +5,7 @@ const toastsEnabled = defineModel<boolean>('toastsEnabled', { required: true })
 const followPlayback = defineModel<boolean>('followPlayback', { required: true })
 const showLibraryTileImages = defineModel<boolean>('showLibraryTileImages', { required: true })
 const matchProjectTempoOnDrop = defineModel<boolean>('matchProjectTempoOnDrop', { required: true })
+const cleanupProjectFiles = defineModel<boolean>('cleanupProjectFiles', { required: true })
 const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { required: true })
 const waveformDisplayMode = defineModel<WaveformDisplayMode>('waveformDisplayMode', { required: true })
 </script>
@@ -69,6 +70,23 @@ const waveformDisplayMode = defineModel<WaveformDisplayMode>('waveformDisplayMod
           warp so its source BPM matches the project BPM. Turn off
           to drop clips at their native tempo; you can still enable
           warp per-clip via right-click ▸ Warp.
+        </span>
+      </span>
+    </label>
+    <label class="mt-3 flex cursor-pointer items-start gap-3">
+      <input
+        v-model="cleanupProjectFiles"
+        type="checkbox"
+        class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+      >
+      <span class="flex-1">
+        <span class="block font-medium text-zinc-200">Clean up project files on remove</span>
+        <span class="mt-0.5 block text-zinc-500">
+          When you remove a stem or sample from the library, also delete its
+          generated file from the project's stems / samples folder (and the empty
+          folder it leaves behind). Cover art and tag data are removed once nothing
+          else in the project uses them. Your original imported audio files are
+          never deleted. Off by default — removal only unlinks from the project.
         </span>
       </span>
     </label>

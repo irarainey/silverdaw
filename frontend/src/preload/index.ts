@@ -253,7 +253,10 @@ const api = {
     ipcRenderer.invoke(IPC.media.save, { mediaId, sourceFilePath }),
   /** Read a source's media (tags + cover bytes) back by media GUID, or null when absent. */
   getProjectMedia: (mediaId: string): Promise<AudioMetadata | null> =>
-    ipcRenderer.invoke(IPC.media.get, mediaId)
+    ipcRenderer.invoke(IPC.media.get, mediaId),
+  /** Delete a removed item's generated stem/sample WAVs and orphaned media files. */
+  cleanupProjectFiles: (payload: { wavPaths: string[]; mediaIds: string[] }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.media.cleanup, payload)
 }as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)
