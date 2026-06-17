@@ -16,27 +16,32 @@ inline constexpr int kPrimePerTrackTimeoutMs = 250;
 inline constexpr int kPlayPrimeBudgetMs = 3000;
 inline constexpr int kLoadPrimeBudgetMs = 1500;
 
-// Inaudible ultrasonic keep-alive tone holds sleep-prone USB DACs awake while a project is
-// loaded, so the first play is instant — without the audible hiss of a broadband floor or the
-// latency of a wake pre-roll. The tone sits just below Nyquist (above human hearing) yet is a
-// strong, clearly non-silent signal to the DAC's auto-mute detector. Kept at a very low level
-// so any ultrasonic energy that reaches a transducer cannot stress it or cause audible IMD.
-inline constexpr float kKeepAliveTonePeak = 0.004F; // ~-48 dBFS peak, inaudible (ultrasonic)
+// Sub-LSB "fluctuate" keep-alive holds sleep-prone USB DACs awake while Silverdaw is open, so
+// every stop->play is instant — without the audible hiss of a broadband floor or the latency of
+// a wake pre-roll. Rather than a near-Nyquist tone (which a DAC's reconstruction filter attenuates
+// before its auto-mute detector ever sees it), it emits isolated, sign-alternating, minimal-
+// amplitude impulses. An impulse is broadband: it puts a sliver of energy across the whole
+// spectrum — including the band the DAC's "audio present" detector actually monitors — so the
+// endpoint reliably registers it as non-silence and stays awake. Each impulse sits near the
+// format noise floor, so the stream is inaudible. Injected POST master-gain, so the project's
+// own volume never attenuates it (only the OS endpoint volume can).
+inline constexpr float kKeepAliveImpulse = 1.0F / 8192.0F; // ~-78 dBFS, broadband, inaudible
 
-// Only inject the tone on otherwise-silent blocks; real programme above this passes through.
+// Only inject on otherwise-silent blocks; real programme above this passes through untouched.
 inline constexpr float kKeepAliveSilenceThreshold = 1.0e-3F;
 
-// Click-free fade as the tone engages/disengages across silent/non-silent block boundaries.
-inline constexpr double kKeepAliveRampSeconds = 0.01; // 10 ms
+// Maintenance impulse rate: a few impulses per audio block is enough to hold a *warm* endpoint
+// out of auto-mute (50 fluctuations/second is a well-proven rate for this).
+inline constexpr double kKeepAliveFluctuateHz = 50.0;
 
-// Waking a *cold* DAC (just plugged in, freshly selected, or woken from deep sleep) needs more
-// than the maintenance tone above: a stronger kick plus a little lock time. On the FIRST play
-// after an output device (re)start — and only on a sleep-prone (USB) endpoint — the engine runs
-// a brief, one-time, still-ultrasonic wake band at this louder level for kWakePrerollMs, then
-// starts content. It is inaudible (ultrasonic) and one-time per device session; every later play
-// is instant. This is the small, acceptable first-play lead-in.
-inline constexpr float kWakeTonePeak = 0.05F; // ~-26 dBFS, ultrasonic (inaudible) cold-wake kick
-inline constexpr int kWakePrerollMs = 500;    // one-time first-play wake lead-in
+// Waking a *cold* DAC (just plugged in, freshly selected, or woken from deep sleep) needs a
+// stronger "signal present" kick plus a little lock time. On the FIRST play after an output
+// device (re)start — and only on a sleep-prone (USB) endpoint — the engine arms a *denser* impulse
+// stream (the same inaudible amplitude, many more non-zero frames per second) for kWakePrerollMs,
+// then starts content. One-time per device session; every later play is instant. This is the
+// small, acceptable first-play lead-in.
+inline constexpr double kWakeFluctuateHz = 1000.0; // denser cold-wake kick (same amplitude)
+inline constexpr int kWakePrerollMs = 500;         // one-time first-play wake lead-in
 
 // Short master fade-in applied the instant playback starts (the output gate opening from digital
 // silence onto programme that begins mid-waveform — e.g. a clip, or a separated stem, whose first

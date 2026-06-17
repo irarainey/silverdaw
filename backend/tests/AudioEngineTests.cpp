@@ -185,7 +185,7 @@ void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
 void testOutputKeepAliveFloorIsPostGainAndGated()
 {
     const float threshold = static_cast<float>(silverdaw::kKeepAliveSilenceThreshold);
-    const float tonePeak = static_cast<float>(silverdaw::kKeepAliveTonePeak);
+    const float impulsePeak = static_cast<float>(silverdaw::kKeepAliveImpulse);
 
     auto blockPeak = [](const juce::AudioBuffer<float>& buf) {
         float p = 0.0F;
@@ -194,57 +194,75 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         return p;
     };
 
+    auto countNonZero = [](const juce::AudioBuffer<float>& buf) {
+        int c = 0;
+        for (int i = 0; i < buf.getNumSamples(); ++i)
+            if (buf.getSample(0, i) != 0.0F)
+                ++c;
+        return c;
+    };
+
     // ── Direct OutputKeepAlive checks ──
     {
         silverdaw::OutputKeepAlive ka;
-        ka.prepare(48000.0); // tune the ultrasonic oscillator + ramp for the sample rate
+        ka.prepare(48000.0); // tune the fluctuate impulse intervals for the sample rate
         require(! ka.shouldRun(), "default gate must be closed (no project, not playing)");
 
         juce::AudioBuffer<float> buf(2, 1024);
         const int n = buf.getNumSamples();
         buf.clear();
-        require(! ka.maybeApplyFloor(buf, 0, n, 0.0F), "gate closed must not inject a tone");
+        require(! ka.maybeApplyFloor(buf, 0, n, 0.0F), "gate closed must not inject impulses");
         require(blockPeak(buf) == 0.0F, "gate closed must leave true digital silence");
 
-        // A loaded project NOW opens the gate: the inaudible ultrasonic tone holds the DAC
-        // awake so the first play is instant (this is the fix — idle hiss is gone because the
-        // tone is ultrasonic, not broadband noise).
+        // A loaded project NOW opens the gate: the inaudible, broadband fluctuate stream holds the
+        // DAC awake so the first play is instant (this is the fix — the impulse is broadband so it
+        // reaches the DAC's auto-mute detector, and sits near the format noise floor so it is
+        // inaudible).
         ka.setContentLoaded(true);
         require(ka.shouldRun(), "a loaded project must open the keep-alive gate");
 
-        // The tone ramps in over a few blocks, then holds just under the configured peak.
+        // The stream injects sparse minimal-amplitude impulses immediately (no ramp): each block
+        // carries at least one, and the peak sits at the inaudible impulse amplitude — BELOW the
+        // silence threshold (the whole point: it must not register as programme audio).
         float peak = 0.0F;
         for (int b = 0; b < 4; ++b)
         {
             buf.clear();
-            ka.maybeApplyFloor(buf, 0, n, 0.0F);
+            require(ka.maybeApplyFloor(buf, 0, n, 0.0F),
+                    "loaded + silent: each block must carry a keep-alive impulse");
             peak = juce::jmax(peak, blockPeak(buf));
         }
-        require(peak > threshold, "loaded + silent: the keep-alive tone must clear the silence threshold");
-        require(peak <= tonePeak * 1.2F, "the keep-alive tone must stay bounded near the configured peak");
+        requireNear(peak, impulsePeak, 1.0e-6,
+                    "the keep-alive impulse must sit at the configured inaudible amplitude");
+        require(peak < threshold,
+                "the keep-alive impulse must stay below the silence threshold (inaudible, "
+                "non-programme)");
 
-        // It is an alternating (AC) tone, not a DC bias that could thump a speaker.
-        buf.clear();
-        ka.maybeApplyFloor(buf, 0, n, 0.0F);
+        // The impulses alternate sign across the stream (DC-free), so they cannot build a DC
+        // offset that would thump a speaker. Accumulate over several blocks since impulses are
+        // sparse (~1 per block at 50 Hz / 48 kHz).
         float mn = 0.0F;
         float mx = 0.0F;
-        for (int i = 0; i < n; ++i)
-        {
-            const float s = buf.getSample(0, i);
-            mn = juce::jmin(mn, s);
-            mx = juce::jmax(mx, s);
-        }
-        require(mx > 0.0F && mn < 0.0F, "the keep-alive must be an alternating tone, not a DC offset");
-
-        // Real content (program peak above the threshold) is not coloured: the tone ramps out
-        // and the keep-alive stops writing entirely under sustained content.
-        bool stillWriting = true;
-        for (int b = 0; b < 8 && stillWriting; ++b)
+        for (int b = 0; b < 8; ++b)
         {
             buf.clear();
-            stillWriting = ka.maybeApplyFloor(buf, 0, n, 0.5F);
+            ka.maybeApplyFloor(buf, 0, n, 0.0F);
+            for (int i = 0; i < n; ++i)
+            {
+                const float s = buf.getSample(0, i);
+                mn = juce::jmin(mn, s);
+                mx = juce::jmax(mx, s);
+            }
         }
-        require(! stillWriting, "the keep-alive tone must fully ramp out under sustained content");
+        require(mx > 0.0F && mn < 0.0F,
+                "the keep-alive impulses must alternate sign (DC-free), not bias the output");
+
+        // Real content (program peak above the threshold) is not coloured: the keep-alive stops
+        // writing entirely under sustained content (no fade — it simply emits nothing).
+        buf.clear();
+        require(! ka.maybeApplyFloor(buf, 0, n, 0.5F),
+                "the keep-alive must inject nothing under sustained content");
+        require(blockPeak(buf) == 0.0F, "real content must pass through uncoloured by the keep-alive");
 
         // Playing opens the gate independently of a loaded project.
         ka.setContentLoaded(false);
@@ -252,15 +270,13 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         ka.setPlaying(true);
         require(ka.shouldRun(), "playing must open the gate");
         buf.clear();
-        require(ka.maybeApplyFloor(buf, 0, n, 0.0F), "playing + silent block must inject the tone");
+        require(ka.maybeApplyFloor(buf, 0, n, 0.0F), "playing + silent block must inject impulses");
 
-        // Closing the gate ramps the tone out and returns to true digital silence.
+        // Closing the gate returns immediately to true digital silence (no decaying tail).
         ka.setPlaying(false);
         require(! ka.shouldRun(), "stopped with no project must close the gate");
         buf.clear();
-        ka.maybeApplyFloor(buf, 0, n, 0.0F); // ramp-out block (may still write a decaying tail)
-        buf.clear();
-        require(! ka.maybeApplyFloor(buf, 0, n, 0.0F), "closed gate must stop injecting the tone");
+        require(! ka.maybeApplyFloor(buf, 0, n, 0.0F), "closed gate must stop injecting impulses");
         require(blockPeak(buf) == 0.0F, "closed gate must leave true digital silence");
 
         // An open output device opens the gate too — even with no project loaded and not
@@ -269,30 +285,23 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         // otherwise let a sleep-prone USB DAC auto-mute and clip the first play.
         ka.setDeviceActive(true);
         require(ka.shouldRun(), "an open output device must open the keep-alive gate");
-        bool wroteForDevice = false;
-        for (int b = 0; b < 4; ++b)
-        {
-            buf.clear();
-            wroteForDevice = ka.maybeApplyFloor(buf, 0, n, 0.0F);
-        }
-        require(wroteForDevice, "device-active + silent block must inject the keep-alive tone");
-        require(blockPeak(buf) > threshold, "device-active tone must clear the silence threshold");
+        buf.clear();
+        require(ka.maybeApplyFloor(buf, 0, n, 0.0F),
+                "device-active + silent block must inject keep-alive impulses");
 
         ka.setDeviceActive(false);
         require(! ka.shouldRun(),
                 "closing the device with no project and not playing must close the gate");
 
-        // ── Keep-awake policy gate: only sleep-prone (USB) endpoints run the tone ──
+        // ── Keep-awake policy gate: only sleep-prone (USB) endpoints run the stream ──
         ka.setDeviceActive(true);
         require(ka.shouldRun(), "device-active must open the gate when keep-awake is enabled");
         ka.setKeepAwakeEnabled(false);
         require(! ka.shouldRun(),
                 "keep-awake disabled (non-USB endpoint) must keep the gate closed");
         buf.clear();
-        ka.maybeApplyFloor(buf, 0, n, 0.0F); // ramp-out of any residual envelope
-        buf.clear();
         require(! ka.maybeApplyFloor(buf, 0, n, 0.0F),
-                "keep-awake disabled must inject no tone (true digital silence on non-USB devices)");
+                "keep-awake disabled must inject nothing (true digital silence on non-USB devices)");
         ka.setKeepAwakeEnabled(true);
         require(ka.shouldRun(), "re-enabling keep-awake on an open device must reopen the gate");
 
@@ -306,31 +315,31 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         ka.clearNeedsWake();
         require(! ka.needsWake(), "consuming the wake clears the one-shot flag (later plays skip it)");
 
-        // ── Armed cold-wake band is louder than the maintenance tone, still bounded ──
+        // ── Armed cold-wake stream is DENSER than maintenance, at the SAME amplitude ──
+        ka.setContentLoaded(true);
+        buf.clear();
+        ka.maybeApplyFloor(buf, 0, n, 0.0F);
+        const int maintNonZero = countNonZero(buf);
+        const float maintPeak = blockPeak(buf);
+
         ka.arm();
-        require(ka.isArmed(), "arm() must engage the louder cold-wake band");
-        float armedPeak = 0.0F;
-        for (int b = 0; b < 8; ++b)
-        {
-            buf.clear();
-            ka.maybeApplyFloor(buf, 0, n, 0.0F);
-            armedPeak = juce::jmax(armedPeak, blockPeak(buf));
-        }
-        require(armedPeak > tonePeak,
-                "the armed cold-wake band must be louder than the maintenance tone");
-        const float wakePeak = static_cast<float>(silverdaw::kWakeTonePeak);
-        require(armedPeak <= wakePeak * 1.2F, "the cold-wake band must stay bounded near its peak");
+        require(ka.isArmed(), "arm() must engage the denser cold-wake stream");
+        buf.clear();
+        ka.maybeApplyFloor(buf, 0, n, 0.0F);
+        const int armedNonZero = countNonZero(buf);
+        const float armedPeak = blockPeak(buf);
+
+        require(armedNonZero > maintNonZero,
+                "the armed cold-wake stream must emit MORE impulses per block than maintenance");
+        requireNear(armedPeak, maintPeak, 1.0e-6,
+                    "the cold-wake stream must use the same inaudible amplitude (denser, not louder)");
+        require(armedPeak < threshold, "the cold-wake stream must stay below the silence threshold");
         ka.disarm();
-        require(! ka.isArmed(), "disarm() must drop back toward the maintenance tone");
-        float settledPeak = 0.0F;
-        for (int b = 0; b < 8; ++b)
-        {
-            buf.clear();
-            ka.maybeApplyFloor(buf, 0, n, 0.0F);
-            settledPeak = blockPeak(buf);
-        }
-        require(settledPeak <= tonePeak * 1.2F,
-                "after disarm the level must settle back to the inaudible maintenance tone");
+        require(! ka.isArmed(), "disarm() must drop back to the sparse maintenance stream");
+        buf.clear();
+        ka.maybeApplyFloor(buf, 0, n, 0.0F);
+        require(countNonZero(buf) < armedNonZero,
+                "after disarm the stream must settle back to the sparse maintenance rate");
     }
 
     // ── Pure keep-awake policy: only USB (and unclassifiable) endpoints are kept awake ──
@@ -340,14 +349,14 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         require(silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::unknown),
                 "unknown endpoints must be kept awake (fail-safe: never drop a beat)");
         require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::onboard),
-                "onboard endpoints must not incur the keep-awake tone or wake lead-in");
+                "onboard endpoints must not incur the keep-awake stream or wake lead-in");
         require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::bluetooth),
-                "Bluetooth endpoints must not be kept awake by the ultrasonic tone");
+                "Bluetooth endpoints must not be kept awake by the fluctuate stream");
         require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::other),
                 "other endpoints must not be kept awake");
     }
 
-    // ── MeteringSource integration: the tone survives a low master gain ──
+    // ── MeteringSource integration: the stream survives a low master gain ──
     struct ConstantSource : juce::AudioSource
     {
         explicit ConstantSource(float v) : value(v) {}
@@ -364,7 +373,7 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
 
     constexpr float lowGain = 0.25F;
     {
-        // Silent program + loaded project + low master gain. The tone is injected POST-gain,
+        // Silent program + loaded project + low master gain. The stream is injected POST-gain,
         // so a low master volume must NOT attenuate it (regression guard).
         silverdaw::OutputKeepAlive ka;
         ka.setContentLoaded(true);
@@ -378,20 +387,18 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         meter.getNextAudioBlock(info);
 
         const float peak = blockPeak(buf);
-        require(peak > tonePeak * lowGain * 2.0F,
-                "post-gain tone must NOT be attenuated by a low master gain (regression guard)");
-        require(peak > threshold, "delivered tone must clear the silence threshold");
-        require(peak <= tonePeak * 1.2F, "delivered tone must stay bounded near the configured peak");
+        requireNear(peak, impulsePeak, 1.0e-6,
+                    "post-gain impulse must NOT be attenuated by a low master gain (regression guard)");
 
         float ml = 0.0F;
         float mr = 0.0F;
         meter.consumePeaks(ml, mr);
         require(juce::jmax(ml, mr) <= threshold,
-                "UI meter must exclude the keep-alive tone (silent program reads ~silent)");
+                "UI meter must exclude the keep-alive stream (silent program reads ~silent)");
     }
 
     {
-        // Real program at a low master gain: content passes through at gain, the tone stays
+        // Real program at a low master gain: content passes through at gain, the stream stays
         // off, and the meter reflects the post-gain program.
         silverdaw::OutputKeepAlive ka;
         ka.setPlaying(true);
@@ -406,7 +413,7 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
 
         const float expected = 0.5F * lowGain; // 0.125
         requireNear(blockPeak(buf), expected, 1.0e-4,
-                    "real content must pass through at the master gain, uncoloured by the tone");
+                    "real content must pass through at the master gain, uncoloured by the stream");
 
         float ml = 0.0F;
         float mr = 0.0F;

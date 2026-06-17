@@ -3,24 +3,26 @@
 #include "AudioConstants.h"
 
 #include <atomic>
-#include <cmath>
+#include <cstdint>
 #include <juce_audio_basics/juce_audio_basics.h>
 
 namespace silverdaw
 {
 
 // Real-time-safe keep-alive for sleep-prone output endpoints. Two cooperating parts:
-//   1. A CONTINUOUS, inaudible ultrasonic maintenance tone, added on otherwise-silent blocks
-//      whenever an output device is open. This keeps an already-*warm* DAC from auto-muting, so
-//      every stop->play in a session is instant — no dropped opening bar, no audible hiss.
-//   2. A ONE-TIME, louder (still ultrasonic) cold-wake band, armed by the engine for a short
-//      pre-roll on the FIRST play after a device (re)start. Waking a fully-*cold* DAC (just
-//      plugged in / selected / woken from deep sleep) needs more than the maintenance tone; the
-//      band gives it a stronger kick + lock time. One-time per device session; later plays skip
-//      it. This is the small, acceptable first-play lead-in.
-// Both are gated by keep-awake-enabled, so only sleep-prone (USB) endpoints incur the tone or the
-// lead-in. The tone is ramped in/out to stay click-free; a released or non-sleep-prone device
-// outputs true digital silence.
+//   1. A CONTINUOUS, inaudible "fluctuate" stream — isolated, sign-alternating, minimal-amplitude
+//      impulses added on otherwise-silent blocks whenever an output device is open. An impulse is
+//      broadband, so unlike a near-Nyquist tone (which a DAC's reconstruction filter strips before
+//      its auto-mute detector sees it) it actually reaches the detector and keeps an already-*warm*
+//      DAC out of auto-mute. Every stop->play in a session is then instant — no dropped opening
+//      bar, no audible hiss.
+//   2. A ONE-TIME, *denser* impulse stream (same inaudible amplitude, many more non-zero frames),
+//      armed by the engine for a short pre-roll on the FIRST play after a device (re)start. Waking
+//      a fully-*cold* DAC (just plugged in / selected / woken from deep sleep) needs a stronger
+//      "signal present" kick + lock time; the denser stream provides it. One-time per device
+//      session; later plays skip it. This is the small, acceptable first-play lead-in.
+// Both are gated by keep-awake-enabled, so only sleep-prone (USB) endpoints incur the stream or the
+// lead-in. A released or non-sleep-prone device outputs true digital silence.
 class OutputKeepAlive
 {
   public:
@@ -45,7 +47,7 @@ class OutputKeepAlive
     bool isDeviceActive() const noexcept { return deviceActive.load(std::memory_order_acquire); }
 
     // Keep-awake policy gate, driven by output-device classification. Only sleep-prone (USB)
-    // endpoints get the maintenance tone and the one-time first-play wake; everything else stays
+    // endpoints get the fluctuate stream and the one-time first-play wake; everything else stays
     // true digital silence and plays instantly. Defaults to true so a USB DAC is covered before
     // classification has run.
     void setKeepAwakeEnabled(bool enabled) noexcept
@@ -60,7 +62,7 @@ class OutputKeepAlive
     // One-time cold-wake handshake. markDeviceStarted() arms it on every device/sample-rate
     // (re)start (called from prepareToPlay); the engine consumes it with a short wake pre-roll on
     // the first subsequent play, then clearNeedsWake() so later plays are instant. arm()/disarm()
-    // bracket the pre-roll, switching the injected level to the louder cold-wake band.
+    // bracket the pre-roll, switching the injected stream to the denser cold-wake rate.
     void markDeviceStarted() noexcept { needsWakePreroll.store(true, std::memory_order_release); }
     bool needsWake() const noexcept { return needsWakePreroll.load(std::memory_order_acquire); }
     void clearNeedsWake() noexcept { needsWakePreroll.store(false, std::memory_order_release); }
@@ -79,38 +81,33 @@ class OutputKeepAlive
                || deviceActive.load(std::memory_order_acquire);
     }
 
-    // Called from prepareToPlay (device/sample-rate start): tune the oscillator for the active
-    // rate. The tone sits just below Nyquist so it is inaudible at every supported rate while
-    // remaining a full-level digital signal to the endpoint's auto-mute detector.
+    // Called from prepareToPlay (device/sample-rate start): tune the impulse intervals for the
+    // active rate so the maintenance and cold-wake streams keep their per-second impulse rates.
     void prepare(double sampleRate) noexcept
     {
         const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
-        const double freq = sr >= 88200.0 ? 32000.0 : sr * 0.46;
-        phaseIncrement = juce::MathConstants<float>::twoPi * static_cast<float>(freq / sr);
-        // Ramp sized so the louder cold-wake band still reaches level well within the pre-roll.
-        rampStep = static_cast<float>(
-            static_cast<double>(kWakeTonePeak) / juce::jmax(1.0, kKeepAliveRampSeconds * sr));
-        phase = 0.0F;
-        envelope = 0.0F;
+        maintInterval = intervalFrames(sr, kKeepAliveFluctuateHz);
+        wakeInterval = intervalFrames(sr, kWakeFluctuateHz);
+        frame = 0;
         // A device/sample-rate (re)start means the endpoint may be cold: arm the one-time wake so
         // the next play runs the wake pre-roll.
         markDeviceStarted();
     }
 
-    // Audio thread: add the inaudible keep-alive tone on otherwise-silent blocks while the gate
-    // is open, ramped to stay click-free. While the one-time cold-wake band is armed the level is
-    // raised to kWakeTonePeak. Returns true if any tone was written this block.
+    // Audio thread: add the inaudible fluctuate stream on otherwise-silent blocks while the gate
+    // is open. Impulses are isolated, minimal-amplitude, and sign-alternating (DC-free); the
+    // denser cold-wake rate is used while the one-time wake band is armed. Returns true if any
+    // impulse was written this block. There is no envelope to fade — a sparse minimal-amplitude
+    // impulse stream is inherently click-free, and stopping simply means writing nothing.
     bool maybeApplyFloor(juce::AudioBuffer<float>& buffer, int startSample, int numSamples,
                          float programPeak) noexcept
     {
         const bool active = shouldRun() && programPeak <= silverdaw::kKeepAliveSilenceThreshold;
-        const float runLevel =
-            wakeArmed.load(std::memory_order_acquire) ? kWakeTonePeak : kKeepAliveTonePeak;
-        const float target = active ? runLevel : 0.0F;
-
-        // Gate closed and nothing left to fade out -> leave true digital silence.
-        if (! active && envelope <= 0.0F)
+        if (! active)
             return false;
+
+        const std::int64_t interval =
+            wakeArmed.load(std::memory_order_acquire) ? wakeInterval : maintInterval;
 
         constexpr int kMaxChannels = 32;
         const int numChannels = juce::jmin(buffer.getNumChannels(), kMaxChannels);
@@ -121,40 +118,39 @@ class OutputKeepAlive
         bool wrote = false;
         for (int i = 0; i < numSamples; ++i)
         {
-            if (envelope < target)
-                envelope = juce::jmin(target, envelope + rampStep);
-            else if (envelope > target)
-                envelope = juce::jmax(target, envelope - rampStep);
-
-            const float sample = std::sin(phase) * envelope;
-            phase += phaseIncrement;
-            if (phase >= juce::MathConstants<float>::twoPi)
-                phase -= juce::MathConstants<float>::twoPi;
-
-            if (envelope > 0.0F)
+            if (frame % interval == 0)
             {
+                // Alternate the sign of successive impulses so the stream carries no DC bias.
+                const bool negative = ((frame / interval) & std::int64_t{1}) != 0;
+                const float sample = negative ? -kKeepAliveImpulse : kKeepAliveImpulse;
                 for (int ch = 0; ch < numChannels; ++ch)
                     dest[ch][i] += sample;
                 wrote = true;
             }
+            ++frame;
         }
         return wrote;
     }
 
   private:
+    static std::int64_t intervalFrames(double sampleRate, double hz) noexcept
+    {
+        const std::int64_t frames = static_cast<std::int64_t>(sampleRate / hz + 0.5);
+        return frames < 2 ? std::int64_t{2} : frames;
+    }
+
     std::atomic<bool> playing{false};
     std::atomic<bool> contentLoaded{false};
     std::atomic<bool> deviceActive{false};
     std::atomic<bool> keepAwakeEnabled{true};
     std::atomic<bool> needsWakePreroll{false};
     std::atomic<bool> wakeArmed{false};
-    // Oscillator state — audio-thread only. prepare() runs from prepareToPlay during a
-    // device/sample-rate (re)start, which JUCE serialises against the IO callback (the stream
-    // is stopped across the restart), so these non-atomic floats are never touched concurrently.
-    float phase{0.0F};
-    float phaseIncrement{0.0F};
-    float envelope{0.0F};
-    float rampStep{0.0F};
+    // Impulse-stream state — audio-thread only. prepare() runs from prepareToPlay during a
+    // device/sample-rate (re)start, which JUCE serialises against the IO callback (the stream is
+    // stopped across the restart), so these are never touched concurrently.
+    std::int64_t frame{0};
+    std::int64_t maintInterval{960};  // 50 Hz @ 48 kHz until prepare() tunes it
+    std::int64_t wakeInterval{48};    // 1000 Hz @ 48 kHz until prepare() tunes it
 };
 
 } // namespace silverdaw

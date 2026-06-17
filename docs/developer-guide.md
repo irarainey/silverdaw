@@ -743,26 +743,34 @@ mute/solo; further nodes are planned there — see the
 
 To stop sleep-prone audio devices (notably some USB DACs) from soft-muting and
 clipping the first instants of playback, the engine keeps such endpoints awake
-with two cooperating, inaudible (ultrasonic) signals owned by
+with two cooperating, inaudible signals owned by
 [`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h) and injected by the
 metering stage **after** the master-gain ramp (so a low master volume can't
-attenuate them below the level that keeps the endpoint awake):
+attenuate them below the level that keeps the endpoint awake). Rather than a
+near-Nyquist tone — which a DAC's reconstruction filter attenuates before its
+"audio present" detector ever sees it — both signals are streams of isolated,
+sign-alternating, minimal-amplitude **impulses**. An impulse is broadband, so it
+puts a sliver of energy across the whole spectrum (including the band the detector
+actually monitors) and reliably registers as non-silence, while sitting near the
+format noise floor so it stays inaudible:
 
-1. **Continuous maintenance tone** (`kKeepAliveTonePeak`, ≈0.004 / −48 dBFS, just
-   below Nyquist) mixed into otherwise-silent output whenever a device is open
-   (`deviceActive`), a project is loaded (`contentLoaded`), or playback is active.
-   This keeps an already-**warm** DAC out of auto-mute, so every stop→play in a
-   session is instant — no dropped opening bar, no audible hiss. It rings out on
-   real programme above `kKeepAliveSilenceThreshold` so content is never coloured.
-2. **One-time cold-wake band** (`kWakeTonePeak`, ≈0.05 / −26 dBFS, same ultrasonic
-   frequency). Waking a fully-**cold** endpoint (just plugged in, freshly selected,
-   or woken from deep sleep) needs more than the maintenance tone: a stronger kick
-   plus a little lock time. The band is armed on every device/sample-rate
-   (re)start (`markDeviceStarted`, from `prepare()`) and consumed by a short
-   `kWakePrerollMs` wake pre-roll on the **first** play afterwards (`AudioEngine::play`
-   arms it, sleeps, then starts content), then cleared so every later play is
-   instant. This is the small, acceptable first-play lead-in — and it is silent
-   (ultrasonic) and one-time per device session.
+1. **Continuous maintenance stream** (`kKeepAliveImpulse`, ≈1/8192 / −78 dBFS, one
+   impulse every `kKeepAliveFluctuateHz` of a second) mixed into otherwise-silent
+   output whenever a device is open (`deviceActive`), a project is loaded
+   (`contentLoaded`), or playback is active. This keeps an already-**warm** DAC out
+   of auto-mute, so every stop→play in a session is instant — no dropped opening
+   bar, no audible hiss. It stops entirely on real programme above
+   `kKeepAliveSilenceThreshold` so content is never coloured.
+2. **One-time cold-wake stream** (same `kKeepAliveImpulse` amplitude, but **denser**
+   — `kWakeFluctuateHz` impulses per second). Waking a fully-**cold** endpoint (just
+   plugged in, freshly selected, or woken from deep sleep) needs more than the
+   sparse maintenance stream: a stronger "signal present" kick plus a little lock
+   time. The denser stream is armed on every device/sample-rate (re)start
+   (`markDeviceStarted`, from `prepare()`) and consumed by a short `kWakePrerollMs`
+   wake pre-roll on the **first** play afterwards (`AudioEngine::play` arms it,
+   sleeps, then starts content), then cleared so every later play is instant. This
+   is the small, acceptable first-play lead-in — and it is inaudible and one-time
+   per device session.
 
 Both signals are gated by a **device-type policy**:
 [`OutputDeviceClassifier`](../backend/src/engine/OutputDeviceClassifier.cpp) walks
@@ -771,11 +779,12 @@ endpoint up to its physical bus enumerator (`USB` / `HDAUDIO` / `PCI` / `BTH`…
 `AudioEngine::updateKeepAwakePolicy` enables keep-awake only for USB endpoints
 (the known offenders). It is **fail-safe**: an unclassifiable endpoint
 (`OutputBus::unknown`) keeps keep-awake on, so a real USB DAC is never left to drop
-a beat, while onboard / Bluetooth / virtual devices incur neither the tone nor the
-first-play lead-in. The policy is re-evaluated on init, device selection, and
-device-list changes. Both signals ramp in/out over `kKeepAliveRampSeconds` to stay
-click-free; the gate closes — returning the output to **truly silent** digital
-zero — once the device is released or the endpoint is classified as non-sleep-prone.
+a beat, while onboard / Bluetooth / virtual devices incur neither the impulse
+stream nor the first-play lead-in. The policy is re-evaluated on init, device
+selection, and device-list changes. The impulses are sparse and minimal-amplitude,
+so they are inherently click-free with no ramping; the gate simply stops writing —
+returning the output to **truly silent** digital zero — once the device is released
+or the endpoint is classified as non-sleep-prone.
 `MasterClockSource` still gates the transport and clears the buffer when not
 playing; the keep-alive injection lives downstream in the metering stage. When
 the gate opens from idle, `MasterClockSource` also applies a one-shot
