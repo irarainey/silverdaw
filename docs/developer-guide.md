@@ -742,11 +742,13 @@ mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 
 To stop sleep-prone audio devices (notably generic USB-Audio-Class dongle DACs)
-from soft-muting and clipping the first instants of playback, the engine keeps such
-endpoints awake with a single continuous, inaudible signal owned by
+from soft-muting and swallowing the first instants of playback, the engine keeps such
+endpoints awake with an inaudible keep-alive signal owned by
 [`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h) and injected by the
 metering stage **after** the master-gain ramp (so a low master volume can't
-attenuate it below the level that keeps the endpoint awake).
+attenuate it below the level that keeps the endpoint awake). It has two tiers — a
+continuous **holding dither** and a short **wake burst** — plus a per-play wake
+pre-roll, described below.
 
 The signal has two tiers, both owned by `OutputKeepAlive`:
 
@@ -784,20 +786,23 @@ and — crucially — it runs entirely on the audio thread, so the message threa
 (an earlier 500 ms `Thread::sleep` pre-roll froze the UI). Non-sleep-prone endpoints skip
 the pre-roll and play from the first sample.
 
-The dither is gated by a **device-type policy**:
+The keep-alive — both the dither **and** the wake burst / pre-roll — is gated by a
+**device-type policy**:
 [`OutputDeviceClassifier`](../backend/src/engine/OutputDeviceClassifier.cpp) walks
 the Windows device tree (MMDevice COM + Config Manager) from the active render
 endpoint up to its physical bus enumerator (`USB` / `HDAUDIO` / `PCI` / `BTH`…) and
 `AudioEngine::updateKeepAwakePolicy` enables keep-awake only for USB endpoints
 (the known offenders). It is **fail-safe**: an unclassifiable endpoint
 (`OutputBus::unknown`) keeps keep-awake on, so a real USB DAC is never left to drop
-a beat, while onboard / Bluetooth / virtual devices incur no dither at all. The policy
-is re-evaluated on init, device selection, and device-list changes; the dither only
+a beat, while onboard / Bluetooth / virtual devices incur no keep-alive at all (no
+dither and no wake pre-roll, so they play from the first sample). The policy
+is re-evaluated on init, device selection, and device-list changes; the keep-alive only
 ever runs for the **currently selected** output, and only if it is sleep-prone. The
 gate simply stops writing — returning the output to **truly silent** digital zero —
 once the device is released or classified non-sleep-prone.
-`MasterClockSource` still gates the transport and clears the buffer when not
-playing; the keep-alive injection lives downstream in the metering stage. A play-start click can come from `juce::AudioTransportSource`:
+`MasterClockSource` gates the transport and clears the buffer when not playing, runs
+the wake pre-roll at play-start, and otherwise delivers the source verbatim; the
+keep-alive injection lives downstream in the metering stage. A play-start click can come from `juce::AudioTransportSource`:
 it ramps each track from the previously-rendered block's gain (`lastGain`) to the
 current gain across the first block it renders. Because the per-track transports
 are not pulled while the master is gated, a gain changed during that window — most
