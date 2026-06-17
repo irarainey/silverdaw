@@ -103,15 +103,17 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
         unresolved: item.unresolved === true,
         // Keep CLIP_ADD keyed by source path; cached WAV paths are backend-internal.
         playbackFilePath: item.filePath,
-        derivedFrom:
-          item.kind === 'saved-clip' || item.kind === 'stem'
-            ? {
-                sourceItemId: item.sourceItemId,
-                sourceClipId: item.sourceClipId,
-                inMs: Math.max(0, item.sourceInMs ?? 0),
-                durationMs: Math.max(0, item.sourceDurationMs ?? item.durationMs ?? 0)
-              }
-            : undefined,
+        // Restore the source link for any derived item: saved clips, stems, AND
+        // saved samples (an audio-file persisted with a sourceItemId). The sample's
+        // link is what marks it as a sample asset rather than an ordinary import.
+        derivedFrom: item.sourceItemId
+          ? {
+              sourceItemId: item.sourceItemId,
+              sourceClipId: item.sourceClipId,
+              inMs: Math.max(0, item.sourceInMs ?? 0),
+              durationMs: Math.max(0, item.sourceDurationMs ?? item.durationMs ?? 0)
+            }
+          : undefined,
         collapsed: item.collapsed === true ? true : undefined,
         warpEnabled: item.kind === 'saved-clip' && typeof item.warpEnabled === 'boolean'
           ? item.warpEnabled

@@ -268,12 +268,16 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     // the inherited beats. A simple sample stores no musical metadata.
                     // Both flavours carry over the source's media GUID so their cover
                     // art + tags resolve from the project's central metadata/covers store.
+                    // Both also persist the source link (sourceItemId) as provenance: a
+                    // sample is the only audio-file created FROM another item, which is
+                    // how the renderer tells a saved sample from an ordinary import
+                    // (sampleMode alone is ambiguous — a musical import is also "music").
                     const juce::String sampleMediaId =
                         sourceItemId.isNotEmpty() ? projectState.getLibraryItemMediaId(sourceItemId) : juce::String{};
                     projectState.addLibraryItem(newItemId, outFile.getFullPathName(), outFile.getFileName(),
                                                 actualDurationMs, static_cast<int>(sampleRate), channels,
                                                 outFile.getFullPathName(), {}, "audio-file", safeName,
-                                                {}, {}, isMusic ? inMs : -1.0, -1.0, -1, sampleMediaId);
+                                                sourceItemId, {}, isMusic ? inMs : -1.0, -1.0, -1, sampleMediaId);
                     if (isMusic)
                         projectState.setLibraryItemSampleMode(newItemId, "music");
                     else if (sampleMode == "sample")

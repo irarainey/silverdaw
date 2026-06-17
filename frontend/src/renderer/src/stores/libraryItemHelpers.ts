@@ -119,27 +119,29 @@ export function resolveLibraryItemMediaId(
 
 /**
  * Whether a library item is a saved sample asset — a reusable WAV saved into the
- * project's Samples folder — in either flavour:
+ * project's `samples` folder — in either flavour:
  *   - a "music sample" (`sampleMode === 'music'`), which inherits the source's
  *     tempo + key so it warps and shows its grid, OR
  *   - a "simple sample" (`sampleMode === 'sample'`), a non-musical one-shot.
- * Both share identical provenance handling (cover art + tags + sidecar); the ONLY
- * difference is that a music sample carries pitch + BPM. Use this for the
- * at-a-glance provenance treatment — the cover-art type badge, the "Sample" type
- * label, and tile styling. For the narrower "non-musical, hide the tempo/key grid"
- * concern use `libraryItemIsSample` instead.
+ * Both share identical provenance handling (cover art + tags); the ONLY difference
+ * is that a music sample carries pitch + BPM.
+ *
+ * Identity comes from PROVENANCE, not `sampleMode`: a saved sample is the only
+ * `audio-file` library item created FROM another item, so it is the only audio-file
+ * carrying a source link (`derivedFrom.sourceItemId`, persisted in the project file
+ * at creation). An ordinary import has none; stems and saved clips have their own
+ * `kind`. `sampleMode` is NOT a reliable tell because a plain musical import is also
+ * classified 'music'.
+ *
+ * Use this for the at-a-glance provenance treatment — the cover-art type badge, the
+ * "Sample" type label, and tile styling. For the narrower "non-musical, hide the
+ * tempo/key grid" concern use `libraryItemIsSample` instead.
  */
 export function libraryItemIsSampleAsset(
-  item: { sampleMode?: 'sample' | 'music'; derivedFrom?: SavedClipSource },
-  byId: Readonly<Record<string, LibraryItem>>
+  item: { kind?: LibraryItem['kind']; derivedFrom?: SavedClipSource; sampleMode?: LibraryItem['sampleMode'] } | undefined | null
 ): boolean {
-  if (item.sampleMode === 'sample' || item.sampleMode === 'music') return true
-  const sourceId = item.derivedFrom?.sourceItemId
-  if (sourceId) {
-    const source = byId[sourceId]
-    if (source?.sampleMode === 'sample' || source?.sampleMode === 'music') return true
-  }
-  return false
+  if (!item) return false
+  return item.kind === 'audio-file' && !!item.derivedFrom?.sourceItemId
 }
 
 /**
@@ -150,10 +152,10 @@ export function libraryItemIsSampleAsset(
  * clip renderer and the rename overlay so badge width stays in sync.
  */
 export function libraryItemShowsLinkBadge(
-  item: { kind?: LibraryItem['kind']; sampleMode?: LibraryItem['sampleMode'] } | undefined | null
+  item: { kind?: LibraryItem['kind']; derivedFrom?: SavedClipSource; sampleMode?: LibraryItem['sampleMode'] } | undefined | null
 ): boolean {
   if (!item) return false
-  return item.kind === 'saved-clip' || item.sampleMode === 'sample' || item.sampleMode === 'music'
+  return item.kind === 'saved-clip' || libraryItemIsSampleAsset(item)
 }
 
 /**

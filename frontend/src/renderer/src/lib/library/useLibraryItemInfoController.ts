@@ -121,7 +121,7 @@ export function useLibraryItemInfoController(
   const isSampleAsset = computed(() => {
     const item = props.item
     if (!item) return false
-    return libraryItemIsSampleAsset(item, library.byId)
+    return libraryItemIsSampleAsset(item)
   })
 
   /**
@@ -170,11 +170,13 @@ export function useLibraryItemInfoController(
     // libraryItemId references any saved-clip derived FROM this
     // source — that's a structural relationship recorded by
     // `derivedFrom.sourceItemId` on the saved-clip, not a heuristic.
+    // Stems are also derived items, but they are independent library
+    // entries with their own usage count, so exclude them here.
     const derivedSavedClipIds =
       item.kind === 'audio-file'
         ? new Set(
             library.items
-              .filter((i) => i.derivedFrom?.sourceItemId === item.id)
+              .filter((i) => i.kind === 'saved-clip' && i.derivedFrom?.sourceItemId === item.id)
               .map((i) => i.id)
           )
         : null

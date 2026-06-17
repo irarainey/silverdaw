@@ -216,7 +216,7 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
   /** Saved sample asset (music OR simple) — drives the cover-art type badge and tile
    *  styling. Distinct from `tileIsSample`, which is the narrower non-musical flag. */
   function tileIsSampleAsset(item: LibraryItem): boolean {
-    return libraryItemIsSampleAsset(item, library.byId)
+    return libraryItemIsSampleAsset(item)
   }
 
   /** Number of timeline placements of a library item (drives the in-use count pill). */

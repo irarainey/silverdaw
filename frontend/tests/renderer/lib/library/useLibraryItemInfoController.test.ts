@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useLibraryItemInfoController } from '@/lib/library/useLibraryItemInfoController'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { useProjectStore, type Clip, type Track } from '@/stores/projectStore'
 import { ref } from 'vue'
 
 vi.mock('@/lib/bridgeService', () => ({ send: vi.fn() }))
@@ -104,5 +105,81 @@ describe('useLibraryItemInfoController stem inheritance', () => {
     expect(ctrl.isStem.value).toBe(false)
     expect(ctrl.typeLabel.value).toBe('Audio file')
     expect(ctrl.coverArtUrl.value).toBe(source.coverArtUrl)
+  })
+})
+
+describe('useLibraryItemInfoController usages', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    counter = 0
+  })
+
+  function seedSavedClip(sourceId: string): LibraryItem {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      kind: 'saved-clip',
+      name: 'Chorus',
+      filePath: `C:\\audio\\song-1.wav`,
+      fileName: 'song-1.wav',
+      durationMs: 8_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId, sourceClipId: 'c1', inMs: 0, durationMs: 8_000 }
+    })
+    return library.byId[id]!
+  }
+
+  function placeClip(trackId: string, trackName: string, clipId: string, libraryItemId: string): void {
+    const project = useProjectStore()
+    project.clips[clipId] = {
+      id: clipId,
+      trackId,
+      libraryItemId,
+      filePath: 'C:\\audio\\song-1.wav',
+      fileName: 'song-1.wav',
+      startMs: 0,
+      inMs: 0,
+      durationMs: 8_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      unresolved: false
+    } as Clip
+    const existing = project.tracks.find((t) => t.id === trackId)
+    if (existing) {
+      existing.clipIds.push(clipId)
+    } else {
+      project.tracks.push({
+        id: trackId,
+        name: trackName,
+        clipIds: [clipId],
+        muted: false,
+        soloed: false,
+        volume: 1,
+        colorIndex: 0
+      } as Track)
+    }
+  }
+
+  it('counts the source and its saved clips but never its stems', () => {
+    const source = seedSourceWithArtAndTags()
+    const stem = seedStem(source.id)
+    const savedClip = seedSavedClip(source.id)
+
+    placeClip('track-a', 'Track A', 'clip-source', source.id)
+    placeClip('track-a', 'Track A', 'clip-saved', savedClip.id)
+    placeClip('track-b', 'Track B', 'clip-stem', stem.id)
+
+    const dialogEl = ref<HTMLDivElement | null>(null)
+    const ctrl = useLibraryItemInfoController(
+      { open: true, item: source, clipId: null },
+      () => {},
+      dialogEl
+    )
+
+    const rows = ctrl.usages.value
+    expect(rows.map((r) => r.trackId)).toEqual(['track-a'])
+    expect(rows[0]?.clipCount).toBe(2)
   })
 })

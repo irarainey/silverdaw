@@ -157,6 +157,16 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     peaksPerSecond: payload.peaksPerSecond,
     playbackFilePath: payload.filePath,
     mediaId: sampleMediaId,
+    // Record the source link as provenance so this audio-file reads as a saved
+    // sample (not an ordinary import) immediately — and on reload via the
+    // backend-persisted sourceItemId. The backend mirrors this in the project file.
+    derivedFrom: payload.sourceItemId
+      ? {
+          sourceItemId: payload.sourceItemId,
+          inMs: payload.sourceInMs ?? 0,
+          durationMs: payload.durationMs
+        }
+      : undefined,
     fromSnapshot: true
   })
   if (parsed && parsed.channels.length > 0) {

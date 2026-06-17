@@ -1,11 +1,37 @@
 import { describe, expect, it } from 'vitest'
 import {
   libraryItemIsSample,
+  libraryItemIsSampleAsset,
   libraryItemShowsLinkBadge,
   libraryItemTempoUnverified,
   stemPartLabel,
   STEM_NAME_SEPARATOR
 } from '@/stores/libraryItemHelpers'
+
+const sampleSource = { sourceItemId: 'origin-1', inMs: 0, durationMs: 8_000 }
+
+describe('libraryItemIsSampleAsset', () => {
+  it('returns false for a nullish item', () => {
+    expect(libraryItemIsSampleAsset(undefined)).toBe(false)
+    expect(libraryItemIsSampleAsset(null)).toBe(false)
+  })
+
+  it('flags both music and simple saved samples (audio-file with a source link)', () => {
+    expect(libraryItemIsSampleAsset({ kind: 'audio-file', derivedFrom: sampleSource })).toBe(true)
+  })
+
+  it('does NOT flag a music-classified original import', () => {
+    // The bug: an ordinary musical import is sampleMode "music" but has no source
+    // link, so it must never read as a sample.
+    expect(libraryItemIsSampleAsset({ kind: 'audio-file', sampleMode: 'music' })).toBe(false)
+    expect(libraryItemIsSampleAsset({ kind: 'audio-file' })).toBe(false)
+  })
+
+  it('does not flag stems or saved clips (they have their own kind)', () => {
+    expect(libraryItemIsSampleAsset({ kind: 'stem', derivedFrom: sampleSource })).toBe(false)
+    expect(libraryItemIsSampleAsset({ kind: 'saved-clip', derivedFrom: sampleSource })).toBe(false)
+  })
+})
 
 describe('libraryItemShowsLinkBadge', () => {
   it('returns false for an undefined item', () => {
@@ -17,13 +43,13 @@ describe('libraryItemShowsLinkBadge', () => {
     expect(libraryItemShowsLinkBadge({ kind: 'saved-clip' })).toBe(true)
   })
 
-  it('flags both music and simple sample assets as linked', () => {
-    expect(libraryItemShowsLinkBadge({ kind: 'audio-file', sampleMode: 'sample' })).toBe(true)
-    expect(libraryItemShowsLinkBadge({ kind: 'audio-file', sampleMode: 'music' })).toBe(true)
+  it('flags saved sample assets (audio-file with a source link) as linked', () => {
+    expect(libraryItemShowsLinkBadge({ kind: 'audio-file', derivedFrom: sampleSource })).toBe(true)
   })
 
-  it('does not flag a plain imported source file', () => {
+  it('does not flag a plain or music-classified imported source file', () => {
     expect(libraryItemShowsLinkBadge({ kind: 'audio-file' })).toBe(false)
+    expect(libraryItemShowsLinkBadge({ kind: 'audio-file', sampleMode: 'music' })).toBe(false)
     expect(libraryItemShowsLinkBadge({ kind: 'stem' })).toBe(false)
   })
 })
