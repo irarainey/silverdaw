@@ -138,18 +138,18 @@ void testDefaultSeparatorFailsFastWithoutModel()
 
 void testStemsOutputBaseDir()
 {
-    // Unsaved project -> the disposable temp workspace (…/Temp/Silverdaw/Stems).
+    // Unsaved project -> the disposable temp workspace (…/Temp/Silverdaw/stems).
     const auto temp = silverdaw::stemsOutputBaseDir(juce::String{});
-    require(temp.getFileName() == "Stems", "unsaved project writes stems to the temp workspace");
+    require(temp.getFileName() == "stems", "unsaved project writes stems to the temp workspace");
     requireEqual(temp.getFullPathName(),
-                 silverdaw::tempArtifactsRoot().getChildFile("Stems").getFullPathName(),
+                 silverdaw::tempArtifactsRoot().getChildFile("stems").getFullPathName(),
                  "unsaved stems live under the temp artifacts root");
 
-    // Saved project -> a portable "Stems" subfolder beside the project file.
+    // Saved project -> a portable "stems" subfolder beside the project file.
     const auto projectDir = makeTempDir("stem-base");
     const auto projectFile = projectDir.getChildFile("My Mix.silverdaw");
     const auto base = silverdaw::stemsOutputBaseDir(projectFile.getFullPathName());
-    requireEqual(base.getFullPathName(), projectDir.getChildFile("Stems").getFullPathName(),
+    requireEqual(base.getFullPathName(), projectDir.getChildFile("stems").getFullPathName(),
                  "saved project keeps stems beside the project file");
     projectDir.deleteRecursively();
 }

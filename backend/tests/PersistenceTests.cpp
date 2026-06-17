@@ -181,15 +181,15 @@ void testProjectFilePortablePaths()
 void testProjectArtifactsBaseDir()
 {
     // Unsaved -> temp workspace; saved -> a subfolder beside the project file.
-    const auto tempStems = silverdaw::projectArtifactsBaseDir(juce::String{}, "Stems");
+    const auto tempStems = silverdaw::projectArtifactsBaseDir(juce::String{}, "stems");
     requireEqual(tempStems.getFullPathName(),
-                 silverdaw::tempArtifactsRoot().getChildFile("Stems").getFullPathName(),
+                 silverdaw::tempArtifactsRoot().getChildFile("stems").getFullPathName(),
                  "unsaved artifacts live under the temp workspace");
 
     const auto projectDir = makeTempDir("artifacts-base");
     const auto projectFile = projectDir.getChildFile("Mix.silverdaw");
-    const auto samples = silverdaw::projectArtifactsBaseDir(projectFile.getFullPathName(), "Samples");
-    requireEqual(samples.getFullPathName(), projectDir.getChildFile("Samples").getFullPathName(),
+    const auto samples = silverdaw::projectArtifactsBaseDir(projectFile.getFullPathName(), "samples");
+    requireEqual(samples.getFullPathName(), projectDir.getChildFile("samples").getFullPathName(),
                  "saved project keeps samples beside the project file");
     projectDir.deleteRecursively();
 }
@@ -201,7 +201,7 @@ void testMigrateTempArtifactsIntoProject()
 
     // Seed a temp-workspace stem (WAV + sidecar) as if separated before first save.
     const auto tempRoot = silverdaw::tempArtifactsRoot();
-    const auto tempStemDir = tempRoot.getChildFile("Stems").getChildFile("song-stems");
+    const auto tempStemDir = tempRoot.getChildFile("stems").getChildFile("song-stems");
     require(tempStemDir.createDirectory().wasOk(), "temp stem dir should create");
     const auto tempStemWav = tempStemDir.getChildFile("vocals.wav");
     require(tempStemWav.replaceWithText("placeholder stem audio"), "temp stem file should write");
@@ -235,7 +235,7 @@ void testMigrateTempArtifactsIntoProject()
     silverdaw::migrateTempArtifactsIntoProject(projectFile.getFullPathName(), engine, state, pool,
                                                decodedCache);
 
-    const auto movedDir = projectDir.getChildFile("Stems").getChildFile("song-stems");
+    const auto movedDir = projectDir.getChildFile("stems").getChildFile("song-stems");
     require(movedDir.getChildFile("vocals.wav").existsAsFile(), "stem WAV should move beside the project");
     require(movedDir.getChildFile("metadata.json").existsAsFile(),
             "stem sidecar should move with the stem folder");

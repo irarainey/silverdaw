@@ -310,7 +310,7 @@ void migrateTempArtifactsIntoProject(const juce::String& projectFilePath, AudioE
                                      ProjectState& projectState, juce::ThreadPool& peakPool,
                                      const DecodedCache& decodedCache)
 {
-    static const char* kCategories[] = {"Stems", "Samples"};
+    static const char* kCategories[] = {"stems", "samples"};
 
     const auto tempRoot = tempArtifactsRoot();
     const auto projectDir = juce::File(projectFilePath).getParentDirectory();

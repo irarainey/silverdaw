@@ -47,7 +47,7 @@ juce::String sanitiseSampleFileName(juce::String name)
 // shared media GUID). The subdir name is derived from the source path's filename.
 juce::String sampleOutputDir(const juce::String& projectPath, const juce::String& sourcePath)
 {
-    const auto base = silverdaw::projectArtifactsBaseDir(projectPath, "Samples");
+    const auto base = silverdaw::projectArtifactsBaseDir(projectPath, "samples");
     if (sourcePath.isNotEmpty())
         return base.getChildFile(sanitiseSampleFileName(juce::File(sourcePath).getFileNameWithoutExtension()))
             .getFullPathName();

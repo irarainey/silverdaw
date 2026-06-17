@@ -15,11 +15,11 @@ const issuedAudioPaths: Set<string> = new Set<string>()
 const trustedReadRoots: Set<string> = new Set<string>()
 
 // App-derived folders (never renderer-supplied) where the backend writes a
-// project's separated stems — a "Stems" folder beside a saved project file. Stem
+// project's separated stems — a "stems" folder beside a saved project file. Stem
 // sidecar metadata reads/writes are confined to these (or the central stems base).
 const stemsWriteRoots: Set<string> = new Set<string>()
 
-// App-derived "Samples" folders beside a project (or in the temp workspace while
+// App-derived "samples" folders beside a project (or in the temp workspace while
 // unsaved) where the backend writes exported samples. Music samples persist an
 // inherited metadata/cover sidecar in a per-source subdir here; those sidecar
 // reads/writes are confined to these roots.
@@ -102,7 +102,7 @@ export function registerSamplesWriteRoot(dir: string): void {
 }
 
 // A sample sidecar folder is writable only when it sits inside a registered
-// samples write root (a project's portable "Samples" subfolder or the temp
+// samples write root (a project's portable "samples" subfolder or the temp
 // workspace one used before the project is saved).
 export function isWithinSamplesWriteRoot(dir: unknown): dir is string {
   if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false

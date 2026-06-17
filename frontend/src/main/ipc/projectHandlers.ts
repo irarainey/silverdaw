@@ -88,10 +88,10 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       await mkdir(dirname(target), { recursive: true })
       // The backend writes this project's stems beside the file; trust that folder
       // for renderer reads + sidecar writes ahead of the first separation.
-      registerStemsWriteRoot(join(dirname(target), 'Stems'))
-      // Likewise the project's Samples folder, where music samples persist their
+      registerStemsWriteRoot(join(dirname(target), 'stems'))
+      // Likewise the project's samples folder, where music samples persist their
       // inherited metadata/cover sidecar.
-      registerSamplesWriteRoot(join(dirname(target), 'Samples'))
+      registerSamplesWriteRoot(join(dirname(target), 'samples'))
       // Carry the central media store (cover art + tags) into the project folder so it
       // survives the save: items imported while the project was unsaved wrote it to the
       // temp workspace, and a "Save As" copies it from the previous project folder.
@@ -117,9 +117,9 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       // resolve them against it before allow-listing so the renderer can read them.
       const projectDir = dirname(canonical)
       // Stems for this project live beside it; trust that folder for reads + sidecar.
-      registerStemsWriteRoot(join(projectDir, 'Stems'))
+      registerStemsWriteRoot(join(projectDir, 'stems'))
       // Samples (and their music-sample sidecars) likewise live beside the project.
-      registerSamplesWriteRoot(join(projectDir, 'Samples'))
+      registerSamplesWriteRoot(join(projectDir, 'samples'))
       // Central per-source metadata/cover store (keyed by media GUID) beside the project.
       registerProjectMediaRoots(projectDir)
       let parsed: unknown

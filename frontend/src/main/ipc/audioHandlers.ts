@@ -69,7 +69,7 @@ function stemsBaseDir(): string {
 }
 
 // Sidecar reads/writes are confined to the central stems base or a registered
-// per-project stems folder (a saved project's portable "Stems" subfolder).
+// per-project stems folder (a saved project's portable "stems" subfolder).
 function isWithinStemsDir(dir: unknown): dir is string {
   if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
   const rel = relative(stemsBaseDir(), canonicalisePath(dir))

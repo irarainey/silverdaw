@@ -37,7 +37,7 @@ void handleStemSeparateCancel(const juce::var& payload,
 // safe. Exposed for unit testing.
 double overlapForStemQuality(const juce::String& quality);
 
-// Base folder a project's separated stems are written under: a "Stems" subfolder
+// Base folder a project's separated stems are written under: a "stems" subfolder
 // beside the project file when it has been saved (so the whole project folder is
 // portable), otherwise the disposable temporary workspace for unsaved projects.
 // Exposed for testing.

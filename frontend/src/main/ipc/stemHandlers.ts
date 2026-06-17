@@ -33,14 +33,14 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   const managedModelDir = join(app.getPath('userData'), 'models', HTDEMUCS_FT_MANIFEST.id)
   // Unsaved projects write separated stems into a temporary workspace; trust it
   // for renderer reads and sidecar writes until the project is saved (at which
-  // point the backend migrates them beside the project file). Saved-project Stems
+  // point the backend migrates them beside the project file). Saved-project stems
   // dirs are registered separately in projectHandlers.
-  registerStemsWriteRoot(join(app.getPath('temp'), 'Silverdaw', 'Stems'))
+  registerStemsWriteRoot(join(app.getPath('temp'), 'Silverdaw', 'stems'))
   // Unsaved projects likewise export samples into the temp workspace; trust it for
   // renderer reads and music-sample sidecar writes until the project is saved (the
-  // backend then migrates them beside the project file). Saved-project Samples dirs
+  // backend then migrates them beside the project file). Saved-project samples dirs
   // are registered separately in projectHandlers.
-  registerSamplesWriteRoot(join(app.getPath('temp'), 'Silverdaw', 'Samples'))
+  registerSamplesWriteRoot(join(app.getPath('temp'), 'Silverdaw', 'samples'))
   // Central per-source metadata/cover store while unsaved (migrated beside the project on save).
   registerProjectMediaRoots(join(app.getPath('temp'), 'Silverdaw'))
   // The backend separator is single-slot, so at most one download is in flight.

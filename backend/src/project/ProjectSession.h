@@ -22,7 +22,7 @@ juce::StringArray collectClipIds(const ProjectState& projectState);
 // discarded when the project is saved or a new project is started.
 juce::File tempArtifactsRoot();
 
-// Base directory for a generated-artifact category (e.g. "Stems", "Samples"):
+// Base directory for a generated-artifact category (e.g. "stems", "samples"):
 // <projectDir>/<subdir> once the project is saved, else the temp workspace so
 // unsaved work never lands outside the disposable temp area.
 juce::File projectArtifactsBaseDir(const juce::String& projectPath, const juce::String& subdir);

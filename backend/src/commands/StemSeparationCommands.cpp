@@ -85,7 +85,7 @@ bool parseSelectedStems(const juce::var& payload, std::vector<juce::String>& out
 
 juce::File stemsOutputBaseDir(const juce::String& projectPath)
 {
-    return projectArtifactsBaseDir(projectPath, "Stems");
+    return projectArtifactsBaseDir(projectPath, "stems");
 }
 
 void handleStemSeparate(const juce::var& payload,
