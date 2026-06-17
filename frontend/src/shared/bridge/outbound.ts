@@ -802,6 +802,112 @@ export interface AudioDevicesRequestPayload {
 
 export type BridgeOutboundType = keyof BridgeOutboundMap
 
+/** Whether a given outbound type carries a payload, derived from the map so it
+ *  cannot drift from the catalogue. */
+export type BridgeOutboundPayloadKind<K extends BridgeOutboundType> =
+  BridgeOutboundMap[K] extends undefined ? 'none' : 'payload'
+
+/**
+ * Runtime registry of every outbound type to whether it carries a payload.
+ *
+ * The mapped-type annotation makes this exhaustive and self-correcting: adding a
+ * type to `BridgeOutboundMap`, or marking the wrong payload kind, fails the
+ * build until this entry matches. It is the runtime counterpart of the
+ * compile-time map, used by `validateOutboundEnvelope` to guard the send
+ * boundary without a hand-maintained parallel list.
+ */
+export const bridgeOutboundPayloadKinds: {
+  readonly [K in BridgeOutboundType]: BridgeOutboundPayloadKind<K>
+} = {
+  AUTH: 'payload',
+  CLIP_ADD: 'payload',
+  CLIP_MOVE: 'payload',
+  CLIP_TRIM: 'payload',
+  CLIP_COLOR: 'payload',
+  CLIP_SET_LOCKED: 'payload',
+  CLIP_SET_REVERSED: 'payload',
+  CLIP_REMOVE: 'payload',
+  LIBRARY_ITEM_RELINK: 'payload',
+  CLIP_RENAME: 'payload',
+  CLIP_REBIND: 'payload',
+  CLIP_SET_WARP: 'payload',
+  CLIP_SAVE_AS_SAMPLE: 'payload',
+  LIBRARY_ITEM_SAVE_AS_SAMPLE: 'payload',
+  CLIP_EDITOR_PEAKS_REQUEST: 'payload',
+  LIBRARY_ADD: 'payload',
+  LIBRARY_REMOVE: 'payload',
+  LIBRARY_REANALYSE: 'payload',
+  LIBRARY_ITEM_SET_SAMPLE_MODE: 'payload',
+  LIBRARY_ITEM_SET_MANUAL_TEMPO: 'payload',
+  TRACK_ADD: 'payload',
+  TRACK_REMOVE: 'payload',
+  TRACK_RENAME: 'payload',
+  TRACK_GAIN: 'payload',
+  TRACK_MUTE: 'payload',
+  TRACK_SOLO: 'payload',
+  TRACK_SET_HEIGHT: 'payload',
+  TRACK_REORDER: 'payload',
+  TRACK_SET_SENDS: 'payload',
+  TRACK_SET_TONE: 'payload',
+  TRACK_SET_LEVELER: 'payload',
+  TRACK_SET_PAN: 'payload',
+  CLIP_SET_ENVELOPE: 'payload',
+  TRANSITION_CREATE: 'payload',
+  TRANSITION_DELETE: 'payload',
+  TRANSITION_SET_RECIPE: 'payload',
+  PROJECT_SET_REVERB: 'payload',
+  PROJECT_SET_DELAY: 'payload',
+  TRANSPORT_PLAY: 'none',
+  TRANSPORT_PAUSE: 'none',
+  TRANSPORT_STOP: 'none',
+  TRANSPORT_SEEK: 'payload',
+  WAVEFORM_REQUEST: 'payload',
+  PROJECT_NEW: 'none',
+  PROJECT_SAVE: 'payload',
+  PROJECT_SAVE_AS: 'payload',
+  PROJECT_SAVE_VIEW_STATE: 'payload',
+  PROJECT_LOAD: 'payload',
+  PROJECT_LOAD_RECOVERY: 'payload',
+  PROJECT_AUTOSAVE: 'payload',
+  PROJECT_RENAME: 'payload',
+  PROJECT_SET_VIEW: 'payload',
+  PROJECT_SET_BPM: 'payload',
+  PROJECT_SET_LENGTH: 'payload',
+  PROJECT_SET_AUDIO_OUTPUT: 'payload',
+  PROJECT_SET_TARGET_SAMPLE_RATE: 'payload',
+  PROJECT_SET_EXPORT_SETTINGS: 'payload',
+  PROJECT_SET_MASTER_VOLUME: 'payload',
+  PROJECT_SET_BAR_COUNTER_START: 'payload',
+  PROJECT_SET_MIXDOWN_START_BAR: 'payload',
+  AUDIO_FILE_PROBE: 'payload',
+  MIXDOWN_START: 'payload',
+  MIXDOWN_CANCEL: 'none',
+  STEM_SEPARATE: 'payload',
+  STEM_SEPARATE_CANCEL: 'payload',
+  PROJECT_MARKER_ADD: 'payload',
+  PROJECT_MARKER_MOVE: 'payload',
+  PROJECT_MARKER_REMOVE: 'payload',
+  PREVIEW_LOAD: 'payload',
+  PREVIEW_UNLOAD: 'none',
+  PREVIEW_PLAY: 'none',
+  PREVIEW_PAUSE: 'none',
+  PREVIEW_STOP: 'none',
+  PREVIEW_SEEK: 'payload',
+  PREVIEW_SET_WARP: 'payload',
+  PREVIEW_SET_ENVELOPE: 'payload',
+  PREVIEW_SET_REVERSED: 'payload',
+  AUDIO_DEVICES_REQUEST: 'payload',
+  AUDIO_DEVICE_SELECT: 'payload',
+  EDIT_UNDO: 'none',
+  EDIT_REDO: 'none',
+  PING: 'payload'
+}
+
+/** Narrow an unknown value to a known outbound type. */
+export function isBridgeOutboundType(value: unknown): value is BridgeOutboundType {
+  return typeof value === 'string' && value in bridgeOutboundPayloadKinds
+}
+
 /** Tuple args for the typed `send()` helper: `send('TRANSPORT_PLAY')` or `send('CLIP_ADD', {...})`. */
 export type BridgeOutboundArgs<K extends BridgeOutboundType> =
   BridgeOutboundMap[K] extends undefined ? [type: K] : [type: K, payload: BridgeOutboundMap[K]]

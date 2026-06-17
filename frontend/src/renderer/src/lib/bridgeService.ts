@@ -22,6 +22,7 @@ import {
 } from '@shared/bridge-protocol'
 
 import { validateInbound } from '@/lib/bridge/inboundValidation'
+import { validateOutboundEnvelope } from '@/lib/bridge/outboundValidation'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
 import { transportBridgeHandlers } from '@/lib/bridge/handlers/transportHandlers'
 import { projectBridgeHandlers } from '@/lib/bridge/handlers/projectHandlers'
@@ -291,7 +292,19 @@ export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K
     log.warn('bridge', `not connected; dropping ${type}`)
     return false
   }
+  const check = validateOutboundEnvelope(type, payload)
+  if (!check.ok) {
+    log.error('bridge', `refusing to send malformed envelope: ${check.reason}`)
+    return false
+  }
   const env = payload === undefined ? { type } : { type, payload }
+  let serialised: string
+  try {
+    serialised = JSON.stringify(env)
+  } catch (err) {
+    log.error('bridge', `failed to serialise ${type}: ${String(err)}`)
+    return false
+  }
   outboundCount++
   // TRACK_GAIN can fire per slider pixel; keep it at debug.
   if (type !== 'TRACK_GAIN') {
@@ -299,7 +312,7 @@ export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K
   } else {
     log.debug('bridge', `send ${type}`)
   }
-  socket.send(JSON.stringify(env))
+  socket.send(serialised)
   return true
 }
 
