@@ -41,15 +41,14 @@ juce::String sanitiseSampleFileName(juce::String name)
 
 // A music sample is an independent loop that inherits its parent's identity
 // (cover art + tags), persisted as a sidecar beside the WAV (mirroring stems).
-// Group these under a per-source-parent subdir of Samples/ so all music samples
-// from one source share a single sidecar AND so the sidecar is locatable on
-// reload purely from the sample's own file path (dirname), with no surviving
-// link to the source item. Simple samples carry no inherited identity, so they
-// stay flat in Samples/.
-juce::String sampleOutputDir(const juce::String& projectPath, bool isMusic, const juce::String& sourcePath)
+// Group every saved sample — music AND simple — under a per-source subdir of Samples/
+// named after the originating file, so all samples cut from the same track stay
+// together (and inherit the same identity from the project media store, keyed by the
+// shared media GUID). The subdir name is derived from the source path's filename.
+juce::String sampleOutputDir(const juce::String& projectPath, const juce::String& sourcePath)
 {
     const auto base = silverdaw::projectArtifactsBaseDir(projectPath, "Samples");
-    if (isMusic && sourcePath.isNotEmpty())
+    if (sourcePath.isNotEmpty())
         return base.getChildFile(sanitiseSampleFileName(juce::File(sourcePath).getFileNameWithoutExtension()))
             .getFullPathName();
     return base.getFullPathName();
@@ -328,7 +327,7 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
     if (sourcePath.isEmpty()) sourcePath = projectState.getClipFilePath(clipId);
     // The samples folder is derived, not renderer-supplied, so it tracks the
     // project's portable location (or the temp workspace while unsaved).
-    const juce::String outputDir = sampleOutputDir(projectPath, isMusic, sourcePath);
+    const juce::String outputDir = sampleOutputDir(projectPath, sourcePath);
     // A music sample stays at its source tempo (warp/pitch are not baked) so it
     // can inherit the source grid and re-warp on drop. A simple sample bakes the
     // clip's current warp/pitch into a flat one-shot.
@@ -392,7 +391,7 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
     auto sourcePath = projectState.getLibraryItemPlaybackPath(sourceItemId);
     if (sourcePath.isEmpty()) sourcePath = projectState.getLibraryItemFilePath(sourceItemId);
     if (sourcePath.isEmpty()) sourcePath = found.getProperty("filePath", juce::var()).toString();
-    const juce::String outputDir = sampleOutputDir(projectPath, isMusic, sourcePath);
+    const juce::String outputDir = sampleOutputDir(projectPath, sourcePath);
     // See handleClipSaveAsSample: music keeps source tempo (no bake) so it can
     // inherit the source grid; simple bakes the saved clip's warp/pitch.
     std::optional<SampleWarpOptions> sampleWarp;
