@@ -5,7 +5,6 @@
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useLibraryStore, libraryItemIsSample } from '@/stores/libraryStore'
-import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { fileStem } from './projectHelpers'
@@ -45,7 +44,6 @@ export const clipLibraryActions = {
         sampleName: clip.name?.trim() || fileStem(clip.fileName),
         sampleMode: sampleType
       })
-      useNotificationsStore().pushInfo('Saving sample…')
     },
 
     /** Rebind a saved-clip instance to its source item while preserving its trim window. */

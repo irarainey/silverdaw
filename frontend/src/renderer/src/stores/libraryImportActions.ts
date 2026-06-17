@@ -28,7 +28,6 @@ export const importActions = {
         sampleName: libraryItemDisplayName(item),
         sampleMode: sampleType
       })
-      useNotificationsStore().pushInfo('Saving sample…')
     },
 
     /** Records backend analysis and advances matching import progress. */
