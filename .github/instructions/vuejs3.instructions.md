@@ -38,6 +38,11 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 
 ### Component Design
 
+- **Apply the repo-wide authoring-time gate first.** Before adding code to any
+  existing component, composable, or store, run the *Before you add code*
+  checklist in `.github/copilot-instructions.md`: check the target's current size
+  against its ceiling, name the responsibility you are adding, and extract a child
+  component or `useXxx` composable rather than growing a file that shouldn't grow.
 - **Default to domain separation of logic.** Organise components, composables,
   and stores by the feature / problem domain they serve (timeline, clip editor,
   library, transport, …), not by incidental technical layering. New logic goes

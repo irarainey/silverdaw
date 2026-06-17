@@ -127,6 +127,11 @@ and what the timeline visually promises.
 
 ## File Size and Single Responsibility
 
+- **Apply the repo-wide authoring-time gate first.** Before adding code to any
+  existing file, run the *Before you add code* checklist in
+  `.github/copilot-instructions.md`: check the target's current size against its
+  ceiling, name the responsibility you are adding, and extract a focused new unit
+  rather than growing a file that shouldn't grow.
 - **Default to domain separation of logic.** Organise code by the feature /
   problem domain it serves (clips, waveform/peaks, warp & music-time, timeline
   rendering, import/reanalysis, …), not by incidental technical layering. New

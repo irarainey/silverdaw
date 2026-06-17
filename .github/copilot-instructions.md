@@ -60,6 +60,35 @@ as blocking-class review findings, not stylistic suggestions.
 - **Names carry intent.** Files, types, functions, variables, and bridge `type`
   strings should be self-explanatory. Comment the *why*, never the *what*.
 
+### Before you add code (authoring-time gate)
+
+God files are not created in one commit — they grow one "small, related"
+addition at a time. Stop them at the point of *writing*, not at review. The
+path-specific `File Size and Single Responsibility` sections under
+`.github/instructions/` describe the ceilings; this is the proactive check that
+must fire **before every edit that adds code to an existing file**:
+
+1. **Check where it's going first.** Note the target file's current length and
+   its soft ceiling. If the file is already at or over budget, the default is a
+   new focused unit — do not grow it further.
+2. **Name the responsibility you're adding.** If it is a *second reason to
+   change* (a new concern, domain, or concept), it belongs in its own
+   file / composable / module — independent of the current line count.
+3. **Reject the easy excuses.** "It's only a few lines", "it's related",
+   "I'll extract it later", and "just for now" are never sufficient grounds to
+   append to a file that shouldn't grow. Extract the seam first, then add.
+4. **If your change pushes a file past a soft ceiling, split in the same
+   change** — pure mechanical move, stable facade / barrel re-export so
+   importers don't churn, build + tests green. Never leave a newly-oversized
+   file behind for "later".
+5. **When unsure, extract rather than grow.** A few small, well-named files are
+   always preferable to one god file. The burden of proof is on *keeping code
+   together*, not on splitting it.
+
+The one exception remains a genuinely cohesive real-time path (e.g. a single
+DSP `processBlock` chain or a tight timing/warp pipeline): don't fragment it
+purely to chase a line count.
+
 ## Project invariants (never violate)
 
 - **Audio thread is real-time:** no allocation, locking, throwing, or blocking
