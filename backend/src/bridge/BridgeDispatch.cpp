@@ -54,6 +54,21 @@ silverdaw::StemSeparator& stemSeparator()
     static std::unique_ptr<silverdaw::StemSeparator> instance = silverdaw::createDefaultStemSeparator();
     return *instance;
 }
+
+// Bundles the long, shared dispatch parameter list so each per-domain router
+// stays readable. References only: the context outlives every dispatch call.
+struct DispatchContext
+{
+    const juce::String& type;
+    const juce::var& payload;
+    silverdaw::AudioEngine& engine;
+    silverdaw::ProjectState& projectState;
+    silverdaw::BridgeServer& bridge;
+    juce::ThreadPool& peakPool;
+    const silverdaw::PeaksCache& cache;
+    const silverdaw::DecodedCache& decodedCache;
+    silverdaw::ProjectSession& session;
+};
 } // namespace
 
 // Hoist payload readers so dispatch branches stay readable.
@@ -65,24 +80,23 @@ using silverdaw::bridge::readOptionalBool;
 using silverdaw::bridge::readOptionalString;
 using silverdaw::broadcastApplied;
 
-// Wire-protocol order is fixed as (type, payload).
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, silverdaw::AudioEngine& engine,
-                           silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
-                           const silverdaw::DecodedCache& decodedCache, silverdaw::ProjectSession& session)
+namespace
 {
-    // Answer on the message thread so PING proves command-thread responsiveness.
-    if (type == "PING")
-    {
-        auto* p = new juce::DynamicObject();
-        p->setProperty("id", payload.getProperty("id", 0));
-        bridge.broadcast("PONG", juce::var(p));
-        return;
-    }
+// Each dispatchXxx returns true if it owned `type`. Branch bodies are unchanged
+// from the original monolithic switch; only the routing is grouped by domain.
 
-    // Mutations get one undo transaction; high-rate drag streams coalesce by target.
-    silverdaw::beginUndoTransactionIfNeeded(type, payload, projectState);
+bool dispatchClip(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+    auto& peakPool = ctx.peakPool;
+    const auto& cache = ctx.cache;
+    const auto& decodedCache = ctx.decodedCache;
+    auto& session = ctx.session;
+
     if (type == "CLIP_ADD")
     {
         silverdaw::log::info("bridge", "recv CLIP_ADD trackId=" + payload.getProperty("trackId", "").toString() +
@@ -122,12 +136,6 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::info("bridge", "recv CLIP_REMOVE clipId=" + payload.getProperty("clipId", "").toString());
         silverdaw::handleClipRemove(payload, engine, projectState, bridge);
     }
-    else if (type == "LIBRARY_ITEM_RELINK")
-    {
-        silverdaw::log::info("bridge", "recv LIBRARY_ITEM_RELINK itemId=" + payload.getProperty("itemId", "").toString() +
-                                            " path=" + payload.getProperty("filePath", "").toString());
-        silverdaw::handleLibraryItemRelink(payload, engine, projectState, bridge, session, peakPool, decodedCache);
-    }
     else if (type == "CLIP_RENAME")
     {
         silverdaw::handleClipRename(payload, projectState);
@@ -144,6 +152,37 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleClipSaveAsSample(payload, engine, projectState, bridge, peakPool, cache,
                                           session.currentPath);
+    }
+    else if (type == "CLIP_SET_ENVELOPE")
+    {
+        silverdaw::log::debug("bridge", "recv CLIP_SET_ENVELOPE clipId=" +
+                                            payload.getProperty("clipId", "").toString());
+        silverdaw::handleClipSetEnvelope(payload, engine, projectState, bridge);
+    }
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchLibrary(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+    auto& peakPool = ctx.peakPool;
+    const auto& cache = ctx.cache;
+    const auto& decodedCache = ctx.decodedCache;
+    auto& session = ctx.session;
+
+    if (type == "LIBRARY_ITEM_RELINK")
+    {
+        silverdaw::log::info("bridge", "recv LIBRARY_ITEM_RELINK itemId=" + payload.getProperty("itemId", "").toString() +
+                                            " path=" + payload.getProperty("filePath", "").toString());
+        silverdaw::handleLibraryItemRelink(payload, engine, projectState, bridge, session, peakPool, decodedCache);
     }
     else if (type == "LIBRARY_ITEM_SAVE_AS_SAMPLE")
     {
@@ -170,7 +209,21 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleLibraryItemSetManualTempo(payload, engine, projectState, bridge);
     }
-    else if (type == "TRANSPORT_PLAY")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchTransport(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+
+    if (type == "TRANSPORT_PLAY")
     {
         silverdaw::handleTransportPlay(engine, g_mixdownBusy.load());
     }
@@ -186,7 +239,23 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleTransportSeek(payload, engine, projectState);
     }
-    else if (type == "PREVIEW_LOAD")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchPreview(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+    const auto& decodedCache = ctx.decodedCache;
+
+    if (type == "PREVIEW_LOAD")
     {
         silverdaw::handlePreviewLoad(payload, engine, projectState, bridge, decodedCache);
     }
@@ -222,7 +291,22 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handlePreviewSetReversed(payload, engine);
     }
-    else if (type == "TRACK_ADD")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchTrack(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+
+    if (type == "TRACK_ADD")
     {
         silverdaw::log::info("bridge", "recv TRACK_ADD trackId=" + payload.getProperty("trackId", "").toString());
         silverdaw::handleTrackAdd(payload, projectState, bridge);
@@ -306,13 +390,22 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                             " pan=" + payload.getProperty("pan", "").toString());
         silverdaw::handleTrackSetPan(payload, engine, projectState, bridge);
     }
-    else if (type == "CLIP_SET_ENVELOPE")
+    else
     {
-        silverdaw::log::debug("bridge", "recv CLIP_SET_ENVELOPE clipId=" +
-                                            payload.getProperty("clipId", "").toString());
-        silverdaw::handleClipSetEnvelope(payload, engine, projectState, bridge);
+        return false;
     }
-    else if (type == "PROJECT_SET_REVERB")
+    return true;
+}
+
+bool dispatchProjectFx(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+
+    if (type == "PROJECT_SET_REVERB")
     {
         silverdaw::log::debug("bridge", "recv PROJECT_SET_REVERB");
         silverdaw::handleProjectSetReverb(payload, engine, projectState, bridge);
@@ -322,7 +415,24 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::debug("bridge", "recv PROJECT_SET_DELAY");
         silverdaw::handleProjectSetDelay(payload, engine, projectState, bridge);
     }
-    else if (type == "WAVEFORM_REQUEST")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchWaveform(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+    auto& peakPool = ctx.peakPool;
+    const auto& cache = ctx.cache;
+
+    if (type == "WAVEFORM_REQUEST")
     {
         silverdaw::log::debug("bridge", "recv WAVEFORM_REQUEST clipId=" + payload.getProperty("clipId", "").toString());
         silverdaw::handleWaveformRequest(payload, engine, projectState, bridge, peakPool, cache);
@@ -335,7 +445,25 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
                                   " ppS=" + payload.getProperty("peaksPerSecond", "").toString());
         silverdaw::handleClipEditorPeaksRequest(payload, engine, projectState, bridge, peakPool, cache);
     }
-    else if (type == "PROJECT_NEW")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchProject(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+    auto& peakPool = ctx.peakPool;
+    const auto& decodedCache = ctx.decodedCache;
+    auto& session = ctx.session;
+
+    if (type == "PROJECT_NEW")
     {
         silverdaw::log::info("bridge", "recv PROJECT_NEW");
         silverdaw::handleProjectNew(engine, projectState, bridge, session);
@@ -415,7 +543,20 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleProjectSetMixdownStartBar(payload, projectState);
     }
-    else if (type == "PROJECT_MARKER_ADD")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchMarker(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& projectState = ctx.projectState;
+
+    if (type == "PROJECT_MARKER_ADD")
     {
         silverdaw::applyMarkerAdd(payload, projectState);
     }
@@ -427,7 +568,22 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::applyMarkerRemove(payload, projectState);
     }
-    else if (type == "AUDIO_DEVICES_REQUEST")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchAudioDevice(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& bridge = ctx.bridge;
+    auto& peakPool = ctx.peakPool;
+
+    if (type == "AUDIO_DEVICES_REQUEST")
     {
         silverdaw::log::debug("bridge", "recv AUDIO_DEVICES_REQUEST refresh=" +
                                             payload.getProperty("refresh", "false").toString());
@@ -444,7 +600,24 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleAudioFileProbe(payload, engine, bridge, peakPool);
     }
-    else if (type == "MIXDOWN_START")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchMixdown(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+    auto& peakPool = ctx.peakPool;
+    const auto& decodedCache = ctx.decodedCache;
+
+    if (type == "MIXDOWN_START")
     {
         silverdaw::handleMixdownStart(payload, engine, projectState, bridge, peakPool, decodedCache,
                                       g_mixdownBusy, g_mixdownCancel);
@@ -453,7 +626,24 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleMixdownCancel(g_mixdownBusy, g_mixdownCancel);
     }
-    else if (type == "STEM_SEPARATE")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchStem(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+    auto& peakPool = ctx.peakPool;
+    const auto& decodedCache = ctx.decodedCache;
+    auto& session = ctx.session;
+
+    if (type == "STEM_SEPARATE")
     {
         silverdaw::handleStemSeparate(payload, projectState, bridge, peakPool, decodedCache,
                                       stemSeparator(), g_stemBusy, g_stemCancel, g_stemActiveJobId,
@@ -463,7 +653,24 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     {
         silverdaw::handleStemSeparateCancel(payload, g_stemBusy, g_stemCancel, g_stemActiveJobId);
     }
-    else if (type == "EDIT_UNDO")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchUndo(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+    auto& peakPool = ctx.peakPool;
+    const auto& decodedCache = ctx.decodedCache;
+    auto& session = ctx.session;
+
+    if (type == "EDIT_UNDO")
     {
         silverdaw::log::info("bridge", "recv EDIT_UNDO");
         silverdaw::handleEditUndo(engine, projectState, bridge, session, peakPool, decodedCache);
@@ -473,7 +680,23 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::log::info("bridge", "recv EDIT_REDO");
         silverdaw::handleEditRedo(engine, projectState, bridge, session, peakPool, decodedCache);
     }
-    else if (type == "TRANSITION_CREATE")
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchTransition(const DispatchContext& ctx)
+{
+    const auto& type = ctx.type;
+    const auto& payload = ctx.payload;
+    auto& engine = ctx.engine;
+    auto& projectState = ctx.projectState;
+    auto& bridge = ctx.bridge;
+    auto& session = ctx.session;
+
+    if (type == "TRANSITION_CREATE")
     {
         silverdaw::log::info("bridge", "recv TRANSITION_CREATE track=" +
                                            payload.getProperty("trackId", "").toString());
@@ -495,6 +718,42 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
         silverdaw::finishTransitionEdit(engine, projectState, bridge, session);
     }
     else
+    {
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+// Wire-protocol order is fixed as (type, payload).
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, silverdaw::AudioEngine& engine,
+                           silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                           const silverdaw::DecodedCache& decodedCache, silverdaw::ProjectSession& session)
+{
+    // Answer on the message thread so PING proves command-thread responsiveness.
+    if (type == "PING")
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("id", payload.getProperty("id", 0));
+        bridge.broadcast("PONG", juce::var(p));
+        return;
+    }
+
+    // Mutations get one undo transaction; high-rate drag streams coalesce by target.
+    silverdaw::beginUndoTransactionIfNeeded(type, payload, projectState);
+
+    // Route to the first domain that owns the type. Type strings are unique, so
+    // the chaining order only affects readability, not behaviour.
+    const DispatchContext ctx{type,  payload, engine,       projectState, bridge,
+                              peakPool, cache,   decodedCache, session};
+    const bool handled = dispatchClip(ctx) || dispatchLibrary(ctx) || dispatchTransport(ctx) ||
+                         dispatchPreview(ctx) || dispatchTrack(ctx) || dispatchProjectFx(ctx) ||
+                         dispatchWaveform(ctx) || dispatchProject(ctx) || dispatchMarker(ctx) ||
+                         dispatchAudioDevice(ctx) || dispatchMixdown(ctx) || dispatchStem(ctx) ||
+                         dispatchUndo(ctx) || dispatchTransition(ctx);
+    if (!handled)
     {
         silverdaw::log::warn("bridge", "unhandled message type: " + type);
     }
