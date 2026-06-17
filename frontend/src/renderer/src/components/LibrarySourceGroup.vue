@@ -3,6 +3,7 @@ import { computed, type ComponentPublicInstance } from 'vue'
 import type { LibraryItem } from '@/stores/libraryStore'
 import LibrarySavedClipRow from '@/components/LibrarySavedClipRow.vue'
 import LibraryTypeBadge from '@/components/LibraryTypeBadge.vue'
+import { LIBRARY_BPM_VARIABLE_PILL_CLASS } from '@/lib/library/libraryPillClasses'
 
 const props = defineProps<{
   source: LibraryItem
@@ -165,7 +166,7 @@ const childSummary = computed(() => {
               </span>
               <span
                 v-if="props.source.bpm"
-                :class="props.source.variableTempo ? `${props.savedClipPillClass} border-amber-800 bg-amber-900/60 text-amber-200` : props.savedClipBpmPillClass"
+                :class="props.source.variableTempo ? LIBRARY_BPM_VARIABLE_PILL_CLASS : props.savedClipBpmPillClass"
                 :title="props.source.variableTempo ? 'Tempo varies across the file - the BPM shown is a rough average' : 'Detected tempo'"
               >
                 <span

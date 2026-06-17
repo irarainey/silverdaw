@@ -105,6 +105,12 @@ function basename(path: string): string {
   return lastSep >= 0 ? path.slice(lastSep + 1) : path
 }
 
+/** The user-facing project name: the file name without the `.silverdaw` extension
+ *  (a project saves as `<ProjectName>/<ProjectName>.silverdaw`). */
+function projectName(path: string): string {
+  return basename(path).replace(/\.silverdaw$/i, '')
+}
+
 function newProject(): void {
   emit('newProject')
 }
@@ -319,14 +325,14 @@ onBeforeUnmount(() => {
                 :title="path"
                 @click="openRecent(path)"
               >
-                <span class="truncate text-zinc-100">{{ basename(path) }}</span>
+                <span class="truncate text-zinc-100">{{ projectName(path) }}</span>
                 <span class="truncate text-[11px] text-zinc-500">{{ path }}</span>
               </button>
               <button
                 type="button"
                 data-borderless-button="true"
                 class="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded text-zinc-500 opacity-0 hover:bg-zinc-700 hover:text-red-400 focus:opacity-100 focus:outline-none focus-visible:opacity-100 group-hover:opacity-100"
-                :aria-label="`Remove ${basename(path)} from recent projects`"
+                :aria-label="`Remove ${projectName(path)} from recent projects`"
                 title="Remove from recent projects"
                 @click="removeRecent(path)"
               >

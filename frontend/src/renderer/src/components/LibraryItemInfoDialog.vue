@@ -20,7 +20,6 @@ const {
   coverArtUrl,
   headerArtist,
   isSample,
-  tempoUnverified,
   classificationMode,
   setClassification,
   instanceRows,
@@ -28,6 +27,8 @@ const {
   displayKey,
   warpedBpm,
   bpmLabel,
+  bpmIsVariable,
+  bpmPillClass,
   keyLabel,
   displayDecodedCachePath,
   playbackPathDistinct,
@@ -197,17 +198,15 @@ const {
                   {{ bpmLabel }}
                 </dt>
                 <dd>
-                  <span v-if="warpedBpm ?? item.bpm">
-                    {{ (warpedBpm ?? item.bpm)?.toFixed(2) }}
+                  <span
+                    v-if="warpedBpm ?? item.bpm"
+                    :class="bpmPillClass"
+                    :title="bpmIsVariable ? 'Tempo varies across the file - the BPM shown is a rough average' : 'Detected tempo'"
+                  >
                     <span
-                      v-if="!warpedBpm && item.variableTempo"
-                      class="text-amber-300"
-                    >(variable)</span>
-                    <span
-                      v-if="!warpedBpm && tempoUnverified"
-                      class="text-amber-300"
-                      title="Tempo detection was low-confidence. The beat grid is shown so you can verify or correct it."
-                    >(unverified)</span>
+                      v-if="bpmIsVariable"
+                      class="mr-0.5"
+                    >~</span>{{ (warpedBpm ?? item.bpm)?.toFixed(2) }} BPM
                   </span>
                   <span v-else>Not analysed</span>
                 </dd>

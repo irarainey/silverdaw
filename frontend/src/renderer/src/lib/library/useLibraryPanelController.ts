@@ -5,6 +5,11 @@ import { useProjectStore } from '@/stores/projectStore'
 import { importAudioIntoLibrary, preflightSampleRates } from '@/lib/importAudio'
 import { log } from '@/lib/log'
 import { keyBadgeClass } from '@/lib/keyBadge'
+import {
+  LIBRARY_PILL_BASE_CLASS,
+  LIBRARY_BPM_PILL_CLASS,
+  LIBRARY_SAMPLE_PILL_CLASS
+} from '@/lib/library/libraryPillClasses'
 import { effectiveTempoRatio } from '@/lib/warp'
 import { useLibraryDropZone } from '@/lib/library/useLibraryDropZone'
 import { useLibraryItemRename } from '@/lib/library/useLibraryItemRename'
@@ -81,12 +86,9 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
 
   const itemCount = computed(() => library.items.length)
 
-  const SAVED_CLIP_PILL_CLASS =
-    'shrink-0 whitespace-nowrap rounded border px-1 py-0.5 text-[9px] leading-none shadow-sm'
-  const SAVED_CLIP_BPM_PILL_CLASS =
-    `${SAVED_CLIP_PILL_CLASS} border-zinc-700 bg-zinc-800 text-zinc-300`
-  const SAMPLE_PILL_CLASS =
-    `${SAVED_CLIP_PILL_CLASS} border-indigo-800 bg-indigo-900/60 text-indigo-200`
+  const SAVED_CLIP_PILL_CLASS = LIBRARY_PILL_BASE_CLASS
+  const SAVED_CLIP_BPM_PILL_CLASS = LIBRARY_BPM_PILL_CLASS
+  const SAMPLE_PILL_CLASS = LIBRARY_SAMPLE_PILL_CLASS
   // Stems are standalone audio files (their own samples / duration), shown as
   // top-level items like imported sources — not nested under the original. The
   // link to the original survives via `derivedFrom` (badge + info-dialog note +

@@ -1,8 +1,9 @@
 import { computed, onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
-import { libraryItemDisplayName, libraryItemIsSample, libraryItemIsSampleAsset, libraryItemTempoUnverified, stemPartLabel, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { libraryItemDisplayName, libraryItemIsSample, libraryItemIsSampleAsset, stemPartLabel, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
+import { LIBRARY_BPM_PILL_CLASS, LIBRARY_BPM_VARIABLE_PILL_CLASS } from '@/lib/library/libraryPillClasses'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveTempoRatio } from '@/lib/warp'
 
@@ -124,17 +125,6 @@ export function useLibraryItemInfoController(
     return libraryItemIsSampleAsset(item)
   })
 
-  /**
-   * Whether the detected tempo grid is unverified (low detection
-   * confidence, no explicit user classification). The grid is still
-   * shown and warpable; the UI flags it as needing review.
-   */
-  const tempoUnverified = computed(() => {
-    const item = props.item
-    if (!item) return false
-    return libraryItemTempoUnverified(item, library.byId)
-  })
-
   /** Current classification mode for the radio control: 'auto' when no
    *  override is set, otherwise the explicit choice. */
   const classificationMode = computed<'auto' | 'sample' | 'music'>(() => {
@@ -238,6 +228,14 @@ export function useLibraryItemInfoController(
     return sourceBpm * ratio
   })
   const bpmLabel = computed(() => warpedBpm.value ? 'Warped BPM' : 'Detected BPM')
+  /** Whether the BPM shown is a rough average of a varying tempo (only for the
+   *  source's own detected tempo, not a precise warped value). */
+  const bpmIsVariable = computed(() => !warpedBpm.value && props.item?.variableTempo === true)
+  /** Pill styling for the BPM value, matching the library tile (amber when the
+   *  source tempo varies, neutral otherwise). */
+  const bpmPillClass = computed(() =>
+    bpmIsVariable.value ? LIBRARY_BPM_VARIABLE_PILL_CLASS : LIBRARY_BPM_PILL_CLASS
+  )
   const keyLabel = computed(() => pitchShifted.value ? 'Shifted key' : 'Detected key')
   const displayDecodedCachePath = computed(() => {
     const item = props.item
@@ -326,7 +324,6 @@ export function useLibraryItemInfoController(
     headerArtist,
     isSample,
     isSampleAsset,
-    tempoUnverified,
     classificationMode,
     setClassification,
     instanceRows,
@@ -334,6 +331,8 @@ export function useLibraryItemInfoController(
     displayKey,
     warpedBpm,
     bpmLabel,
+    bpmIsVariable,
+    bpmPillClass,
     keyLabel,
     displayDecodedCachePath,
     playbackPathDistinct,
