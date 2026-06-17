@@ -20,8 +20,7 @@ import { useClipEditorCanvasInteraction } from '@/lib/clipEditor/useClipEditorCa
 import { useClipEditorBeatGrid } from '@/lib/clipEditor/useClipEditorBeatGrid'
 import { useClipEditorKeyboard } from '@/lib/clipEditor/useClipEditorKeyboard'
 import { useClipEditorTransport } from '@/lib/clipEditor/useClipEditorTransport'
-import { sourceMsToVolumeTime } from '@/lib/clipEditor/volumeOverlay'
-import { ENVELOPE_MIN_GAIN } from '@/lib/envelope'
+import { useClipEditorVolumeRegion } from '@/lib/clipEditor/useClipEditorVolumeRegion'
 
 export type ClipEditorProps = {
   open: boolean
@@ -86,9 +85,6 @@ export function useClipEditorController(
     committedPoints: volumeShapeCommittedPoints
   } = volumeShapeDraft
 
-  // Volume mode edits the gain envelope instead of the selection in Clip view.
-  const volumeEditMode = ref(false)
-
   // Draft reverse-playback flag; Save commits, Cancel discards.
   const reverseDraft = useClipEditorReverseDraft()
   const { hasChanged: hasReverseChanged, initialise: initialiseReverseDraft } = reverseDraft
@@ -111,19 +107,6 @@ export function useClipEditorController(
     if (!clip) return 0
     return effectiveClipDurationMs(clip)
   })
-
-  const volumeShapeAvailable = computed(
-    () => editsTimelineClip.value && !viewExpanded.value && volumeShapeDurationMs.value > 0
-  )
-  const volumeEditActive = computed(() => volumeEditMode.value && volumeShapeAvailable.value)
-
-  // Reset is offered only while actively shaping a clip that has a non-flat draft.
-  const canResetVolumeShape = computed(
-    () => volumeShapeAvailable.value && !volumeShapeDraft.isFlat.value
-  )
-  function onResetVolumeShape(): void {
-    volumeShapeDraft.reset(volumeShapeDurationMs.value)
-  }
 
 
   const warpActive = computed(() => {
@@ -175,26 +158,27 @@ export function useClipEditorController(
   } = viewport
   void _basePxPerMs
 
-  // Region gate: flatten the current selection to silence/full with hard edges.
-  const canGateSelection = computed(
-    () => volumeShapeAvailable.value && hasPlaybackSelection.value
-  )
-  function onGateSelection(gain: number): void {
-    if (!canGateSelection.value) return
-    const ratio = warpDraft.draftEffectiveRatio.value
-    const base = viewInMs.value
-    const durMs = volumeShapeDurationMs.value
-    const clampLocal = (sourceMs: number): number =>
-      Math.max(0, Math.min(durMs, sourceMsToVolumeTime(sourceMs, base, ratio)))
-    volumeShapeDraft.gateRange(clampLocal(selectionInMs.value), clampLocal(selectionEndMs.value), gain)
-    if (!volumeEditMode.value) volumeEditMode.value = true
-  }
-  function onSilenceSelection(): void {
-    onGateSelection(ENVELOPE_MIN_GAIN)
-  }
-  function onFullSelection(): void {
-    onGateSelection(1)
-  }
+  // Volume-region edit mode + selection gate/reset actions live in a focused unit.
+  const {
+    volumeEditMode,
+    volumeShapeAvailable,
+    volumeEditActive,
+    canResetVolumeShape,
+    onResetVolumeShape,
+    canGateSelection,
+    onSilenceSelection,
+    onFullSelection
+  } = useClipEditorVolumeRegion({
+    editsTimelineClip: () => editsTimelineClip.value,
+    viewExpanded,
+    volumeShapeDurationMs: () => volumeShapeDurationMs.value,
+    volumeShapeDraft,
+    hasPlaybackSelection: () => hasPlaybackSelection.value,
+    draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
+    viewInMs: () => viewInMs.value,
+    selectionInMs: () => selectionInMs.value,
+    selectionEndMs: () => selectionEndMs.value
+  })
 
 
   // Dirty-state + save/crop affordances live in `useClipEditorDirtyState`.

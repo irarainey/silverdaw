@@ -2,7 +2,7 @@ import { computed, onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 // Timeline canvas shell; Pixi drawing, drag/drop, scroll, and dialogs live in composables.
 
 import { useProjectStore } from '@/stores/projectStore'
-import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { isWarpPending } from '@/lib/warp'
@@ -22,6 +22,8 @@ import { useClipRename } from '@/lib/timeline/useClipRename'
 import { useTimelineRulerInteraction } from '@/lib/timeline/useTimelineRulerInteraction'
 import { useTimelineZoom } from '@/lib/timeline/useTimelineZoom'
 import { createRedrawScheduler } from '@/lib/timeline/useRedrawScheduler'
+import { useTimelineRepaintWatches } from '@/lib/timeline/useTimelineRepaintWatches'
+import { useTimelineHeaderResize } from '@/lib/timeline/useTimelineHeaderResize'
 
 
 export function useTimelineViewController(
@@ -270,112 +272,18 @@ export function useTimelineViewController(
     rafId = null
   }
 
-  // ─── Watches that trigger repaints ────────────────────────────────────────
-  watch(
-    () => [project.tracks.length, Object.keys(project.clips).length] as const,
-    () => {
-      redraw()
-      updatePlayhead()
-    }
-  )
-
-  watch(
-    () => Object.values(project.clips)
-      .map((clip) => [
-        clip.id,
-        clip.warpEnabled === true ? 1 : 0,
-        clip.pendingAutoWarp === true ? 1 : 0,
-        clip.warpMode ?? '',
-        clip.tempoRatio ?? '',
-        clip.semitones ?? '',
-        clip.cents ?? ''
-      ].join(':'))
-      .join('|'),
-    () => {
-      redraw()
-      updatePlayhead()
-    }
-  )
-
-  watch(
-    () => Object.values(project.clips)
-      .map((clip) => {
-        const item = library.byId[clip.libraryItemId]
-        const sourceBpm = item ? libraryItemSourceBpm(item, library.byId) : undefined
-        return [
-          clip.id,
-          clip.libraryItemId,
-          item?.kind ?? '',
-          item ? libraryItemDisplayName(item) : '',
-          item?.durationMs ?? '',
-          item?.derivedFrom?.inMs ?? '',
-          item?.derivedFrom?.durationMs ?? '',
-          sourceBpm ?? ''
-        ].join(':')
-      })
-      .join('|'),
-    () => {
-      redraw()
-      updatePlayhead()
-    }
-  )
-
-  // Track-height changes affect row positions and vertical scrollbar geometry.
-  watch(
-    () => project.tracks.map((t) => t.heightPx ?? 0).join(','),
-    () => {
-      clampScroll()
-      redraw()
-      updatePlayhead()
-    }
-  )
-
-  // Peaks revision avoids a deep watch on clip waveform data.
-  watch(
-    () => project.peaksRevision,
-    () => redraw()
-  )
-
-  // Both scroll axes change which content falls inside the culled draw window
-  // (vertical = which rows; horizontal = which clip/grid/tick band). Vertical
-  // scroll always rebuilds. Horizontal scroll translates the band immediately
-  // (O(1), crisp this frame) and only schedules a coalesced rebuild once it
-  // drifts past the overscan threshold — so panning and playback auto-follow
-  // stay translate-only per frame instead of rebuilding the scene each tick.
-  watch(scrollX, () => {
-    applyScroll()
-    if (drawing.horizontalRebuildNeeded()) redraw()
+  // ─── Watches that trigger repaints ────────────────────────────
+  // Each watcher sources a distinct reactive input; details live in the composable.
+  useTimelineRepaintWatches({
+    redraw: () => redraw(),
+    updatePlayhead: () => updatePlayhead(),
+    clampScroll,
+    applyScroll,
+    horizontalRebuildNeeded: () => drawing.horizontalRebuildNeeded(),
+    scrollX,
+    scrollY,
+    headerWidthRef
   })
-  watch(scrollY, () => redraw())
-
-  watch(
-    () => ui.waveformDisplayMode,
-    () => redraw()
-  )
-
-  // Track pan affects stereo waveform lane height/opacity.
-  watch(
-    () => project.tracks.map((t) => t.pan ?? 0).join(','),
-    () => redraw()
-  )
-
-  watch(
-    () => project.markers.map((marker) => `${marker.id}:${marker.positionMs}`).join('|'),
-    () => redraw()
-  )
-
-  // Transition overlays can change without clip movement.
-  watch(
-    () =>
-      project.tracks
-        .map((t) =>
-          (t.transitions ?? [])
-            .map((tr) => `${tr.id}:${tr.leftClipId}>${tr.rightClipId}:${tr.recipe.kind}`)
-            .join(',')
-        )
-        .join('|'),
-    () => redraw()
-  )
 
   // Project length changes only need scroll re-clamping.
   watch([maxScrollX, maxScrollY], () => {
@@ -384,23 +292,6 @@ export function useTimelineViewController(
       if (pendingSavedScrollX !== null) return
     }
     if (clampScroll()) applyScroll()
-  })
-
-  // BPM drives ruler ticks, grid lines, and snap units.
-  watch(() => transport.bpm, () => {
-    redraw()
-    updatePlayhead()
-  })
-
-  // Ruler bar labels depend on the project's bar-counter offset.
-  watch(() => project.barCounterStart, () => {
-    redraw()
-  })
-
-  // Header width participates in cached x positions.
-  watch(headerWidthRef, () => {
-    redraw()
-    updatePlayhead()
   })
 
   // ─── Zoom + scroll persistence ─────────────────────────────────────────────
@@ -509,38 +400,13 @@ export function useTimelineViewController(
     { flush: 'sync' }
   )
 
-  // Project length changes affect grid extent even when clip counts stay unchanged.
-  watch(
-    () => project.durationMs,
-    () => redraw()
-  )
 
   // ─── Track-header column resize ────────────────────────────────────────────
-
-  let headerResizePointerId: number | null = null
-  let headerResizeStartX = 0
-  let headerResizeStartWidth = 0
-
-  function onHeaderResizePointerDown(e: PointerEvent): void {
-    if (e.button !== 0) return
-    headerResizePointerId = e.pointerId
-    headerResizeStartX = e.clientX
-    headerResizeStartWidth = ui.trackHeaderWidth
-      ; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    e.preventDefault()
-  }
-
-  function onHeaderResizePointerMove(e: PointerEvent): void {
-    if (headerResizePointerId !== e.pointerId) return
-    const delta = e.clientX - headerResizeStartX
-    ui.setTrackHeaderWidth(headerResizeStartWidth + delta)
-  }
-
-  function onHeaderResizePointerUp(e: PointerEvent): void {
-    if (headerResizePointerId !== e.pointerId) return
-    headerResizePointerId = null
-      ; (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
-  }
+  const {
+    onHeaderResizePointerDown,
+    onHeaderResizePointerMove,
+    onHeaderResizePointerUp
+  } = useTimelineHeaderResize()
 
   return {
     project,

@@ -1,0 +1,205 @@
+// Timeline track-area painting: world-space grid lines, virtualized row
+// backgrounds, pinned per-track headers, and delegated clip rendering.
+
+import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
+import type { Application, Container, Graphics } from 'pixi.js'
+import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
+import { useTransportStore } from '@/stores/transportStore'
+import {
+  GRID_BAR,
+  GRID_BEAT,
+  GRID_SUB,
+  RULER_HEIGHT,
+  RULER_TICK,
+  SCROLLBAR_WIDTH,
+  SUBDIVISIONS_PER_BEAT,
+  TIME_SIG_NUM,
+  TRACK_BG,
+  TRACK_HEADER_BG
+} from './constants'
+import { buildTrackRowLayout } from './trackLayout'
+import type { GridGeometry } from './useGridGeometry'
+import type { createClipRenderer } from './clipRenderer'
+import { horizontalOverscanPx } from './timelineWindow'
+import { visibleSubRange } from './timelineWindow'
+
+export interface TimelineTracksRendererDeps {
+  app: ShallowRef<Application | null>
+  tracksLayer: ShallowRef<Container | null>
+  headersLayer: ShallowRef<Container | null>
+  GraphicsCtor: ShallowRef<typeof Graphics | null>
+  geometry: Pick<GridGeometry, 'pxPerSecond' | 'headerWidth'>
+  scrollX: Ref<number>
+  scrollY: Ref<number>
+  trackAreaHeight: ComputedRef<number>
+  project: ReturnType<typeof useProjectStore>
+  transport: ReturnType<typeof useTransportStore>
+  clipRenderer: ReturnType<typeof createClipRenderer>
+}
+
+export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
+  const {
+    app,
+    tracksLayer,
+    headersLayer,
+    GraphicsCtor,
+    geometry,
+    scrollX,
+    scrollY,
+    trackAreaHeight,
+    project,
+    transport,
+    clipRenderer
+  } = deps
+  const { pxPerSecond, headerWidth } = geometry
+
+  /** Full-height grid lines in world coordinates for translate-only scroll. */
+  function drawGrid(width: number): void {
+    const tracks = tracksLayer.value
+    const G = GraphicsCtor.value
+    if (!tracks || !G) return
+
+    if (project.tracks.length === 0) return
+
+    const rightEdge = width - SCROLLBAR_WIDTH
+    const gridLeft = headerWidth()
+    const gridTop = RULER_HEIGHT
+    const gridBottom = RULER_HEIGHT + trackAreaHeight.value
+    if (gridBottom <= gridTop || rightEdge <= gridLeft) return
+
+    const pxPerBeat = (60 / transport.bpm) * pxPerSecond.value
+    const pxPerSub = pxPerBeat / SUBDIVISIONS_PER_BEAT
+    const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
+
+    const viewWidth = rightEdge - gridLeft
+    const projectPx = (project.durationMs / 1000) * pxPerSecond.value
+    const lastSub = Math.ceil((projectPx + viewWidth) / pxPerSub)
+    // Window to the visible band (see drawRulerTicks); horizontal scroll rebuilds.
+    const { first: firstSub, last: lastVisibleSub } = visibleSubRange(
+      scrollX.value,
+      viewWidth,
+      pxPerSub,
+      lastSub
+    )
+
+    const subLines = new G()
+    const beatLines = new G()
+    const barLines = new G()
+
+    for (let s = firstSub; s <= lastVisibleSub; s++) {
+      const x = gridLeft + s * pxPerSub + 0.5
+      const isBar = s % subsPerBar === 0
+      const isBeat = s % SUBDIVISIONS_PER_BEAT === 0
+      const target = isBar ? barLines : isBeat ? beatLines : subLines
+      target.moveTo(x, gridTop).lineTo(x, gridBottom)
+    }
+    subLines.stroke({ color: GRID_SUB, width: 1, alpha: 0.5 })
+    beatLines.stroke({ color: GRID_BEAT, width: 1, alpha: 0.7 })
+    barLines.stroke({ color: GRID_BAR, width: 1, alpha: 0.95 })
+
+    tracks.addChild(subLines)
+    tracks.addChild(beatLines)
+    tracks.addChild(barLines)
+  }
+
+  /** Paint visible rows, headers, grid, and clips. Returns counts for stats. */
+  function drawTracks(width: number): { rows: number; clips: number } {
+    const a = app.value
+    const tracksL = tracksLayer.value
+    const headers = headersLayer.value
+    const G = GraphicsCtor.value
+    if (!a || !tracksL || !headers || !G) return { rows: 0, clips: 0 }
+
+    const rightEdge = width - SCROLLBAR_WIDTH
+    const visibleBottom = RULER_HEIGHT + trackAreaHeight.value
+
+    // Pinned header-column bg sits under per-track headers.
+    const headerColumnBg = new G()
+    headerColumnBg
+      .rect(0, RULER_HEIGHT, headerWidth(), a.renderer.screen.height - RULER_HEIGHT)
+      .fill(TRACK_HEADER_BG)
+    headers.addChildAt(headerColumnBg, 0)
+
+    // Pass 1: visible row backgrounds and pinned per-track headers.
+    const tracks = project.tracks
+    const viewWidth = rightEdge - headerWidth()
+    const projectPx = (project.durationMs / 1000) * pxPerSecond.value
+    const worldRowRight = headerWidth() + projectPx + viewWidth
+    // Horizontal virtualization: build clip geometry only within the visible
+    // viewport plus half a viewport of overscan each side, so redraw cost scales
+    // with the viewport — not the whole project × zoom. Horizontal scroll fires a
+    // coalesced redraw to re-centre this band (mirroring vertical scroll); the
+    // overscan covers the small distance scrolled before that redraw lands.
+    const overscan = horizontalOverscanPx(viewWidth)
+    const worldLeft = Math.max(0, scrollX.value + headerWidth() - overscan)
+    const worldRight = scrollX.value + rightEdge + overscan
+    const rowLayout = buildTrackRowLayout(tracks)
+    const visibleRows: {
+      track: (typeof tracks)[number]
+      worldY: number
+      rowHeight: number
+    }[] = []
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i]
+      if (!track) continue
+      const slot = rowLayout[i]
+      if (!slot) continue
+      const worldY = slot.top
+      const rowHeight = slot.height
+      const viewportY = worldY - scrollY.value
+
+      if (viewportY + rowHeight <= RULER_HEIGHT) continue
+      if (viewportY >= visibleBottom) break
+
+      // Header-column bg masks the row's left edge.
+      const rowBg = new G()
+      rowBg.rect(0, worldY, worldRowRight, rowHeight).fill(TRACK_BG)
+      tracksL.addChild(rowBg)
+
+      // Selected-track highlight sits above row bg but below grid and clips.
+      if (project.selectedTrackId === track.id) {
+        const palette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
+        const highlight = new G()
+        highlight
+          .rect(1, worldY + 1, worldRowRight - 2, rowHeight - 2)
+          .stroke({ color: palette.border, width: 2, alpha: 0.9 })
+        tracksL.addChild(highlight)
+      }
+
+      // Per-track header stays pinned in viewport coordinates.
+      const header = new G()
+      header.rect(0, viewportY, headerWidth(), rowHeight).fill(TRACK_HEADER_BG)
+      header
+        .moveTo(headerWidth() - 0.5, viewportY)
+        .lineTo(headerWidth() - 0.5, viewportY + rowHeight)
+        .stroke({ color: RULER_TICK, width: 1, alpha: 0.6 })
+      headers.addChild(header)
+
+      visibleRows.push({ track, worldY, rowHeight })
+    }
+
+    drawGrid(width)
+
+    let visibleClipCount = 0
+    for (const { track, worldY, rowHeight } of visibleRows) {
+      const trackPalette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
+      for (const clipId of track.clipIds) {
+        const clip = project.clips[clipId]
+        if (!clip) continue
+        const palette =
+          typeof clip.colorIndex === 'number'
+            ? TRACK_PALETTE[clip.colorIndex % TRACK_PALETTE.length]!
+            : trackPalette
+        clipRenderer.drawClip(clip, worldY, rowHeight, palette, worldLeft, worldRight, track.pan ?? 0)
+        ++visibleClipCount
+      }
+      // Overlap hatch sits above the clip blocks; crossfade curves above that.
+      clipRenderer.drawClipOverlaps(track, worldY, rowHeight, worldLeft, worldRight)
+      // Crossfade overlays sit above both partner clips.
+      clipRenderer.drawTrackTransitions(track, worldY, rowHeight, worldLeft, worldRight)
+    }
+    return { rows: visibleRows.length, clips: visibleClipCount }
+  }
+
+  return { drawTracks }
+}
