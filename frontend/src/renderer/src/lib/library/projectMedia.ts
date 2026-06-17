@@ -26,7 +26,12 @@ export async function saveProjectMedia(mediaId: string, sourceFilePath: string):
   }
 }
 
-/** Read a source's tags + cover (cover bytes attached) back by GUID, or null when absent. */
+/** Read a source's tags + cover (cover bytes attached) back by GUID, or null when absent.
+ *  The stored entry also carries the SOURCE file's audio geometry (duration / sample
+ *  rate / channel count), which is meaningless for a derived stem or sample sharing the
+ *  GUID — applying it would stretch a one-bar stem to the whole source. Strip it here so
+ *  the media store only ever supplies identity (tags + cover); every consumer keeps its
+ *  own decoded geometry. */
 export async function getProjectMedia(mediaId: string | undefined): Promise<AudioMetadata | null> {
   if (!mediaId) {
     log.info('media', 'getProjectMedia skipped (no mediaId on item)')
@@ -35,9 +40,17 @@ export async function getProjectMedia(mediaId: string | undefined): Promise<Audi
   try {
     const meta = await window.silverdaw.getProjectMedia(mediaId)
     log.info('media', `getProjectMedia id=${mediaId} found=${meta != null} cover=${meta?.coverArt != null}`)
-    return meta
+    return meta ? withoutAudioGeometry(meta) : null
   } catch (err) {
     log.warn('media', `getProjectMedia failed for ${mediaId}: ${String(err)}`)
     return null
   }
+}
+
+/** Drop the source file's audio geometry from media-store metadata so a derived item
+ *  (stem or sample) keeps its OWN duration / sample-rate / channel-count while still
+ *  inheriting identity tags + cover art. */
+export function withoutAudioGeometry(meta: AudioMetadata): AudioMetadata {
+  const { durationMs: _d, sampleRate: _s, channelCount: _c, ...rest } = meta
+  return rest
 }

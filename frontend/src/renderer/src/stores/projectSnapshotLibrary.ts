@@ -10,14 +10,6 @@ import type { AudioMetadata } from '@shared/types'
 import { filePathToBasename } from './projectHelpers'
 import type { SnapshotTarget } from './projectSnapshotTypes'
 
-/** Strip the source file's audio geometry from inherited metadata so a derived item
- *  (stem or sample) keeps its OWN duration/sample-rate/channel-count (decoded from its
- *  own file) while still inheriting identity tags + cover art from the media store. */
-function withoutAudioGeometry(meta: AudioMetadata): AudioMetadata {
-  const { durationMs: _d, sampleRate: _s, channelCount: _c, ...rest } = meta
-  return rest
-}
-
 export async function refreshLibraryItemMedia(
   itemId: string,
   filePath: string,
@@ -27,12 +19,11 @@ export async function refreshLibraryItemMedia(
   try {
     // Cover art + tags come from the project media store, keyed by the item's media
     // GUID — shared by the imported source and every stem/sample derived from it,
-    // surviving reload and removal of the origin. The store holds the SOURCE's
-    // geometry, so strip it (the item keeps its own, decoded below). Items without a
+    // surviving reload and removal of the origin. `getProjectMedia` already strips the
+    // source's geometry, so the item keeps its own (decoded below). Items without a
     // GUID (older projects) fall back to the file's own embedded tags.
     let metadata: AudioMetadata | null = mediaId ? await getProjectMedia(mediaId) : null
-    if (metadata) metadata = withoutAudioGeometry(metadata)
-    else metadata = await window.silverdaw.readAudioMetadata(filePath)
+    if (!metadata) metadata = await window.silverdaw.readAudioMetadata(filePath)
     library.setItemMetadata(itemId, metadata)
   } catch (err) {
     log.warn('library', `media refresh failed for ${filePath}: ${String(err)}`)
