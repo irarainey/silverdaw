@@ -1,0 +1,269 @@
+// Track + clip rebuild and post-reconciliation finalisation for PROJECT_STATE
+// snapshots. applyProjectTracks rebuilds tracks/clips and returns the clip ids
+// still needing peaks; finalizeProjectSnapshot requests those peaks, applies the
+// project length, restores reset-only view state, and migrates saved-clip windows.
+
+import { send as sendBridge } from '@/lib/bridgeService'
+import { sanitizeEnvelopePoints } from '@/lib/envelope'
+import { log } from '@/lib/log'
+import { useLibraryStore } from '@/stores/libraryStore'
+import type { ProjectStatePayload } from '@shared/bridge-protocol'
+import {
+  DEFAULT_TRACK_LENGTH_MS,
+  MAX_TRACK_VOLUME,
+  TRACK_PALETTE
+} from './projectTypes'
+import type { Clip } from './projectTypes'
+import { filePathToDisplayName, hydrateTransitions } from './projectHelpers'
+import type { SnapshotTarget } from './projectSnapshotTypes'
+
+/**
+ * Rebuild renderer tracks and clips from the backend snapshot, keeping optimistic
+ * local-only tracks/clips. Returns the clip ids that still need peaks fetched.
+ */
+export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStatePayload): string[] {
+  const library = useLibraryStore()
+  // Batch missing-peak requests after reconciliation.
+  const clipsNeedingPeaks: string[] = []
+  for (const t of snapshot.tracks) {
+    // Rebuild missing renderer tracks from the backend snapshot.
+    let track = target.tracks.find((x) => x.id === t.id)
+    if (!track) {
+      const index = target.tracks.length
+      const persistedName = t.name?.trim()
+      track = {
+        id: t.id,
+        name: persistedName && persistedName.length > 0 ? persistedName : `Track ${index + 1}`,
+        clipIds: [],
+        muted: t.muted === true && t.soloed !== true,
+        soloed: t.soloed === true,
+        volume: Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain)),
+        colorIndex:
+          typeof t.colorIndex === 'number' ? t.colorIndex : index % TRACK_PALETTE.length,
+        lengthMs: DEFAULT_TRACK_LENGTH_MS,
+        heightPx: typeof t.heightPx === 'number' && t.heightPx > 0 ? t.heightPx : undefined,
+        toneBassDb: typeof t.toneBassDb === 'number' && t.toneBassDb !== 0 ? t.toneBassDb : undefined,
+        toneMidDb: typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined,
+        toneTrebleDb:
+          typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined,
+        toneFilter: typeof t.toneFilter === 'number' && t.toneFilter !== 0 ? t.toneFilter : undefined,
+        reverbSend:
+          typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined,
+        delaySend:
+          typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined,
+        pan: typeof t.pan === 'number' && t.pan !== 0 ? t.pan : undefined,
+        levelerAmount:
+          typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
+            ? t.levelerAmount
+            : undefined
+      }
+      target.tracks.push(track)
+    } else {
+      const persistedName = t.name?.trim()
+      if (persistedName && persistedName.length > 0) {
+        track.name = persistedName
+      }
+      if (typeof t.heightPx === 'number' && t.heightPx > 0) {
+        track.heightPx = t.heightPx
+      }
+      // Adopt a persisted track colour; absent leaves the existing value intact.
+      if (typeof t.colorIndex === 'number') {
+        track.colorIndex = t.colorIndex
+      }
+      // Mute/solo acks arrive as PROJECT_STATE refreshes. Mute and solo are mutually
+      // exclusive; if a legacy project carries both, solo wins (clears mute).
+      track.muted = t.muted === true && t.soloed !== true
+      track.soloed = t.soloed === true
+      track.volume = Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain))
+      track.toneBassDb =
+        typeof t.toneBassDb === 'number' && t.toneBassDb !== 0 ? t.toneBassDb : undefined
+      track.toneMidDb =
+        typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined
+      track.toneTrebleDb =
+        typeof t.toneTrebleDb === 'number' && t.toneTrebleDb !== 0 ? t.toneTrebleDb : undefined
+      track.toneFilter =
+        typeof t.toneFilter === 'number' && t.toneFilter !== 0 ? t.toneFilter : undefined
+      track.reverbSend =
+        typeof t.sendReverb === 'number' && t.sendReverb !== 0 ? t.sendReverb : undefined
+      track.delaySend =
+        typeof t.sendDelay === 'number' && t.sendDelay !== 0 ? t.sendDelay : undefined
+      track.pan = typeof t.pan === 'number' && t.pan !== 0 ? t.pan : undefined
+      track.levelerAmount =
+        typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
+          ? t.levelerAmount
+          : undefined
+    }
+    // Transitions are backend-authoritative and cleared by absent snapshot data.
+    track.transitions = hydrateTransitions(t.transitions)
+    for (const c of t.clips) {
+      const offset = Math.max(0, c.offsetMs)
+      // Library item id is the clip source of truth; skip unknown ids.
+      const libItem = library.byId[c.libraryItemId]
+      if (!libItem) {
+        log.warn(
+          'project',
+          `skip clip ${c.id} — unknown libraryItemId=${c.libraryItemId}`
+        )
+        continue
+      }
+      const clipFilePath = libItem.filePath
+      const existing = target.clips[c.id]
+      if (existing) {
+        existing.startMs = offset
+        existing.inMs = Math.max(0, c.inMs ?? 0)
+        existing.durationMs = Math.max(0, c.durationMs)
+        existing.unresolved = c.unresolved === true
+        // Relinked library items must refresh existing clip path/name caches.
+        existing.filePath = clipFilePath
+        existing.fileName = filePathToDisplayName(clipFilePath)
+        existing.playbackFilePath = libItem.playbackFilePath
+        existing.colorIndex = typeof c.colorIndex === 'number' ? c.colorIndex : undefined
+        existing.name = typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined
+        existing.warpEnabled = typeof c.warpEnabled === 'boolean' ? c.warpEnabled : undefined
+        existing.warpMode = c.warpMode
+        existing.tempoRatio = typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined
+        existing.semitones = typeof c.semitones === 'number' ? c.semitones : undefined
+        existing.cents = typeof c.cents === 'number' ? c.cents : undefined
+        existing.envelopePoints =
+          Array.isArray(c.envelopePoints) && c.envelopePoints.length >= 2
+            ? sanitizeEnvelopePoints(c.envelopePoints)
+            : undefined
+        existing.effectiveDurationMs =
+          typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined
+        existing.effectiveTempoRatio =
+          typeof c.effectiveTempoRatio === 'number' ? c.effectiveTempoRatio : undefined
+        existing.effectiveWarpActive =
+          typeof c.effectiveWarpActive === 'boolean' ? c.effectiveWarpActive : undefined
+        existing.pendingAutoWarp =
+          c.pendingAutoWarp === true && existing.warpEnabled !== true ? true : undefined
+        existing.locked = c.locked === true ? true : undefined
+        if (existing.peaks.length === 0) clipsNeedingPeaks.push(c.id)
+        continue
+      }
+      // Placeholder draws immediately; peaks are requested later.
+      const fileName = filePathToDisplayName(clipFilePath)
+      const placeholder: Clip = {
+        id: c.id,
+        trackId: t.id,
+        libraryItemId: c.libraryItemId,
+        filePath: clipFilePath,
+        playbackFilePath: libItem.playbackFilePath,
+        fileName,
+        startMs: offset,
+        inMs: Math.max(0, c.inMs ?? 0),
+        durationMs: Math.max(0, c.durationMs),
+        sampleRate: libItem.sampleRate,
+        channelCount: libItem.channelCount,
+        peaks: libItem.peaks.length > 0 ? libItem.peaks : new Float32Array(0),
+        unresolved: c.unresolved === true,
+        colorIndex: typeof c.colorIndex === 'number' ? c.colorIndex : undefined,
+        name: typeof c.name === 'string' && c.name.trim().length > 0 ? c.name : undefined,
+        warpEnabled: typeof c.warpEnabled === 'boolean' ? c.warpEnabled : undefined,
+        warpMode: c.warpMode,
+        tempoRatio: typeof c.tempoRatio === 'number' ? c.tempoRatio : undefined,
+        semitones: typeof c.semitones === 'number' ? c.semitones : undefined,
+        cents: typeof c.cents === 'number' ? c.cents : undefined,
+        envelopePoints:
+          Array.isArray(c.envelopePoints) && c.envelopePoints.length >= 2
+            ? sanitizeEnvelopePoints(c.envelopePoints)
+            : undefined,
+        effectiveDurationMs:
+          typeof c.effectiveDurationMs === 'number' ? c.effectiveDurationMs : undefined,
+        effectiveTempoRatio:
+          typeof c.effectiveTempoRatio === 'number' ? c.effectiveTempoRatio : undefined,
+        effectiveWarpActive:
+          typeof c.effectiveWarpActive === 'boolean' ? c.effectiveWarpActive : undefined,
+        pendingAutoWarp:
+          c.pendingAutoWarp === true && c.warpEnabled !== true ? true : undefined,
+        locked: c.locked === true ? true : undefined,
+        reversed: c.reversed === true ? true : undefined
+      }
+      target.clips[c.id] = placeholder
+      track.clipIds.push(c.id)
+      // Missing sources cannot produce peaks.
+      if (!placeholder.unresolved) clipsNeedingPeaks.push(c.id)
+      const clipEnd = placeholder.startMs + placeholder.durationMs
+      if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
+      if (track.clipIds.length === 1 && /^Track \d+$/.test(track.name)) {
+        track.name = fileName
+      }
+    }
+  }
+  // Backend order wins; optimistic local-only tracks stay appended.
+  if (snapshot.tracks.length > 0) {
+    const indexOf = new Map<string, number>()
+    for (let i = 0; i < snapshot.tracks.length; i++) {
+      const id = snapshot.tracks[i]?.id
+      if (id) indexOf.set(id, i)
+    }
+    const SENTINEL = Number.MAX_SAFE_INTEGER
+    target.tracks.sort((a, b) => {
+      const ai = indexOf.has(a.id) ? indexOf.get(a.id)! : SENTINEL
+      const bi = indexOf.has(b.id) ? indexOf.get(b.id)! : SENTINEL
+      return ai - bi
+    })
+  }
+  return clipsNeedingPeaks
+}
+
+/**
+ * After tracks/clips exist: request missing peaks, apply project length, restore
+ * reset-only view state, and migrate saved-clip windows to their saved item.
+ */
+export function finalizeProjectSnapshot(
+  target: SnapshotTarget,
+  snapshot: ProjectStatePayload,
+  isSoftReplace: boolean,
+  clipsNeedingPeaks: string[],
+  pendingProjectLengthMs: number | null
+): void {
+  const library = useLibraryStore()
+  // Additive snapshots must not drop optimistic local tracks/clips.
+  // Missing peaks are requested after reconciliation and arrive as WAVEFORM_DATA.
+  for (const clipId of clipsNeedingPeaks) {
+    sendBridge('WAVEFORM_REQUEST', { clipId })
+  }
+
+  // Project length applies after tracks exist and clamps above clip ends.
+  if (pendingProjectLengthMs !== null && target.tracks.length > 0) {
+    target.setProjectLengthMs(pendingProjectLengthMs)
+  }
+
+  // Restore reset-only view state directly so it does not echo to the backend.
+  if (snapshot.reset === true) {
+    const savedSelected =
+      typeof snapshot.viewSelectedTrack === 'string' && snapshot.viewSelectedTrack.length > 0
+        ? snapshot.viewSelectedTrack
+        : null
+    target.selectedTrackId =
+      savedSelected !== null && target.tracks.some((t) => t.id === savedSelected)
+        ? savedSelected
+        : null
+    target.fxPanelOpen = snapshot.viewFxPanelOpen === true
+    target.fxTab = 'track'
+    target.peaksRevision++
+  }
+
+  // Migration: rebind pre-existing saved-clip windows to their saved item.
+  if (snapshot.reset === true || isSoftReplace) {
+    for (const clipId in target.clips) {
+      const clip = target.clips[clipId]
+      if (!clip) continue
+      const candidate = library.items.find(
+        (i) =>
+          i.kind === 'saved-clip' &&
+          i.derivedFrom?.sourceItemId === clip.libraryItemId &&
+          Math.abs((i.derivedFrom?.inMs ?? 0) - clip.inMs) < 0.5 &&
+          Math.abs((i.derivedFrom?.durationMs ?? 0) - clip.durationMs) < 0.5
+      )
+      if (candidate && candidate.id !== clip.libraryItemId) {
+        log.info(
+          'project',
+          `migrate clip ${clipId} libraryItemId=${clip.libraryItemId} -> ${candidate.id} (saved-clip window match)`
+        )
+        clip.libraryItemId = candidate.id
+        sendBridge('CLIP_REBIND', { clipId, libraryItemId: candidate.id })
+      }
+    }
+  }
+}
