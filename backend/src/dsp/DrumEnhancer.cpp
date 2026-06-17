@@ -1,5 +1,7 @@
 #include "DrumEnhancer.h"
 
+#include "EnhancerDsp.h"
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -8,6 +10,15 @@ namespace silverdaw
 {
 namespace
 {
+
+using enhancer_dsp::applyHighPass;
+using enhancer_dsp::expansionGainDb;
+using enhancer_dsp::kContrastBypassDb;
+using enhancer_dsp::kContrastHalfRangeDb;
+using enhancer_dsp::kSilenceFloor;
+using enhancer_dsp::percentile;
+using enhancer_dsp::sanitiseInPlace;
+using enhancer_dsp::softLimitInPlace;
 
 // Per-strength tuning. The subsonic corner clears DC/rumble only. The expander
 // threshold sits `thresholdBelowDb` under a robust high-percentile "active drum
@@ -59,83 +70,6 @@ double transientBoostDbFor(DrumEnhanceStrength strength) noexcept
 // a stable estimate.
 constexpr double kEnvelopeWindowMs = 10.0;
 
-// Below this peak the stem is treated as silent and the expander is skipped: the
-// threshold would be meaningless and we must never divide by (or log) zero.
-constexpr float kSilenceFloor = 1.0e-6F;
-
-// Loud/quiet contrast guards (active p95 minus gap p20, in dB). Below the bypass
-// floor the stem has effectively no gaps (dense rolls, continuous cymbals, brush
-// work) and gating would only expose artefacts, so the expander is skipped.
-// Between the floor and the full threshold the range is halved to stay gentle.
-constexpr double kContrastBypassDb = 6.0;
-constexpr double kContrastHalfRangeDb = 12.0;
-
-// Direct Form I biquad in double precision. Offline use only, so it is a plain
-// per-channel filter with no lock-free/atomic machinery. Coefficients are
-// normalised on assignment.
-struct Biquad
-{
-    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
-    double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
-
-    inline double process(double x) noexcept
-    {
-        const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-        x2 = x1;
-        x1 = x;
-        y2 = y1;
-        y1 = y;
-        return y;
-    }
-};
-
-// RBJ 2nd-order Butterworth high-pass (Q = 1/sqrt(2)). Corner is clamped safely
-// below Nyquist.
-Biquad designButterHighPass(double sampleRate, double freqHz) noexcept
-{
-    Biquad f;
-    const double fs = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
-    const double freq = std::clamp(freqHz, 10.0, fs * 0.49);
-    const double w0 = 2.0 * juce::MathConstants<double>::pi * freq / fs;
-    const double cw = std::cos(w0);
-    const double sw = std::sin(w0);
-    const double q = 1.0 / std::sqrt(2.0);
-    const double alpha = sw / (2.0 * q);
-    const double a0 = 1.0 + alpha;
-    const double onePlusCw = 1.0 + cw;
-
-    f.b0 = (onePlusCw / 2.0) / a0;
-    f.b1 = (-onePlusCw) / a0;
-    f.b2 = (onePlusCw / 2.0) / a0;
-    f.a1 = (-2.0 * cw) / a0;
-    f.a2 = (1.0 - alpha) / a0;
-    return f;
-}
-
-// Replaces any non-finite sample with zero so a stray NaN/Inf from the model can
-// never poison the filter state, the level statistics, or the output WAV.
-void sanitiseInPlace(juce::AudioBuffer<float>& buffer) noexcept
-{
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    {
-        float* data = buffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            if (! std::isfinite(data[i]))
-                data[i] = 0.0F;
-    }
-}
-
-void applyHighPass(juce::AudioBuffer<float>& buffer, double sampleRate, double freqHz) noexcept
-{
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    {
-        Biquad f = designButterHighPass(sampleRate, freqHz);
-        float* data = buffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            data[i] = static_cast<float>(f.process(static_cast<double>(data[i])));
-    }
-}
-
 // Cross-channel sample detector: the loudest channel drives one shared gain so
 // the stereo image and kit balance are preserved. Summing L+R is avoided because
 // phasey separated material can cancel.
@@ -166,35 +100,6 @@ std::vector<double> windowPeaks(const juce::AudioBuffer<float>& buffer, double s
         peaks.push_back(peak);
     }
     return peaks;
-}
-
-// Linear value at a [0,1] percentile of a copy-sorted series (nearest-rank).
-double percentile(std::vector<double> values, double p) noexcept
-{
-    if (values.empty()) return 0.0;
-    std::sort(values.begin(), values.end());
-    const double clamped = std::clamp(p, 0.0, 1.0);
-    auto idx = static_cast<size_t>(clamped * static_cast<double>(values.size() - 1) + 0.5);
-    return values[std::min(idx, values.size() - 1)];
-}
-
-// Soft-knee downward-expansion static curve. `over` is the detector level in dB
-// relative to the threshold; returns the gain (dB, <= 0). The knee makes the
-// transition continuous in value and slope so there are no audible steps.
-double expansionGainDb(double overDb, double slope, double kneeDb, double rangeDb) noexcept
-{
-    const double halfKnee = kneeDb * 0.5;
-    double gainDb;
-    if (overDb >= halfKnee)
-        gainDb = 0.0;
-    else if (overDb <= -halfKnee)
-        gainDb = slope * overDb;
-    else
-    {
-        const double d = halfKnee - overDb; // 0..kneeDb across the knee
-        gainDb = -slope * (d * d) / (2.0 * kneeDb);
-    }
-    return std::max(gainDb, -rangeDb);
 }
 
 // Wide-band downward expander with an instant attack + hold + slow release
@@ -311,27 +216,7 @@ void applyTransientDesigner(juce::AudioBuffer<float>& buffer, double sampleRate,
     }
 }
 
-// Soft-knee peak safety. Samples below the knee pass through unchanged (so steady
-// levels and the body of the signal are untouched); only peaks pushed past the
-// knee by the transient gain are smoothly compressed toward the ceiling, avoiding
-// hard-clip distortion without altering the rest of the signal.
-void softLimitInPlace(juce::AudioBuffer<float>& buffer) noexcept
-{
-    constexpr float knee = 0.9F;
-    constexpr float ceiling = 0.9999F;
-    const float range = ceiling - knee;
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    {
-        float* data = buffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-        {
-            const float a = std::abs(data[i]);
-            if (a <= knee) continue;
-            const float comp = range * std::tanh((a - knee) / range);
-            data[i] = std::copysign(knee + comp, data[i]);
-        }
-    }
-}
+// Soft-knee peak safety is shared via enhancer_dsp::softLimitInPlace.
 
 } // namespace
 

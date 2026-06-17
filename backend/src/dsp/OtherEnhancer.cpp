@@ -1,5 +1,7 @@
 #include "OtherEnhancer.h"
 
+#include "EnhancerDsp.h"
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -10,6 +12,12 @@ namespace silverdaw
 {
 namespace
 {
+
+using enhancer_dsp::applyHighPass;
+using enhancer_dsp::kSilenceFloor;
+using enhancer_dsp::percentile;
+using enhancer_dsp::sanitiseInPlace;
+using enhancer_dsp::softLimitInPlace;
 
 // Per-strength tuning. The subsonic corner clears DC/rumble the residual
 // collects from imperfect bass/drum/vocal estimates. `floorPercentile` picks the
@@ -59,75 +67,6 @@ constexpr double kActiveFrameEnergyFraction = 1.0e-5;
 // this, the STFT stage is skipped entirely: the change would be inaudible and
 // not worth the reconstruction cost or artefact risk.
 constexpr double kSelfBypassAttenDb = 0.3;
-
-// Below this the stem is treated as silent and the STFT stage is skipped.
-constexpr float kSilenceFloor = 1.0e-6F;
-
-struct Biquad
-{
-    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
-    double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
-
-    inline double process(double x) noexcept
-    {
-        const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-        x2 = x1;
-        x1 = x;
-        y2 = y1;
-        y1 = y;
-        return y;
-    }
-};
-
-// RBJ 2nd-order Butterworth high-pass (Q = 1/sqrt(2)).
-Biquad designButterHighPass(double sampleRate, double freqHz) noexcept
-{
-    const double fs = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
-    const double freq = std::clamp(freqHz, 10.0, fs * 0.49);
-    const double w0 = 2.0 * juce::MathConstants<double>::pi * freq / fs;
-    const double cw = std::cos(w0);
-    const double alpha = std::sin(w0) / (2.0 * (1.0 / std::sqrt(2.0)));
-    Biquad f;
-    const double a0 = 1.0 + alpha;
-    const double onePlusCw = 1.0 + cw;
-    f.b0 = (onePlusCw / 2.0) / a0;
-    f.b1 = (-onePlusCw) / a0;
-    f.b2 = (onePlusCw / 2.0) / a0;
-    f.a1 = (-2.0 * cw) / a0;
-    f.a2 = (1.0 - alpha) / a0;
-    return f;
-}
-
-void sanitiseInPlace(juce::AudioBuffer<float>& buffer) noexcept
-{
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    {
-        float* data = buffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            if (! std::isfinite(data[i]))
-                data[i] = 0.0F;
-    }
-}
-
-void applyHighPass(juce::AudioBuffer<float>& buffer, double sampleRate, double freqHz) noexcept
-{
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    {
-        Biquad f = designButterHighPass(sampleRate, freqHz);
-        float* data = buffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            data[i] = static_cast<float>(f.process(static_cast<double>(data[i])));
-    }
-}
-
-double percentile(std::vector<float>& values, double p) noexcept
-{
-    if (values.empty()) return 0.0;
-    std::sort(values.begin(), values.end());
-    const double clamped = std::clamp(p, 0.0, 1.0);
-    auto idx = static_cast<size_t>(clamped * static_cast<double>(values.size() - 1) + 0.5);
-    return values[std::min(idx, values.size() - 1)];
-}
 
 // Soft-knee spectral gain: unity at/above kUnityRatio×threshold, smoothly down to
 // `floorGain` at/below the threshold. `ratio` is magnitude / threshold.
@@ -415,26 +354,7 @@ double stereoWidthFor(OtherEnhanceStrength strength) noexcept
     }
 }
 
-// Soft-knee peak safety. Samples below the knee pass through unchanged; only peaks
-// pushed past the knee by the widened side are smoothly compressed toward the
-// ceiling, avoiding hard-clip distortion without altering the rest of the signal.
-void softLimitInPlace(juce::AudioBuffer<float>& buffer) noexcept
-{
-    constexpr float knee = 0.9F;
-    constexpr float ceiling = 0.9999F;
-    const float range = ceiling - knee;
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    {
-        float* data = buffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-        {
-            const float a = std::abs(data[i]);
-            if (a <= knee) continue;
-            const float comp = range * std::tanh((a - knee) / range);
-            data[i] = std::copysign(knee + comp, data[i]);
-        }
-    }
-}
+// Soft-knee peak safety is shared via enhancer_dsp::softLimitInPlace.
 
 } // namespace
 

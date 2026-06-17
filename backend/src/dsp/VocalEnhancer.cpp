@@ -1,5 +1,7 @@
 #include "VocalEnhancer.h"
 
+#include "EnhancerDsp.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -7,6 +9,10 @@ namespace silverdaw
 {
 namespace
 {
+
+using enhancer_dsp::applyHighPass;
+using enhancer_dsp::kSilenceFloor;
+using enhancer_dsp::sanitiseInPlace;
 
 // Per-strength tuning. The high-pass corner clears sub-bass bleed/rumble; the
 // expander only acts on material well below the stem's own peak, so quiet vocal
@@ -38,78 +44,6 @@ StrengthParams paramsFor(VocalEnhanceStrength strength) noexcept
 // that the expander relaxes smoothly into phrases instead of pumping.
 constexpr double kAttackMs = 5.0;
 constexpr double kReleaseMs = 150.0;
-
-// Below this peak the stem is treated as silent and the expander is skipped: the
-// threshold would be meaningless and we must never divide by (or log) zero.
-constexpr float kSilenceFloor = 1.0e-6F;
-
-// Direct Form I biquad in double precision. Offline use only, so it is a plain
-// per-channel filter with no lock-free/atomic machinery (unlike the real-time
-// ToneEq). Coefficients are normalised on assignment.
-struct Biquad
-{
-    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
-    double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
-
-    void reset() noexcept { x1 = x2 = y1 = y2 = 0.0; }
-
-    inline double process(double x) noexcept
-    {
-        const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-        x2 = x1;
-        x1 = x;
-        y2 = y1;
-        y1 = y;
-        return y;
-    }
-};
-
-// RBJ 2nd-order Butterworth high-pass (Q = 1/sqrt(2)); mirrors the corner design
-// used elsewhere in the engine. Corner is clamped safely below Nyquist.
-Biquad designButterHighPass(double sampleRate, double freqHz) noexcept
-{
-    Biquad f;
-    const double fs = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
-    const double freq = std::clamp(freqHz, 10.0, fs * 0.49);
-    const double w0 = 2.0 * juce::MathConstants<double>::pi * freq / fs;
-    const double cw = std::cos(w0);
-    const double sw = std::sin(w0);
-    const double q = 1.0 / std::sqrt(2.0);
-    const double alpha = sw / (2.0 * q);
-    const double a0 = 1.0 + alpha;
-    const double onePlusCw = 1.0 + cw;
-
-    f.b0 = (onePlusCw / 2.0) / a0;
-    f.b1 = (-onePlusCw) / a0;
-    f.b2 = (onePlusCw / 2.0) / a0;
-    f.a1 = (-2.0 * cw) / a0;
-    f.a2 = (1.0 - alpha) / a0;
-    return f;
-}
-
-// Replaces any non-finite sample with zero so a stray NaN/Inf from the model can
-// never poison the filter state, the peak measurement, or the output WAV.
-void sanitiseInPlace(juce::AudioBuffer<float>& buffer) noexcept
-{
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    {
-        float* data = buffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            if (! std::isfinite(data[i]))
-                data[i] = 0.0F;
-    }
-}
-
-void applyHighPass(juce::AudioBuffer<float>& buffer, double sampleRate, double freqHz) noexcept
-{
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-    {
-        Biquad f = designButterHighPass(sampleRate, freqHz);
-        float* data = buffer.getWritePointer(ch);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            data[i] = static_cast<float>(f.process(static_cast<double>(data[i])));
-    }
-}
 
 float bufferPeak(const juce::AudioBuffer<float>& buffer) noexcept
 {

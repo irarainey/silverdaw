@@ -432,6 +432,7 @@ add_library(silverdaw_backend_core STATIC
     # dsp
     src/dsp/BpmDetector.cpp
     src/dsp/LoudnessAnalyzer.cpp
+    src/dsp/EnhancerDsp.cpp
     src/dsp/VocalEnhancer.cpp
     src/dsp/VocalDenoiser.cpp
     src/dsp/DrumEnhancer.cpp
