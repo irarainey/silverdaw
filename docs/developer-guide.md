@@ -231,10 +231,11 @@ Silverdaw currently supports the core arrangement workflow:
   dependent timeline clip is silently unlinked first so the audio plays on as an
   independent clip referencing the underlying source file.
 - Bake timeline clips or saved-clip library items into new WAV samples with
-  **Save as sample**. The generated file is written under a `Samples` folder
-  and added back to the library as a normal audio-file item. Warped clips are
-  rendered through Rubber Band so the baked sample matches the current
-  tempo/pitch state.
+  **Save as sample**. The generated file is written under a per-source subfolder of
+  the `samples` folder and added back to the library as an audio-file item that
+  inherits the source's cover art and tags. A **simple** (non-music) sample bakes
+  the clip's warp/pitch through Rubber Band into a flat one-shot; a **music** sample
+  keeps the source tempo/pitch and inherits its grid instead.
 - Inline rename for library items (single-click into the name) and timeline clips
   (double-click the clip title). Renames persist with the project; if the renamed
   clip is saved to the library, the library entry inherits the same name.
@@ -270,8 +271,9 @@ Silverdaw currently supports the core arrangement workflow:
   source doesn't match. The transport bar's **RATE** column shows the
   effective project rate at all times. See [Project sample rate](#project-sample-rate).
 - **Tempo confidence and sample classification.** When BPM analysis comes back at
-  low confidence the grid is shown as **tempo-unverified** (an amber hint) rather
-  than hidden — it stays visible and warpable. A track is only treated as a
+  low confidence the grid stays visible and warpable rather than hidden — there is
+  no separate amber "unverified" marker on the BPM (the classification control still
+  notes a low-confidence tempo in words). A track is only treated as a
   non-musical **sample** (badges and beat markers hidden, auto-warp on drop
   skipped, project-BPM seed suppressed) through an explicit per-source-item
   **Auto / Music / Sample** override from the library tile context menu or the
@@ -607,7 +609,8 @@ project edits or changing the dirty flag. Logic lives in
 
 **Portable project folder** — Save / Save As nests the project into its own folder
 (`<chosen dir>/<Name>/<Name>.silverdaw`) so all generated artifacts can live beside it
-(`Stems\`, `Samples\`). At the disk boundary `ProjectFile.cpp` rewrites path properties
+(`stems/`, `samples/`, plus the `metadata/` and `covers/` media store described below).
+At the disk boundary `ProjectFile.cpp` rewrites path properties
 (`filePath`, `playbackFilePath`) **relative to the project folder** when they point inside
 it, and keeps them absolute otherwise — so original source files and machine-local caches
 stay absolute while project-internal stems/samples become relative. The in-memory tree and
@@ -619,23 +622,37 @@ sit at the same absolute path on the other machine. Peaks are deliberately **not
 with the project — they are a regenerable cache (`<appData>/Silverdaw/peaks`) rebuilt from
 source on demand.
 
+**Central media store (cover art + tags)** — embedded tag metadata and cover art are not
+stored per library item. At first import each source file is minted a **media GUID**, and
+its tags are written to `<projectDir>/metadata/<guid>.json` and its cover image to
+`<projectDir>/covers/<guid>.<ext>` (before the first save the store lives in the temp
+workspace `<temp>/Silverdaw/{metadata,covers}` registered at startup, copied into the
+project folder on save). Every derived item — stems
+and samples — **carries the source's GUID** (the backend resolves it by walking the
+`sourceItemId` provenance chain) so it reads the same cover art and tags from that one
+store entry, even after the original library item is removed. The renderer reads/writes the
+store through guarded main-process IPC (`media:get` / `media:save`, roots registered by
+`registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`.
+
 **Temporary workspace + migrate-on-save** — until a project is first saved it has no
 folder, so generated stems and samples are written to a shared temp workspace
-(`<temp>/Silverdaw/{Stems,Samples}`; the backend derives this from `juce::File::tempDirectory`
-and the renderer trusts `<temp>/Silverdaw/Stems` for reads/sidecars via
+(`<temp>/Silverdaw/{stems,samples}`; the backend derives this from `juce::File::tempDirectory`
+and the renderer trusts `<temp>/Silverdaw/stems` for reads via
 `registerStemsWriteRoot`). Unsaved work is therefore **temporary — lost if the project is
 never saved**. On the first save (`handleProjectSave` when `session.currentPath` was empty),
 `migrateTempArtifactsIntoProject` runs *before* serialization: it stops the engine,
 `removeClip`s every clip (releasing the open WAV file handles Windows would otherwise lock),
-merge-moves the temp `Stems`/`Samples` into the project folder, rebases the in-memory path
+merge-moves the temp `stems`/`samples` into the project folder, rebases the in-memory path
 properties (`ProjectState::rebaseArtifactPaths`), rebuilds the engine at the new paths,
-restores the playhead, and deletes the whole temp root. The subsequent `PROJECT_STATE`
-broadcast re-syncs the renderer's library/clip paths and re-reads stem media from the new
-location. Starting a New project (`handleProjectNew`) also purges the temp workspace, since
-a new project abandons any unsaved artifacts. The artifact base directories are chosen by a
-single backend helper, `projectArtifactsBaseDir(projectPath, subdir)` — `<projectDir>/<subdir>`
-when saved, else `<temp>/Silverdaw/<subdir>` — so stems (`StemSeparationCommands`) and samples
-(`SampleExport`) share the same temp-vs-project decision and no path is passed over the bridge.
+restores the playhead, and deletes the whole temp root. The renderer separately copies the
+temp media store (`metadata/`, `covers/`) into the project folder on save. The subsequent
+`PROJECT_STATE` broadcast re-syncs the renderer's library/clip paths and re-reads media from
+the new location. Starting a New project (`handleProjectNew`) also purges the temp workspace,
+since a new project abandons any unsaved artifacts. The artifact base directories are chosen
+by a single backend helper, `projectArtifactsBaseDir(projectPath, subdir)` —
+`<projectDir>/<subdir>` when saved, else `<temp>/Silverdaw/<subdir>` — so stems
+(`StemSeparationCommands`) and samples (`SampleExport`) share the same temp-vs-project
+decision and no path is passed over the bridge.
 
 **Missing files** — on every `tracksAsJson` / `libraryAsJson` call, the backend resolves
 each clip's library item and stat()s the underlying source path. Anything that's gone
@@ -993,11 +1010,11 @@ ambience, vocal one-shots and sound effects that BTrack would otherwise report
 bogus tempo / beat positions for.
 
 Crucially, **`lowConfidence` no longer classifies an item as a sample.** It is a
-*tempo-unverified* signal: the grid is still drawn (and the clip is still
-warpable), but the library tile and Info dialog mark the BPM as unverified (an
-amber hint) via `libraryItemTempoUnverified(item, byId)`. This avoids the previous
-behaviour where any musical track BTrack was merely unsure about lost its beat
-grid. The renderer treats a library item as a non-musical "sample" via a single
+*tempo-unverified* signal: the grid is still drawn and the clip is still warpable,
+so a musical track BTrack is merely unsure about no longer loses its beat grid.
+(The classification helper `libraryItemTempoUnverified(item, byId)` still exposes
+this signal, but the UI no longer surfaces a separate amber marker for it.) The
+renderer treats a library item as a non-musical "sample" via a single
 helper, `libraryItemIsSample(item, byId)`, with the resolution order:
 
 1. user override `item.sampleMode` (`'sample'` / `'music'`),
@@ -1017,7 +1034,7 @@ Set the classification from the library tile's right-click menu
 items only; saved clips inherit) or from the **Treat as** radio in the
 Library Item Info dialog. The `LIBRARY_ITEM_SET_SAMPLE_MODE { itemId, mode }`
 envelope round-trips the choice (undoable); `mode = 'auto'` clears the override so
-the item falls back to music (tempo-unverified if `lowConfidence`).
+the item falls back to music.
 
 ### Beat markers and source-beat snap
 
@@ -1096,18 +1113,18 @@ separates the **whole track**. Either way the source is untouched
 under its source group. Because each stem is sample-aligned with its source it
 **inherits** the source's analysis (BPM, beat grid, key, variable-tempo flag)
 rather than being re-analysed. On disk each separation writes its WAVs into a
-`Stems\<sourceName>-stems` folder (disambiguated with `-2`/`-3`… for repeat runs)
+`stems\<sourceName>-stems` folder (disambiguated with `-2`/`-3`… for repeat runs)
 **beside the saved project file**, so they travel with the project folder when it
 is moved or synced between machines; an **unsaved** project writes them to the
-temporary workspace (`<temp>/Silverdaw/Stems`) and they are migrated into the
+temporary workspace (`<temp>/Silverdaw/stems`) and they are migrated into the
 project folder on the first save (or discarded if the project is never saved).
 Each stem file basename also carries a **unique GUID token**
 (`<sourceName> - <stem> - <guid>.wav`) so regenerating stems from the same source
 never overwrites earlier files — including when an unsaved temp workspace is later
-merged into a saved project's `Stems` folder. Each folder also
-carries a `metadata.json` + `cover.<ext>` **sidecar**, written through guarded
-main-process IPC scoped to the stems directory, so a stem keeps the original's
-tags and artwork even after the source item is removed. Because separated stems
+merged into a saved project's `stems` folder. A stem inherits the source's **media
+GUID**, so it keeps the original's tags and artwork (resolved from the central
+`metadata/` + `covers/` store, see *Project state model*) even after the source
+item is removed. Because separated stems
 are already WAV, they are played back directly from their project file — the
 `DecodedCache` short-circuits a WAV source (it only transcodes non-WAV formats),
 so no redundant (and, for float stems, lossy) decoded copy is written to the
@@ -1163,18 +1180,27 @@ saved clip describes.
 
 **Samples** — right-click a timeline clip or a saved-clip library tile and choose
 **Save as sample** to bake a new WAV. Silverdaw writes the file to
-`Samples\<name>-sample-001.wav` under the current project folder, or to the
-temporary workspace (`<temp>/Silverdaw/Samples`) when the project has not been
-saved yet — temp samples migrate into the project folder on the first save. The
-numeric
-suffix increments for duplicate base names. The baked WAV is added as a normal
-audio-file library item; deleting that library item removes the reference from
-the project but leaves the WAV file on disk. Warped clips are rendered through
-Rubber Band during the bake so the sample sounds like the clip did on the
-timeline.
+`samples\<sourceFileName>\<name>-sample-001.wav` — grouped in a per-source subfolder
+named after the source's (sanitised) file name, under the current project folder, or
+under the temporary workspace
+(`<temp>/Silverdaw/samples`) when the project has not been saved yet; temp samples
+migrate into the project folder on the first save. The numeric
+suffix increments for duplicate base names. There are two flavours: a **music
+sample** inherits the source's tempo/key grid so it warps and shows its grid, while
+a **simple sample** is a non-musical one-shot — the presence of pitch + BPM is the
+only difference. The baked WAV is added as an
+audio-file library item that **records its source** (`sourceItemId`, persisted in
+the project file): that provenance both inherits the source's cover art + tags via
+the shared media GUID and marks the item as a saved sample rather than an ordinary
+import. Deleting that library item removes the reference from
+the project but leaves the WAV file on disk. A simple sample bakes the clip's
+warp/pitch through Rubber Band during export so the one-shot sounds like the clip did
+on the timeline; a music sample is exported at the source tempo/pitch so it can
+re-warp on drop.
 
 > **Re-baking is non-destructive and unlinked.** Every **Save as sample** run
-> creates a *new, independent* WAV — the resulting library item is not linked
+> creates a *new, independent* WAV. The resulting item records its source only for
+> cover-art / tag inheritance and sample identification — it is not *live-linked*
 > back to the clip it was baked from. Running it again on the same saved clip
 > always produces a fresh sample (`…-sample-002.wav`, `-003`, …) rather than
 > overwriting the previous one, and future edits to the source clip's trim,
@@ -1187,7 +1213,10 @@ based on their source and offset; renaming is the same flow.
 
 Double-click a tile to open the **Clip Editor** (see below). To view the read-only
 information dialog instead — file details, technical audio details, detected
-BPM/beat/key metadata, tag metadata, cover art and which tracks currently use the
+BPM/beat/key metadata (the BPM shown in the same pill style as the tile, with a
+leading `~` for a variable tempo), tag metadata, cover art, the item **type**
+(audio file / stem / sample / saved clip) and, for stems and samples, a banner
+naming the source it derives from, plus which tracks currently use the
 library item — pick **Show information** from the tile's right-click context menu.
 The right-click context menu also includes **Reanalyse file** (audio-file items
 only), which refreshes the decoded cache, BPM/beat analysis and musical key;

@@ -339,19 +339,20 @@ requested the backend skips the `other` model run and synthesises
 is mathematically identical to adding the full residual to the model's `other`,
 captures any energy the three specialists miss, and runs ~25 % faster).
 
-**On-disk layout & sidecar (implemented):** Each separation writes its WAVs into a
-folder named after the source — `Stems\<sourceName>-stems` beside the saved project
-file (or the temporary workspace `<temp>/Silverdaw/Stems` when the project has not
+**On-disk layout & media store (implemented):** Each separation writes its WAVs into a
+folder named after the source — `stems\<sourceName>-stems` beside the saved project
+file (or the temporary workspace `<temp>/Silverdaw/stems` when the project has not
 been saved yet, migrated into the project folder on the first save), with a `-2`/`-3`…
 suffix when a folder for that source already
 exists, so repeat separations never collide. Keeping stems inside the project folder
 lets the whole project travel with them when the folder is moved or synced. Because
 separated WAVs carry no tags and the original source can later be removed from the
-library, the renderer also writes a `metadata.json` + `cover.<ext>` **sidecar** into
-that folder (via guarded main-
-process IPC scoped to the stems directory). On reload the stem items re-read the
-sidecar, so they keep the source's tags and artwork even after the source item is
-gone — the metadata is **copied, not merely referenced**.
+library, each stem **inherits the source's media GUID** and resolves the source's
+tags + cover art from the project's central media store
+(`<projectDir>/metadata/<guid>.json` + `<projectDir>/covers/<guid>.<ext>`, written
+through guarded main-process IPC). On reload the stem items re-read the store by that
+GUID, so they keep the source's tags and artwork even after the source item is
+gone — the metadata is **shared by reference to one store entry, not copied per item**.
 
 **Naming & analysis reuse:** Stem WAV files and their tracks are named from the
 source's friendly library name (e.g. "Song - Vocals" / "Vocals — Song"), never the
@@ -391,12 +392,12 @@ Users turn a timeline clip or a saved-clip library item into a reusable sample i
 one action (region-to-sample arrives with the selection primitive in §7.2.1):
 
 - Select a timeline clip or saved-clip library tile → right-click → "Save as sample"
-- Backend writes a WAV slice to a `Samples` folder under the project directory
+- Backend writes a WAV slice to a per-source subfolder of `samples` under the project directory
   (or the temporary workspace for unsaved projects, migrated on first save)
 - Browser updates immediately on receipt of `SAMPLE_SAVED` event
 - Non-warped clips: sliced directly from source file, no render required
-- Warped clips: offline Rubber Band render before write so the WAV matches the
-  clip's tempo/pitch state
+- Warped **simple** (non-music) clips: offline Rubber Band render before write so the WAV matches the
+  clip's tempo/pitch state. **Music** samples are written at the source tempo/pitch so they re-warp on drop
 - File names use `<base>-sample-001.wav`, incrementing for duplicate base names
 - Phase 8 alternative flow: drag a selected region from the timeline directly into the sample browser panel
 
@@ -430,8 +431,9 @@ Runs automatically on every import, in the background:
 - Sample rate is read from the file header on import and stored on the clip; no detection needed (always exact)
 - Results are merged into library metadata and stored in `ValueTree`
 - **Confidence ≠ sample.** Low tempo confidence no longer reclassifies a track as
-  a non-musical "sample" — it shows the grid as **tempo-unverified** (visible,
-  warpable) instead of hiding it. Only an explicit per-source **Auto / Music /
+  a non-musical "sample" — the grid stays **visible and warpable**, with no separate
+  amber "unverified" marker (the classification control still notes the low-confidence
+  tempo in words). Only an explicit per-source **Auto / Music /
   Sample** override marks a true sample.
 - **Manual fallback.** The user can set a BPM by hand on a source (rigid-metronome
   grid) and **slide the grid over the waveform** in the Clip Editor to correct its
@@ -1100,12 +1102,14 @@ state; user preferences such as panel sizes remain in `preferences.json`.
   - **Transport / view state** — playhead position, horizontal zoom and
     horizontal scroll. View-state-only saves do not mark the project dirty.
   - **Library catalogue** — every library item with id, kind
-    (`audio-file` / `saved-clip`), name, source path, detected BPM/key,
+    (`audio-file` / `saved-clip` / `stem`), name, source path, detected BPM/key,
     beat positions, beat anchor, variable-tempo flag, decoded playback
-    cache path, duration, channel count, sample rate, and (for saved
-    clips) `derivedFrom` source-window pointers. Cover art and tag
-    metadata are not serialised inline; they are re-read async from the
-    source file on load via `audio:readMetadata`.
+    cache path, duration, channel count, sample rate, a **media GUID**
+    (`mediaId`), and — for derived items (saved clips, stems, samples) —
+    `sourceItemId` / `derivedFrom` source pointers. Cover art and tag
+    metadata are not serialised inline; each item resolves them from the
+    project media store by its GUID on load, falling back to reading the
+    source file's embedded metadata via `audio:readMetadata` when it has none.
   - **Timeline markers** — marker id and absolute project position.
 - **What is NOT saved:** undo history (always empty on load),
   `PROJECT_STATE` reconnect tokens, audio engine caches (peaks cache lives
@@ -1326,7 +1330,7 @@ library, transport, UI layout and per-clip edits — from a single
   `ValueTree` (each node mapped to `{ "$type": "TRACK", id: "...", $children: [ … ] }`
   via the generic `ValueTreeJson` converter). Atomic save via sibling
   `.tmp` + rename. Audio files referenced by absolute path; a separate
-  generated sample WAVs are written under a `Samples` folder by the
+  generated sample WAVs are written under a `samples` folder by the
   sample-export flow.
 - [x] Schema version marker + forward-compatible "ignore unknown nodes"
   loader; load aborts cleanly on a too-new schema with a user-facing toast
@@ -1436,9 +1440,9 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] No-overlap rule on same-track clip drag (magnetic edge snap so adjacent clips play seamlessly)
 
 **Sample creation:**
-- [x] `CLIP_SAVE_AS_SAMPLE` / `LIBRARY_ITEM_SAVE_AS_SAMPLE` → `SAMPLE_SAVED` writes a WAV under the project/default `Samples` folder and adds it to the browser as a normal audio-file item
+- [x] `CLIP_SAVE_AS_SAMPLE` / `LIBRARY_ITEM_SAVE_AS_SAMPLE` → `SAMPLE_SAVED` writes a WAV under a per-source subfolder of the project/default `samples` folder and adds it to the browser as an audio-file item that records its source (`sourceItemId`) so it inherits the source's cover/tags and reads as a saved sample
 - [x] Context-menu sample creation from timeline clips and saved-clip library tiles
-- [x] Warped timeline clips and warped saved clips render through a fresh offline Rubber Band processor so the baked sample matches the clip's tempo/pitch state
+- [x] Warped timeline clips and warped saved clips render through a fresh offline Rubber Band processor when baked as a **simple** sample so it matches the clip's tempo/pitch state; **music** samples are exported at the source tempo/pitch so they re-warp on drop
 
 **Library upgrades:**
 - [x] Library item information dialog (double-click / context menu): file path, decoded cache path, sample rate, channel count, duration, detected BPM / key, embedded metadata, cover art and "used on" track list. Tag editor and jump links are deferred to Phase 8.
@@ -1702,7 +1706,7 @@ playable at every point — no broken-build day):
 - [x] Quality presets (**Fast / Balanced / Best** → inference overlap 0.10 / 0.25 / 0.50) sent as `quality` on `STEM_SEPARATE`
 - [x] Mixture-consistency residual — when all four stems are requested, synthesise `other = mixture − (vocals + drums + bass)` and skip the `other` model run (~25 % faster)
 - [x] DirectML GPU acceleration (issue tracked) — DirectML-build ONNX Runtime bundled (`onnxruntime.dll` + `DirectML.dll`); `useGpu` threaded to session options, opt-in and adapter-gated (Preferences ▸ Stems), TDR/timeout-recovery hardened
-- [x] Per-separation stem folder `Stems\<sourceName>-stems` (disambiguated) beside the saved project file — written to a temporary workspace (`<temp>/Silverdaw/Stems`) for unsaved projects and migrated into the project folder on first save — with a `metadata.json` + `cover.<ext>` sidecar, so stems travel with the portable project folder and keep the source's tags/artwork after the source is removed
+- [x] Per-separation stem folder `stems\<sourceName>-stems` (disambiguated) beside the saved project file — written to a temporary workspace (`<temp>/Silverdaw/stems`) for unsaved projects and migrated into the project folder on first save — with stems inheriting the source's media GUID so they resolve tags/artwork from the project's central `metadata/` + `covers/` store, so stems travel with the portable project folder and keep the source's tags/artwork after the source is removed
 - [ ] Loop slicer: transient and grid markers in PixiJS
 - [ ] Slice-to-timeline and slice-to-sample flows
 - [x] Fine-clip editor — shipped as the in-app **Clip Editor** dialog (§7.14): full-source waveform, sample-accurate selection, looped audition through a backend preview voice, Save-as-new-clip and Apply-trim with linked-clip propagation, hi-res peaks on demand. A dedicated BrowserWindow surface remains a future option.
