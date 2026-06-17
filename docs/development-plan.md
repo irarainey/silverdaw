@@ -340,7 +340,8 @@ is mathematically identical to adding the full residual to the model's `other`,
 captures any energy the three specialists miss, and runs ~25 % faster).
 
 **On-disk layout & media store (implemented):** Each separation writes its WAVs into a
-folder named after the source — `stems\<sourceName>-stems` beside the saved project
+folder named after the source's **original file name** — `stems\<sourceFileName>-stems`
+beside the saved project
 file (or the temporary workspace `<temp>/Silverdaw/stems` when the project has not
 been saved yet, migrated into the project folder on the first save), with a `-2`/`-3`…
 suffix when a folder for that source already
@@ -358,7 +359,9 @@ gone — the metadata is **shared by reference to one store entry, not copied pe
 source's friendly library name (e.g. "Song - Vocals" / "Vocals — Song"), never the
 internal decoded-cache hash — the renderer sends `sourceName` in `STEM_SEPARATE`
 and the backend prefers it (falling back to the clip name, then the raw source
-basename). Because each stem is sample-aligned with its source, stems **inherit**
+basename); the enclosing folder, however, is always named from the original source
+**file** name so it matches the `samples/<sourceFileName>/` grouping. Because each
+stem is sample-aligned with its source, stems **inherit**
 the source's analysis (BPM, beat grid, anchor, key, variable-tempo flag)
 instead of being re-analysed — applied on both the renderer (so the stem clip
 auto-warps to the project grid the moment it is placed) and the backend (so its

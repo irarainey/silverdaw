@@ -1113,13 +1113,15 @@ separates the **whole track**. Either way the source is untouched
 under its source group. Because each stem is sample-aligned with its source it
 **inherits** the source's analysis (BPM, beat grid, key, variable-tempo flag)
 rather than being re-analysed. On disk each separation writes its WAVs into a
-`stems\<sourceName>-stems` folder (disambiguated with `-2`/`-3`… for repeat runs)
-**beside the saved project file**, so they travel with the project folder when it
+`stems\<sourceFileName>-stems` folder named after the original source file
+(disambiguated with `-2`/`-3`… for repeat runs), so it matches the
+`samples/<sourceFileName>/` grouping and travels with the project folder when it
 is moved or synced between machines; an **unsaved** project writes them to the
 temporary workspace (`<temp>/Silverdaw/stems`) and they are migrated into the
 project folder on the first save (or discarded if the project is never saved).
-Each stem file basename also carries a **unique GUID token**
-(`<sourceName> - <stem> - <guid>.wav`) so regenerating stems from the same source
+Each stem file basename uses the source's friendly library name plus a **unique
+GUID token** (`<sourceName> - <stem> - <guid>.wav`) so regenerating stems from the
+same source
 never overwrites earlier files — including when an unsaved temp workspace is later
 merged into a saved project's `stems` folder. A stem inherits the source's **media
 GUID**, so it keeps the original's tags and artwork (resolved from the central

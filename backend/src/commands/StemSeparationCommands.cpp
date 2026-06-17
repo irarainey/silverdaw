@@ -155,12 +155,18 @@ void handleStemSeparate(const juce::var& payload,
 
     // Prefer the renderer's friendly library name; fall back to the clip name (when
     // separating a timeline clip), then the RAW source file's basename (never the
-    // resolved decoded-cache hash).
+    // resolved decoded-cache hash). This drives the stem track / library item names.
     auto sourceName = payloadSourceName;
     if (sourceName.isEmpty() && clipId.isNotEmpty()) sourceName = projectState.getClipName(clipId);
     if (sourceName.isEmpty()) sourceName = juce::File(rawSourcePath).getFileNameWithoutExtension();
 
-    const auto outputDir = uniqueStemsOutputDir(sourceName, stemsOutputBaseDir(projectPath));
+    // Name the on-disk stems folder from the ORIGINAL source file's name (never the
+    // friendly title or the decoded-cache hash), so it matches the sample folders
+    // grouped under `samples/<sourceFileName>/`.
+    juce::String folderName = juce::File(rawSourcePath).getFileNameWithoutExtension();
+    if (folderName.isEmpty()) folderName = sourceName;
+
+    const auto outputDir = uniqueStemsOutputDir(folderName, stemsOutputBaseDir(projectPath));
     const auto created = outputDir.createDirectory();
     if (created.failed())
     {

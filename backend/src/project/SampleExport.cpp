@@ -329,9 +329,14 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
     const juce::String libraryItemId = projectState.getClipLibraryItemId(clipId);
     auto sourcePath = projectState.getLibraryItemPlaybackPath(libraryItemId);
     if (sourcePath.isEmpty()) sourcePath = projectState.getClipFilePath(clipId);
+    // Name the per-source subfolder from the ORIGINAL source file, not the playback
+    // path: for a non-WAV import (e.g. MP3) the playback path is a hashed decoded-WAV
+    // cache file, which would otherwise become the folder name.
+    juce::String namePath = projectState.getLibraryItemFilePath(libraryItemId);
+    if (namePath.isEmpty()) namePath = sourcePath;
     // The samples folder is derived, not renderer-supplied, so it tracks the
     // project's portable location (or the temp workspace while unsaved).
-    const juce::String outputDir = sampleOutputDir(projectPath, sourcePath);
+    const juce::String outputDir = sampleOutputDir(projectPath, namePath);
     // A music sample stays at its source tempo (warp/pitch are not baked) so it
     // can inherit the source grid and re-warp on drop. A simple sample bakes the
     // clip's current warp/pitch into a flat one-shot.
@@ -395,7 +400,13 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
     auto sourcePath = projectState.getLibraryItemPlaybackPath(sourceItemId);
     if (sourcePath.isEmpty()) sourcePath = projectState.getLibraryItemFilePath(sourceItemId);
     if (sourcePath.isEmpty()) sourcePath = found.getProperty("filePath", juce::var()).toString();
-    const juce::String outputDir = sampleOutputDir(projectPath, sourcePath);
+    // Name the per-source subfolder from the ORIGINAL source file, not the playback
+    // path (a hashed decoded-WAV cache file for non-WAV imports). `found` is the
+    // saved-clip being sampled; its `filePath` is the original source path.
+    juce::String namePath = projectState.getLibraryItemFilePath(sourceItemId);
+    if (namePath.isEmpty()) namePath = found.getProperty("filePath", juce::var()).toString();
+    if (namePath.isEmpty()) namePath = sourcePath;
+    const juce::String outputDir = sampleOutputDir(projectPath, namePath);
     // See handleClipSaveAsSample: music keeps source tempo (no bake) so it can
     // inherit the source grid; simple bakes the saved clip's warp/pitch.
     std::optional<SampleWarpOptions> sampleWarp;
