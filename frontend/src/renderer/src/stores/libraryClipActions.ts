@@ -15,23 +15,23 @@ import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveDurationMs } from '@/lib/warp'
 import type { ClipWarpMode, ClipEnvelopePoint } from '@shared/bridge-protocol'
 import type { AddLibraryItemInput, LibraryItem, LibraryState } from './libraryTypes'
-import { buildSavedClipName } from './libraryItemHelpers'
+import { buildLibraryClipName } from './libraryItemHelpers'
 
-type SavedClipThis = LibraryState & {
+type LibraryClipThis = LibraryState & {
   addItem(audio: AddLibraryItemInput): string
   setItemCollapsed(itemId: string, collapsed: boolean): boolean
 }
 
-/** Finds direct and legacy implicit saved-clip links for propagation/rebind. */
-function findLinkedTimelineClips(savedClipItem: LibraryItem): Clip[] {
+/** Finds direct and legacy implicit library-clip links for propagation/rebind. */
+function findLinkedTimelineClips(libraryClipItem: LibraryItem): Clip[] {
   const project = useProjectStore()
   const directLinkedClips = Object.values(project.clips).filter(
-    (c): c is Clip => c?.libraryItemId === savedClipItem.id
+    (c): c is Clip => c?.libraryItemId === libraryClipItem.id
   )
-  const sourceItemId = savedClipItem.derivedFrom?.sourceItemId
+  const sourceItemId = libraryClipItem.derivedFrom?.sourceItemId
   if (!sourceItemId) return directLinkedClips
-  const currentInMs = savedClipItem.derivedFrom?.inMs ?? 0
-  const currentDurationMs = savedClipItem.derivedFrom?.durationMs ?? savedClipItem.durationMs
+  const currentInMs = libraryClipItem.derivedFrom?.inMs ?? 0
+  const currentDurationMs = libraryClipItem.derivedFrom?.durationMs ?? libraryClipItem.durationMs
   const implicitLinkedClips = Object.values(project.clips).filter(
     (c): c is Clip =>
       !!c &&
@@ -42,27 +42,27 @@ function findLinkedTimelineClips(savedClipItem: LibraryItem): Clip[] {
   return [...directLinkedClips, ...implicitLinkedClips]
 }
 
-export const savedClipActions = {
-    addSavedClipFromTimelineClip(clip: Clip): string | null {
-      // Walk saved clips back to their underlying source file. An audio-file or
+export const libraryClipActions = {
+    addLibraryClipFromTimelineClip(clip: Clip): string | null {
+      // Walk saved clips back to their underlying source file. A source or
       // a stem already IS a standalone source file (a stem's derivedFrom only
       // points at the original track for inherited identity, not its audio), so
-      // it is used directly; only a saved-clip resolves back to its source.
+      // it is used directly; only a library-clip resolves back to its source.
       const direct = this.items.find((item) => item.id === clip.libraryItemId)
       const source =
-        direct?.kind === 'saved-clip' && direct.derivedFrom?.sourceItemId
+        direct?.kind === 'clip' && direct.derivedFrom?.sourceItemId
           ? (this.items.find((i) => i.id === direct.derivedFrom?.sourceItemId) ?? direct)
           : direct
       const sourceItemId = source?.id
       const inMs = Math.max(0, clip.inMs)
       const durationMs = Math.max(0, clip.durationMs)
       if (durationMs <= 0) {
-        log.warn('library', `addSavedClipFromTimelineClip refused zero-duration clip id=${clip.id}`)
+        log.warn('library', `addLibraryClipFromTimelineClip refused zero-duration clip id=${clip.id}`)
         return null
       }
       const existing = this.items.find(
         (item) =>
-          item.kind === 'saved-clip' &&
+          item.kind === 'clip' &&
           item.derivedFrom?.sourceItemId === sourceItemId &&
           item.derivedFrom?.inMs === inMs &&
           item.derivedFrom?.durationMs === durationMs
@@ -71,7 +71,7 @@ export const savedClipActions = {
       const customName = clip.name?.trim()
       const name = customName && customName.length > 0
         ? customName
-        : buildSavedClipName(source ?? clip, inMs, durationMs)
+        : buildLibraryClipName(source ?? clip, inMs, durationMs)
       const pinnedTempoRatio =
         isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : clip.tempoRatio
       const shiftedClipKey = shiftedKey(source?.key ?? source?.metadata?.key, clip.semitones, clip.cents)
@@ -105,7 +105,7 @@ export const savedClipActions = {
         return existing.id
       }
       const itemId = this.addItem({
-        kind: 'saved-clip',
+        kind: 'clip',
         name,
         filePath: clip.filePath,
         fileName: source?.fileName ?? clip.fileName,
@@ -150,7 +150,7 @@ export const savedClipActions = {
     },
 
     /** Saves a Clip Editor selection, reusing an exact matching saved clip. */
-    addSavedClipFromSelection(
+    addLibraryClipFromSelection(
       sourceItemId: string,
       inMs: number,
       durationMs: number,
@@ -158,18 +158,18 @@ export const savedClipActions = {
     ): string | null {
       const source = this.items.find((i) => i.id === sourceItemId)
       if (!source) {
-        log.warn('library', `addSavedClipFromSelection unknown source=${sourceItemId}`)
+        log.warn('library', `addLibraryClipFromSelection unknown source=${sourceItemId}`)
         return null
       }
       const trimIn = Math.max(0, Math.floor(inMs))
       const trimDur = Math.max(0, Math.floor(durationMs))
       if (trimDur <= 0) {
-        log.warn('library', `addSavedClipFromSelection refused zero-duration source=${sourceItemId}`)
+        log.warn('library', `addLibraryClipFromSelection refused zero-duration source=${sourceItemId}`)
         return null
       }
       const existing = this.items.find(
         (item) =>
-          item.kind === 'saved-clip' &&
+          item.kind === 'clip' &&
           item.derivedFrom?.sourceItemId === sourceItemId &&
           item.derivedFrom?.inMs === trimIn &&
           item.derivedFrom?.durationMs === trimDur
@@ -178,9 +178,9 @@ export const savedClipActions = {
 
       const trimmed = name?.trim()
       const finalName =
-        trimmed && trimmed.length > 0 ? trimmed : buildSavedClipName(source, trimIn, trimDur)
+        trimmed && trimmed.length > 0 ? trimmed : buildLibraryClipName(source, trimIn, trimDur)
       const itemId = this.addItem({
-        kind: 'saved-clip',
+        kind: 'clip',
         name: finalName,
         filePath: source.filePath,
         fileName: source.fileName,
@@ -213,15 +213,15 @@ export const savedClipActions = {
       return itemId || null
     },
 
-    /** Updates a saved-clip trim window, refusing linked timeline collisions. */
-    updateSavedClipTrim(
+    /** Updates a library-clip trim window, refusing linked timeline collisions. */
+    updateLibraryClipTrim(
       itemId: string,
       inMs: number,
       durationMs: number
     ): { ok: boolean; conflictingTrackNames?: string[] } {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return { ok: false }
-      if (item.kind !== 'saved-clip') return { ok: false }
+      if (item.kind !== 'clip') return { ok: false }
       const trimIn = Math.max(0, Math.floor(inMs))
       const trimDur = Math.max(0, Math.floor(durationMs))
       if (trimDur <= 0) return { ok: false }
@@ -252,7 +252,7 @@ export const savedClipActions = {
       if (conflictingTrackNames.size > 0) {
         log.warn(
           'library',
-          `updateSavedClipTrim refused (collisions on ${[...conflictingTrackNames].join(', ')}) id=${itemId}`
+          `updateLibraryClipTrim refused (collisions on ${[...conflictingTrackNames].join(', ')}) id=${itemId}`
         )
         return { ok: false, conflictingTrackNames: [...conflictingTrackNames] }
       }
@@ -299,12 +299,12 @@ export const savedClipActions = {
       if (linkedClips.length > 0) project.peaksRevision++
       log.info(
         'library',
-        `updateSavedClipTrim id=${itemId} in=${trimIn} dur=${trimDur} propagatedTo=${linkedClips.length}`
+        `updateLibraryClipTrim id=${itemId} in=${trimIn} dur=${trimDur} propagatedTo=${linkedClips.length}`
       )
       return { ok: true }
     },
 
-    updateSavedClipEdit(
+    updateLibraryClipEdit(
       itemId: string,
       patch: {
         inMs?: number
@@ -317,7 +317,7 @@ export const savedClipActions = {
       }
     ): { ok: boolean; conflictingTrackNames?: string[] } {
       const item = this.items.find((i) => i.id === itemId)
-      if (!item || item.kind !== 'saved-clip') return { ok: false }
+      if (!item || item.kind !== 'clip') return { ok: false }
 
       const trimIn = Math.max(0, Math.floor(patch.inMs ?? item.derivedFrom?.inMs ?? 0))
       const trimDur = Math.max(0, Math.floor(patch.durationMs ?? item.derivedFrom?.durationMs ?? item.durationMs))
@@ -366,7 +366,7 @@ export const savedClipActions = {
       if (conflictingTrackNames.size > 0) {
         log.warn(
           'library',
-          `updateSavedClipEdit refused (collisions on ${[...conflictingTrackNames].join(', ')}) id=${itemId}`
+          `updateLibraryClipEdit refused (collisions on ${[...conflictingTrackNames].join(', ')}) id=${itemId}`
         )
         return { ok: false, conflictingTrackNames: [...conflictingTrackNames] }
       }
@@ -440,7 +440,7 @@ export const savedClipActions = {
         })
       }
       if (linkedClips.length > 0) project.peaksRevision++
-      log.info('library', `updateSavedClipEdit id=${itemId} propagatedTo=${linkedClips.length}`)
+      log.info('library', `updateLibraryClipEdit id=${itemId} propagatedTo=${linkedClips.length}`)
       return { ok: true }
     },
 
@@ -449,9 +449,9 @@ export const savedClipActions = {
     // all (like trim/warp/pitch). The durable store is each clip's backend
     // envelope (CLIP_SET_ENVELOPE) — the shape lives on the live instances, not on
     // the library item, so a saved clip with no placed instance carries no shape.
-    updateSavedClipEnvelope(itemId: string, points: ClipEnvelopePoint[]): { ok: boolean } {
+    updateLibraryClipEnvelope(itemId: string, points: ClipEnvelopePoint[]): { ok: boolean } {
       const item = this.items.find((i) => i.id === itemId)
-      if (!item || item.kind !== 'saved-clip') return { ok: false }
+      if (!item || item.kind !== 'clip') return { ok: false }
       const project = useProjectStore()
       const linkedClips = findLinkedTimelineClips(item)
       for (const c of linkedClips) {
@@ -460,7 +460,7 @@ export const savedClipActions = {
       }
       log.info(
         'library',
-        `updateSavedClipEnvelope id=${itemId} points=${points.length} propagatedTo=${linkedClips.length}`
+        `updateLibraryClipEnvelope id=${itemId} points=${points.length} propagatedTo=${linkedClips.length}`
       )
       return { ok: true }
     },
@@ -469,9 +469,9 @@ export const savedClipActions = {
     // reversing one linked clip reverses them all (like trim/warp/pitch/envelope). The durable
     // store is each clip's backend reverse flag (CLIP_SET_REVERSED); the flag lives on the live
     // instances, not the library item.
-    updateSavedClipReversed(itemId: string, reversed: boolean): { ok: boolean } {
+    updateLibraryClipReversed(itemId: string, reversed: boolean): { ok: boolean } {
       const item = this.items.find((i) => i.id === itemId)
-      if (!item || item.kind !== 'saved-clip') return { ok: false }
+      if (!item || item.kind !== 'clip') return { ok: false }
       const project = useProjectStore()
       const linkedClips = findLinkedTimelineClips(item)
       for (const c of linkedClips) {
@@ -480,12 +480,12 @@ export const savedClipActions = {
       }
       log.info(
         'library',
-        `updateSavedClipReversed id=${itemId} reversed=${reversed} propagatedTo=${linkedClips.length}`
+        `updateLibraryClipReversed id=${itemId} reversed=${reversed} propagatedTo=${linkedClips.length}`
       )
       return { ok: true }
     },
 
-    updateSavedClipWarp(
+    updateLibraryClipWarp(
       itemId: string,
       patch: {
         warpEnabled?: boolean
@@ -496,7 +496,7 @@ export const savedClipActions = {
       }
     ): boolean {
       const item = this.items.find((i) => i.id === itemId)
-      if (!item || item.kind !== 'saved-clip') return false
+      if (!item || item.kind !== 'clip') return false
       if (patch.warpEnabled !== undefined) item.warpEnabled = patch.warpEnabled
       if (patch.warpMode !== undefined) item.warpMode = patch.warpMode
       if (patch.tempoRatio !== undefined) item.tempoRatio = patch.tempoRatio === null ? undefined : patch.tempoRatio
@@ -538,8 +538,8 @@ export const savedClipActions = {
         propagated++
       }
       if (propagated > 0) project.peaksRevision++
-      log.info('library', `updateSavedClipWarp id=${itemId} propagatedTo=${propagated}`)
+      log.info('library', `updateLibraryClipWarp id=${itemId} propagatedTo=${propagated}`)
       return true
     },
-} satisfies Record<string, (this: SavedClipThis, ...args: never[]) => unknown> &
-  ThisType<SavedClipThis>
+} satisfies Record<string, (this: LibraryClipThis, ...args: never[]) => unknown> &
+  ThisType<LibraryClipThis>

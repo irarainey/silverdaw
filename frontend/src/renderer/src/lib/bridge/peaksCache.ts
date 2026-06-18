@@ -141,12 +141,12 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
   const library = useLibraryStore()
   // The sample shares its source's media GUID, so its cover art + tags resolve from
   // the one project media-store entry the source already wrote at import. The source
-  // may be a derived item (e.g. a saved-clip region), so walk its chain to the origin.
+  // may be a derived item (e.g. a library-clip region), so walk its chain to the origin.
   const mediaSource = payload.sourceItemId ? (library.byId[payload.sourceItemId] ?? null) : null
   const sampleMediaId = resolveLibraryItemMediaId(mediaSource, library.byId)
   library.addItem({
     id: payload.itemId,
-    kind: 'audio-file',
+    kind: 'sample',
     name: payload.name,
     filePath: payload.filePath,
     fileName: payload.fileName,
@@ -157,8 +157,8 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     peaksPerSecond: payload.peaksPerSecond,
     playbackFilePath: payload.filePath,
     mediaId: sampleMediaId,
-    // Record the source link as provenance so this audio-file reads as a saved
-    // sample (not an ordinary import) immediately — and on reload via the
+    // Record the source link as provenance so this sample reads as saved from a
+    // clip (not an ordinary import) immediately — and on reload via the
     // backend-persisted sourceItemId. The backend mirrors this in the project file.
     derivedFrom: payload.sourceItemId
       ? {
@@ -177,10 +177,10 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
   // BPM is the ONLY thing that distinguishes a simple sample. The backend persists the
   // same grid (and may re-broadcast it via LIBRARY_ITEM_ANALYSIS); applying it here too
   // keeps the renderer correct regardless of message ordering.
-  if (payload.sampleMode) {
+  if (payload.audioType) {
     const item = library.byId[payload.itemId]
-    if (item) item.sampleMode = payload.sampleMode
-    if (payload.sampleMode === 'music' && mediaSource) {
+    if (item) item.audioType = payload.audioType
+    if (payload.audioType === 'music' && mediaSource) {
       inheritSourceAnalysis(library, payload.itemId, mediaSource, (payload.sourceInMs ?? 0) / 1000)
     }
     // Resolve the shared cover art + tags from the project media store by the GUID the

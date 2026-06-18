@@ -44,16 +44,16 @@ export function cleanupRemovedItemFiles(
 
 /**
  * Capture the deletable-file info for a library item before it is removed. Only stems
- * and saved samples (audio-file items derived from a source) own a generated WAV in the
- * project folders; a plain imported source's file is the user's own and is never
- * deleted (the media GUID may still be cleaned up if it becomes orphaned).
+ * and saved samples own a generated WAV in the project folders; a plain imported
+ * source's file is the user's own and is never deleted (the media GUID may still be
+ * cleaned up if it becomes orphaned).
  */
 export function removedItemFileInfo(
   item: LibraryItem,
   isSampleAsset: boolean,
   mediaId: string | undefined
 ): RemovedItemFile {
-  const ownsArtifact = item.kind === 'stem' || (item.kind === 'audio-file' && isSampleAsset)
+  const ownsArtifact = item.kind === 'stem' || (item.kind === 'sample' && isSampleAsset)
   return {
     wavPath: ownsArtifact ? item.playbackFilePath || item.filePath : undefined,
     mediaId

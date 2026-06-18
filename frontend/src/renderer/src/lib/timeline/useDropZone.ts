@@ -3,7 +3,7 @@
 
 import { onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Application } from 'pixi.js'
-import { libraryItemDisplayName, libraryItemIsSample, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { libraryItemDisplayName, libraryItemIsSimple, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -122,7 +122,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       item.warpEnabled === true ||
       (ui.matchProjectTempoOnDrop &&
         projectHasOtherClips &&
-        item.kind !== 'saved-clip' && item.variableTempo !== true)
+        item.kind !== 'clip' && item.variableTempo !== true)
     const ratio = isWarpActive({
       warpEnabled: willWarpForSnap,
       tempoRatio: item.tempoRatio,
@@ -167,13 +167,13 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     const ui = useUiStore()
     const projectHasOtherClips = Object.keys(project.clips).length > 0
     // Samples skip auto-warp on drop, so the preview must too.
-    const dropIsSample = libraryItemIsSample(item, library.byId)
+    const dropIsSample = libraryItemIsSimple(item, library.byId)
     const willWarp =
       (item.warpEnabled === true) ||
       (ui.matchProjectTempoOnDrop &&
         projectHasOtherClips &&
         !dropIsSample &&
-        item.kind !== 'saved-clip' && item.variableTempo !== true &&
+        item.kind !== 'clip' && item.variableTempo !== true &&
         typeof item.bpm === 'number' && item.bpm > 0 && transport.bpm > 0)
     const previewRatio = willWarp
       ? effectiveTempoRatio({

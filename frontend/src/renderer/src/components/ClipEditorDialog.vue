@@ -64,7 +64,7 @@ const {
   sourceItem,
   editorItem,
   canSaveChanges,
-  editsSavedClipLibrary,
+  editsLibraryClipLibrary,
   onSaveChanges,
   canSaveAsNew,
   onSaveAsNew,
@@ -245,7 +245,7 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
             type="button"
             class="dialog-btn-primary"
             :disabled="!canSaveChanges"
-            :title="editsSavedClipLibrary
+            :title="editsLibraryClipLibrary
               ? 'Save changes to the library and every linked timeline clip'
               : 'Save changes to this timeline clip only'"
             @click="onSaveChanges"
@@ -259,7 +259,7 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
             :disabled="!canSaveAsNew"
             @click="onSaveAsNew"
           >
-            Save as New Clip
+            Save Selection to Library
           </button>
         </footer>
       </div>

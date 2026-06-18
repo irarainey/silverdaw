@@ -192,7 +192,7 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
         .find((clip) => {
           if (!clip) return false
           const libItem = library.byId[clip.libraryItemId]
-          if (libItem?.kind === 'saved-clip') return false
+          if (libItem?.kind === 'clip') return false
           const effDur = effectiveClipDurationMs(clip)
           return atMs > clip.startMs && atMs < clip.startMs + effDur
         })

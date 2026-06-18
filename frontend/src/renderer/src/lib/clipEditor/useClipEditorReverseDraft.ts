@@ -2,7 +2,7 @@
 //
 // Transactional draft: the toggle lives here until Save, when `committed()` is
 // persisted via `project.setClipReversed` (or propagated to linked instances via
-// `library.updateSavedClipReversed`); Cancel discards. Reverse is a single
+// `library.updateLibraryClipReversed`); Cancel discards. Reverse is a single
 // non-destructive flag on the clip — the source file is never rewritten.
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'

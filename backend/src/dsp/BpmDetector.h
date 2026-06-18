@@ -18,7 +18,7 @@ struct BpmAnalysis
     std::vector<double> beatTimesSec;
     /** Suppresses project-BPM seeding when BTrack's post-settling tempo spread is high. */
     bool variableTempo = false;
-    /** Marks likely non-rhythmic detections; the renderer can override via `sampleMode`. */
+    /** Marks likely non-rhythmic detections; the renderer can override via `audioType`. */
     bool lowConfidence = false;
 };
 

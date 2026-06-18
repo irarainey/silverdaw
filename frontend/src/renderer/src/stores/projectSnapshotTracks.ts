@@ -1,7 +1,7 @@
 // Track + clip rebuild and post-reconciliation finalisation for PROJECT_STATE
 // snapshots. applyProjectTracks rebuilds tracks/clips and returns the clip ids
 // still needing peaks; finalizeProjectSnapshot requests those peaks, applies the
-// project length, restores reset-only view state, and migrates saved-clip windows.
+// project length, restores reset-only view state, and migrates library-clip windows.
 
 import { send as sendBridge } from '@/lib/bridgeService'
 import { sanitizeEnvelopePoints } from '@/lib/envelope'
@@ -208,7 +208,7 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
 
 /**
  * After tracks/clips exist: request missing peaks, apply project length, restore
- * reset-only view state, and migrate saved-clip windows to their saved item.
+ * reset-only view state, and migrate library-clip windows to their saved item.
  */
 export function finalizeProjectSnapshot(
   target: SnapshotTarget,
@@ -244,14 +244,14 @@ export function finalizeProjectSnapshot(
     target.peaksRevision++
   }
 
-  // Migration: rebind pre-existing saved-clip windows to their saved item.
+  // Migration: rebind pre-existing library-clip windows to their saved item.
   if (snapshot.reset === true || isSoftReplace) {
     for (const clipId in target.clips) {
       const clip = target.clips[clipId]
       if (!clip) continue
       const candidate = library.items.find(
         (i) =>
-          i.kind === 'saved-clip' &&
+          i.kind === 'clip' &&
           i.derivedFrom?.sourceItemId === clip.libraryItemId &&
           Math.abs((i.derivedFrom?.inMs ?? 0) - clip.inMs) < 0.5 &&
           Math.abs((i.derivedFrom?.durationMs ?? 0) - clip.durationMs) < 0.5
@@ -259,7 +259,7 @@ export function finalizeProjectSnapshot(
       if (candidate && candidate.id !== clip.libraryItemId) {
         log.info(
           'project',
-          `migrate clip ${clipId} libraryItemId=${clip.libraryItemId} -> ${candidate.id} (saved-clip window match)`
+          `migrate clip ${clipId} libraryItemId=${clip.libraryItemId} -> ${candidate.id} (library-clip window match)`
         )
         clip.libraryItemId = candidate.id
         sendBridge('CLIP_REBIND', { clipId, libraryItemId: candidate.id })

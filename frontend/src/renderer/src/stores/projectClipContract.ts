@@ -37,7 +37,7 @@ export type ProjectClipThis = ProjectState & {
       bpm?: number
       variableTempo?: boolean
       lowConfidence?: boolean
-      sampleMode?: 'sample' | 'music'
+      audioType?: 'simple' | 'music'
       warpEnabled?: boolean
       warpMode?: ClipWarpMode
       tempoRatio?: number

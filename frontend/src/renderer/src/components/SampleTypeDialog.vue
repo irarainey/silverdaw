@@ -17,7 +17,7 @@ const clipName = computed(() => {
   return clip?.name?.trim() || clip?.fileName || ''
 })
 
-const choice = ref<'music' | 'sample'>('music')
+const choice = ref<'music' | 'simple'>('music')
 
 watch(
   () => props.open,
@@ -81,7 +81,7 @@ function onKeydown(e: KeyboardEvent): void {
               class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
             >
             <span class="flex-1">
-              <span class="block font-medium text-zinc-200">Music sample</span>
+              <span class="block font-medium text-zinc-200">Music</span>
               <span class="mt-0.5 block text-zinc-500">
                 A loop or musical phrase. Keeps the source tempo, beat markers, key,
                 and cover art, and warps to the project tempo when dropped onto a track.
@@ -95,11 +95,11 @@ function onKeydown(e: KeyboardEvent): void {
               v-model="choice"
               type="radio"
               name="sample-type"
-              value="sample"
+              value="simple"
               class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
             >
             <span class="flex-1">
-              <span class="block font-medium text-zinc-200">Simple sample</span>
+              <span class="block font-medium text-zinc-200">Simple</span>
               <span class="mt-0.5 block text-zinc-500">
                 A one-shot sound effect or vocal snippet. Carries no tempo or beat
                 metadata and is never warped when dropped onto a track.

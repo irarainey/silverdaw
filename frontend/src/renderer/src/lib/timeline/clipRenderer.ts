@@ -14,7 +14,7 @@ import {
 import {
   useLibraryStore,
   libraryItemSourceBpm,
-  libraryItemIsSample
+  libraryItemIsSimple
 } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -317,9 +317,9 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     const baseLibPeaks = libItem?.peaks
     const baseLibPps = libItem?.peaksPerSecond
     const baseLibLod = libItem?.peaksLod
-    // Saved clips usually borrow the source audio-file LOD pyramid.
+    // Saved clips usually borrow the source file's LOD pyramid.
     let sourceLodOwner = libItem
-    if (libItem?.kind === 'saved-clip' && (!baseLibLod || baseLibLod.length <= 1)) {
+    if (libItem?.kind === 'clip' && (!baseLibLod || baseLibLod.length <= 1)) {
       const sourceId = libItem.derivedFrom?.sourceItemId
       if (sourceId) {
         const source = library.byId[sourceId]
@@ -345,7 +345,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     }
     // Stereo mode needs per-channel peaks and enough height for two lanes.
     const channelSourceItem =
-      libItem?.kind === 'saved-clip'
+      libItem?.kind === 'clip'
         ? libItem.derivedFrom?.sourceItemId
           ? library.byId[libItem.derivedFrom.sourceItemId]
           : undefined
@@ -489,7 +489,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     const beats = libItem?.beats
     const markerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
     // Samples suppress synthetic beat markers even if analysis found beats.
-    const treatAsSample = libItem ? libraryItemIsSample(libItem, library.byId) : false
+    const treatAsSample = libItem ? libraryItemIsSimple(libItem, library.byId) : false
     // Prefer regression-derived anchor; older projects fall back to `beats[0]`.
     const anchorSec = libItem?.beatAnchorSec ?? beats?.[0]
     if (!treatAsSample && beats && beats.length > 0 && markerSourceBpm && markerSourceBpm > 0 && anchorSec !== undefined && w > 0) {

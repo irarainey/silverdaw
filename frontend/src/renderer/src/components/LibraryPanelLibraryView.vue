@@ -2,17 +2,17 @@
 import type { ComponentPublicInstance } from 'vue'
 import type { LibraryItem } from '@/stores/libraryStore'
 import LibrarySourceGroup from '@/components/LibrarySourceGroup.vue'
-import LibrarySavedClipRow from '@/components/LibrarySavedClipRow.vue'
+import LibraryClipRow from '@/components/LibraryClipRow.vue'
 
 const props = defineProps<{
   itemCount: number
   sourceItems: readonly LibraryItem[]
-  orphanSavedClipItems: readonly LibraryItem[]
+  orphanLibraryClipItems: readonly LibraryItem[]
   isDragOver: boolean
   showTileImages: boolean
   editingItemId: string | null
-  savedClipPillClass: string
-  savedClipBpmPillClass: string
+  libraryClipPillClass: string
+  libraryClipBpmPillClass: string
   samplePillClass: string
   formatDuration: (ms: number) => string
   formatClipDuration: (ms: number) => string
@@ -20,7 +20,7 @@ const props = defineProps<{
   displayArtist: (item: LibraryItem) => string
   childItems: (source: LibraryItem) => LibraryItem[]
   groupCoverArtUrl: (item: LibraryItem) => string | undefined
-  savedClipEffectiveBpm: (item: LibraryItem) => number | undefined
+  libraryClipEffectiveBpm: (item: LibraryItem) => number | undefined
   keyBadgeClass: (key: string) => string
   tileIsSample: (item: LibraryItem) => boolean
   tileIsSampleAsset: (item: LibraryItem) => boolean
@@ -61,14 +61,14 @@ const editingValue = defineModel<string>('editingValue', { required: true })
         :cover-art-url="props.groupCoverArtUrl(source)"
         :show-tile-images="props.showTileImages"
         :editing-item-id="props.editingItemId"
-        :saved-clip-pill-class="props.savedClipPillClass"
-        :saved-clip-bpm-pill-class="props.savedClipBpmPillClass"
+        :library-clip-pill-class="props.libraryClipPillClass"
+        :library-clip-bpm-pill-class="props.libraryClipBpmPillClass"
         :sample-pill-class="props.samplePillClass"
         :format-duration="props.formatDuration"
         :format-clip-duration="props.formatClipDuration"
         :display-title="props.displayTitle"
         :display-artist="props.displayArtist"
-        :saved-clip-effective-bpm="props.savedClipEffectiveBpm"
+        :library-clip-effective-bpm="props.libraryClipEffectiveBpm"
         :key-badge-class="props.keyBadgeClass"
         :tile-is-sample="props.tileIsSample"
         :tile-is-sample-asset="props.tileIsSampleAsset"
@@ -83,23 +83,23 @@ const editingValue = defineModel<string>('editingValue', { required: true })
       />
 
       <div
-        v-if="props.orphanSavedClipItems.length > 0"
+        v-if="props.orphanLibraryClipItems.length > 0"
         class="library-group flex w-60 max-w-full shrink-0 flex-col overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/50"
       >
         <div class="px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
           Saved clips (source missing)
         </div>
-        <LibrarySavedClipRow
-          v-for="item in props.orphanSavedClipItems"
+        <LibraryClipRow
+          v-for="item in props.orphanLibraryClipItems"
           :key="item.id"
           v-model:editing-value="editingValue"
           :item="item"
           :editing-item-id="props.editingItemId"
-          row-class="saved-clip group flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
+          row-class="library-clip group flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
           marker-class="h-6 w-1 shrink-0 rounded-sm bg-amber-500/60"
           missing-source
-          :saved-clip-pill-class="props.savedClipPillClass"
-          :saved-clip-bpm-pill-class="props.savedClipBpmPillClass"
+          :library-clip-pill-class="props.libraryClipPillClass"
+          :library-clip-bpm-pill-class="props.libraryClipBpmPillClass"
           :format-clip-duration="props.formatClipDuration"
           :display-title="props.displayTitle"
           :key-badge-class="props.keyBadgeClass"

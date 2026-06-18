@@ -187,9 +187,9 @@ export const ProjectStateClipSchema = z.object({
   /** Source-time trim offset; omitted means 0. */
   inMs: z.number().optional(),
   colorIndex: z.number().optional(),
-  /** Per-clip lock; not propagated across saved-clip siblings. */
+  /** Per-clip lock; not propagated across library-clip siblings. */
   locked: z.boolean().optional(),
-  /** Play the clip window backwards; non-destructive. Propagates across saved-clip siblings. */
+  /** Play the clip window backwards; non-destructive. Propagates across library-clip siblings. */
   reversed: z.boolean().optional(),
   name: z.string().optional(),
   /** Source file is missing; engine skips playback. */
@@ -263,14 +263,14 @@ export const ProjectStateMarkerSchema = z.object({
 })
 export type ProjectStateMarker = z.infer<typeof ProjectStateMarkerSchema>
 
-export type LibraryItemKind = 'audio-file' | 'saved-clip' | 'stem'
-const libraryItemKindSchema = z.enum(['audio-file', 'saved-clip', 'stem'])
+export type LibraryItemKind = 'source' | 'stem' | 'sample' | 'clip'
+const libraryItemKindSchema = z.enum(['source', 'stem', 'sample', 'clip'])
 
 export const ProjectStateLibraryItemSchema = z
   .object({
     id: z.string(),
     filePath: z.string(),
-    /** Older projects omit this and are treated as whole audio files. */
+    /** Older projects omit this and are treated as whole source files. */
     kind: libraryItemKindSchema.optional(),
     name: z.string().optional(),
     fileName: z.string().optional(),
@@ -291,7 +291,7 @@ export const ProjectStateLibraryItemSchema = z
     /** Backend auto-classification hint; mirrors `LIBRARY_ITEM_ANALYSIS`. */
     lowConfidence: z.boolean().optional(),
     /** User override; absent means auto via `lowConfidence`. */
-    sampleMode: z.enum(['sample', 'music']).optional(),
+    audioType: z.enum(['simple', 'music']).optional(),
     sourceItemId: z.string().optional(),
     sourceClipId: z.string().optional(),
     sourceInMs: z.number().optional(),
@@ -309,12 +309,12 @@ export const ProjectStateLibraryItemSchema = z
   })
   // Saved clips must carry window pointers; stems must point at their source.
   .superRefine((item, ctx) => {
-    if (item.kind === 'saved-clip') {
+    if (item.kind === 'clip') {
       if (typeof item.sourceInMs !== 'number') {
-        ctx.addIssue({ code: 'custom', path: ['sourceInMs'], message: 'required when kind === saved-clip' })
+        ctx.addIssue({ code: 'custom', path: ['sourceInMs'], message: 'required when kind === clip' })
       }
       if (typeof item.sourceDurationMs !== 'number') {
-        ctx.addIssue({ code: 'custom', path: ['sourceDurationMs'], message: 'required when kind === saved-clip' })
+        ctx.addIssue({ code: 'custom', path: ['sourceDurationMs'], message: 'required when kind === clip' })
       }
     }
     if (item.kind === 'stem' && (item.sourceItemId === undefined || item.sourceItemId === '')) {
@@ -440,7 +440,7 @@ const SampleSavedSuccessSchema = z.object({
   peaksPerSecond: z.number(),
   // Echoed back so the renderer classifies the new item and (for music)
   // inherits the source's display metadata / cover art.
-  sampleMode: z.enum(['sample', 'music']).optional(),
+  audioType: z.enum(['simple', 'music']).optional(),
   sourceItemId: z.string().optional(),
   /** Source window start in ms; shifts the inherited beat grid for a music sample. */
   sourceInMs: z.number().optional(),
@@ -460,7 +460,7 @@ export const LibraryItemAnalysisPayloadSchema = z.object({
   beatAnchorSec: z.number(),
   beats: z.array(z.number()),
   variableTempo: z.boolean(),
-  /** Auto-classification hint; user can override via `sampleMode`. */
+  /** Auto-classification hint; user can override via `audioType`. */
   lowConfidence: z.boolean().optional(),
   /** Decoded PCM cache path reused for clip playback. */
   playbackFilePath: z.string().optional()

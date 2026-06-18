@@ -1,13 +1,13 @@
 // Pure library-item helpers.
 //
 // Stateless functions over `LibraryItem` shapes: user-facing display name,
-// source-BPM and sample/music resolution (saved-clip aware), saved-clip name
+// source-BPM and sample/music resolution (library-clip aware), library-clip name
 // building, and cover-art URL revocation. Extracted from `libraryStore` so this
 // reusable logic lives apart from the Pinia store; the store imports what it
 // needs and re-exports the public helpers for existing `@/stores/libraryStore`
 // consumers.
 
-import type { LibraryItem, SavedClipSource } from './libraryTypes'
+import type { LibraryItem, LibraryClipSource } from './libraryTypes'
 
 /**
  * Separator between a stem's part label and its source name in the stem's
@@ -47,7 +47,7 @@ export function libraryItemDisplayName(item: {
 }
 
 export function libraryItemSourceBpm(
-  item: { bpm?: number; derivedFrom?: SavedClipSource },
+  item: { bpm?: number; derivedFrom?: LibraryClipSource },
   byId: Readonly<Record<string, LibraryItem>>
 ): number | undefined {
   if (typeof item.bpm === 'number' && item.bpm > 0) return item.bpm
@@ -58,38 +58,38 @@ export function libraryItemSourceBpm(
 }
 
 /**
- * Effective sample-vs-music classification for a library item.
- * Resolution order (saved-clip-aware):
- *   1. item's own `sampleMode` override, if set
- *   2. for saved clips, fall back to the SOURCE item's `sampleMode`
+ * Effective simple-vs-music classification for a library item.
+ * Resolution order (clip-aware):
+ *   1. item's own `audioType` override, if set
+ *   2. for saved clips, fall back to the SOURCE item's `audioType`
  *      override (so cutting a one-shot out of a musical track inherits
  *      music unless explicitly overridden on the saved clip)
  *   3. default to `false` (music)
  *
  * NOTE: low tempo-detection confidence (`lowConfidence`) does NOT make
- * an item a sample. "Tempo unsure" and "non-musical sample" are distinct
+ * an item simple. "Tempo unsure" and "non-musical" are distinct
  * concerns: a low-confidence track still shows its (rigid) beat grid and
  * stays warpable so the user can verify / correct it. Only the explicit
- * user override (`sampleMode === 'sample'`) classifies something as a
- * sample. See `libraryItemTempoUnverified` for the unverified-grid signal.
+ * user override (`audioType === 'simple'`) classifies something as
+ * simple. See `libraryItemTempoUnverified` for the unverified-grid signal.
  *
  * Used to gate beat-marker rendering, library tile BPM/key badges,
  * auto-warp on drop, and the project-BPM seed. Does NOT gate the
  * Warp / Pitch dialogs — those remain available so the user can
- * speed up / slow down / pitch shift any clip including samples.
+ * speed up / slow down / pitch shift any clip including simple ones.
  */
-export function libraryItemIsSample(
-  item: { sampleMode?: 'sample' | 'music'; derivedFrom?: SavedClipSource },
+export function libraryItemIsSimple(
+  item: { audioType?: 'simple' | 'music'; derivedFrom?: LibraryClipSource },
   byId: Readonly<Record<string, LibraryItem>>
 ): boolean {
-  if (item.sampleMode === 'sample') return true
-  if (item.sampleMode === 'music') return false
+  if (item.audioType === 'simple') return true
+  if (item.audioType === 'music') return false
   const sourceId = item.derivedFrom?.sourceItemId
   if (sourceId) {
     const source = byId[sourceId]
     if (source) {
-      if (source.sampleMode === 'sample') return true
-      if (source.sampleMode === 'music') return false
+      if (source.audioType === 'simple') return true
+      if (source.audioType === 'music') return false
     }
   }
   return false
@@ -102,7 +102,7 @@ export function libraryItemIsSample(
  * until a `mediaId` is found. Returns undefined if none in the chain has one.
  */
 export function resolveLibraryItemMediaId(
-  item: { mediaId?: string; derivedFrom?: SavedClipSource } | undefined | null,
+  item: { mediaId?: string; derivedFrom?: LibraryClipSource } | undefined | null,
   byId: Readonly<Record<string, LibraryItem>>
 ): string | undefined {
   let cur = item
@@ -118,68 +118,66 @@ export function resolveLibraryItemMediaId(
 }
 
 /**
- * Whether a library item is a saved sample asset — a reusable WAV saved into the
+ * Whether a library item is a saved sample — a reusable WAV saved into the
  * project's `samples` folder — in either flavour:
- *   - a "music sample" (`sampleMode === 'music'`), which inherits the source's
+ *   - a "music sample" (`audioType === 'music'`), which inherits the source's
  *     tempo + key so it warps and shows its grid, OR
- *   - a "simple sample" (`sampleMode === 'sample'`), a non-musical one-shot.
+ *   - a "simple sample" (`audioType === 'simple'`), a non-musical one-shot.
  * Both share identical provenance handling (cover art + tags); the ONLY difference
  * is that a music sample carries pitch + BPM.
  *
- * Identity comes from PROVENANCE, not `sampleMode`: a saved sample is the only
- * `audio-file` library item created FROM another item, so it is the only audio-file
- * carrying a source link (`derivedFrom.sourceItemId`, persisted in the project file
- * at creation). An ordinary import has none; stems and saved clips have their own
- * `kind`. `sampleMode` is NOT a reliable tell because a plain musical import is also
- * classified 'music'.
+ * Identity comes from the explicit `sample` kind: a saved sample is the only
+ * library file kind created FROM another item (its `derivedFrom.sourceItemId`
+ * records that provenance for information only). `audioType` is NOT a reliable
+ * tell because a plain musical import is also classified 'music'.
  *
  * Use this for the at-a-glance provenance treatment — the cover-art type badge, the
  * "Sample" type label, and tile styling. For the narrower "non-musical, hide the
- * tempo/key grid" concern use `libraryItemIsSample` instead.
+ * tempo/key grid" concern use `libraryItemIsSimple` instead.
  */
-export function libraryItemIsSampleAsset(
-  item: { kind?: LibraryItem['kind']; derivedFrom?: SavedClipSource; sampleMode?: LibraryItem['sampleMode'] } | undefined | null
+export function libraryItemIsSample(
+  item: { kind?: LibraryItem['kind']; derivedFrom?: LibraryClipSource; audioType?: LibraryItem['audioType'] } | undefined | null
 ): boolean {
   if (!item) return false
-  return item.kind === 'audio-file' && !!item.derivedFrom?.sourceItemId
+  return item.kind === 'sample'
 }
 
 /**
  * Whether a timeline clip sourced from `item` should show the "linked to
- * library" badge in its header. True for saved clips and for sample assets
- * (both music and simple samples) — reusable library entries a placed clip
- * stays linked to, as opposed to a plain imported source file. Mirrored by the
+ * library" badge in its header. True for saved clips and for samples (both
+ * music and simple samples) — reusable library entries a placed clip stays
+ * linked to, as opposed to a plain imported source file. Mirrored by the
  * clip renderer and the rename overlay so badge width stays in sync.
  */
 export function libraryItemShowsLinkBadge(
-  item: { kind?: LibraryItem['kind']; derivedFrom?: SavedClipSource; sampleMode?: LibraryItem['sampleMode'] } | undefined | null
+  item: { kind?: LibraryItem['kind']; derivedFrom?: LibraryClipSource; audioType?: LibraryItem['audioType'] } | undefined | null
 ): boolean {
   if (!item) return false
-  return item.kind === 'saved-clip' || libraryItemIsSampleAsset(item)
+  return item.kind === 'clip' || libraryItemIsSample(item)
 }
 
 /**
  * Whether an item's detected tempo grid is unverified — i.e. tempo
  * detection returned low confidence and the user has not explicitly
- * confirmed the classification via `sampleMode`. Such items still show
- * their beat grid (they are not samples) but the UI may flag the grid as
+ * confirmed the classification via `audioType`. Such items still show
+ * their beat grid (they are not simple) but the UI may flag the grid as
  * needing review / manual correction.
  */
 export function libraryItemTempoUnverified(
-  item: { sampleMode?: 'sample' | 'music'; lowConfidence?: boolean; derivedFrom?: SavedClipSource },
+  item: { audioType?: 'simple' | 'music'; lowConfidence?: boolean; derivedFrom?: LibraryClipSource },
   byId: Readonly<Record<string, LibraryItem>>
 ): boolean {
-  if (item.sampleMode) return false
+  if (item.audioType) return false
   if (item.lowConfidence === true) return true
   const sourceId = item.derivedFrom?.sourceItemId
   if (sourceId) {
     const source = byId[sourceId]
-    if (source && !source.sampleMode && source.lowConfidence === true) return true
+    if (source && !source.audioType && source.lowConfidence === true) return true
   }
   return false
 }
 
-export function buildSavedClipName(
+export function buildLibraryClipName(
   source: { name?: string; fileName: string; metadata?: AudioMetadata | null },
   inMs: number,
   durationMs: number

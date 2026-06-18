@@ -419,7 +419,7 @@ class ProjectState : public juce::ValueTree::Listener
     bool setLibraryItemLowConfidence(const juce::String& itemId, bool lowConfidence);
 
     // Classification override beats low-confidence auto-classification.
-    bool setLibraryItemSampleMode(const juce::String& itemId, const juce::String& mode);
+    bool setLibraryItemAudioType(const juce::String& itemId, const juce::String& audioType);
 
     bool hasLibraryItemForPath(const juce::String& filePath) const;
 
@@ -565,7 +565,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kPlaybackFilePath;
     static const juce::Identifier kVariableTempo;
     static const juce::Identifier kLowConfidence;
-    static const juce::Identifier kSampleMode;
+    static const juce::Identifier kAudioType;
     static const juce::Identifier kKey;
     static const juce::Identifier kKind;
     static const juce::Identifier kSourceItemId;
@@ -578,7 +578,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kCollapsed;
     static const juce::Identifier kLibraryItemId;
 
-    // Reused on saved-clip library items as copy-on-drop defaults.
+    // Reused on clip library items as copy-on-drop defaults.
     static const juce::Identifier kWarpEnabled;
     static const juce::Identifier kWarpMode;
     static const juce::Identifier kTempoRatio;

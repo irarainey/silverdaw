@@ -127,7 +127,7 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
     }
 
     const channelSourceId =
-      src.kind === 'saved-clip' ? src.derivedFrom?.sourceItemId : src.id
+      src.kind === 'clip' ? src.derivedFrom?.sourceItemId : src.id
     const hiResChannels =
       usingHiRes && hiRes!.channels.length === 2 ? hiRes!.channels : undefined
     const channelEntry = channelSourceId

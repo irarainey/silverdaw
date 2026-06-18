@@ -1,8 +1,8 @@
 // Pure-logic composable resolving the Clip Editor's editing target from the
 // `(item, clipId)` open-arguments into an explicit `EditorMode` discriminant
 // plus the source/clip/item refs the editor depends on. Centralises the
-// `kind === 'saved-clip'` decision behind exhaustive `editsExistingClip` /
-// `editsSavedClipLibrary` / `editsSingleTimelineClip` booleans, replacing the
+// `kind === 'clip'` decision behind exhaustive `editsExistingClip` /
+// `editsLibraryClipLibrary` / `editsSingleTimelineClip` booleans, replacing the
 // dialog's previously scattered, drift-prone kind checks.
 
 import { computed, type ComputedRef, type Ref } from 'vue'
@@ -25,7 +25,7 @@ export interface ClipEditorTarget {
   editorItem: ComputedRef<LibraryItem | null>
   editorMode: ComputedRef<EditorMode | null>
   editsExistingClip: ComputedRef<boolean>
-  editsSavedClipLibrary: ComputedRef<boolean>
+  editsLibraryClipLibrary: ComputedRef<boolean>
   editsSingleTimelineClip: ComputedRef<boolean>
   editsTimelineClip: ComputedRef<boolean>
   titleText: ComputedRef<string>
@@ -57,14 +57,14 @@ export function useClipEditorTarget(
     const clip = timelineClip.value
     const entry = editorItem.value
     if (!entry) return null
-    if (clip) return entry.kind === 'saved-clip' ? 'timeline-linked' : 'timeline-unlinked'
-    return entry.kind === 'saved-clip' ? 'saved-library' : 'source-library'
+    if (clip) return entry.kind === 'clip' ? 'timeline-linked' : 'timeline-unlinked'
+    return entry.kind === 'clip' ? 'saved-library' : 'source-library'
   })
 
   const editsExistingClip = computed(
     () => editorMode.value !== null && editorMode.value !== 'source-library'
   )
-  const editsSavedClipLibrary = computed(
+  const editsLibraryClipLibrary = computed(
     () => editorMode.value === 'saved-library' || editorMode.value === 'timeline-linked'
   )
   const editsSingleTimelineClip = computed(() => editorMode.value === 'timeline-unlinked')
@@ -82,7 +82,7 @@ export function useClipEditorTarget(
   const sourceItem = computed<LibraryItem | null>(() => {
     const entry = editorItem.value
     if (!entry) return null
-    if (entry.kind === 'saved-clip' && entry.derivedFrom?.sourceItemId) {
+    if (entry.kind === 'clip' && entry.derivedFrom?.sourceItemId) {
       return library.byId[entry.derivedFrom?.sourceItemId] ?? entry
     }
     return entry
@@ -104,7 +104,7 @@ export function useClipEditorTarget(
     editorItem,
     editorMode,
     editsExistingClip,
-    editsSavedClipLibrary,
+    editsLibraryClipLibrary,
     editsSingleTimelineClip,
     editsTimelineClip,
     titleText,

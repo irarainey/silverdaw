@@ -28,7 +28,7 @@ export const clipEditActions = {
       }
       const library = useLibraryStore()
       const libItem = library.byId[clip.libraryItemId]
-      if (libItem?.kind === 'saved-clip') {
+      if (libItem?.kind === 'clip') {
         useNotificationsStore().pushError('Linked clips must be edited in the Clip Editor.')
         log.info('project', `splitClipAt rejected linked clip id=${clipId}`)
         return null

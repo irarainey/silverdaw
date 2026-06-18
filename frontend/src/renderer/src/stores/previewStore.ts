@@ -87,7 +87,7 @@ export const usePreviewStore = defineStore('preview', {
     /** Update the preview voice's warp engine while loaded. Mirrors
      *  `setClipWarp` semantics — partial update, `tempoRatio: null`
      *  clears the pin. Called by the Clip Editor when warp parameters
-     *  change on the saved-clip library item the editor is viewing. */
+     *  change on the library-clip library item the editor is viewing. */
     setWarp(patch: {
       warpEnabled?: boolean
       warpMode?: ClipWarpMode

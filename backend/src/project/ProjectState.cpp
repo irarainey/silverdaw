@@ -49,7 +49,7 @@ const juce::Identifier ProjectState::kBeatAnchorSec{"beatAnchorSec"};
 const juce::Identifier ProjectState::kPlaybackFilePath{"playbackFilePath"};
 const juce::Identifier ProjectState::kVariableTempo{"variableTempo"};
 const juce::Identifier ProjectState::kLowConfidence{"lowConfidence"};
-const juce::Identifier ProjectState::kSampleMode{"sampleMode"};
+const juce::Identifier ProjectState::kAudioType{"audioType"};
 const juce::Identifier ProjectState::kKey{"key"};
 const juce::Identifier ProjectState::kKind{"kind"};
 const juce::Identifier ProjectState::kSourceItemId{"sourceItemId"};

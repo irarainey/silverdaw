@@ -25,10 +25,10 @@ interface Harness {
     setClipReversed: ReturnType<typeof vi.fn>
   }
   library: {
-    updateSavedClipEdit: ReturnType<typeof vi.fn>
-    updateSavedClipEnvelope: ReturnType<typeof vi.fn>
-    updateSavedClipReversed: ReturnType<typeof vi.fn>
-    addSavedClipFromSelection: ReturnType<typeof vi.fn>
+    updateLibraryClipEdit: ReturnType<typeof vi.fn>
+    updateLibraryClipEnvelope: ReturnType<typeof vi.fn>
+    updateLibraryClipReversed: ReturnType<typeof vi.fn>
+    addLibraryClipFromSelection: ReturnType<typeof vi.fn>
   }
   notifications: {
     pushInfo: ReturnType<typeof vi.fn>
@@ -48,10 +48,10 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     setClipReversed: vi.fn()
   }
   const library = {
-    updateSavedClipEdit: vi.fn(() => ({ ok: true })),
-    updateSavedClipEnvelope: vi.fn(() => ({ ok: true })),
-    updateSavedClipReversed: vi.fn(() => ({ ok: true })),
-    addSavedClipFromSelection: vi.fn(() => 'new-id')
+    updateLibraryClipEdit: vi.fn(() => ({ ok: true })),
+    updateLibraryClipEnvelope: vi.fn(() => ({ ok: true })),
+    updateLibraryClipReversed: vi.fn(() => ({ ok: true })),
+    addLibraryClipFromSelection: vi.fn(() => 'new-id')
   }
   const notifications = { pushInfo: vi.fn(), pushError: vi.fn() }
   const close = vi.fn()
@@ -62,7 +62,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     sourceItem: { id: 'item-1', name: 'Test' },
     titleText: 'Test',
     editsSingleTimelineClip: false,
-    editsSavedClipLibrary: true,
+    editsLibraryClipLibrary: true,
     editsTimelineClip: false,
     hasWarpPitchChanged: false,
     sourceBpm: 120,
@@ -92,7 +92,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     sourceItem: () => state.sourceItem as ReturnType<ClipEditorSaveDeps['sourceItem']>,
     titleText: () => state.titleText as string,
     editsSingleTimelineClip: () => state.editsSingleTimelineClip as boolean,
-    editsSavedClipLibrary: () => state.editsSavedClipLibrary as boolean,
+    editsLibraryClipLibrary: () => state.editsLibraryClipLibrary as boolean,
     editsTimelineClip: () => state.editsTimelineClip as boolean,
     hasWarpPitchChanged: () => state.hasWarpPitchChanged as boolean,
     sourceBpm: () => state.sourceBpm as number | undefined,
@@ -128,7 +128,7 @@ describe('useClipEditorSave', () => {
     h.state.editorItem = null
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.library.updateSavedClipEdit).not.toHaveBeenCalled()
+    expect(h.library.updateLibraryClipEdit).not.toHaveBeenCalled()
     expect(h.close).not.toHaveBeenCalled()
   })
 
@@ -137,7 +137,7 @@ describe('useClipEditorSave', () => {
     h.state.selectionDurationMs = 400
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.library.updateSavedClipEdit).toHaveBeenCalledWith(
+    expect(h.library.updateLibraryClipEdit).toHaveBeenCalledWith(
       'item-1',
       expect.objectContaining({ inMs: 250, durationMs: 400 })
     )
@@ -152,14 +152,14 @@ describe('useClipEditorSave', () => {
     h.state.cropViewDurationMs = 900
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.library.updateSavedClipEdit).toHaveBeenCalledWith(
+    expect(h.library.updateLibraryClipEdit).toHaveBeenCalledWith(
       'item-1',
       expect.objectContaining({ inMs: 10, durationMs: 900 })
     )
   })
 
   it('library save surfaces overlap conflicts as an error and stays open', () => {
-    h.library.updateSavedClipEdit.mockReturnValue({
+    h.library.updateLibraryClipEdit.mockReturnValue({
       ok: false,
       conflictingTrackNames: ['Drums', 'Bass']
     })
@@ -172,7 +172,7 @@ describe('useClipEditorSave', () => {
   })
 
   it('linked-clip save propagates the shared volume envelope to all linked clips', () => {
-    h.state.editsSavedClipLibrary = true
+    h.state.editsLibraryClipLibrary = true
     h.state.editsTimelineClip = true
     h.state.timelineClip = makeClip({ id: 'clip-1' })
     h.state.volumeShapeCommittedPoints = [
@@ -181,8 +181,8 @@ describe('useClipEditorSave', () => {
     ]
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.library.updateSavedClipEdit).toHaveBeenCalled()
-    expect(h.library.updateSavedClipEnvelope).toHaveBeenCalledWith('item-1', [
+    expect(h.library.updateLibraryClipEdit).toHaveBeenCalled()
+    expect(h.library.updateLibraryClipEnvelope).toHaveBeenCalledWith('item-1', [
       { timeMs: 0, gain: 1 },
       { timeMs: 500, gain: 0.5 }
     ])
@@ -190,28 +190,28 @@ describe('useClipEditorSave', () => {
   })
 
   it('saved-library save (no placed instance) does not touch the volume envelope', () => {
-    h.state.editsSavedClipLibrary = true
+    h.state.editsLibraryClipLibrary = true
     h.state.editsTimelineClip = false
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.library.updateSavedClipEdit).toHaveBeenCalled()
-    expect(h.library.updateSavedClipEnvelope).not.toHaveBeenCalled()
+    expect(h.library.updateLibraryClipEdit).toHaveBeenCalled()
+    expect(h.library.updateLibraryClipEnvelope).not.toHaveBeenCalled()
   })
 
-  it('linked-clip save skips the envelope when the saved-clip edit is rejected', () => {
-    h.state.editsSavedClipLibrary = true
+  it('linked-clip save skips the envelope when the library-clip edit is rejected', () => {
+    h.state.editsLibraryClipLibrary = true
     h.state.editsTimelineClip = true
     h.state.timelineClip = makeClip({ id: 'clip-1' })
-    h.library.updateSavedClipEdit.mockReturnValue({ ok: false, conflictingTrackNames: ['Drums'] })
+    h.library.updateLibraryClipEdit.mockReturnValue({ ok: false, conflictingTrackNames: ['Drums'] })
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.library.updateSavedClipEnvelope).not.toHaveBeenCalled()
+    expect(h.library.updateLibraryClipEnvelope).not.toHaveBeenCalled()
     expect(h.close).not.toHaveBeenCalled()
   })
 
   it('timeline-clip save trims and clears warp/envelope when warp is unchanged', () => {
     h.state.editsSingleTimelineClip = true
-    h.state.editsSavedClipLibrary = false
+    h.state.editsLibraryClipLibrary = false
     h.state.hasWarpPitchChanged = false
     const clip = makeClip({ id: 'clip-1', trackId: 'track-1', startMs: 0 })
     h.state.timelineClip = clip
@@ -229,7 +229,7 @@ describe('useClipEditorSave', () => {
 
   it('timeline-clip save commits the reverse flag', () => {
     h.state.editsSingleTimelineClip = true
-    h.state.editsSavedClipLibrary = false
+    h.state.editsLibraryClipLibrary = false
     h.state.timelineClip = makeClip({ id: 'clip-1' })
     h.state.canApplyCrop = true
     h.state.selectionInMs = 0
@@ -242,20 +242,20 @@ describe('useClipEditorSave', () => {
   })
 
   it('linked-clip save propagates the reverse flag to all linked clips', () => {
-    h.state.editsSavedClipLibrary = true
+    h.state.editsLibraryClipLibrary = true
     h.state.editsTimelineClip = true
     h.state.timelineClip = makeClip({ id: 'clip-1' })
     h.state.reverseCommitted = true
 
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.library.updateSavedClipReversed).toHaveBeenCalledWith('item-1', true)
+    expect(h.library.updateLibraryClipReversed).toHaveBeenCalledWith('item-1', true)
     expect(h.close).toHaveBeenCalledTimes(1)
   })
 
   it('timeline-clip save re-applies warp only when it changed', () => {
     h.state.editsSingleTimelineClip = true
-    h.state.editsSavedClipLibrary = false
+    h.state.editsLibraryClipLibrary = false
     h.state.hasWarpPitchChanged = true
     h.state.draftSemitones = 3
     h.state.timelineClip = makeClip({ id: 'clip-1' })
@@ -273,7 +273,7 @@ describe('useClipEditorSave', () => {
 
   it('timeline-clip save blocks on an overlapping neighbour', () => {
     h.state.editsSingleTimelineClip = true
-    h.state.editsSavedClipLibrary = false
+    h.state.editsLibraryClipLibrary = false
     const clip = makeClip({ id: 'clip-1', trackId: 'track-1', startMs: 0, durationMs: 1000 })
     const neighbour = makeClip({ id: 'clip-2', trackId: 'track-1', startMs: 200, durationMs: 1000 })
     h.state.timelineClip = clip
@@ -295,13 +295,13 @@ describe('useClipEditorSave', () => {
   it('onSaveAsNew adds a clip from the current selection', () => {
     useClipEditorSave(h.deps).onSaveAsNew()
 
-    expect(h.library.addSavedClipFromSelection).toHaveBeenCalledWith('item-1', 100, 500)
+    expect(h.library.addLibraryClipFromSelection).toHaveBeenCalledWith('item-1', 100, 500)
     expect(h.notifications.pushInfo).toHaveBeenCalled()
     expect(h.close).toHaveBeenCalledTimes(1)
   })
 
   it('onSaveAsNew does not close when the library rejects the selection', () => {
-    h.library.addSavedClipFromSelection.mockReturnValue(null)
+    h.library.addLibraryClipFromSelection.mockReturnValue(null)
     useClipEditorSave(h.deps).onSaveAsNew()
 
     expect(h.close).not.toHaveBeenCalled()

@@ -15,7 +15,7 @@ export const libraryBridgeHandlers: BridgeInboundHandlers<
   },
 
   CLIP_EDITOR_PEAKS_READY: (payload) => {
-    // Clip Editor peaks are keyed by library item for saved-clip reuse.
+    // Clip Editor peaks are keyed by library item for library-clip reuse.
     void loadEditorPeaksFromCache(payload)
   },
 

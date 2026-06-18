@@ -18,7 +18,7 @@ let counter = 0
 function seedAudioFile(): LibraryItem {
   const library = useLibraryStore()
   const id = library.addItem({
-    kind: 'audio-file',
+    kind: 'source',
     filePath: `C:\\audio\\loop-${++counter}.wav`,
     fileName: `loop-${counter}.wav`,
     durationMs: 1_000,
@@ -29,13 +29,29 @@ function seedAudioFile(): LibraryItem {
   return library.byId[id]!
 }
 
-function seedSavedClip(): LibraryItem {
+function seedLibraryClip(): LibraryItem {
   const library = useLibraryStore()
   const sourceId = seedAudioFile().id
   const id = library.addItem({
-    kind: 'saved-clip',
+    kind: 'clip',
     filePath: `C:\\audio\\clip-${++counter}.wav`,
     fileName: `clip-${counter}.wav`,
+    durationMs: 1_000,
+    sampleRate: 44_100,
+    channelCount: 2,
+    peaks: new Float32Array([0, 1]),
+    derivedFrom: { sourceItemId: sourceId, inMs: 0, durationMs: 1_000 }
+  })
+  return library.byId[id]!
+}
+
+function seedStem(): LibraryItem {
+  const library = useLibraryStore()
+  const sourceId = seedAudioFile().id
+  const id = library.addItem({
+    kind: 'stem',
+    filePath: `C:\\proj\\stems\\song\\vocals-${++counter}.wav`,
+    fileName: `vocals-${counter}.wav`,
     durationMs: 1_000,
     sampleRate: 44_100,
     channelCount: 2,
@@ -61,21 +77,37 @@ describe('useLibraryItemActions', () => {
     expect(actions.contextMenuItem.value?.id).toBe(item.id)
   })
 
-  it('builds an audio-file menu with reanalyse + classification rows', () => {
+  it('builds a source menu with reanalyse + classification rows', () => {
     const item = seedAudioFile()
+    const actions = useLibraryItemActions({ startRename: vi.fn() })
+    actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
+    const commands = actions.contextMenuItems.value.map((row) => row.command)
+    expect(commands).toContain('library.reanalyse')
+    expect(commands).toContain('library.separateStems')
+    expect(commands).toContain('library.classifyAuto')
+    expect(commands).toContain('library.classifyMusic')
+    expect(commands).toContain('library.classifySimple')
+    expect(commands).toContain('library.delete')
+    expect(commands).not.toContain('library.saveSample')
+  })
+
+  it('gives a stem reanalyse + classification but hides Separate Stems and Save as Sample', () => {
+    const item = seedStem()
     const actions = useLibraryItemActions({ startRename: vi.fn() })
     actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
     const commands = actions.contextMenuItems.value.map((row) => row.command)
     expect(commands).toContain('library.reanalyse')
     expect(commands).toContain('library.classifyAuto')
     expect(commands).toContain('library.classifyMusic')
-    expect(commands).toContain('library.classifySample')
-    expect(commands).toContain('library.delete')
-    expect(commands).not.toContain('library.saveSample')
+    expect(commands).toContain('library.classifySimple')
+    // A stem is already a separated part, so it cannot be separated further.
+    expect(commands).not.toContain('library.separateStems')
+    expect(commands).not.toContain('library.saveMusicSample')
+    expect(commands).not.toContain('library.saveSimpleSample')
   })
 
   it('offers music + simple sample rows for a saved clip and dispatches the chosen mode', () => {
-    const item = seedSavedClip()
+    const item = seedLibraryClip()
     const library = useLibraryStore()
     const saveSpy = vi.spyOn(library, 'saveLibraryItemAsSample').mockImplementation(() => {})
     const actions = useLibraryItemActions({ startRename: vi.fn() })
@@ -89,7 +121,7 @@ describe('useLibraryItemActions', () => {
 
     actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
     actions.onContextMenuCommand('library.saveSimpleSample')
-    expect(saveSpy).toHaveBeenCalledWith(item.id, 'sample')
+    expect(saveSpy).toHaveBeenCalledWith(item.id, 'simple')
   })
 
   it('returns no rows when no item is targeted', () => {
@@ -129,14 +161,14 @@ describe('useLibraryItemActions', () => {
     expect(reanalyseLibraryItemMock).toHaveBeenCalledWith(item.id)
   })
 
-  it('classification commands update the item sample mode', () => {
+  it('classification commands update the item audio type', () => {
     const item = seedAudioFile()
     const library = useLibraryStore()
-    const setMode = vi.spyOn(library, 'setItemSampleMode')
+    const setMode = vi.spyOn(library, 'setItemAudioType')
     const actions = useLibraryItemActions({ startRename: vi.fn() })
     actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
-    actions.onContextMenuCommand('library.classifySample')
-    expect(setMode).toHaveBeenCalledWith(item.id, 'sample')
+    actions.onContextMenuCommand('library.classifySimple')
+    expect(setMode).toHaveBeenCalledWith(item.id, 'simple')
   })
 
   it('delete command removes the item and closes a matching info dialog', () => {

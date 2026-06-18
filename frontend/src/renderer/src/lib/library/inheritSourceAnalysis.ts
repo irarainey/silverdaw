@@ -2,7 +2,7 @@
 // saved music samples). Copies the source item's tempo/beats/anchor/key onto the
 // derived item, shifting beats back by the derived item's window start so they
 // land on the derived item's own timeline (its sample 0 = source time
-// `windowStartSec`). Classification (`sampleMode`) and the `lowConfidence`
+// `windowStartSec`). Classification (`audioType`) and the `lowConfidence`
 // auto-flag are deliberately NOT copied — each caller owns those.
 
 import { useLibraryStore } from '@/stores/libraryStore'

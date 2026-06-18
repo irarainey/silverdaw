@@ -125,7 +125,7 @@ export function useTimelineContextMenu(
         separatorAbove: true
       })
     }
-    const isLinkedClip = clipParent?.kind === 'saved-clip'
+    const isLinkedClip = clipParent?.kind === 'clip'
     const playheadOverClip =
       !!clip &&
       project.selectedTrackId === clip.trackId &&
@@ -299,8 +299,8 @@ export function useTimelineContextMenu(
       if (clip) {
         const next = !clip.reversed
         const parent = library.byId[clip.libraryItemId]
-        if (parent?.kind === 'saved-clip') {
-          library.updateSavedClipReversed(clip.libraryItemId, next)
+        if (parent?.kind === 'clip') {
+          library.updateLibraryClipReversed(clip.libraryItemId, next)
         } else {
           project.setClipReversed(clipId, next)
         }

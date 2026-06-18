@@ -35,11 +35,11 @@ const {
   closeItemContextMenu,
   onContextMenuCommand,
   itemCount,
-  SAVED_CLIP_PILL_CLASS,
-  SAVED_CLIP_BPM_PILL_CLASS,
+  LIBRARY_CLIP_PILL_CLASS,
+  LIBRARY_CLIP_BPM_PILL_CLASS,
   SAMPLE_PILL_CLASS,
   sourceItems,
-  orphanSavedClipItems,
+  orphanLibraryClipItems,
   onImportClick,
   onItemDragStart,
   onItemDragEnd,
@@ -49,7 +49,7 @@ const {
   displayArtist,
   childItems,
   groupCoverArtUrl,
-  savedClipEffectiveBpm,
+  libraryClipEffectiveBpm,
   keyBadgeClass,
   tileIsSample,
   tileIsSampleAsset,
@@ -94,12 +94,12 @@ const {
         v-model:editing-value="editingValue"
         :item-count="library.items.length"
         :source-items="sourceItems"
-        :orphan-saved-clip-items="orphanSavedClipItems"
+        :orphan-library-clip-items="orphanLibraryClipItems"
         :is-drag-over="isDragOver"
         :show-tile-images="ui.showLibraryTileImages"
         :editing-item-id="editingItemId"
-        :saved-clip-pill-class="SAVED_CLIP_PILL_CLASS"
-        :saved-clip-bpm-pill-class="SAVED_CLIP_BPM_PILL_CLASS"
+        :library-clip-pill-class="LIBRARY_CLIP_PILL_CLASS"
+        :library-clip-bpm-pill-class="LIBRARY_CLIP_BPM_PILL_CLASS"
         :sample-pill-class="SAMPLE_PILL_CLASS"
         :format-duration="formatDuration"
         :format-clip-duration="formatClipDuration"
@@ -107,7 +107,7 @@ const {
         :display-artist="displayArtist"
         :child-items="childItems"
         :group-cover-art-url="groupCoverArtUrl"
-        :saved-clip-effective-bpm="savedClipEffectiveBpm"
+        :library-clip-effective-bpm="libraryClipEffectiveBpm"
         :key-badge-class="keyBadgeClass"
         :tile-is-sample="tileIsSample"
         :tile-is-sample-asset="tileIsSampleAsset"

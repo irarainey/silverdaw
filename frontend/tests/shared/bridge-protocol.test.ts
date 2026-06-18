@@ -239,7 +239,7 @@ describe('isProjectStatePayload', () => {
           {
             id: 'l1',
             filePath: '/sample.wav',
-            kind: 'audio-file',
+            kind: 'source',
             fileName: 'sample.wav',
             durationMs: 1000,
             sampleRate: 44100,
@@ -255,7 +255,7 @@ describe('isProjectStatePayload', () => {
           {
             id: 'l2',
             filePath: '/sample.wav',
-            kind: 'saved-clip',
+            kind: 'clip',
             name: 'Sample chop',
             fileName: 'sample.wav',
             durationMs: 500,
@@ -352,7 +352,7 @@ describe('isProjectStatePayload', () => {
     expect(
       isProjectStatePayload({
         ...base,
-        library: [{ id: 'l2', filePath: '/sample.wav', kind: 'saved-clip', sourceInMs: 0 }],
+        library: [{ id: 'l2', filePath: '/sample.wav', kind: 'clip', sourceInMs: 0 }],
         tracks: []
       })
     ).toBe(false)

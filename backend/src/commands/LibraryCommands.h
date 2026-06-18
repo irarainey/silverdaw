@@ -21,7 +21,7 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
 void handleLibraryRemove(const juce::var& payload, ProjectState& projectState);
 void handleLibraryReanalyse(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                             BridgeServer& bridge, juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
-void handleLibraryItemSetSampleMode(const juce::var& payload, ProjectState& projectState);
+void handleLibraryItemSetAudioType(const juce::var& payload, ProjectState& projectState);
 void handleLibraryItemSetManualTempo(const juce::var& payload, AudioEngine& engine,
                                      ProjectState& projectState, BridgeServer& bridge);
 

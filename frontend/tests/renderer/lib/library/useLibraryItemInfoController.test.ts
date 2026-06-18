@@ -16,7 +16,7 @@ let counter = 0
 function seedSourceWithArtAndTags(): LibraryItem {
   const library = useLibraryStore()
   const id = library.addItem({
-    kind: 'audio-file',
+    kind: 'source',
     filePath: `C:\\audio\\song-${++counter}.wav`,
     fileName: `song-${counter}.wav`,
     durationMs: 200_000,
@@ -114,10 +114,10 @@ describe('useLibraryItemInfoController usages', () => {
     counter = 0
   })
 
-  function seedSavedClip(sourceId: string): LibraryItem {
+  function seedLibraryClip(sourceId: string): LibraryItem {
     const library = useLibraryStore()
     const id = library.addItem({
-      kind: 'saved-clip',
+      kind: 'clip',
       name: 'Chorus',
       filePath: `C:\\audio\\song-1.wav`,
       fileName: 'song-1.wav',
@@ -165,10 +165,10 @@ describe('useLibraryItemInfoController usages', () => {
   it('counts the source and its saved clips but never its stems', () => {
     const source = seedSourceWithArtAndTags()
     const stem = seedStem(source.id)
-    const savedClip = seedSavedClip(source.id)
+    const libraryClip = seedLibraryClip(source.id)
 
     placeClip('track-a', 'Track A', 'clip-source', source.id)
-    placeClip('track-a', 'Track A', 'clip-saved', savedClip.id)
+    placeClip('track-a', 'Track A', 'clip-saved', libraryClip.id)
     placeClip('track-b', 'Track B', 'clip-stem', stem.id)
 
     const dialogEl = ref<HTMLDivElement | null>(null)

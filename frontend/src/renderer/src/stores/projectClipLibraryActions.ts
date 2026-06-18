@@ -4,7 +4,7 @@
 
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { useLibraryStore, libraryItemIsSample } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemIsSimple } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { fileStem } from './projectHelpers'
@@ -22,9 +22,9 @@ export const clipLibraryActions = {
     saveClipToLibrary(clipId: string): string | null {
       const clip = this.clips[clipId]
       if (!clip) return null
-      const itemId = useLibraryStore().addSavedClipFromTimelineClip(clip)
+      const itemId = useLibraryStore().addLibraryClipFromTimelineClip(clip)
       if (itemId) {
-        // Rebind so saved-clip usage views see the originating timeline clip.
+        // Rebind so library-clip usage views see the originating timeline clip.
         if (clip.libraryItemId !== itemId) {
           clip.libraryItemId = itemId
           sendBridge('CLIP_REBIND', { clipId, libraryItemId: itemId })
@@ -34,7 +34,7 @@ export const clipLibraryActions = {
       return itemId
     },
 
-    saveClipAsSample(clipId: string, sampleType: 'sample' | 'music'): void {
+    saveClipAsSample(clipId: string, audioType: 'simple' | 'music'): void {
       const clip = this.clips[clipId]
       if (!clip) return
       const itemId = `sample-${crypto.randomUUID()}`
@@ -42,17 +42,17 @@ export const clipLibraryActions = {
         clipId,
         itemId,
         sampleName: clip.name?.trim() || fileStem(clip.fileName),
-        sampleMode: sampleType
+        audioType
       })
     },
 
-    /** Rebind a saved-clip instance to its source item while preserving its trim window. */
+    /** Rebind a library-clip instance to its source item while preserving its trim window. */
     unlinkClipFromLibrary(clipId: string): boolean {
       const clip = this.clips[clipId]
       if (!clip) return false
       const library = useLibraryStore()
       const parent = library.byId[clip.libraryItemId]
-      if (!parent || parent.kind !== 'saved-clip') return false
+      if (!parent || parent.kind !== 'clip') return false
       const fallbackParentId = parent.derivedFrom?.sourceItemId
       if (!fallbackParentId) return false
       clip.libraryItemId = fallbackParentId
@@ -89,8 +89,8 @@ export const clipLibraryActions = {
         tempoRatio?: number
         semitones?: number
         cents?: number
-        /** 'sample'-classified items never auto-warp on drop. */
-        sampleMode?: 'sample' | 'music'
+        /** 'simple'-classified items never auto-warp on drop. */
+        audioType?: 'simple' | 'music'
       },
       startMs: number
     ): string | null {
@@ -98,9 +98,9 @@ export const clipLibraryActions = {
       if (!track) return null
       const snapped = Math.max(0, Math.floor(startMs))
       const clipInMs =
-        libraryItem.kind === 'saved-clip' ? Math.max(0, libraryItem.derivedFrom?.inMs ?? 0) : 0
+        libraryItem.kind === 'clip' ? Math.max(0, libraryItem.derivedFrom?.inMs ?? 0) : 0
       const clipDurationMs =
-        libraryItem.kind === 'saved-clip'
+        libraryItem.kind === 'clip'
           ? Math.max(0, libraryItem.derivedFrom?.durationMs ?? libraryItem.durationMs)
           : libraryItem.durationMs
       // Predict post-drop effective duration so collision checks match auto-warp.
@@ -111,10 +111,10 @@ export const clipLibraryActions = {
         libraryItem.warpEnabled === true ||
         (autoWarpPref &&
           projectHasOtherClips &&
-          libraryItem.kind !== 'saved-clip' &&
+          libraryItem.kind !== 'clip' &&
           libraryItem.variableTempo !== true &&
-          !libraryItemIsSample(
-            { sampleMode: libraryItem.sampleMode, derivedFrom: libraryItem.derivedFrom },
+          !libraryItemIsSimple(
+            { audioType: libraryItem.audioType, derivedFrom: libraryItem.derivedFrom },
             useLibraryStore().byId
           ) &&
           typeof libraryItem.bpm === 'number' && libraryItem.bpm > 0 &&
@@ -157,8 +157,8 @@ export const clipLibraryActions = {
         clipId,
         libraryItemId: libraryItem.id,
         positionMs: snapped,
-        ...(clipInMs > 0 || libraryItem.kind === 'saved-clip' ? { inMs: clipInMs } : {}),
-        ...(libraryItem.kind === 'saved-clip' ? { durationMs: clipDurationMs } : {})
+        ...(clipInMs > 0 || libraryItem.kind === 'clip' ? { inMs: clipInMs } : {}),
+        ...(libraryItem.kind === 'clip' ? { durationMs: clipDurationMs } : {})
       })
       if (inheritedName) {
         const newClip = this.clips[clipId]
@@ -171,7 +171,7 @@ export const clipLibraryActions = {
 
       // Inherit the saved clip's shared volume envelope from an existing instance
       // so every linked placement carries the same shape.
-      if (libraryItem.kind === 'saved-clip') {
+      if (libraryItem.kind === 'clip') {
         const sibling = Object.values(this.clips).find(
           (c) =>
             !!c &&
@@ -197,7 +197,7 @@ export const clipLibraryActions = {
         bpm?: number
         variableTempo?: boolean
         lowConfidence?: boolean
-        sampleMode?: 'sample' | 'music'
+        audioType?: 'simple' | 'music'
         warpEnabled?: boolean
         warpMode?: ClipWarpMode
         tempoRatio?: number
@@ -210,19 +210,19 @@ export const clipLibraryActions = {
         'warp',
         `applyDropTimeWarp clip=${clipId} kind=${src.kind ?? 'audio'} ` +
           `srcBpm=${src.bpm ?? 'undef'} variableTempo=${src.variableTempo ?? false} ` +
-          `lowConfidence=${src.lowConfidence ?? false} sampleMode=${src.sampleMode ?? 'auto'} ` +
+          `lowConfidence=${src.lowConfidence ?? false} audioType=${src.audioType ?? 'auto'} ` +
           `inheritedWarpEnabled=${src.warpEnabled ?? 'undef'} ` +
           `inheritedTempoRatio=${src.tempoRatio ?? 'undef'}`
       )
       // Saved-clip warp defaults are explicit user choices, not auto-match.
-      if (src.kind === 'saved-clip' && (
+      if (src.kind === 'clip' && (
         src.warpEnabled !== undefined ||
         src.warpMode !== undefined ||
         src.tempoRatio !== undefined ||
         src.semitones !== undefined ||
         src.cents !== undefined
       )) {
-        log.info('warp', `applyDropTimeWarp clip=${clipId} → saved-clip inheritance branch`)
+        log.info('warp', `applyDropTimeWarp clip=${clipId} → library-clip inheritance branch`)
         this.setClipWarp(clipId, {
           warpEnabled: src.warpEnabled,
           warpMode: src.warpMode,
@@ -235,9 +235,9 @@ export const clipLibraryActions = {
       // Sample-classified sources skip tempo auto-match; manual warp still
       // works. Low detection confidence no longer counts as a sample, so a
       // low-confidence musical source still auto-warps to the project tempo.
-      const sampleClassified = libraryItemIsSample(
+      const sampleClassified = libraryItemIsSimple(
         {
-          sampleMode: src.sampleMode,
+          audioType: src.audioType,
           derivedFrom: src.derivedFrom
         },
         useLibraryStore().byId
@@ -264,7 +264,7 @@ export const clipLibraryActions = {
       const projectBpm = useTransportStore().bpm
       if (src.variableTempo === true || typeof src.bpm !== 'number' || src.bpm <= 0) {
         // Unknown source BPM: let later analysis opt in unless the user edits warp.
-        if (src.kind !== 'saved-clip' && src.variableTempo !== true) {
+        if (src.kind !== 'clip' && src.variableTempo !== true) {
           log.info(
             'warp',
             `applyDropTimeWarp clip=${clipId} → pendingAutoWarp (source BPM not yet known)`

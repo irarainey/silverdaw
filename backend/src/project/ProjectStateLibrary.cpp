@@ -14,8 +14,9 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
                                    int collapsedFlag, const juce::String& mediaId)
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return false;
-    // 'stem' joins 'saved-clip' as a recognised derived kind; anything else is a source.
-    const auto normalisedKind = (kind == "saved-clip" || kind == "stem") ? kind : juce::String("audio-file");
+    // 'stem', 'sample' and 'clip' are recognised derived/explicit kinds; anything else is a source.
+    const auto normalisedKind =
+        (kind == "clip" || kind == "stem" || kind == "sample") ? kind : juce::String("source");
     auto library = root.getChildWithName(kLibrary);
     if (!library.isValid())
     {
@@ -204,7 +205,7 @@ juce::String ProjectState::getLibraryItemMediaId(const juce::String& itemId) con
 {
     const auto library = root.getChildWithName(kLibrary);
     if (!library.isValid()) return {};
-    // Walk the derived-from chain (a sample saved from a saved-clip region, etc.) back
+    // Walk the derived-from chain (a sample saved from a clip region, etc.) back
     // to the origin that actually carries a media GUID.
     juce::String currentId = itemId;
     juce::StringArray seen;
@@ -236,7 +237,8 @@ bool ProjectState::hasLibraryItemForPath(const juce::String& filePath) const
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(kKind, "audio-file").toString() == "audio-file"
+        const auto kind = item.getProperty(kKind, "source").toString();
+        if ((kind == "source" || kind == "sample")
             && item.getProperty(kFilePath).toString() == filePath) return true;
     }
     return false;
@@ -255,7 +257,7 @@ juce::var ProjectState::libraryAsJson() const
         obj->setProperty("id", item.getProperty(kId).toString());
         const juce::String filePath = item.getProperty(kFilePath).toString();
         obj->setProperty("filePath", filePath);
-        const auto kind = item.getProperty(kKind, "audio-file").toString();
+        const auto kind = item.getProperty(kKind, "source").toString();
         obj->setProperty("kind", kind);
         if (item.hasProperty(kDisplayName))
         {
@@ -298,12 +300,12 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("lowConfidence", true);
         }
-        if (item.hasProperty(kSampleMode))
+        if (item.hasProperty(kAudioType))
         {
-            const auto mode = item.getProperty(kSampleMode).toString();
-            if (mode == "sample" || mode == "music")
+            const auto audioType = item.getProperty(kAudioType).toString();
+            if (audioType == "simple" || audioType == "music")
             {
-                obj->setProperty("sampleMode", mode);
+                obj->setProperty("audioType", audioType);
             }
         }
         if (item.hasProperty(kSourceItemId))

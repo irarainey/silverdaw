@@ -11,7 +11,7 @@ import type { Clip } from '@/stores/projectStore'
 function makeItem(overrides: Partial<LibraryItem> = {}): LibraryItem {
   return {
     id: 'item',
-    kind: 'audio-file',
+    kind: 'source',
     fileName: 'src.wav',
     filePath: 'C:\\src.wav',
     playbackFilePath: 'C:\\src.wav',
@@ -23,10 +23,10 @@ function makeItem(overrides: Partial<LibraryItem> = {}): LibraryItem {
   } as LibraryItem
 }
 
-function makeSavedClipItem(overrides: Partial<LibraryItem> = {}): LibraryItem {
+function makeLibraryClipItem(overrides: Partial<LibraryItem> = {}): LibraryItem {
   return makeItem({
     id: 'saved',
-    kind: 'saved-clip',
+    kind: 'clip',
     durationMs: 2_000,
     derivedFrom: { sourceItemId: 'src', sourceClipId: '', inMs: 1_000, durationMs: 2_000 },
     ...overrides
@@ -75,7 +75,7 @@ describe('useClipEditorViewport — view bounds', () => {
     expect(vp.viewEndMs.value).toBe(0)
   })
 
-  it('audio-file mode: view spans the full source duration', () => {
+  it('source mode: view spans the full source duration', () => {
     const vp = makeVp({
       editorItem: makeItem(),
       editsExistingClip: false,
@@ -86,9 +86,9 @@ describe('useClipEditorViewport — view bounds', () => {
     expect(vp.viewEndMs.value).toBe(8_000)
   })
 
-  it('saved-clip mode collapsed: view tracks the cropped window', () => {
+  it('library-clip mode collapsed: view tracks the cropped window', () => {
     const vp = makeVp({
-      editorItem: makeSavedClipItem(),
+      editorItem: makeLibraryClipItem(),
       editsExistingClip: true,
       timelineClip: makeTimelineClip(),
       sourceDurationMs: 10_000
@@ -98,9 +98,9 @@ describe('useClipEditorViewport — view bounds', () => {
     expect(vp.viewDurationMs.value).toBe(1_500)
   })
 
-  it('saved-clip mode expanded: view spans the full source', () => {
+  it('library-clip mode expanded: view spans the full source', () => {
     const vp = makeVp({
-      editorItem: makeSavedClipItem(),
+      editorItem: makeLibraryClipItem(),
       editsExistingClip: true,
       timelineClip: makeTimelineClip(),
       sourceDurationMs: 10_000
@@ -113,9 +113,9 @@ describe('useClipEditorViewport — view bounds', () => {
 })
 
 describe('useClipEditorViewport — initialiseForItem', () => {
-  it('seeds saved-clip view from the timeline clip when provided', () => {
+  it('seeds library-clip view from the timeline clip when provided', () => {
     const vp = makeVp({
-      editorItem: makeSavedClipItem(),
+      editorItem: makeLibraryClipItem(),
       editsExistingClip: true,
       timelineClip: makeTimelineClip({ inMs: 750, durationMs: 1_250 })
     })
@@ -128,7 +128,7 @@ describe('useClipEditorViewport — initialiseForItem', () => {
 
   it('falls back to derivedFrom when no timeline clip exists', () => {
     const vp = makeVp({
-      editorItem: makeSavedClipItem(),
+      editorItem: makeLibraryClipItem(),
       editsExistingClip: true,
       timelineClip: null
     })
@@ -137,7 +137,7 @@ describe('useClipEditorViewport — initialiseForItem', () => {
     expect(vp.cropViewDurationMs.value).toBe(2_000)
   })
 
-  it('audio-file mode: opens with no selection over the full source', () => {
+  it('source mode: opens with no selection over the full source', () => {
     const vp = makeVp({
       editorItem: makeItem(),
       editsExistingClip: false,
@@ -203,7 +203,7 @@ describe('useClipEditorViewport — zoom math', () => {
 describe('useClipEditorViewport — scroll clamping', () => {
   it('clamps scrollMs back when the view duration shrinks after a crop', () => {
     const vp = makeVp({
-      editorItem: makeSavedClipItem(),
+      editorItem: makeLibraryClipItem(),
       editsExistingClip: true,
       timelineClip: makeTimelineClip(),
       sourceDurationMs: 10_000
@@ -244,7 +244,7 @@ describe('useClipEditorViewport — selection / playback range', () => {
 describe('useClipEditorViewport — crop snapshot + viewExpanded transitions', () => {
   it('snapCropViewToSelection moves the cropped view to the current selection', () => {
     const vp = makeVp({
-      editorItem: makeSavedClipItem(),
+      editorItem: makeLibraryClipItem(),
       editsExistingClip: true,
       timelineClip: makeTimelineClip()
     })
@@ -258,7 +258,7 @@ describe('useClipEditorViewport — crop snapshot + viewExpanded transitions', (
 
   it('snapCropViewToSelection is a no-op when the selection has been cleared', () => {
     const vp = makeVp({
-      editorItem: makeSavedClipItem(),
+      editorItem: makeLibraryClipItem(),
       editsExistingClip: true,
       timelineClip: makeTimelineClip()
     })
@@ -273,7 +273,7 @@ describe('useClipEditorViewport — crop snapshot + viewExpanded transitions', (
 
   it('captureCropSnapshot / restoreCropSnapshot round-trips view and selection', () => {
     const vp = makeVp({
-      editorItem: makeSavedClipItem(),
+      editorItem: makeLibraryClipItem(),
       editsExistingClip: true,
       timelineClip: makeTimelineClip()
     })

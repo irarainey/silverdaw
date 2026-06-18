@@ -118,7 +118,7 @@ export async function preflightSampleRates(filePaths: readonly string[]): Promis
 }
 
 /** Map a library item to the placement payload `addClipFromLibrary` expects, so
- *  warp, saved-clip, and tempo handling stay aligned across every caller. */
+ *  warp, library-clip, and tempo handling stay aligned across every caller. */
 export function libraryItemToClipPlacement(audio: LibraryItem): {
   id: string
   filePath: string
@@ -139,7 +139,7 @@ export function libraryItemToClipPlacement(audio: LibraryItem): {
   tempoRatio?: number
   semitones?: number
   cents?: number
-  sampleMode?: 'sample' | 'music'
+  audioType?: 'simple' | 'music'
 } {
   return {
     id: audio.id,
@@ -161,7 +161,7 @@ export function libraryItemToClipPlacement(audio: LibraryItem): {
     tempoRatio: audio.tempoRatio,
     semitones: audio.semitones,
     cents: audio.cents,
-    sampleMode: audio.sampleMode
+    audioType: audio.audioType
   }
 }
 
@@ -196,7 +196,7 @@ export async function importAudioIntoTrack(
   const audio = library.getItem(itemId)
   if (!audio) return null
 
-  // Reuse drag/drop placement so warp, collision, and saved-clip handling match.
+  // Reuse drag/drop placement so warp, collision, and library-clip handling match.
   log.info(
     'import',
     `importAudioIntoTrack → addClipFromLibrary itemId=${audio.id} bpm=${audio.bpm ?? 'undef'} ` +

@@ -12,7 +12,7 @@ vi.mock('@/lib/log', () => ({
 
 function item(partial: Partial<LibraryItem> & { id: string }): LibraryItem {
   return {
-    kind: 'audio-file',
+    kind: 'source',
     filePath: `C:\\src\\${partial.id}.wav`,
     fileName: `${partial.id}.wav`,
     durationMs: 1000,
@@ -38,18 +38,18 @@ describe('removedItemFileInfo', () => {
     expect(removedItemFileInfo(stem, false, 'guid-1').wavPath).toBe('C:\\proj\\stems\\song-stems\\vocals.wav')
   })
 
-  it('returns the WAV path for a saved sample (audio-file marked as a sample asset)', () => {
-    const sample = item({ id: 'sm1', kind: 'audio-file', playbackFilePath: 'C:\\proj\\samples\\song\\hit-sample-001.wav' })
+  it('returns the WAV path for a saved sample (source marked as a sample asset)', () => {
+    const sample = item({ id: 'sm1', kind: 'sample', playbackFilePath: 'C:\\proj\\samples\\song\\hit-sample-001.wav' })
     expect(removedItemFileInfo(sample, true, 'guid-1').wavPath).toBe('C:\\proj\\samples\\song\\hit-sample-001.wav')
   })
 
   it('never returns a WAV path for a plain imported source', () => {
-    const source = item({ id: 'a1', kind: 'audio-file', playbackFilePath: 'C:\\music\\original.wav' })
+    const source = item({ id: 'a1', kind: 'source', playbackFilePath: 'C:\\music\\original.wav' })
     expect(removedItemFileInfo(source, false, 'guid-1').wavPath).toBeUndefined()
   })
 
   it('never returns a WAV path for a saved clip', () => {
-    const clip = item({ id: 'c1', kind: 'saved-clip' })
+    const clip = item({ id: 'c1', kind: 'clip' })
     expect(removedItemFileInfo(clip, false, 'guid-1').wavPath).toBeUndefined()
   })
 })

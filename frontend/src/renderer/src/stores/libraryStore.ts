@@ -3,7 +3,7 @@
 // Items are decoded once and reused by every placed clip.
 //
 // Domain actions live in sibling modules spread into `actions` below:
-//   librarySavedClipActions — create/trim/edit/warp saved clips
+//   libraryClipActions — create/trim/edit/warp saved clips
 //   libraryImportActions     — import + analysis-progress lifecycle
 //   libraryPeaksActions      — waveform / peaks caching
 // This module keeps state, getters, and the catalogue/metadata core.
@@ -18,7 +18,7 @@ import type {
   LibraryItem,
   LibraryState
 } from './libraryTypes'
-import { revokeItemCoverArt, libraryItemIsSampleAsset, resolveLibraryItemMediaId } from './libraryItemHelpers'
+import { revokeItemCoverArt, libraryItemIsSample, resolveLibraryItemMediaId } from './libraryItemHelpers'
 import { cleanupRemovedItemFiles, removedItemFileInfo, type RemovedItemFile } from '@/lib/library/projectFileCleanup'
 
 // Stable facade for existing `@/stores/libraryStore` imports.
@@ -28,11 +28,11 @@ export type {
   ImportStage,
   ItemChannelPeaks,
   LibraryItem,
-  SavedClipSource
+  LibraryClipSource
 } from './libraryTypes'
-export { libraryItemDisplayName, libraryItemIsSample, libraryItemIsSampleAsset, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
+export { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
 
-import { savedClipActions } from './librarySavedClipActions'
+import { libraryClipActions } from './libraryClipActions'
 import { importActions } from './libraryImportActions'
 import { peaksActions } from './libraryPeaksActions'
 
@@ -88,7 +88,7 @@ export const useLibraryStore = defineStore('library', {
   },
 
   actions: {
-    ...savedClipActions,
+    ...libraryClipActions,
     ...importActions,
     ...peaksActions,
     /** Clears state before a reset PROJECT_STATE rebuilds the catalogue. */
@@ -110,10 +110,10 @@ export const useLibraryStore = defineStore('library', {
       log.info('library', 'cleared')
     },
 
-    /** Reuses audio-file items by `filePath`; saved clips are distinct by trim window. */
+    /** Reuses source/sample items by `filePath`; saved clips are distinct by trim window. */
     addItem(audio: AddLibraryItemInput): string {
-      const kind = audio.kind ?? 'audio-file'
-      if (kind === 'saved-clip' && !audio.derivedFrom) {
+      const kind = audio.kind ?? 'source'
+      if (kind === 'clip' && !audio.derivedFrom) {
         log.warn('library', `addItem refused saved clip without source window file=${audio.filePath}`)
         return ''
       }
@@ -122,13 +122,13 @@ export const useLibraryStore = defineStore('library', {
         return ''
       }
       const existing =
-        kind === 'audio-file'
-          ? this.items.find((i) => i.kind === 'audio-file' && i.filePath === audio.filePath)
+        kind === 'source' || kind === 'sample'
+          ? this.items.find((i) => (i.kind === 'source' || i.kind === 'sample') && i.filePath === audio.filePath)
           : kind === 'stem'
             ? this.items.find((i) => i.kind === 'stem' && i.filePath === audio.filePath)
             : this.items.find(
                 (i) =>
-                  i.kind === 'saved-clip' &&
+                  i.kind === 'clip' &&
                   i.filePath === audio.filePath &&
                   i.derivedFrom?.sourceItemId === audio.derivedFrom?.sourceItemId &&
                   i.derivedFrom?.inMs === audio.derivedFrom?.inMs &&
@@ -169,11 +169,11 @@ export const useLibraryStore = defineStore('library', {
         key: audio.key,
         derivedFrom: audio.derivedFrom,
         collapsed: audio.collapsed,
-        warpEnabled: kind === 'saved-clip' ? audio.warpEnabled : undefined,
-        warpMode: kind === 'saved-clip' ? audio.warpMode : undefined,
-        tempoRatio: kind === 'saved-clip' ? audio.tempoRatio : undefined,
-        semitones: kind === 'saved-clip' ? audio.semitones : undefined,
-        cents: kind === 'saved-clip' ? audio.cents : undefined,
+        warpEnabled: kind === 'clip' ? audio.warpEnabled : undefined,
+        warpMode: kind === 'clip' ? audio.warpMode : undefined,
+        tempoRatio: kind === 'clip' ? audio.tempoRatio : undefined,
+        semitones: kind === 'clip' ? audio.semitones : undefined,
+        cents: kind === 'clip' ? audio.cents : undefined,
         unresolved: audio.unresolved === true ? true : undefined,
         mediaId: audio.mediaId
       })
@@ -200,11 +200,11 @@ export const useLibraryStore = defineStore('library', {
           sourceDurationMs: audio.derivedFrom?.durationMs,
           mediaId: audio.mediaId,
           collapsed: audio.collapsed,
-          warpEnabled: kind === 'saved-clip' ? audio.warpEnabled : undefined,
-          warpMode: kind === 'saved-clip' ? audio.warpMode : undefined,
-          tempoRatio: kind === 'saved-clip' ? audio.tempoRatio : undefined,
-          semitones: kind === 'saved-clip' ? audio.semitones : undefined,
-          cents: kind === 'saved-clip' ? audio.cents : undefined
+          warpEnabled: kind === 'clip' ? audio.warpEnabled : undefined,
+          warpMode: kind === 'clip' ? audio.warpMode : undefined,
+          tempoRatio: kind === 'clip' ? audio.tempoRatio : undefined,
+          semitones: kind === 'clip' ? audio.semitones : undefined,
+          cents: kind === 'clip' ? audio.cents : undefined
         })
       }
       return id
@@ -239,20 +239,20 @@ export const useLibraryStore = defineStore('library', {
       }
     },
 
-    /** Overrides sample/music classification; `auto` falls back to `lowConfidence`. */
-    setItemSampleMode(itemId: string, mode: 'sample' | 'music' | 'auto' | null): void {
+    /** Overrides simple/music classification; `auto` falls back to `lowConfidence`. */
+    setItemAudioType(itemId: string, audioType: 'simple' | 'music' | 'auto' | null): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
-      const normalised: 'sample' | 'music' | 'auto' =
-        mode === 'sample' || mode === 'music' ? mode : 'auto'
-      const nextStored: 'sample' | 'music' | undefined =
+      const normalised: 'simple' | 'music' | 'auto' =
+        audioType === 'simple' || audioType === 'music' ? audioType : 'auto'
+      const nextStored: 'simple' | 'music' | undefined =
         normalised === 'auto' ? undefined : normalised
-      if (item.sampleMode === nextStored) return
-      item.sampleMode = nextStored
+      if (item.audioType === nextStored) return
+      item.audioType = nextStored
       useProjectStore().peaksRevision++
-      sendBridge('LIBRARY_ITEM_SET_SAMPLE_MODE', {
+      sendBridge('LIBRARY_ITEM_SET_AUDIO_TYPE', {
         itemId,
-        mode: normalised
+        audioType: normalised
       })
     },
 
@@ -305,8 +305,8 @@ export const useLibraryStore = defineStore('library', {
       if (item.name === nextName) return false
       const previousName = item.name
       item.name = nextName
-      // Propagate only to linked clips still using the saved-clip name.
-      if (item.kind === 'saved-clip') {
+      // Propagate only to linked clips still using the library-clip name.
+      if (item.kind === 'clip') {
         const project = useProjectStore()
         let propagated = 0
         for (const clipId in project.clips) {
@@ -382,15 +382,15 @@ export const useLibraryStore = defineStore('library', {
       useProjectStore().peaksRevision++
     },
 
-    /** Removes unused items; audio-file sources cascade-delete unused saved clips. */
+    /** Removes unused items; source/sample files cascade-delete unused saved clips. */
     removeItem(itemId: string): boolean {
       const idx = this.items.findIndex((i) => i.id === itemId)
       if (idx < 0) return false
       const item = this.items[idx]
       if (!item) return false
 
-      // Source audio and stems stay blocked while timeline clips depend on them.
-      if ((item.kind === 'audio-file' || item.kind === 'stem') && this.isItemInUse(itemId)) {
+      // Source audio, samples and stems stay blocked while timeline clips depend on them.
+      if ((item.kind === 'source' || item.kind === 'sample' || item.kind === 'stem') && this.isItemInUse(itemId)) {
         log.warn('library', `removeItem refused (${item.kind} in use) id=${itemId}`)
         return false
       }
@@ -405,13 +405,13 @@ export const useLibraryStore = defineStore('library', {
         removedForCleanup.push(
           removedItemFileInfo(
             removed,
-            libraryItemIsSampleAsset(removed),
+            libraryItemIsSample(removed),
             resolveLibraryItemMediaId(removed, this.byId)
           )
         )
       }
 
-      if (item.kind === 'saved-clip') {
+      if (item.kind === 'clip') {
         const project = useProjectStore()
         const linkedClipIds: string[] = []
         for (const clipId in project.clips) {
@@ -422,11 +422,11 @@ export const useLibraryStore = defineStore('library', {
         }
       }
 
-      // An audio-file source lends inherited identity to its stems; promote it
-      // before the source disappears so each stem keeps reading standalone.
-      if (item.kind === 'audio-file') {
+      // A source/sample lends inherited identity to its stems; promote it
+      // before it disappears so each stem keeps reading standalone.
+      if (item.kind === 'source' || item.kind === 'sample') {
         // Stems own their audio but inherit identity (tags, cover art, BPM, key,
-        // beats, sample classification) from the source via live lookups.
+        // beats, audio-type classification) from the source via live lookups.
         let coverHandedOff = false
         for (const child of this.items) {
           if (child.kind !== 'stem' || child.derivedFrom?.sourceItemId !== itemId) continue
@@ -441,7 +441,7 @@ export const useLibraryStore = defineStore('library', {
           if (child.variableTempo == null && item.variableTempo != null) {
             child.variableTempo = item.variableTempo
           }
-          if (child.sampleMode == null && item.sampleMode) child.sampleMode = item.sampleMode
+          if (child.audioType == null && item.audioType) child.audioType = item.audioType
           if (child.lowConfidence == null && item.lowConfidence != null) {
             child.lowConfidence = item.lowConfidence
           }
@@ -456,12 +456,12 @@ export const useLibraryStore = defineStore('library', {
         if (coverHandedOff) item.coverArtUrl = undefined
       }
 
-      // Saved clips replay their source's file (an audio-file OR a stem), so
+      // Saved clips replay their source's file (a source, sample OR a stem), so
       // they cannot outlive it. Walk back-to-front so splices stay valid.
-      if (item.kind === 'audio-file' || item.kind === 'stem') {
+      if (item.kind === 'source' || item.kind === 'sample' || item.kind === 'stem') {
         for (let i = this.items.length - 1; i >= 0; i--) {
           const child = this.items[i]
-          if (!child || child.kind !== 'saved-clip' || child.derivedFrom?.sourceItemId !== itemId) {
+          if (!child || child.kind !== 'clip' || child.derivedFrom?.sourceItemId !== itemId) {
             continue
           }
           revokeItemCoverArt(child)
@@ -502,13 +502,13 @@ export const useLibraryStore = defineStore('library', {
       for (const id in project.clips) {
         if (project.clips[id]?.libraryItemId === itemId) return true
       }
-      // Only active saved-clip descendants block removal. Stems are standalone
+      // Only active library-clip descendants block removal. Stems are standalone
       // WAV files that merely inherit identity (name/tags/art) from the source,
       // so a stem on the timeline does NOT keep the source in use. But a stem,
       // like a source, can itself back saved clips that replay its file.
-      if (item.kind === 'audio-file' || item.kind === 'stem') {
+      if (item.kind === 'source' || item.kind === 'sample' || item.kind === 'stem') {
         for (const child of this.items) {
-          if (child.kind !== 'saved-clip' || child.derivedFrom?.sourceItemId !== itemId) continue
+          if (child.kind !== 'clip' || child.derivedFrom?.sourceItemId !== itemId) continue
           for (const id in project.clips) {
             if (project.clips[id]?.libraryItemId === child.id) return true
           }

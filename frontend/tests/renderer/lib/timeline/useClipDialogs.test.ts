@@ -13,7 +13,7 @@ vi.mock('@/lib/audioDecode', () => ({ PEAKS_PER_SECOND: 200, decodeAudioToPeaks:
 function makeItem(overrides: Partial<LibraryItem> = {}): LibraryItem {
   return {
     id: 'src',
-    kind: 'audio-file',
+    kind: 'source',
     fileName: 'src.wav',
     filePath: 'C:\\src.wav',
     playbackFilePath: 'C:\\src.wav',

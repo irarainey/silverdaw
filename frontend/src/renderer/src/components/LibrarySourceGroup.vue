@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, type ComponentPublicInstance } from 'vue'
 import type { LibraryItem } from '@/stores/libraryStore'
-import LibrarySavedClipRow from '@/components/LibrarySavedClipRow.vue'
+import LibraryClipRow from '@/components/LibraryClipRow.vue'
 import LibraryTypeBadge from '@/components/LibraryTypeBadge.vue'
 import { LIBRARY_BPM_VARIABLE_PILL_CLASS } from '@/lib/library/libraryPillClasses'
 
@@ -11,14 +11,14 @@ const props = defineProps<{
   coverArtUrl?: string
   showTileImages: boolean
   editingItemId: string | null
-  savedClipPillClass: string
-  savedClipBpmPillClass: string
+  libraryClipPillClass: string
+  libraryClipBpmPillClass: string
   samplePillClass: string
   formatDuration: (ms: number) => string
   formatClipDuration: (ms: number) => string
   displayTitle: (item: LibraryItem) => string
   displayArtist: (item: LibraryItem) => string
-  savedClipEffectiveBpm: (item: LibraryItem) => number | undefined
+  libraryClipEffectiveBpm: (item: LibraryItem) => number | undefined
   keyBadgeClass: (key: string) => string
   tileIsSample: (item: LibraryItem) => boolean
   tileIsSampleAsset: (item: LibraryItem) => boolean
@@ -42,7 +42,7 @@ const isInUse = computed(() => useCount.value > 0)
 // Same chrome as the BPM badge (shared base class), recoloured by in-use state.
 const inUsePillClass = computed(
   () =>
-    `${props.savedClipPillClass} ${isInUse.value ? 'border-emerald-700 bg-emerald-900/60 text-emerald-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`
+    `${props.libraryClipPillClass} ${isInUse.value ? 'border-emerald-700 bg-emerald-900/60 text-emerald-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`
 )
 const tileCoverArtUrl = computed(() => props.coverArtUrl ?? props.source.coverArtUrl)
 // Drives the sample tint, fallback waveform icon, and cover-art badge: a saved sample
@@ -51,11 +51,11 @@ const tileCoverArtUrl = computed(() => props.coverArtUrl ?? props.source.coverAr
 // sample shows its pitch + BPM while still reading as a sample at a glance.
 const isSampleTile = computed(() => props.tileIsSampleAsset(props.source))
 const isStemTile = computed(() => props.source.kind === 'stem')
-const savedClipChildren = computed(() => props.children.filter((item) => item.kind === 'saved-clip'))
+const libraryClipChildren = computed(() => props.children.filter((item) => item.kind === 'clip'))
 
 /** Compact summary for the collapse header, e.g. "3 saved clips". */
 const childSummary = computed(() => {
-  const clipCount = savedClipChildren.value.length
+  const clipCount = libraryClipChildren.value.length
   if (clipCount === 0) return ''
   return `${clipCount} saved ${clipCount === 1 ? 'clip' : 'clips'}`
 })
@@ -152,9 +152,9 @@ const childSummary = computed(() => {
             <span
               v-if="props.tileIsSample(props.source)"
               :class="props.samplePillClass"
-              title="Treated as a non-musical sample — beat / key analysis is hidden and auto-warp on drop is skipped. Toggle from the right-click menu."
+              title="Treated as simple — beat / key analysis is hidden and auto-warp on drop is skipped. Toggle from the right-click menu."
             >
-              Sample
+              Simple
             </span>
             <template v-else>
               <span
@@ -166,7 +166,7 @@ const childSummary = computed(() => {
               </span>
               <span
                 v-if="props.source.bpm"
-                :class="props.source.variableTempo ? LIBRARY_BPM_VARIABLE_PILL_CLASS : props.savedClipBpmPillClass"
+                :class="props.source.variableTempo ? LIBRARY_BPM_VARIABLE_PILL_CLASS : props.libraryClipBpmPillClass"
                 :title="props.source.variableTempo ? 'Tempo varies across the file - the BPM shown is a rough average' : 'Detected tempo'"
               >
                 <span
@@ -192,7 +192,7 @@ const childSummary = computed(() => {
         type="button"
         data-borderless-button="true"
         class="flex w-full items-center gap-1.5 border-t border-zinc-800/80 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-300"
-        :title="props.source.collapsed ? 'Show stems and saved clips' : 'Hide stems and saved clips'"
+        :title="props.source.collapsed ? 'Show saved clips' : 'Hide saved clips'"
         @click="emit('toggleCollapsed', props.source.id, !props.source.collapsed)"
       >
         <svg
@@ -208,17 +208,17 @@ const childSummary = computed(() => {
         <span>{{ childSummary }}</span>
       </button>
       <template v-if="!props.source.collapsed">
-        <LibrarySavedClipRow
-          v-for="item in savedClipChildren"
+        <LibraryClipRow
+          v-for="item in libraryClipChildren"
           :key="item.id"
           v-model:editing-value="editingValue"
           :item="item"
           :editing-item-id="props.editingItemId"
-          row-class="saved-clip group relative flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 pr-1 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
+          row-class="library-clip group relative flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 pr-1 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
           marker-class="h-6 w-1 shrink-0 rounded-sm bg-cyan-500/60"
-          :saved-clip-bpm="props.savedClipEffectiveBpm(item)"
-          :saved-clip-pill-class="props.savedClipPillClass"
-          :saved-clip-bpm-pill-class="props.savedClipBpmPillClass"
+          :library-clip-bpm="props.libraryClipEffectiveBpm(item)"
+          :library-clip-pill-class="props.libraryClipPillClass"
+          :library-clip-bpm-pill-class="props.libraryClipBpmPillClass"
           :format-clip-duration="props.formatClipDuration"
           :display-title="props.displayTitle"
           :key-badge-class="props.keyBadgeClass"

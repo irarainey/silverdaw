@@ -104,7 +104,7 @@ inline juce::ValueTree makeProjectTree()
     juce::ValueTree libItem(juce::Identifier{"ITEM"});
     libItem.setProperty("id", "lib1", nullptr);
     libItem.setProperty("filePath", "C:\\audio\\loop.wav", nullptr);
-    libItem.setProperty("kind", "audio-file", nullptr);
+    libItem.setProperty("kind", "source", nullptr);
     library.appendChild(libItem, nullptr);
     project.appendChild(library, nullptr);
     project.appendChild(juce::ValueTree(juce::Identifier{"MARKERS"}), nullptr);

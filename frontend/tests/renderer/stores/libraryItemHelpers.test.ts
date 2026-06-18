@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   libraryItemIsSample,
-  libraryItemIsSampleAsset,
+  libraryItemIsSimple,
   libraryItemShowsLinkBadge,
   libraryItemTempoUnverified,
   stemPartLabel,
@@ -10,26 +10,26 @@ import {
 
 const sampleSource = { sourceItemId: 'origin-1', inMs: 0, durationMs: 8_000 }
 
-describe('libraryItemIsSampleAsset', () => {
+describe('libraryItemIsSample', () => {
   it('returns false for a nullish item', () => {
-    expect(libraryItemIsSampleAsset(undefined)).toBe(false)
-    expect(libraryItemIsSampleAsset(null)).toBe(false)
+    expect(libraryItemIsSample(undefined)).toBe(false)
+    expect(libraryItemIsSample(null)).toBe(false)
   })
 
-  it('flags both music and simple saved samples (audio-file with a source link)', () => {
-    expect(libraryItemIsSampleAsset({ kind: 'audio-file', derivedFrom: sampleSource })).toBe(true)
+  it('flags both music and simple saved samples (explicit sample kind)', () => {
+    expect(libraryItemIsSample({ kind: 'sample', derivedFrom: sampleSource })).toBe(true)
   })
 
   it('does NOT flag a music-classified original import', () => {
-    // The bug: an ordinary musical import is sampleMode "music" but has no source
-    // link, so it must never read as a sample.
-    expect(libraryItemIsSampleAsset({ kind: 'audio-file', sampleMode: 'music' })).toBe(false)
-    expect(libraryItemIsSampleAsset({ kind: 'audio-file' })).toBe(false)
+    // The bug: an ordinary musical import is audioType "music" but is a source
+    // kind, so it must never read as a sample.
+    expect(libraryItemIsSample({ kind: 'source', audioType: 'music' })).toBe(false)
+    expect(libraryItemIsSample({ kind: 'source' })).toBe(false)
   })
 
   it('does not flag stems or saved clips (they have their own kind)', () => {
-    expect(libraryItemIsSampleAsset({ kind: 'stem', derivedFrom: sampleSource })).toBe(false)
-    expect(libraryItemIsSampleAsset({ kind: 'saved-clip', derivedFrom: sampleSource })).toBe(false)
+    expect(libraryItemIsSample({ kind: 'stem', derivedFrom: sampleSource })).toBe(false)
+    expect(libraryItemIsSample({ kind: 'clip', derivedFrom: sampleSource })).toBe(false)
   })
 })
 
@@ -40,50 +40,50 @@ describe('libraryItemShowsLinkBadge', () => {
   })
 
   it('flags saved clips as linked', () => {
-    expect(libraryItemShowsLinkBadge({ kind: 'saved-clip' })).toBe(true)
+    expect(libraryItemShowsLinkBadge({ kind: 'clip' })).toBe(true)
   })
 
-  it('flags saved sample assets (audio-file with a source link) as linked', () => {
-    expect(libraryItemShowsLinkBadge({ kind: 'audio-file', derivedFrom: sampleSource })).toBe(true)
+  it('flags saved sample assets (explicit sample kind) as linked', () => {
+    expect(libraryItemShowsLinkBadge({ kind: 'sample', derivedFrom: sampleSource })).toBe(true)
   })
 
   it('does not flag a plain or music-classified imported source file', () => {
-    expect(libraryItemShowsLinkBadge({ kind: 'audio-file' })).toBe(false)
-    expect(libraryItemShowsLinkBadge({ kind: 'audio-file', sampleMode: 'music' })).toBe(false)
+    expect(libraryItemShowsLinkBadge({ kind: 'source' })).toBe(false)
+    expect(libraryItemShowsLinkBadge({ kind: 'source', audioType: 'music' })).toBe(false)
     expect(libraryItemShowsLinkBadge({ kind: 'stem' })).toBe(false)
   })
 })
 
-describe('libraryItemIsSample', () => {
-  it('treats a low-confidence detection as music, not a sample', () => {
+describe('libraryItemIsSimple', () => {
+  it('treats a low-confidence detection as music, not simple', () => {
     expect(
-      libraryItemIsSample(
-        { lowConfidence: true } as Parameters<typeof libraryItemIsSample>[0],
+      libraryItemIsSimple(
+        { lowConfidence: true } as Parameters<typeof libraryItemIsSimple>[0],
         {}
       )
     ).toBe(false)
   })
 
-  it('honours an explicit sample override regardless of confidence', () => {
-    expect(libraryItemIsSample({ sampleMode: 'sample' }, {})).toBe(true)
+  it('honours an explicit simple override regardless of confidence', () => {
+    expect(libraryItemIsSimple({ audioType: 'simple' }, {})).toBe(true)
   })
 
   it('honours an explicit music override regardless of confidence', () => {
-    expect(libraryItemIsSample({ sampleMode: 'music' }, {})).toBe(false)
+    expect(libraryItemIsSimple({ audioType: 'music' }, {})).toBe(false)
   })
 
   it('falls back to the source override for a derived item but ignores source confidence', () => {
     const byId = {
-      src: { id: 'src', kind: 'audio-file', sampleMode: 'sample', lowConfidence: false }
+      src: { id: 'src', kind: 'source', audioType: 'simple', lowConfidence: false }
     } as never
     expect(
-      libraryItemIsSample({ derivedFrom: { sourceItemId: 'src' } as never }, byId)
+      libraryItemIsSimple({ derivedFrom: { sourceItemId: 'src' } as never }, byId)
     ).toBe(true)
     const byIdLowConf = {
-      src: { id: 'src', kind: 'audio-file', lowConfidence: true }
+      src: { id: 'src', kind: 'source', lowConfidence: true }
     } as never
     expect(
-      libraryItemIsSample({ derivedFrom: { sourceItemId: 'src' } as never }, byIdLowConf)
+      libraryItemIsSimple({ derivedFrom: { sourceItemId: 'src' } as never }, byIdLowConf)
     ).toBe(false)
   })
 })
@@ -94,8 +94,8 @@ describe('libraryItemTempoUnverified', () => {
   })
 
   it('is cleared once the user sets any explicit classification', () => {
-    expect(libraryItemTempoUnverified({ sampleMode: 'music', lowConfidence: true }, {})).toBe(false)
-    expect(libraryItemTempoUnverified({ sampleMode: 'sample', lowConfidence: true }, {})).toBe(false)
+    expect(libraryItemTempoUnverified({ audioType: 'music', lowConfidence: true }, {})).toBe(false)
+    expect(libraryItemTempoUnverified({ audioType: 'simple', lowConfidence: true }, {})).toBe(false)
   })
 
   it('is false for a confident item', () => {
@@ -104,7 +104,7 @@ describe('libraryItemTempoUnverified', () => {
 
   it('inherits the unverified state from an un-overridden source', () => {
     const byId = {
-      src: { id: 'src', kind: 'audio-file', lowConfidence: true }
+      src: { id: 'src', kind: 'source', lowConfidence: true }
     } as never
     expect(
       libraryItemTempoUnverified({ derivedFrom: { sourceItemId: 'src' } as never }, byId)

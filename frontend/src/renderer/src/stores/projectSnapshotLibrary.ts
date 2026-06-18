@@ -82,7 +82,7 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
       }
       const libId = library.addItem({
         id: item.id,
-        kind: item.kind ?? 'audio-file',
+        kind: item.kind ?? 'source',
         name: item.name,
         filePath: item.filePath,
         fileName: item.fileName?.trim() ? item.fileName : filePathToBasename(item.filePath),
@@ -95,8 +95,8 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
         // Keep CLIP_ADD keyed by source path; cached WAV paths are backend-internal.
         playbackFilePath: item.filePath,
         // Restore the source link for any derived item: saved clips, stems, AND
-        // saved samples (an audio-file persisted with a sourceItemId). The sample's
-        // link is what marks it as a sample asset rather than an ordinary import.
+        // saved samples (a sample persisted with a sourceItemId). The sample's
+        // link records its provenance; its `sample` kind marks it as a sample.
         derivedFrom: item.sourceItemId
           ? {
               sourceItemId: item.sourceItemId,
@@ -106,17 +106,17 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
             }
           : undefined,
         collapsed: item.collapsed === true ? true : undefined,
-        warpEnabled: item.kind === 'saved-clip' && typeof item.warpEnabled === 'boolean'
+        warpEnabled: item.kind === 'clip' && typeof item.warpEnabled === 'boolean'
           ? item.warpEnabled
           : undefined,
-        warpMode: item.kind === 'saved-clip' ? item.warpMode : undefined,
-        tempoRatio: item.kind === 'saved-clip' && typeof item.tempoRatio === 'number'
+        warpMode: item.kind === 'clip' ? item.warpMode : undefined,
+        tempoRatio: item.kind === 'clip' && typeof item.tempoRatio === 'number'
           ? item.tempoRatio
           : undefined,
-        semitones: item.kind === 'saved-clip' && typeof item.semitones === 'number'
+        semitones: item.kind === 'clip' && typeof item.semitones === 'number'
           ? item.semitones
           : undefined,
-        cents: item.kind === 'saved-clip' && typeof item.cents === 'number'
+        cents: item.kind === 'clip' && typeof item.cents === 'number'
           ? item.cents
           : undefined,
         mediaId: item.mediaId,
@@ -139,21 +139,21 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
           item.lowConfidence === true
         )
       }
-      if (item.sampleMode === 'sample' || item.sampleMode === 'music') {
+      if (item.audioType === 'simple' || item.audioType === 'music') {
         const target = library.items.find((i) => i.id === libId)
-        if (target) target.sampleMode = item.sampleMode
+        if (target) target.audioType = item.audioType
       }
       // Resolve cover art + tags from the project media store by the item's media GUID
       // (shared by the imported source and every stem/sample derived from it). Items
       // without a GUID — older projects, or a plain audio file — fall back to the file's
       // own embedded tags inside refreshLibraryItemMedia.
-      const reloadKind = item.kind ?? 'audio-file'
-      if (reloadKind === 'audio-file' || reloadKind === 'stem') {
+      const reloadKind = item.kind ?? 'source'
+      if (reloadKind === 'source' || reloadKind === 'sample' || reloadKind === 'stem') {
         void refreshLibraryItemMedia(libId, item.filePath, item.mediaId)
       }
     }
     for (const item of library.items) {
-      if (item.kind !== 'saved-clip' || item.bpm !== undefined) continue
+      if (item.kind !== 'clip' || item.bpm !== undefined) continue
       const sourceId = item.derivedFrom?.sourceItemId
       if (!sourceId) continue
       const source = library.byId[sourceId]

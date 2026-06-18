@@ -2,7 +2,7 @@
 
 import type { ClipWarpMode, LibraryItemKind } from '@shared/bridge-protocol'
 
-export interface SavedClipSource {
+export interface LibraryClipSource {
   sourceItemId?: string
   sourceClipId?: string
   inMs: number
@@ -25,7 +25,7 @@ export interface AddLibraryItemInput {
   /** Snapshot rebuilds must not echo `LIBRARY_ADD` back to the backend. */
   fromSnapshot?: boolean
   id?: string
-  derivedFrom?: SavedClipSource
+  derivedFrom?: LibraryClipSource
   collapsed?: boolean
   /** Saved-clip warp defaults copied onto new timeline placements. */
   warpEnabled?: boolean
@@ -65,10 +65,10 @@ export interface LibraryItem {
   beatAnchorSec?: number
   /** True when the analysed tempo varies enough that BPM is only an average. */
   variableTempo?: boolean
-  /** Backend hint for defaulting non-musical sources to sample mode. */
+  /** Backend hint for defaulting non-musical sources to the simple audio type. */
   lowConfidence?: boolean
   /** User override; `undefined` means auto via `lowConfidence`. */
-  sampleMode?: 'sample' | 'music'
+  audioType?: 'simple' | 'music'
   key?: string
   /** Backend load path; may point at a renderer-written WAV for renderer-only formats. */
   playbackFilePath: string
@@ -78,7 +78,7 @@ export interface LibraryItem {
   metadata?: AudioMetadata | null
   /** Object URL for embedded cover art; owned and revoked by the library store. */
   coverArtUrl?: string
-  derivedFrom?: SavedClipSource
+  derivedFrom?: LibraryClipSource
   /** Source-group disclosure state persisted with the project. */
   collapsed?: boolean
   /** Saved-clip warp defaults copied onto new timeline placements. */

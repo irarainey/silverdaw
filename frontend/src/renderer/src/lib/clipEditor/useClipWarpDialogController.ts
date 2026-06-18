@@ -40,14 +40,14 @@ export function useClipWarpDialogController(
   const sourceBpm = computed(() => libItem.value?.bpm)
   const projectBpm = computed(() => transport.bpm)
   const dialogTitle = computed(() => props.panel === 'pitch' ? 'Pitch' : 'Warp')
-  // True when the dialog's target is a saved-clip library item — either
+  // True when the dialog's target is a library-clip library item — either
   // opened directly via `itemId`, or opened via a `clipId` whose parent
-  // library entry is a saved-clip (the "linked" timeline-clip case).
-  // Routing through `library.updateSavedClipWarp` in both cases keeps the
+  // library entry is a library-clip (the "linked" timeline-clip case).
+  // Routing through `library.updateLibraryClipWarp` in both cases keeps the
   // semantic identical to editing the library item from the Clip Editor:
   // the library entry's defaults move AND every linked timeline instance
   // stays in lockstep.
-  const isLinkedTarget = computed(() => libItem.value?.kind === 'saved-clip')
+  const isLinkedTarget = computed(() => libItem.value?.kind === 'clip')
   const clipTitle = computed(() => {
     const custom = clip.value?.name?.trim()
     if (custom) return custom
@@ -157,9 +157,9 @@ export function useClipWarpDialogController(
       }
       if (isLinkedTarget.value && libItem.value) {
         // Library item (either opened directly OR opened via a linked
-        // timeline clip): propagates to the saved-clip entry and every
+        // timeline clip): propagates to the library-clip entry and every
         // linked timeline instance in lockstep.
-        library.updateSavedClipWarp(libItem.value.id, patch)
+        library.updateLibraryClipWarp(libItem.value.id, patch)
       } else if (props.clipId) {
         // Unlinked timeline clip: edit only this clip.
         project.setClipWarp(props.clipId, patch)
@@ -173,7 +173,7 @@ export function useClipWarpDialogController(
         warpEnabled: pitchNeedsProcessor(nextSemitones, nextCents) ? true : undefined
       }
       if (isLinkedTarget.value && libItem.value) {
-        library.updateSavedClipWarp(libItem.value.id, patch)
+        library.updateLibraryClipWarp(libItem.value.id, patch)
       } else if (props.clipId) {
         project.setClipWarp(props.clipId, patch)
       }

@@ -164,7 +164,7 @@ const {
                 v-if="sourceItem"
                 class="text-zinc-500"
               >
-                {{ isStem ? 'Separated from' : 'Source' }}
+                {{ isStem ? 'Separated from' : isSampleAsset ? 'Saved from' : 'Source' }}
               </dt>
               <dd
                 v-if="sourceItem"
@@ -184,7 +184,7 @@ const {
               <dt class="text-zinc-500">
                 Duration
               </dt>
-              <dd>{{ item.kind === 'saved-clip' ? formatPreciseDuration(item.durationMs) : formatDuration(item.durationMs) }}</dd>
+              <dd>{{ item.kind === 'clip' ? formatPreciseDuration(item.durationMs) : formatDuration(item.durationMs) }}</dd>
               <dt class="text-zinc-500">
                 Sample rate
               </dt>
@@ -225,21 +225,21 @@ const {
                   </span>
                 </dd>
                 <dt
-                  v-if="item.kind !== 'saved-clip'"
+                  v-if="item.kind !== 'clip'"
                   class="text-zinc-500"
                 >
                   Beat markers
                 </dt>
-                <dd v-if="item.kind !== 'saved-clip'">
+                <dd v-if="item.kind !== 'clip'">
                   {{ item.beats?.length ?? 0 }}
                 </dd>
                 <dt
-                  v-if="item.kind !== 'saved-clip'"
+                  v-if="item.kind !== 'clip'"
                   class="text-zinc-500"
                 >
                   Beat anchor
                 </dt>
-                <dd v-if="item.kind !== 'saved-clip'">
+                <dd v-if="item.kind !== 'clip'">
                   {{ item.beatAnchorSec !== undefined ? `${item.beatAnchorSec.toFixed(3)} s` : 'None' }}
                 </dd>
               </template>
@@ -248,18 +248,18 @@ const {
                   Classification
                 </dt>
                 <dd class="text-indigo-300">
-                  Sample — tempo / key / beat analysis hidden
+                  Simple — tempo / key / beat analysis hidden
                 </dd>
               </template>
             </dl>
           </section>
 
-          <!-- Sample / music classification (audio-file items only).
+          <!-- Simple / music classification (source/sample/stem items).
                Saved clips inherit from their source; toggling the
                source flows through to all derived saved clips.
                Full dialog width so the three options spread evenly. -->
           <section
-            v-if="item.kind === 'audio-file'"
+            v-if="item.kind === 'source' || item.kind === 'sample' || item.kind === 'stem'"
             class="mt-5"
           >
             <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
@@ -295,18 +295,18 @@ const {
                 <button
                   type="button"
                   class="flex-1 rounded border px-2 py-1.5 text-xs transition-colors"
-                  :class="classificationMode === 'sample'
+                  :class="classificationMode === 'simple'
                     ? 'border-sky-500 bg-sky-600/30 text-zinc-100'
                     : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
                   "
-                  :aria-pressed="classificationMode === 'sample'"
-                  @click="setClassification('sample')"
+                  :aria-pressed="classificationMode === 'simple'"
+                  @click="setClassification('simple')"
                 >
-                  Sample
+                  Simple
                 </button>
               </div>
               <p class="mt-2 truncate text-[10px] text-zinc-500">
-                Samples hide tempo / key / beat markers and skip auto-warp on drop. Warp and Pitch dialogs still work manually.
+                Simple audio hides tempo / key / beat markers and skips auto-warp on drop. Warp and Pitch dialogs still work manually.
               </p>
             </div>
           </section>
@@ -364,7 +364,7 @@ const {
           </section>
 
           <section
-            v-if="item.kind === 'audio-file' || isStem"
+            v-if="item.kind === 'source' || item.kind === 'sample' || isStem"
             class="mt-5"
           >
             <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
@@ -395,7 +395,7 @@ const {
           </section>
 
           <section
-            v-if="item.kind === 'audio-file' || isStem"
+            v-if="item.kind === 'source' || item.kind === 'sample' || isStem"
             class="mt-5"
           >
             <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">

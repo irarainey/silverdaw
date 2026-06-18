@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Small type indicator overlaid on a library item's cover art (library tile + info
-// dialog) so the file type — a separated stem or a non-musical sample — reads at a
+// dialog) so the file type — a separated stem or a saved sample — reads at a
 // glance. The host element must be `position: relative`; the badge pins itself to the
 // bottom-right corner. Pass `showLabel` where there is room for the word (the dialog);
 // the dense library tiles use the icon alone.
@@ -13,7 +13,7 @@ defineProps<{
 <template>
   <span
     class="pointer-events-none absolute bottom-1 right-1 flex items-center gap-1 rounded bg-zinc-950/85 px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-100"
-    :title="kind === 'stem' ? 'This is a separated stem' : 'Treated as a non-musical sample'"
+    :title="kind === 'stem' ? 'This is a separated stem' : 'Saved from a clip'"
   >
     <svg
       v-if="kind === 'stem'"

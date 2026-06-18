@@ -19,7 +19,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Audio analysis](#audio-analysis)
   - [Key detection](#key-detection)
   - [BPM and beat detection](#bpm-and-beat-detection)
-  - [Confidence and sample classification](#confidence-and-sample-classification)
+  - [Confidence and audio type classification](#confidence-and-audio-type-classification)
   - [Beat markers and source-beat snap](#beat-markers-and-source-beat-snap)
   - [Processing progress panel](#processing-progress-panel)
 - [Stem separation](#stem-separation)
@@ -185,7 +185,7 @@ Silverdaw currently supports the core arrangement workflow:
   where it is part of the transactional draft and previewed live. Reversal is a
   per-clip `reversed` flag — the source file is never rewritten; the audio engine
   reads the clip's source window in reverse. From the context menu the toggle
-  propagates to every linked-saved-clip sibling; from the Clip Editor it follows
+  propagates to every linked saved clip sibling; from the Clip Editor it follows
   the same save scope as the other draft edits. The flag round-trips through
   `PROJECT_STATE` and the `.silverdaw` file and is suppressed from save when off.
 - **Mixdown export** (File ▸ Export Mixdown…) renders the whole project to a
@@ -209,7 +209,7 @@ Silverdaw currently supports the core arrangement workflow:
   silently, and surface a toast if the user tries Split-at-playhead on them.
   Double-click still opens the Clip Editor (so warp / pitch / trim remain
   editable through that surface). The flag is per-clip — locking one
-  linked-saved-clip sibling does not lock the others — and is round-tripped
+  linked saved clip sibling does not lock the others — and is round-tripped
   through `PROJECT_STATE` and the `.silverdaw` file.
 - **End-of-project playback** stops automatically: when the playhead reaches the
   project ruler's end, the renderer sends `TRANSPORT_PAUSE` and parks the playhead
@@ -220,7 +220,7 @@ Silverdaw currently supports the core arrangement workflow:
   the ruler cannot be shortened below the longest clip's effective end.
 - Save reusable saved clips to the library from any timeline clip; saved clips are
   grouped under their source file and can be dragged back to the timeline as a clip
-  with the same source window. **Linked saved-clips**: clips dropped from a saved-clip
+  with the same source window. **Linked saved clips**: clips dropped from a saved clip
   library tile remember that link; the Clip Editor batches trim, warp and pitch edits
   into a single transactional draft and the **Save** button propagates them to every
   linked timeline instance in lockstep, unless a collision would result (in which
@@ -230,9 +230,11 @@ Silverdaw currently supports the core arrangement workflow:
   library**. Removing a saved clip from the library is always allowed: every
   dependent timeline clip is silently unlinked first so the audio plays on as an
   independent clip referencing the underlying source file.
-- Bake timeline clips or saved-clip library items into new WAV samples with
-  **Save as sample**. The generated file is written under a per-source subfolder of
-  the `samples` folder and added back to the library as an audio-file item that
+- Bake timeline clips or library clip items into new WAV samples. Timeline clips
+  use **Save as Sample…** to open the **Save as Sample** dialog, while library
+  clips expose **Save as Sample (Music)** and **Save as Sample (Simple)** directly
+  in their context menu. The generated file is written under a per-source subfolder of
+  the `samples` folder and added back to the library as a sample item that
   inherits the source's cover art and tags. A **simple** (non-music) sample bakes
   the clip's warp/pitch through Rubber Band into a flat one-shot; a **music** sample
   keeps the source tempo/pitch and inherits its grid instead.
@@ -270,14 +272,15 @@ Silverdaw currently supports the core arrangement workflow:
   paths (Cancel / Convert to project rate / Switch project rate) when the
   source doesn't match. The transport bar's **RATE** column shows the
   effective project rate at all times. See [Project sample rate](#project-sample-rate).
-- **Tempo confidence and sample classification.** When BPM analysis comes back at
+- **Tempo confidence and audio type classification.** When BPM analysis comes back at
   low confidence the grid stays visible and warpable rather than hidden — there is
   no separate amber "unverified" marker on the BPM (the classification control still
   notes a low-confidence tempo in words). A track is only treated as a
-  non-musical **sample** (badges and beat markers hidden, auto-warp on drop
-  skipped, project-BPM seed suppressed) through an explicit per-source-item
-  **Auto / Music / Sample** override from the library tile context menu or the
-  Info dialog (saved clips inherit from their source). When detection is unsure
+  **simple** audio file (badges and beat markers hidden, auto-warp on drop
+  skipped, project-BPM seed suppressed) through an explicit per-file
+  **Auto-classify** / **Treat as Music** / **Treat as Simple** override from the
+  library tile context menu or the Info dialog (saved clips inherit from their
+  source). When detection is unsure
   the user can also set a BPM by hand and slide the beat grid over the waveform in
   the Clip Editor to line it up. Warp and Pitch dialogs work regardless for
   explicit speed / pitch changes.
@@ -297,7 +300,7 @@ Silverdaw currently supports the core arrangement workflow:
   Trim** workflow keeps a dialog-local undo stack so the user can
   tweak a trim with Ctrl+Z/Y inside the dialog without touching the
   project-level history; only when the user clicks **Save** or
-  **Save as new clip** does the change land in the main undo stack.
+  **Save Selection to Library** does the change land in the main undo stack.
   Compound operations like clip split / duplicate currently emit
   multiple undo steps; bundling them is a follow-up.
 
@@ -472,7 +475,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
   LIBRARY
      ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
           sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?,
-          playbackFilePath?, variableTempo?, lowConfidence?, sampleMode?, collapsed?,
+          playbackFilePath?, variableTempo?, lowConfidence?, audioType?, collapsed?,
           sourceItemId?, sourceClipId?, sourceInMs?, sourceDurationMs?,
           warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?]
   MARKERS
@@ -500,16 +503,17 @@ collision checks, split / duplicate / paste maths, and Clip Editor
 overlap-validation all read from these fields rather than recomputing the
 ratio in the renderer.
 
-`ITEM.kind` is either `audio-file` (a normal imported source) or `saved-clip` (a
-reusable region derived from a timeline clip). Saved-clip items share `filePath` with
-their parent audio-file item and carry `sourceItemId` / `sourceClipId` / `sourceInMs` /
-`sourceDurationMs` describing the trim window into the source. `displayName` is the
-user-facing name shown on library tiles. `collapsed` is a per-source UI flag that hides
-the saved-clip sub-list under a parent source. `ITEM.key`, `ITEM.bpm`, `ITEM.beats`,
+`ITEM.kind` is one of `source`, `stem`, `sample`, or `clip`. Source, stem, and
+sample items are standalone audio files; clip items are reusable regions derived
+from a timeline clip. Clip items share `filePath` with their parent source item
+and carry `sourceItemId` / `sourceClipId` / `sourceInMs` / `sourceDurationMs`
+describing the trim window into the source. `displayName` is the user-facing name
+shown on library tiles. `collapsed` is a per-source UI flag that hides the saved
+clip sub-list under a parent source. `ITEM.key`, `ITEM.bpm`, `ITEM.beats`,
 `ITEM.beatAnchorSec` and `ITEM.variableTempo` hold the BTrack analysis output (see
 [Audio analysis](#audio-analysis) below). `ITEM.lowConfidence` is the backend's
-auto-classification hint from that same analysis; `ITEM.sampleMode` is the user's
-explicit `'sample'` / `'music'` override (absent = auto). `ITEM.playbackFilePath` is
+auto-classification hint from that same analysis; `ITEM.audioType` is the user's
+explicit `'simple'` / `'music'` override (absent = auto). `ITEM.playbackFilePath` is
 the on-disk path of the decoded-WAV cache the audio engine reads from. The durable
 library fields are stored once and round-tripped through save/load so a reopened
 project doesn't have to re-analyse every imported file.
@@ -544,7 +548,7 @@ dialog; `mixdownStartBar` is edited in the Export Mixdown dialog and changing it
 does not affect `barCounterStart` (and vice versa).
 `CLIP.locked` is an optional boolean (absent == unlocked) that freezes a clip
 against move / trim / split gestures on the timeline; the lock is per-clip,
-not propagated across linked-saved-clip siblings, and round-trips through
+not propagated across linked saved clip siblings, and round-trips through
 `PROJECT_STATE`. `CLIP.reversed` is an optional boolean (absent == forward) that
 plays the clip's source window back-to-front; it is set via `CLIP_SET_REVERSED`
 (timeline) or `PREVIEW_SET_REVERSED` (Clip Editor live preview), suppressed from
@@ -591,7 +595,7 @@ The `LIBRARY` sub-tree carries the user's imported-but-not-yet-placed samples *a
 saved clip so the catalogue survives save / load. Durable library fields are persisted: id,
 kind, source path, display file name, display name override, duration, sample rate, channel
 count, detected key, cached playback path, BPM, beat positions, beat anchor, variable-tempo
-flag, collapse state, saved-clip warp defaults and (for saved clips) the source-window pointers. Cover art, ID3 tags,
+flag, collapse state, saved clip warp defaults and (for saved clips) the source-window pointers. Cover art, ID3 tags,
 waveform peaks and playable bytes are not written into the project file; they are re-fetched
 or served from cache on load.
 
@@ -881,7 +885,7 @@ corrupted read; the same layout is what the renderer reads via the
 returns the summary plus (for stereo) the per-channel arrays.
 
 The renderer keeps the per-channel peaks in a session-only
-`libraryStore.channelPeaksByItemId` map (keyed by the audio-file source item id,
+`libraryStore.channelPeaksByItemId` map (keyed by the source item id,
 each with its own LOD pyramid). The **Waveform display** preference (Preferences ▸
 Interface) chooses between *Single waveform* (summary, default) and *Left and
 right channels* (stacked L/R lanes for stereo sources); the choice is persisted
@@ -1002,7 +1006,7 @@ the Clip Editor dirty so its **Save** button stays available to confirm and clos
 Manual values survive save / load because `ensureBpmDetection`
 is idempotent and skips a source that already has a BPM.
 
-### Confidence and sample classification
+### Confidence and audio type classification
 
 `BpmAnalysis` also reports a `lowConfidence` flag derived from the LSQ-fit
 residual and the fraction of detected beats kept after outlier rejection.
@@ -1022,15 +1026,15 @@ Crucially, **`lowConfidence` no longer classifies an item as a sample.** It is a
 so a musical track BTrack is merely unsure about no longer loses its beat grid.
 (The classification helper `libraryItemTempoUnverified(item, byId)` still exposes
 this signal, but the UI no longer surfaces a separate amber marker for it.) The
-renderer treats a library item as a non-musical "sample" via a single
-helper, `libraryItemIsSample(item, byId)`, with the resolution order:
+renderer treats a library item as a simple audio file via a single
+helper, `libraryItemIsSimple(item, byId)`, with the resolution order:
 
-1. user override `item.sampleMode` (`'sample'` / `'music'`),
-2. for saved clips, fall back to the source item's `sampleMode`, then
+1. user override `item.audioType` (`'simple'` / `'music'`),
+2. for saved clips, fall back to the source item's `audioType`, then
 3. default to `false` (music).
 
-When an item is classified as a sample the library tile shows a small indigo
-**Sample** pill in place of the BPM / key / variable-tempo badges, clip beat
+When an item's `audioType` is `simple` the library tile shows a small indigo
+**Simple** pill in place of the BPM / key / variable-tempo badges, clip beat
 markers are not drawn, `applyDropTimeWarp` skips the auto-warp branch (the
 drop-zone preview width matches), and the backend's `maybeSeedProjectBpmFor` /
 late-pending-auto-warp loop both refuse to fire from it. **Warp and Pitch
@@ -1038,10 +1042,10 @@ dialogs continue to work** so the user can still speed up, slow down, or
 pitch-shift the clip manually.
 
 Set the classification from the library tile's right-click menu
-(**Auto-classify** / **Treat as music** / **Treat as sample** — audio-file
-items only; saved clips inherit) or from the **Treat as** radio in the
-Library Item Info dialog. The `LIBRARY_ITEM_SET_SAMPLE_MODE { itemId, mode }`
-envelope round-trips the choice (undoable); `mode = 'auto'` clears the override so
+(**Auto-classify** / **Treat as Music** / **Treat as Simple** — source, stem,
+and sample items only; saved clips inherit) or from the **Treat as** radio in the
+Library Item Info dialog. The `LIBRARY_ITEM_SET_AUDIO_TYPE { itemId, audioType }`
+envelope round-trips the choice (undoable); `audioType = 'auto'` clears the override so
 the item falls back to music.
 
 ### Beat markers and source-beat snap
@@ -1063,7 +1067,7 @@ behaviour.
 
 Non-linked edge-trim drags use the same project grid by default, snapping the
 dragged edge as the source window changes. Hold `Alt` while trimming for
-freeform 1 ms edge placement. Linked saved-clip instances do not expose timeline
+freeform 1 ms edge placement. Linked saved clip instances do not expose timeline
 edge-resize handles; edit their shared window in the Clip Editor or unlink the
 instance first.
 
@@ -1111,14 +1115,15 @@ defaults off and is honoured only when a compatible adapter is detected
 
 A **timeline** separation (started from a placed clip) also lands each stem on its
 own new track aligned to the source clip's start; a **library** separation
-(started from a library source) imports the stems to the library only, leaving it
-to the user to drag them onto the timeline. A timeline separation only processes
+(started from a source or sample library item) imports the stems to the library only,
+leaving it to the user to drag them onto the timeline. The **Separate Stems** action
+is hidden on stems because they are already separated. A timeline separation only processes
 the **clip's own time window** of the source (`[inMs, inMs + durationMs)`, sent as
 the `clipId` whose window the backend reads from `ProjectState`), so the stem WAVs
 are clip-length and drop in already aligned; a library separation has no clip and
 separates the **whole track**. Either way the source is untouched
-(non-destructive) and each stem is added to the library as a nested **stem** item
-under its source group. Because each stem is sample-aligned with its source it
+(non-destructive) and each stem is added to the library as a top-level **stem**
+item. Because each stem is sample-aligned with its source it
 **inherits** the source's analysis (BPM, beat grid, key, variable-tempo flag)
 rather than being re-analysed. On disk each separation writes its WAVs into a
 `stems\<sourceFileName>-stems` folder named after the original source file
@@ -1173,23 +1178,25 @@ it is a guaranteed no-op when disabled, empty, or silent. See
 
 ## Library panel
 
-The bottom library panel stores imported audio files and saved clips as draggable tiles.
+The bottom library panel stores source, stem, sample, and clip items as draggable tiles.
 Tiles wrap to the available width and the panel scrolls vertically when there are more
 tiles than fit; it does not expose a horizontal scrollbar. Each source tile shows
 duration, detected key and detected BPM when those fields are available.
 
-**Saved clips** — right-click a timeline clip and choose **Save clip to library** to
+**Saved clips** — right-click a timeline clip and choose **Save Clip to Library** to
 turn its trim window into a reusable library entry. Saved clips are non-destructive
 references back into their source file (same audio, same WAV cache, same BPM / key)
 and are grouped underneath the source they came from. Each source group has a
-disclosure chevron that hides / shows its saved-clip list; the open/closed state
-persists with the project. Adding a new saved clip auto-expands the group so the new
-clip is immediately visible. Dragging a saved-clip tile onto a track creates a
+disclosure chevron with **Show saved clips** / **Hide saved clips** tooltips; the
+open/closed state persists with the project. Adding a new saved clip auto-expands
+the group so the new clip is immediately visible. Dragging a saved clip tile onto a track creates a
 timeline clip with the same source window and non-destructive warp defaults the
 saved clip describes.
 
-**Samples** — right-click a timeline clip or a saved-clip library tile and choose
-**Save as sample** to bake a new WAV. Silverdaw writes the file to
+**Samples** — right-click a timeline clip and choose **Save as Sample…** to open
+the **Save as Sample** dialog, or right-click a library clip and choose
+**Save as Sample (Music)** or **Save as Sample (Simple)** to bake a new WAV.
+Silverdaw writes the file to
 `samples\<sourceFileName>\<name>-sample-001.wav` — grouped in a per-source subfolder
 named after the source's (sanitised) file name, under the current project folder, or
 under the temporary workspace
@@ -1198,11 +1205,12 @@ migrate into the project folder on the first save. The numeric
 suffix increments for duplicate base names. There are two flavours: a **music
 sample** inherits the source's tempo/key grid so it warps and shows its grid, while
 a **simple sample** is a non-musical one-shot — the presence of pitch + BPM is the
-only difference. The baked WAV is added as an
-audio-file library item that **records its source** (`sourceItemId`, persisted in
+only difference. The baked WAV is added as a
+sample library item that **records its source** (`sourceItemId`, persisted in
 the project file): that provenance both inherits the source's cover art + tags via
 the shared media GUID and marks the item as a saved sample rather than an ordinary
-import. Deleting that library item removes the reference from
+import. Sample tiles use the **Saved from a clip** cover-art badge tooltip, and
+simple samples show a **Simple** audio-type pill. Deleting that library item removes the reference from
 the project and, by default, leaves the WAV file on disk; enabling **Clean up
 project files** (Preferences ▸ General) instead deletes the generated WAV — and
 prunes its now-empty per-source folder, plus any shared cover/tag media nothing
@@ -1211,7 +1219,7 @@ warp/pitch through Rubber Band during export so the one-shot sounds like the cli
 on the timeline; a music sample is exported at the source tempo/pitch so it can
 re-warp on drop.
 
-> **Re-baking is non-destructive and unlinked.** Every **Save as sample** run
+> **Re-baking is non-destructive and unlinked.** Every **Save as Sample** run
 > creates a *new, independent* WAV. The resulting item records its source only for
 > cover-art / tag inheritance and sample identification — it is not *live-linked*
 > back to the clip it was baked from. Running it again on the same saved clip
@@ -1228,23 +1236,25 @@ Double-click a tile to open the **Clip Editor** (see below). To view the read-on
 information dialog instead — file details, technical audio details, detected
 BPM/beat/key metadata (the BPM shown in the same pill style as the tile, with a
 leading `~` for a variable tempo), tag metadata, cover art, the item **type**
-(audio file / stem / sample / saved clip) and, for stems and samples, a banner
-naming the source it derives from, plus which tracks currently use the
-library item — pick **Show information** from the tile's right-click context menu.
-The right-click context menu also includes **Reanalyse file** (audio-file items
-only), which refreshes the decoded cache, BPM/beat analysis and musical key;
-**Auto-classify** / **Treat as music** / **Treat as sample** for the sample-vs-music
-classification override (audio-file items only — see
-[Confidence and sample classification](#confidence-and-sample-classification));
-**Save as sample** (saved-clip items only); and **Remove**. Removal is gated
-for audio-file source items while they're in use by a timeline clip; saved-clip
+(source / stem / sample / clip) and, for stems and samples, a banner
+naming the source it derives from (**Separated from** for stems, **Saved from**
+for samples, and **Source** for clips / other items), plus which tracks currently
+use the library item — pick **Show information** from the tile's right-click context menu.
+The right-click context menu also includes **Reanalyse file** (source, stem, and
+sample items only), which refreshes the decoded cache, BPM/beat analysis and
+musical key; **Auto-classify** / **Treat as Music** / **Treat as Simple** for the
+simple-vs-music classification override (source, stem, and sample items only — see
+[Confidence and audio type classification](#confidence-and-audio-type-classification));
+**Save as Sample (Music)** and **Save as Sample (Simple)** (clip items only); and
+**Remove**. Removal is gated
+for source items while they're in use by a timeline clip; saved clip
 items can always be removed (every linked timeline clip is silently unlinked
 first and continues playing from the underlying source).
 
 **Clip Editor** — the same dialog opens from four entry surfaces:
 
 - Double-click a **library tile**, or pick **Open in editor** from its
-  right-click menu, to edit the source / saved-clip item.
+  right-click menu, to edit the source / saved clip item.
 - Double-click a **timeline clip body** (anywhere other than the title strip,
   which still inline-renames), or pick **Open in editor** from the clip's
   right-click menu, to edit that timeline clip — its window, warp and pitch.
@@ -1258,7 +1268,7 @@ opportunistically requests a **2000 peaks/sec** rendering for the item on
 screen so the waveform stays crisp at deep zoom; the request is keyed on the
 library item id and cached on disk alongside the default 500 peaks/sec cache.
 Audio-file items open at the same px-per-second scale as the main timeline;
-existing clips (saved-clip library items, linked timeline clips, and
+existing clips (saved clip library items, linked timeline clips, and
 unlinked timeline clips) open zoomed to fit their window and the **Source**
 / **Clip** toggle flips between full-source view (so the window can be
 extended beyond the current bounds) and the narrowed view. Warped clips show
@@ -1274,22 +1284,22 @@ canvas follows the playhead with the same smooth ease-in catch-up the main
 timeline uses.
 
 The dialog is **transactional**. Whenever it opens on an existing clip
-(saved-clip library item, linked timeline clip, or unlinked timeline clip)
+(saved clip library item, linked timeline clip, or unlinked timeline clip)
 every edit — trim window, narrowed view, warp settings, pitch settings — is held
 as a local draft that affects only the preview voice. The footer shows
 **Cancel** + **Save**. **Save** commits the whole draft atomically; **Cancel**
 (and `Esc`) discard it without touching the library item or the timeline.
 Save scope depends on the target:
 
-- Saved-clip library item or linked timeline clip → updates the library item
+- Saved clip library item or linked timeline clip → updates the library item
   and propagates the new window + warp + pitch to every linked timeline
   instance in lockstep, refused with a toast if any sibling would collide
   with a neighbour on its track.
 - Unlinked timeline clip → updates only that one clip after the same
   collision check.
 
-For source audio-file library items the footer instead shows **Close** +
-**Save as new clip**, which writes a fresh saved-clip entry from the current
+For source, stem, and sample library items the footer instead shows **Close** +
+**Save Selection to Library**, which writes a fresh saved clip entry from the current
 selection without modifying the source.
 
 Within the dialog:
@@ -1548,7 +1558,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
-| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved-clip library item (right-click ▸ Unlink first, or use the Clip Editor) and on **locked** clips (Ctrl+L or right-click ▸ Unlock to free). |
+| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved clip library item (right-click ▸ Unlink first, or use the Clip Editor) and on **locked** clips (Ctrl+L or right-click ▸ Unlock to free). |
 | `Alt` + drag on clip edge | Trim with 1 ms resolution — the dragged edge stays at the unsnapped position. |
 | Drag the **bottom edge of a track header** (~5 px hit zone) | Resize that track row vertically (60–400 px). Each track's height is persisted with the project and undoable. |
 | Drag the **grip icon** (6-dot handle next to the track name) | Reorder the track. A green drop indicator shows the target slot. Drop on the indicator commits one undoable reorder step. |
@@ -1576,13 +1586,13 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
-| `Ctrl + L` | Toggle the **lock** flag on the selected clip. Locked clips refuse drag-move, edge-trim and Split-at-playhead, and show a padlock badge in their title strip. Per-clip — linked-saved-clip siblings stay independently lockable. |
-| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked-saved-clip sibling), **Save clip to library**, **Save as sample**, **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved-clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
+| `Ctrl + L` | Toggle the **lock** flag on the selected clip. Locked clips refuse drag-move, edge-trim and Split-at-playhead, and show a padlock badge in their title strip. Per-clip — linked saved clip siblings stay independently lockable. |
+| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked saved clip sibling), **Save Clip to Library**, **Save as Sample…** (opens the **Save as Sample** dialog with **Music** and **Simple** choices), **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
 | Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
 | Double-click a **library tile** (off the name) | Open the **Clip Editor** for that library item. Use **Show information** from the right-click menu for the read-only info dialog. |
-| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename**, **Reanalyse file** (audio-file items only), **Save as sample** (saved-clip items only), and **Remove**. Removal is gated only for audio-file sources that are still in use by a timeline clip; saved-clip removal silently unlinks dependent clips. |
+| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename**, **Reanalyse file** (source, stem, and sample items only), **Auto-classify** / **Treat as Music** / **Treat as Simple** (source, stem, and sample items only), **Save as Sample (Music)** / **Save as Sample (Simple)** (clip items only), and **Remove**. Removal is gated only for sources that are still in use by a timeline clip; saved clip removal silently unlinks dependent clips. |
 
 ### Clip Editor
 
@@ -1926,4 +1936,3 @@ users.
 Third-party components (JUCE, IXWebSocket, Electron, Vue, etc.) retain their
 own licences; see [`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md) for the
 attribution notices required by those licences.
-
