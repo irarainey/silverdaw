@@ -144,7 +144,7 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
   function isRegionTrimmable(region: ClipHitRegion): boolean {
     const clip = project.clips[region.clipId]
     // Linked saved clips resize only through the Clip Editor, not timeline trim.
-    if (clip && isClipLinkedToSavedClip(clip)) return false
+    if (clip && isClipLinkedToLibraryClip(clip)) return false
     // Locked clips suppress trim affordances; the store remains the backstop.
     if (clip?.locked) return false
     return true
@@ -209,12 +209,12 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     return candidate.dist < best.dist
   }
 
-  /** True when the clip is linked to a saved-clip library item. */
-  function isClipLinkedToSavedClip(clip: { libraryItemId?: string }): boolean {
+  /** True when the clip is linked to a library-clip library item. */
+  function isClipLinkedToLibraryClip(clip: { libraryItemId?: string }): boolean {
     const libId = clip.libraryItemId
     if (!libId) return false
     const item = library.byId[libId]
-    return item?.kind === 'saved-clip'
+    return item?.kind === 'clip'
   }
 
   /** Source-file duration in ms; unknown files allow no extra right-trim room. */
@@ -245,7 +245,7 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     hitTestClip,
     hitTestMarker,
     hitTestTrimEdge,
-    isClipLinkedToSavedClip,
+    isClipLinkedToLibraryClip,
     getSourceDurationMs,
     pointerToTrackId
   }

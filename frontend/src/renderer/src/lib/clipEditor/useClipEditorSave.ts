@@ -16,7 +16,7 @@ type ProjectStore = ReturnType<typeof useProjectStore>
 type LibraryStore = ReturnType<typeof useLibraryStore>
 type NotificationsStore = ReturnType<typeof useNotificationsStore>
 
-export interface SavedClipWarpPatch {
+export interface LibraryClipWarpPatch {
   warpEnabled: boolean
   warpMode: ClipWarpMode
   tempoRatio: number | null
@@ -35,7 +35,7 @@ export interface ClipEditorSaveDeps {
   sourceItem: () => LibraryItem | null
   titleText: () => string
   editsSingleTimelineClip: () => boolean
-  editsSavedClipLibrary: () => boolean
+  editsLibraryClipLibrary: () => boolean
   editsTimelineClip: () => boolean
   hasWarpPitchChanged: () => boolean
   sourceBpm: () => number | undefined
@@ -64,7 +64,7 @@ export interface ClipEditorSave {
 }
 
 export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
-  function savedClipWarpPatch(): SavedClipWarpPatch {
+  function libraryClipWarpPatch(): LibraryClipWarpPatch {
     const nextSemitones = clampNumber(deps.draftSemitones(), -12, 12)
     const nextCents = clampNumber(deps.draftCents(), -100, 100)
     const pitchActive = pitchNeedsProcessor(nextSemitones, nextCents)
@@ -128,7 +128,7 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
     const entry = deps.editorItem()
     if (!entry) return
     const { inMs: targetIn, durationMs: targetDur } = draftTargetWindow()
-    const warpPatch = savedClipWarpPatch()
+    const warpPatch = libraryClipWarpPatch()
     if (deps.editsSingleTimelineClip()) {
       const clip = deps.timelineClip()
       if (!clip) {
@@ -141,7 +141,7 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
         return
       }
       deps.project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
-      // Only re-apply warp when the user actually changed it. `savedClipWarpPatch`
+      // Only re-apply warp when the user actually changed it. `libraryClipWarpPatch`
       // reconstructs the patch from the draft, which is lossy for follow-project
       // clips (it emits `tempoRatio: null`); re-applying it on a volume-only save
       // would clear an existing warp on the backend, leaving the clip flagged as
@@ -160,8 +160,8 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
       deps.close()
       return
     }
-    if (!deps.editsSavedClipLibrary()) return
-    const result = deps.library.updateSavedClipEdit(entry.id, {
+    if (!deps.editsLibraryClipLibrary()) return
+    const result = deps.library.updateLibraryClipEdit(entry.id, {
       inMs: targetIn,
       durationMs: targetDur,
       ...warpPatch
@@ -172,8 +172,8 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
       // durations, so the post-warp ms basis is current. Saved-library edits
       // (no placed instance) skip this — they have no volume control.
       if (deps.editsTimelineClip()) {
-        deps.library.updateSavedClipEnvelope(entry.id, deps.volumeShapeCommittedPoints())
-        deps.library.updateSavedClipReversed(entry.id, deps.reverseCommitted())
+        deps.library.updateLibraryClipEnvelope(entry.id, deps.volumeShapeCommittedPoints())
+        deps.library.updateLibraryClipReversed(entry.id, deps.reverseCommitted())
       }
       deps.notifications.pushInfo(`Saved changes for "${deps.titleText()}".`)
       deps.close()
@@ -189,7 +189,7 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
   function onSaveAsNew(): void {
     const src = deps.sourceItem()
     if (!src) return
-    const id = deps.library.addSavedClipFromSelection(
+    const id = deps.library.addLibraryClipFromSelection(
       src.id,
       deps.selectionInMs(),
       deps.selectionDurationMs()

@@ -229,7 +229,7 @@ Electron Shell
     │   ├── projectStore        — tracks, clips, markers, project identity (mirrors backend state)
     │   ├── transportStore      — playhead position, play/pause state, bridge status
     │   ├── uiStore             — zoom, scroll, panel sizes, clip-editor-open
-    │   ├── libraryStore        — project-scoped library (sources + saved clips)
+    │   ├── libraryStore        — project-scoped source / stem / sample / clip library
     │   ├── previewStore        — Clip Editor preview voice state + endedCount
     │   ├── audioDeviceStore    — current output device + scanInProgress flag
     │   ├── appStore            — startup flow state + recents MRU mirror
@@ -240,7 +240,7 @@ Electron Shell
     └── Vue components
         ├── StartupScreen       — unified boot+landing overlay (no separate splash)
         ├── TimelineView        — PixiJS canvas (tracks, clips, playhead, grid)
-        ├── LibraryPanel        — source + saved-clip tiles, metadata, drag source
+        ├── LibraryPanel        — source / stem / sample / clip tiles, metadata, drag source
         ├── ClipEditorDialog    — full-waveform clip editor with preview voice
         ├── TransportBar        — play/pause, BPM, position, audio-device chip
         ├── PreferencesDialog   — General / Project / Audio / Developer tabs
@@ -314,10 +314,9 @@ a single batch at the end. The final `STEM_READY` lists every stem and backfills
 any not already placed (a per-job set dedupes the two paths). Each of the four
 stems is added to its own new track beneath the
 source clip's track, non-destructively — the original clip and its source file
-are left untouched. Each stem is **also** added to the library as a new `stem`
-item nested under its source group (alongside any saved clips), so the library
-mirrors the timeline; stem rows carry a distinct marker and the source group's
-collapse header summarises its children (e.g. "4 stems · 2 saved clips"). Stem
+are left untouched. Each stem is **also** added to the library as a new top-level
+`stem` item, so the library mirrors the timeline; stem rows carry a distinct
+marker and source groups only collapse their saved clips. Stem
 library items persist with the project (kind `stem` + a `derivedFrom` pointer to
 the source) and reload like standalone files, and a stem cannot be removed from
 the library while its timeline clip is still present.
@@ -367,9 +366,9 @@ instead of being re-analysed — applied on both the renderer (so the stem clip
 auto-warps to the project grid the moment it is placed) and the backend (so its
 persisted/playback state matches). This is instant and avoids the sparse-stem
 mis-detection a fresh analysis would produce. A stem does **not** carry its own
-sample/music (low-confidence) flag: it has no independent confidence measurement,
-so its classification defers to the source via `derivedFrom`. Marking the source
-as **music** therefore reveals the beat grid on every derived stem clip.
+low-confidence hint: it has no independent confidence measurement, so its
+automatic classification defers to the source via `derivedFrom`. Marking the stem
+as **Treat as Music** reveals the beat grid on every clip using that stem.
 
 **Future:** an optional experimental 6-stem model (adds guitar + piano) and an
 fp16 GPU compute path (prototyped) once the shipped 4-stem pipeline is proven.
@@ -391,10 +390,13 @@ the backend and driven from the shared master transport clock.
 - Multi-track sync via shared master transport clock with per-track latency compensation
 
 ### 7.2 Sample Creation from Clip
-Users turn a timeline clip or a saved-clip library item into a reusable sample in
-one action (region-to-sample arrives with the selection primitive in §7.2.1):
+Users turn a timeline clip or a library clip item into a reusable sample in one
+action (region-to-sample arrives with the selection primitive in §7.2.1):
 
-- Select a timeline clip or saved-clip library tile → right-click → "Save as sample"
+- Select a timeline clip → right-click → **Save as Sample…**, then choose
+  **Music** or **Simple** in the **Save as Sample** dialog
+- Select a library clip tile → right-click → **Save as Sample (Music)** or
+  **Save as Sample (Simple)**
 - Backend writes a WAV slice to a per-source subfolder of `samples` under the project directory
   (or the temporary workspace for unsaved projects, migrated on first save)
 - Browser updates immediately on receipt of `SAMPLE_SAVED` event
@@ -452,8 +454,8 @@ Non-destructive clip operations on the timeline. Each operation mutates the `Val
 - **Split** — slice a clip at the playhead (or at every selected mark) into N adjacent clips that together reference the same file. Cheap: O(1) ValueTree edits, zero audio I/O.
 - **Duplicate** — clone a clip at a chosen offset (commonly drag with `Alt` or right-click → "Duplicate to Beat Grid"). Both clips reference the same file; the duplicate gets its own clip id so it can be edited independently.
 - **Repeat-to-loop** — a special-case duplicate that fills a region with N copies of a clip at clip-length spacing; ideal for looping a short sample across a section.
-- **Lock / Unlock** — `Ctrl+L` or right-click ▸ Lock freezes a single clip against accidental move / trim / split. Locked clips show a padlock badge on the title strip, refuse drag-move and edge-trim gestures silently, and surface a toast if Split-at-playhead is invoked on them. Double-click still opens the Clip Editor so warp / pitch / crop remain editable via that surface. The lock is per-clip — linked-saved-clip siblings stay independently lockable — and persisted on the clip's `locked` ValueTree property (absent == unlocked).
-- **Reverse** — right-click ▸ Reverse (a checkmarked toggle) or the **Reverse** toggle in the Clip Editor toolbar plays the clip's source window back-to-front. It is non-destructive: the source file is never rewritten — the audio engine reads the clip window in reverse. From the context menu the toggle propagates to every linked-saved-clip sibling; in the Clip Editor it is part of the transactional draft, previewed live, and committed on **Save** following the same scope as the other draft edits. Persisted on the clip's `reversed` ValueTree property (absent == forward) via `CLIP_SET_REVERSED` / `PREVIEW_SET_REVERSED`.
+- **Lock / Unlock** — `Ctrl+L` or right-click ▸ Lock freezes a single clip against accidental move / trim / split. Locked clips show a padlock badge on the title strip, refuse drag-move and edge-trim gestures silently, and surface a toast if Split-at-playhead is invoked on them. Double-click still opens the Clip Editor so warp / pitch / crop remain editable via that surface. The lock is per-clip — linked saved clip siblings stay independently lockable — and persisted on the clip's `locked` ValueTree property (absent == unlocked).
+- **Reverse** — right-click ▸ Reverse (a checkmarked toggle) or the **Reverse** toggle in the Clip Editor toolbar plays the clip's source window back-to-front. It is non-destructive: the source file is never rewritten — the audio engine reads the clip window in reverse. From the context menu the toggle propagates to every linked saved clip sibling; in the Clip Editor it is part of the transactional draft, previewed live, and committed on **Save** following the same scope as the other draft edits. Persisted on the clip's `reversed` ValueTree property (absent == forward) via `CLIP_SET_REVERSED` / `PREVIEW_SET_REVERSED`.
 
 ### 7.6 Loop Slicing
 - Slice on BTrack transient positions, beat grid divisions, or manual markers
@@ -461,11 +463,16 @@ Non-destructive clip operations on the timeline. Each operation mutates the `Val
 - Slices can be laid back on the timeline as individual clips or saved as samples
 
 ### 7.7 Stem Separation
-- Triggered from the clip context menu (**Separate Stems**) or a library audio-file's context menu; a one-time model download is offered on first use
+- Triggered from the clip context menu (**Separate Stems**) or from a source or
+  sample library item's context menu; it is hidden for stems, and a one-time
+  model download is offered on first use
 - A stem picker is shown first (vocals / drums / bass / other, all ticked by default) — only the chosen stems are separated, which proportionally shortens the run
 - Progress shown in a non-blocking dialog driven by `STEM_PROGRESS` events; the counter reflects the selected stems
-- Stems are imported to the library as a nested **stem** clip type under their source. When started from a timeline clip they are also placed on new tracks (one per stem), each aligned to the source clip's start. When started from a library source they are imported to the library only — adding them to the timeline is a manual step
-- Source preserved untouched (non-destructive); stems inherit the source's beat grid, key, and sample/music classification
+- Stems are imported to the library as top-level **stem** items. When started
+  from a timeline clip they are also placed on new tracks (one per stem), each
+  aligned to the source clip's start. When started from a source or sample library
+  item they are imported to the library only — adding them to the timeline is a manual step
+- Source preserved untouched (non-destructive); stems inherit the source's beat grid, key, and audio-type classification
 
 ### 7.8 Harmonic Matching
 - Detected key displayed on every clip in the timeline
@@ -1056,18 +1063,18 @@ parameter envelopes — all built on top of the same `EnvelopeSnapshot`
 primitive once it has shipped.
 
 ### 7.12 Sample Browser & Library
-- Current implementation is a project-scoped **LibraryPanel** of imported audio items and **saved clips**; user-scoped folder scanning is deferred to Phase 8
+- Current implementation is a project-scoped **LibraryPanel** of source, stem, sample, and clip items; user-scoped folder scanning is deferred to Phase 8
 - Preview playback through the Clip Editor preview voice is implemented for any library tile; preview-at-project-BPM is deferred to Phase 8
 - Displays duration, detected key, stable/variable BPM badges and coloured key badges per file
 - **Drag-to-timeline** creates a clip at the drop position; auto-warp can match
   eligible clips to the project BPM when the preference is enabled
-- **Saved clips** — right-click a timeline clip → **Save clip to library** turns its trim window into a reusable library entry. Saved clips are non-destructive references back into their source file (same audio, same WAV cache, same BPM/key) and preserve the clip's warp defaults, grouped underneath the source they came from with a disclosure chevron whose open/closed state persists with the project. Dragging a saved-clip tile onto a track creates a **linked timeline clip**: it stores the saved-clip's library id, shows a small chain badge in its title strip and is blocked from edge-resize on the timeline. The Clip Editor's **Apply trim** propagates the new window to every linked timeline instance atomically (collision-checked per track). Right-click ▸ **Unlink from library** rebinds the instance to the underlying audio-file item, preserving its current window. Saved-clip removal silently unlinks every dependent timeline clip first — the audio plays on as an independent clip referencing the underlying source file. The Clip Editor's **Save as new clip** is the second producer of saved clips.
+- **Saved clips** — right-click a timeline clip → **Save Clip to Library** turns its trim window into a reusable library entry. Saved clips are non-destructive references back into their source file (same audio, same WAV cache, same BPM/key) and preserve the clip's warp defaults, grouped underneath the source they came from with a disclosure chevron whose tooltip is **Show saved clips** or **Hide saved clips**. Dragging a saved clip tile onto a track creates a **linked timeline clip**: it stores the saved clip's library id, shows a small chain badge in its title strip and is blocked from edge-resize on the timeline. The Clip Editor's **Apply trim** propagates the new window to every linked timeline instance atomically (collision-checked per track). Right-click ▸ **Unlink from library** rebinds the instance to the underlying source item, preserving its current window. Saved clip removal silently unlinks every dependent timeline clip first — the audio plays on as an independent clip referencing the underlying source file. The Clip Editor's **Save Selection to Library** is the second producer of saved clips.
 - **Tile images:** library tiles can show embedded cover art or the fallback audio icon; this is toggleable via the persisted `uiStore.showLibraryTileImages` preference. List view is deferred to Phase 8.
 - **Inline rename:** single-click the name on any library tile (or pick **Rename…** from the right-click menu) edits it inline. Saved clips inherit a sensible default name from their source + offset.
 - **Vertical scroll:** virtualised list once item count exceeds visible height; library never overflows the panel.
 - **Tags:** Phase 8 chip-input on each card, stored on library items.
 - **Search & filter:** Phase 8 debounced text search across filename / tags / detected key. Quick filters by tag chip; sort by name / BPM / duration / date added.
-- **Library item information dialog:** pick **Show information** from a library tile's right-click context menu (double-clicking the tile opens the Clip Editor instead) → opens a non-blocking dialog with file path, decoded cache path, sample rate, channel count, duration, detected BPM / key, embedded metadata (artist / title / cover art), and a list of every track on the timeline where this file is currently placed. Tag editing and jump-to-clip links are Phase 8 polish.
+- **Library item information dialog:** pick **Show information** from a library tile's right-click context menu (double-clicking the tile opens the Clip Editor instead) → opens a non-blocking dialog with file path, decoded cache path, sample rate, channel count, duration, detected BPM / key, embedded metadata (artist / title / cover art), the item type (source / stem / sample / clip), provenance labels (**Separated from** for stems, **Saved from** for samples, **Source** for clips / other items), and a list of every track on the timeline where this file is currently placed. Tag editing and jump-to-clip links are Phase 8 polish.
 - Rendered in Vue (panel) + Pixi (waveform thumbnails); no Pixi for the list cards.
 
 ### 7.13 Project Save / Load
@@ -1105,7 +1112,7 @@ state; user preferences such as panel sizes remain in `preferences.json`.
   - **Transport / view state** — playhead position, horizontal zoom and
     horizontal scroll. View-state-only saves do not mark the project dirty.
   - **Library catalogue** — every library item with id, kind
-    (`audio-file` / `saved-clip` / `stem`), name, source path, detected BPM/key,
+    (`source` / `stem` / `sample` / `clip`), name, source path, detected BPM/key,
     beat positions, beat anchor, variable-tempo flag, decoded playback
     cache path, duration, channel count, sample rate, a **media GUID**
     (`mediaId`), and — for derived items (saved clips, stems, samples) —
@@ -1157,7 +1164,7 @@ sits in its own branch of `AudioEngine.topMixer`, independent of the
 project transport.
 
 - Full-source waveform at the renderer's px-per-second scale for
-  audio-file items, zoomed-to-fit for saved-clip items. Adaptive time
+  source, stem, and sample items, zoomed-to-fit for library clip items. Adaptive time
   ruler with relative-to-clip labels.
 - Beat lines extrapolated from the source's detected BPM + beat
   anchor across the whole view (so split / trim sub-clips stay in
@@ -1187,7 +1194,7 @@ project transport.
   non-destructively (no project mutation). Ctrl+Z / Ctrl+Y inside the
   dialog walk a Crop-only undo stack scoped to the dialog itself —
   the project-level undo history is untouched until the user
-  explicitly commits via Apply trim or Save as new.
+  explicitly commits via Apply trim or Save Selection to Library.
 - Keyboard selection via Shift+Arrow uses a text-editor-style
   anchor model: first press anchors at the playhead (or the opposite
   edge of an existing narrowing selection); subsequent presses move
@@ -1213,20 +1220,20 @@ project transport.
 - **Waveform display** honours the `ui.waveformDisplayMode` preference:
   a single summary waveform or stacked left / right lanes for stereo
   sources, matching the timeline.
-- **Save as new clip** writes a new saved-clip entry to the library.
-- **Apply trim** (saved clips only) updates the saved-clip's
+- **Save Selection to Library** writes a new saved clip entry to the library.
+- **Apply trim** (saved clips only) updates the saved clip's
   `derivedFrom` window in place AND propagates the new window to
   every linked timeline clip atomically. The push is collision-
   checked against each linked clip's track — refused with a toast
   naming the offending track(s) if the new range would clash with a
   neighbour, leaving the user to resolve (or unlink) before retrying.
-- Linked-clip model: clips dropped from a saved-clip tile remember
+- Linked-clip model: clips dropped from a saved clip tile remember
   the link via `clip.libraryItemId === savedClipItemId`. Linked
   clips show a chain badge on the timeline title strip and are
   blocked from edge-resize (`hitTestClipEdge` returns null when the
   clip is linked) so an in-place trim can't desync a sibling. Right-
   click ▸ **Unlink from library** rebinds the instance to the
-  underlying audio-file item — the trim window is preserved exactly
+  underlying source item — the trim window is preserved exactly
   by the rebind — so the user can freely resize a single instance.
   Saved clips can also be removed from the library while still in
   use: the remove silently unlinks every dependent timeline clip via
@@ -1443,8 +1450,8 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] No-overlap rule on same-track clip drag (magnetic edge snap so adjacent clips play seamlessly)
 
 **Sample creation:**
-- [x] `CLIP_SAVE_AS_SAMPLE` / `LIBRARY_ITEM_SAVE_AS_SAMPLE` → `SAMPLE_SAVED` writes a WAV under a per-source subfolder of the project/default `samples` folder and adds it to the browser as an audio-file item that records its source (`sourceItemId`) so it inherits the source's cover/tags and reads as a saved sample
-- [x] Context-menu sample creation from timeline clips and saved-clip library tiles
+- [x] `CLIP_SAVE_AS_SAMPLE` / `LIBRARY_ITEM_SAVE_AS_SAMPLE` → `SAMPLE_SAVED` writes a WAV under a per-source subfolder of the project/default `samples` folder and adds it to the browser as a sample item that records its source (`sourceItemId`) so it inherits the source's cover/tags and reads as a saved sample
+- [x] Context-menu sample creation from timeline clips and library clip tiles
 - [x] Warped timeline clips and warped saved clips render through a fresh offline Rubber Band processor when baked as a **simple** sample so it matches the clip's tempo/pitch state; **music** samples are exported at the source tempo/pitch so they re-warp on drop
 
 **Library upgrades:**
@@ -1705,7 +1712,7 @@ playable at every point — no broken-build day):
 - [x] `STEM_PROGRESS` / `STEM_READY` / `STEM_FAILED` handling; non-blocking separation progress dialog, plus a first-use model-download dialog gated on `stems:` IPC
 - [x] Stem output as new tracks (one per stem) beneath the source — `STEM_READY` reuses the existing library-import / track-add / clip-add flows; each stem lands on its own new track aligned to the source clip start, non-destructively
 - [x] Incremental placement — `STEM_PARTIAL` lands each stem the instant its WAV is written; `STEM_READY` backfills the rest (per-job dedupe)
-- [x] Stems nested in the library as `stem` items under their source group; they inherit the source's analysis (BPM, beat grid, key, variable-tempo) instead of being re-analysed
+- [x] Stems stored as top-level `stem` items in the library; they inherit the source's analysis (BPM, beat grid, key, variable-tempo) instead of being re-analysed
 - [x] Quality presets (**Fast / Balanced / Best** → inference overlap 0.10 / 0.25 / 0.50) sent as `quality` on `STEM_SEPARATE`
 - [x] Mixture-consistency residual — when all four stems are requested, synthesise `other = mixture − (vocals + drums + bass)` and skip the `other` model run (~25 % faster)
 - [x] DirectML GPU acceleration (issue tracked) — DirectML-build ONNX Runtime bundled (`onnxruntime.dll` + `DirectML.dll`); `useGpu` threaded to session options, opt-in and adapter-gated (Preferences ▸ Stems), TDR/timeout-recovery hardened
@@ -1973,7 +1980,7 @@ Three independent design critiques converged on the following constraints.
 **Build the reframed version, not the literal feature:**
 
 - **No arbitrary same-track clip overlap.** The strict no-overlap invariant
-  (§7.5 magnetic edge snap) underpins collision checks, saved-clip propagation,
+  (§7.5 magnetic edge snap) underpins collision checks, saved clip propagation,
   paste/duplicate, hit-testing and render parity. Crossfades/transitions are
   modelled as an explicit **Transition Zone object between two adjacent clips**
   (A→B), which may render both clips for the overlap window, *not* as free clip

@@ -19,7 +19,7 @@ vi.mock('@/lib/audioDecode', () => ({
 function makeSourceItem(overrides: Partial<LibraryItem> = {}): LibraryItem {
   return {
     id: 'src',
-    kind: 'audio-file',
+    kind: 'source',
     fileName: 'src.wav',
     filePath: 'C:\\src.wav',
     playbackFilePath: 'C:\\src.wav',
@@ -33,10 +33,10 @@ function makeSourceItem(overrides: Partial<LibraryItem> = {}): LibraryItem {
   } as LibraryItem
 }
 
-function makeSavedClipItem(sourceId: string, overrides: Partial<LibraryItem> = {}): LibraryItem {
+function makeLibraryClipItem(sourceId: string, overrides: Partial<LibraryItem> = {}): LibraryItem {
   return {
     id: 'saved',
-    kind: 'saved-clip',
+    kind: 'clip',
     fileName: 'src.wav',
     filePath: 'C:\\src.wav',
     playbackFilePath: 'C:\\src.wav',
@@ -76,11 +76,11 @@ describe('useClipEditorTarget', () => {
     const target = useClipEditorTarget(ref(null), ref(null))
     expect(target.editorMode.value).toBe(null)
     expect(target.editsExistingClip.value).toBe(false)
-    expect(target.editsSavedClipLibrary.value).toBe(false)
+    expect(target.editsLibraryClipLibrary.value).toBe(false)
     expect(target.editsSingleTimelineClip.value).toBe(false)
   })
 
-  it('classifies a source audio-file library item as source-library', () => {
+  it('classifies a source library item as source-library', () => {
     const lib = useLibraryStore()
     lib.items.push(makeSourceItem())
     const target = useClipEditorTarget(ref(lib.items[0]!), ref(null))
@@ -92,35 +92,35 @@ describe('useClipEditorTarget', () => {
     expect(target.sourceKey.value).toBe('C major')
   })
 
-  it('classifies a saved-clip library item as saved-library and points sourceItem at the parent audio-file', () => {
+  it('classifies a library-clip library item as saved-library and points sourceItem at the parent source', () => {
     const lib = useLibraryStore()
     lib.items.push(makeSourceItem())
-    lib.items.push(makeSavedClipItem('src'))
+    lib.items.push(makeLibraryClipItem('src'))
     const target = useClipEditorTarget(ref(lib.items[1]!), ref(null))
     expect(target.editorMode.value).toBe('saved-library')
     expect(target.editsExistingClip.value).toBe(true)
-    expect(target.editsSavedClipLibrary.value).toBe(true)
+    expect(target.editsLibraryClipLibrary.value).toBe(true)
     expect(target.editsSingleTimelineClip.value).toBe(false)
     expect(target.sourceItem.value?.id).toBe('src')
     expect(target.sourceBpm.value).toBe(120)
   })
 
-  it('classifies a timeline clip backed by a saved-clip library item as timeline-linked', () => {
+  it('classifies a timeline clip backed by a library-clip library item as timeline-linked', () => {
     const lib = useLibraryStore()
     const project = useProjectStore()
     lib.items.push(makeSourceItem())
-    lib.items.push(makeSavedClipItem('src'))
+    lib.items.push(makeLibraryClipItem('src'))
     const clip = makeTimelineClip('saved')
     project.clips[clip.id] = clip
     const target = useClipEditorTarget(ref(null), ref(clip.id))
     expect(target.editorMode.value).toBe('timeline-linked')
     expect(target.editsExistingClip.value).toBe(true)
-    expect(target.editsSavedClipLibrary.value).toBe(true)
+    expect(target.editsLibraryClipLibrary.value).toBe(true)
     expect(target.editsSingleTimelineClip.value).toBe(false)
     expect(target.sourceItem.value?.id).toBe('src')
   })
 
-  it('classifies a timeline clip backed by an audio-file library item as timeline-unlinked', () => {
+  it('classifies a timeline clip backed by a source library item as timeline-unlinked', () => {
     const lib = useLibraryStore()
     const project = useProjectStore()
     lib.items.push(makeSourceItem())
@@ -129,7 +129,7 @@ describe('useClipEditorTarget', () => {
     const target = useClipEditorTarget(ref(null), ref(clip.id))
     expect(target.editorMode.value).toBe('timeline-unlinked')
     expect(target.editsExistingClip.value).toBe(true)
-    expect(target.editsSavedClipLibrary.value).toBe(false)
+    expect(target.editsLibraryClipLibrary.value).toBe(false)
     expect(target.editsSingleTimelineClip.value).toBe(true)
     expect(target.sourceItem.value?.id).toBe('src')
   })

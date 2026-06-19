@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useLibraryStore, libraryItemDisplayName, libraryItemIsSample, libraryItemIsSampleAsset, type LibraryItem } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, type LibraryItem } from '@/stores/libraryStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { importAudioIntoLibrary, preflightSampleRates } from '@/lib/importAudio'
@@ -86,20 +86,20 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
 
   const itemCount = computed(() => library.items.length)
 
-  const SAVED_CLIP_PILL_CLASS = LIBRARY_PILL_BASE_CLASS
-  const SAVED_CLIP_BPM_PILL_CLASS = LIBRARY_BPM_PILL_CLASS
+  const LIBRARY_CLIP_PILL_CLASS = LIBRARY_PILL_BASE_CLASS
+  const LIBRARY_CLIP_BPM_PILL_CLASS = LIBRARY_BPM_PILL_CLASS
   const SAMPLE_PILL_CLASS = LIBRARY_SAMPLE_PILL_CLASS
   // Stems are standalone audio files (their own samples / duration), shown as
   // top-level items like imported sources — not nested under the original. The
   // link to the original survives via `derivedFrom` (badge + info-dialog note +
   // inherited cover art), not via tree nesting.
   const sourceItems = computed(() =>
-    library.items.filter((item) => item.kind === 'audio-file' || item.kind === 'stem')
+    library.items.filter((item) => item.kind === 'source' || item.kind === 'sample' || item.kind === 'stem')
   )
-  const orphanSavedClipItems = computed(() =>
+  const orphanLibraryClipItems = computed(() =>
     library.items.filter(
       (item) =>
-        item.kind === 'saved-clip' &&
+        item.kind === 'clip' &&
         !library.items.some((source) => source.id === item.derivedFrom?.sourceItemId)
     )
   )
@@ -195,8 +195,8 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     return originId ? library.byId[originId]?.coverArtUrl : undefined
   }
 
-  function savedClipEffectiveBpm(item: LibraryItem): number | undefined {
-    if (item.kind !== 'saved-clip' || item.warpEnabled !== true) return undefined
+  function libraryClipEffectiveBpm(item: LibraryItem): number | undefined {
+    if (item.kind !== 'clip' || item.warpEnabled !== true) return undefined
     const source = item.derivedFrom?.sourceItemId
       ? library.byId[item.derivedFrom?.sourceItemId]
       : undefined
@@ -212,13 +212,13 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
 
   /** Mirrors drop-time warp rules so sample tiles match drop behavior. */
   function tileIsSample(item: LibraryItem): boolean {
-    return libraryItemIsSample(item, library.byId)
+    return libraryItemIsSimple(item, library.byId)
   }
 
-  /** Saved sample asset (music OR simple) — drives the cover-art type badge and tile
+  /** Saved sample (music OR simple) — drives the cover-art type badge and tile
    *  styling. Distinct from `tileIsSample`, which is the narrower non-musical flag. */
   function tileIsSampleAsset(item: LibraryItem): boolean {
-    return libraryItemIsSampleAsset(item)
+    return libraryItemIsSample(item)
   }
 
   /** Number of timeline placements of a library item (drives the in-use count pill). */
@@ -289,11 +289,11 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     closeItemContextMenu,
     onContextMenuCommand,
     itemCount,
-    SAVED_CLIP_PILL_CLASS,
-    SAVED_CLIP_BPM_PILL_CLASS,
+    LIBRARY_CLIP_PILL_CLASS,
+    LIBRARY_CLIP_BPM_PILL_CLASS,
     SAMPLE_PILL_CLASS,
     sourceItems,
-    orphanSavedClipItems,
+    orphanLibraryClipItems,
     onImportClick,
     onItemDragStart,
     onItemDragEnd,
@@ -303,7 +303,7 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     displayArtist,
     childItems,
     groupCoverArtUrl,
-    savedClipEffectiveBpm,
+    libraryClipEffectiveBpm,
     keyBadgeClass,
     tileIsSample,
     tileIsSampleAsset,

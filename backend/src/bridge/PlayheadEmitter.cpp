@@ -30,7 +30,7 @@ void PlayheadEmitter::timerCallback()
         lastPosMs = posMs;
     }
 
-    // Preview transport is independent. A trimmed clip/saved-clip preview keeps
+    // Preview transport is independent. A trimmed clip/library-clip preview keeps
     // streaming past its window (still inside the file) so `isPreviewPlaying()`
     // stays true and the position check below catches the window end. A full-file
     // sample preview, however, hits true end-of-file at exactly `durationMs`: JUCE

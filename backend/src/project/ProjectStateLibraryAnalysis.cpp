@@ -105,8 +105,8 @@ bool ProjectState::setLibraryItemWarp(const juce::String& itemId,
     {
         auto item = library.getChild(i);
         if (item.getProperty(kId).toString() != itemId) continue;
-        // Warp defaults are only meaningful on saved-clip items.
-        if (item.getProperty(kKind).toString() != "saved-clip") return false;
+        // Warp defaults are only meaningful on clip items.
+        if (item.getProperty(kKind).toString() != "clip") return false;
         if (warpEnabled.has_value())
             item.setProperty(kWarpEnabled, *warpEnabled, &undoManager);
         if (warpMode.has_value() && warpMode->isNotEmpty())
@@ -143,7 +143,7 @@ juce::String ProjectState::getLibraryItemPlaybackPathForSource(const juce::Strin
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(kKind, "audio-file").toString() != "saved-clip"
+        if (item.getProperty(kKind, "source").toString() != "clip"
             && item.getProperty(kFilePath).toString() == sourceFilePath)
         {
             return item.getProperty(kPlaybackFilePath, {}).toString();
@@ -176,7 +176,7 @@ bool ProjectState::setLibraryItemLowConfidence(const juce::String& itemId, bool 
                                     });
 }
 
-bool ProjectState::setLibraryItemSampleMode(const juce::String& itemId, const juce::String& mode)
+bool ProjectState::setLibraryItemAudioType(const juce::String& itemId, const juce::String& audioType)
 {
     auto library = root.getChildWithName(kLibrary);
     if (!library.isValid()) return false;
@@ -185,13 +185,13 @@ bool ProjectState::setLibraryItemSampleMode(const juce::String& itemId, const ju
         auto item = library.getChild(i);
         if (item.getProperty(kId).toString() == itemId)
         {
-            if (mode == "sample" || mode == "music")
+            if (audioType == "simple" || audioType == "music")
             {
-                item.setProperty(kSampleMode, mode, nullptr);
+                item.setProperty(kAudioType, audioType, nullptr);
             }
             else
             {
-                item.removeProperty(kSampleMode, nullptr);
+                item.removeProperty(kAudioType, nullptr);
             }
             return true;
         }
@@ -219,7 +219,7 @@ double ProjectState::getLibraryItemBpmForPath(const juce::String& filePath) cons
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
-        if (item.getProperty(kKind, "audio-file").toString() != "saved-clip"
+        if (item.getProperty(kKind, "source").toString() != "clip"
             && item.getProperty(kFilePath).toString() == filePath)
         {
             return static_cast<double>(item.getProperty(kBpm, 0.0));

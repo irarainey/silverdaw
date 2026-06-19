@@ -217,11 +217,11 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                              silverdaw::ProjectState& projectState, juce::ThreadPool& peakPool,
                              const silverdaw::PeaksCache& cache, silverdaw::BridgeServer& bridge,
                              std::optional<SampleWarpOptions> warpOptions = std::nullopt,
-                             juce::String sampleMode = {}, juce::String sourceItemId = {})
+                             juce::String audioType = {}, juce::String sourceItemId = {})
 {
     peakPool.addJob(
         [clipId, libraryItemId, newItemId, sampleName, outputDir, sourceFile, inMs, durationMs,
-         warpOptions, sampleMode, sourceItemId, &engine, &projectState, &cache, &bridge]
+         warpOptions, audioType, sourceItemId, &engine, &projectState, &cache, &bridge]
         {
             const auto safeName = sanitiseSampleFileName(sampleName);
             const auto outDir = juce::File(outputDir);
@@ -247,7 +247,7 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
 
             juce::MessageManager::callAsync(
                 [clipId, libraryItemId, newItemId, safeName, outFile, actualDurationMs, sampleRate, channels,
-                 ok, error, peaks, peaksFile, inMs, sampleMode, sourceItemId, &engine, &projectState, &bridge]
+                 ok, error, peaks, peaksFile, inMs, audioType, sourceItemId, &engine, &projectState, &bridge]
                 {
                     auto* obj = new juce::DynamicObject();
                     if (clipId.isNotEmpty()) obj->setProperty("clipId", clipId);
@@ -261,7 +261,7 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                         return;
                     }
 
-                    const bool isMusic = (sampleMode == "music");
+                    const bool isMusic = (audioType == "music");
                     projectState.getUndoManager().beginNewTransaction("Save sample");
                     // A music sample is a standalone loop: it carries the source's
                     // beat grid (set below), so persist its window start to shift
@@ -269,19 +269,19 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     // Both flavours carry over the source's media GUID so their cover
                     // art + tags resolve from the project's central metadata/covers store.
                     // Both also persist the source link (sourceItemId) as provenance: a
-                    // sample is the only audio-file created FROM another item, which is
+                    // sample is the only kind created FROM another item, which is
                     // how the renderer tells a saved sample from an ordinary import
-                    // (sampleMode alone is ambiguous — a musical import is also "music").
+                    // (audioType alone is ambiguous — a musical import is also "music").
                     const juce::String sampleMediaId =
                         sourceItemId.isNotEmpty() ? projectState.getLibraryItemMediaId(sourceItemId) : juce::String{};
                     projectState.addLibraryItem(newItemId, outFile.getFullPathName(), outFile.getFileName(),
                                                 actualDurationMs, static_cast<int>(sampleRate), channels,
-                                                outFile.getFullPathName(), {}, "audio-file", safeName,
+                                                outFile.getFullPathName(), {}, "sample", safeName,
                                                 sourceItemId, {}, isMusic ? inMs : -1.0, -1.0, -1, sampleMediaId);
                     if (isMusic)
-                        projectState.setLibraryItemSampleMode(newItemId, "music");
-                    else if (sampleMode == "sample")
-                        projectState.setLibraryItemSampleMode(newItemId, "sample");
+                        projectState.setLibraryItemAudioType(newItemId, "music");
+                    else if (audioType == "simple")
+                        projectState.setLibraryItemAudioType(newItemId, "simple");
                     obj->setProperty("filePath", outFile.getFullPathName());
                     obj->setProperty("fileName", outFile.getFileName());
                     obj->setProperty("name", safeName);
@@ -292,7 +292,7 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     obj->setProperty("peakCount", peaks.bucketsPerLane());
                     obj->setProperty("laneCount", peaks.laneCount);
                     obj->setProperty("peaksPerSecond", silverdaw::effectivePeaksPerSecond(peaks));
-                    if (sampleMode.isNotEmpty()) obj->setProperty("sampleMode", sampleMode);
+                    if (audioType.isNotEmpty()) obj->setProperty("audioType", audioType);
                     // Echo the source id for BOTH music and simple samples so the renderer can
                     // inherit the source's cover art + tags and persist them to a sidecar. Only a
                     // music sample additionally inherits the musical grid (tempo/key, below) — that
@@ -323,8 +323,8 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
     const juce::String sampleName = tryGetRequiredString(payload, "sampleName").value_or(juce::String{});
-    const juce::String sampleMode = tryGetString(payload, "sampleMode").value_or(juce::String{});
-    const bool isMusic = (sampleMode == "music");
+    const juce::String audioType = tryGetString(payload, "audioType").value_or(juce::String{});
+    const bool isMusic = (audioType == "music");
     if (clipId.isEmpty() || itemId.isEmpty()) return;
     const juce::String libraryItemId = projectState.getClipLibraryItemId(clipId);
     auto sourcePath = projectState.getLibraryItemPlaybackPath(libraryItemId);
@@ -366,7 +366,7 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
     }
     saveWindowAsSampleAsync(clipId, {}, itemId, sampleName, outputDir, juce::File(sourcePath),
                             projectState.getClipInMs(clipId), projectState.getClipDurationMs(clipId),
-                            engine, projectState, peakPool, cache, bridge, sampleWarp, sampleMode, libraryItemId);
+                            engine, projectState, peakPool, cache, bridge, sampleWarp, audioType, libraryItemId);
 }
 
 void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& engine,
@@ -377,8 +377,8 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
     const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
     const juce::String sampleName = tryGetRequiredString(payload, "sampleName").value_or(juce::String{});
-    const juce::String sampleMode = tryGetString(payload, "sampleMode").value_or(juce::String{});
-    const bool isMusic = (sampleMode == "music");
+    const juce::String audioType = tryGetString(payload, "audioType").value_or(juce::String{});
+    const bool isMusic = (audioType == "music");
     if (libraryItemId.isEmpty() || itemId.isEmpty()) return;
     juce::var found;
     const auto library = projectState.libraryAsJson();
@@ -402,7 +402,7 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
     if (sourcePath.isEmpty()) sourcePath = found.getProperty("filePath", juce::var()).toString();
     // Name the per-source subfolder from the ORIGINAL source file, not the playback
     // path (a hashed decoded-WAV cache file for non-WAV imports). `found` is the
-    // saved-clip being sampled; its `filePath` is the original source path.
+    // saved-from is the clip being sampled; its `filePath` is the original source path.
     juce::String namePath = projectState.getLibraryItemFilePath(sourceItemId);
     if (namePath.isEmpty()) namePath = found.getProperty("filePath", juce::var()).toString();
     if (namePath.isEmpty()) namePath = sourcePath;
@@ -432,7 +432,7 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
     }
     saveWindowAsSampleAsync({}, libraryItemId, itemId, sampleName, outputDir, juce::File(sourcePath),
                             sourceInMs, sourceDurationMs, engine, projectState, peakPool, cache, bridge,
-                            sampleWarp, sampleMode, sourceItemId);
+                            sampleWarp, audioType, sourceItemId);
 }
 
 } // namespace silverdaw

@@ -51,9 +51,9 @@ export interface Clip {
   effectiveDurationMs?: number
   effectiveTempoRatio?: number
   effectiveWarpActive?: boolean
-  /** Locks move/edge-trim gestures (editor still opens). Per-clip; not shared across saved-clip siblings. */
+  /** Locks move/edge-trim gestures (editor still opens). Per-clip; not shared across library-clip siblings. */
   locked?: boolean
-  /** Plays the clip window backwards (non-destructive). Propagated across saved-clip siblings. */
+  /** Plays the clip window backwards (non-destructive). Propagated across library-clip siblings. */
   reversed?: boolean
 }
 

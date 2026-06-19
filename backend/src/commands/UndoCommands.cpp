@@ -29,7 +29,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
-           type == "LIBRARY_ITEM_SET_SAMPLE_MODE" ||
+           type == "LIBRARY_ITEM_SET_AUDIO_TYPE" ||
            type == "LIBRARY_ITEM_SET_MANUAL_TEMPO" ||
            type == "PROJECT_RENAME" || type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" ||
            type == "PROJECT_SET_AUDIO_OUTPUT" ||
@@ -77,7 +77,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "LIBRARY_REMOVE") return "Remove library item";
     if (type == "LIBRARY_REANALYSE") return "Reanalyse library item";
     if (type == "LIBRARY_ITEM_RELINK") return "Relink library item";
-    if (type == "LIBRARY_ITEM_SET_SAMPLE_MODE") return "Change library item classification";
+    if (type == "LIBRARY_ITEM_SET_AUDIO_TYPE") return "Change library item classification";
     if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO") return "Set manual tempo";
     if (type == "PROJECT_RENAME") return "Rename project";
     if (type == "PROJECT_SET_BPM") return "Change tempo";

@@ -397,7 +397,7 @@ void testProjectStateViewLibraryMarkersAndReplace()
                                   "C:\\cache\\source.wav", "Bb minor"),
             "library item should add");
     require(state.addLibraryItem("l2", "C:\\audio\\source.wav", "source.wav", 750.0, 48000, 2,
-                                 {}, {}, "saved-clip", "Source chop", "l1", "c1", 500.0, 750.0),
+                                 {}, {}, "clip", "Source chop", "l1", "c1", 500.0, 750.0),
             "saved clip library item should add");
     require(state.hasLibraryItemForPath("C:\\audio\\source.wav"), "library item should be found by path");
     requireEqual(state.getLibraryItemPlaybackPathForSource("C:\\audio\\source.wav"), "C:\\cache\\source.wav",
@@ -415,7 +415,7 @@ void testProjectStateViewLibraryMarkersAndReplace()
     require(firstItem.getProperty("beats", {}).isArray(), "libraryAsJson should include beats array");
     require(bool(firstItem.getProperty("variableTempo", false)), "libraryAsJson should include variableTempo");
     const auto& savedItem = library.getArray()->getReference(1);
-    requireEqual(savedItem.getProperty("kind", {}).toString(), "saved-clip", "saved clip kind should round-trip");
+    requireEqual(savedItem.getProperty("kind", {}).toString(), "clip", "saved clip kind should round-trip");
     requireEqual(savedItem.getProperty("name", {}).toString(), "Source chop", "saved clip name should round-trip");
     requireEqual(savedItem.getProperty("sourceItemId", {}).toString(), "l1", "saved clip source should round-trip");
     requireNear(static_cast<double>(savedItem.getProperty("sourceInMs", 0.0)), 500.0, 0.0001,
@@ -466,11 +466,11 @@ void testProjectStateNetZeroDirty()
     require(transitions == 2 && !lastDirty, "dirty callback should fire on net-zero remove");
 
     require(state.addLibraryItem("l2", "C:\\audio\\saved.wav", "saved.wav", 500.0, 48000, 2,
-                                 {}, {}, "saved-clip", "Chop", "src", "clip", 100.0, 500.0),
+                                 {}, {}, "clip", "Chop", "src", "clip", 100.0, 500.0),
             "saved clip add should succeed");
-    require(state.isDirty(), "saved-clip add should mark dirty");
-    require(state.removeLibraryItem("l2"), "saved-clip remove should succeed");
-    require(!state.isDirty(), "saved-clip add+remove should return to clean");
+    require(state.isDirty(), "clip add should mark dirty");
+    require(state.removeLibraryItem("l2"), "clip remove should succeed");
+    require(!state.isDirty(), "clip add+remove should return to clean");
 }
 
 void testProjectStateClipTransitions()
@@ -680,7 +680,7 @@ void testExplicitSampleDoesNotSeed()
     auto bridge = makeSilentBridge();
     const double original = state.getBpm();
     stageSeededSource(state, "l1", 175.0);
-    require(state.setLibraryItemSampleMode("l1", "sample"), "explicit sample classification applies");
+    require(state.setLibraryItemAudioType("l1", "simple"), "explicit simple classification applies");
 
     silverdaw::maybeSeedProjectBpmFor("l1", state, bridge);
     requireNear(state.getBpm(), original, 1e-6, "a user-classified sample must not seed the tempo");

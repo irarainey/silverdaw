@@ -201,9 +201,9 @@ bool dispatchLibrary(const DispatchContext& ctx)
     {
         silverdaw::handleLibraryReanalyse(payload, engine, projectState, bridge, peakPool, decodedCache);
     }
-    else if (type == "LIBRARY_ITEM_SET_SAMPLE_MODE")
+    else if (type == "LIBRARY_ITEM_SET_AUDIO_TYPE")
     {
-        silverdaw::handleLibraryItemSetSampleMode(payload, projectState);
+        silverdaw::handleLibraryItemSetAudioType(payload, projectState);
     }
     else if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO")
     {

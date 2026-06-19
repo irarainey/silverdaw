@@ -55,7 +55,7 @@ export interface ClipSetLockedPayload {
   locked: boolean
 }
 
-/** Play a clip's window backwards (non-destructive). Propagated across saved-clip siblings. */
+/** Play a clip's window backwards (non-destructive). Propagated across library-clip siblings. */
 export interface ClipSetReversedPayload {
   clipId: string
   reversed: boolean
@@ -109,9 +109,9 @@ export interface LibraryAddPayload {
   sourceClipId?: string
   sourceInMs?: number
   sourceDurationMs?: number
-  /** True when the source's saved-clip list is collapsed in the library panel. */
+  /** True when the source's library-clip list is collapsed in the library panel. */
   collapsed?: boolean
-  /** Saved-clip default warp (kind === 'saved-clip'); copied onto a clip on drop (not a live link). */
+  /** Saved-clip default warp (kind === 'clip'); copied onto a clip on drop (not a live link). */
   warpEnabled?: boolean
   warpMode?: ClipWarpMode
   tempoRatio?: number
@@ -137,10 +137,10 @@ export interface LibraryReanalysePayload {
   key?: string
 }
 
-/** User classification override: 'sample'/'music' persist; 'auto' clears it (falls back to lowConfidence). */
-export interface LibraryItemSetSampleModePayload {
+/** User classification override: 'simple'/'music' persist; 'auto' clears it (falls back to lowConfidence). */
+export interface LibraryItemSetAudioTypePayload {
   itemId: string
-  mode: 'sample' | 'music' | 'auto'
+  audioType: 'simple' | 'music' | 'auto'
 }
 
 /**
@@ -232,9 +232,9 @@ export interface ClipSaveAsSamplePayload {
   clipId: string
   itemId: string
   sampleName: string
-  /** 'music' inherits the source bpm/beats/key (warps on drop); 'sample' is a
+  /** 'music' inherits the source bpm/beats/key (warps on drop); 'simple' is a
    *  bare one-shot with no musical metadata (never auto-warps on drop). */
-  sampleMode?: 'sample' | 'music'
+  audioType?: 'simple' | 'music'
 }
 
 // ─── Effects envelopes (Bass / Mid / Treble / Leveler / Sends / shared FX) ──
@@ -353,8 +353,8 @@ export interface LibraryItemSaveAsSamplePayload {
   libraryItemId: string
   itemId: string
   sampleName: string
-  /** See ClipSaveAsSamplePayload.sampleMode. */
-  sampleMode?: 'sample' | 'music'
+  /** See ClipSaveAsSamplePayload.audioType. */
+  audioType?: 'simple' | 'music'
 }
 
 export interface TransportSeekPayload {
@@ -393,7 +393,7 @@ export interface BridgeOutboundMap {
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
   LIBRARY_REANALYSE: LibraryReanalysePayload
-  LIBRARY_ITEM_SET_SAMPLE_MODE: LibraryItemSetSampleModePayload
+  LIBRARY_ITEM_SET_AUDIO_TYPE: LibraryItemSetAudioTypePayload
   LIBRARY_ITEM_SET_MANUAL_TEMPO: LibraryItemSetManualTempoPayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
@@ -650,7 +650,7 @@ export type MixdownCancelPayload = undefined
 /**
  * Separate a source's audio into the chosen stems (any of vocals/drums/bass/other) with the
  * htdemucs-ft ONNX model. Non-destructive: stems are written to disk and imported as new library
- * items; the source is untouched. `sourceItemId` is the resolved top-level audio-file library item
+ * items; the source is untouched. `sourceItemId` is the resolved top-level source library item
  * to separate. When `clipId` is present (timeline separation), each stem is placed on a new track
  * aligned to that clip; when absent (library-source separation), stems are imported to the library
  * only. `modelDir` is the resolved model directory (renderer obtains it from main via IPC after
@@ -675,7 +675,7 @@ export type OtherEnhanceStrength = StemEnhanceStrength
 
 export interface StemSeparatePayload {
   jobId: string
-  /** Resolved top-level audio-file library item to separate. */
+  /** Resolved top-level source library item to separate. */
   sourceItemId: string
   /** Source clip for timeline placement; omit for library-source separation. */
   clipId?: string
@@ -840,7 +840,7 @@ export const bridgeOutboundPayloadKinds: {
   LIBRARY_ADD: 'payload',
   LIBRARY_REMOVE: 'payload',
   LIBRARY_REANALYSE: 'payload',
-  LIBRARY_ITEM_SET_SAMPLE_MODE: 'payload',
+  LIBRARY_ITEM_SET_AUDIO_TYPE: 'payload',
   LIBRARY_ITEM_SET_MANUAL_TEMPO: 'payload',
   TRACK_ADD: 'payload',
   TRACK_REMOVE: 'payload',

@@ -61,7 +61,7 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
     double itemBpm = 0.0;
     bool itemFound = false;
     bool itemLowConfidence = false;
-    juce::String itemSampleMode;
+    juce::String itemAudioType;
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
@@ -76,7 +76,7 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
             }
             itemBpm = static_cast<double>(item.getProperty(juce::Identifier{"bpm"}, 0.0));
             itemLowConfidence = static_cast<bool>(item.getProperty(juce::Identifier{"lowConfidence"}, false));
-            itemSampleMode = item.getProperty(juce::Identifier{"sampleMode"}, juce::var("")).toString();
+            itemAudioType = item.getProperty(juce::Identifier{"audioType"}, juce::var("")).toString();
             break;
         }
     }
@@ -90,17 +90,17 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
         silverdaw::log::info("bpmjob", "seed skipped for itemId=" + itemId + " (itemBpm=0)");
         return;
     }
-    // Only an explicit user "sample" classification blocks tempo seeding. A
+    // Only an explicit user "simple" classification blocks tempo seeding. A
     // low-confidence auto-detection still seeds: the very first musical clip on
     // a track should establish the project tempo (the seeded flag below ensures
     // this only fires once), rather than leaving the default because the
     // detector was merely unsure.
-    if (itemSampleMode == "sample")
+    if (itemAudioType == "simple")
     {
         silverdaw::log::info(
             "bpmjob",
             "seed skipped for itemId=" + itemId
-                + " (user-classified as sample — lowConfidence="
+                + " (user-classified as simple — lowConfidence="
                 + (itemLowConfidence ? "true" : "false") + ")");
         return;
     }

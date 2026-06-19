@@ -82,7 +82,7 @@ function isWithinStemsDir(dir: unknown): dir is string {
 // (metadata.json plus a cover.<ext>) into an app-owned `dir`. Shared by both the
 // stem and sample writers — the difference is only how the identity is sourced:
 // stems re-parse the original tagged source file; samples pass the in-memory
-// inherited identity (their source may be a tagless stem/saved-clip, so the file
+// inherited identity (their source may be a tagless stem/library-clip, so the file
 // on disk has nothing to parse).
 async function writeSidecarData(
   dir: string,

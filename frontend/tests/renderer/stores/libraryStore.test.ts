@@ -80,7 +80,7 @@ describe('libraryStore', () => {
     expect(library.items).toHaveLength(1)
     expect(library.items[0]).toMatchObject({
       id,
-      kind: 'audio-file',
+      kind: 'source',
       durationMs: 2_000,
       sampleRate: 48_000,
       channelCount: 1,
@@ -90,7 +90,7 @@ describe('libraryStore', () => {
     expect(sendMock).toHaveBeenCalledWith('LIBRARY_ADD', {
       itemId: 'l1',
       filePath: 'C:\\audio\\loop.wav',
-      kind: 'audio-file',
+      kind: 'source',
       name: undefined,
       fileName: 'loop.wav',
       durationMs: 1_000,
@@ -228,7 +228,7 @@ describe('libraryStore', () => {
       derivedFrom: { sourceItemId: sourceId!, sourceClipId: 'c1', inMs: 0, durationMs: 0 }
     })
 
-    const savedId = library.addSavedClipFromTimelineClip({
+    const savedId = library.addLibraryClipFromTimelineClip({
       id: 'clip-stem',
       trackId: 't1',
       libraryItemId: stemId,
@@ -245,7 +245,7 @@ describe('libraryStore', () => {
     })
 
     const saved = library.getItem(savedId!)
-    expect(saved?.kind).toBe('saved-clip')
+    expect(saved?.kind).toBe('clip')
     // The cropped clip must point back to the stem (its real file), not the
     // original track — otherwise the library shows "source not found".
     expect(saved?.derivedFrom?.sourceItemId).toBe(stemId)
@@ -283,7 +283,7 @@ describe('libraryStore', () => {
     })
     sendMock.mockClear()
 
-    const savedId = library.addSavedClipFromTimelineClip({
+    const savedId = library.addLibraryClipFromTimelineClip({
       id: 'c1',
       trackId: 't1',
       libraryItemId: sourceId,
@@ -298,7 +298,7 @@ describe('libraryStore', () => {
       peaks: new Float32Array([0, 1]),
       unresolved: false
     })
-    const duplicateId = library.addSavedClipFromTimelineClip({
+    const duplicateId = library.addLibraryClipFromTimelineClip({
       id: 'c2',
       trackId: 't1',
       libraryItemId: sourceId,
@@ -318,7 +318,7 @@ describe('libraryStore', () => {
     expect(library.items).toHaveLength(2)
     expect(library.items[1]).toMatchObject({
       id: savedId,
-      kind: 'saved-clip',
+      kind: 'clip',
       filePath: 'C:\\audio\\song.wav',
       durationMs: 1_500,
       derivedFrom: {
@@ -332,7 +332,7 @@ describe('libraryStore', () => {
     expect(library.isItemInUse(savedId ?? '')).toBe(false)
     expect(sendMock).toHaveBeenCalledWith('LIBRARY_ADD', expect.objectContaining({
       itemId: savedId,
-      kind: 'saved-clip',
+      kind: 'clip',
       sourceItemId: sourceId,
       sourceClipId: 'c1',
       sourceInMs: 2_000,
@@ -449,7 +449,7 @@ describe('libraryStore', () => {
     expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: unusedItemId })
   })
 
-  it('cascade-removes unused saved-clip children when their audio-file source is deleted', () => {
+  it('cascade-removes unused library-clip children when their source is deleted', () => {
     const library = useLibraryStore()
     const project = useProjectStore()
     const sourceId = library.addItem({
@@ -465,7 +465,7 @@ describe('libraryStore', () => {
     // immediately drop the timeline clip so the source has only an
     // unused library child — the exact scenario the bug report
     // describes.
-    const savedId = library.addSavedClipFromTimelineClip({
+    const savedId = library.addLibraryClipFromTimelineClip({
       id: 'c1',
       trackId: 't1',
       libraryItemId: sourceId,
@@ -495,7 +495,7 @@ describe('libraryStore', () => {
     expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: sourceId })
   })
 
-  it('refuses to remove a source when one of its saved-clip children is still on the timeline', () => {
+  it('refuses to remove a source when one of its library-clip children is still on the timeline', () => {
     const library = useLibraryStore()
     const project = useProjectStore()
     const sourceId = library.addItem({
@@ -507,7 +507,7 @@ describe('libraryStore', () => {
       peaks: new Float32Array(),
       fromSnapshot: true
     })
-    const savedId = library.addSavedClipFromTimelineClip({
+    const savedId = library.addLibraryClipFromTimelineClip({
       id: 'c-transient',
       trackId: 't0',
       libraryItemId: sourceId,
@@ -522,7 +522,7 @@ describe('libraryStore', () => {
       peaks: new Float32Array(),
       unresolved: false
     })
-    // Now put the saved-clip on the timeline — the source becomes
+    // Now put the library-clip on the timeline — the source becomes
     // in-use via its child, even though no clip references the
     // source directly.
     const trackId = project.addTrack()
@@ -658,7 +658,7 @@ describe('libraryStore', () => {
     )
   })
 
-  it('saves a selection as a new saved-clip and deduplicates identical windows', () => {
+  it('saves a selection as a new library-clip and deduplicates identical windows', () => {
     const library = useLibraryStore()
     const sourceId = library.addItem({
       filePath: 'C:\\audio\\source.wav',
@@ -671,21 +671,21 @@ describe('libraryStore', () => {
     })
     sendMock.mockClear()
 
-    const id1 = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000, 'My slice')
-    const id2 = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000, 'My slice')
+    const id1 = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000, 'My slice')
+    const id2 = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000, 'My slice')
 
     expect(id1).toBeTruthy()
     expect(id2).toBe(id1)
     const saved = library.items.find((i) => i.id === id1)
     expect(saved).toMatchObject({
-      kind: 'saved-clip',
+      kind: 'clip',
       name: 'My slice',
       durationMs: 2_000,
       derivedFrom: { sourceItemId: sourceId, inMs: 1_000, durationMs: 2_000 }
     })
   })
 
-  it('updates a saved-clip trim window when no timeline clips reference it', () => {
+  it('updates a library-clip trim window when no timeline clips reference it', () => {
     const library = useLibraryStore()
     const sourceId = library.addItem({
       filePath: 'C:\\audio\\source.wav',
@@ -696,10 +696,10 @@ describe('libraryStore', () => {
       peaks: new Float32Array([0, 1]),
       fromSnapshot: true
     })
-    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000)
     sendMock.mockClear()
 
-    const result = library.updateSavedClipTrim(savedId!, 1_500, 3_000)
+    const result = library.updateLibraryClipTrim(savedId!, 1_500, 3_000)
 
     expect(result.ok).toBe(true)
     expect(library.items.find((i) => i.id === savedId)).toMatchObject({
@@ -717,7 +717,7 @@ describe('libraryStore', () => {
     )
   })
 
-  it('propagates saved-clip trim to every linked timeline clip', () => {
+  it('propagates library-clip trim to every linked timeline clip', () => {
     const library = useLibraryStore()
     const project = useProjectStore()
     const sourceId = library.addItem({
@@ -729,13 +729,13 @@ describe('libraryStore', () => {
       peaks: new Float32Array([0, 1]),
       fromSnapshot: true
     })
-    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000)!
     const trackId = project.addTrack()
     const clipId = project.addClipFromLibrary(
       trackId,
       {
         id: savedId,
-        kind: 'saved-clip',
+        kind: 'clip',
         filePath: 'C:\\audio\\source.wav',
         fileName: 'source.wav',
         durationMs: 2_000,
@@ -748,7 +748,7 @@ describe('libraryStore', () => {
     )!
     sendMock.mockClear()
 
-    const result = library.updateSavedClipTrim(savedId, 1_500, 3_000)
+    const result = library.updateLibraryClipTrim(savedId, 1_500, 3_000)
 
     expect(result.ok).toBe(true)
     // Saved-clip library entry updated.
@@ -779,10 +779,10 @@ describe('libraryStore', () => {
       peaks: new Float32Array([0, 1]),
       fromSnapshot: true
     })
-    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000)!
     const savedItem = {
       id: savedId,
-      kind: 'saved-clip' as const,
+      kind: 'clip' as const,
       filePath: 'C:\\audio\\source.wav',
       fileName: 'source.wav',
       durationMs: 2_000,
@@ -801,7 +801,7 @@ describe('libraryStore', () => {
       { timeMs: 0, gain: 1 },
       { timeMs: 1_000, gain: 0.25 }
     ]
-    const result = library.updateSavedClipEnvelope(savedId, points)
+    const result = library.updateLibraryClipEnvelope(savedId, points)
 
     expect(result.ok).toBe(true)
     expect(project.clips[clipA]!.envelopePoints).toEqual(points)
@@ -828,10 +828,10 @@ describe('libraryStore', () => {
       peaks: new Float32Array([0, 1]),
       fromSnapshot: true
     })
-    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000)!
     const savedItem = {
       id: savedId,
-      kind: 'saved-clip' as const,
+      kind: 'clip' as const,
       filePath: 'C:\\audio\\source.wav',
       fileName: 'source.wav',
       durationMs: 2_000,
@@ -846,7 +846,7 @@ describe('libraryStore', () => {
     const clipB = project.addClipFromLibrary(trackB, savedItem, 0)!
     sendMock.mockClear()
 
-    const result = library.updateSavedClipReversed(savedId, true)
+    const result = library.updateLibraryClipReversed(savedId, true)
 
     expect(result.ok).toBe(true)
     expect(project.clips[clipA]!.reversed).toBe(true)
@@ -867,10 +867,10 @@ describe('libraryStore', () => {
       peaks: new Float32Array([0, 1]),
       fromSnapshot: true
     })
-    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000)!
     const savedItem = {
       id: savedId,
-      kind: 'saved-clip' as const,
+      kind: 'clip' as const,
       filePath: 'C:\\audio\\source.wav',
       fileName: 'source.wav',
       durationMs: 2_000,
@@ -909,14 +909,14 @@ describe('libraryStore', () => {
       peaks: new Float32Array([0, 1]),
       fromSnapshot: true
     })
-    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000, 'Old loop')!
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000, 'Old loop')!
     const saved = library.items.find((item) => item.id === savedId)!
     const trackId = project.addTrack()
     const clipId = project.addClipFromLibrary(
       trackId,
       {
         id: savedId,
-        kind: 'saved-clip',
+        kind: 'clip',
         name: saved.name,
         filePath: saved.filePath,
         fileName: saved.fileName,
@@ -939,7 +939,7 @@ describe('libraryStore', () => {
     expect(sendMock).toHaveBeenCalledWith('CLIP_RENAME', { clipId, name: 'New loop' })
   })
 
-  it('refuses saved-clip trim when propagation would collide with a neighbour clip', () => {
+  it('refuses library-clip trim when propagation would collide with a neighbour clip', () => {
     const library = useLibraryStore()
     const project = useProjectStore()
     const sourceId = library.addItem({
@@ -951,14 +951,14 @@ describe('libraryStore', () => {
       peaks: new Float32Array([0, 1]),
       fromSnapshot: true
     })
-    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000)!
     const trackId = project.addTrack()
-    // Linked saved-clip instance at position 0..2000 ms.
+    // Linked library-clip instance at position 0..2000 ms.
     project.addClipFromLibrary(
       trackId,
       {
         id: savedId,
-        kind: 'saved-clip',
+        kind: 'clip',
         filePath: 'C:\\audio\\source.wav',
         fileName: 'source.wav',
         durationMs: 2_000,
@@ -970,12 +970,12 @@ describe('libraryStore', () => {
       0
     )
     // Independent neighbour clip at 2500..4500 ms — close enough that
-    // growing the saved-clip to 3000 ms would overlap into it.
+    // growing the library-clip to 3000 ms would overlap into it.
     project.addClipFromLibrary(
       trackId,
       {
         id: sourceId!,
-        kind: 'audio-file',
+        kind: 'source',
         filePath: 'C:\\audio\\source.wav',
         fileName: 'source.wav',
         durationMs: 2_000,
@@ -987,7 +987,7 @@ describe('libraryStore', () => {
     )
     sendMock.mockClear()
 
-    const result = library.updateSavedClipTrim(savedId, 1_500, 3_000)
+    const result = library.updateLibraryClipTrim(savedId, 1_500, 3_000)
 
     expect(result.ok).toBe(false)
     expect(result.conflictingTrackNames).toBeDefined()
@@ -999,7 +999,7 @@ describe('libraryStore', () => {
     })
   })
 
-  it('commits saved-clip trim, warp, and pitch as one editor save', () => {
+  it('commits library-clip trim, warp, and pitch as one editor save', () => {
     const library = useLibraryStore()
     const project = useProjectStore()
     const sourceId = library.addItem({
@@ -1013,14 +1013,14 @@ describe('libraryStore', () => {
       fromSnapshot: true
     })
     library.items.find((item) => item.id === sourceId)!.bpm = 100
-    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000)!
     const trackId = project.addTrack()
     const saved = library.items.find((item) => item.id === savedId)!
     const clipId = project.addClipFromLibrary(
       trackId,
       {
         id: savedId,
-        kind: 'saved-clip',
+        kind: 'clip',
         filePath: saved.filePath,
         fileName: saved.fileName,
         durationMs: saved.durationMs,
@@ -1033,7 +1033,7 @@ describe('libraryStore', () => {
     )!
     sendMock.mockClear()
 
-    const result = library.updateSavedClipEdit(savedId, {
+    const result = library.updateLibraryClipEdit(savedId, {
       inMs: 1_500,
       durationMs: 3_000,
       warpEnabled: true,
@@ -1095,7 +1095,7 @@ describe('libraryStore', () => {
     )
   })
 
-  it('refuses a saved-clip editor save when new warp timing would collide', () => {
+  it('refuses a library-clip editor save when new warp timing would collide', () => {
     const library = useLibraryStore()
     const project = useProjectStore()
     const sourceId = library.addItem({
@@ -1108,14 +1108,14 @@ describe('libraryStore', () => {
       fromSnapshot: true
     })
     library.items.find((item) => item.id === sourceId)!.bpm = 100
-    const savedId = library.addSavedClipFromSelection(sourceId!, 1_000, 1_000)!
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 1_000)!
     const trackId = project.addTrack()
     const saved = library.items.find((item) => item.id === savedId)!
     project.addClipFromLibrary(
       trackId,
       {
         id: savedId,
-        kind: 'saved-clip',
+        kind: 'clip',
         filePath: saved.filePath,
         fileName: saved.fileName,
         durationMs: saved.durationMs,
@@ -1130,7 +1130,7 @@ describe('libraryStore', () => {
       trackId,
       {
         id: sourceId!,
-        kind: 'audio-file',
+        kind: 'source',
         filePath: 'C:\\audio\\source.wav',
         fileName: 'source.wav',
         durationMs: 1_000,
@@ -1142,7 +1142,7 @@ describe('libraryStore', () => {
     )
     sendMock.mockClear()
 
-    const result = library.updateSavedClipEdit(savedId, {
+    const result = library.updateLibraryClipEdit(savedId, {
       inMs: 1_000,
       durationMs: 1_000,
       warpEnabled: true,
@@ -1264,7 +1264,7 @@ describe('libraryStore', () => {
       channelCount: 2,
       peaks: new Float32Array([0, 1])
     })
-    library.setItemSampleMode(id, 'auto')
+    library.setItemAudioType(id, 'auto')
     sendMock.mockClear()
 
     library.setItemManualTempo(id, 128, 0.25)

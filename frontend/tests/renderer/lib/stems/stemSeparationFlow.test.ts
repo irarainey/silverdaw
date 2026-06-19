@@ -24,7 +24,7 @@ const forgetStemJob = vi.fn()
 vi.mock('@/lib/stems/createStemTracks', () => ({
   registerStemJob: (...args: unknown[]) => registerStemJob(...args),
   forgetStemJob: (...args: unknown[]) => forgetStemJob(...args),
-  // The real helper walks saved-clips up to their source; tests pass the source
+  // The real helper walks library-clips up to their source; tests pass the source
   // id directly, so echo it back.
   resolveSourceItemId: (_library: unknown, itemId: string | undefined) => itemId
 }))

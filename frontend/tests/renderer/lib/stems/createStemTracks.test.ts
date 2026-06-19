@@ -31,7 +31,7 @@ const noteImportFinished = vi.fn()
 const setItemAnalysis = vi.fn()
 const setItemKey = vi.fn()
 const getItem = vi.fn((id: string) =>
-  id === 'src-item' ? { id, kind: 'audio-file', filePath: 'C:\\music\\Song.mp3' } : { id }
+  id === 'src-item' ? { id, kind: 'source', filePath: 'C:\\music\\Song.mp3' } : { id }
 )
 vi.mock('@/stores/libraryStore', () => ({
   useLibraryStore: () => ({ beginImportBatch, noteImportFinished, getItem, setItemAnalysis, setItemKey })
@@ -160,7 +160,7 @@ describe('createTracksFromStems (timeline target)', () => {
       id === 'src-item'
         ? {
             id,
-            kind: 'audio-file',
+            kind: 'source',
             filePath: 'C:\\music\\Song.mp3',
             bpm: 120,
             beats: [0.5, 1.0, 1.5],
@@ -194,7 +194,7 @@ describe('createTracksFromStems (timeline target)', () => {
       id === 'src-item'
         ? {
             id,
-            kind: 'audio-file',
+            kind: 'source',
             filePath: 'C:\\music\\Song.mp3',
             bpm: 120,
             beats: [0.1, 0.5, 1.0, 1.5],
@@ -233,7 +233,7 @@ describe('createTracksFromStems (timeline target)', () => {
       id === 'src-item'
         ? {
             id,
-            kind: 'audio-file',
+            kind: 'source',
             filePath: 'C:\\music\\Song.mp3',
             bpm: 120,
             beats: [0.5, 1.0, 1.5],

@@ -8,9 +8,9 @@ const props = defineProps<{
   rowClass: string
   markerClass: string
   missingSource?: boolean
-  savedClipBpm?: number
-  savedClipPillClass: string
-  savedClipBpmPillClass: string
+  libraryClipBpm?: number
+  libraryClipPillClass: string
+  libraryClipBpmPillClass: string
   formatClipDuration: (ms: number) => string
   displayTitle: (item: LibraryItem) => string
   keyBadgeClass: (key: string) => string
@@ -32,7 +32,7 @@ const isInUse = computed(() => useCount.value > 0)
 // Same chrome as the BPM badge (shared base class), recoloured by in-use state.
 const inUsePillClass = computed(
   () =>
-    `${props.savedClipPillClass} ${isInUse.value ? 'border-emerald-700 bg-emerald-900/60 text-emerald-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`
+    `${props.libraryClipPillClass} ${isInUse.value ? 'border-emerald-700 bg-emerald-900/60 text-emerald-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`
 )
 </script>
 
@@ -109,11 +109,11 @@ const inUsePillClass = computed(
         {{ props.item.key }}
       </span>
       <span
-        v-if="props.savedClipBpm"
-        :class="props.savedClipBpmPillClass"
+        v-if="props.libraryClipBpm"
+        :class="props.libraryClipBpmPillClass"
         title="Warped clip tempo"
       >
-        {{ props.savedClipBpm.toFixed(2) }} BPM
+        {{ props.libraryClipBpm.toFixed(2) }} BPM
       </span>
       <span
         :class="inUsePillClass"

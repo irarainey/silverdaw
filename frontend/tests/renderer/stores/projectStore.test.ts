@@ -268,13 +268,13 @@ describe('projectStore', () => {
     )
   })
 
-  it('does not split linked saved-clip timeline instances', () => {
+  it('does not split linked library-clip timeline instances', () => {
     const project = useProjectStore()
     const library = useLibraryStore()
     const trackId = project.addTrack()
     library.addItem({
       id: 'source',
-      kind: 'audio-file',
+      kind: 'source',
       filePath: 'C:\\audio\\loop.wav',
       fileName: 'loop.wav',
       durationMs: 4_000,
@@ -285,7 +285,7 @@ describe('projectStore', () => {
     })
     library.addItem({
       id: 'saved',
-      kind: 'saved-clip',
+      kind: 'clip',
       filePath: 'C:\\audio\\loop.wav',
       fileName: 'loop.wav',
       durationMs: 2_000,
@@ -329,7 +329,7 @@ describe('projectStore', () => {
     const trackId = project.addTrack()
     library.addItem({
       id: 'src',
-      kind: 'audio-file',
+      kind: 'source',
       filePath: 'C:\\audio\\song.wav',
       fileName: 'song.wav',
       durationMs: 10_000,
@@ -419,7 +419,7 @@ describe('projectStore', () => {
         {
           id: 'l7',
           filePath: 'C:\\audio\\loop.wav',
-          kind: 'audio-file',
+          kind: 'source',
           fileName: 'loop.wav',
           durationMs: 4_000,
           sampleRate: 48_000,
@@ -434,7 +434,7 @@ describe('projectStore', () => {
         {
           id: 'l8',
           filePath: 'C:\\audio\\loop.wav',
-          kind: 'saved-clip',
+          kind: 'clip',
           name: 'Loop chop',
           fileName: 'loop.wav',
           durationMs: 1_000,
@@ -493,7 +493,7 @@ describe('projectStore', () => {
     expect(library.items).toHaveLength(2)
     expect(library.items[0]).toMatchObject({
       id: 'l7',
-      kind: 'audio-file',
+      kind: 'source',
       filePath: 'C:\\audio\\loop.wav',
       bpm: 124.5,
       beatAnchorSec: 0.25,
@@ -503,7 +503,7 @@ describe('projectStore', () => {
     })
     expect(library.items[1]).toMatchObject({
       id: 'l8',
-      kind: 'saved-clip',
+      kind: 'clip',
       name: 'Loop chop',
       derivedFrom: {
         sourceItemId: 'l7',
@@ -523,9 +523,9 @@ describe('projectStore', () => {
     const missing = 'C:\\old\\song.wav'
     const found = 'C:\\new\\song.wav'
 
-    // Initial load: an audio-file source AND a saved clip derived from it
+    // Initial load: a source AND a saved clip derived from it
     // both reference the same missing file, but ONLY the saved clip is
-    // placed on the timeline. The audio-file source has no clip of its own.
+    // placed on the timeline. The source has no clip of its own.
     project.applyProjectStateSnapshot({
       filePath: 'C:\\projects\\mix.silverdaw',
       name: 'Mix',
@@ -533,7 +533,7 @@ describe('projectStore', () => {
       library: [
         {
           id: 'l1',
-          kind: 'audio-file',
+          kind: 'source',
           filePath: missing,
           fileName: 'song.wav',
           durationMs: 4_000,
@@ -543,7 +543,7 @@ describe('projectStore', () => {
         },
         {
           id: 'l2',
-          kind: 'saved-clip',
+          kind: 'clip',
           name: 'Chop',
           filePath: missing,
           fileName: 'song.wav',
@@ -567,7 +567,7 @@ describe('projectStore', () => {
       ]
     })
 
-    // Both items — including the unplaced audio-file source — are flagged
+    // Both items — including the unplaced source — are flagged
     // unresolved, so the Relink dialog can fan out to both.
     expect(library.byId.l1?.unresolved).toBe(true)
     expect(library.byId.l2?.unresolved).toBe(true)
@@ -582,7 +582,7 @@ describe('projectStore', () => {
       library: [
         {
           id: 'l1',
-          kind: 'audio-file',
+          kind: 'source',
           filePath: found,
           fileName: 'song.wav',
           durationMs: 4_000,
@@ -591,7 +591,7 @@ describe('projectStore', () => {
         },
         {
           id: 'l2',
-          kind: 'saved-clip',
+          kind: 'clip',
           name: 'Chop',
           filePath: found,
           fileName: 'song.wav',
@@ -662,7 +662,7 @@ describe('projectStore', () => {
       trackId,
       {
         id: 'l2',
-        kind: 'saved-clip',
+        kind: 'clip',
         name: 'Vocal chop',
         filePath: 'C:\\audio\\vocal.wav',
         fileName: 'vocal.wav',
@@ -857,7 +857,7 @@ describe('projectStore', () => {
       library: [
         {
           id: 'l1',
-          kind: 'audio-file',
+          kind: 'source',
           filePath: 'C:\\audio\\loop.wav',
           fileName: 'loop.wav',
           durationMs: 8_000,
@@ -1047,7 +1047,7 @@ describe('projectStore', () => {
       library: [
         {
           id: 'l1',
-          kind: 'audio-file',
+          kind: 'source',
           filePath: 'C:\\audio\\loop.wav',
           fileName: 'loop.wav',
           durationMs: 8_000,
@@ -1089,7 +1089,7 @@ describe('projectStore', () => {
       library: [
         {
           id: 'l1',
-          kind: 'audio-file',
+          kind: 'source',
           filePath: 'C:\\audio\\loop.wav',
           fileName: 'loop.wav',
           durationMs: 8_000,
@@ -1134,7 +1134,7 @@ describe('projectStore', () => {
       library: [
         {
           id: 'l1',
-          kind: 'audio-file',
+          kind: 'source',
           filePath: 'C:\\audio\\loop.wav',
           fileName: 'loop.wav',
           durationMs: 8_000,

@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
-import { libraryItemDisplayName, libraryItemIsSample, libraryItemIsSampleAsset, stemPartLabel, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, stemPartLabel, useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { LIBRARY_BPM_PILL_CLASS, LIBRARY_BPM_VARIABLE_PILL_CLASS } from '@/lib/library/libraryPillClasses'
@@ -81,7 +81,7 @@ export function useLibraryItemInfoController(
     switch (props.item?.kind) {
       case 'stem':
         return 'Stem'
-      case 'saved-clip':
+      case 'clip':
         return 'Saved clip'
       default:
         return isSampleAsset.value ? 'Sample' : 'Audio file'
@@ -111,32 +111,32 @@ export function useLibraryItemInfoController(
   const isSample = computed(() => {
     const item = props.item
     if (!item) return false
-    return libraryItemIsSample(item, library.byId)
+    return libraryItemIsSimple(item, library.byId)
   })
 
   /**
-   * Whether this is a saved sample asset (music OR simple). Drives the cover-art
+   * Whether this is a saved sample (music OR simple). Drives the cover-art
    * type badge and the "Sample" type label — both flavours read as a sample;
    * `isSample` (above) stays the narrower non-musical flag that hides the grid.
    */
   const isSampleAsset = computed(() => {
     const item = props.item
     if (!item) return false
-    return libraryItemIsSampleAsset(item)
+    return libraryItemIsSample(item)
   })
 
   /** Current classification mode for the radio control: 'auto' when no
    *  override is set, otherwise the explicit choice. */
-  const classificationMode = computed<'auto' | 'sample' | 'music'>(() => {
+  const classificationMode = computed<'auto' | 'simple' | 'music'>(() => {
     const item = props.item
     if (!item) return 'auto'
-    return item.sampleMode ?? 'auto'
+    return item.audioType ?? 'auto'
   })
 
-  function setClassification(mode: 'auto' | 'sample' | 'music'): void {
+  function setClassification(audioType: 'auto' | 'simple' | 'music'): void {
     const item = props.item
-    if (!item || item.kind !== 'audio-file') return
-    library.setItemSampleMode(item.id, mode)
+    if (!item || (item.kind !== 'source' && item.kind !== 'sample' && item.kind !== 'stem')) return
+    library.setItemAudioType(item.id, audioType)
   }
   const instanceRows = computed(() => {
     const c = clip.value
@@ -156,17 +156,17 @@ export function useLibraryItemInfoController(
     // Truth lives in the project file: each timeline clip records the
     // `libraryItemId` of its parent library entry. Match on that.
     //
-    // Audio-file sources additionally count timeline clips whose
-    // libraryItemId references any saved-clip derived FROM this
+    // Source/sample files additionally count timeline clips whose
+    // libraryItemId references any saved clip derived FROM this
     // source — that's a structural relationship recorded by
-    // `derivedFrom.sourceItemId` on the saved-clip, not a heuristic.
+    // `derivedFrom.sourceItemId` on the saved clip, not a heuristic.
     // Stems are also derived items, but they are independent library
     // entries with their own usage count, so exclude them here.
-    const derivedSavedClipIds =
-      item.kind === 'audio-file'
+    const derivedLibraryClipIds =
+      item.kind === 'source' || item.kind === 'sample'
         ? new Set(
             library.items
-              .filter((i) => i.kind === 'saved-clip' && i.derivedFrom?.sourceItemId === item.id)
+              .filter((i) => i.kind === 'clip' && i.derivedFrom?.sourceItemId === item.id)
               .map((i) => i.id)
           )
         : null
@@ -177,7 +177,7 @@ export function useLibraryItemInfoController(
         .filter((clip): clip is Clip => {
           if (!clip) return false
           if (clip.libraryItemId === item.id) return true
-          if (derivedSavedClipIds?.has(clip.libraryItemId)) return true
+          if (derivedLibraryClipIds?.has(clip.libraryItemId)) return true
           return false
         })
       if (matching.length === 0) continue
@@ -242,12 +242,12 @@ export function useLibraryItemInfoController(
     if (!item) return 'Not available yet'
     // Saved-clip items don't carry their own decoded-WAV cache —
     // they play through their source's cache. Inherit the source's
-    // value (saved-clips only) so the info dialog shows the same path
+    // value (library-clips only) so the info dialog shows the same path
     // that's actually serving audio for this clip. Stems carry their
     // own cache, so they must NOT inherit the original source's path.
     return (
       item.decodedCacheFilePath ??
-      (item.kind === 'saved-clip' ? sourceItem.value?.decodedCacheFilePath : undefined) ??
+      (item.kind === 'clip' ? sourceItem.value?.decodedCacheFilePath : undefined) ??
       'Not available yet'
     )
   })

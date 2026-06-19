@@ -149,7 +149,7 @@ void testProjectFilePortablePaths()
     juce::ValueTree outside(juce::Identifier{"ITEM"});
     outside.setProperty("id", "libOutside", nullptr);
     outside.setProperty("filePath", outsideAbs, nullptr);
-    outside.setProperty("kind", "audio-file", nullptr);
+    outside.setProperty("kind", "source", nullptr);
     library.appendChild(outside, nullptr);
     project.appendChild(library, nullptr);
     project.appendChild(juce::ValueTree(juce::Identifier{"MARKERS"}), nullptr);
@@ -310,6 +310,99 @@ void testPeaksCacheRoundTripAndValidation()
     dir.deleteRecursively();
 }
 
+void testLegacySampleModeMigratesToAudioType()
+{
+    juce::ValueTree project(juce::Identifier{"PROJECT"});
+    project.setProperty("name", "Legacy", nullptr);
+
+    juce::ValueTree library(juce::Identifier{"LIBRARY"});
+    juce::ValueTree simple(juce::Identifier{"ITEM"});
+    simple.setProperty("id", "legacySimple", nullptr);
+    simple.setProperty("filePath", "C:\\audio\\fx.wav", nullptr);
+    simple.setProperty("kind", "audio-file", nullptr);
+    simple.setProperty("sampleMode", "sample", nullptr);
+    library.appendChild(simple, nullptr);
+    juce::ValueTree music(juce::Identifier{"ITEM"});
+    music.setProperty("id", "legacyMusic", nullptr);
+    music.setProperty("filePath", "C:\\audio\\loop.wav", nullptr);
+    music.setProperty("kind", "audio-file", nullptr);
+    music.setProperty("sampleMode", "music", nullptr);
+    library.appendChild(music, nullptr);
+    project.appendChild(library, nullptr);
+    project.appendChild(juce::ValueTree(juce::Identifier{"MARKERS"}), nullptr);
+
+    silverdaw::ProjectState state;
+    state.replaceTree(project);
+
+    const auto json = state.libraryAsJson();
+    require(json.isArray() && json.getArray()->size() == 2, "migrated library should expose two items");
+    for (const auto& item : *json.getArray())
+    {
+        const auto id = item.getProperty("id", {}).toString();
+        require(!item.hasProperty("sampleMode"), "legacy sampleMode must not survive migration");
+        if (id == "legacySimple")
+            requireEqual(item.getProperty("audioType", {}).toString(), juce::String("simple"),
+                         "legacy sampleMode 'sample' migrates to audioType 'simple'");
+        else if (id == "legacyMusic")
+            requireEqual(item.getProperty("audioType", {}).toString(), juce::String("music"),
+                         "legacy sampleMode 'music' migrates to audioType 'music'");
+    }
+}
+
+void testLegacyLibraryKindMigrates()
+{
+    juce::ValueTree project(juce::Identifier{"PROJECT"});
+    project.setProperty("name", "LegacyKinds", nullptr);
+
+    juce::ValueTree library(juce::Identifier{"LIBRARY"});
+    // Legacy import with no source link → source.
+    juce::ValueTree source(juce::Identifier{"ITEM"});
+    source.setProperty("id", "legacySource", nullptr);
+    source.setProperty("filePath", "C:\\audio\\song.wav", nullptr);
+    source.setProperty("kind", "audio-file", nullptr);
+    library.appendChild(source, nullptr);
+    // Legacy saved-from-clip file (audio-file WITH a source link) → sample.
+    juce::ValueTree sample(juce::Identifier{"ITEM"});
+    sample.setProperty("id", "legacySample", nullptr);
+    sample.setProperty("filePath", "C:\\proj\\samples\\hit.wav", nullptr);
+    sample.setProperty("kind", "audio-file", nullptr);
+    sample.setProperty("sourceItemId", "legacySource", nullptr);
+    library.appendChild(sample, nullptr);
+    // Legacy reusable clip → clip.
+    juce::ValueTree clip(juce::Identifier{"ITEM"});
+    clip.setProperty("id", "legacyClip", nullptr);
+    clip.setProperty("filePath", "C:\\audio\\song.wav", nullptr);
+    clip.setProperty("kind", "saved-clip", nullptr);
+    clip.setProperty("sourceItemId", "legacySource", nullptr);
+    library.appendChild(clip, nullptr);
+    // Item with an absent kind → source.
+    juce::ValueTree kindless(juce::Identifier{"ITEM"});
+    kindless.setProperty("id", "legacyKindless", nullptr);
+    kindless.setProperty("filePath", "C:\\audio\\other.wav", nullptr);
+    library.appendChild(kindless, nullptr);
+    project.appendChild(library, nullptr);
+    project.appendChild(juce::ValueTree(juce::Identifier{"MARKERS"}), nullptr);
+
+    silverdaw::ProjectState state;
+    state.replaceTree(project);
+
+    const auto json = state.libraryAsJson();
+    require(json.isArray() && json.getArray()->size() == 4, "migrated library should expose four items");
+    for (const auto& item : *json.getArray())
+    {
+        const auto id = item.getProperty("id", {}).toString();
+        const auto kind = item.getProperty("kind", {}).toString();
+        if (id == "legacySource")
+            requireEqual(kind, juce::String("source"), "legacy audio-file with no source link migrates to source");
+        else if (id == "legacySample")
+            requireEqual(kind, juce::String("sample"), "legacy audio-file with a source link migrates to sample");
+        else if (id == "legacyClip")
+            requireEqual(kind, juce::String("clip"), "legacy saved-clip migrates to clip");
+        else if (id == "legacyKindless")
+            requireEqual(kind, juce::String("source"), "absent kind migrates to source");
+    }
+}
+
 } // namespace
 
 void addPersistenceTests(std::vector<TestCase>& tests)
@@ -320,6 +413,8 @@ void addPersistenceTests(std::vector<TestCase>& tests)
     tests.push_back({"project artifacts base dir follows the project", testProjectArtifactsBaseDir});
     tests.push_back({"migrate temp artifacts into project folder", testMigrateTempArtifactsIntoProject});
     tests.push_back({"PeaksCache round-trip and validation", testPeaksCacheRoundTripAndValidation});
+    tests.push_back({"legacy sampleMode migrates to audioType", testLegacySampleModeMigratesToAudioType});
+    tests.push_back({"legacy library kind migrates to source/sample/clip", testLegacyLibraryKindMigrates});
 }
 
 } // namespace silverdaw::tests

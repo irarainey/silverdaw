@@ -193,7 +193,7 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
     if (!entry) return
     const src = deps.sourceItem()
     if (!src) return
-    // Pass any warp defaults stored on the library item (saved-clips
+    // Pass any warp defaults stored on the library item (library-clips
     // carry the user's preferred warp at the time the clip was saved)
     // so the preview voice plays the clip the way the timeline will.
     // Audio-file items don't carry warp metadata, so the spread is a

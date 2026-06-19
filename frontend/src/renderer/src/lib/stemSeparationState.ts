@@ -13,7 +13,7 @@ export type StemStage = StemProgressPayload['stage']
  *  renderer is the single source of truth for this so the bridge envelopes stay
  *  minimal and placement never depends on echoed fields. */
 export interface StemSeparationTarget {
-  /** Resolved top-level audio-file source the stems derive from. */
+  /** Resolved top-level source the stems derive from. */
   sourceItemId: string
   /** Friendly source name for filenames, track names, and the dialog. */
   sourceName: string

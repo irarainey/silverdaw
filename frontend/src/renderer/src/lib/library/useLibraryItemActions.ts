@@ -56,8 +56,13 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
       { command: 'library.info', label: 'Show Information' },
       { command: 'library.rename', label: 'Rename', separatorAbove: true }
     ]
-    if (item.kind === 'audio-file') {
+    const isFile = item.kind === 'source' || item.kind === 'sample' || item.kind === 'stem'
+    if (isFile) {
       items.push({ command: 'library.reanalyse', label: 'Reanalyse File' })
+    }
+    // Separate Stems applies to whole source files (and samples), but never to a
+    // stem itself — a stem is already a separated part, so it is hidden there.
+    if (item.kind === 'source' || item.kind === 'sample') {
       items.push({
         command: 'library.separateStems',
         label: 'Separate Stems',
@@ -65,10 +70,10 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
           'Extract vocals, drums, bass, and other into separate stems added to the library. ' +
           'Add them to the timeline yourself afterwards.'
       })
-    } else if (item.kind === 'saved-clip') {
+    } else if (item.kind === 'clip') {
       items.push({
         command: 'library.saveMusicSample',
-        label: 'Save as Music Sample',
+        label: 'Save as Sample (Music)',
         title:
           'Create a new independent WAV sample from the saved clip that keeps the source ' +
           'tempo, beat markers, key, and cover art, so it warps to the project tempo when ' +
@@ -76,18 +81,18 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
       })
       items.push({
         command: 'library.saveSimpleSample',
-        label: 'Save as Simple Sample',
+        label: 'Save as Sample (Simple)',
         title:
           'Create a new independent WAV sample from the saved clip as a bare one-shot \u2014 ' +
           'a sound effect or vocal snippet with no tempo or beat metadata that is never ' +
           'warped when dropped onto a track. Samples are not linked back to this clip.'
       })
     }
-    // Sample / music classification submenu. Audio-file items only —
+    // Simple / music classification submenu. Source, sample, and stem files —
     // saved clips inherit from their source unless the source is
     // missing (then they edit their own override here).
-    if (item.kind === 'audio-file') {
-      const auto = item.sampleMode === undefined
+    if (isFile) {
+      const auto = item.audioType === undefined
       items.push({
         command: 'library.classifyAuto',
         label: auto
@@ -99,22 +104,22 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
       items.push({
         command: 'library.classifyMusic',
         label: 'Treat as Music',
-        disabled: item.sampleMode === 'music'
+        disabled: item.audioType === 'music'
       })
       items.push({
-        command: 'library.classifySample',
-        label: 'Treat as Sample',
+        command: 'library.classifySimple',
+        label: 'Treat as Simple',
         title:
           'Hide BPM / key / beat markers, and skip auto-warp on drop. Warp and pitch dialogs still work manually.',
-        disabled: item.sampleMode === 'sample'
+        disabled: item.audioType === 'simple'
       })
     }
     // Saved clips can always be removed — doing so just unlinks any
     // timeline clips that reference them (they keep their audio and
-    // become independent). Audio-file sources stay gated because
+    // become independent). Source + sample files stay gated because
     // removing them would orphan the actual sound data.
-    const isSavedClip = item.kind === 'saved-clip'
-    const blockRemove = inUse && !isSavedClip
+    const isLibraryClip = item.kind === 'clip'
+    const blockRemove = inUse && !isLibraryClip
     items.push({
       command: 'library.delete',
       label: 'Remove',
@@ -187,22 +192,22 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     }
     if (command === 'library.saveSimpleSample') {
       closeItemContextMenu()
-      void library.saveLibraryItemAsSample(item.id, 'sample')
+      void library.saveLibraryItemAsSample(item.id, 'simple')
       return
     }
     if (command === 'library.classifyAuto') {
       closeItemContextMenu()
-      library.setItemSampleMode(item.id, 'auto')
+      library.setItemAudioType(item.id, 'auto')
       return
     }
     if (command === 'library.classifyMusic') {
       closeItemContextMenu()
-      library.setItemSampleMode(item.id, 'music')
+      library.setItemAudioType(item.id, 'music')
       return
     }
-    if (command === 'library.classifySample') {
+    if (command === 'library.classifySimple') {
       closeItemContextMenu()
-      library.setItemSampleMode(item.id, 'sample')
+      library.setItemAudioType(item.id, 'simple')
       return
     }
     if (command === 'library.delete') {

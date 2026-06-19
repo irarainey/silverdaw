@@ -17,7 +17,7 @@ vi.mock('@/lib/audioDecode', () => ({ PEAKS_PER_SECOND: 200, decodeAudioToPeaks:
 function makeAudioFileItem(id = 'src'): LibraryItem {
   return {
     id,
-    kind: 'audio-file',
+    kind: 'source',
     fileName: `${id}.wav`,
     filePath: `C:\\${id}.wav`,
     playbackFilePath: `C:\\${id}.wav`,
@@ -28,10 +28,10 @@ function makeAudioFileItem(id = 'src'): LibraryItem {
   } as LibraryItem
 }
 
-function makeSavedClipItem(id = 'saved'): LibraryItem {
+function makeLibraryClipItem(id = 'saved'): LibraryItem {
   return {
     id,
-    kind: 'saved-clip',
+    kind: 'clip',
     fileName: 'src.wav',
     filePath: 'C:\\src.wav',
     playbackFilePath: 'C:\\src.wav',
@@ -134,15 +134,15 @@ describe('useTimelineContextMenu — items builder', () => {
     expect(findItem(menu, 'clip.info')?.disabled).toBe(true)
   })
 
-  it('linked saved-clip allows warp / pitch (propagates to library), disables split / save-to-library, and shows Unlink', () => {
+  it('linked library-clip allows warp / pitch (propagates to library), disables split / save-to-library, and shows Unlink', () => {
     const menu = setupMenu({
       clip: makeClip({ libraryItemId: 'saved' }),
-      item: makeSavedClipItem('saved')
+      item: makeLibraryClipItem('saved')
     })
     expect(findItem(menu, 'clip.split')?.disabled).toBe(true)
     // Warp and Pitch are enabled on linked clips: the dialog routes the
-    // save through `library.updateSavedClipWarp(libItem.id, patch)`,
-    // which updates the saved-clip library entry and propagates to
+    // save through `library.updateLibraryClipWarp(libItem.id, patch)`,
+    // which updates the library-clip library entry and propagates to
     // every linked timeline instance.
     expect(findItem(menu, 'clip.warp')?.disabled).toBeFalsy()
     expect(findItem(menu, 'clip.pitch')?.disabled).toBeFalsy()
@@ -150,7 +150,7 @@ describe('useTimelineContextMenu — items builder', () => {
     expect(commandsOf(menu)).toContain('clip.unlink')
   })
 
-  it('audio-file clip omits Unlink', () => {
+  it('source clip omits Unlink', () => {
     const menu = setupMenu({
       clip: makeClip(),
       item: makeAudioFileItem()
@@ -436,7 +436,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
     expect(lockSpy).toHaveBeenLastCalledWith(clip.id, false)
   })
 
-  it('clip.reverse toggles project.setClipReversed for an audio-file clip', () => {
+  it('clip.reverse toggles project.setClipReversed for a source clip', () => {
     const clip = makeClip()
     const project = useProjectStore()
     const library = useLibraryStore()
@@ -456,14 +456,14 @@ describe('useTimelineContextMenu — command dispatch', () => {
     expect(reverseSpy).toHaveBeenCalledWith(clip.id, true)
   })
 
-  it('clip.reverse on a linked saved clip routes to library.updateSavedClipReversed', () => {
+  it('clip.reverse on a linked saved clip routes to library.updateLibraryClipReversed', () => {
     const clip = makeClip({ libraryItemId: 'saved', reversed: true })
     const project = useProjectStore()
     const library = useLibraryStore()
     project.clips = { [clip.id]: clip }
-    library.items = [makeSavedClipItem('saved')]
+    library.items = [makeLibraryClipItem('saved')]
     const propagateSpy = vi
-      .spyOn(library, 'updateSavedClipReversed')
+      .spyOn(library, 'updateLibraryClipReversed')
       .mockImplementation(() => ({ ok: true }))
     const directSpy = vi.spyOn(project, 'setClipReversed').mockImplementation(() => {})
 

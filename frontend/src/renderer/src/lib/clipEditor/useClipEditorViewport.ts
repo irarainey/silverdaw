@@ -15,7 +15,7 @@ export interface CropSnapshot {
 export interface UseClipEditorViewportInputs {
   /** Library item being edited. */
   editorItem: Ref<LibraryItem | null | undefined> | ComputedRef<LibraryItem | null | undefined>
-  /** True for persisted clip or saved-clip editing. */
+  /** True for persisted clip or library-clip editing. */
   editsExistingClip: Ref<boolean> | ComputedRef<boolean>
   /** Timeline clip being edited, when present. */
   timelineClip: Ref<Clip | null | undefined> | ComputedRef<Clip | null | undefined>

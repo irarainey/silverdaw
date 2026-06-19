@@ -91,7 +91,7 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
 
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
       // Toggle lock on the currently-selected clip. Per-clip — siblings
-      // of a saved-clip instance stay independent.
+      // of a library-clip instance stay independent.
       e.preventDefault()
       e.stopPropagation()
       if (e.repeat) return

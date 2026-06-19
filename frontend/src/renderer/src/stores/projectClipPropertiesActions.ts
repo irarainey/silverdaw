@@ -89,7 +89,7 @@ export const clipPropertiesActions = {
       // Prefer the whole-file library row; saved clips can share its filePath.
       const lib = useLibraryStore()
       const item =
-        lib.items.find((i) => i.kind === 'audio-file' && i.filePath === clip.filePath) ??
+        lib.items.find((i) => (i.kind === 'source' || i.kind === 'sample') && i.filePath === clip.filePath) ??
         lib.items.find((i) => i.filePath === clip.filePath)
       if (item && item.peaks.length === 0) {
         lib.setItemPeaks(item.id, peaks, sampleRate, peaksPerSecond)

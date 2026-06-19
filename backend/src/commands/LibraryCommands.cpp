@@ -30,7 +30,7 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
     const juce::String playbackPath = tryGetRequiredString(payload, "playbackFilePath").value_or(juce::String{});
     const juce::String key = tryGetRequiredString(payload, "key").value_or(juce::String{});
     const juce::String kind = tryGetRequiredString(payload, "kind").value_or(juce::String{});
-    // name/sourceItemId/sourceClipId are optional: only saved-clips and stems carry provenance.
+    // name/sourceItemId/sourceClipId are optional: only clips and stems carry provenance.
     const juce::String displayName = readOptionalString(payload, "name").value_or(juce::String{});
     const juce::String sourceItemId = readOptionalString(payload, "sourceItemId").value_or(juce::String{});
     const juce::String sourceClipId = readOptionalString(payload, "sourceClipId").value_or(juce::String{});
@@ -48,7 +48,7 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
     projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath, key,
                                 kind, displayName, sourceItemId, sourceClipId, sourceInMs, sourceDurationMs,
                                 collapsedFlag, mediaId);
-    if (kind == "saved-clip")
+    if (kind == "clip")
     {
         // Saved-clip warp fields are partial; missing fields keep identity defaults.
         std::optional<bool> warpEnabled;
@@ -120,24 +120,24 @@ void handleLibraryReanalyse(const juce::var& payload, AudioEngine& engine, Proje
     forceLibraryItemAnalysis(itemId, analysisPath, engine, projectState, bridge, peakPool, decodedCache);
 }
 
-void handleLibraryItemSetSampleMode(const juce::var& payload, ProjectState& projectState)
+void handleLibraryItemSetAudioType(const juce::var& payload, ProjectState& projectState)
 {
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
-    const juce::String mode = readOptionalString(payload, "mode").value_or(juce::String{});
-    silverdaw::log::info("bridge", "recv LIBRARY_ITEM_SET_SAMPLE_MODE itemId=" + itemId + " mode='" + mode + "'");
+    const juce::String audioType = readOptionalString(payload, "audioType").value_or(juce::String{});
+    silverdaw::log::info("bridge", "recv LIBRARY_ITEM_SET_AUDIO_TYPE itemId=" + itemId + " audioType='" + audioType + "'");
     if (itemId.isEmpty())
     {
-        silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_SAMPLE_MODE missing itemId");
+        silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_AUDIO_TYPE missing itemId");
     }
-    else if (!mode.isEmpty() && mode != "sample" && mode != "music" && mode != "auto")
+    else if (!audioType.isEmpty() && audioType != "simple" && audioType != "music" && audioType != "auto")
     {
-        silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_SAMPLE_MODE bad mode='" + mode + "'");
+        silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_AUDIO_TYPE bad audioType='" + audioType + "'");
     }
     else
     {
         // "auto" and empty both clear the override.
-        const juce::String stored = (mode == "sample" || mode == "music") ? mode : juce::String{};
-        projectState.setLibraryItemSampleMode(itemId, stored);
+        const juce::String stored = (audioType == "simple" || audioType == "music") ? audioType : juce::String{};
+        projectState.setLibraryItemAudioType(itemId, stored);
     }
 }
 

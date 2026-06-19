@@ -91,7 +91,7 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
         // The separation extracted [inMs, …) of the source, so the stem WAV begins
         // at source-time `inMs`. Recording it here (a) lets the backend shift the
         // inherited beat grid onto the stem's timeline and (b) keeps provenance
-        // accurate. Stem clip placement still uses inMs 0 (only saved-clips read
+        // accurate. Stem clip placement still uses inMs 0 (only library-clips read
         // this for placement), so the stem plays from its own start.
         inMs: target.sourceInMs ?? 0,
         durationMs: 0
@@ -168,9 +168,9 @@ export async function createTracksFromStems(payload: StemReadyPayload): Promise<
   }
 }
 
-/** Resolve the top-level audio-file source a clip or library item ultimately
+/** Resolve the top-level source a clip or library item ultimately
  *  derives from. Stems nest under this source even when separated from a
- *  saved-clip (which itself derives from it). */
+ *  library-clip (which itself derives from it). */
 export function resolveSourceItemId(
   library: ReturnType<typeof useLibraryStore>,
   libraryItemId: string | undefined
@@ -178,6 +178,6 @@ export function resolveSourceItemId(
   if (!libraryItemId) return undefined
   const item = library.getItem(libraryItemId)
   if (!item) return undefined
-  if (item.kind === 'audio-file') return item.id
+  if (item.kind === 'source' || item.kind === 'sample') return item.id
   return item.derivedFrom?.sourceItemId ?? item.id
 }

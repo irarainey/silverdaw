@@ -14,10 +14,10 @@ type ImportThis = LibraryState & {
 }
 
 export const importActions = {
-    saveLibraryItemAsSample(itemId: string, sampleType: 'sample' | 'music'): void {
+    saveLibraryItemAsSample(itemId: string, audioType: 'simple' | 'music'): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
-      if (item.kind !== 'saved-clip') {
+      if (item.kind !== 'clip') {
         useNotificationsStore().pushError('Only saved clips can be saved as samples from the library.')
         return
       }
@@ -26,7 +26,7 @@ export const importActions = {
         libraryItemId: itemId,
         itemId: sampleId,
         sampleName: libraryItemDisplayName(item),
-        sampleMode: sampleType
+        audioType
       })
     },
 
@@ -47,7 +47,7 @@ export const importActions = {
       item.beatAnchorSec = beats.length > 0 ? beatAnchorSec : undefined
       item.beats = beats.length > 0 ? beats.slice() : undefined
       item.variableTempo = variableTempo || undefined
-      // Backend hint refreshes on reanalysis; explicit `sampleMode` still wins.
+      // Backend hint refreshes on reanalysis; explicit `audioType` still wins.
       item.lowConfidence = lowConfidence === true ? true : undefined
       // Keep backend decoded-WAV cache path separate from renderer clip-add paths.
       item.decodedCacheFilePath = playbackFilePath?.trim() ? playbackFilePath : undefined

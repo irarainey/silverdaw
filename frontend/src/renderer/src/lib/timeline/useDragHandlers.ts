@@ -316,7 +316,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     effectiveTempoRatio?: number
     effectiveWarpActive?: boolean
   }): number | null {
-    // Prefer libraryItemId; saved-clip siblings can share file paths.
+    // Prefer libraryItemId; library-clip siblings can share file paths.
     const itemById = clip.libraryItemId
       ? library.byId[clip.libraryItemId]
       : undefined
@@ -383,7 +383,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (!clip) return
 
     if (edge) {
-      // Linked saved-clip instances never reach trim mode.
+      // Linked library-clip instances never reach trim mode.
       trimClipId = clip.id
       trimEdge = edge
       trimOrigStartMs = clip.startMs

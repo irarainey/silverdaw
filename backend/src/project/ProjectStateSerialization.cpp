@@ -220,6 +220,65 @@ void removeLegacyClipFadeProperties(juce::ValueTree& tree)
     }
 }
 
+// Migrate the legacy classification property `sampleMode` (values "sample" /
+// "music") to the current `audioType` (values "simple" / "music"). The word
+// "sample" now means a saved-from-clip file kind, so the classification value
+// "sample" became "simple". Runs on load so old projects open unchanged.
+void migrateLegacyAudioType(juce::ValueTree& tree)
+{
+    static const juce::Identifier legacy{"sampleMode"};
+    static const juce::Identifier current{"audioType"};
+    if (tree.hasProperty(legacy))
+    {
+        const auto legacyValue = tree.getProperty(legacy).toString();
+        if (!tree.hasProperty(current))
+        {
+            const juce::String migrated = legacyValue == "sample" ? juce::String("simple") : legacyValue;
+            if (migrated == "simple" || migrated == "music")
+            {
+                tree.setProperty(current, migrated, nullptr);
+            }
+        }
+        tree.removeProperty(legacy, nullptr);
+    }
+
+    for (int i = 0; i < tree.getNumChildren(); ++i)
+    {
+        auto child = tree.getChild(i);
+        migrateLegacyAudioType(child);
+    }
+}
+
+// Migrate legacy library-item `kind` values to the current vocabulary. The old
+// scheme used "audio-file" for both imported sources and saved-from-clip files
+// (distinguished only by a `sourceItemId` link) and "saved-clip" for reusable
+// clips. The current scheme makes these explicit: "source", "sample" and "clip".
+// Runs on load so old projects open unchanged.
+void migrateLegacyLibraryKind(juce::ValueTree& tree)
+{
+    static const juce::Identifier kindId{"kind"};
+    static const juce::Identifier sourceItemIdId{"sourceItemId"};
+    if (tree.hasType(juce::Identifier{"ITEM"}))
+    {
+        const auto kind = tree.getProperty(kindId).toString();
+        if (kind == "audio-file" || kind.isEmpty())
+        {
+            const bool hasSourceLink = tree.getProperty(sourceItemIdId).toString().isNotEmpty();
+            tree.setProperty(kindId, hasSourceLink ? juce::String("sample") : juce::String("source"), nullptr);
+        }
+        else if (kind == "saved-clip")
+        {
+            tree.setProperty(kindId, juce::String("clip"), nullptr);
+        }
+    }
+
+    for (int i = 0; i < tree.getNumChildren(); ++i)
+    {
+        auto child = tree.getChild(i);
+        migrateLegacyLibraryKind(child);
+    }
+}
+
 } // namespace
 
 juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
@@ -235,6 +294,8 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
         root.removeAllProperties(nullptr);
         root.copyPropertiesAndChildrenFrom(newTree, nullptr);
         removeLegacyClipFadeProperties(root);
+        migrateLegacyAudioType(root);
+        migrateLegacyLibraryKind(root);
         // Backfill a stable per-track colour for legacy projects so inherited
         // clip colours stop shifting with track order across reloads. The ordinal
         // mirrors the renderer's positional fallback, so the first load is
