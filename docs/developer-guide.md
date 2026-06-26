@@ -954,23 +954,51 @@ already has a BPM for). The library tile context menu can also send
 decoded-WAV cache, and reruns detection from the current source file. Worker thread
 → decode the file via JUCE → downmix to mono → resample to 44.1 kHz with
 libsamplerate → feed BTrack frame-by-frame at hop=256 (~5.8 ms steps) recording every
-`beatDueInCurrentFrame()` event. Analysis is capped at the first 60 seconds of audio;
-estimates outside `[40, 240]` BPM are dropped as implausible.
+`beatDueInCurrentFrame()` event. **BTrack itself only tracks the first 60 seconds**
+(`kBeatTrackingSeconds`) — it is the expensive, causal part and a bounded prefix gives a
+robust octave/tempo *seed* without risking octave-wander on long, variable material. The
+**onset-detection-function (ODF) period/phase refinement described below spans the whole
+decoded track** (bounded only by the generous `kMaxAnalysisSeconds` ceiling), so the final
+period is fit over the entire piece rather than extrapolated from the opening minute.
+Estimates outside `[40, 240]` BPM are dropped as implausible.
 
 The reported BPM starts from the **median of beat-to-beat intervals** (more stable
 than BTrack's running tempo estimate, which can drift a fraction of a BPM from the
 implied spacing) and is then refined by a least-squares period+anchor fit and a
-guarded onset-detection-function (ODF) autocorrelation pass. This keeps the
-project grid we later seed lined up with the source's beats. A `variableTempo`
-flag is also computed by checking the spread of per-beat tempo samples (after a
-short settling period) — if it's > 5 % of the mean, the library tile shows the
+guarded ODF autocorrelation pass. The LSQ fit's phase is **seeded from the circular
+mean of every detected beat's phase** (`circularMeanAnchor`), never from the first
+detected beat: intro fills, pickup beats and stray early detections routinely sit
+off the body grid, and anchoring on such a beat would push the entire track past
+the fit's quarter-period inlier gate — collapsing the fit (so the BPM falls back to
+BTrack's raw, sometimes wrong-octave estimate and the grid lands visibly out of
+phase). Deriving the anchor from the bulk makes the grid phase a property of the
+whole track rather than its first transient. Before any of the ODF-driven stages
+run, the recomputed ODF is passed through a **sliding-window median floor
+subtraction** (`subtractMovingMedianFloor`, adapted from aubio's median-adaptive
+peak picking):
+it subtracts a ~2-beat-wide running median and half-wave rectifies, stripping the
+slow sub-onset energy swell that sustained vocals, horns and pads add to a full
+mix. A median (not a mean) is used so the very onset peaks we want to keep don't
+pull the floor up. This sharpens transient peaks so the autocorrelation,
+median-phase and ODF-peak stages key off true onsets rather than broad humps —
+it is the difference between the median-phase alignment engaging or being skipped
+on dense material (where the raw ODF's per-beat offset IQR otherwise blows past
+the consistency gate). A final **whole-track ODF-peak refit**
+(`refineGridFromOdfPeaks`) does a least-squares period+anchor fit over the
+sub-frame-interpolated ODF onset peaks across the *entire* track; the long lever arm
+pins the period far more tightly than a 60 s fit, which is what stops the rigid grid
+from drifting late→early across a long track (adopted only when it stays within 5 % of
+BTrack's octave, so a spurious fit can't hijack the tempo). This keeps the project grid
+we later seed lined up with the source's beats from the first beat to the last. A
+`variableTempo` flag is also computed by checking the spread of per-beat tempo samples
+(after a short settling period) — if it's > 5 % of the mean, the library tile shows the
 amber `~ BPM` warning badge.
 
 The grid is rendered as a **rigid metronome** from a single `(bpm, beatAnchorSec)`
 pair, so the anchor's phase matters as much as the period. After the period is
 final the detector runs a guarded **phase correction**: `estimateGridPhaseOffset`
-measures, for each grid beat, the offset to the strongest nearby onset-detection-
-function (ODF) peak and takes the **median**. The anchor is shifted by that median
+measures, for each grid beat across the whole track, the offset to the strongest nearby
+ODF peak and takes the **median**. The anchor is shifted by that median
 only when the offsets are *consistent* (IQR ≤ 30 ms — chosen over median-absolute-
 deviation, which is blind to a bimodal early/late split), *plausible* (≤ 120 ms,
 latency-sized), *significant* (> 4 ms) and backed by *enough* matched beats

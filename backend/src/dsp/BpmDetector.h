@@ -33,8 +33,15 @@ class BpmDetector
     /** Anything outside the musical plausibility window is reported as no tempo. */
     static constexpr double kMinPlausibleBpm = 40.0;
     static constexpr double kMaxPlausibleBpm = 240.0;
-    /** Cap analysis because long files rarely improve tempo confidence enough to justify the wait. */
-    static constexpr double kMaxAnalysisSeconds = 60.0;
+    /** BTrack (the expensive causal tracker) runs on this bounded prefix for a
+        robust octave/tempo seed; extending it risks octave-wander on long,
+        variable material and adds cost without improving the seed. */
+    static constexpr double kBeatTrackingSeconds = 60.0;
+    /** The ODF-based period/phase refinement spans the WHOLE track (capped here
+        only to bound memory/CPU on pathological inputs) so the fitted period
+        reflects the entire piece, eliminating grid drift that accumulates when
+        the period is fit to just the opening minute. */
+    static constexpr double kMaxAnalysisSeconds = 600.0;
 
     /** Blocking; call from a worker, and keep `formatManager` alive for the call. */
     BpmAnalysis analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager);
@@ -53,5 +60,27 @@ class BpmDetector
 bool estimateGridPhaseOffset(const std::vector<double>& odf, double envRate, double periodSec,
                              double anchorSec, double maxOffsetSec, double& outOffsetSec,
                              int& outMatched, double& outSpread);
+
+// Analysis-internal, exposed for unit testing. Suppresses slow sub-onset energy
+// swells (sustained vocals, pads, horns and other broadband bed in a full mix)
+// that raise the ODF's local floor and blur transient peaks. Adapted from
+// aubio's median-adaptive peak picking: subtracts a sliding-window MEDIAN floor
+// (robust to the very onset peaks we keep, unlike a mean) and half-wave
+// rectifies, so the downstream autocorrelation, median-phase and ODF-peak-LSQ
+// stages key off true onsets instead of broad humps. The window spans ~2 beats
+// (sized from `approxPeriodSec`, clamped) so it sits on the inter-onset floor
+// without following individual beats. Returns the cleaned ODF (same length).
+std::vector<double> subtractMovingMedianFloor(const std::vector<double>& odf, double envRate,
+                                              double approxPeriodSec);
+
+// Analysis-internal, exposed for unit testing. Returns a robust beat-grid phase
+// anchor (seconds) for a rigid grid of the given `periodSec`, computed from the
+// CIRCULAR MEAN of every detected beat's phase (mod period). Seeding the LSQ fit
+// from this — rather than the first detected beat — prevents an off-grid intro or
+// pickup beat from anchoring the grid off-phase, which would otherwise push the
+// whole body of the track past the fit's quarter-period inlier gate. The result
+// is mapped into the same period bin as the first beat so backfill/render stays
+// stable. Falls back to the first beat when there is no usable input.
+double circularMeanAnchor(const std::vector<double>& beats, double periodSec);
 
 } // namespace silverdaw

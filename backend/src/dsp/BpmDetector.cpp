@@ -229,6 +229,67 @@ namespace
 constexpr int kMinPhaseMatches = 8;
 }
 
+double circularMeanAnchor(const std::vector<double>& beats, double periodSec)
+{
+    if (beats.empty()) return 0.0;
+    if (periodSec <= 0.0) return beats.front();
+
+    const double twoPi = 2.0 * juce::MathConstants<double>::pi;
+    double sinSum = 0.0;
+    double cosSum = 0.0;
+    for (double t : beats)
+    {
+        const double frac = t / periodSec - std::floor(t / periodSec); // phase in [0, 1)
+        const double ang = frac * twoPi;
+        sinSum += std::sin(ang);
+        cosSum += std::cos(ang);
+    }
+    if (std::abs(sinSum) < 1e-12 && std::abs(cosSum) < 1e-12) return beats.front();
+
+    double ang = std::atan2(sinSum, cosSum);
+    if (ang < 0.0) ang += twoPi;
+    const double phaseSec = ang / twoPi * periodSec; // [0, periodSec)
+
+    // Place the anchor in the same period bin as the first beat so it stays near
+    // the track start (keeps grid backfill/render stable), choosing the nearest
+    // equivalent phase to the first beat.
+    const double first = beats.front();
+    double anchor = std::floor(first / periodSec) * periodSec + phaseSec;
+    while (anchor > first + periodSec * 0.5) anchor -= periodSec;
+    while (anchor < first - periodSec * 0.5) anchor += periodSec;
+    return anchor;
+}
+
+std::vector<double> subtractMovingMedianFloor(const std::vector<double>& odf, double envRate,
+                                              double approxPeriodSec)
+{
+    const int n = static_cast<int>(odf.size());
+    if (n < 16 || envRate <= 0.0) return odf;
+
+    // Window half-width ~1 beat (total ~2 beats): long enough that the median
+    // sits on the inter-onset floor and is never pulled up by the onset peaks we
+    // want to keep, short enough to track genuine dynamic changes across the
+    // track. Clamped so implausible tempos can't degenerate the window.
+    const double winSec = juce::jlimit(0.30, 1.20, (approxPeriodSec > 0.0 ? approxPeriodSec : 0.5));
+    int half = std::max(3, static_cast<int>(std::lround(winSec * envRate)));
+    if (2 * half + 1 > n) half = (n - 1) / 2;
+
+    std::vector<double> out(static_cast<size_t>(n), 0.0);
+    std::vector<double> window;
+    window.reserve(static_cast<size_t>(2 * half + 1));
+    for (int i = 0; i < n; ++i)
+    {
+        const int lo = std::max(0, i - half);
+        const int hi = std::min(n - 1, i + half);
+        window.assign(odf.begin() + lo, odf.begin() + hi + 1);
+        const size_t mid = window.size() / 2;
+        std::nth_element(window.begin(), window.begin() + static_cast<std::ptrdiff_t>(mid), window.end());
+        const double v = odf[static_cast<size_t>(i)] - window[mid];
+        out[static_cast<size_t>(i)] = v > 0.0 ? v : 0.0;
+    }
+    return out;
+}
+
 bool estimateGridPhaseOffset(const std::vector<double>& odf, double envRate, double periodSec,
                              double anchorSec, double maxOffsetSec, double& outOffsetSec,
                              int& outMatched, double& outSpread)
@@ -411,6 +472,8 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         return result;
     }
 
+    // Decode the whole track (bounded only by the generous kMaxAnalysisSeconds
+    // ceiling) so the ODF-based period fit below spans the entire piece.
     const juce::int64 maxSourceSamples =
         static_cast<juce::int64>(kMaxAnalysisSeconds * sourceSampleRate);
     const juce::int64 totalSourceSamples = juce::jmin(reader->lengthInSamples, maxSourceSamples);
@@ -480,8 +543,13 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     std::vector<double> beatTimes;
     std::vector<double> tempoSamples;
     const size_t totalFrames = resampled.size();
+    // BTrack runs on a bounded prefix (robust, cost-controlled octave/tempo
+    // seed); the ODF-based period/phase refinement below spans the whole decoded
+    // track, so the fitted period reflects the entire piece, not just the opening.
+    const size_t beatTrackFrames =
+        std::min(totalFrames, static_cast<size_t>(kBeatTrackingSeconds * kAnalysisSampleRate));
     size_t hopIndex = 0;
-    for (size_t pos = 0; pos + static_cast<size_t>(kHopSize) <= totalFrames;
+    for (size_t pos = 0; pos + static_cast<size_t>(kHopSize) <= beatTrackFrames;
          pos += static_cast<size_t>(kHopSize), ++hopIndex)
     {
         for (int i = 0; i < kHopSize; ++i)
@@ -506,7 +574,14 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
 
     // LSQ over detected beats gives stable period+phase; outlier rejection handles missed/doubled beats.
     double derivedBpm = bpm;
-    double anchorSec = beatTimes.empty() ? 0.0 : beatTimes.front();
+    // Never anchor on the first detected beat (intro/pickup beats are routinely
+    // off-grid); seed the phase from the bulk via the circular mean even on this
+    // pre-fit fallback path.
+    double anchorSec = beatTimes.empty()
+                           ? 0.0
+                           : ((bpm >= kMinPlausibleBpm && bpm <= kMaxPlausibleBpm)
+                                  ? circularMeanAnchor(beatTimes, 60.0 / bpm)
+                                  : beatTimes.front());
     double baselineResidual = std::numeric_limits<double>::infinity();
     int baselineKept = 0;
     if (beatTimes.size() >= 6)
@@ -522,11 +597,15 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         {
             std::sort(intervals.begin(), intervals.end());
             const double medianInterval = intervals[intervals.size() / 2];
+            // Seed the grid phase from the bulk of the beats, not the first
+            // detected beat: an off-grid intro/pickup beat as the anchor would
+            // push the whole body past the fit's quarter-period inlier gate.
+            const double seedAnchor = circularMeanAnchor(beatTimes, medianInterval);
             double fitPeriod = 0.0;
             double fitAnchor = 0.0;
             double rms = 0.0;
             int kept = 0;
-            if (fitPeriodAndAnchor(beatTimes, medianInterval, beatTimes.front(), fitPeriod, fitAnchor, rms, kept))
+            if (fitPeriodAndAnchor(beatTimes, medianInterval, seedAnchor, fitPeriod, fitAnchor, rms, kept))
             {
                 derivedBpm = 60.0 / fitPeriod;
                 anchorSec = fitAnchor;
@@ -554,6 +633,10 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     {
         envRate = kAnalysisSampleRate / static_cast<double>(kOdfHop);
         odf = computeOdf(resampled, kOdfHop);
+        // Strip the slow sub-onset energy floor (sustained vocals/horns/pads in a
+        // full mix) so the autocorrelation, median-phase and ODF-peak-LSQ stages
+        // key off true transients. Window sized from the seed tempo (~2 beats).
+        odf = subtractMovingMedianFloor(odf, envRate, (derivedBpm > 0.0) ? (60.0 / derivedBpm) : 0.5);
         if (odf.size() >= 64)
         {
             const double btrackPeriodSec = (derivedBpm > 0.0) ? (60.0 / derivedBpm) : 0.5;

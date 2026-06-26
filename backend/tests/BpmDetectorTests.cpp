@@ -8,6 +8,7 @@
 
 #include "../src/dsp/BpmDetector.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -160,10 +161,75 @@ juce::File writeClickWav(const juce::File& dir, const juce::String& name, double
 //     is late and the last is early (or vice-versa). A 0.02 BPM error is invisible
 //     to a mean/max check but produces visible drift over a 30 s track, so the
 //     first-vs-last residual SLOPE is asserted explicitly.
-void checkClickTrackGrid(double bpm)
+void testCircularMeanAnchorIgnoresIntroBeat()
+{
+    const double period = 0.5; // 120 BPM
+    // One off-grid intro beat (phase 0.05) then a clean body at a constant phase
+    // of 0.35 — exactly the "Big Fun" failure shape where the first beat sits a
+    // ~0.29-period off the bulk grid.
+    std::vector<double> beats = {0.05};
+    for (int n = 1; n <= 12; ++n) beats.push_back(0.35 + static_cast<double>(n) * period);
+
+    const double anchor = silverdaw::circularMeanAnchor(beats, period);
+
+    auto phaseOf = [period](double t) {
+        double p = std::fmod(t, period);
+        if (p < 0.0) p += period;
+        return p;
+    };
+    requireNear(phaseOf(anchor), 0.35, 0.03, "anchor phase follows the bulk of the beats");
+    require(std::abs(phaseOf(anchor) - 0.05) > 0.1, "anchor must not lock to the off-grid intro beat");
+    require(std::abs(anchor - beats.front()) <= period * 0.5 + 1e-9,
+            "anchor stays within half a period of the track start");
+}
+
+void testMovingMedianFloorPreservesPeaksRemovesSwell()
+{
+    const double envRate = 200.0;
+    const double period = 0.5; // 120 BPM => peaks every 100 frames
+
+    // Build an ODF with sharp onset peaks riding on a slow raised-cosine swell
+    // (a sustained bed). The floor subtraction must keep the peaks while removing
+    // the swell so a naive peak-picker no longer locks onto the broad hump.
+    const int n = 2600; // 13 s
+    std::vector<double> odf(static_cast<size_t>(n), 0.0);
+    for (int i = 0; i < n; ++i)
+    {
+        const double t = static_cast<double>(i) / envRate;
+        // Slow swell: one full cosine lobe across the span, amplitude 0.6.
+        odf[static_cast<size_t>(i)] =
+            0.6 * (0.5 - 0.5 * std::cos(2.0 * juce::MathConstants<double>::pi * t / 13.0));
+    }
+    std::vector<int> peakFrames;
+    for (int k = 1; k * static_cast<int>(period * envRate) < n - 2; ++k)
+    {
+        const int idx = k * static_cast<int>(period * envRate);
+        odf[static_cast<size_t>(idx)] += 1.0; // sharp unit onset on top of the swell
+        peakFrames.push_back(idx);
+    }
+
+    const auto cleaned = silverdaw::subtractMovingMedianFloor(odf, envRate, period);
+    require(cleaned.size() == odf.size(), "cleaned ODF keeps the same length");
+
+    // Every onset frame must remain a strict local maximum after cleaning.
+    for (int idx : peakFrames)
+    {
+        require(cleaned[static_cast<size_t>(idx)] > cleaned[static_cast<size_t>(idx - 1)] &&
+                    cleaned[static_cast<size_t>(idx)] > cleaned[static_cast<size_t>(idx + 1)],
+                "onset peaks survive floor subtraction as local maxima");
+    }
+
+    // Mid-span swell crest (a non-onset frame) must be flattened to ~0, where in
+    // the raw ODF it was a large positive value that could mislead peak-picking.
+    int crest = n / 2;
+    while (std::find(peakFrames.begin(), peakFrames.end(), crest) != peakFrames.end()) ++crest;
+    require(odf[static_cast<size_t>(crest)] > 0.3, "raw swell crest is large pre-cleaning");
+    require(cleaned[static_cast<size_t>(crest)] < 0.05, "swell crest is flattened post-cleaning");
+}
+
+void checkClickTrackGrid(double bpm, double seconds = 60.0)
 {
     const double sampleRate = 44100.0;
-    const double seconds = 60.0;
 
     auto dir = makeTempDir("bpm-click");
     const auto file = writeClickWav(dir, "click.wav", bpm, seconds, sampleRate);
@@ -219,6 +285,17 @@ void testClickTrackGridLandsOnBeats()
         checkClickTrackGrid(bpm);
 }
 
+// Whole-track analysis: BTrack only tracks the first kBeatTrackingSeconds (60 s),
+// but the ODF period/phase refinement now spans the entire decoded track. A
+// 180 s click track therefore exercises beats far beyond the BTrack window; the
+// grid must still sit on the beats at the very end, proving the period was fit
+// over the whole piece rather than extrapolated from the opening minute.
+void testWholeTrackGridDoesNotDriftBeyondBeatWindow()
+{
+    for (double bpm : {120.0, 128.0})
+        checkClickTrackGrid(bpm, 180.0);
+}
+
 } // namespace
 
 void addBpmDetectorTests(std::vector<TestCase>& tests)
@@ -228,7 +305,13 @@ void addBpmDetectorTests(std::vector<TestCase>& tests)
     tests.push_back({"Grid phase: inconsistent jitter flagged by MAD", testInconsistentOffsetsFlaggedByMad});
     tests.push_back({"Grid phase: sparse onsets decline", testSparseOnsetsReturnFalse});
     tests.push_back({"Grid phase: onsets beyond window decline", testOnsetBeyondWindowNotCaptured});
+    tests.push_back({"ODF floor: median subtraction preserves peaks, removes swell",
+                     testMovingMedianFloorPreservesPeaksRemovesSwell});
+    tests.push_back({"Grid anchor: circular mean ignores off-grid intro beat",
+                     testCircularMeanAnchorIgnoresIntroBeat});
     tests.push_back({"Click track: grid lands on beats", testClickTrackGridLandsOnBeats});
+    tests.push_back({"Click track: whole-track grid does not drift past beat window",
+                     testWholeTrackGridDoesNotDriftBeyondBeatWindow});
 }
 
 } // namespace silverdaw::tests
