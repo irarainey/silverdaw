@@ -625,6 +625,11 @@ tests/MixdownRenderTests.cpp
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
 
+    # Offline BPM/beat accuracy harness (dev tool, not shipped, not a CTest test).
+    # Run: SilverdawBpmEval <manifest>  (manifest lines: <path>|<referenceBpm>)
+    add_executable(SilverdawBpmEval tools/bpm_eval/BpmEval.cpp)
+    target_link_libraries(SilverdawBpmEval PRIVATE silverdaw_backend_core)
+
     if(SILVERDAW_ENABLE_COVERAGE)
         set(SILVERDAW_BACKEND_COVERAGE_DIR ${CMAKE_BINARY_DIR}/coverage)
         if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")

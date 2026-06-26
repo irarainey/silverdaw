@@ -58,3 +58,6 @@ vite.config.*.timestamp-*
 lint-output.txt
 
 .mypy_cache
+
+# Personal BPM eval manifest (use manifest.example.csv as a template)
+backend/tools/bpm_eval/manifest.csv

@@ -1,0 +1,22 @@
+# BPM evaluation manifest — reference tempos for the offline accuracy harness.
+#
+# Format, one track per line:   <path>|<referenceBpm>[|<refFirstBeatSec>]
+#   - <path> may be absolute, or relative to the working directory you run from.
+#   - lines starting with '#' and blank lines are ignored.
+#   - <path> can be the original file (wav/mp3/flac) OR a decoded .wav cache.
+#   - <refFirstBeatSec> is OPTIONAL: the time (seconds) of a known downbeat (e.g.
+#     the first clear kick). Supplying it makes the harness also score PHASE
+#     (how far the grid sits from the beat; ~+/-0.5 of a beat = on the off-beat).
+#
+# Run from the backend build dir, e.g.:
+#   .\SilverdawBpmEval ..\tools\bpm_eval\manifest.example.csv
+#
+# Fill referenceBpm from a trusted source (Rekordbox, etc.). This file is a
+# TEMPLATE — copy it to manifest.csv (gitignored) and edit with your own paths.
+#
+# Tracks seen during analysis this session (fill in the reference BPMs):
+#
+# C:\Users\irara\OneDrive\Music\Various Artists\12_ 80's Dance\2-02 Big Fun (12inch Mix).mp3|
+# C:\Users\irara\OneDrive\Music\Various Artists\12_ 80's Dance\3-02 Last Night A DJ Saved My Life (12inch Mix).mp3|
+# C:\Users\irara\OneDrive\Music\Various Artists\12_ 80's Dance\2-06 Roadblock (12inch Mix).mp3|100.3
+# C:\Users\irara\OneDrive\Music\Various Artists\12_ 80's Dance\2-02 Apache.mp3|
