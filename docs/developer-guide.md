@@ -255,7 +255,9 @@ Silverdaw currently supports the core arrangement workflow:
   always reopen marked dirty so the user is steered to File > Save.
 - Recent Projects MRU (up to 10) persisted in `preferences.json`, surfaced as a
   `File > Recent Projects ▸` submenu and as the Start Screen list shown on first
-  launch or after File > New on a fresh install.
+  launch or after File > New on a fresh install. Both label each entry by its
+  project name (the file name without the `.silverdaw` extension) and keep the
+  full path as the hover hint.
 - Relink a missing source file at the **library item** level — every clip
   referencing that item picks up the new file automatically. The Relink dialog
   groups missing references by file path so the same broken path used by ten
@@ -1644,7 +1646,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Delete` | Delete the selected clip. |
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
-| `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step. Compound ops (split / duplicate) emit multiple undo steps today. |
+| `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step, and compound ops (split / duplicate / paste) fold into a single undo step. |
 | `Ctrl + L` | Toggle the **lock** flag on the selected clip. Locked clips refuse drag-move, edge-trim and Split-at-playhead, and show a padlock badge in their title strip. Per-clip — linked saved clip siblings stay independently lockable. |
 | **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Cut** / **Copy** / **Paste** (Cut and Copy act on the right-clicked clip — selecting it and its track first; Paste needs a clip on the clipboard and lands on this clip's track at the playhead, mirroring the Edit-menu / Ctrl+X·C·V behaviour), **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked saved clip sibling), **Save Clip to Library**, **Save as Sample…** (opens the **Save as Sample** dialog with **Music** and **Simple** choices), **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
 | Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
@@ -1713,12 +1715,16 @@ step, so they survive the geometry's snap-to-step) and shared by the menu and it
 A click selects two things at once: the **selected clip** (thick outline) is the target of
 Cut, Copy, Duplicate, Delete, and Split-at-playhead shortcuts; the **selected track**
 (highlighted row border) is the destination of Paste. Clicking a clip selects both the clip
-and its host track. Clicking an empty area of a track row selects just that track. Clicking
-between tracks clears both.
+and its host track. Clicking an empty area of a track row selects just that track and moves
+the playhead to the click position (drag to scrub); clicking between tracks clears both and
+likewise moves the playhead — so the playhead can be placed anywhere on the timeline, not
+just on the ruler.
 
-Copy/paste is target-driven: copy a clip, select the destination track, place the playhead,
-then paste. The new clip lands on the selected track at the playhead. Overlap rules are
-evaluated only on that destination; the source-track's clips don't constrain placement.
+Copy/paste is target-driven: copy a clip, place the playhead where it should land, then
+paste onto a track. Keyboard `Ctrl+V` pastes onto the **selected** track; the clip and empty
+track-lane right-click menus paste onto the **right-clicked** track (selecting it first). The
+new clip always lands at the playhead. Overlap rules are evaluated only on that destination;
+the source-track's clips don't constrain placement.
 
 ## Rendering performance
 

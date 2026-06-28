@@ -36,9 +36,10 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 
 - **Project library.** Import audio into a per-project library and drag it
   straight onto the timeline. Files are grouped and easy to reuse.
-- **Timeline arranging.** Move, split, duplicate, cut, copy, trim, colour, and
-  delete clips across multiple tracks. Clips snap to the beat grid by default,
-  with a modifier for fine, free placement. Bar numbering starts at 1 by default,
+- **Timeline arranging.** Move, split, duplicate, cut, copy, paste, trim, colour,
+  and delete clips across multiple tracks. Drag clips or nudge them with the
+  keyboard; clips snap to the beat grid by default, with a modifier for fine,
+  free placement. Bar numbering starts at 1 by default,
   or you can start it at 0 or lower to leave lead-in bars before bar one for clips
   with a silent intro.
 - **Automatic analysis.** Imported audio is analysed for key, tempo (BPM), and
