@@ -4,8 +4,9 @@
 /** Default height of a freshly-created track row. */
 export const TRACK_HEIGHT = 120
 /** Minimum row height that still fits the stacked header controls (name,
- *  volume slider + meter, and the button row) without them overlapping. */
-export const MIN_TRACK_HEIGHT = 80
+ *  volume slider + meter, pan slider, and the button row) without cropping the
+ *  pan or overlapping the buttons. Raised when pan moved into the header. */
+export const MIN_TRACK_HEIGHT = 120
 /** Maximum row height so one track cannot dominate the viewport. */
 export const MAX_TRACK_HEIGHT = 400
 export const TRACK_GAP = 2

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Track FX surface in the bottom panel beside the Library and Project FX tabs.
 // Hosts the selected track's rack: Tone (3-band EQ), Filter (DJ-style LPF↔HPF
-// sweep), Pan, Leveler, and Reverb/Delay send amounts into the project buses.
+// sweep), Leveler, and Reverb/Delay send amounts into the project buses. (Pan
+// lives in the track header, under the gain fader.)
 //
 // Modules are keyed by track id so changing selection remounts them (fresh
 // inputs, torn-down gestures). Each module owns its live editing + undo wiring;
@@ -12,7 +13,6 @@ import { useProjectStore } from '@/stores/projectStore'
 import TrackToneModule from '@/components/TrackToneModule.vue'
 import TrackFilterModule from '@/components/TrackFilterModule.vue'
 import TrackSendsModule from '@/components/TrackSendsModule.vue'
-import TrackPanModule from '@/components/TrackPanModule.vue'
 import TrackLevelerModule from '@/components/TrackLevelerModule.vue'
 import FxRack from '@/components/FxRack.vue'
 
@@ -38,10 +38,6 @@ const selectedTrackId = computed(() =>
       :key="`filter-${selectedTrackId}`"
       :track-id="selectedTrackId"
     />
-    <TrackPanModule
-      :key="`pan-${selectedTrackId}`"
-      :track-id="selectedTrackId"
-    />
     <TrackLevelerModule
       :key="`leveler-${selectedTrackId}`"
       :track-id="selectedTrackId"
@@ -55,6 +51,6 @@ const selectedTrackId = computed(() =>
     v-else
     class="flex h-full min-h-0 w-full items-center justify-center px-4 text-center text-xs text-zinc-500"
   >
-    Select a track to edit its Tone, Filter, Pan, Leveler, and Reverb &amp; Delay.
+    Select a track to edit its Tone, Filter, Leveler, and Reverb &amp; Delay.
   </div>
 </template>

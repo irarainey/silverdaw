@@ -14,6 +14,7 @@ import {
 import { RULER_HEIGHT } from '@/lib/timeline/constants'
 import { buildTrackRowLayout } from '@/lib/timeline/trackLayout'
 import { useTrackHeaderEditing } from '@/lib/track/useTrackHeaderEditing'
+import { useTrackPan } from '@/lib/track/useTrackPan'
 import { useTrackResizeDrag } from '@/lib/track/useTrackResizeDrag'
 import { useTrackReorderDrag } from '@/lib/track/useTrackReorderDrag'
 import TrackMeter from '@/components/TrackMeter.vue'
@@ -60,6 +61,9 @@ const {
   onGainInput,
   onGainKeydown
 } = useTrackHeaderEditing()
+
+// ─── Pan slider (under the gain fader) ──────────────────────────────────────
+const { panDisplay, onPanInput, onPanChange, onPanReset } = useTrackPan()
 
 // Cache per-track row layout for template lookups.
 const rowLayout = computed(() => buildTrackRowLayout(project.tracks))
@@ -157,7 +161,7 @@ function isTrackFxShowing(trackId: string): boolean {
         <div
           v-for="(track, i) in project.tracks"
           :key="track.id"
-          class="pointer-events-auto absolute flex flex-col justify-between rounded border border-zinc-700 px-2 py-1.5 text-xs"
+          class="pointer-events-auto absolute flex flex-col gap-1.5 rounded border border-zinc-700 px-2 py-1.5 text-xs"
           :class="{
             'opacity-50': track.muted || (project.anySoloed && !track.soloed),
             'ring-1 ring-inset ring-cyan-500/60': track.soloed,
@@ -239,66 +243,101 @@ function isTrackFxShowing(trackId: string): boolean {
             </div>
           </div>
 
-          <!-- Middle: volume slider + matching track meter. -->
-          <div class="flex items-center gap-2">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="h-3.5 w-3.5 shrink-0 text-zinc-500"
-              aria-hidden="true"
-            >
-              <path d="M11 5L6 9H2v6h4l5 4V5z" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-            </svg>
-            <div class="flex min-w-0 flex-1 flex-col gap-1">
+          <!-- Middle: volume slider + matching meter, with pan below. -->
+          <div class="mt-2.5 flex flex-col gap-1.5">
+            <div class="flex items-center gap-2">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="h-3.5 w-3.5 shrink-0 text-zinc-500"
+                aria-hidden="true"
+              >
+                <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+              </svg>
+              <div class="flex min-w-0 flex-1 flex-col gap-1">
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.001"
+                  :value="volumeToSliderPosition(track.volume)"
+                  :title="'Volume ' + formatLinearAsDb(track.volume, { unit: true })"
+                  class="track-volume h-1 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
+                  @input="(e) => project.setTrackVolumeLocal(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
+                  @change="(e) => project.setTrackVolume(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
+                >
+                <TrackMeter
+                  :track-id="track.id"
+                  :width="120"
+                  :height="6"
+                />
+              </div>
+              <input
+                v-if="editingGainTrackId === track.id"
+                :ref="setGainInputEl"
+                v-model="editingGainValue"
+                type="text"
+                inputmode="text"
+                spellcheck="false"
+                autocomplete="off"
+                class="w-10 shrink-0 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500"
+                @input="onGainInput"
+                @blur="commitGainEdit(track.id)"
+                @keydown="(e) => onGainKeydown(e, track.id)"
+              >
+              <button
+                v-else
+                type="button"
+                data-borderless-button="true"
+                class="w-10 shrink-0 cursor-text appearance-none border-0 bg-transparent p-0 text-right font-mono text-[10px] tabular-nums text-zinc-500 outline-none hover:text-zinc-200 focus-visible:text-cyan-300"
+                :title="`Volume ${formatLinearAsDb(track.volume, { unit: true })} — double-click to type a dB value (e.g. -3, +1.5, -inf)`"
+                @dblclick.stop="startGainEdit(track.id, track.volume)"
+              >
+                {{ volumeDbText(track.volume) }}
+              </button>
+            </div>
+
+            <!-- Pan: bipolar slider directly under the gain fader. -->
+            <div class="flex items-center gap-2">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="h-3.5 w-3.5 shrink-0 text-zinc-500"
+                aria-hidden="true"
+              >
+                <path d="M8 7l-4 5 4 5M16 7l4 5-4 5" />
+              </svg>
               <input
                 type="range"
-                min="0"
+                min="-1"
                 max="1"
-                step="0.001"
-                :value="volumeToSliderPosition(track.volume)"
-                :title="'Volume ' + formatLinearAsDb(track.volume, { unit: true })"
-                class="track-volume h-1 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
-                @input="(e) => project.setTrackVolumeLocal(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
-                @change="(e) => project.setTrackVolume(track.id, sliderPositionToVolume(Number((e.target as HTMLInputElement).value)))"
+                step="0.01"
+                :value="track.pan ?? 0"
+                :title="'Pan ' + panDisplay(track.pan) + ' — double-click to centre'"
+                aria-label="Track pan"
+                class="track-pan h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
+                @input="(e) => onPanInput(track.id, Number((e.target as HTMLInputElement).value))"
+                @change="(e) => onPanChange(track.id, Number((e.target as HTMLInputElement).value))"
+                @dblclick.stop="onPanReset(track.id)"
               >
-              <TrackMeter
-                :track-id="track.id"
-                :width="120"
-                :height="6"
-              />
+              <span class="w-10 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-500">
+                {{ panDisplay(track.pan) }}
+              </span>
             </div>
-            <input
-              v-if="editingGainTrackId === track.id"
-              :ref="setGainInputEl"
-              v-model="editingGainValue"
-              type="text"
-              inputmode="text"
-              spellcheck="false"
-              autocomplete="off"
-              class="w-10 shrink-0 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500"
-              @input="onGainInput"
-              @blur="commitGainEdit(track.id)"
-              @keydown="(e) => onGainKeydown(e, track.id)"
-            >
-            <button
-              v-else
-              type="button"
-              data-borderless-button="true"
-              class="w-10 shrink-0 cursor-text appearance-none border-0 bg-transparent p-0 text-right font-mono text-[10px] tabular-nums text-zinc-500 outline-none hover:text-zinc-200 focus-visible:text-cyan-300"
-              :title="`Volume ${formatLinearAsDb(track.volume, { unit: true })} — double-click to type a dB value (e.g. -3, +1.5, -inf)`"
-              @dblclick.stop="startGainEdit(track.id, track.volume)"
-            >
-              {{ volumeDbText(track.volume) }}
-            </button>
           </div>
 
-          <div class="flex items-center gap-1">
+          <div class="mt-auto flex items-center gap-1 pt-2.5">
             <button
               type="button"
               class="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:border-red-500 hover:bg-red-600 hover:text-white"
@@ -457,6 +496,50 @@ function isTrackFxShowing(trackId: string): boolean {
   height: 3px;
   border-radius: 9999px;
   background: #3f3f46;
+}
+
+/* Pan slider: same thumb as the volume fader, with a subtle centre detent on the
+   track so 0 (centre) reads at a glance. */
+.track-pan {
+  outline: none;
+}
+
+.track-pan::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #e4e4e7;
+  border: 1px solid #71717a;
+  cursor: pointer;
+  margin-top: -5px;
+}
+
+.track-pan::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #e4e4e7;
+  border: 1px solid #71717a;
+  cursor: pointer;
+}
+
+.track-pan::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 9999px;
+  /* Flat zinc track with a 1px centre tick. */
+  background:
+    linear-gradient(#71717a, #71717a) 50% / 1px 100% no-repeat,
+    #3f3f46;
+}
+
+.track-pan::-moz-range-track {
+  height: 3px;
+  border-radius: 9999px;
+  background:
+    linear-gradient(#71717a, #71717a) 50% / 1px 100% no-repeat,
+    #3f3f46;
 }
 
 /* Invisible until hover/drag so row chrome stays clean. */

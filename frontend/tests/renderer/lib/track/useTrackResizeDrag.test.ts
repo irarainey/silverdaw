@@ -51,7 +51,7 @@ describe('useTrackResizeDrag', () => {
 
   it('previews height locally during the drag and commits once on pointerup', () => {
     const project = useProjectStore()
-    seedTrack('t1', 100)
+    seedTrack('t1', 150)
     const local = vi.spyOn(project, 'setTrackHeightLocal').mockImplementation((_id, h) => {
       project.tracks[0]!.heightPx = h
     })
@@ -61,11 +61,12 @@ describe('useTrackResizeDrag', () => {
     onHandlePointerDown({ id: 't1' }, pointerDown(100))
     listeners.get('pointermove')!({ clientY: 150 } as PointerEvent)
 
-    expect(local).toHaveBeenCalledWith('t1', 150)
+    // start 150 + dy (150 - 100) = 200
+    expect(local).toHaveBeenCalledWith('t1', 200)
 
     listeners.get('pointerup')!({} as PointerEvent)
     expect(commit).toHaveBeenCalledTimes(1)
-    expect(commit).toHaveBeenCalledWith('t1', 150)
+    expect(commit).toHaveBeenCalledWith('t1', 200)
     expect(listeners.has('pointermove')).toBe(false)
   })
 
@@ -85,7 +86,7 @@ describe('useTrackResizeDrag', () => {
 
   it('does not commit when the pointer never moved', () => {
     const project = useProjectStore()
-    seedTrack('t1', 100)
+    seedTrack('t1', 150)
     const commit = vi.spyOn(project, 'setTrackHeight').mockImplementation(() => {})
 
     const { onHandlePointerDown } = useTrackResizeDrag()
