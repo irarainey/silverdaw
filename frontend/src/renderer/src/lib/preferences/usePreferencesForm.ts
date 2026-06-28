@@ -1,6 +1,6 @@
 // Transactional form model for PreferencesDialog; nothing persists until `save()`.
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import type { VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
+import type { VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength, KeepAwakeMode } from '@shared/bridge-protocol'
 import { useAppStore } from '@/stores/appStore'
 import { useUiStore, type SkipButtonTarget, type WaveformDisplayMode } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
@@ -22,6 +22,7 @@ export interface PreferencesForm {
   backendsForSelectedDevice: ComputedRef<string[]>
   showAdvancedBackend: Ref<boolean>
   pickBackend: (typeName: string) => void
+  keepAwakeMode: Ref<KeepAwakeMode>
   loggingEnabled: Ref<boolean>
   devToolsEnabled: Ref<boolean>
   logDirectory: Ref<string>
@@ -109,6 +110,9 @@ export function usePreferencesForm(): PreferencesForm {
     audioOutputTypeName.value = typeName
   }
 
+  const keepAwakeMode = ref<KeepAwakeMode>('auto')
+  const initialKeepAwakeMode = ref<KeepAwakeMode>('auto')
+
   const loggingEnabled = ref(false)
   const devToolsEnabled = ref(false)
   const logDirectory = ref('')
@@ -187,16 +191,18 @@ export function usePreferencesForm(): PreferencesForm {
       enhanceOther.value !== initialEnhanceOther.value ||
       otherEnhanceStrength.value !== initialOtherEnhanceStrength.value ||
       audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
-      audioOutputDeviceName.value !== initialAudioOutputDeviceName.value
+      audioOutputDeviceName.value !== initialAudioOutputDeviceName.value ||
+      keepAwakeMode.value !== initialKeepAwakeMode.value
   )
 
   async function loadCurrent(): Promise<void> {
     try {
-      const [debugVal, qol, autosave, audioPref] = await Promise.all([
+      const [debugVal, qol, autosave, audioPref, keepAwake] = await Promise.all([
         window.silverdaw.getDebugPreferences(),
         window.silverdaw.getQolPrefs(),
         window.silverdaw.getAutosaveConfig(),
-        window.silverdaw.getAudioOutput()
+        window.silverdaw.getAudioOutput(),
+        window.silverdaw.getKeepAwakeMode()
       ])
       loggingEnabled.value = debugVal.loggingEnabled
       devToolsEnabled.value = debugVal.devToolsEnabled
@@ -209,6 +215,7 @@ export function usePreferencesForm(): PreferencesForm {
       // Seed from the saved preference, not the live device JUCE chose.
       audioOutputTypeName.value = audioPref.typeName
       audioOutputDeviceName.value = audioPref.deviceName
+      keepAwakeMode.value = keepAwake
       const stemPrefs = await window.silverdaw.getStemPrefs()
       useGpuForStems.value = stemPrefs.useGpu
       enhanceVocals.value = stemPrefs.enhanceVocals
@@ -230,6 +237,7 @@ export function usePreferencesForm(): PreferencesForm {
       autosaveIntervalSeconds.value = 30
       audioOutputTypeName.value = null
       audioOutputDeviceName.value = null
+      keepAwakeMode.value = 'auto'
       useGpuForStems.value = false
       enhanceVocals.value = false
       vocalEnhanceStrength.value = 'medium'
@@ -274,6 +282,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialOtherEnhanceStrength.value = otherEnhanceStrength.value
     initialAudioOutputTypeName.value = audioOutputTypeName.value
     initialAudioOutputDeviceName.value = audioOutputDeviceName.value
+    initialKeepAwakeMode.value = keepAwakeMode.value
   }
 
   async function chooseProjectDir(): Promise<void> {
@@ -374,6 +383,9 @@ export function usePreferencesForm(): PreferencesForm {
     ) {
       audioDevices.selectDevice(audioOutputTypeName.value, audioOutputDeviceName.value)
     }
+    if (keepAwakeMode.value !== initialKeepAwakeMode.value) {
+      audioDevices.setKeepAwakeMode(keepAwakeMode.value)
+    }
     if (useGpuForStems.value !== initialUseGpuForStems.value) {
       window.silverdaw.setStemPrefs({ useGpu: useGpuForStems.value })
     }
@@ -426,6 +438,7 @@ export function usePreferencesForm(): PreferencesForm {
     backendsForSelectedDevice,
     showAdvancedBackend,
     pickBackend,
+    keepAwakeMode,
     loggingEnabled,
     devToolsEnabled,
     logDirectory,

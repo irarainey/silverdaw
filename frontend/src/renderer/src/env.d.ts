@@ -97,6 +97,8 @@ declare global {
       setAutosaveConfig(partial: { enabled?: boolean; intervalSeconds?: number }): void
       getAudioOutput(): Promise<{ typeName: string | null; deviceName: string | null }>
       setAudioOutput(partial: { typeName: string | null; deviceName: string | null }): void
+      getKeepAwakeMode(): Promise<'auto' | 'on' | 'off'>
+      setKeepAwakeMode(mode: 'auto' | 'on' | 'off'): void
       // ── Autosave folder + manifest IPCs ───────────────────────────────
       resolveAutosaveDir(projectId: string): Promise<{ dir: string; filePath: string } | null>
       writeAutosaveManifest(manifest: {

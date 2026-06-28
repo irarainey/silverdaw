@@ -99,6 +99,10 @@ export class PrefsService {
               ? (parsed.audioOutput as AudioOutputPrefs).deviceName
               : null
         },
+        keepAwakeMode:
+          parsed.keepAwakeMode === 'on' || parsed.keepAwakeMode === 'off'
+            ? parsed.keepAwakeMode
+            : defaults.keepAwakeMode,
         recentProjects: sanitiseRecentList(parsed.recentProjects),
         stems: sanitiseStemPrefs(parsed.stems, defaults.stems)
       }

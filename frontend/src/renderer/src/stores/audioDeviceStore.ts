@@ -7,7 +7,8 @@ import { log } from '@/lib/log'
 import type {
   AudioDeviceChangedPayload,
   AudioDevicesListPayload,
-  AudioDeviceTypeListing
+  AudioDeviceTypeListing,
+  KeepAwakeMode
 } from '@shared/bridge-protocol'
 
 interface PendingSelection {
@@ -41,6 +42,8 @@ interface AudioDeviceState {
   hydrated: boolean
   /** True while the backend's deferred startup scan is pending. */
   scanInProgress: boolean
+  /** User override for the output keep-awake dither + first-play wake burst. */
+  keepAwakeMode: KeepAwakeMode
 }
 
 export const useAudioDeviceStore = defineStore('audioDevice', {
@@ -57,7 +60,8 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
     lastError: null,
     startupFellBack: false,
     hydrated: false,
-    scanInProgress: false
+    scanInProgress: false,
+    keepAwakeMode: 'auto'
   }),
 
   getters: {
@@ -151,6 +155,27 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
     /** Bridge-ready fallback in case the proactive snapshot was missed. */
     requestInitialList(): void {
       sendBridge('AUDIO_DEVICES_REQUEST', { refresh: false })
+    },
+
+    /** Persist + apply a keep-awake override; pushes it to the backend live. */
+    setKeepAwakeMode(mode: KeepAwakeMode): void {
+      this.keepAwakeMode = mode
+      window.silverdaw.setKeepAwakeMode(mode)
+      sendBridge('AUDIO_KEEP_AWAKE_SET', { mode })
+    },
+
+    /**
+     * On every bridge (re)connect the backend starts at its `auto` default, so re-send the user's
+     * persisted keep-awake override once the engine is ready.
+     */
+    async applyKeepAwakeOnReady(): Promise<void> {
+      try {
+        this.keepAwakeMode = await window.silverdaw.getKeepAwakeMode()
+      } catch (err) {
+        log.warn('audio', `keep-awake hydrate failed, using auto: ${String(err)}`)
+        this.keepAwakeMode = 'auto'
+      }
+      sendBridge('AUDIO_KEEP_AWAKE_SET', { mode: this.keepAwakeMode })
     }
   }
 })

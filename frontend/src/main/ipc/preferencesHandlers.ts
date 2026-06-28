@@ -10,6 +10,7 @@ import type {
   AudioOutputPrefs,
   AutosavePrefs,
   DebugPrefs,
+  KeepAwakeMode,
   PathPrefs,
   ToastPrefs
 } from '../preferences'
@@ -163,6 +164,17 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
       return
     }
     store.audioOutput = { typeName: nextTypeName, deviceName: nextDeviceName }
+    prefs.schedulePrefsSave()
+  })
+
+  // ─── Output keep-awake override (auto / on / off) ───────────────────────
+  ipcMain.handle(IPC.prefs.getKeepAwake, (): KeepAwakeMode => prefs.get().keepAwakeMode)
+
+  ipcMain.on(IPC.prefs.setKeepAwake, (_evt, mode: unknown) => {
+    if (mode !== 'auto' && mode !== 'on' && mode !== 'off') return
+    const store = prefs.get()
+    if (store.keepAwakeMode === mode) return
+    store.keepAwakeMode = mode
     prefs.schedulePrefsSave()
   })
 

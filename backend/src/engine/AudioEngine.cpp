@@ -195,19 +195,27 @@ void AudioEngine::rebuildDevicesSnapshot(bool rescan)
     devicesSnapshot = std::move(snap);
 }
 
+void AudioEngine::setKeepAwakeMode(KeepAwakeMode mode)
+{
+    keepAwakeMode = mode;
+    updateKeepAwakePolicy();
+}
+
 void AudioEngine::updateKeepAwakePolicy()
 {
-    // Classify the active output endpoint by its Windows connection bus and only keep sleep-prone
-    // (USB) endpoints awake — so onboard / Bluetooth / virtual devices never incur the keep-alive
-    // tone or the one-time first-play wake pre-roll. Fail-safe: an unclassifiable device keeps
-    // keep-awake on, so a real USB DAC is never left to drop a beat.
+    // Classify the active output endpoint by its Windows connection bus; only positively-identified
+    // sleep-prone (USB) endpoints incur the keep-alive dither + one-time first-play wake, so onboard
+    // / Bluetooth / virtual / unclassifiable devices stay true digital silence and never play the
+    // audible wake burst. The user's keep-awake override (auto / on / off) takes final say so a
+    // misclassified endpoint can be corrected from Preferences.
     const auto setup = deviceManager.getAudioDeviceSetup();
     const auto bus = silverdaw::classifyOutputEndpoint(setup.outputDeviceName);
-    const bool keepAwake = silverdaw::busPrefersKeepAwake(bus);
+    const bool keepAwake = silverdaw::resolveKeepAwake(keepAwakeMode, bus);
     outputKeepAlive.setKeepAwakeEnabled(keepAwake);
     silverdaw::log::info("audio",
                          juce::String("output device '") + setup.outputDeviceName +
-                             "' classified " + silverdaw::toString(bus) + " -> keep-awake " +
+                             "' classified " + silverdaw::toString(bus) + " mode=" +
+                             silverdaw::toString(keepAwakeMode) + " -> keep-awake " +
                              (keepAwake ? "on" : "off"));
 }
 

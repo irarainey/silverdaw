@@ -26,6 +26,7 @@ const {
   backendsForSelectedDevice,
   showAdvancedBackend,
   pickBackend,
+  keepAwakeMode,
   loggingEnabled,
   devToolsEnabled,
   logDirectory,
@@ -193,6 +194,7 @@ function onSave(): void {
               v-else-if="activeTab === 'audio'"
               v-model:default-project-sample-rate="defaultProjectSampleRate"
               v-model:show-advanced-backend="showAdvancedBackend"
+              v-model:keep-awake-mode="keepAwakeMode"
               :unique-devices="uniqueDevices"
               :audio-output-type-name="audioOutputTypeName"
               :audio-has-selection="audioHasSelection"

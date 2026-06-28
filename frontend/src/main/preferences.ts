@@ -89,6 +89,14 @@ export interface AudioOutputPrefs {
   deviceName: string | null
 }
 
+/**
+ * User override for the output keep-awake policy. `auto` follows the backend's USB-bus
+ * classification; `on` forces the keep-alive dither + first-play wake burst (for a USB DAC that
+ * classification misses); `off` disables it (for a USB DAC that does not need it, or any endpoint
+ * where the wake burst becomes audible).
+ */
+export type KeepAwakeMode = 'auto' | 'on' | 'off'
+
 export interface Preferences {
   window: WindowPrefs
   ui: UiPrefs
@@ -97,6 +105,7 @@ export interface Preferences {
   paths: PathPrefs
   autosave: AutosavePrefs
   audioOutput: AudioOutputPrefs
+  keepAwakeMode: KeepAwakeMode
   stems: StemPrefs
   /** MRU `.silverdaw` paths, newest first, capped and case-insensitive. */
   recentProjects: string[]
@@ -150,6 +159,7 @@ export function buildDefaultPrefs(): Preferences {
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
+    keepAwakeMode: 'auto',
     stems: {
       useGpu: false,
       quality: 'balanced',

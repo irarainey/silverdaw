@@ -596,6 +596,12 @@ bool dispatchAudioDevice(const DispatchContext& ctx)
                                            payload.getProperty("deviceName", "").toString());
         silverdaw::handleAudioDeviceSelect(payload, engine, bridge);
     }
+    else if (type == "AUDIO_KEEP_AWAKE_SET")
+    {
+        silverdaw::log::info("bridge", "recv AUDIO_KEEP_AWAKE_SET mode=" +
+                                           payload.getProperty("mode", "").toString());
+        silverdaw::handleAudioKeepAwakeSet(payload, engine);
+    }
     else if (type == "AUDIO_FILE_PROBE")
     {
         silverdaw::handleAudioFileProbe(payload, engine, bridge, peakPool);

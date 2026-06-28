@@ -454,6 +454,7 @@ export interface BridgeOutboundMap {
   PREVIEW_SET_REVERSED: PreviewSetReversedPayload
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
+  AUDIO_KEEP_AWAKE_SET: AudioKeepAwakeSetPayload
   EDIT_UNDO: undefined
   EDIT_REDO: undefined
   PING: PingPayload
@@ -803,6 +804,18 @@ export interface AudioDevicesRequestPayload {
   refresh?: boolean
 }
 
+/**
+ * User override for the output keep-awake policy (the inaudible dither + first-play wake burst that
+ * holds sleep-prone USB DACs awake). `auto` follows the backend's bus classification (USB only);
+ * `on` forces it (for a USB DAC that classification misses); `off` disables it (for a USB DAC that
+ * does not need it, or any endpoint where the wake burst becomes audible).
+ */
+export type KeepAwakeMode = 'auto' | 'on' | 'off'
+
+export interface AudioKeepAwakeSetPayload {
+  mode: KeepAwakeMode
+}
+
 export type BridgeOutboundType = keyof BridgeOutboundMap
 
 /** Whether a given outbound type carries a payload, derived from the map so it
@@ -901,6 +914,7 @@ export const bridgeOutboundPayloadKinds: {
   PREVIEW_SET_REVERSED: 'payload',
   AUDIO_DEVICES_REQUEST: 'payload',
   AUDIO_DEVICE_SELECT: 'payload',
+  AUDIO_KEEP_AWAKE_SET: 'payload',
   EDIT_UNDO: 'none',
   EDIT_REDO: 'none',
   PING: 'payload'

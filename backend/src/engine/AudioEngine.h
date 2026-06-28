@@ -6,6 +6,7 @@
 #include "EnvelopeSnapshot.h"
 #include "Log.h"
 #include "OutputKeepAlive.h"
+#include "OutputDeviceClassifier.h"
 #include "TrackChain.h"
 #include "WarpProcessor.h"
 #include "MasterClockSource.h"
@@ -220,6 +221,10 @@ class AudioEngine
 
     juce::String selectOutputDevice(const juce::String& typeName, const juce::String& deviceName);
 
+    // User override for the keep-awake policy (auto / force-on / force-off). Applied immediately to
+    // the current endpoint. Message-thread only.
+    void setKeepAwakeMode(KeepAwakeMode mode);
+
     using DeviceListChangedCallback = std::function<void()>;
     void setDeviceListChangedCallback(DeviceListChangedCallback cb)
     {
@@ -285,7 +290,8 @@ class AudioEngine
     void rebuildDevicesSnapshot(bool rescan);
 
     // Classify the current output endpoint and enable/disable the keep-awake tone + one-time
-    // first-play wake accordingly (sleep-prone USB endpoints only). Message-thread only.
+    // first-play wake accordingly (sleep-prone USB endpoints only), subject to the user override
+    // in `keepAwakeMode`. Message-thread only.
     void updateKeepAwakePolicy();
 
     void onDeviceListChanged();
@@ -293,6 +299,9 @@ class AudioEngine
     AudioDevicesSnapshot devicesSnapshot;
     DeviceListChangedCallback deviceListChangedCallback;
     bool hasFullyScanned = false;
+
+    // User keep-awake override; autoDetect follows the bus classification. Message-thread only.
+    KeepAwakeMode keepAwakeMode = KeepAwakeMode::autoDetect;
 
     class DeviceChangeListener : public juce::ChangeListener
     {

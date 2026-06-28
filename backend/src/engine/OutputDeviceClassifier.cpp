@@ -8,13 +8,47 @@ bool busPrefersKeepAwake(OutputBus bus) noexcept
     switch (bus)
     {
         case OutputBus::usb:
-        case OutputBus::unknown:
             return true;
         case OutputBus::onboard:
         case OutputBus::bluetooth:
         case OutputBus::other:
+        case OutputBus::unknown:
         default:
             return false;
+    }
+}
+
+bool resolveKeepAwake(KeepAwakeMode mode, OutputBus bus) noexcept
+{
+    switch (mode)
+    {
+        case KeepAwakeMode::forceOn:
+            return true;
+        case KeepAwakeMode::forceOff:
+            return false;
+        case KeepAwakeMode::autoDetect:
+        default:
+            return busPrefersKeepAwake(bus);
+    }
+}
+
+std::optional<KeepAwakeMode> keepAwakeModeFromString(const juce::String& value) noexcept
+{
+    const auto v = value.trim().toLowerCase();
+    if (v == "auto") return KeepAwakeMode::autoDetect;
+    if (v == "on") return KeepAwakeMode::forceOn;
+    if (v == "off") return KeepAwakeMode::forceOff;
+    return std::nullopt;
+}
+
+const char* toString(KeepAwakeMode mode) noexcept
+{
+    switch (mode)
+    {
+        case KeepAwakeMode::forceOn: return "on";
+        case KeepAwakeMode::forceOff: return "off";
+        case KeepAwakeMode::autoDetect:
+        default: return "auto";
     }
 }
 

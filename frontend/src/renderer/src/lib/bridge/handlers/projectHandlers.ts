@@ -35,6 +35,8 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     }
     // Seed audio devices as soon as the bridge is ready.
     useAudioDeviceStore().requestInitialList()
+    // The backend resets to its keep-awake default on each connect; re-apply the saved override.
+    void useAudioDeviceStore().applyKeepAwakeOnReady()
     // Recovery distinguishes empty reconnect snapshots from restored resets.
     engineRecovery.onProjectStateApplied(payload)
   },

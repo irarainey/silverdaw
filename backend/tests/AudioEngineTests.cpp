@@ -329,18 +329,44 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         require(ka.shouldRun(), "re-enabling keep-awake on an open device must reopen the gate");
     }
 
-    // ── Pure keep-awake policy: only USB (and unclassifiable) endpoints are kept awake ──
+    // ── Pure keep-awake policy: only positively-classified USB endpoints are kept awake ──
     {
         require(silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::usb),
                 "USB endpoints (the sleep-prone offenders) must be kept awake");
-        require(silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::unknown),
-                "unknown endpoints must be kept awake (fail-safe: never drop a beat)");
+        require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::unknown),
+                "unknown endpoints must NOT be kept awake (no audible wake burst on misclassified "
+                "onboard devices; a missed USB DAC is covered by the user's force-on preference)");
         require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::onboard),
                 "onboard endpoints must not incur the keep-awake tone");
         require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::bluetooth),
                 "Bluetooth endpoints must not be kept awake by the keep-alive dither");
         require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::other),
                 "other endpoints must not be kept awake");
+    }
+
+    // ── Keep-awake user override resolves over the bus classification ──
+    {
+        using silverdaw::KeepAwakeMode;
+        using silverdaw::OutputBus;
+        // autoDetect mirrors busPrefersKeepAwake.
+        require(silverdaw::resolveKeepAwake(KeepAwakeMode::autoDetect, OutputBus::usb),
+                "auto on a USB endpoint keeps awake");
+        require(! silverdaw::resolveKeepAwake(KeepAwakeMode::autoDetect, OutputBus::unknown),
+                "auto on an unclassifiable endpoint stays silent");
+        // forceOn rescues a misclassified USB DAC; forceOff silences an unwanted dither.
+        require(silverdaw::resolveKeepAwake(KeepAwakeMode::forceOn, OutputBus::unknown),
+                "force-on keeps awake even when classification missed the USB DAC");
+        require(! silverdaw::resolveKeepAwake(KeepAwakeMode::forceOff, OutputBus::usb),
+                "force-off silences the dither even on a USB endpoint");
+
+        require(silverdaw::keepAwakeModeFromString("auto") == KeepAwakeMode::autoDetect,
+                "'auto' parses to autoDetect");
+        require(silverdaw::keepAwakeModeFromString(" ON ") == KeepAwakeMode::forceOn,
+                "'on' parses to forceOn (trimmed, case-insensitive)");
+        require(silverdaw::keepAwakeModeFromString("off") == KeepAwakeMode::forceOff,
+                "'off' parses to forceOff");
+        require(! silverdaw::keepAwakeModeFromString("bogus").has_value(),
+                "an unknown mode string is rejected");
     }
 
     // ── MeteringSource integration: the tone survives a low master gain ──

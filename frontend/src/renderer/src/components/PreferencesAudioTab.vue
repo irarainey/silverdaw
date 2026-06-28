@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { describeBackend, type UniqueDevice } from '@/lib/audio/audioOutputPicker'
+import type { KeepAwakeMode } from '@shared/bridge-protocol'
 
 defineProps<{
   uniqueDevices: readonly UniqueDevice[]
@@ -21,6 +22,25 @@ defineProps<{
 
 const defaultProjectSampleRate = defineModel<number>('defaultProjectSampleRate', { required: true })
 const showAdvancedBackend = defineModel<boolean>('showAdvancedBackend', { required: true })
+const keepAwakeMode = defineModel<KeepAwakeMode>('keepAwakeMode', { required: true })
+
+const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hint: string }> = [
+  {
+    value: 'auto',
+    label: 'Automatic (recommended)',
+    hint: 'Only USB audio interfaces are kept awake. Onboard and other devices stay silent.'
+  },
+  {
+    value: 'on',
+    label: 'Always on',
+    hint: 'Force the keep-awake signal — use if a USB DAC drops the first beat and Automatic did not catch it.'
+  },
+  {
+    value: 'off',
+    label: 'Off',
+    hint: 'Never send the keep-awake signal. Use if you hear a faint noise or burst before playback starts.'
+  }
+]
 </script>
 
 <template>
@@ -190,5 +210,36 @@ const showAdvancedBackend = defineModel<boolean>('showAdvancedBackend', { requir
     >
       {{ lastError }}
     </p>
+
+    <div>
+      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+        Keep audio device awake
+      </h2>
+      <p class="mb-3 text-zinc-500">
+        Some USB audio interfaces mute their own output on silence and swallow the
+        start of the first beat. Silverdaw sends an inaudible signal to keep them
+        awake. Leave this on <strong class="text-zinc-300">Automatic</strong> unless
+        you hear a noise before playback, or a USB device still drops its first beat.
+      </p>
+      <div class="space-y-2">
+        <label
+          v-for="option in keepAwakeOptions"
+          :key="option.value"
+          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+        >
+          <input
+            v-model="keepAwakeMode"
+            type="radio"
+            name="keep-awake-mode"
+            :value="option.value"
+            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+          >
+          <span class="flex-1">
+            <span class="block font-medium text-zinc-200">{{ option.label }}</span>
+            <span class="mt-0.5 block text-zinc-500">{{ option.hint }}</span>
+          </span>
+        </label>
+      </div>
+    </div>
   </section>
 </template>

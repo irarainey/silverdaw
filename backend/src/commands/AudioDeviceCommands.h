@@ -19,6 +19,7 @@ void broadcastAudioDevicesList(BridgeServer& bridge, const juce::var& envelope, 
 
 void handleAudioDevicesRequest(const juce::var& payload, AudioEngine& engine, BridgeServer& bridge);
 void handleAudioDeviceSelect(const juce::var& payload, AudioEngine& engine, BridgeServer& bridge);
+void handleAudioKeepAwakeSet(const juce::var& payload, AudioEngine& engine);
 
 // Reader construction runs on `peakPool` so transport ticks keep draining.
 void handleAudioFileProbe(const juce::var& payload, AudioEngine& engine, BridgeServer& bridge,
