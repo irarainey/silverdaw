@@ -189,7 +189,17 @@ export const clipEditActions = {
         semitones: clip.semitones,
         cents: clip.cents,
         pendingAutoWarp: clip.pendingAutoWarp,
-        reversed: clip.reversed
+        reversed: clip.reversed,
+        locked: clip.locked,
+        // Carry the source's exact rendered footprint and volume shape so the
+        // duplicate is a true copy from the first frame, before the warp /
+        // envelope acks land.
+        effectiveDurationMs: clip.effectiveDurationMs,
+        effectiveTempoRatio: clip.effectiveTempoRatio,
+        effectiveWarpActive: clip.effectiveWarpActive,
+        envelopePoints: clip.envelopePoints
+          ? clip.envelopePoints.map((p) => ({ ...p }))
+          : undefined
       }
       this.clips[newId] = copy
       const insertAt = track.clipIds.indexOf(tail.id)
@@ -202,7 +212,8 @@ export const clipEditActions = {
       const clipEnd = copy.startMs + clipEffDur
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
 
-      // One undo step for the duplicate: CLIP_ADD plus its name/warp/reverse replay.
+      // One undo step for the duplicate: CLIP_ADD plus its name / warp / reverse /
+      // envelope / lock replay.
       runInUndoGroup('Duplicate clip', () => {
         sendBridge('CLIP_ADD', {
           trackId: clip.trackId,
@@ -231,6 +242,14 @@ export const clipEditActions = {
         // Replay reverse so the duplicate plays backwards like its source.
         if (clip.reversed === true) {
           sendBridge('CLIP_SET_REVERSED', { clipId: newId, reversed: true })
+        }
+        // Replay the volume shape so the duplicate keeps the source's fades.
+        if (copy.envelopePoints && copy.envelopePoints.length >= 2) {
+          this.setClipEnvelope(newId, copy.envelopePoints)
+        }
+        // Replay the lock so the duplicate inherits the source's lock state.
+        if (clip.locked === true) {
+          sendBridge('CLIP_SET_LOCKED', { clipId: newId, locked: true })
         }
       })
       log.info('project', `duplicateClip id=${clipId} -> newId=${newId} @${newStartMs}ms`)
