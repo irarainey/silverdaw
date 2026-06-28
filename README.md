@@ -44,6 +44,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Automatic analysis.** Imported audio is analysed for key, tempo (BPM), and
   beat positions, so clips can line up musically. When detection is uncertain you
   can set a BPM by hand and slide the beat grid over the waveform to line it up.
+- **Metronome.** Toggle an audible click that follows the project tempo from the
+  timing display, so you can check by ear whether a loop or beat sits in time
+  with the BPM. It is off by default and its state is saved with the project.
 - **Stem separation.** Split a track into vocals, drums, bass, and other parts
   and drop each onto its own track to remix and recombine — non-destructive, with
   optional GPU acceleration. Each stem keeps the original's tempo, key, and
@@ -56,14 +59,15 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   its generated stems and samples beside the project file, so the whole folder
   can be moved or synced between machines (for example via cloud storage) and
   still open — as long as the original source files sit at the same location.
-- **Track, project, and master controls.** Per-track volume faders, mute, solo,
+- **Track, project, and master controls.** Per-track volume faders with a
+  bipolar equal-power **Pan** control in each track header, plus mute, solo,
   and a collapsible bottom panel with **Track FX**, **Project FX**, and
   **Library** tabs. Track FX gives each track a Tone EQ (Bass / Mid / Treble),
   a bipolar **Filter** (a single DJ-style sweep from low-pass through off to
-  high-pass), an equal-power Pan control, a single-knob
-  Leveler (a gentle compressor), plus Reverb and Delay sends; Project FX hosts
-  the song-wide Reverb and Delay those sends feed. Plus drag-to-resize and
-  reorder tracks, and a master output with live metering.
+  high-pass), a single-knob Leveler (a gentle compressor), plus Reverb and
+  Delay sends; Project FX hosts the song-wide Reverb and Delay those sends
+  feed. Plus drag-to-resize and reorder tracks, and a master output with live
+  metering.
 - **Per-clip volume shaping.** Draw a volume envelope right on a clip's waveform
   in the Clip Editor to swell, duck, fade in, or fade out, or chop a selected
   range to silence or full volume with hard edges — all non-destructive

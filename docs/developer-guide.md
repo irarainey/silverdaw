@@ -136,6 +136,11 @@ Silverdaw currently supports the core arrangement workflow:
   directly. Faders are tapered in dB (range `-∞..+6 dB`) with
   0 dB landing near the top of travel and a snap-to-`-∞` dead zone at the
   bottom. Typed input accepts forms like `-3`, `+1.5`, `0 dB`, `-inf` or `-∞`.
+- Set track pan with the bipolar **Pan** slider directly below the gain fader in
+  each track header — equal-power, signed `[-1, 1]` (`0` = centre), with a
+  `C` / `L<n>` / `R<n>` readout and double-click to recentre. The backend
+  [`BusGraph`](../backend/src/engine/BusGraph.h) applies the pan to the dry path
+  after the pre-pan send tap.
 - Master output volume in the transport bar: stereo peak meter (live + decayed
   hold) plus a tapered dB fader (`-∞..0 dB`, no boost). Double-click the dB
   readout to type a value. The master gain is persisted with the project,
@@ -150,8 +155,7 @@ Silverdaw currently supports the core arrangement workflow:
   the surface never feels broken. **Track FX** edits the selected track and hosts
   a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) — a **Filter** rack
   (a single bipolar DJ-style sweep, low-pass at the left through off at centre
-  to high-pass at the right), a **Pan** control (equal-power, signed
-  `[-1, 1]`, unity at centre), a **Leveler** (a single **Amount** knob `0..1`
+  to high-pass at the right), a **Leveler** (a single **Amount** knob `0..1`
   driving a hand-rolled stereo-linked soft-knee compressor; Amount 0 is a
   bit-exact passthrough), and a **Reverb & Delay** rack setting how much the
   track feeds the project-wide Reverb and Delay buses. **Project FX** hosts the
@@ -301,8 +305,9 @@ Silverdaw currently supports the core arrangement workflow:
   tweak a trim with Ctrl+Z/Y inside the dialog without touching the
   project-level history; only when the user clicks **Save** or
   **Save Selection to Library** does the change land in the main undo stack.
-  Compound operations like clip split / duplicate currently emit
-  multiple undo steps; bundling them is a follow-up.
+  Compound operations like clip split, duplicate, and paste run inside an
+  explicit undo group (`EDIT_GROUP_BEGIN` / `EDIT_GROUP_END`) so the whole action
+  collapses to a single undo step.
 
 Playback is always served from the decoded WAV cache; original compressed sources
 (MP3, M4A, …) are only used to generate that cache. This keeps the read-ahead
@@ -314,8 +319,7 @@ search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
 wider mixer / effects / automation work (a deeper per-clip processor chain —
 saturation — applied both live and in mixdown, beyond the per-track Tone EQ +
 Filter, the per-track Leveler, the project-wide Reverb and Delay sends,
-and the per-clip Volume Shape that already ship), loop slicing, grouping compound
-operations (split / duplicate) into a single undo step, and a CI matrix that
+and the per-clip Volume Shape that already ship), loop slicing, and a CI matrix that
 enforces a coverage floor over the existing backend and frontend test suites.
 
 ## Bridge protocol
@@ -462,6 +466,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         viewSelectedTrack?, viewFxPanelOpen?,
         audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
         masterVolume?, exportSettingsJson?, barCounterStart?, mixdownStartBar?,
+        metronomeEnabled?,
         reverbSize?, reverbDecay?, reverbTone?, reverbMix?,
         delayNoteValue?, delayFeedback?, delayTone?, delayMix?]
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
@@ -577,6 +582,17 @@ bottom-panel FX tabs, round-tripped through `PROJECT_SET_VIEW`.
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
 added, moved or removed.
+
+`metronomeEnabled` toggles an audible click track that the backend
+[`Metronome`](../backend/src/engine/Metronome.h) renders in time with the project
+BPM during playback. The click is phase-locked to the absolute transport sample
+position (tempo- and seek-correct) and mixed in **after** the master-gain stage in
+the metering source, so master volume never silences it. The toggle lives in the
+transport bar's timing display (top-right) and defaults to off. The flag is
+persisted with the project but **silently**: its setter runs under a dirty
+suppression guard and is excluded from the undo history, so flipping this
+monitoring aid never marks the project dirty or adds an undo step. It is omitted
+from save (and from the `PROJECT_STATE` broadcast) while at its default-off value.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
 Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 60..400) is
@@ -820,11 +836,18 @@ The keep-alive — both the dither **and** the wake burst / pre-roll — is gate
 [`OutputDeviceClassifier`](../backend/src/engine/OutputDeviceClassifier.cpp) walks
 the Windows device tree (MMDevice COM + Config Manager) from the active render
 endpoint up to its physical bus enumerator (`USB` / `HDAUDIO` / `PCI` / `BTH`…) and
-`AudioEngine::updateKeepAwakePolicy` enables keep-awake only for USB endpoints
-(the known offenders). It is **fail-safe**: an unclassifiable endpoint
-(`OutputBus::unknown`) keeps keep-awake on, so a real USB DAC is never left to drop
-a beat, while onboard / Bluetooth / virtual devices incur no keep-alive at all (no
-dither and no wake pre-roll, so they play from the first sample). The policy
+`AudioEngine::updateKeepAwakePolicy` enables keep-awake only for **positively
+classified USB** endpoints (the known offenders). An unclassifiable endpoint
+(`OutputBus::unknown`) — like onboard, Bluetooth, and virtual devices — gets **no
+keep-alive at all** (no dither and no wake burst, so it plays from the first
+sample); the keep-alive's broadband wake burst is plainly audible on a never-muted
+onboard card, so it is reserved for the devices that actually sleep.
+A user preference resolves the final decision through pure
+`resolveKeepAwake(mode, bus)`: **Automatic** (the default) follows the USB-only
+classification, **Always on** forces keep-awake for the selected output (for a USB
+DAC the classifier misses), and **Off** disables it. The mode is persisted in
+`preferences.json` and re-applied to the backend on every connect via
+`AUDIO_KEEP_AWAKE_SET` (the engine defaults to **Automatic** each launch). The policy
 is re-evaluated on init, device selection, and device-list changes; the keep-alive only
 ever runs for the **currently selected** output, and only if it is sleep-prone. The
 gate simply stops writing — returning the output to **truly silent** digital zero —
@@ -1031,6 +1054,11 @@ item reads as verified music. In the Clip Editor a **slide-the-grid** drag gestu
 shifts `beatAnchorSec` live (local-only preview, committed on release) to correct
 the downbeat phase; the markers track the drag in real time and the commit marks
 the Clip Editor dirty so its **Save** button stays available to confirm and close.
+Alongside the drag, a beat-grid panel offers explicit corrections: **÷2 / ×2**
+octave buttons that halve or double the source BPM while holding the phase anchor,
+**±5 ms** fine-nudge buttons, and a **half-beat** shift for when the grid has
+locked onto the off-beat. Each commits through the same
+`LIBRARY_ITEM_SET_MANUAL_TEMPO` path.
 Manual values survive save / load because `ensureBpmDetection`
 is idempotent and skips a source that already has a BPM.
 
@@ -1049,11 +1077,11 @@ combined gate avoids false-positive flags on real music while still catching rai
 ambience, vocal one-shots and sound effects that BTrack would otherwise report
 bogus tempo / beat positions for.
 
-Crucially, **`lowConfidence` no longer classifies an item as a sample.** It is a
+Crucially, **`lowConfidence` does not classify an item as a sample.** It is a
 *tempo-unverified* signal: the grid is still drawn and the clip is still warpable,
-so a musical track BTrack is merely unsure about no longer loses its beat grid.
-(The classification helper `libraryItemTempoUnverified(item, byId)` still exposes
-this signal, but the UI no longer surfaces a separate amber marker for it.) The
+so a musical track BTrack is merely unsure about keeps its beat grid.
+(The classification helper `libraryItemTempoUnverified(item, byId)` exposes this
+signal, but the UI does not surface a separate amber marker for it.) The
 renderer treats a library item as a simple audio file via a single
 helper, `libraryItemIsSimple(item, byId)`, with the resolution order:
 
@@ -1090,7 +1118,7 @@ Drag-snap on a clip with a known source tempo locks onto the same grid: instead
 of snapping the clip's left edge to the project sub-beat, it snaps the first
 source beat inside the clip's window. With the project BPM seeded to the source
 BPM (the common case), every subsequent marker on the clip then lines up exactly
-with a project grid sub-beat. Drag with `Alt` for the legacy 1 ms unsnapped
+with a project grid sub-beat. Drag with `Alt` for fine 1 ms unsnapped
 behaviour.
 
 Non-linked edge-trim drags use the same project grid by default, snapping the
