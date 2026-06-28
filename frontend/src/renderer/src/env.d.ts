@@ -73,6 +73,7 @@ declare global {
       resolveMixdownDefaultPath(projectFilePath: string | null, projectName: string, format: 'wav' | 'mp3' | 'flac' | 'aiff'): Promise<string>
       confirmMixdownOverwrite(filePath: string): Promise<'overwrite' | 'cancel' | 'not-found'>
       prepareProjectOpen(filePath: string): Promise<boolean>
+      prepareProjectRecovery(autosavePath: string, originalPath: string | null): Promise<boolean>
       consumePendingOpenPath(): Promise<string | null>
       onOpenProjectFromPath(handler: (filePath: string) => void): () => void
       readPeaksCacheFile(cachePath: string): Promise<ArrayBuffer | null>

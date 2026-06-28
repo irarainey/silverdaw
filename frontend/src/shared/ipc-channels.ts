@@ -65,6 +65,7 @@ export const IPC = {
     chooseOpen: 'project:chooseOpen',
     chooseSaveAs: 'project:chooseSaveAs',
     prepareOpen: 'project:prepareOpen',
+    prepareRecovery: 'project:prepareRecovery',
     consumePendingOpenPath: 'project:consumePendingOpenPath',
     openFromPath: 'project:openFromPath'
   },

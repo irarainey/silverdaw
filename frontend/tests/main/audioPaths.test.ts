@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  getProjectMediaDirs,
   isAllowedAudioPath,
   isPrunableArtifactSubdir,
   isWithinSamplesWriteRoot,
   isWithinStemsWriteRoot,
   registerIssuedPath,
+  registerProjectMediaRoots,
   registerSamplesWriteRoot,
   registerStemsWriteRoot,
   registerTrustedReadRoot
@@ -117,5 +119,21 @@ describe('audioPaths allow-list', () => {
     expect(isPrunableArtifactSubdir(abs('Prune', 'stems', '..', 'escape'))).toBe(false)
     expect(isPrunableArtifactSubdir('relative/stems/x')).toBe(false)
     expect(isPrunableArtifactSubdir(42)).toBe(false)
+  })
+
+  it('points the project media store at the registered project folder', () => {
+    // Regression for the autosave-recovery bug: media (cover art + tags) must resolve beside the
+    // project folder it was registered with. Recovery registers the ORIGINAL project folder, not
+    // the autosave bucket — so the recovered project's media store still resolves.
+    const projectDir = abs('Mixes', 'MyMix')
+    registerProjectMediaRoots(projectDir)
+    const dirs = getProjectMediaDirs()
+    expect(dirs?.metadataDir).toBe(abs('Mixes', 'MyMix', 'metadata'))
+    expect(dirs?.coversDir).toBe(abs('Mixes', 'MyMix', 'covers'))
+
+    // Re-registering at a different folder (a later open/recovery) moves the store.
+    const otherDir = abs('Mixes', 'Other')
+    registerProjectMediaRoots(otherDir)
+    expect(getProjectMediaDirs()?.metadataDir).toBe(abs('Mixes', 'Other', 'metadata'))
   })
 })

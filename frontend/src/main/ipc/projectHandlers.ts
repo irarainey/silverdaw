@@ -2,7 +2,7 @@
 // the Recent Projects MRU, project pre-open path allow-listing, and consuming a
 // pending launch path. Registered from main/index.ts.
 
-import { ipcMain, dialog, type BrowserWindow } from 'electron'
+import { ipcMain, app, dialog, type BrowserWindow } from 'electron'
 import { readFile, mkdir, cp } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
@@ -110,36 +110,38 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
     }
   )
 
-  // Pre-register project audio paths; `registerIssuedPath` still enforces the allow-list.
-  ipcMain.handle(IPC.project.prepareOpen, async (_evt, filePath: unknown): Promise<boolean> => {
-    const canonical = canonicaliseProjectPath(filePath)
-    if (canonical === null) return false
+  // Pre-register a project's audio paths before load: trust its artifact roots (stems /
+  // samples / media store) for reads, and allow-list every `filePath` in the project JSON.
+  // `contentPath` is the file to scan (the .silverdaw being loaded); `rootsDir` is the folder
+  // the project's artifacts live beside. For a normal open these are the same directory. For a
+  // RECOVERY they differ: the content is the autosave copy in the autosave bucket, but the
+  // artifacts (samples, stems, media store) live beside the ORIGINAL project file — so the roots
+  // must be registered there, not against the autosave directory.
+  async function prepareProjectPaths(contentPath: string, rootsDir: string): Promise<boolean> {
     try {
-      const content = await readFile(canonical, 'utf8')
-      // Project JSON may contain `filePath` anywhere in the tree. Project-internal
-      // artifact paths are stored relative to the project folder (portability);
-      // resolve them against it before allow-listing so the renderer can read them.
-      const projectDir = dirname(canonical)
-      // Stems for this project live beside it; trust that folder for reads + sidecar.
-      const stemsRoot = join(projectDir, 'stems')
-      const samplesRoot = join(projectDir, 'samples')
+      const content = await readFile(contentPath, 'utf8')
+      // Stems + samples for this project live beside it; trust those folders for reads + sidecar.
+      const stemsRoot = join(rootsDir, 'stems')
+      const samplesRoot = join(rootsDir, 'samples')
       registerStemsWriteRoot(stemsRoot)
-      // Samples (and their music-sample sidecars) likewise live beside the project.
       registerSamplesWriteRoot(samplesRoot)
-      // Clear any empty per-source artifact folder left behind by a removal whose
-      // folder couldn't be deleted last session (a transient sync/scan lock that has
-      // since cleared). Best-effort; never touches folders that still hold files.
+      // Clear any empty per-source artifact folder left behind by a removal whose folder couldn't
+      // be deleted last session. Best-effort; never touches folders that still hold files.
       void sweepEmptyArtifactSubdirs(stemsRoot)
       void sweepEmptyArtifactSubdirs(samplesRoot)
       // Central per-source metadata/cover store (keyed by media GUID) beside the project.
-      registerProjectMediaRoots(projectDir)
+      registerProjectMediaRoots(rootsDir)
       let parsed: unknown
       try {
         parsed = JSON.parse(content)
       } catch (parseErr) {
-        logMain('WARN ', 'project:prepareOpen', `malformed project JSON at ${canonical}:`, parseErr)
+        logMain('WARN ', 'project:prepare', `malformed project JSON at ${contentPath}:`, parseErr)
         return false
       }
+      // Project JSON may contain `filePath` anywhere in the tree. Project-internal artifact paths
+      // are stored relative to the project folder (portability); resolve them against `rootsDir`
+      // before allow-listing so the renderer can read them. (Autosave content stores these
+      // absolute, so resolution is a no-op there.)
       const visit = (node: unknown): void => {
         if (Array.isArray(node)) {
           for (const item of node) visit(item)
@@ -148,7 +150,7 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
         if (node !== null && typeof node === 'object') {
           for (const [k, v] of Object.entries(node)) {
             if (k === 'filePath' && typeof v === 'string' && v.length > 0) {
-              registerIssuedPath(isAbsolute(v) ? v : join(projectDir, v))
+              registerIssuedPath(isAbsolute(v) ? v : join(rootsDir, v))
             } else {
               visit(v)
             }
@@ -158,10 +160,39 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       visit(parsed)
       return true
     } catch (err) {
-      logMain('WARN ', 'project:prepareOpen', `could not read project file ${canonical}:`, err)
+      logMain('WARN ', 'project:prepare', `could not read project file ${contentPath}:`, err)
       return false
     }
+  }
+
+  // Pre-register project audio paths; `registerIssuedPath` still enforces the allow-list.
+  ipcMain.handle(IPC.project.prepareOpen, async (_evt, filePath: unknown): Promise<boolean> => {
+    const canonical = canonicaliseProjectPath(filePath)
+    if (canonical === null) return false
+    return prepareProjectPaths(canonical, dirname(canonical))
   })
+
+  // Recovery preloads from the autosave copy, but the project's artifacts live beside the ORIGINAL
+  // file (or in the temp workspace if it was never saved). Allow-list the autosave content while
+  // registering the artifact roots at the real project folder, so samples / stems / cover art +
+  // tags resolve to where they actually are — not the autosave bucket (which broke restored links).
+  ipcMain.handle(
+    IPC.project.prepareRecovery,
+    async (_evt, autosavePath: unknown, originalPath: unknown): Promise<boolean> => {
+      const canonicalAutosave = canonicaliseProjectPath(autosavePath)
+      if (canonicalAutosave === null) return false
+      const canonicalOriginal =
+        typeof originalPath === 'string' && originalPath.length > 0
+          ? canonicaliseProjectPath(originalPath)
+          : null
+      // Saved project → artifacts beside the original file; never-saved → the temp workspace
+      // (where unsaved imports/samples/stems were written, mirroring stemHandlers startup).
+      const rootsDir = canonicalOriginal !== null
+        ? dirname(canonicalOriginal)
+        : join(app.getPath('temp'), 'Silverdaw')
+      return prepareProjectPaths(canonicalAutosave, rootsDir)
+    }
+  )
 
   // Consume a pending launch path once so renderer reloads do not reopen it.
   ipcMain.handle(IPC.project.consumePendingOpenPath, (): string | null => ctx.consumePendingOpenPath())

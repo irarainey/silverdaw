@@ -119,6 +119,10 @@ const api = {
   /** Pre-register project audio paths for trusted post-load reads. */
   prepareProjectOpen: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.project.prepareOpen, filePath),
+  /** Pre-register a recovered project's audio paths: allow-list the autosave content but trust the
+   *  ORIGINAL project folder's artifact roots (samples/stems/media), so restored links resolve. */
+  prepareProjectRecovery: (autosavePath: string, originalPath: string | null): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.project.prepareRecovery, autosavePath, originalPath),
   /** Consume a pending `.silverdaw` launch path exactly once. */
   consumePendingOpenPath: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC.project.consumePendingOpenPath),

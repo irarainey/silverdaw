@@ -55,12 +55,16 @@ async function restore(entry: RecoverableEntry): Promise<void> {
   if (busyId.value) return
   busyId.value = entry.projectId
   try {
-    // Preload the audio paths inside the autosave so the renderer's
-    // post-load metadata refresh works (same allow-list seeding that
-    // a normal File > Open uses).
-    const prepared = await window.silverdaw.prepareProjectOpen(entry.autosavePath)
+    // Preload the audio paths inside the autosave so the renderer's post-load metadata refresh
+    // works (same allow-list seeding a normal File ▸ Open uses) — but trust the ORIGINAL project
+    // folder's artifact roots (samples/stems/cover art + tags), which live beside the original
+    // file, not in the autosave bucket. Otherwise restored sample/media links break.
+    const prepared = await window.silverdaw.prepareProjectRecovery(
+      entry.autosavePath,
+      entry.originalPath
+    )
     if (!prepared) {
-      log.warn('recovery', `prepareProjectOpen failed for ${entry.autosavePath}`)
+      log.warn('recovery', `prepareProjectRecovery failed for ${entry.autosavePath}`)
     }
     const result = await project.requestLoadRecovery(
       entry.autosavePath,
