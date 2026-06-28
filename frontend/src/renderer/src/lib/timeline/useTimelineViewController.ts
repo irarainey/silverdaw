@@ -166,6 +166,7 @@ export function useTimelineViewController(
     scrollX,
     scrollY,
     getClipHitRegions: () => clipHitRegions,
+    headerWidth,
     dialogs
   })
   const {

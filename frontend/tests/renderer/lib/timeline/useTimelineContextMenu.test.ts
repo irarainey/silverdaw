@@ -95,6 +95,7 @@ function setupMenu(opts: {
     scrollX: ref(0),
     scrollY: ref(0),
     getClipHitRegions: () => [],
+    headerWidth: () => 200,
     dialogs,
     chooseAudioFile: opts.chooseAudioFile,
     startStemSeparation: opts.startStemSeparation
@@ -156,6 +157,19 @@ describe('useTimelineContextMenu — items builder', () => {
       item: makeAudioFileItem()
     })
     expect(commandsOf(menu)).not.toContain('clip.unlink')
+  })
+
+  it('offers Cut / Copy / Paste; Paste is gated on a non-empty clipboard', () => {
+    const menu = setupMenu({ clip: makeClip(), item: makeAudioFileItem() })
+    const cmds = commandsOf(menu)
+    expect(cmds).toContain('clip.cut')
+    expect(cmds).toContain('clip.copy')
+    expect(cmds).toContain('clip.paste')
+    // Empty clipboard -> Paste disabled.
+    expect(findItem(menu, 'clip.paste')?.disabled).toBe(true)
+
+    useProjectStore().clipboardClip = { libraryItemId: 'src' } as never
+    expect(findItem(menu, 'clip.paste')?.disabled).toBeFalsy()
   })
 
   it('Split is enabled only when the playhead sits strictly inside the clip on the selected track', () => {
@@ -300,6 +314,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       scrollX: ref(0),
       scrollY: ref(0),
       getClipHitRegions: () => [],
+      headerWidth: () => 200,
       dialogs
     })
     menu.contextMenuClipId.value = clip.id
@@ -324,6 +339,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       scrollX: ref(0),
       scrollY: ref(0),
       getClipHitRegions: () => [],
+      headerWidth: () => 200,
       dialogs
     })
     menu.contextMenuClipId.value = clip.id
@@ -363,6 +379,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       scrollX: ref(0),
       scrollY: ref(0),
       getClipHitRegions: () => [],
+      headerWidth: () => 200,
       dialogs: useClipDialogs(),
       chooseAudioFile
     })
@@ -388,6 +405,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       scrollX: ref(0),
       scrollY: ref(0),
       getClipHitRegions: () => [],
+      headerWidth: () => 200,
       dialogs: useClipDialogs()
     })
     menu.contextMenuClipId.value = 'ghost'
@@ -406,6 +424,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       scrollX: ref(0),
       scrollY: ref(0),
       getClipHitRegions: () => [],
+      headerWidth: () => 200,
       dialogs: useClipDialogs()
     })
     menu.contextMenuClipId.value = clip.id
@@ -424,6 +443,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       scrollX: ref(0),
       scrollY: ref(0),
       getClipHitRegions: () => [],
+      headerWidth: () => 200,
       dialogs: useClipDialogs()
     })
 
@@ -434,6 +454,123 @@ describe('useTimelineContextMenu — command dispatch', () => {
     menu.contextMenuClipId.value = clip.id
     menu.onContextMenuCommand('clip.unlock')
     expect(lockSpy).toHaveBeenLastCalledWith(clip.id, false)
+  })
+
+  it('clip.copy selects the clip + its track and copies it', () => {
+    const clip = makeClip()
+    const project = useProjectStore()
+    project.clips = { [clip.id]: clip }
+    const selectClip = vi.spyOn(project, 'selectClip').mockImplementation(() => {})
+    const selectTrack = vi.spyOn(project, 'selectTrack').mockImplementation(() => {})
+    const copy = vi.spyOn(project, 'copySelectedClip').mockReturnValue(true)
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      headerWidth: () => 200,
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.copy')
+
+    expect(selectClip).toHaveBeenCalledWith(clip.id)
+    expect(selectTrack).toHaveBeenCalledWith(clip.trackId)
+    expect(copy).toHaveBeenCalledTimes(1)
+  })
+
+  it('clip.cut selects the clip + its track and cuts it', () => {
+    const clip = makeClip()
+    const project = useProjectStore()
+    project.clips = { [clip.id]: clip }
+    const selectClip = vi.spyOn(project, 'selectClip').mockImplementation(() => {})
+    const selectTrack = vi.spyOn(project, 'selectTrack').mockImplementation(() => {})
+    const cut = vi.spyOn(project, 'cutSelectedClip').mockReturnValue(true)
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      headerWidth: () => 200,
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.cut')
+
+    expect(selectClip).toHaveBeenCalledWith(clip.id)
+    expect(selectTrack).toHaveBeenCalledWith(clip.trackId)
+    expect(cut).toHaveBeenCalledTimes(1)
+  })
+
+  it('clip.paste targets the clip\'s track and pastes at the playhead', () => {
+    const clip = makeClip()
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    project.clips = { [clip.id]: clip }
+    transport.positionMs = 1_234
+    const selectTrack = vi.spyOn(project, 'selectTrack').mockImplementation(() => {})
+    const paste = vi.spyOn(project, 'pasteClipAtPlayhead').mockReturnValue(null)
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      headerWidth: () => 200,
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.paste')
+
+    expect(selectTrack).toHaveBeenCalledWith(clip.trackId)
+    expect(paste).toHaveBeenCalledWith(1_234)
+  })
+
+  it('empty track-lane menu offers a single Paste, gated on the clipboard', () => {
+    const project = useProjectStore()
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      headerWidth: () => 200,
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = null
+    menu.contextMenuTrackId.value = 'track-1'
+
+    expect(menu.contextMenuItems.value.map((i) => i.command)).toEqual(['track.paste'])
+    expect(menu.contextMenuItems.value[0]?.disabled).toBe(true)
+
+    project.clipboardClip = { libraryItemId: 'src' } as never
+    expect(menu.contextMenuItems.value[0]?.disabled).toBeFalsy()
+  })
+
+  it('track.paste targets the right-clicked track and pastes at the playhead', () => {
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.positionMs = 2_500
+    const selectTrack = vi.spyOn(project, 'selectTrack').mockImplementation(() => {})
+    const paste = vi.spyOn(project, 'pasteClipAtPlayhead').mockReturnValue(null)
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      headerWidth: () => 200,
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = null
+    menu.contextMenuTrackId.value = 'track-9'
+    menu.onContextMenuCommand('track.paste')
+
+    expect(selectTrack).toHaveBeenCalledWith('track-9')
+    expect(paste).toHaveBeenCalledWith(2_500)
+    // Target is cleared after dispatch.
+    expect(menu.contextMenuTrackId.value).toBeNull()
   })
 
   it('clip.reverse toggles project.setClipReversed for a source clip', () => {
@@ -449,6 +586,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       scrollX: ref(0),
       scrollY: ref(0),
       getClipHitRegions: () => [],
+      headerWidth: () => 200,
       dialogs: useClipDialogs()
     })
     menu.contextMenuClipId.value = clip.id
@@ -472,6 +610,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       scrollX: ref(0),
       scrollY: ref(0),
       getClipHitRegions: () => [],
+      headerWidth: () => 200,
       dialogs: useClipDialogs()
     })
     menu.contextMenuClipId.value = clip.id
@@ -486,6 +625,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       scrollX: ref(0),
       scrollY: ref(0),
       getClipHitRegions: () => [],
+      headerWidth: () => 200,
       dialogs: useClipDialogs()
     })
     menu.contextMenuOpen.value = true

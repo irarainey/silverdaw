@@ -21,6 +21,7 @@ import {
 } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { trackIndexAtWorldY } from '@/lib/timeline/trackLayout'
 import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
@@ -43,6 +44,9 @@ export interface UseTimelineContextMenuInputs {
    *  than an array reference) so the array is read fresh on each
    *  right-click and the composable never holds onto a stale slice. */
   getClipHitRegions: () => readonly ClipHitRegion[]
+  /** Width of the pinned track-header column, used to tell a right-click on the
+   *  clip lane apart from one on the header controls. */
+  headerWidth: () => number
   /** Dialog open actions; injected so the menu doesn't depend on the
    *  full `useClipDialogs` return type. */
   dialogs: ClipDialogActions
@@ -61,6 +65,8 @@ export interface TimelineContextMenu {
   contextMenuX: Ref<number>
   contextMenuY: Ref<number>
   contextMenuClipId: Ref<string | null>
+  /** Track targeted by an empty-lane right-click (Paste menu); null otherwise. */
+  contextMenuTrackId: Ref<string | null>
   contextMenuItems: ComputedRef<ClipContextMenuItem[]>
   onContextMenu(e: MouseEvent): void
   onContextMenuCommand(command: string): void
@@ -93,8 +99,20 @@ export function useTimelineContextMenu(
   const contextMenuX = ref(0)
   const contextMenuY = ref(0)
   const contextMenuClipId = ref<string | null>(null)
+  const contextMenuTrackId = ref<string | null>(null)
 
   const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
+    // Empty track-lane right-click: a Paste-only menu that drops the clipboard
+    // clip onto that track at the playhead.
+    if (!contextMenuClipId.value && contextMenuTrackId.value) {
+      return [
+        {
+          command: 'track.paste',
+          label: 'Paste',
+          disabled: !project.clipboardClip
+        }
+      ]
+    }
     const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
     const items: ClipContextMenuItem[] = []
     const clipParent = clip ? library.byId[clip.libraryItemId] : null
@@ -112,8 +130,17 @@ export function useTimelineContextMenu(
       label: 'Show Information',
       disabled: !clip || clip.unresolved || !hasLibraryItem
     })
+    items.push({ command: 'clip.cut', label: 'Cut', separatorAbove: true })
+    items.push({ command: 'clip.copy', label: 'Copy' })
+    items.push({
+      command: 'clip.paste',
+      label: 'Paste',
+      // Paste needs a clip on the clipboard; it lands on this clip's track at
+      // the playhead, mirroring the Edit-menu / Ctrl+V behaviour.
+      disabled: !project.clipboardClip
+    })
+    items.push({ command: 'clip.duplicate', label: 'Duplicate' })
     items.push({ command: 'clip.delete', label: 'Delete' })
-    items.push({ command: 'clip.duplicate', label: 'Duplicate', separatorAbove: true })
     if (clip) {
       // Lock toggle: label flips based on the current flag so a single
       // command + a single menu row covers both directions. Placed in
@@ -247,6 +274,7 @@ export function useTimelineContextMenu(
       if (!r) continue
       if (worldX >= r.x && worldX <= r.x + r.w && worldY >= r.y && worldY <= r.y + r.h) {
         e.preventDefault()
+        contextMenuTrackId.value = null
         contextMenuClipId.value = r.clipId
         contextMenuX.value = e.clientX
         contextMenuY.value = e.clientY
@@ -254,12 +282,40 @@ export function useTimelineContextMenu(
         return
       }
     }
-    // Not on a clip — let the browser default contextmenu happen (which
-    // is a no-op in Electron) so we don't accidentally swallow the event
-    // for the rest of the layout.
+    // Not on a clip: offer a Paste menu when the right-click lands on an empty
+    // track lane (past the pinned header column, on a real track row). The
+    // header column hosts its own controls, so anything left of it is ignored.
+    const localX = e.clientX - rect.left
+    if (localX >= inputs.headerWidth()) {
+      const hit = trackIndexAtWorldY(project.tracks, worldY)
+      const trackId = hit ? (project.tracks[hit.index]?.id ?? null) : null
+      if (trackId) {
+        e.preventDefault()
+        contextMenuClipId.value = null
+        contextMenuTrackId.value = trackId
+        contextMenuX.value = e.clientX
+        contextMenuY.value = e.clientY
+        contextMenuOpen.value = true
+        return
+      }
+    }
+    // Otherwise let the browser default contextmenu happen (a no-op in Electron)
+    // so we don't accidentally swallow the event for the rest of the layout.
   }
 
   function onContextMenuCommand(command: string): void {
+    // Empty track-lane Paste: drop the clipboard clip onto the right-clicked
+    // track at the playhead (mirrors the clip-menu / Ctrl+V behaviour).
+    if (command === 'track.paste') {
+      const trackId = contextMenuTrackId.value
+      if (trackId) {
+        project.selectTrack(trackId)
+        project.pasteClipAtPlayhead(transport.positionMs)
+      }
+      contextMenuTrackId.value = null
+      contextMenuClipId.value = null
+      return
+    }
     const clipId = contextMenuClipId.value
     if (!clipId) return
     const clip = project.clips[clipId]
@@ -275,6 +331,27 @@ export function useTimelineContextMenu(
       inputs.dialogs.openInfo(clipId)
     } else if (command === 'clip.delete') {
       project.removeClip(clipId)
+    } else if (command === 'clip.copy') {
+      if (clip) {
+        // Select the clip + its track first (as a left-click would) so Copy
+        // acts on what was right-clicked and a later Paste targets this track.
+        project.selectClip(clipId)
+        project.selectTrack(clip.trackId)
+        project.copySelectedClip()
+      }
+    } else if (command === 'clip.cut') {
+      if (clip) {
+        project.selectClip(clipId)
+        project.selectTrack(clip.trackId)
+        project.cutSelectedClip()
+      }
+    } else if (command === 'clip.paste') {
+      if (clip) {
+        // Paste onto the right-clicked clip's track at the playhead, matching
+        // the Edit-menu / Ctrl+V behaviour.
+        project.selectTrack(clip.trackId)
+        project.pasteClipAtPlayhead(transport.positionMs)
+      }
     } else if (command === 'clip.duplicate') {
       project.duplicateClip(clipId)
     } else if (command === 'clip.lock') {
@@ -332,11 +409,13 @@ export function useTimelineContextMenu(
       }
     }
     contextMenuClipId.value = null
+    contextMenuTrackId.value = null
   }
 
   function onContextMenuClose(): void {
     contextMenuOpen.value = false
     contextMenuClipId.value = null
+    contextMenuTrackId.value = null
   }
 
   return {
@@ -344,6 +423,7 @@ export function useTimelineContextMenu(
     contextMenuX,
     contextMenuY,
     contextMenuClipId,
+    contextMenuTrackId,
     contextMenuItems,
     onContextMenu,
     onContextMenuCommand,

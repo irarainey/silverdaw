@@ -218,9 +218,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       project.selectTrack(null)
     }
 
-    // Only the ruler band seeks; empty track-row clicks select without moving playback.
-    if (y >= RULER_HEIGHT) return
-
+    // Ruler band and empty track rows both seek the playhead (and start a
+    // playhead drag), so the user can place the playhead anywhere on the
+    // timeline — e.g. to choose where a right-click ▸ Paste will land.
     const ms = pointerToMs(e.clientX, e.altKey)
     if (ms === null) return
 
