@@ -101,6 +101,37 @@ describe('compound clip actions are one undo group', () => {
     expect(types.indexOf('CLIP_ADD')).toBeGreaterThan(begin)
     expect(types.indexOf('CLIP_ADD')).toBeLessThan(end)
   })
+
+  it('duplicateClip brackets CLIP_ADD + gain + rename in a single group', () => {
+    const project = useProjectStore()
+    project.tracks = [
+      {
+        id: 't1',
+        name: 'Track 1',
+        clipIds: ['c1'],
+        volume: 1,
+        lengthMs: 1000
+      } as never
+    ]
+    // A named clip is the regression case: the trailing CLIP_RENAME must fold into the group.
+    project.clips = { c1: makeClip({ name: 'My Clip' }) }
+
+    const newId = project.duplicateClip('c1')
+    expect(newId).toBe('new-clip-id')
+
+    const types = sentTypes()
+    expect(types.filter((t) => t === 'EDIT_GROUP_BEGIN')).toHaveLength(1)
+    expect(types.filter((t) => t === 'EDIT_GROUP_END')).toHaveLength(1)
+    expect(types[0]).toBe('EDIT_GROUP_BEGIN')
+    expect(types[types.length - 1]).toBe('EDIT_GROUP_END')
+    // CLIP_ADD and the trailing CLIP_RENAME are both inside the one group.
+    const begin = types.indexOf('EDIT_GROUP_BEGIN')
+    const end = types.indexOf('EDIT_GROUP_END')
+    expect(types.indexOf('CLIP_ADD')).toBeGreaterThan(begin)
+    expect(types.indexOf('CLIP_ADD')).toBeLessThan(end)
+    expect(types.indexOf('CLIP_RENAME')).toBeGreaterThan(begin)
+    expect(types.indexOf('CLIP_RENAME')).toBeLessThan(end)
+  })
 })
 
 describe('library-clip edits propagate inside one undo group', () => {

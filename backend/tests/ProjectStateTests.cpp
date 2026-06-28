@@ -16,6 +16,7 @@
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
+#include "ProjectSession.h"
 #include "ProjectState.h"
 #include "UndoCommands.h"
 #include "SharedFx.h"
@@ -780,6 +781,37 @@ void testNestedUndoGroupsCollapseToOneStep()
             "nested group undo reverts every mutation in one step");
 }
 
+// Faithful replay of the renderer "Duplicate clip" message sequence: a single group containing
+// CLIP_ADD (new clip) + a no-op TRACK_GAIN (re-push of the unchanged track gain) + CLIP_RENAME.
+// Regression guard for the bug where a duplicated, named clip needed several undos because the
+// trailing CLIP_RENAME landed in its own transaction at the top of the stack.
+void testDuplicateClipGroupUndoesInOneStep()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "track add should succeed");
+    // The source clip is its own prior edit, so it must survive the duplicate's undo.
+    state.getUndoManager().beginNewTransaction("Add source clip");
+    require(state.addClip("t1", "src", "lib1", 0.0, 1000.0, 0.0, -1), "source clip add should succeed");
+    const float gain = state.getEffectiveTrackGain("t1");
+
+    // Duplicate: one group, dispatcher's per-command begin suppressed throughout.
+    silverdaw::beginUndoGroup("Duplicate clip", state);
+    silverdaw::beginUndoTransactionIfNeeded("CLIP_ADD", juce::var(), state);
+    require(state.addClip("t1", "dup", "lib1", 1000.0, 1000.0, 0.0, -1), "duplicate clip add should succeed");
+    silverdaw::beginUndoTransactionIfNeeded("TRACK_GAIN", juce::var(), state);
+    state.setTrackGain("t1", gain); // unchanged value → JUCE records no action
+    silverdaw::beginUndoTransactionIfNeeded("CLIP_RENAME", juce::var(), state);
+    require(state.setClipName("dup", "My Clip"), "duplicate rename should succeed");
+    silverdaw::endUndoGroup();
+
+    // A single undo must remove the duplicate (and its name) while keeping the source.
+    state.getUndoManager().beginNewTransaction();
+    require(state.getUndoManager().undo(), "one undo should reverse the whole duplicate group");
+    const auto idsAfter = silverdaw::collectClipIds(state);
+    require(!idsAfter.contains("dup"), "duplicate clip must be gone after one undo");
+    require(idsAfter.contains("src"), "the source clip must survive the duplicate's undo");
+}
+
 } // namespace
 
 void addProjectStateTests(std::vector<TestCase>& tests)
@@ -803,6 +835,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState rename is not undoable", testProjectStateRenameIsNotUndoable});
     tests.push_back({"Undo group collapses a compound edit to one step", testUndoGroupCollapsesCompoundEditToOneStep});
     tests.push_back({"Nested undo groups collapse to one step", testNestedUndoGroupsCollapseToOneStep});
+    tests.push_back({"Duplicate-clip group undoes in one step", testDuplicateClipGroupUndoesInOneStep});
 }
 
 } // namespace silverdaw::tests
