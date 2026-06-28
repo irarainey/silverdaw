@@ -119,4 +119,60 @@ describe('useClipEditorBeatGrid', () => {
     grid.applyManualBpm()
     expect(grid.hasGridChanged()).toBe(true)
   })
+
+  it('halves and doubles the source BPM, keeping the anchor', () => {
+    const item = addSource(120, 0.25)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    sendMock.mockClear()
+
+    grid.halveBpm()
+    expect(sendMock).toHaveBeenLastCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+      itemId: item.id,
+      bpm: 60,
+      beatAnchorSec: 0.25
+    })
+    expect(grid.manualBpmInput.value).toBe(60)
+
+    grid.doubleBpm()
+    expect(sendMock).toHaveBeenLastCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+      itemId: item.id,
+      bpm: 120,
+      beatAnchorSec: 0.25
+    })
+    expect(grid.manualBpmInput.value).toBe(120)
+    expect(grid.hasGridChanged()).toBe(true)
+  })
+
+  it('clamps an octave change that would leave the valid BPM range', () => {
+    const item = addSource(200, 0)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    sendMock.mockClear()
+    grid.doubleBpm()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('nudges the anchor by a millisecond delta on the existing BPM', () => {
+    const item = addSource(120, 0.5)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    sendMock.mockClear()
+    grid.nudgeAnchorMs(-5)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+      itemId: item.id,
+      bpm: 120,
+      beatAnchorSec: 0.495
+    })
+    expect(grid.hasGridChanged()).toBe(true)
+  })
+
+  it('shifts the anchor by half a beat to flip an off-beat lock', () => {
+    const item = addSource(120, 0.5)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    sendMock.mockClear()
+    grid.nudgeHalfBeat(1)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+      itemId: item.id,
+      bpm: 120,
+      beatAnchorSec: 0.75
+    })
+  })
 })

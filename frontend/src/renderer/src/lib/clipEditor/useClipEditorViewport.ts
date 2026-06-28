@@ -108,14 +108,18 @@ export function useClipEditorViewport(inputs: UseClipEditorViewportInputs): Clip
 
   const basePxPerMs = computed(() => {
     if (!editorItem.value) return 0
+    // Timeline px/s so a clip opens at the same scale the user sees on the track.
+    const timelinePxPerMs = Math.max(0.001, (uiZoomPxPerSecond.value || 100) / 1000)
     if (!editsExistingClip.value) {
-      // Match timeline px/s; fall back to its default before the live value arrives.
-      return Math.max(0.001, (uiZoomPxPerSecond.value || 100) / 1000)
+      return timelinePxPerMs
     }
-    // Saved clips fit the cropped range to the canvas.
+    // Saved clips fit the cropped range to the canvas, but never zoom out past the
+    // timeline scale: a short clip fills the width, while a long clip opens at
+    // track-view scale and scrolls instead of being shrunk to fit.
     const w = canvasCssWidth.value
     const dur = viewDurationMs.value
-    return w > 0 && dur > 0 ? w / dur : 0
+    const fitPxPerMs = w > 0 && dur > 0 ? w / dur : 0
+    return Math.max(fitPxPerMs, timelinePxPerMs)
   })
 
   const visibleDurationMs = computed(() => {

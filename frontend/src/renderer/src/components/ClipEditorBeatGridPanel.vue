@@ -52,6 +52,30 @@ const alignActive = props.grid.alignActive
           Apply
         </button>
       </div>
+      <div
+        class="flex items-center gap-2"
+        :class="!props.grid.hasGrid() ? 'opacity-50' : ''"
+      >
+        <span class="text-[10px] text-zinc-500">Octave</span>
+        <button
+          type="button"
+          class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 font-mono text-[11px] text-zinc-200 transition-colors hover:border-zinc-600 hover:text-zinc-100 disabled:opacity-40"
+          :disabled="!props.grid.hasGrid()"
+          aria-label="Halve BPM"
+          @click="props.grid.halveBpm()"
+        >
+          ÷2
+        </button>
+        <button
+          type="button"
+          class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 font-mono text-[11px] text-zinc-200 transition-colors hover:border-zinc-600 hover:text-zinc-100 disabled:opacity-40"
+          :disabled="!props.grid.hasGrid()"
+          aria-label="Double BPM"
+          @click="props.grid.doubleBpm()"
+        >
+          ×2
+        </button>
+      </div>
     </fieldset>
 
     <fieldset
@@ -76,6 +100,36 @@ const alignActive = props.grid.alignActive
       </button>
       <p class="text-[10px] text-zinc-500">
         Drag left/right across the waveform to slide the beat grid onto the beats.
+      </p>
+      <div class="mt-1 flex items-center gap-1.5">
+        <span class="text-[10px] text-zinc-500">Nudge</span>
+        <button
+          type="button"
+          class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 font-mono text-[11px] text-zinc-200 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+          aria-label="Nudge grid 5 milliseconds earlier"
+          @click="props.grid.nudgeAnchorMs(-5)"
+        >
+          ◀
+        </button>
+        <button
+          type="button"
+          class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 font-mono text-[11px] text-zinc-200 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+          aria-label="Nudge grid 5 milliseconds later"
+          @click="props.grid.nudgeAnchorMs(5)"
+        >
+          ▶
+        </button>
+        <button
+          type="button"
+          class="ml-auto rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-[11px] text-zinc-200 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+          aria-label="Shift grid by half a beat"
+          @click="props.grid.nudgeHalfBeat(1)"
+        >
+          ½ beat
+        </button>
+      </div>
+      <p class="text-[10px] text-zinc-500">
+        Fine-nudge by 5 ms, or shift a half beat if the grid sits on the off-beat.
       </p>
     </fieldset>
   </div>

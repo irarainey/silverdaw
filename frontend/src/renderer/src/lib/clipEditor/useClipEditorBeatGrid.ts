@@ -34,6 +34,13 @@ export interface ClipEditorBeatGrid {
   toggleAlign: () => void
   /** Apply the typed BPM, keeping the current phase anchor. */
   applyManualBpm: () => void
+  /** Halve / double the source BPM (octave fix), keeping the phase anchor. */
+  halveBpm: () => void
+  doubleBpm: () => void
+  /** Nudge the grid phase by a few milliseconds (fine alignment the drag lacks). */
+  nudgeAnchorMs: (deltaMs: number) => void
+  /** Shift the grid by half a beat to flip an on-beat/off-beat lock. */
+  nudgeHalfBeat: (direction: -1 | 1) => void
   /** Live local anchor update during a drag (seconds). */
   previewAnchorSec: (anchorSec: number) => void
   /** Persist the final anchor after a drag (seconds). */
@@ -86,6 +93,40 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     gridEdited.value = true
   }
 
+  // Re-anchor on the same phase so a halve/double doesn't jump the grid origin.
+  function scaleBpm(factor: number): void {
+    const item = deps.sourceItem()
+    if (!item || !item.bpm || item.bpm <= 0) return
+    const next = item.bpm * factor
+    if (next < MIN_BPM || next > MAX_BPM) return
+    library.setItemManualTempo(item.id, next, currentAnchorSec(item))
+    manualBpmInput.value = Math.round(next * 100) / 100
+    gridEdited.value = true
+  }
+
+  function halveBpm(): void {
+    scaleBpm(0.5)
+  }
+
+  function doubleBpm(): void {
+    scaleBpm(2)
+  }
+
+  function nudgeAnchorMs(deltaMs: number): void {
+    const item = deps.sourceItem()
+    if (!item || !item.bpm || item.bpm <= 0 || !Number.isFinite(deltaMs)) return
+    library.setItemManualTempo(item.id, item.bpm, currentAnchorSec(item) + deltaMs / 1000)
+    gridEdited.value = true
+  }
+
+  function nudgeHalfBeat(direction: -1 | 1): void {
+    const item = deps.sourceItem()
+    if (!item || !item.bpm || item.bpm <= 0) return
+    const halfBeatSec = 30 / item.bpm
+    library.setItemManualTempo(item.id, item.bpm, currentAnchorSec(item) + direction * halfBeatSec)
+    gridEdited.value = true
+  }
+
   function previewAnchorSec(anchorSec: number): void {
     const item = deps.sourceItem()
     if (!item) return
@@ -107,6 +148,10 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     hasGridChanged,
     toggleAlign,
     applyManualBpm,
+    halveBpm,
+    doubleBpm,
+    nudgeAnchorMs,
+    nudgeHalfBeat,
     previewAnchorSec,
     commitAnchorSec
   }

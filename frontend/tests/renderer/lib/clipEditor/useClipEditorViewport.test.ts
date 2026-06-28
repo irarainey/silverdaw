@@ -151,6 +151,47 @@ describe('useClipEditorViewport — initialiseForItem', () => {
   })
 })
 
+describe('useClipEditorViewport — base scale', () => {
+  it('source mode opens at the timeline px/s scale', () => {
+    const vp = makeVp({ editorItem: makeItem(), editsExistingClip: false, uiZoomPxPerSecond: 120 })
+    vp.canvasCssWidth.value = 1000
+    expect(vp.basePxPerMs.value).toBeCloseTo(0.12)
+  })
+
+  it('a short saved clip scales to fill the canvas width', () => {
+    // 1.5s clip in a 1000px canvas at 100 px/s timeline scale: fit (0.667) > timeline (0.1).
+    const vp = makeVp({
+      editorItem: makeLibraryClipItem(),
+      editsExistingClip: true,
+      timelineClip: makeTimelineClip({ inMs: 0, durationMs: 1_500 }),
+      uiZoomPxPerSecond: 100
+    })
+    vp.initialiseForItem()
+    vp.canvasCssWidth.value = 1000
+    expect(vp.basePxPerMs.value).toBeCloseTo(1000 / 1500)
+    // Whole clip is visible at zoom 1 (no scroll).
+    expect(vp.visibleDurationMs.value).toBeCloseTo(1_500)
+    expect(vp.maxScrollMs.value).toBe(0)
+  })
+
+  it('a long saved clip opens at the timeline scale and scrolls instead of shrinking', () => {
+    // 60s clip in a 1000px canvas at 100 px/s: fit (0.0167) < timeline (0.1) → use timeline.
+    const vp = makeVp({
+      editorItem: makeLibraryClipItem({ durationMs: 60_000 }),
+      editsExistingClip: true,
+      timelineClip: makeTimelineClip({ inMs: 0, durationMs: 60_000 }),
+      sourceDurationMs: 120_000,
+      uiZoomPxPerSecond: 100
+    })
+    vp.initialiseForItem()
+    vp.canvasCssWidth.value = 1000
+    expect(vp.basePxPerMs.value).toBeCloseTo(0.1)
+    // At zoom 1, a 1000px canvas shows 10s of the 60s clip; the rest scrolls.
+    expect(vp.visibleDurationMs.value).toBeCloseTo(10_000)
+    expect(vp.maxScrollMs.value).toBeCloseTo(50_000)
+  })
+})
+
 describe('useClipEditorViewport — zoom math', () => {
   it('clamps zoom into [MIN_ZOOM, MAX_ZOOM]', () => {
     const vp = makeVp({ editorItem: makeItem() })
