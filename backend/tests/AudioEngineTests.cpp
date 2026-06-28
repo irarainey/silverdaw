@@ -11,6 +11,7 @@
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
 #include "MixdownEngine.h"
+#include "Metronome.h"
 #include "OutputDeviceClassifier.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
@@ -391,7 +392,9 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         silverdaw::OutputKeepAlive ka;
         ka.setContentLoaded(true);
         ConstantSource silentSource(0.0F);
-        silverdaw::MeteringSource meter(silentSource, ka);
+        silverdaw::Metronome metro;
+        silverdaw::MasterClockSource clock(silentSource, ka);
+        silverdaw::MeteringSource meter(silentSource, ka, clock, metro);
         meter.setTargetGain(lowGain);
         meter.prepareToPlay(1024, 48000.0);
 
@@ -425,7 +428,9 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         silverdaw::OutputKeepAlive ka;
         ka.setPlaying(true);
         ConstantSource toneSource(0.5F);
-        silverdaw::MeteringSource meter(toneSource, ka);
+        silverdaw::Metronome metro;
+        silverdaw::MasterClockSource clock(toneSource, ka);
+        silverdaw::MeteringSource meter(toneSource, ka, clock, metro);
         meter.setTargetGain(lowGain);
         meter.prepareToPlay(1024, 48000.0);
 
@@ -585,7 +590,8 @@ void testMasterGainIsSettledAtPlayStart()
     silverdaw::OutputKeepAlive keepAlive;
     FullSource src;
     silverdaw::MasterClockSource master(src, keepAlive);
-    silverdaw::MeteringSource meter(master, keepAlive);
+    silverdaw::Metronome metro;
+    silverdaw::MeteringSource meter(master, keepAlive, master, metro);
     meter.setTargetGain(kGain);
     meter.prepareToPlay(kBlock, kRate);
 
@@ -911,6 +917,62 @@ void testDecodedCacheSkipsWavSources()
     dir.deleteRecursively();
 }
 
+// Metronome: clicks land exactly on beat boundaries (phase-locked to absolute transport position),
+// stay silent off-beat, and produce nothing when disabled or when a block "didn't advance".
+void testMetronomeClicksOnBeatBoundaries()
+{
+    constexpr double sr = 48000.0;
+    constexpr double bpm = 120.0; // beat period = 48000 * 60 / 120 = 24000 samples
+    const auto beatPeriod = static_cast<juce::int64>(sr * 60.0 / bpm);
+
+    silverdaw::Metronome metro;
+    metro.prepare(sr);
+    metro.setBpm(bpm);
+
+    auto blockMagnitude = [](const juce::AudioBuffer<float>& buf) {
+        return buf.getMagnitude(0, 0, buf.getNumSamples());
+    };
+
+    // Disabled: render adds nothing even across a beat boundary.
+    {
+        juce::AudioBuffer<float> buf(2, 512);
+        buf.clear();
+        metro.render(buf, 0, 512, 0, sr);
+        require(blockMagnitude(buf) == 0.0F, "disabled metronome must inject nothing");
+    }
+
+    metro.setEnabled(true);
+
+    // Beat 0 sits at transport sample 0: a block starting at 0 must contain the click.
+    {
+        juce::AudioBuffer<float> buf(2, 512);
+        buf.clear();
+        metro.render(buf, 0, 512, 0, sr);
+        require(blockMagnitude(buf) > 0.05F, "a click must fire on the downbeat (transport sample 0)");
+        // Both channels carry the mono click identically.
+        require(std::abs(buf.getSample(0, 0) - buf.getSample(1, 0)) < 1e-6F,
+                "the click is mixed equally to both channels");
+    }
+
+    // Mid-beat block with no boundary stays silent (click from beat 0 has long decayed).
+    {
+        juce::AudioBuffer<float> buf(2, 512);
+        buf.clear();
+        metro.render(buf, 0, 512, beatPeriod / 2, sr); // 12000..12512, no beat, prior click ended
+        require(blockMagnitude(buf) == 0.0F, "no click off-beat");
+    }
+
+    // A block straddling the next beat boundary fires the click at the right offset.
+    {
+        const juce::int64 start = beatPeriod - 100; // 23900; beat at 24000 lands 100 samples in
+        juce::AudioBuffer<float> buf(2, 512);
+        buf.clear();
+        metro.render(buf, 0, 512, start, sr);
+        require(buf.getMagnitude(0, 0, 100) == 0.0F, "silence before the beat boundary in the block");
+        require(buf.getMagnitude(0, 100, 412) > 0.05F, "click begins exactly on the beat boundary");
+    }
+}
+
 } // namespace
 
 void addAudioEngineTests(std::vector<TestCase>& tests)
@@ -926,6 +988,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"Primed mixer delivers the first played block", testPrimedMixerDeliversFirstBlock});
     tests.push_back({"Primed OffsetSource delivers the first played block", testPrimedOffsetSourceDeliversFirstBlock});
     tests.push_back({"DecodedCache skips transcoding WAV sources", testDecodedCacheSkipsWavSources});
+    tests.push_back({"Metronome clicks land on beat boundaries", testMetronomeClicksOnBeatBoundaries});
 }
 
 } // namespace silverdaw::tests

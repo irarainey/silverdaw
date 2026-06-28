@@ -11,6 +11,7 @@
 #include "WarpProcessor.h"
 #include "MasterClockSource.h"
 #include "MeteringSource.h"
+#include "Metronome.h"
 #include "OffsetSource.h"
 
 #include <atomic>
@@ -65,6 +66,11 @@ class AudioEngine
     void stop();
 
     void setMasterGain(float gain);
+
+    // Metronome monitoring click (post master gain). Enable/disable and keep the click in time with
+    // the project tempo. Both publish to the audio thread via atomics.
+    void setMetronomeEnabled(bool enabled);
+    void setMetronomeBpm(double bpm);
 
     void consumeMasterPeaks(float& outL, float& outR);
 
@@ -320,7 +326,8 @@ class AudioEngine
     OutputKeepAlive outputKeepAlive;
     MasterClockSource master{busGraph, outputKeepAlive};
     juce::MixerAudioSource topMixer;
-    MeteringSource masterMeter{topMixer, outputKeepAlive};
+    Metronome metronome;
+    MeteringSource masterMeter{topMixer, outputKeepAlive, master, metronome};
     juce::AudioFormatManager formatManager;
 
     juce::TimeSliceThread readAheadThread{"silverdaw-readahead"};

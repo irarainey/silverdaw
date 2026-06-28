@@ -460,6 +460,16 @@ void AudioEngine::setMasterGain(float gain)
     masterMeter.setTargetGain(clamped);
 }
 
+void AudioEngine::setMetronomeEnabled(bool enabled)
+{
+    metronome.setEnabled(enabled);
+}
+
+void AudioEngine::setMetronomeBpm(double bpm)
+{
+    metronome.setBpm(bpm);
+}
+
 void AudioEngine::consumeMasterPeaks(float& outL, float& outR)
 {
     masterMeter.consumePeaks(outL, outR);

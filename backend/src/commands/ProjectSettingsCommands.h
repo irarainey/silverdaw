@@ -21,5 +21,6 @@ void handleProjectSetExportSettings(const juce::var& payload, ProjectState& proj
 void handleProjectSetMasterVolume(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
 void handleProjectSetBarCounterStart(const juce::var& payload, ProjectState& projectState);
 void handleProjectSetMixdownStartBar(const juce::var& payload, ProjectState& projectState);
+void handleProjectSetMetronome(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
 
 } // namespace silverdaw

@@ -261,6 +261,9 @@ export interface ProjectState {
   /** Displayed bar number a mixdown begins from (independent of barCounterStart). 1 (default)
    *  is the first bar. Persisted with the project. */
   mixdownStartBar: number
+  /** Monitoring metronome click toggle. Default off. Persisted silently with the project
+   *  (no undo, no dirty); a backend-audio-only feature, so the renderer just mirrors + sends it. */
+  metronomeEnabled: boolean
   /** Project-shared Reverb; persisted. Defaults all-zero (inaudible). */
   projectReverb: ProjectReverbState
   /** Project-shared tempo-locked Delay. Defaults 1/8-note, zero feedback/tone/mix (inaudible). */

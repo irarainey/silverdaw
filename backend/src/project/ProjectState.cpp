@@ -39,6 +39,7 @@ const juce::Identifier ProjectState::kExportSettingsJson{"exportSettingsJson"};
 const juce::Identifier ProjectState::kMasterVolume{"masterVolume"};
 const juce::Identifier ProjectState::kBarCounterStart{"barCounterStart"};
 const juce::Identifier ProjectState::kMixdownStartBar{"mixdownStartBar"};
+const juce::Identifier ProjectState::kMetronomeEnabled{"metronomeEnabled"};
 const juce::Identifier ProjectState::kLibrary{"LIBRARY"};
 const juce::Identifier ProjectState::kLibraryItem{"ITEM"};
 const juce::Identifier ProjectState::kMarkers{"MARKERS"};

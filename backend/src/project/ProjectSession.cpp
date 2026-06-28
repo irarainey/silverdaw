@@ -86,6 +86,8 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         const auto mixdownStartBar = projectState.getMixdownStartBar();
         if (mixdownStartBar != 1) obj->setProperty("mixdownStartBar", mixdownStartBar);
     }
+    // Omit the default-off metronome so legacy projects round-trip byte-clean.
+    if (projectState.getMetronomeEnabled()) obj->setProperty("metronomeEnabled", true);
     // Emit only non-default shared FX so legacy projects stay byte-clean.
     {
         const auto emitUnit = [obj](const char* key, float v) {
@@ -252,6 +254,10 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
 
     // Keep live master gain aligned with loaded, recovered, and undo/redo state.
     engine.setMasterGain(projectState.getMasterVolume());
+
+    // Keep the monitoring metronome aligned with the loaded tempo + toggle state.
+    engine.setMetronomeBpm(projectState.getBpm());
+    engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
 
     // Always reset shared FX on new/load so projects never inherit prior settings.
     engine.setProjectReverb(projectState.getProjectReverbSize(),

@@ -120,6 +120,29 @@ describe('projectStore', () => {
     expect(project.mixdownStartBar).toBe(4)
   })
 
+  it('defaults the metronome off', () => {
+    const project = useProjectStore()
+    expect(project.metronomeEnabled).toBe(false)
+  })
+
+  it('toggles the metronome and notifies the bridge, no-op when unchanged', () => {
+    const project = useProjectStore()
+    sendMock.mockReturnValue(true)
+
+    project.setMetronomeEnabled(true)
+    expect(project.metronomeEnabled).toBe(true)
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_METRONOME', { enabled: true })
+
+    // No-op when the value is unchanged (avoids redundant bridge traffic).
+    sendMock.mockClear()
+    project.setMetronomeEnabled(true)
+    expect(sendMock).not.toHaveBeenCalled()
+
+    project.setMetronomeEnabled(false)
+    expect(project.metronomeEnabled).toBe(false)
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_METRONOME', { enabled: false })
+  })
+
   it('adds tracks and local clips while notifying the bridge about tracks', () => {
     const project = useProjectStore()
 
@@ -1001,6 +1024,44 @@ describe('projectStore', () => {
     })
 
     expect(project.isDirty).toBe(false)
+  })
+
+  it('hydrates the metronome toggle from a project snapshot', () => {
+    const project = useProjectStore()
+
+    // Absent means off (the backend omits the default-off metronome).
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\m.silverdaw',
+      name: 'M',
+      reset: true,
+      dirty: false,
+      bpm: 120,
+      tracks: []
+    })
+    expect(project.metronomeEnabled).toBe(false)
+
+    // Present + true hydrates on.
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\m.silverdaw',
+      name: 'M',
+      reset: true,
+      dirty: false,
+      bpm: 120,
+      metronomeEnabled: true,
+      tracks: []
+    })
+    expect(project.metronomeEnabled).toBe(true)
+
+    // A later snapshot omitting it reverts to off.
+    project.applyProjectStateSnapshot({
+      filePath: 'C:\\projects\\m.silverdaw',
+      name: 'M',
+      reset: true,
+      dirty: false,
+      bpm: 120,
+      tracks: []
+    })
+    expect(project.metronomeEnabled).toBe(false)
   })
 
   it('sends fire-and-forget TRANSITION_* envelopes without mutating local state', () => {

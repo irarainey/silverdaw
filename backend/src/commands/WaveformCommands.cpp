@@ -205,6 +205,8 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         silverdaw::ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
         // Re-check project BPM seeding once the first clip exists.
         silverdaw::maybeSeedProjectBpmFor(libraryItemId, projectState, bridge);
+        // Keep the monitoring metronome in time if seeding just set the project tempo.
+        engine.setMetronomeBpm(projectState.getBpm());
     }
 }
 

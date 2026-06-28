@@ -1,5 +1,7 @@
 #pragma once
 
+#include "MasterClockSource.h"
+#include "Metronome.h"
 #include "OutputKeepAlive.h"
 
 #include <atomic>
@@ -9,16 +11,20 @@ namespace silverdaw
 {
 
 // Apply master gain before metering; inject keep-alive after gain so the endpoint floor is
-// volume-independent.
+// volume-independent. The metronome click is also mixed post-gain so the project master volume
+// never silences the monitoring tick.
 class MeteringSource : public juce::AudioSource
 {
   public:
-    MeteringSource(juce::AudioSource& s, OutputKeepAlive& keepAlive) : source(s), keepAlive(keepAlive) {}
+    MeteringSource(juce::AudioSource& s, OutputKeepAlive& keepAlive, MasterClockSource& clock,
+                   Metronome& metronome)
+        : source(s), keepAlive(keepAlive), clock(clock), metronome(metronome) {}
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
     {
         source.prepareToPlay(samplesPerBlockExpected, sampleRate);
         keepAlive.prepare(sampleRate);
+        metronome.prepare(sampleRate);
         // The output device is now streaming: hold the endpoint awake from this first block so a
         // freshly-opened or reconnected DAC never sleeps before the user loads a project and plays.
         keepAlive.setDeviceActive(true);
@@ -36,6 +42,9 @@ class MeteringSource : public juce::AudioSource
     {
         // ScopedNoDenormals protects realtime DSP from denormal CPU spikes.
         const juce::ScopedNoDenormals scopedNoDenormals;
+        // Capture the transport position BEFORE pulling the source: the clock advances inside the
+        // pull, so this is the true start-of-block sample.
+        const juce::int64 posBefore = clock.getPositionSamples();
         source.getNextAudioBlock(info);
         if (info.buffer == nullptr || info.numSamples <= 0)
             return;
@@ -60,6 +69,12 @@ class MeteringSource : public juce::AudioSource
             for (int ch = 0; ch < numCh; ++ch)
                 info.buffer->applyGainRamp(ch, info.startSample, n, startGain, endGain);
         }
+
+        // Mix the metronome click post master gain, only when the transport actually advanced this
+        // block (real playback — not a stopped block or a wake pre-roll, where the position is
+        // frozen). This keeps the click phase-aligned to the playhead and seek-correct.
+        if (clock.getPositionSamples() == posBefore + static_cast<juce::int64>(n))
+            metronome.render(*info.buffer, info.startSample, n, posBefore, clock.getSampleRate());
 
         if (numCh > 0)
             atomicMaxFloat(peakL_, info.buffer->getMagnitude(0, info.startSample, n));
@@ -93,6 +108,8 @@ class MeteringSource : public juce::AudioSource
 
     juce::AudioSource& source;
     OutputKeepAlive& keepAlive;
+    MasterClockSource& clock;
+    Metronome& metronome;
     juce::LinearSmoothedValue<float> smoothedGain;
     std::atomic<float> targetGain{1.0F};
     std::atomic<float> peakL_{0.0F};

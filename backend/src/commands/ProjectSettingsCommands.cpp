@@ -16,6 +16,7 @@ namespace silverdaw
 
 using silverdaw::bridge::tryGetNumber;
 using silverdaw::bridge::tryGetRequiredString;
+using silverdaw::bridge::readOptionalBool;
 
 void handleProjectSetView(const juce::var& payload, silverdaw::ProjectState& projectState)
 {
@@ -57,6 +58,7 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
         if (bpm > 0.0)
         {
             projectState.setBpm(bpm);
+            engine.setMetronomeBpm(bpm);
             // Pinned tempo ratios opt out of project-BPM tracking.
             projectState.forEachWarpClip(
                 [&](const silverdaw::ProjectState::WarpClipInfo& info)
@@ -171,6 +173,19 @@ void handleProjectSetMixdownStartBar(const juce::var& payload, silverdaw::Projec
         const int clamped = juce::jlimit(-64, 4096, static_cast<int>(std::lround(*barOpt)));
         projectState.setMixdownStartBar(clamped);
     }
+}
+
+void handleProjectSetMetronome(const juce::var& payload, silverdaw::AudioEngine& engine,
+                               silverdaw::ProjectState& projectState)
+{
+    const auto enabledOpt = readOptionalBool(payload, "enabled");
+    if (! enabledOpt.has_value()) return;
+    // Persist silently (no dirty, no undo) and push live. Refresh the metronome BPM from the
+    // current project tempo on enable so it ticks in time even if the tempo changed (or was
+    // auto-seeded) since the engine last learned it.
+    projectState.setMetronomeEnabled(*enabledOpt);
+    engine.setMetronomeBpm(projectState.getBpm());
+    engine.setMetronomeEnabled(*enabledOpt);
 }
 
 } // namespace silverdaw

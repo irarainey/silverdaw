@@ -11,6 +11,7 @@ defineProps<{
   lengthEditable: boolean
   projectBpmPending: boolean
   effectiveSampleRateLabel: string
+  metronomeEnabled: boolean
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +21,7 @@ const emit = defineEmits<{
   bpmCommit: []
   bpmKeydown: [event: KeyboardEvent]
   bumpBpm: [delta: number]
+  toggleMetronome: []
 }>()
 </script>
 
@@ -182,6 +184,36 @@ const emit = defineEmits<{
         <span class="text-[9px] uppercase tracking-wide text-zinc-500">RATE</span>
         <span class="font-mono text-base tabular-nums text-zinc-100">{{ effectiveSampleRateLabel }}</span>
       </div>
+      <div class="h-7 w-px bg-zinc-800" />
+      <button
+        type="button"
+        role="switch"
+        :aria-checked="metronomeEnabled"
+        aria-label="Metronome click"
+        :title="metronomeEnabled ? 'Metronome on — click plays in time with the project tempo. Click to turn off.' : 'Metronome off — click plays an audible tick in time with the project tempo. Click to turn on.'"
+        class="flex h-7 w-7 items-center justify-center rounded border transition-colors"
+        :class="metronomeEnabled
+          ? 'border-sky-500 bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+          : 'border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300'
+        "
+        @click="emit('toggleMetronome')"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="h-4 w-4"
+          aria-hidden="true"
+        >
+          <path d="M8 3h8l3 18H5L8 3z" />
+          <path d="M9 9l7-4" />
+          <path d="M7 16h10" />
+        </svg>
+      </button>
     </div>
   </div>
 </template>

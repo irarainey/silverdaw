@@ -99,6 +99,7 @@ export const useProjectStore = defineStore('project', {
     masterVolume: 1.0,
     barCounterStart: 1,
     mixdownStartBar: 1,
+    metronomeEnabled: false,
     projectReverb: { size: 0, decay: 0, tone: 0, mix: 0 },
     projectDelay: { noteValue: '1/8', feedback: 0, tone: 0, mix: 0 }
   }),
@@ -301,6 +302,14 @@ export const useProjectStore = defineStore('project', {
       if (next === this.mixdownStartBar) return
       this.mixdownStartBar = next
       sendBridge('PROJECT_SET_MIXDOWN_START_BAR', { mixdownStartBar: next })
+    },
+
+    /** Toggle the monitoring metronome click. Persisted silently with the project (no undo,
+     *  no dirty) — the backend generates the click in time with the project BPM. */
+    setMetronomeEnabled(enabled: boolean): void {
+      if (enabled === this.metronomeEnabled) return
+      this.metronomeEnabled = enabled
+      sendBridge('PROJECT_SET_METRONOME', { enabled })
     },
 
     applyProjectStateSnapshot(snapshot: ProjectStatePayload): void {

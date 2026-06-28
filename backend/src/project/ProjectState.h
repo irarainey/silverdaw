@@ -357,6 +357,12 @@ class ProjectState : public juce::ValueTree::Listener
     int getMixdownStartBar() const;
     void setMixdownStartBar(int mixdownStartBar);
 
+    // Monitoring metronome click toggle. Default off. Persisted with the project but applied
+    // SILENTLY — toggling it neither marks the project dirty nor enters the undo stack (mirrored
+    // into the clean snapshot, like view state).
+    bool getMetronomeEnabled() const;
+    void setMetronomeEnabled(bool enabled);
+
     // Library items persist imported sources; rich metadata is re-read by the renderer.
 
     /** Add (or update the file path of) a library item. Marks dirty. */
@@ -555,6 +561,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kMasterVolume;
     static const juce::Identifier kBarCounterStart;
     static const juce::Identifier kMixdownStartBar;
+    static const juce::Identifier kMetronomeEnabled;
     static const juce::Identifier kLibrary;
     static const juce::Identifier kLibraryItem;
     static const juce::Identifier kMarkers;

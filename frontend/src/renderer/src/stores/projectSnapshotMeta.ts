@@ -124,6 +124,8 @@ export function applyProjectSettings(target: SnapshotTarget, snapshot: ProjectSt
     typeof incomingMixdownStartBar === 'number' && Number.isFinite(incomingMixdownStartBar)
       ? Math.min(4096, Math.max(-64, Math.round(incomingMixdownStartBar)))
       : 1
+  // Absent/false means off; the backend omits the default-off metronome.
+  target.metronomeEnabled = snapshot.metronomeEnabled === true
 }
 
 /** Mutate project FX (reverb/delay) objects in place so refreshes do not end drags. */

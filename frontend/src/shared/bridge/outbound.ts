@@ -435,6 +435,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_MASTER_VOLUME: ProjectSetMasterVolumePayload
   PROJECT_SET_BAR_COUNTER_START: ProjectSetBarCounterStartPayload
   PROJECT_SET_MIXDOWN_START_BAR: ProjectSetMixdownStartBarPayload
+  PROJECT_SET_METRONOME: ProjectSetMetronomePayload
   AUDIO_FILE_PROBE: AudioFileProbePayload
   MIXDOWN_START: MixdownStartPayload
   MIXDOWN_CANCEL: undefined
@@ -592,6 +593,15 @@ export interface ProjectSetBarCounterStartPayload {
  */
 export interface ProjectSetMixdownStartBarPayload {
   mixdownStartBar: number
+}
+
+/**
+ * Toggle the monitoring metronome click (an audible tick in time with the project BPM).
+ * Default off. Persisted with the project but applied SILENTLY on the backend — it never marks the
+ * project dirty and is not undoable.
+ */
+export interface ProjectSetMetronomePayload {
+  enabled: boolean
 }
 
 /**
@@ -907,6 +917,7 @@ export const bridgeOutboundPayloadKinds: {
   PROJECT_SET_MASTER_VOLUME: 'payload',
   PROJECT_SET_BAR_COUNTER_START: 'payload',
   PROJECT_SET_MIXDOWN_START_BAR: 'payload',
+  PROJECT_SET_METRONOME: 'payload',
   AUDIO_FILE_PROBE: 'payload',
   MIXDOWN_START: 'payload',
   MIXDOWN_CANCEL: 'none',

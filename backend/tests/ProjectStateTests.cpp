@@ -812,6 +812,37 @@ void testDuplicateClipGroupUndoesInOneStep()
     require(idsAfter.contains("src"), "the source clip must survive the duplicate's undo");
 }
 
+// The metronome toggle persists with the project but applies SILENTLY: it neither marks the project
+// dirty nor enters the undo stack, and default-off is stored as absent (legacy round-trip clean).
+void testProjectStateMetronomeRoundTrip()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+
+    require(! state.getMetronomeEnabled(), "fresh project should default the metronome off");
+
+    state.setMetronomeEnabled(true);
+    require(state.getMetronomeEnabled(), "setMetronomeEnabled(true) should round-trip");
+    require(! state.isDirty(), "toggling the metronome must NOT mark the project dirty (silent)");
+    require(! state.getUndoManager().canUndo(),
+            "toggling the metronome must NOT push an undo entry (silent)");
+
+    // ValueTreeJson round-trip for the enabled state.
+    {
+        const auto encoded = silverdaw::ValueTreeJson::toVar(state.getTree());
+        const auto decoded = silverdaw::ValueTreeJson::fromVar(encoded);
+        require(static_cast<bool>(decoded.getProperty(juce::Identifier{"metronomeEnabled"}, false)),
+                "metronomeEnabled should round-trip through ValueTreeJson when on");
+    }
+
+    // Default-off removes the property so projects round-trip without an extra field.
+    state.setMetronomeEnabled(false);
+    require(! state.getMetronomeEnabled(), "setMetronomeEnabled(false) should round-trip");
+    require(! state.getTree().hasProperty(juce::Identifier{"metronomeEnabled"}),
+            "default-off metronome should be stored as absent");
+    require(! state.isDirty(), "turning the metronome back off must remain silent (not dirty)");
+}
+
 } // namespace
 
 void addProjectStateTests(std::vector<TestCase>& tests)
@@ -836,6 +867,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"Undo group collapses a compound edit to one step", testUndoGroupCollapsesCompoundEditToOneStep});
     tests.push_back({"Nested undo groups collapse to one step", testNestedUndoGroupsCollapseToOneStep});
     tests.push_back({"Duplicate-clip group undoes in one step", testDuplicateClipGroupUndoesInOneStep});
+    tests.push_back({"ProjectState metronome toggle persists silently", testProjectStateMetronomeRoundTrip});
 }
 
 } // namespace silverdaw::tests

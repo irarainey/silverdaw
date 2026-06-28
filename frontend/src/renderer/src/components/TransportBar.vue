@@ -93,12 +93,14 @@ const {
       :length-editable="lengthEditable"
       :project-bpm-pending="projectBpmPending"
       :effective-sample-rate-label="effectiveSampleRateLabel"
+      :metronome-enabled="project.metronomeEnabled"
       @length-commit="onLengthCommit"
       @length-keydown="onLengthKeydown"
       @bump-length="bumpLength"
       @bpm-commit="onBpmCommit"
       @bpm-keydown="onBpmKeydown"
       @bump-bpm="bumpBpm"
+      @toggle-metronome="project.setMetronomeEnabled(!project.metronomeEnabled)"
     />
   </header>
 </template>

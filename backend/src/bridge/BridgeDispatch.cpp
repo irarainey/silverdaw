@@ -543,6 +543,10 @@ bool dispatchProject(const DispatchContext& ctx)
     {
         silverdaw::handleProjectSetMixdownStartBar(payload, projectState);
     }
+    else if (type == "PROJECT_SET_METRONOME")
+    {
+        silverdaw::handleProjectSetMetronome(payload, engine, projectState);
+    }
     else
     {
         return false;

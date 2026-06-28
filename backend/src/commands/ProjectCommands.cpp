@@ -43,6 +43,8 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
     // replaceTree does not touch the live engine, so align master gain with the
     // new project's default (rebuildEngineFromProject only runs on load/clip ops).
     engine.setMasterGain(projectState.getMasterVolume());
+    engine.setMetronomeBpm(projectState.getBpm());
+    engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
 }

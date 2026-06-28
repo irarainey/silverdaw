@@ -223,6 +223,8 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     }
 
     maybeSeedProjectBpmFor(itemId, projectState, bridge);
+    // Keep the monitoring metronome in time if this analysis just (re)seeded the project tempo.
+    engine.setMetronomeBpm(projectState.getBpm());
     return true;
 }
 

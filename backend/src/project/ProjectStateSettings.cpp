@@ -233,4 +233,27 @@ void ProjectState::setMixdownStartBar(int mixdownStartBar)
     }
 }
 
+bool ProjectState::getMetronomeEnabled() const
+{
+    return static_cast<bool>(root.getProperty(kMetronomeEnabled, false));
+}
+
+void ProjectState::setMetronomeEnabled(bool enabled)
+{
+    // A monitoring aid, not a content edit: persisted but silent (never dirty, never undoable).
+    // Default-off removes the property so projects round-trip without an extra field. Mirror both
+    // root and cleanSnapshot under a suppress scope so the toggle never produces a phantom dirty.
+    const SuppressDirtyScope suppress(*this);
+    if (! enabled)
+    {
+        root.removeProperty(kMetronomeEnabled, nullptr);
+        if (cleanSnapshot.isValid()) cleanSnapshot.removeProperty(kMetronomeEnabled, nullptr);
+    }
+    else
+    {
+        root.setProperty(kMetronomeEnabled, true, nullptr);
+        if (cleanSnapshot.isValid()) cleanSnapshot.setProperty(kMetronomeEnabled, true, nullptr);
+    }
+}
+
 } // namespace silverdaw

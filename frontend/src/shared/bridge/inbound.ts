@@ -351,6 +351,8 @@ export const ProjectStatePayloadSchema = z.object({
   barCounterStart: z.number().optional(),
   /** Displayed bar number a mixdown begins from; 1 (default) is the first bar. */
   mixdownStartBar: z.number().optional(),
+  /** Monitoring metronome click toggle; absent/false means off (the default). */
+  metronomeEnabled: z.boolean().optional(),
   // Project-shared FX bus parameters, stored flat on PROJECT.
   reverbSize: z.number().min(0).max(1).optional(),
   reverbDecay: z.number().min(0).max(1).optional(),
