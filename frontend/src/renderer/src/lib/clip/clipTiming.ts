@@ -36,6 +36,64 @@ export function isClipTempoWarpActive(clip: { effectiveWarpActive?: boolean }): 
   return clip.effectiveWarpActive === true
 }
 
+/** Minimal library-item shape needed to locate a clip's source beat grid. */
+export interface ClipBeatGridItem {
+  filePath: string
+  beats?: readonly number[]
+  bpm?: number
+  beatAnchorSec?: number
+}
+
+/** Minimal clip shape needed to project its first in-window source beat. */
+export interface ClipBeatGridClip {
+  libraryItemId?: string
+  filePath: string
+  inMs: number
+  durationMs: number
+  effectiveTempoRatio?: number
+  effectiveWarpActive?: boolean
+}
+
+/** Library lookup the beat-grid projection reads from (the store is structurally
+ *  compatible). `byId` is preferred; `items` is the file-path fallback for
+ *  library-clip siblings that share a source path. */
+export interface ClipBeatGridLibrary {
+  byId: Readonly<Record<string, ClipBeatGridItem | undefined>>
+  items: readonly ClipBeatGridItem[]
+}
+
+/** Timeline-time offset from a clip's left edge to the first source-grid beat
+ *  inside its trim window, or `null` when the source has no usable beat grid (or
+ *  no detected beat falls within the window). Single source of truth for the
+ *  beat-aware snap shared by clip drag and keyboard nudge. */
+export function clipFirstBeatOffsetMs(
+  clip: ClipBeatGridClip,
+  library: ClipBeatGridLibrary
+): number | null {
+  // Prefer libraryItemId; library-clip siblings can share file paths.
+  const itemById = clip.libraryItemId ? library.byId[clip.libraryItemId] : undefined
+  const item = itemById ?? library.items.find((i) => i.filePath === clip.filePath)
+  const beats = item?.beats
+  const sourceBpm = item?.bpm
+  const anchorSec = item?.beatAnchorSec ?? beats?.[0]
+  if (!beats || beats.length === 0 || !sourceBpm || sourceBpm <= 0 || anchorSec === undefined) {
+    return null
+  }
+  const inMs = clip.inMs
+  const outMs = inMs + clip.durationMs
+  const beatSpacingMs = (60 / sourceBpm) * 1000
+  const universalAnchorMs = anchorSec * 1000
+  let firstBeatMs =
+    universalAnchorMs +
+    Math.ceil((inMs - universalAnchorMs) / beatSpacingMs) * beatSpacingMs
+  while (firstBeatMs < inMs) firstBeatMs += beatSpacingMs
+  if (firstBeatMs > outMs) return null
+  const sourceOffsetMs = firstBeatMs - inMs
+  // Convert source-time offset to timeline-time for warped clips.
+  const ratio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
+  return sourceOffsetMs / ratio
+}
+
 /** Minimal clip shape `findClipSlot` needs — the store's full `Clip` is
  *  structurally compatible. */
 export interface ClipSlotInput {

@@ -7,17 +7,21 @@
 import type { useTransportStore } from '@/stores/transportStore'
 import type { useProjectStore } from '@/stores/projectStore'
 import type { useUiStore } from '@/stores/uiStore'
+import type { useLibraryStore } from '@/stores/libraryStore'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
 import { log } from '@/lib/log'
 
 type TransportStore = ReturnType<typeof useTransportStore>
 type ProjectStore = ReturnType<typeof useProjectStore>
 type UiStore = ReturnType<typeof useUiStore>
+type LibraryStore = ReturnType<typeof useLibraryStore>
 
 export interface AppKeyboardShortcutsDeps {
   transport: TransportStore
   project: ProjectStore
   ui: UiStore
+  library: LibraryStore
   // True when a modal/dialog owns the keyboard; shortcuts are suppressed.
   isModalOpen: () => boolean
   // Opens the Export Mixdown dialog (Ctrl/Cmd+M).
@@ -47,12 +51,31 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyboardShortcuts {
-  const { transport, project, ui } = deps
+  const { transport, project, ui, library } = deps
 
   // Tracks the exact last arrow-seek target so repeated presses step off the
   // precise value rather than the backend's sub-ms-rounded ack (see the grid
   // step branch for the rationale).
   let lastArrowSeekMs: number | null = null
+
+  // Resolve the clip a keyboard nudge should act on: the selected, unlocked
+  // clip. Returns null (after logging the reason) when there is nothing to move,
+  // shared by the Shift+Arrow (grid) and Shift+Alt+Arrow (fine) nudge branches.
+  function nudgeTargetClip(
+    label: string
+  ): { id: string; clip: NonNullable<ProjectStore['clips'][string]> } | null {
+    const id = project.selectedClipId
+    const clip = id ? project.clips[id] : null
+    if (!id || !clip) {
+      log.info('project', `${label} ignored — no clip selected`)
+      return null
+    }
+    if (clip.locked) {
+      log.info('project', `${label} ignored — clip ${id} locked`)
+      return null
+    }
+    return { id, clip }
+  }
 
   function onGlobalShortcutKey(e: KeyboardEvent): void {
     // Don't fight text fields, and don't trigger before the bridge is up
@@ -184,6 +207,56 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       transport.setPosition(targetMarker.positionMs)
       sendBridge('TRANSPORT_SEEK', { positionMs: targetMarker.positionMs })
       log.debug('transport', `marker-seek to ${targetMarker.positionMs}ms`)
+      return
+    }
+
+    // Shift + Alt + Arrow: nudge the selected clip along the timeline at the
+    // finest granularity (1 ms, no snap — the keyboard twin of Alt+drag). Alt
+    // keeps its "granular move" meaning; Shift marks the clip (not the playhead)
+    // as the target, so it never collides with Alt+Arrow's fine playhead seek.
+    if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault()
+      e.stopPropagation()
+      const target = nudgeTargetClip('shift-alt-arrow nudge')
+      if (!target) return
+      lastArrowSeekMs = null
+      const direction = e.key === 'ArrowLeft' ? -1 : 1
+      const targetMs = Math.max(0, Math.round(target.clip.startMs) + direction)
+      // Bump-clamped by moveClip; same-clip moves within 500 ms coalesce into
+      // one undo step on the backend, so a burst of nudges = one undo.
+      project.moveClip(target.id, targetMs)
+      log.debug('project', `shift-alt-arrow nudge clip ${target.id} -> ${targetMs}ms`)
+      return
+    }
+
+    // Shift + Arrow: move the selected clip by one beat-grid step, snapping its
+    // first in-window source beat to the project sub-beat grid (the keyboard twin
+    // of a plain clip drag). Shift+Alt is the fine 1 ms variant above.
+    if (e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault()
+      e.stopPropagation()
+      const target = nudgeTargetClip('shift-arrow grid-nudge')
+      if (!target) return
+      const bpm = transport.bpm
+      if (!Number.isFinite(bpm) || bpm <= 0) return
+      lastArrowSeekMs = null
+      const snap = 60_000 / bpm / SUB_BEATS_PER_BEAT
+      const direction = e.key === 'ArrowLeft' ? -1 : 1
+      // Snap the first in-window source beat to the grid, falling back to the
+      // clip's left edge when the source has no detected beats.
+      const offset = clipFirstBeatOffsetMs(target.clip, library) ?? 0
+      const beatBase = target.clip.startMs + offset
+      const snappedBeat =
+        direction < 0
+          ? Math.max(0, Math.floor((beatBase - 1e-6) / snap) * snap)
+          : (Math.floor(beatBase / snap + 1e-6) + 1) * snap
+      const targetMs = Math.max(0, snappedBeat - offset)
+      // Bump-clamped by moveClip; same-clip moves within 500 ms coalesce into
+      // one undo step on the backend.
+      project.moveClip(target.id, targetMs)
+      log.debug('project', `shift-arrow grid-nudge clip ${target.id} -> ${targetMs}ms`)
       return
     }
 

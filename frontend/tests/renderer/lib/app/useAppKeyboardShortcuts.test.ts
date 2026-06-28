@@ -27,17 +27,22 @@ interface FakeStores {
   project: {
     durationMs: number
     selectedClipId: string | null
-    clips: Record<string, { locked: boolean }>
+    clips: Record<string, { locked: boolean; startMs: number }>
     tracks: { clipIds: string[] }[]
     markers: { positionMs: number }[]
     viewPxPerSecond: number
     setClipLocked: ReturnType<typeof vi.fn>
     toggleMarkerAt: ReturnType<typeof vi.fn>
+    moveClip: ReturnType<typeof vi.fn>
   }
   ui: {
     requestTimelineZoom: ReturnType<typeof vi.fn>
     requestTimelineScroll: ReturnType<typeof vi.fn>
     requestTimelineScrollToPosition: ReturnType<typeof vi.fn>
+  }
+  library: {
+    byId: Record<string, unknown>
+    items: unknown[]
   }
 }
 
@@ -64,12 +69,17 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
       markers: [],
       viewPxPerSecond: 100,
       setClipLocked: vi.fn(),
-      toggleMarkerAt: vi.fn()
+      toggleMarkerAt: vi.fn(),
+      moveClip: vi.fn()
     },
     ui: {
       requestTimelineZoom: vi.fn(),
       requestTimelineScroll: vi.fn(),
       requestTimelineScrollToPosition: vi.fn()
+    },
+    library: {
+      byId: {},
+      items: []
     }
   }
   const openExportMixdown = vi.fn()
@@ -77,6 +87,7 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
     transport: stores.transport as unknown as AppKeyboardShortcutsDeps['transport'],
     project: stores.project as unknown as AppKeyboardShortcutsDeps['project'],
     ui: stores.ui as unknown as AppKeyboardShortcutsDeps['ui'],
+    library: stores.library as unknown as AppKeyboardShortcutsDeps['library'],
     isModalOpen: () => overrides.modalOpen === true,
     openExportMixdown
   }
@@ -184,7 +195,7 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
 
   it('Ctrl+L toggles lock on the selected clip', () => {
     h.stores.project.selectedClipId = 'c1'
-    h.stores.project.clips = { c1: { locked: false } }
+    h.stores.project.clips = { c1: { locked: false, startMs: 0 } }
     const { e } = makeKey({ key: 'l', ctrlKey: true })
     kb.onGlobalShortcutKey(e)
     expect(h.stores.project.setClipLocked).toHaveBeenCalledWith('c1', true)
@@ -251,5 +262,83 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     const { e } = makeKey({ key: 'ArrowRight', altKey: true })
     kb.onGlobalShortcutKey(e)
     expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 10 })
+  })
+
+  it('Shift+Alt+ArrowRight nudges the selected clip forward by 1 ms', () => {
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.clips = { c1: { locked: false, startMs: 500 } }
+    const { e, preventDefault } = makeKey({ key: 'ArrowRight', altKey: true, shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.moveClip).toHaveBeenCalledWith('c1', 501)
+    expect(preventDefault).toHaveBeenCalled()
+    // Clip nudge owns the key — no playhead seek.
+    expect(sendBridge).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
+  })
+
+  it('Shift+Alt+ArrowLeft nudges the selected clip back by 1 ms, clamped at 0', () => {
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.clips = { c1: { locked: false, startMs: 500 } }
+    const { e } = makeKey({ key: 'ArrowLeft', altKey: true, shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.moveClip).toHaveBeenCalledWith('c1', 499)
+  })
+
+  it('Shift+Alt+Arrow does not move a locked selected clip', () => {
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.clips = { c1: { locked: true, startMs: 500 } }
+    const { e } = makeKey({ key: 'ArrowRight', altKey: true, shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.moveClip).not.toHaveBeenCalled()
+    expect(sendBridge).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
+  })
+
+  it('Shift+Alt+Arrow with no clip selected does nothing (no clip move, no seek)', () => {
+    const { e } = makeKey({ key: 'ArrowRight', altKey: true, shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.moveClip).not.toHaveBeenCalled()
+    expect(sendBridge).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
+  })
+
+  it('Alt+Arrow still seeks the playhead when a clip is selected', () => {
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.clips = { c1: { locked: false, startMs: 500 } }
+    h.stores.transport.positionMs = 0
+    const { e } = makeKey({ key: 'ArrowRight', altKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.moveClip).not.toHaveBeenCalled()
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 10 })
+  })
+
+  it('Shift+ArrowRight moves the selected clip to the next sub-beat grid line', () => {
+    // 120 bpm -> 125 ms/sub-beat; no source beats -> snap the clip left edge.
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.clips = { c1: { locked: false, startMs: 500 } }
+    const { e } = makeKey({ key: 'ArrowRight', shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.moveClip).toHaveBeenCalledWith('c1', 625)
+    expect(sendBridge).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
+  })
+
+  it('Shift+ArrowLeft moves the selected clip to the previous sub-beat grid line', () => {
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.clips = { c1: { locked: false, startMs: 500 } }
+    const { e } = makeKey({ key: 'ArrowLeft', shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.moveClip).toHaveBeenCalledWith('c1', 375)
+  })
+
+  it('Shift+Arrow does not move a locked selected clip', () => {
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.clips = { c1: { locked: true, startMs: 500 } }
+    const { e } = makeKey({ key: 'ArrowRight', shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.moveClip).not.toHaveBeenCalled()
+  })
+
+  it('Shift+Arrow with no clip selected does nothing', () => {
+    const { e } = makeKey({ key: 'ArrowRight', shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.moveClip).not.toHaveBeenCalled()
+    expect(sendBridge).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
   })
 })

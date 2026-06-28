@@ -1624,6 +1624,8 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Click on **inter-track gap** / below the last track | Deselect both clip and track. |
 | `←` / `→` | Step the playhead one grid line (sub-beat). |
 | `Alt` + `←` / `→` | Step the playhead by one pixel's worth of time (~16.7 ms at default zoom, finer when zoomed in). |
+| `Shift` + `←` / `→` | Move the **selected** clip one beat-grid step, snapping its first in-window source beat to the project sub-beat grid (the keyboard twin of a plain clip drag; falls back to the clip's left edge when the source has no detected beats). Bump-clamped against neighbours; a burst folds into one undo step. No-op on a locked clip or with no clip selected. |
+| `Shift` + `Alt` + `←` / `→` | Nudge the **selected** clip along the timeline at the finest granularity (1 ms, no snap — the keyboard twin of `Alt`+drag). Bump-clamped against neighbours; a burst of nudges folds into one undo step. No-op on a locked clip or with no clip selected. |
 | `M` | Toggle a marker at the nearest grid point to the playhead. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
 | `Ctrl` + `←` / `→` | Move the playhead to the previous or next marker, scrolling the timeline if needed. |
 | `Ctrl` + `Shift` + `←` / `→` | Skip to the start or end of the project and jump the timeline viewport there. |

@@ -8,6 +8,7 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
 import { RULER_HEIGHT, SCROLLBAR_HEIGHT } from './constants'
 import type { GridGeometry } from './useGridGeometry'
 import { createTimelineQueries } from './timelineQueries'
@@ -283,7 +284,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     } else {
       const snap = geometry.msPerSubBeat()
       // Beat-aware snap aligns the first in-window source beat to the project grid.
-      const referenceBeatOffsetMs = firstBeatOffsetMs(clip)
+      const referenceBeatOffsetMs = clipFirstBeatOffsetMs(clip, library)
       if (referenceBeatOffsetMs !== null) {
         const projectBeat = rawStartMs + referenceBeatOffsetMs
         const snappedBeat = Math.round(projectBeat / snap) * snap
@@ -306,42 +307,6 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   }
 
   /** Timeline-time offset to the first source-grid beat inside the clip window. */
-  function firstBeatOffsetMs(clip: {
-    libraryItemId?: string
-    filePath: string
-    inMs: number
-    durationMs: number
-    warpEnabled?: boolean
-    tempoRatio?: number
-    effectiveTempoRatio?: number
-    effectiveWarpActive?: boolean
-  }): number | null {
-    // Prefer libraryItemId; library-clip siblings can share file paths.
-    const itemById = clip.libraryItemId
-      ? library.byId[clip.libraryItemId]
-      : undefined
-    const item = itemById ?? library.items.find((i) => i.filePath === clip.filePath)
-    const beats = item?.beats
-    const sourceBpm = item?.bpm
-    const anchorSec = item?.beatAnchorSec ?? beats?.[0]
-    if (!beats || beats.length === 0 || !sourceBpm || sourceBpm <= 0 || anchorSec === undefined) {
-      return null
-    }
-    const inMs = clip.inMs
-    const outMs = inMs + clip.durationMs
-    const beatSpacingMs = (60 / sourceBpm) * 1000
-    const universalAnchorMs = anchorSec * 1000
-    let firstBeatMs =
-      universalAnchorMs +
-      Math.ceil((inMs - universalAnchorMs) / beatSpacingMs) * beatSpacingMs
-    while (firstBeatMs < inMs) firstBeatMs += beatSpacingMs
-    if (firstBeatMs > outMs) return null
-    const sourceOffsetMs = firstBeatMs - inMs
-    // Convert source-time offset to timeline-time for warped clips.
-    const ratio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
-    return sourceOffsetMs / ratio
-  }
-
   function onClipPointerUp(_e: PointerEvent): void {
     if (draggedClipId === null) return
     const endClip = project.clips[draggedClipId]

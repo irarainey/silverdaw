@@ -137,6 +137,7 @@ const { onGlobalShortcutKey } = useAppKeyboardShortcuts({
   transport,
   project,
   ui,
+  library,
   isModalOpen: isShortcutModalOpen,
   openExportMixdown: () => {
     exportMixdownOpen.value = true

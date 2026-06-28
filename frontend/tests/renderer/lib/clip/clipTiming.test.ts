@@ -3,6 +3,7 @@ import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
   isClipTempoWarpActive,
+  clipFirstBeatOffsetMs,
   findClipSlot
 } from '@/lib/clip/clipTiming'
 
@@ -34,6 +35,52 @@ describe('isClipTempoWarpActive', () => {
     expect(isClipTempoWarpActive({ effectiveWarpActive: true })).toBe(true)
     expect(isClipTempoWarpActive({ effectiveWarpActive: false })).toBe(false)
     expect(isClipTempoWarpActive({})).toBe(false)
+  })
+})
+
+describe('clipFirstBeatOffsetMs', () => {
+  // 120 bpm source -> 500 ms/beat, anchored at 0 s.
+  const item = { filePath: 'C:\\a.wav', beats: [0, 0.5, 1], bpm: 120, beatAnchorSec: 0 }
+  const lib = { byId: { lib1: item }, items: [item] }
+
+  it('returns null when the source has no usable beat grid', () => {
+    const clip = { libraryItemId: 'none', filePath: 'C:\\b.wav', inMs: 0, durationMs: 1000 }
+    expect(clipFirstBeatOffsetMs(clip, { byId: {}, items: [] })).toBeNull()
+  })
+
+  it('offsets to the first in-window beat (window starting on a beat = 0)', () => {
+    const clip = { libraryItemId: 'lib1', filePath: 'C:\\a.wav', inMs: 0, durationMs: 1000 }
+    expect(clipFirstBeatOffsetMs(clip, lib)).toBe(0)
+  })
+
+  it('offsets to the next beat when the window starts mid-beat', () => {
+    // Window starts at 100 ms; next beat is 500 ms -> 400 ms offset.
+    const clip = { libraryItemId: 'lib1', filePath: 'C:\\a.wav', inMs: 100, durationMs: 1000 }
+    expect(clipFirstBeatOffsetMs(clip, lib)).toBe(400)
+  })
+
+  it('falls back to the file-path lookup when libraryItemId misses', () => {
+    const clip = { filePath: 'C:\\a.wav', inMs: 0, durationMs: 1000 }
+    expect(clipFirstBeatOffsetMs(clip, lib)).toBe(0)
+  })
+
+  it('scales the source-time offset to timeline time for warped clips', () => {
+    // 400 ms source offset / ratio 2 -> 200 ms timeline offset.
+    const clip = {
+      libraryItemId: 'lib1',
+      filePath: 'C:\\a.wav',
+      inMs: 100,
+      durationMs: 1000,
+      effectiveWarpActive: true,
+      effectiveTempoRatio: 2
+    }
+    expect(clipFirstBeatOffsetMs(clip, lib)).toBe(200)
+  })
+
+  it('returns null when no beat falls inside the trim window', () => {
+    // Window 100..200 ms contains no beat (beats at 0 / 500 / 1000 ms).
+    const clip = { libraryItemId: 'lib1', filePath: 'C:\\a.wav', inMs: 100, durationMs: 100 }
+    expect(clipFirstBeatOffsetMs(clip, lib)).toBeNull()
   })
 })
 
