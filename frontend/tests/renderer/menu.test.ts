@@ -43,3 +43,32 @@ describe('View menu — zoom controls', () => {
     expect(viewMenu().some((i) => i.action === 'view.toggleFullScreen')).toBe(true)
   })
 })
+
+describe('File menu — Recent Projects submenu', () => {
+  function recentSubmenu(recentProjects: string[]): MenuItemDef[] {
+    const menus = buildMenus({ devToolsEnabled: false, recentProjects })
+    const file = menus.find((m) => m.label === 'File')
+    const recent = file!.items.find((i) => i.label === 'Recent Projects')
+    expect(recent?.submenu).toBeDefined()
+    return recent!.submenu!
+  }
+
+  it('labels entries with the project name only — no folder or .silverdaw extension', () => {
+    const sub = recentSubmenu([
+      'C:\\Users\\me\\Music\\Summer Mix\\Summer Mix.silverdaw',
+      '/home/me/projects/Demo/Demo.SILVERDAW'
+    ])
+    expect(sub[0]).toMatchObject({
+      label: 'Summer Mix',
+      action: 'file.openRecentByIndex:0',
+      hint: 'C:\\Users\\me\\Music\\Summer Mix\\Summer Mix.silverdaw'
+    })
+    // Extension match is case-insensitive; the full path stays as the hint.
+    expect(sub[1]).toMatchObject({ label: 'Demo', action: 'file.openRecentByIndex:1' })
+  })
+
+  it('shows a disabled placeholder when there are no recent projects', () => {
+    const sub = recentSubmenu([])
+    expect(sub).toEqual([{ label: 'No recent projects', disabled: true }])
+  })
+})

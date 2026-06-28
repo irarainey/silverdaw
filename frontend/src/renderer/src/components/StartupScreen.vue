@@ -7,6 +7,7 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useTransportStore } from '@/stores/transportStore'
 // 256 px renders crisply at 128 px on 2x DPI.
 import logoUrl from '@resources/icons/256x256.png'
+import { projectNameFromPath as projectName } from '@/lib/project/projectPath'
 
 const props = defineProps<{
   open: boolean
@@ -99,17 +100,6 @@ watch(
 const ready = computed(
   () => allResolved.value && phaseQueueLength.value === 0 && !phaseTimerActive.value
 )
-
-function basename(path: string): string {
-  const lastSep = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
-  return lastSep >= 0 ? path.slice(lastSep + 1) : path
-}
-
-/** The user-facing project name: the file name without the `.silverdaw` extension
- *  (a project saves as `<ProjectName>/<ProjectName>.silverdaw`). */
-function projectName(path: string): string {
-  return basename(path).replace(/\.silverdaw$/i, '')
-}
 
 function newProject(): void {
   emit('newProject')

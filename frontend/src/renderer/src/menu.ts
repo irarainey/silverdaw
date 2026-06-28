@@ -5,6 +5,7 @@ import {
   zoomPercentLabel,
   zoomPresetAction
 } from '@/lib/timeline/zoomPresets'
+import { projectNameFromPath } from '@/lib/project/projectPath'
 
 export interface MenuItemDef {
   /** Visible label, or `null` for a separator. */
@@ -40,17 +41,12 @@ export interface BuildMenusOptions {
 /** Recent-project entries shown in the quick File-menu path. */
 const MAX_RECENT_IN_MENU = 10
 
-function basename(path: string): string {
-  const lastSep = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
-  return lastSep >= 0 ? path.slice(lastSep + 1) : path
-}
-
 function buildRecentProjectsSubmenu(paths: string[]): MenuItemDef[] {
   if (paths.length === 0) {
     return [{ label: 'No recent projects', disabled: true }]
   }
   const items: MenuItemDef[] = paths.map((path, index) => ({
-    label: basename(path),
+    label: projectNameFromPath(path),
     // Encode the index because Windows paths collide with action separators.
     action: `file.openRecentByIndex:${index}`,
     hint: path
