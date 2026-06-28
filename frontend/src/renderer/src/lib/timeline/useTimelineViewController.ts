@@ -6,10 +6,10 @@ import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { isWarpPending } from '@/lib/warp'
-import { SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH } from '@/lib/timeline/constants'
+import { SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH, RULER_HEIGHT } from '@/lib/timeline/constants'
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
 import { useTimelineScroll } from '@/lib/timeline/useTimelineScroll'
-import { tracksContentHeight as tracksContentHeight_ } from '@/lib/timeline/trackLayout'
+import { tracksContentHeight as tracksContentHeight_, buildTrackRowLayout } from '@/lib/timeline/trackLayout'
 import { usePixiApp } from '@/lib/timeline/usePixiApp'
 import { useDragHandlers, type ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import { useDropZone } from '@/lib/timeline/useDropZone'
@@ -359,6 +359,31 @@ export function useTimelineViewController(
       }
       if (Math.abs(next - scrollX.value) < 0.5) return
       scrollX.value = next
+      applyScroll()
+    }
+  )
+
+  // Scroll a freshly-added (or otherwise off-screen) track row into the
+  // visible vertical band. Mirrors the horizontal scroll-into-view above.
+  watch(
+    () => ui.timelineRevealTrackRequest,
+    (request) => {
+      if (!request) return
+      const index = project.tracks.findIndex((t) => t.id === request.trackId)
+      if (index < 0) return
+      const slot = buildTrackRowLayout(project.tracks)[index]
+      if (!slot) return
+      // Content-relative bounds: 0 = first track top (just below the ruler).
+      const rowTop = slot.top - RULER_HEIGHT
+      const rowBottom = rowTop + slot.height
+      const viewTop = scrollY.value
+      const viewBottom = scrollY.value + trackAreaHeight.value
+      let next = scrollY.value
+      if (rowTop < viewTop) next = rowTop
+      else if (rowBottom > viewBottom) next = rowBottom - trackAreaHeight.value
+      next = Math.max(0, Math.min(maxScrollY.value, next))
+      if (Math.abs(next - scrollY.value) < 0.5) return
+      scrollY.value = next
       applyScroll()
     }
   )

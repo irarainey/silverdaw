@@ -15,6 +15,8 @@ export type TimelineZoomAction = 'in' | 'out' | 'reset'
 export type TimelineZoomRequest =
   | { kind: 'step'; action: TimelineZoomAction; id: number }
   | { kind: 'absolute'; pxPerSecond: number; id: number }
+/** One-shot request to scroll a track row into the visible vertical band. */
+export type TimelineRevealTrackRequest = { trackId: string; id: number }
 
 interface UiState {
   trackHeaderWidth: number
@@ -33,6 +35,7 @@ interface UiState {
   zoomPxPerSecond: number
   timelineScrollRequest: TimelineScrollRequest | null
   timelineZoomRequest: TimelineZoomRequest | null
+  timelineRevealTrackRequest: TimelineRevealTrackRequest | null
   /** Global shortcuts defer while the Clip Editor preview dialog is open. */
   clipEditorOpen: boolean
   hydrated: boolean
@@ -40,6 +43,7 @@ interface UiState {
 
 let nextTimelineScrollRequestId = 1
 let nextTimelineZoomRequestId = 1
+let nextTimelineRevealTrackRequestId = 1
 
 // Must match `DEFAULT_PREFS.ui` in src/main/index.ts.
 const DEFAULTS = {
@@ -132,6 +136,7 @@ export const useUiStore = defineStore('ui', {
     zoomPxPerSecond: 100,
     timelineScrollRequest: null,
     timelineZoomRequest: null,
+    timelineRevealTrackRequest: null,
     clipEditorOpen: false,
     hydrated: false
   }),
@@ -263,6 +268,15 @@ export const useUiStore = defineStore('ui', {
       this.timelineScrollRequest = {
         positionMs,
         id: nextTimelineScrollRequestId++
+      }
+    },
+
+    /** Ask the timeline to scroll the given track row into the visible band. */
+    requestRevealTrack(trackId: string): void {
+      if (!trackId) return
+      this.timelineRevealTrackRequest = {
+        trackId,
+        id: nextTimelineRevealTrackRequestId++
       }
     },
 

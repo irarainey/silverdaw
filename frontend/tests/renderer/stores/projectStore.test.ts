@@ -171,6 +171,22 @@ describe('projectStore', () => {
     expect(sendMock).toHaveBeenCalledWith('TRACK_ADD', { trackId, name: 'Track 1', colorIndex: 0 })
   })
 
+  it('requests the timeline reveal the newly added track', async () => {
+    const { useUiStore } = await import('@/stores/uiStore')
+    const project = useProjectStore()
+    const ui = useUiStore()
+
+    expect(ui.timelineRevealTrackRequest).toBeNull()
+    const trackId = project.addTrack()
+    expect(ui.timelineRevealTrackRequest).toEqual({ trackId, id: expect.any(Number) })
+
+    // A second add issues a fresh one-shot request (new id) for the new row.
+    const firstId = ui.timelineRevealTrackRequest!.id
+    const secondTrackId = project.addTrack()
+    expect(ui.timelineRevealTrackRequest!.trackId).toBe(secondTrackId)
+    expect(ui.timelineRevealTrackRequest!.id).not.toBe(firstId)
+  })
+
   it('clamps same-track clip moves to the nearest non-overlapping slot', () => {
     const project = useProjectStore()
     const trackId = project.addTrack()

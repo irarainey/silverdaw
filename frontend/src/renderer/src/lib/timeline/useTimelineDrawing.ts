@@ -120,6 +120,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     scrollX,
     scrollY,
     trackAreaHeight,
+    tracksContentHeight,
     project,
     transport,
     clipRenderer

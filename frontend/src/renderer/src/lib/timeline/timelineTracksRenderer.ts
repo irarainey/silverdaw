@@ -32,6 +32,7 @@ export interface TimelineTracksRendererDeps {
   scrollX: Ref<number>
   scrollY: Ref<number>
   trackAreaHeight: ComputedRef<number>
+  tracksContentHeight: ComputedRef<number>
   project: ReturnType<typeof useProjectStore>
   transport: ReturnType<typeof useTransportStore>
   clipRenderer: ReturnType<typeof createClipRenderer>
@@ -47,6 +48,7 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
     scrollX,
     scrollY,
     trackAreaHeight,
+    tracksContentHeight,
     project,
     transport,
     clipRenderer
@@ -64,7 +66,10 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
     const rightEdge = width - SCROLLBAR_WIDTH
     const gridLeft = headerWidth()
     const gridTop = RULER_HEIGHT
-    const gridBottom = RULER_HEIGHT + trackAreaHeight.value
+    // Span the full stacked track height (not just the visible band) so rows
+    // scrolled into view below the first viewport still sit on the grid; when
+    // the stack is shorter than the viewport the grid still fills the band.
+    const gridBottom = RULER_HEIGHT + Math.max(trackAreaHeight.value, tracksContentHeight.value)
     if (gridBottom <= gridTop || rightEdge <= gridLeft) return
 
     const pxPerBeat = (60 / transport.bpm) * pxPerSecond.value

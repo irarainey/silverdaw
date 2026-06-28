@@ -5,6 +5,7 @@
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
+import { useUiStore } from '@/stores/uiStore'
 import type { ProjectState, Track } from './projectTypes'
 import { DEFAULT_TRACK_LENGTH_MS, MAX_TRACK_VOLUME, TRACK_PALETTE } from './projectTypes'
 
@@ -30,6 +31,9 @@ export const trackActions = {
       // Optimistic; TRACK_ADDED is diagnostic because the renderer already shows it.
       // colorIndex is persisted so the inherited clip colour never drifts on reload.
       sendBridge('TRACK_ADD', { trackId, name: track.name, colorIndex: track.colorIndex })
+      // A new row is appended at the bottom; ask the timeline to scroll it into
+      // view so it is never created out of sight below the fold.
+      useUiStore().requestRevealTrack(trackId)
       log.info('project', `addTrack id=${trackId}`)
       return trackId
     },
