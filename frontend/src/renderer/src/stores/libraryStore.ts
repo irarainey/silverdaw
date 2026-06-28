@@ -13,6 +13,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import type {
   AddLibraryItemInput,
   LibraryItem,
@@ -305,38 +306,40 @@ export const useLibraryStore = defineStore('library', {
       if (item.name === nextName) return false
       const previousName = item.name
       item.name = nextName
-      // Propagate only to linked clips still using the library-clip name.
-      if (item.kind === 'clip') {
-        const project = useProjectStore()
-        let propagated = 0
-        for (const clipId in project.clips) {
-          const clip = project.clips[clipId]
-          if (!clip || clip.libraryItemId !== itemId) continue
-          if (clip.name === previousName) {
-            clip.name = nextName
-            sendBridge('CLIP_RENAME', { clipId, name: nextName ?? '' })
-            propagated++
+      // Propagate the rename to linked clips and persist the upsert as ONE undo step.
+      runInUndoGroup('Rename', () => {
+        if (item.kind === 'clip') {
+          const project = useProjectStore()
+          let propagated = 0
+          for (const clipId in project.clips) {
+            const clip = project.clips[clipId]
+            if (!clip || clip.libraryItemId !== itemId) continue
+            if (clip.name === previousName) {
+              clip.name = nextName
+              sendBridge('CLIP_RENAME', { clipId, name: nextName ?? '' })
+              propagated++
+            }
           }
+          const touched = touchTimelineClipsForLibraryItem(itemId)
+          log.debug('library', `renameItem linked redraw id=${itemId} touched=${touched} propagated=${propagated}`)
         }
-        const touched = touchTimelineClipsForLibraryItem(itemId)
-        log.debug('library', `renameItem linked redraw id=${itemId} touched=${touched} propagated=${propagated}`)
-      }
-      // Omit `playbackFilePath` so backend decoded-cache paths stay intact.
-      sendBridge('LIBRARY_ADD', {
-        itemId: item.id,
-        filePath: item.filePath,
-        kind: item.kind,
-        name: nextName,
-        fileName: item.fileName,
-        durationMs: item.durationMs,
-        sampleRate: item.sampleRate,
-        channelCount: item.channelCount,
-        key: item.key,
-        sourceItemId: item.derivedFrom?.sourceItemId,
-        sourceClipId: item.derivedFrom?.sourceClipId,
-        sourceInMs: item.derivedFrom?.inMs,
-        sourceDurationMs: item.derivedFrom?.durationMs,
-        collapsed: item.collapsed
+        // Omit `playbackFilePath` so backend decoded-cache paths stay intact.
+        sendBridge('LIBRARY_ADD', {
+          itemId: item.id,
+          filePath: item.filePath,
+          kind: item.kind,
+          name: nextName,
+          fileName: item.fileName,
+          durationMs: item.durationMs,
+          sampleRate: item.sampleRate,
+          channelCount: item.channelCount,
+          key: item.key,
+          sourceItemId: item.derivedFrom?.sourceItemId,
+          sourceClipId: item.derivedFrom?.sourceClipId,
+          sourceInMs: item.derivedFrom?.inMs,
+          sourceDurationMs: item.derivedFrom?.durationMs,
+          collapsed: item.collapsed
+        })
       })
       log.info('library', `renameItem id=${itemId} name=${nextName ?? '<cleared>'}`)
       return true
@@ -417,10 +420,30 @@ export const useLibraryStore = defineStore('library', {
         for (const clipId in project.clips) {
           if (project.clips[clipId]?.libraryItemId === itemId) linkedClipIds.push(clipId)
         }
-        for (const clipId of linkedClipIds) {
-          project.unlinkClipFromLibrary(clipId)
-        }
+        // Unlink every dependent clip and cascade-remove child saved clips as ONE undo step.
+        return runInUndoGroup('Remove from library', () => {
+          for (const clipId of linkedClipIds) {
+            project.unlinkClipFromLibrary(clipId)
+          }
+          return this.finaliseRemoveItem(itemId, cleanupFiles, removedForCleanup, captureForCleanup)
+        })
       }
+
+      return runInUndoGroup('Remove from library', () =>
+        this.finaliseRemoveItem(itemId, cleanupFiles, removedForCleanup, captureForCleanup)
+      )
+    },
+
+    /** Promote stem identity, cascade-remove child clips, then remove the target item.
+     *  Must run inside a `runInUndoGroup` so the LIBRARY_REMOVE cascade is one undo step. */
+    finaliseRemoveItem(
+      itemId: string,
+      cleanupFiles: boolean,
+      removedForCleanup: RemovedItemFile[],
+      captureForCleanup: (removed: LibraryItem) => void
+    ): boolean {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return false
 
       // A source/sample lends inherited identity to its stems; promote it
       // before it disappears so each stem keeps reading standalone.

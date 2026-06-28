@@ -16,6 +16,7 @@
 // the summary. A per-job set dedupes the two paths.
 
 import { importAudioIntoLibrary, libraryItemToClipPlacement } from '@/lib/importAudio'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { STEM_NAME_SEPARATOR } from '@/stores/libraryItemHelpers'
@@ -116,9 +117,12 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
     // Library-source separation imports the stems only; placing them on the
     // timeline is a manual step the user takes later.
     if (target.clipId !== undefined) {
-      const trackId = project.addTrack()
-      project.setTrackName(trackId, `${label} ${STEM_NAME_SEPARATOR} ${target.sourceName}`)
-      project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), target.startMs ?? 0)
+      // New track, its name, and the stem clip placement are ONE undo step.
+      runInUndoGroup(`Add ${label} stem`, () => {
+        const trackId = project.addTrack()
+        project.setTrackName(trackId, `${label} ${STEM_NAME_SEPARATOR} ${target.sourceName}`)
+        project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), target.startMs ?? 0)
+      })
     }
     return true
   } catch (err) {

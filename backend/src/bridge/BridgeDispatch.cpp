@@ -686,6 +686,16 @@ bool dispatchUndo(const DispatchContext& ctx)
         silverdaw::log::info("bridge", "recv EDIT_REDO");
         silverdaw::handleEditRedo(engine, projectState, bridge, session, peakPool, decodedCache);
     }
+    else if (type == "EDIT_GROUP_BEGIN")
+    {
+        const auto label = silverdaw::bridge::readOptionalString(ctx.payload, "label")
+                               .value_or(juce::String{});
+        silverdaw::beginUndoGroup(label, projectState);
+    }
+    else if (type == "EDIT_GROUP_END")
+    {
+        silverdaw::endUndoGroup();
+    }
     else
     {
         return false;

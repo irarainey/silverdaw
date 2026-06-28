@@ -5,6 +5,7 @@
 // persisted warp patch, the target trim window, the overlap-conflict check, and
 // the two save entry points (Save changes / Save as new).
 import { clampNumber, pitchNeedsProcessor } from '@/lib/clipEditor/useClipEditorWarpDraft'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveDurationMs } from '@/lib/warp'
 import { effectiveClipDurationMs, type Clip } from '@/stores/projectStore'
 import type { useProjectStore } from '@/stores/projectStore'
@@ -140,41 +141,49 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
         deps.notifications.pushError(`Cannot save changes — they would overlap clips on ${conflictTrack}.`)
         return
       }
-      deps.project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
-      // Only re-apply warp when the user actually changed it. `libraryClipWarpPatch`
-      // reconstructs the patch from the draft, which is lossy for follow-project
-      // clips (it emits `tempoRatio: null`); re-applying it on a volume-only save
-      // would clear an existing warp on the backend, leaving the clip flagged as
-      // warped but playing at its original tempo. `trimClip` self-guards and
-      // `setClipEnvelope` round-trips, so only warp needs gating here.
-      if (deps.hasWarpPitchChanged()) {
-        deps.project.setClipWarp(clip.id, warpPatch)
-      }
-      // Volume shape is stored in clip-local timeline-ms basis; a flat unity
-      // draft commits as an empty array, clearing it.
-      deps.project.setClipEnvelope(clip.id, deps.volumeShapeCommittedPoints())
-      // Reverse is a non-destructive per-clip flag; `setClipReversed` self-guards
-      // against a no-op change.
-      deps.project.setClipReversed(clip.id, deps.reverseCommitted())
+      // Save commits the whole draft as ONE undo step.
+      runInUndoGroup('Save clip changes', () => {
+        deps.project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
+        // Only re-apply warp when the user actually changed it. `libraryClipWarpPatch`
+        // reconstructs the patch from the draft, which is lossy for follow-project
+        // clips (it emits `tempoRatio: null`); re-applying it on a volume-only save
+        // would clear an existing warp on the backend, leaving the clip flagged as
+        // warped but playing at its original tempo. `trimClip` self-guards and
+        // `setClipEnvelope` round-trips, so only warp needs gating here.
+        if (deps.hasWarpPitchChanged()) {
+          deps.project.setClipWarp(clip.id, warpPatch)
+        }
+        // Volume shape is stored in clip-local timeline-ms basis; a flat unity
+        // draft commits as an empty array, clearing it.
+        deps.project.setClipEnvelope(clip.id, deps.volumeShapeCommittedPoints())
+        // Reverse is a non-destructive per-clip flag; `setClipReversed` self-guards
+        // against a no-op change.
+        deps.project.setClipReversed(clip.id, deps.reverseCommitted())
+      })
       deps.notifications.pushInfo(`Saved changes for "${deps.titleText()}".`)
       deps.close()
       return
     }
     if (!deps.editsLibraryClipLibrary()) return
-    const result = deps.library.updateLibraryClipEdit(entry.id, {
-      inMs: targetIn,
-      durationMs: targetDur,
-      ...warpPatch
-    })
-    if (result.ok) {
-      // A linked timeline clip also shares the saved clip's volume envelope:
-      // persist it to every linked instance after trim/warp reflows their
-      // durations, so the post-warp ms basis is current. Saved-library edits
-      // (no placed instance) skip this — they have no volume control.
-      if (deps.editsTimelineClip()) {
+    // Persist the saved-clip edit and its envelope/reverse propagation as ONE undo step; the
+    // nested groups inside the library actions fold into this outer transaction.
+    const result = runInUndoGroup('Save clip changes', () => {
+      const editResult = deps.library.updateLibraryClipEdit(entry.id, {
+        inMs: targetIn,
+        durationMs: targetDur,
+        ...warpPatch
+      })
+      if (editResult.ok && deps.editsTimelineClip()) {
+        // A linked timeline clip also shares the saved clip's volume envelope:
+        // persist it to every linked instance after trim/warp reflows their
+        // durations, so the post-warp ms basis is current. Saved-library edits
+        // (no placed instance) skip this — they have no volume control.
         deps.library.updateLibraryClipEnvelope(entry.id, deps.volumeShapeCommittedPoints())
         deps.library.updateLibraryClipReversed(entry.id, deps.reverseCommitted())
       }
+      return editResult
+    })
+    if (result.ok) {
       deps.notifications.pushInfo(`Saved changes for "${deps.titleText()}".`)
       deps.close()
     } else if (result.conflictingTrackNames && result.conflictingTrackNames.length > 0) {

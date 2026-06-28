@@ -13,6 +13,11 @@ vi.mock('@/lib/importAudio', () => ({
   libraryItemToClipPlacement: (item: { id: string }) => ({ id: item.id })
 }))
 vi.mock('@/lib/log', () => ({ log: { info: vi.fn(), error: vi.fn() } }))
+// Undo grouping is exercised in undoGroup.test.ts; here it must just run the body so the
+// placement store calls are observable without a live bridge.
+vi.mock('@/lib/undo/undoGroup', () => ({
+  runInUndoGroup: (_label: string, body: () => unknown) => body()
+}))
 
 const addTrack = vi.fn(() => 'track-new')
 const setTrackName = vi.fn()

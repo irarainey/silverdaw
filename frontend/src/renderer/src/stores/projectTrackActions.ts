@@ -4,6 +4,7 @@
 
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import type { ProjectState, Track } from './projectTypes'
 import { DEFAULT_TRACK_LENGTH_MS, MAX_TRACK_VOLUME, TRACK_PALETTE } from './projectTypes'
 
@@ -171,12 +172,15 @@ export const trackActions = {
       if (!t) return
       t.muted = !t.muted
       log.info('project', `toggleMute id=${trackId} muted=${t.muted}`)
-      sendBridge('TRACK_MUTE', { trackId, muted: t.muted })
-      if (t.muted && t.soloed) {
-        t.soloed = false
-        log.info('project', `toggleMute cleared solo id=${trackId}`)
-        sendBridge('TRACK_SOLO', { trackId, soloed: false })
-      }
+      // Mute and its implied solo-clear are one undo step.
+      runInUndoGroup('Toggle mute', () => {
+        sendBridge('TRACK_MUTE', { trackId, muted: t.muted })
+        if (t.muted && t.soloed) {
+          t.soloed = false
+          log.info('project', `toggleMute cleared solo id=${trackId}`)
+          sendBridge('TRACK_SOLO', { trackId, soloed: false })
+        }
+      })
     },
 
     /** Toggle solo; backend re-pushes project-wide effective gain. Mute and solo are
@@ -186,12 +190,15 @@ export const trackActions = {
       if (!t) return
       t.soloed = !t.soloed
       log.info('project', `toggleSolo id=${trackId} soloed=${t.soloed}`)
-      sendBridge('TRACK_SOLO', { trackId, soloed: t.soloed })
-      if (t.soloed && t.muted) {
-        t.muted = false
-        log.info('project', `toggleSolo cleared mute id=${trackId}`)
-        sendBridge('TRACK_MUTE', { trackId, muted: false })
-      }
+      // Solo and its implied mute-clear are one undo step.
+      runInUndoGroup('Toggle solo', () => {
+        sendBridge('TRACK_SOLO', { trackId, soloed: t.soloed })
+        if (t.soloed && t.muted) {
+          t.muted = false
+          log.info('project', `toggleSolo cleared mute id=${trackId}`)
+          sendBridge('TRACK_MUTE', { trackId, muted: false })
+        }
+      })
     },
 
     /** Re-push user volume; backend folds in mute/solo. */

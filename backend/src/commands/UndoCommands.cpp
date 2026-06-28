@@ -103,6 +103,9 @@ struct UndoCoalesceState
     juce::String lastKey;
     juce::int64 lastTimeMs = 0;
     bool gestureActive = false;
+    // >0 while an explicit EDIT_GROUP_BEGIN/END bracket is open; suppresses per-command
+    // transaction starts so a compound action is one undo step. Nestable (depth counter).
+    int groupDepth = 0;
 };
 
 UndoCoalesceState& undoCoalesceState()
@@ -117,6 +120,7 @@ void resetUndoCoalesceState() noexcept
     s.lastKey = {};
     s.lastTimeMs = 0;
     s.gestureActive = false;
+    s.groupDepth = 0;
 }
 
 // 60 Hz drag streams coalesce same-target events into one undo step.
@@ -128,6 +132,9 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
                                   silverdaw::ProjectState& projectState)
 {
     if (!isUndoableEnvelopeType(type)) return;
+
+    // An explicit undo group owns the transaction; individual commands fold into it.
+    if (undoCoalesceState().groupDepth > 0) return;
 
     juce::String idPart;
     if (type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_SET_WARP" ||
@@ -195,6 +202,35 @@ void endUndoTransactionIfNeeded(const juce::String& type, const juce::var& paylo
     s.lastKey = {};
     s.lastTimeMs = 0;
     s.gestureActive = false;
+}
+
+void beginUndoGroup(const juce::String& label, silverdaw::ProjectState& projectState)
+{
+    auto& s = undoCoalesceState();
+    if (s.groupDepth == 0)
+    {
+        // Open the single transaction the whole compound action will land in. Clear any per-target
+        // coalescing so the group starts clean and nothing folds in from a prior edit.
+        projectState.getUndoManager().beginNewTransaction(label.isNotEmpty() ? label
+                                                                             : juce::String("Edit"));
+        s.lastKey = {};
+        s.lastTimeMs = 0;
+        s.gestureActive = false;
+    }
+    ++s.groupDepth;
+}
+
+void endUndoGroup() noexcept
+{
+    auto& s = undoCoalesceState();
+    if (s.groupDepth > 0) --s.groupDepth;
+    if (s.groupDepth == 0)
+    {
+        // Next command after the group starts its own fresh transaction.
+        s.lastKey = {};
+        s.lastTimeMs = 0;
+        s.gestureActive = false;
+    }
 }
 
 void handleEditUndo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,

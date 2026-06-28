@@ -4,6 +4,7 @@
 
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveClipDurationMs, CLIP_FIT_EPSILON_MS } from '@/lib/clip/clipTiming'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { filePathToDisplayName } from './projectHelpers'
@@ -129,30 +130,33 @@ export const clipClipboardActions = {
       this.selectedClipId = newId
       this.peaksRevision++
 
-      sendBridge('CLIP_ADD', {
-        trackId: track.id,
-        clipId: newId,
-        libraryItemId: cb.libraryItemId,
-        positionMs: startMs,
-        inMs: cb.inMs,
-        durationMs: cb.durationMs,
-        ...(cb.colorIndex !== undefined ? { colorIndex: cb.colorIndex } : {})
-      })
-      this.pushTrackGain(track)
-      if (cb.name) {
-        sendBridge('CLIP_RENAME', { clipId: newId, name: cb.name })
-      }
-      // Replay active warp so the backend builds the pasted processor.
-      if (cb.warpEnabled === true) {
-        sendBridge('CLIP_SET_WARP', {
+      // One undo step for the paste: CLIP_ADD plus its name/warp replay.
+      runInUndoGroup('Paste clip', () => {
+        sendBridge('CLIP_ADD', {
+          trackId: track.id,
           clipId: newId,
-          warpEnabled: true,
-          warpMode: cb.warpMode,
-          tempoRatio: cb.tempoRatio,
-          semitones: cb.semitones,
-          cents: cb.cents
+          libraryItemId: cb.libraryItemId,
+          positionMs: startMs,
+          inMs: cb.inMs,
+          durationMs: cb.durationMs,
+          ...(cb.colorIndex !== undefined ? { colorIndex: cb.colorIndex } : {})
         })
-      }
+        this.pushTrackGain(track)
+        if (cb.name) {
+          sendBridge('CLIP_RENAME', { clipId: newId, name: cb.name })
+        }
+        // Replay active warp so the backend builds the pasted processor.
+        if (cb.warpEnabled === true) {
+          sendBridge('CLIP_SET_WARP', {
+            clipId: newId,
+            warpEnabled: true,
+            warpMode: cb.warpMode,
+            tempoRatio: cb.tempoRatio,
+            semitones: cb.semitones,
+            cents: cb.cents
+          })
+        }
+      })
       log.info('project', `pasteClip newId=${newId} @${startMs}ms`)
       return newId
     }

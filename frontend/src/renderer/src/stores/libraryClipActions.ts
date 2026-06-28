@@ -11,6 +11,7 @@ import {
 import type { Clip } from '@/stores/projectStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveDurationMs } from '@/lib/warp'
 import type { ClipWarpMode, ClipEnvelopePoint } from '@shared/bridge-protocol'
@@ -129,24 +130,26 @@ export const libraryClipActions = {
         semitones: clip.semitones,
         cents: clip.cents
       })
-      // Saved clips share source analysis details with their underlying audio file.
-      if (itemId && source) {
-        const item = this.items.find((i) => i.id === itemId)
-        if (item) {
-          if (source.decodedCacheFilePath) item.decodedCacheFilePath = source.decodedCacheFilePath
-          if (shiftedClipKey) item.key = shiftedClipKey
-          if (source.bpm !== undefined) item.bpm = source.bpm
-          if (source.beats !== undefined) item.beats = source.beats.slice()
-          if (source.beatAnchorSec !== undefined) item.beatAnchorSec = source.beatAnchorSec
-          if (source.variableTempo !== undefined) item.variableTempo = source.variableTempo
-          if (source.lowConfidence !== undefined) item.lowConfidence = source.lowConfidence
+      return runInUndoGroup('Save to library', () => {
+        // Saved clips share source analysis details with their underlying audio file.
+        if (itemId && source) {
+          const item = this.items.find((i) => i.id === itemId)
+          if (item) {
+            if (source.decodedCacheFilePath) item.decodedCacheFilePath = source.decodedCacheFilePath
+            if (shiftedClipKey) item.key = shiftedClipKey
+            if (source.bpm !== undefined) item.bpm = source.bpm
+            if (source.beats !== undefined) item.beats = source.beats.slice()
+            if (source.beatAnchorSec !== undefined) item.beatAnchorSec = source.beatAnchorSec
+            if (source.variableTempo !== undefined) item.variableTempo = source.variableTempo
+            if (source.lowConfidence !== undefined) item.lowConfidence = source.lowConfidence
+          }
         }
-      }
-      // Reveal the newly saved clip even if its source group was collapsed.
-      if (itemId && source && source.collapsed) {
-        this.setItemCollapsed(source.id, false)
-      }
-      return itemId || null
+        // Reveal the newly saved clip even if its source group was collapsed.
+        if (itemId && source && source.collapsed) {
+          this.setItemCollapsed(source.id, false)
+        }
+        return itemId || null
+      })
     },
 
     /** Saves a Clip Editor selection, reusing an exact matching saved clip. */
@@ -179,38 +182,41 @@ export const libraryClipActions = {
       const trimmed = name?.trim()
       const finalName =
         trimmed && trimmed.length > 0 ? trimmed : buildLibraryClipName(source, trimIn, trimDur)
-      const itemId = this.addItem({
-        kind: 'clip',
-        name: finalName,
-        filePath: source.filePath,
-        fileName: source.fileName,
-        durationMs: trimDur,
-        sampleRate: source.sampleRate,
-        channelCount: source.channelCount,
-        peaks: source.peaks,
-        peaksPerSecond: source.peaksPerSecond,
-        playbackFilePath: source.playbackFilePath,
-        key: source.key,
-        derivedFrom: {
-          sourceItemId,
-          sourceClipId: '',
-          inMs: trimIn,
-          durationMs: trimDur
+      // Create the saved clip and un-collapse its source as ONE undo step.
+      return runInUndoGroup('Save to library', () => {
+        const itemId = this.addItem({
+          kind: 'clip',
+          name: finalName,
+          filePath: source.filePath,
+          fileName: source.fileName,
+          durationMs: trimDur,
+          sampleRate: source.sampleRate,
+          channelCount: source.channelCount,
+          peaks: source.peaks,
+          peaksPerSecond: source.peaksPerSecond,
+          playbackFilePath: source.playbackFilePath,
+          key: source.key,
+          derivedFrom: {
+            sourceItemId,
+            sourceClipId: '',
+            inMs: trimIn,
+            durationMs: trimDur
+          }
+        })
+        if (itemId) {
+          const item = this.items.find((i) => i.id === itemId)
+          if (item) {
+            if (source.decodedCacheFilePath) item.decodedCacheFilePath = source.decodedCacheFilePath
+            if (source.bpm !== undefined) item.bpm = source.bpm
+            if (source.beats !== undefined) item.beats = source.beats.slice()
+            if (source.beatAnchorSec !== undefined) item.beatAnchorSec = source.beatAnchorSec
+            if (source.variableTempo !== undefined) item.variableTempo = source.variableTempo
+            if (source.lowConfidence !== undefined) item.lowConfidence = source.lowConfidence
+          }
+          if (source.collapsed) this.setItemCollapsed(source.id, false)
         }
+        return itemId || null
       })
-      if (itemId) {
-        const item = this.items.find((i) => i.id === itemId)
-        if (item) {
-          if (source.decodedCacheFilePath) item.decodedCacheFilePath = source.decodedCacheFilePath
-          if (source.bpm !== undefined) item.bpm = source.bpm
-          if (source.beats !== undefined) item.beats = source.beats.slice()
-          if (source.beatAnchorSec !== undefined) item.beatAnchorSec = source.beatAnchorSec
-          if (source.variableTempo !== undefined) item.variableTempo = source.variableTempo
-          if (source.lowConfidence !== undefined) item.lowConfidence = source.lowConfidence
-        }
-        if (source.collapsed) this.setItemCollapsed(source.id, false)
-      }
-      return itemId || null
     },
 
     /** Updates a library-clip trim window, refusing linked timeline collisions. */
@@ -262,39 +268,41 @@ export const libraryClipActions = {
         : { sourceItemId: '', sourceClipId: '', inMs: trimIn, durationMs: trimDur }
       item.derivedFrom = next
       item.durationMs = trimDur
-      sendBridge('LIBRARY_ADD', {
-        itemId: item.id,
-        filePath: item.filePath,
-        kind: item.kind,
-        name: item.name,
-        fileName: item.fileName,
-        durationMs: item.durationMs,
-        sampleRate: item.sampleRate,
-        channelCount: item.channelCount,
-        key: item.key,
-        sourceItemId: next.sourceItemId,
-        sourceClipId: next.sourceClipId,
-        sourceInMs: next.inMs,
-        sourceDurationMs: next.durationMs,
-        collapsed: item.collapsed
-      })
-      // Propagated sibling trims currently become separate undo steps.
-      for (const c of linkedClips) {
-        if (!c) continue
-        // Adopt legacy implicit links before pushing the new window.
-        if (c.libraryItemId !== itemId) {
-          c.libraryItemId = itemId
-          sendBridge('CLIP_REBIND', { clipId: c.id, libraryItemId: itemId })
-        }
-        c.inMs = trimIn
-        c.durationMs = trimDur
-        sendBridge('CLIP_TRIM', {
-          clipId: c.id,
-          startMs: c.startMs,
-          inMs: trimIn,
-          durationMs: trimDur
+      // Persist the saved-clip window and propagate it to every linked instance as ONE undo step.
+      runInUndoGroup('Edit clip', () => {
+        sendBridge('LIBRARY_ADD', {
+          itemId: item.id,
+          filePath: item.filePath,
+          kind: item.kind,
+          name: item.name,
+          fileName: item.fileName,
+          durationMs: item.durationMs,
+          sampleRate: item.sampleRate,
+          channelCount: item.channelCount,
+          key: item.key,
+          sourceItemId: next.sourceItemId,
+          sourceClipId: next.sourceClipId,
+          sourceInMs: next.inMs,
+          sourceDurationMs: next.durationMs,
+          collapsed: item.collapsed
         })
-      }
+        for (const c of linkedClips) {
+          if (!c) continue
+          // Adopt legacy implicit links before pushing the new window.
+          if (c.libraryItemId !== itemId) {
+            c.libraryItemId = itemId
+            sendBridge('CLIP_REBIND', { clipId: c.id, libraryItemId: itemId })
+          }
+          c.inMs = trimIn
+          c.durationMs = trimDur
+          sendBridge('CLIP_TRIM', {
+            clipId: c.id,
+            startMs: c.startMs,
+            inMs: trimIn,
+            durationMs: trimDur
+          })
+        }
+      })
       // Duration changes need a timeline geometry repaint.
       if (linkedClips.length > 0) project.peaksRevision++
       log.info(
@@ -391,54 +399,57 @@ export const libraryClipActions = {
       else item.cents = nextCents
       item.key = shiftedKey(source?.key ?? source?.metadata?.key, item.semitones, item.cents) ?? source?.key ?? item.key
 
-      sendBridge('LIBRARY_ADD', {
-        itemId: item.id,
-        filePath: item.filePath,
-        kind: item.kind,
-        name: item.name,
-        fileName: item.fileName,
-        durationMs: item.durationMs,
-        sampleRate: item.sampleRate,
-        channelCount: item.channelCount,
-        key: item.key,
-        sourceItemId: next.sourceItemId,
-        sourceClipId: next.sourceClipId,
-        sourceInMs: next.inMs,
-        sourceDurationMs: next.durationMs,
-        collapsed: item.collapsed,
-        warpEnabled: item.warpEnabled,
-        warpMode: item.warpMode,
-        tempoRatio: item.tempoRatio,
-        semitones: item.semitones,
-        cents: item.cents
-      })
+      // Persist the saved-clip edit and propagate trim + warp to every linked instance as ONE step.
+      runInUndoGroup('Edit clip', () => {
+        sendBridge('LIBRARY_ADD', {
+          itemId: item.id,
+          filePath: item.filePath,
+          kind: item.kind,
+          name: item.name,
+          fileName: item.fileName,
+          durationMs: item.durationMs,
+          sampleRate: item.sampleRate,
+          channelCount: item.channelCount,
+          key: item.key,
+          sourceItemId: next.sourceItemId,
+          sourceClipId: next.sourceClipId,
+          sourceInMs: next.inMs,
+          sourceDurationMs: next.durationMs,
+          collapsed: item.collapsed,
+          warpEnabled: item.warpEnabled,
+          warpMode: item.warpMode,
+          tempoRatio: item.tempoRatio,
+          semitones: item.semitones,
+          cents: item.cents
+        })
 
-      for (const c of linkedClips) {
-        if (!c) continue
-        let shouldSendTrim = trimChanged
-        if (c.libraryItemId !== itemId) {
-          c.libraryItemId = itemId
-          sendBridge('CLIP_REBIND', { clipId: c.id, libraryItemId: itemId })
-          shouldSendTrim = true
-        }
-        c.inMs = trimIn
-        c.durationMs = trimDur
-        if (shouldSendTrim) {
-          sendBridge('CLIP_TRIM', {
-            clipId: c.id,
-            startMs: c.startMs,
-            inMs: trimIn,
-            durationMs: trimDur
+        for (const c of linkedClips) {
+          if (!c) continue
+          let shouldSendTrim = trimChanged
+          if (c.libraryItemId !== itemId) {
+            c.libraryItemId = itemId
+            sendBridge('CLIP_REBIND', { clipId: c.id, libraryItemId: itemId })
+            shouldSendTrim = true
+          }
+          c.inMs = trimIn
+          c.durationMs = trimDur
+          if (shouldSendTrim) {
+            sendBridge('CLIP_TRIM', {
+              clipId: c.id,
+              startMs: c.startMs,
+              inMs: trimIn,
+              durationMs: trimDur
+            })
+          }
+          project.setClipWarp(c.id, {
+            ...(item.warpEnabled !== undefined ? { warpEnabled: item.warpEnabled } : {}),
+            ...(item.warpMode !== undefined ? { warpMode: item.warpMode } : {}),
+            tempoRatio: item.tempoRatio ?? null,
+            ...(item.semitones !== undefined ? { semitones: item.semitones } : {}),
+            ...(item.cents !== undefined ? { cents: item.cents } : {})
           })
         }
-        project.setClipWarp(c.id, {
-          ...(item.warpEnabled !== undefined ? { warpEnabled: item.warpEnabled } : {}),
-          ...(item.warpMode !== undefined ? { warpMode: item.warpMode } : {}),
-          tempoRatio: item.tempoRatio ?? null,
-          ...(item.semitones !== undefined ? { semitones: item.semitones } : {}),
-          ...(item.cents !== undefined ? { cents: item.cents } : {})
-        })
-      }
+      })
       if (linkedClips.length > 0) project.peaksRevision++
       log.info('library', `updateLibraryClipEdit id=${itemId} propagatedTo=${linkedClips.length}`)
       return { ok: true }
@@ -454,10 +465,13 @@ export const libraryClipActions = {
       if (!item || item.kind !== 'clip') return { ok: false }
       const project = useProjectStore()
       const linkedClips = findLinkedTimelineClips(item)
-      for (const c of linkedClips) {
-        if (!c) continue
-        project.setClipEnvelope(c.id, points)
-      }
+      // Propagate the shared envelope to every linked instance as ONE undo step.
+      runInUndoGroup('Edit clip volume', () => {
+        for (const c of linkedClips) {
+          if (!c) continue
+          project.setClipEnvelope(c.id, points)
+        }
+      })
       log.info(
         'library',
         `updateLibraryClipEnvelope id=${itemId} points=${points.length} propagatedTo=${linkedClips.length}`
@@ -474,10 +488,13 @@ export const libraryClipActions = {
       if (!item || item.kind !== 'clip') return { ok: false }
       const project = useProjectStore()
       const linkedClips = findLinkedTimelineClips(item)
-      for (const c of linkedClips) {
-        if (!c) continue
-        project.setClipReversed(c.id, reversed)
-      }
+      // Propagate reverse to every linked instance as ONE undo step.
+      runInUndoGroup('Reverse clip', () => {
+        for (const c of linkedClips) {
+          if (!c) continue
+          project.setClipReversed(c.id, reversed)
+        }
+      })
       log.info(
         'library',
         `updateLibraryClipReversed id=${itemId} reversed=${reversed} propagatedTo=${linkedClips.length}`
@@ -507,36 +524,39 @@ export const libraryClipActions = {
         : undefined
       item.key = shiftedKey(source?.key ?? source?.metadata?.key, item.semitones, item.cents) ?? source?.key ?? item.key
 
-      sendBridge('LIBRARY_ADD', {
-        itemId: item.id,
-        filePath: item.filePath,
-        kind: item.kind,
-        name: item.name,
-        fileName: item.fileName,
-        durationMs: item.durationMs,
-        sampleRate: item.sampleRate,
-        channelCount: item.channelCount,
-        key: item.key,
-        sourceItemId: item.derivedFrom?.sourceItemId,
-        sourceClipId: item.derivedFrom?.sourceClipId,
-        sourceInMs: item.derivedFrom?.inMs,
-        sourceDurationMs: item.derivedFrom?.durationMs,
-        collapsed: item.collapsed,
-        warpEnabled: item.warpEnabled,
-        warpMode: item.warpMode,
-        tempoRatio: item.tempoRatio,
-        semitones: item.semitones,
-        cents: item.cents
-      })
-
+      // Persist the saved-clip warp and propagate it to every linked instance as ONE undo step.
       const project = useProjectStore()
       let propagated = 0
-      for (const clipId in project.clips) {
-        const clip = project.clips[clipId]
-        if (!clip || clip.libraryItemId !== itemId) continue
-        project.setClipWarp(clipId, patch)
-        propagated++
-      }
+      runInUndoGroup('Warp clip', () => {
+        sendBridge('LIBRARY_ADD', {
+          itemId: item.id,
+          filePath: item.filePath,
+          kind: item.kind,
+          name: item.name,
+          fileName: item.fileName,
+          durationMs: item.durationMs,
+          sampleRate: item.sampleRate,
+          channelCount: item.channelCount,
+          key: item.key,
+          sourceItemId: item.derivedFrom?.sourceItemId,
+          sourceClipId: item.derivedFrom?.sourceClipId,
+          sourceInMs: item.derivedFrom?.inMs,
+          sourceDurationMs: item.derivedFrom?.durationMs,
+          collapsed: item.collapsed,
+          warpEnabled: item.warpEnabled,
+          warpMode: item.warpMode,
+          tempoRatio: item.tempoRatio,
+          semitones: item.semitones,
+          cents: item.cents
+        })
+
+        for (const clipId in project.clips) {
+          const clip = project.clips[clipId]
+          if (!clip || clip.libraryItemId !== itemId) continue
+          project.setClipWarp(clipId, patch)
+          propagated++
+        }
+      })
       if (propagated > 0) project.peaksRevision++
       log.info('library', `updateLibraryClipWarp id=${itemId} propagatedTo=${propagated}`)
       return true

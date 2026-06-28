@@ -4,6 +4,7 @@
 
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
@@ -51,79 +52,84 @@ export const clipEditActions = {
       // new clip's rectangle to the left half and mis-stretch its waveform.
       const newClipEffectiveDurationMs = ratio > 0 ? newClipDurationMs / ratio : newClipDurationMs
 
-      this.trimClip(clipId, clip.startMs, clip.inMs, splitOffsetSourceMs)
-
-      // Reuse peaks and carry warp settings so both halves stay in time.
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (!track) return null
-      const newId = crypto.randomUUID()
-      const right: Clip = {
-        id: newId,
-        trackId: clip.trackId,
-        libraryItemId: clip.libraryItemId,
-        filePath: clip.filePath,
-        playbackFilePath: clip.playbackFilePath,
-        fileName: clip.fileName,
-        startMs: newClipStartMs,
-        inMs: newClipInMs,
-        durationMs: newClipDurationMs,
-        sampleRate: clip.sampleRate,
-        channelCount: clip.channelCount,
-        peaks: clip.peaks,
-        // Carry the source peak-bucket rate; the renderer maps the waveform
-        // window via peaksPerSecond, so without it the new half falls back to
-        // the library default rate and mis-renders (notably stem clips).
-        peaksPerSecond: clip.peaksPerSecond,
-        unresolved: clip.unresolved,
-        colorIndex: clip.colorIndex,
-        name: clip.name,
-        warpEnabled: clip.warpEnabled,
-        warpMode: clip.warpMode,
-        tempoRatio: clip.tempoRatio,
-        semitones: clip.semitones,
-        cents: clip.cents,
-        pendingAutoWarp: clip.pendingAutoWarp,
-        effectiveDurationMs: newClipEffectiveDurationMs,
-        effectiveTempoRatio: clip.effectiveTempoRatio,
-        effectiveWarpActive: clip.effectiveWarpActive
-      }
-      this.clips[newId] = right
-      const insertAt = track.clipIds.indexOf(clipId)
-      if (insertAt >= 0) {
-        track.clipIds.splice(insertAt + 1, 0, newId)
-      } else {
-        track.clipIds.push(newId)
-      }
 
-      sendBridge('CLIP_ADD', {
-        trackId: clip.trackId,
-        clipId: newId,
-        libraryItemId: clip.libraryItemId,
-        positionMs: newClipStartMs,
-        inMs: newClipInMs,
-        durationMs: newClipDurationMs,
-        ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
-      })
-      this.pushTrackGain(track)
-      if (clip.name) {
-        sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
-      }
-      // Replay active warp so the backend builds the right-half processor.
-      if (clip.warpEnabled === true) {
-        sendBridge('CLIP_SET_WARP', {
-          clipId: newId,
-          warpEnabled: true,
+      // One undo step for the whole split: the left-half trim and the new right-half clip (plus its
+      // name/warp replay) fold into a single transaction.
+      return runInUndoGroup('Split clip', () => {
+        this.trimClip(clipId, clip.startMs, clip.inMs, splitOffsetSourceMs)
+
+        // Reuse peaks and carry warp settings so both halves stay in time.
+        const newId = crypto.randomUUID()
+        const right: Clip = {
+          id: newId,
+          trackId: clip.trackId,
+          libraryItemId: clip.libraryItemId,
+          filePath: clip.filePath,
+          playbackFilePath: clip.playbackFilePath,
+          fileName: clip.fileName,
+          startMs: newClipStartMs,
+          inMs: newClipInMs,
+          durationMs: newClipDurationMs,
+          sampleRate: clip.sampleRate,
+          channelCount: clip.channelCount,
+          peaks: clip.peaks,
+          // Carry the source peak-bucket rate; the renderer maps the waveform
+          // window via peaksPerSecond, so without it the new half falls back to
+          // the library default rate and mis-renders (notably stem clips).
+          peaksPerSecond: clip.peaksPerSecond,
+          unresolved: clip.unresolved,
+          colorIndex: clip.colorIndex,
+          name: clip.name,
+          warpEnabled: clip.warpEnabled,
           warpMode: clip.warpMode,
           tempoRatio: clip.tempoRatio,
           semitones: clip.semitones,
-          cents: clip.cents
+          cents: clip.cents,
+          pendingAutoWarp: clip.pendingAutoWarp,
+          effectiveDurationMs: newClipEffectiveDurationMs,
+          effectiveTempoRatio: clip.effectiveTempoRatio,
+          effectiveWarpActive: clip.effectiveWarpActive
+        }
+        this.clips[newId] = right
+        const insertAt = track.clipIds.indexOf(clipId)
+        if (insertAt >= 0) {
+          track.clipIds.splice(insertAt + 1, 0, newId)
+        } else {
+          track.clipIds.push(newId)
+        }
+
+        sendBridge('CLIP_ADD', {
+          trackId: clip.trackId,
+          clipId: newId,
+          libraryItemId: clip.libraryItemId,
+          positionMs: newClipStartMs,
+          inMs: newClipInMs,
+          durationMs: newClipDurationMs,
+          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
         })
-      }
-      log.info(
-        'project',
-        `splitClipAt id=${clipId} at=${atMs} -> newId=${newId} (in=${newClipInMs} dur=${newClipDurationMs})`
-      )
-      return newId
+        this.pushTrackGain(track)
+        if (clip.name) {
+          sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
+        }
+        // Replay active warp so the backend builds the right-half processor.
+        if (clip.warpEnabled === true) {
+          sendBridge('CLIP_SET_WARP', {
+            clipId: newId,
+            warpEnabled: true,
+            warpMode: clip.warpMode,
+            tempoRatio: clip.tempoRatio,
+            semitones: clip.semitones,
+            cents: clip.cents
+          })
+        }
+        log.info(
+          'project',
+          `splitClipAt id=${clipId} at=${atMs} -> newId=${newId} (in=${newClipInMs} dur=${newClipDurationMs})`
+        )
+        return newId
+      })
     },
 
     /** Duplicate appends after the last copy while leaving the source selected. */
@@ -196,34 +202,37 @@ export const clipEditActions = {
       const clipEnd = copy.startMs + clipEffDur
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
 
-      sendBridge('CLIP_ADD', {
-        trackId: clip.trackId,
-        clipId: newId,
-        libraryItemId: clip.libraryItemId,
-        positionMs: newStartMs,
-        inMs: clip.inMs,
-        durationMs: clip.durationMs,
-        ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
-      })
-      this.pushTrackGain(track)
-      if (clip.name) {
-        sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
-      }
-      // Replay active warp so the backend builds the duplicate processor.
-      if (clip.warpEnabled === true) {
-        sendBridge('CLIP_SET_WARP', {
+      // One undo step for the duplicate: CLIP_ADD plus its name/warp/reverse replay.
+      runInUndoGroup('Duplicate clip', () => {
+        sendBridge('CLIP_ADD', {
+          trackId: clip.trackId,
           clipId: newId,
-          warpEnabled: true,
-          warpMode: clip.warpMode,
-          tempoRatio: clip.tempoRatio,
-          semitones: clip.semitones,
-          cents: clip.cents
+          libraryItemId: clip.libraryItemId,
+          positionMs: newStartMs,
+          inMs: clip.inMs,
+          durationMs: clip.durationMs,
+          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
         })
-      }
-      // Replay reverse so the duplicate plays backwards like its source.
-      if (clip.reversed === true) {
-        sendBridge('CLIP_SET_REVERSED', { clipId: newId, reversed: true })
-      }
+        this.pushTrackGain(track)
+        if (clip.name) {
+          sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
+        }
+        // Replay active warp so the backend builds the duplicate processor.
+        if (clip.warpEnabled === true) {
+          sendBridge('CLIP_SET_WARP', {
+            clipId: newId,
+            warpEnabled: true,
+            warpMode: clip.warpMode,
+            tempoRatio: clip.tempoRatio,
+            semitones: clip.semitones,
+            cents: clip.cents
+          })
+        }
+        // Replay reverse so the duplicate plays backwards like its source.
+        if (clip.reversed === true) {
+          sendBridge('CLIP_SET_REVERSED', { clipId: newId, reversed: true })
+        }
+      })
       log.info('project', `duplicateClip id=${clipId} -> newId=${newId} @${newStartMs}ms`)
       return newId
     },

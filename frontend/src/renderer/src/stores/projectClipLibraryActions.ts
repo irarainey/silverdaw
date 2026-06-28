@@ -4,6 +4,7 @@
 
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { useLibraryStore, libraryItemIsSimple } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -152,38 +153,42 @@ export const clipLibraryActions = {
       )
       if (!clipId) return null
 
-      sendBridge('CLIP_ADD', {
-        trackId,
-        clipId,
-        libraryItemId: libraryItem.id,
-        positionMs: snapped,
-        ...(clipInMs > 0 || libraryItem.kind === 'clip' ? { inMs: clipInMs } : {}),
-        ...(libraryItem.kind === 'clip' ? { durationMs: clipDurationMs } : {})
+      // One undo step for the whole drop: clip add, inherited name, drop-time warp, inherited
+      // envelope, and the track-gain re-push all fold into a single transaction.
+      runInUndoGroup('Add clip', () => {
+        sendBridge('CLIP_ADD', {
+          trackId,
+          clipId,
+          libraryItemId: libraryItem.id,
+          positionMs: snapped,
+          ...(clipInMs > 0 || libraryItem.kind === 'clip' ? { inMs: clipInMs } : {}),
+          ...(libraryItem.kind === 'clip' ? { durationMs: clipDurationMs } : {})
+        })
+        if (inheritedName) {
+          const newClip = this.clips[clipId]
+          if (newClip) newClip.name = inheritedName
+          sendBridge('CLIP_RENAME', { clipId, name: inheritedName })
+        }
+
+        // Drop-time warp copies saved defaults or marks eligible audio for auto-warp.
+        this.applyDropTimeWarp(clipId, libraryItem)
+
+        // Inherit the saved clip's shared volume envelope from an existing instance
+        // so every linked placement carries the same shape.
+        if (libraryItem.kind === 'clip') {
+          const sibling = Object.values(this.clips).find(
+            (c) =>
+              !!c &&
+              c.id !== clipId &&
+              c.libraryItemId === libraryItem.id &&
+              Array.isArray(c.envelopePoints) &&
+              c.envelopePoints.length >= 2
+          )
+          if (sibling?.envelopePoints) this.setClipEnvelope(clipId, sibling.envelopePoints)
+        }
+
+        this.pushTrackGain(track)
       })
-      if (inheritedName) {
-        const newClip = this.clips[clipId]
-        if (newClip) newClip.name = inheritedName
-        sendBridge('CLIP_RENAME', { clipId, name: inheritedName })
-      }
-
-      // Drop-time warp copies saved defaults or marks eligible audio for auto-warp.
-      this.applyDropTimeWarp(clipId, libraryItem)
-
-      // Inherit the saved clip's shared volume envelope from an existing instance
-      // so every linked placement carries the same shape.
-      if (libraryItem.kind === 'clip') {
-        const sibling = Object.values(this.clips).find(
-          (c) =>
-            !!c &&
-            c.id !== clipId &&
-            c.libraryItemId === libraryItem.id &&
-            Array.isArray(c.envelopePoints) &&
-            c.envelopePoints.length >= 2
-        )
-        if (sibling?.envelopePoints) this.setClipEnvelope(clipId, sibling.envelopePoints)
-      }
-
-      this.pushTrackGain(track)
       log.info('project', `addClipFromLibrary track=${trackId} clip=${clipId} pos=${snapped}ms`)
       return clipId
     },

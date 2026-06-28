@@ -457,6 +457,8 @@ export interface BridgeOutboundMap {
   AUDIO_KEEP_AWAKE_SET: AudioKeepAwakeSetPayload
   EDIT_UNDO: undefined
   EDIT_REDO: undefined
+  EDIT_GROUP_BEGIN: EditGroupBeginPayload
+  EDIT_GROUP_END: undefined
   PING: PingPayload
 }
 
@@ -816,6 +818,16 @@ export interface AudioKeepAwakeSetPayload {
   mode: KeepAwakeMode
 }
 
+/**
+ * Open an explicit undo group. Every undoable mutation sent before the matching `EDIT_GROUP_END`
+ * folds into ONE backend UndoManager transaction, so a compound action (split, duplicate, paste, a
+ * clip-editor save that touches every linked clip, …) is a single Undo step. Groups nest.
+ * `label` names the transaction for the Undo/Redo menu (e.g. "Split clip").
+ */
+export interface EditGroupBeginPayload {
+  label: string
+}
+
 export type BridgeOutboundType = keyof BridgeOutboundMap
 
 /** Whether a given outbound type carries a payload, derived from the map so it
@@ -917,6 +929,8 @@ export const bridgeOutboundPayloadKinds: {
   AUDIO_KEEP_AWAKE_SET: 'payload',
   EDIT_UNDO: 'none',
   EDIT_REDO: 'none',
+  EDIT_GROUP_BEGIN: 'payload',
+  EDIT_GROUP_END: 'none',
   PING: 'payload'
 }
 

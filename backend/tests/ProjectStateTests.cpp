@@ -17,6 +17,7 @@
 #include "PeaksCache.h"
 #include "ProjectFile.h"
 #include "ProjectState.h"
+#include "UndoCommands.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
 #include "ValueTreeJson.h"
@@ -721,6 +722,64 @@ void testProjectStateRenameIsNotUndoable()
     require(!state.hasTrack("t1"), "undo should have removed the track");
 }
 
+// An explicit EDIT_GROUP_BEGIN/END bracket must fold every undoable command in between into ONE
+// transaction, so a single Undo reverses the whole compound action (split/duplicate/paste/etc.).
+void testUndoGroupCollapsesCompoundEditToOneStep()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+
+    // Prior, separate edit so there is history to leave untouched.
+    state.getUndoManager().beginNewTransaction("baseline");
+    require(state.addTrack("t-base"), "baseline addTrack should succeed");
+
+    // Simulate a compound action: several undoable mutations bracketed in one group. The
+    // per-command begin (as the dispatcher would call it) must be suppressed inside the group.
+    silverdaw::beginUndoGroup("Split clip", state);
+    silverdaw::beginUndoTransactionIfNeeded("CLIP_ADD", juce::var(), state);
+    require(state.addTrack("t-a"), "first grouped mutation should succeed");
+    silverdaw::beginUndoTransactionIfNeeded("CLIP_RENAME", juce::var(), state);
+    require(state.addTrack("t-b"), "second grouped mutation should succeed");
+    silverdaw::endUndoGroup();
+
+    requireEqual(state.getUndoManager().getUndoDescription(), juce::String("Split clip"),
+                 "the group transaction carries the supplied label");
+
+    // A single undo must revert the ENTIRE group, not just the last mutation.
+    state.getUndoManager().beginNewTransaction();
+    require(state.getUndoManager().undo(), "undo should walk the grouped transaction");
+    require(!state.hasTrack("t-a"), "group undo must revert the first mutation");
+    require(!state.hasTrack("t-b"), "group undo must revert the second mutation");
+    require(state.hasTrack("t-base"), "group undo must NOT revert the baseline edit");
+
+    // And it is exactly one step: the next undo reaches the baseline.
+    state.getUndoManager().beginNewTransaction();
+    require(state.getUndoManager().undo(), "a second undo walks the baseline transaction");
+    require(!state.hasTrack("t-base"), "second undo reverts the baseline");
+}
+
+// Nested groups (a wrapped action that itself calls another wrapped action) still collapse to one
+// transaction via the depth counter.
+void testNestedUndoGroupsCollapseToOneStep()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+
+    silverdaw::beginUndoGroup("Outer", state);
+    require(state.addTrack("n-1"), "outer mutation should succeed");
+    silverdaw::beginUndoGroup("Inner", state);
+    require(state.addTrack("n-2"), "inner mutation should succeed");
+    silverdaw::endUndoGroup();
+    // Still inside the outer group: this must not open a second transaction.
+    require(state.addTrack("n-3"), "post-inner mutation should succeed");
+    silverdaw::endUndoGroup();
+
+    state.getUndoManager().beginNewTransaction();
+    require(state.getUndoManager().undo(), "one undo reverses the whole nested group");
+    require(!state.hasTrack("n-1") && !state.hasTrack("n-2") && !state.hasTrack("n-3"),
+            "nested group undo reverts every mutation in one step");
+}
+
 } // namespace
 
 void addProjectStateTests(std::vector<TestCase>& tests)
@@ -742,6 +801,8 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"User-classified sample does not seed project BPM", testExplicitSampleDoesNotSeed});
     tests.push_back({"Library item duration lookup by id", testLibraryItemDurationLookup});
     tests.push_back({"ProjectState rename is not undoable", testProjectStateRenameIsNotUndoable});
+    tests.push_back({"Undo group collapses a compound edit to one step", testUndoGroupCollapsesCompoundEditToOneStep});
+    tests.push_back({"Nested undo groups collapse to one step", testNestedUndoGroupsCollapseToOneStep});
 }
 
 } // namespace silverdaw::tests
