@@ -72,8 +72,8 @@ The Electron process launches the JUCE backend as a child process on startup and
 | Key detection                | Renderer Web Audio analysis           | Implemented. The renderer decodes audio, builds a chroma profile and stores detected keys on library items.                                                   |
 | FFT                          | KISS FFT                              | Implemented as part of the BTrack vendor copy. No FFTW dependency.                                                                                            |
 | Time-stretch / pitch shift   | Rubber Band Library                   | Implemented for real-time per-clip warp / pitch-shift playback.                                                                                               |
-| Stem separation              | Demucs v4 (htdemucs-ft) via ONNX Runtime | Implemented; see Section 6. CPU by default, optional DirectML GPU acceleration. Model weights downloaded on first use.                                       |
-| Vocal-stem denoise           | RNNoise (xiph, v0.1.1)                | Implemented as an optional post-separation vocal cleanup (BSD-2-Clause). Fetched and statically linked via CMake `FetchContent`; the bundled trained model ships with the source. |
+| Stem separation              | Demucs v4 (htdemucs-ft) via ONNX Runtime | Implemented; see Section 6. CPU by default, optional DirectML GPU. Weights downloaded on first use. "Best" preset adds vocal `shifts`. Optional MIT Mel-Band RoFormer **Vocal Quality Pack** (downloaded on demand) for higher-quality vocals. |
+| Vocal-stem cleanup           | RNNoise (xiph, v0.1.1) + de-bleed     | Optional post-separation vocal cleanup: a cross-stem STFT Wiener de-bleed plus RNNoise broadband denoise (BSD-2-Clause) and a sub-bass high-pass/expander. Fetched and statically linked via CMake `FetchContent`. |
 | Decoding unsupported formats | Renderer Web Audio + temp WAV today; ffmpeg later | Web Audio covers many unsupported-by-JUCE formats today. ffmpeg is a later compatibility / robustness upgrade, not a core workflow blocker. |
 
 > **Note:** JUCE UI subsystems (`Component`, `AudioThumbnail`, `OpenGLContext`) are not used. All rendering is handled by the Electron frontend.
@@ -331,12 +331,43 @@ overlap-add reconstruction (`OnnxStemSeparator.cpp`). The stem dialog exposes a
 **Fast / Balanced / Best** quality preset that the renderer sends as
 `quality` on `STEM_SEPARATE`; the backend maps it to the inference overlap
 (0.10 / 0.25 / 0.50, balanced being the long-standing default and the fallback
-for an absent value). The segmentation, layout and source-index handling
-were validated against the real htdemucs-ft weights. When all four stems are
-requested the backend skips the `other` model run and synthesises
-`other = mixture − (vocals + drums + bass)` (a mixture-consistency residual that
-is mathematically identical to adding the full residual to the model's `other`,
-captures any energy the three specialists miss, and runs ~25 % faster).
+for an absent value). **Best** additionally applies vocal **test-time
+augmentation** — the demucs `shifts` trick, four deterministic time-shifts of the
+input averaged after realignment, applied to the **vocals** specialist only (so
+the cost is ~2× the whole job, not 4×) — which cancels the translation-variance
+phase artefacts ("watery"/"metallic" swirl) on the vocal. The segmentation,
+layout and source-index handling were validated against the real htdemucs-ft
+weights. When all four stems are requested the backend skips the `other` model
+run and synthesises `other = mixture − (vocals + drums + bass)` (a
+mixture-consistency residual that is mathematically identical to adding the full
+residual to the model's `other`, captures any energy the three specialists miss,
+and runs ~25 % faster).
+
+**Optional vocal cleanup (implemented, opt-in, vocals only):** after the vocal
+stem is produced it can be run through a small cleanup chain — a **cross-stem
+de-bleed** (`VocalDebleeder`: a conservative STFT Wiener soft mask that uses
+`instrumental = mixture − vocal` as a *measured* interferer reference to attenuate
+pitched instrument bleed, far less artefact-prone than blind spectral
+subtraction), then RNNoise broadband denoise, then a sub-bass high-pass + gentle
+downward expander. It is gated by `stems.enhanceVocals` with a light/medium/strong
+intensity; the `other` residual stays consistent because it is accumulated from
+the *unprocessed* vocal. A dev tool `SilverdawStemEval` reports objective SI-SDR /
+SDR against a reference stem for tuning.
+
+**Optional Vocal Quality Pack (implemented, opt-in, downloaded separately):** a
+higher-quality **Mel-Band RoFormer** vocal model (Kim Vocal 2 / SYHFT, MIT —
+`huggingface.co/musetric/vocal-separation-roformer-onnx`). It is **not** bundled:
+a second pinned manifest (`melBandRoformerModel.ts`) + the same `ModelStore`
+downloads its ~746 MB on demand. When installed and `stems.useVocalPack` is on,
+the renderer passes the pack's `.onnx` path as `roformerModelPath` and the backend
+produces **vocals** with it (`MelRoformerVocals` + the host-side STFT/iSTFT engine
+`MelRoformerSpectral`, run through the same ONNX Runtime); **drums and bass stay
+htdemucs on the original mix** and `other` stays the residual — a drop-in
+vocal-quality upgrade with htdemucs fallback when the pack is absent or disabled.
+The host pipeline (n_fft 2048 / hop 441, complex-mask multiply, iSTFT, 11 s-chunk
+Hamming overlap-add) is unit-tested by an identity-mask round-trip and was
+validated end-to-end against a numpy reference of the model's reference WebGPU
+host, matching on Silverdaw's own ONNX Runtime.
 
 **On-disk layout & media store (implemented):** Each separation writes its WAVs into a
 folder named after the source's **original file name** — `stems\<sourceFileName>-stems`
@@ -370,8 +401,9 @@ low-confidence hint: it has no independent confidence measurement, so its
 automatic classification defers to the source via `derivedFrom`. Marking the stem
 as **Treat as Music** reveals the beat grid on every clip using that stem.
 
-**Future:** an optional experimental 6-stem model (adds guitar + piano) and an
-fp16 GPU compute path (prototyped) once the shipped 4-stem pipeline is proven.
+**Future:** an optional experimental 6-stem model (adds guitar + piano), an
+fp16 GPU compute path, and extending the cross-stem de-bleed to drums/bass (using
+the higher-quality vocal/instrumental split as the sidechain reference).
 
 ---
 
@@ -467,6 +499,7 @@ Non-destructive clip operations on the timeline. Each operation mutates the `Val
   sample library item's context menu; it is hidden for stems, and a one-time
   model download is offered on first use
 - A stem picker is shown first (vocals / drums / bass / other, all ticked by default) — only the chosen stems are separated, which proportionally shortens the run
+- A **Fast / Balanced / Best** quality preset (Best adds vocal shifts for the cleanest vocal); **Preferences ▸ Stems** also offers optional vocal cleanup (de-bleed + denoise + expander) and an optional downloadable **Vocal Quality Pack** (a higher-quality Mel-Band RoFormer vocal model)
 - Progress shown in a non-blocking dialog driven by `STEM_PROGRESS` events; the counter reflects the selected stems
 - Stems are imported to the library as top-level **stem** items. When started
   from a timeline clip they are also placed on new tracks (one per stem), each
@@ -1758,6 +1791,8 @@ playable at every point — no broken-build day):
 - [x] Stems stored as top-level `stem` items in the library; they inherit the source's analysis (BPM, beat grid, key, variable-tempo) instead of being re-analysed
 - [x] Quality presets (**Fast / Balanced / Best** → inference overlap 0.10 / 0.25 / 0.50) sent as `quality` on `STEM_SEPARATE`
 - [x] Mixture-consistency residual — when all four stems are requested, synthesise `other = mixture − (vocals + drums + bass)` and skip the `other` model run (~25 % faster)
+- [x] Vocal quality work — "Best" preset adds vocal-only demucs `shifts` test-time augmentation; optional cross-stem de-bleed (`VocalDebleeder`) + RNNoise + expander vocal cleanup; objective `SilverdawStemEval` SI-SDR/SDR harness
+- [x] Optional **Vocal Quality Pack** — MIT Mel-Band RoFormer vocal model (`MelRoformerVocals` + `MelRoformerSpectral`), downloaded on demand; hybrid path (RoFormer vocals + htdemucs drums/bass + residual other) with htdemucs fallback; validated end-to-end against a reference and unit-tested round-trip
 - [x] DirectML GPU acceleration (issue tracked) — DirectML-build ONNX Runtime bundled (`onnxruntime.dll` + `DirectML.dll`); `useGpu` threaded to session options, opt-in and adapter-gated (Preferences ▸ Stems), TDR/timeout-recovery hardened
 - [x] Per-separation stem folder `stems\<sourceName>-stems` (disambiguated) beside the saved project file — written to a temporary workspace (`<temp>/Silverdaw/stems`) for unsaved projects and migrated into the project folder on first save — with stems inheriting the source's media GUID so they resolve tags/artwork from the project's central `metadata/` + `covers/` store, so stems travel with the portable project folder and keep the source's tags/artwork after the source is removed
 - [ ] Loop slicer: transient and grid markers in PixiJS
@@ -1991,6 +2026,8 @@ robustness without changing the core editing model.
 - **Arrangement view only** — traditional left-to-right timeline; no session/clip launcher
 - **Desktop creation tool** — not for live DJ performance
 - **Demucs** — htdemucs-ft 4-stem model (vocals/drums/bass/other), MIT-licensed ONNX export, downloaded on first use
+- **Mel-Band RoFormer** — optional MIT-licensed vocal model (Kim Vocal 2 / SYHFT) for the "Vocal Quality Pack", downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
+- **ONNX Runtime (DirectML)** — MIT; runs both stem models on CPU or any DX12 GPU
 - **JUCE is backend only** — no JUCE UI components used; all rendering is Electron + PixiJS
 - **Cross-layer logging** — every session writes `debug/<stamp>/{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (dev builds; flag-gated in release)
 - **Multiple clients on the bridge** — the WebSocket bridge supports multiple authenticated clients. A future Fine-Clip Editor window can use that capability as a second BrowserWindow talking to the same backend.
