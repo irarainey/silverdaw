@@ -35,8 +35,9 @@ int main()
     addBassEnhancerTests(tests);
     addOtherEnhancerTests(tests);
     addMelRoformerSpectralTests(tests);
+    addBsRoformerSpectralTests(tests);
 
-    require(tests.size() == 150, "backend test registry should contain 150 tests");
+    require(tests.size() == 153, "backend test registry should contain 153 tests");
 
     int failed = 0;
     for (const auto& test : tests)

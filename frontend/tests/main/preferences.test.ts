@@ -79,6 +79,7 @@ describe('sanitiseStemPrefs', () => {
     useGpu: false,
     quality: 'balanced',
     useVocalPack: false,
+    useRhythmPack: false,
     enhanceVocals: false,
     vocalEnhanceStrength: 'medium',
     enhanceDrums: false,

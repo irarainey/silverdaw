@@ -481,6 +481,7 @@ add_library(silverdaw_backend_core STATIC
     src/stems/StemBroadcast.cpp
     src/stems/StemSeparationEngine.cpp
     src/stems/MelRoformerSpectral.cpp
+    src/stems/BsRoformerSpectral.cpp
     src/stems/StemSeparatorFactory.cpp)
 
 target_compile_definitions(silverdaw_backend_core PUBLIC
@@ -535,7 +536,8 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
     # the factory falls back to a stub otherwise.
     target_sources(silverdaw_backend_core PRIVATE
         src/stems/OnnxStemSeparator.cpp
-        src/stems/MelRoformerVocals.cpp)
+        src/stems/MelRoformerVocals.cpp
+        src/stems/BsRoformerRhythm.cpp)
 endif()
 
 if(SILVERDAW_ENABLE_COVERAGE)
@@ -628,7 +630,8 @@ tests/MixdownRenderTests.cpp
         tests/DrumEnhancerTests.cpp
         tests/BassEnhancerTests.cpp
         tests/OtherEnhancerTests.cpp
-        tests/MelRoformerSpectralTests.cpp)
+        tests/MelRoformerSpectralTests.cpp
+        tests/BsRoformerSpectralTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
 
@@ -648,6 +651,18 @@ tests/MixdownRenderTests.cpp
     if(SILVERDAW_ENABLE_STEM_SEPARATION)
         add_executable(SilverdawRoformerProbe tools/roformer_probe/RoformerProbe.cpp)
         target_link_libraries(SilverdawRoformerProbe PRIVATE silverdaw_backend_core)
+
+        # Generic spectrogram-in/out ONNX probe: validates a new separation model
+        # on the real linked ONNX Runtime (CPU or DirectML EP) against a saved
+        # reference, before any pipeline integration. Run:
+        # SilverdawSpecOnnxProbe <model.onnx> <in0.bin> <in1.bin> <ref0.bin> <ref1.bin> [cpu|gpu]
+        add_executable(SilverdawSpecOnnxProbe tools/spec_onnx_probe/SpecOnnxProbe.cpp)
+        target_link_libraries(SilverdawSpecOnnxProbe PRIVATE silverdaw_backend_core)
+
+        # Dev probe for the 4-stem BS-RoFormer rhythm pack. Run:
+        # SilverdawRhythmProbe <core.onnx> <inputWav> <outDrumsWav> <outBassWav>
+        add_executable(SilverdawRhythmProbe tools/rhythm_probe/RhythmProbe.cpp)
+        target_link_libraries(SilverdawRhythmProbe PRIVATE silverdaw_backend_core)
     endif()
 
     if(SILVERDAW_ENABLE_COVERAGE)

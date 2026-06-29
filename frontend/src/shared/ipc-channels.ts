@@ -102,6 +102,12 @@ export const IPC = {
     ensureVocalPack: 'stems:ensureVocalPack',
     cancelVocalPackDownload: 'stems:cancelVocalPackDownload',
     vocalPackDownloadProgress: 'stems:vocalPackDownloadProgress',
+    // Optional 4-stem BS-RoFormer "Rhythm Quality Pack" (higher-quality drums/bass).
+    getRhythmPackState: 'stems:getRhythmPackState',
+    getRhythmPackPath: 'stems:getRhythmPackPath',
+    ensureRhythmPack: 'stems:ensureRhythmPack',
+    cancelRhythmPackDownload: 'stems:cancelRhythmPackDownload',
+    rhythmPackDownloadProgress: 'stems:rhythmPackDownloadProgress',
     writeSidecar: 'stems:writeSidecar',
     readSidecar: 'stems:readSidecar'
   },

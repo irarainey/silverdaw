@@ -52,8 +52,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   and drop each onto its own track to remix and recombine — non-destructive, with
   optional GPU acceleration. Each stem keeps the original's tempo, key, and
   artwork. A **Best** quality mode sharpens the vocal, optional one-click cleanup
-  tames vocal bleed, and an optional downloadable **Vocal Quality Pack** swaps in
-  a higher-quality vocal model when you want the cleanest acapella.
+  tames vocal bleed, and optional downloadable quality packs swap in
+  higher-quality models — a **Vocal Quality Pack** for the cleanest acapella and a
+  **Rhythm Quality Pack** for sharper drums and bass.
 - **Tempo and pitch.** Clips can automatically match the project tempo and be
   pitch-shifted independently, all without changing the source file.
 - **Saved clips and samples.** Save reusable clips to the library and bake any

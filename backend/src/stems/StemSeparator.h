@@ -75,6 +75,12 @@ struct StemSeparationRequest
     // instead of the htdemucs vocal specialist; drums/bass still come from
     // htdemucs and `other` stays the residual. Empty = htdemucs vocals (default).
     juce::File roformerModelFile;
+    // Optional 4-stem BS-RoFormer ("Rhythm Quality Pack") .onnx core. When set
+    // and its file exists, the DRUMS and BASS stems are produced by this
+    // higher-quality model (run once, both extracted) instead of the htdemucs
+    // drums/bass specialists; vocals still come from htdemucs or the vocal pack,
+    // and `other` stays the residual. Empty = htdemucs drums/bass (default).
+    juce::File rhythmModelFile;
     // Directory the stems are written to (created by the command).
     juce::File outputDir;
     // Short unique token appended to each stem file's basename (a GUID) so

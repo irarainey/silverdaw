@@ -264,6 +264,26 @@ const api = {
     ipcRenderer.on(IPC.stems.vocalPackDownloadProgress, listener)
     return () => ipcRenderer.removeListener(IPC.stems.vocalPackDownloadProgress, listener)
   },
+  // ─── Optional 4-stem BS-RoFormer "Rhythm Quality Pack" ──────────────────────
+  /** Install state of the optional higher-quality drums/bass pack. */
+  getRhythmPackState: (): Promise<StemModelState> => ipcRenderer.invoke(IPC.stems.getRhythmPackState),
+  /** Installed pack core `.onnx` path for the request, or '' when not installed. */
+  getRhythmPackPath: (): Promise<string> => ipcRenderer.invoke(IPC.stems.getRhythmPackPath),
+  /** Download + integrity-verify the rhythm pack; honour an in-flight cancel. */
+  ensureRhythmPack: (): Promise<EnsureStemModelResult> =>
+    ipcRenderer.invoke(IPC.stems.ensureRhythmPack),
+  /** Abort the active rhythm-pack download, if any. */
+  cancelRhythmPackDownload: (): void => {
+    ipcRenderer.send(IPC.stems.cancelRhythmPackDownload)
+  },
+  onRhythmPackDownloadProgress: (
+    handler: (progress: StemModelDownloadProgress) => void
+  ): (() => void) => {
+    const listener = (_evt: IpcRendererEvent, progress: StemModelDownloadProgress): void =>
+      handler(progress)
+    ipcRenderer.on(IPC.stems.rhythmPackDownloadProgress, listener)
+    return () => ipcRenderer.removeListener(IPC.stems.rhythmPackDownloadProgress, listener)
+  },
   /** Copy a stem source file's metadata + cover art into the stem output folder. */
   writeStemSidecar: (stemDir: string, sourceFilePath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.stems.writeSidecar, { stemDir, sourceFilePath }),

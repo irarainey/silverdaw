@@ -30,5 +30,6 @@ void addDrumEnhancerTests(std::vector<TestCase>& tests);
 void addBassEnhancerTests(std::vector<TestCase>& tests);
 void addOtherEnhancerTests(std::vector<TestCase>& tests);
 void addMelRoformerSpectralTests(std::vector<TestCase>& tests);
+void addBsRoformerSpectralTests(std::vector<TestCase>& tests);
 
 } // namespace silverdaw::tests

@@ -287,6 +287,7 @@ async function dispatchSeparation(
   const useGpu = await resolveUseGpu()
   const enhance = await resolveStemEnhance()
   const roformerModelPath = await resolveVocalPackPath()
+  const rhythmModelPath = await resolveRhythmPackPath()
   const jobId = crypto.randomUUID()
   registerStemJob(jobId, target)
   beginStemSeparation(jobId, target, stems)
@@ -296,6 +297,7 @@ async function dispatchSeparation(
     clipId: target.clipId,
     modelDir,
     roformerModelPath,
+    rhythmModelPath,
     sourceName: target.sourceName,
     stems: [...stems],
     quality,
@@ -376,6 +378,23 @@ async function resolveVocalPackPath(): Promise<string | undefined> {
     const prefs = await window.silverdaw.getStemPrefs()
     if (!prefs.useVocalPack) return undefined
     const path = await window.silverdaw.getVocalPackPath()
+    return path && path.length > 0 ? path : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Resolves the optional 4-stem BS-RoFormer "Rhythm Quality Pack" core .onnx path
+ * for the request: returns it only when the user enabled the pack AND it is
+ * installed. Any lookup failure (or pack absent / disabled) returns undefined,
+ * so the backend falls back to the htdemucs drums/bass specialists.
+ */
+async function resolveRhythmPackPath(): Promise<string | undefined> {
+  try {
+    const prefs = await window.silverdaw.getStemPrefs()
+    if (!prefs.useRhythmPack) return undefined
+    const path = await window.silverdaw.getRhythmPackPath()
     return path && path.length > 0 ? path : undefined
   } catch {
     return undefined

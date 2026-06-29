@@ -6,6 +6,7 @@ import type { StemEnhanceStrength } from '@shared/bridge-protocol'
 
 const useGpu = defineModel<boolean>('useGpuForStems', { required: true })
 const useVocalPack = defineModel<boolean>('useVocalPack', { required: true })
+const useRhythmPack = defineModel<boolean>('useRhythmPack', { required: true })
 const enhanceVocals = defineModel<boolean>('enhanceVocals', { required: true })
 const vocalEnhanceStrength = defineModel<StemEnhanceStrength>('vocalEnhanceStrength', {
   required: true
@@ -143,8 +144,47 @@ function cancelPackDownload(): void {
   window.silverdaw.cancelVocalPackDownload()
 }
 
+// Optional 4-stem BS-RoFormer "Rhythm Quality Pack" download state.
+const rhythmInstalled = ref(false)
+const rhythmBusy = ref(false)
+const rhythmPercent = ref(0)
+const rhythmError = ref<string | null>(null)
+
+async function refreshRhythm(): Promise<void> {
+  try {
+    rhythmInstalled.value = (await window.silverdaw.getRhythmPackState()).installed
+  } catch {
+    rhythmInstalled.value = false
+  }
+}
+
+async function downloadRhythm(): Promise<void> {
+  if (rhythmBusy.value) return
+  rhythmBusy.value = true
+  rhythmError.value = null
+  rhythmPercent.value = 0
+  const stop = window.silverdaw.onRhythmPackDownloadProgress((p) => {
+    rhythmPercent.value = p.totalBytes > 0 ? Math.round((p.receivedBytes / p.totalBytes) * 100) : 0
+  })
+  try {
+    const result = await window.silverdaw.ensureRhythmPack()
+    if (!result.ok) rhythmError.value = result.error ?? 'Download failed.'
+    await refreshRhythm()
+  } catch (e) {
+    rhythmError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    stop()
+    rhythmBusy.value = false
+  }
+}
+
+function cancelRhythmDownload(): void {
+  window.silverdaw.cancelRhythmPackDownload()
+}
+
 onMounted(refresh)
 onMounted(refreshPack)
+onMounted(refreshRhythm)
 </script>
 
 <template>
@@ -229,6 +269,63 @@ onMounted(refreshPack)
                 type="button"
                 class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-red-500 hover:text-white"
                 @click.prevent="cancelPackDownload"
+              >
+                Cancel
+              </button>
+            </template>
+            <span
+              v-else
+              class="text-xs text-emerald-400"
+            >Installed</span>
+          </span>
+        </span>
+      </label>
+    </div>
+
+    <div>
+      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+        Rhythm quality pack
+      </h2>
+      <label
+        class="flex items-start gap-3"
+        :class="rhythmInstalled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'"
+      >
+        <input
+          v-model="useRhythmPack"
+          type="checkbox"
+          :disabled="!rhythmInstalled"
+          class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
+        >
+        <span class="flex-1">
+          <span class="block font-medium text-zinc-200">
+            Use the higher-quality drums &amp; bass model (BS-RoFormer)
+          </span>
+          <span class="mt-0.5 block text-zinc-500">
+            An optional ~257&nbsp;MB model that separates drums and bass more
+            cleanly than the built-in model. Vocals are unaffected. Off by
+            default. The model is downloaded once and stored on this machine
+            (MIT-licensed). GPU acceleration falls back to the CPU automatically
+            if the model needs more memory than the GPU has.
+            <span
+              v-if="rhythmError"
+              class="mt-1 block text-red-400/90"
+            >{{ rhythmError }}</span>
+          </span>
+          <span class="mt-2 flex items-center gap-3">
+            <button
+              v-if="!rhythmInstalled && !rhythmBusy"
+              type="button"
+              class="rounded border border-sky-700 bg-sky-900/40 px-2 py-1 text-xs text-sky-200 hover:border-sky-500 hover:bg-sky-800"
+              @click.prevent="downloadRhythm"
+            >
+              Download rhythm pack (~257 MB)
+            </button>
+            <template v-else-if="rhythmBusy">
+              <span class="text-xs text-zinc-400">Downloading… {{ rhythmPercent }}%</span>
+              <button
+                type="button"
+                class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:border-red-500 hover:text-white"
+                @click.prevent="cancelRhythmDownload"
               >
                 Cancel
               </button>

@@ -72,7 +72,7 @@ The Electron process launches the JUCE backend as a child process on startup and
 | Key detection                | Renderer Web Audio analysis           | Implemented. The renderer decodes audio, builds a chroma profile and stores detected keys on library items.                                                   |
 | FFT                          | KISS FFT                              | Implemented as part of the BTrack vendor copy. No FFTW dependency.                                                                                            |
 | Time-stretch / pitch shift   | Rubber Band Library                   | Implemented for real-time per-clip warp / pitch-shift playback.                                                                                               |
-| Stem separation              | Demucs v4 (htdemucs-ft) via ONNX Runtime | Implemented; see Section 6. CPU by default, optional DirectML GPU. Weights downloaded on first use. "Best" preset adds vocal `shifts`. Optional MIT Mel-Band RoFormer **Vocal Quality Pack** (downloaded on demand) for higher-quality vocals. |
+| Stem separation              | Demucs v4 (htdemucs-ft) via ONNX Runtime | Implemented; see Section 6. CPU by default, optional DirectML GPU. Weights downloaded on first use. "Best" preset adds vocal `shifts`. Optional MIT RoFormer quality packs (downloaded on demand): a Mel-Band RoFormer **Vocal Quality Pack** for vocals and a 4-stem BS-RoFormer **Rhythm Quality Pack** for drums/bass. |
 | Vocal-stem cleanup           | RNNoise (xiph, v0.1.1) + de-bleed     | Optional post-separation vocal cleanup: a cross-stem STFT Wiener de-bleed plus RNNoise broadband denoise (BSD-2-Clause) and a sub-bass high-pass/expander. Fetched and statically linked via CMake `FetchContent`. |
 | Decoding unsupported formats | Renderer Web Audio + temp WAV today; ffmpeg later | Web Audio covers many unsupported-by-JUCE formats today. ffmpeg is a later compatibility / robustness upgrade, not a core workflow blocker. |
 
@@ -369,6 +369,28 @@ Hamming overlap-add) is unit-tested by an identity-mask round-trip and was
 validated end-to-end against a numpy reference of the model's reference WebGPU
 host, matching on Silverdaw's own ONNX Runtime.
 
+**Optional Rhythm Quality Pack (implemented, opt-in, downloaded separately):** a
+higher-quality 4-stem **BS-RoFormer** model (MIT — an export of ZFTurbo's
+MUSDB18-HQ checkpoint, `model_bs_roformer_ep_17_sdr_9.6568`). Like the vocal
+pack it is **not** bundled: a third pinned manifest (`bsRoformerRhythmModel.ts`)
++ the same `ModelStore` downloads its ~257 MB (single fp16 `.onnx`) on demand.
+When installed and `stems.useRhythmPack` is on, the renderer passes the pack's
+`.onnx` path as `rhythmModelPath` and the backend produces **drums and bass**
+with it (`BsRoformerRhythm` + the host-side STFT/iSTFT engine
+`BsRoformerSpectral`): the model runs **once** and both stems are extracted (the
+model's own vocals/other outputs are discarded — vocals come from htdemucs or the
+vocal pack, `other` stays the residual). It composes with the vocal pack into a
+full RoFormer hybrid, with htdemucs fallback per stem when the pack is absent.
+The model applies its mask in-graph and returns the masked per-stem spectrogram;
+the host runs the STFT (n_fft 2048 / hop 441) and a per-stem iSTFT with 8 s-chunk
+overlap-add. It is exported at an 8 s window (T=801) — the largest that stays
+within a modest GPU's VRAM (11 s OOMs DirectML on integrated GPUs because the
+graph uses unfused attention) — and the runner transparently **retries on the CPU
+provider** if DirectML runs out of memory. The host pipeline is unit-tested by an
+identity round-trip, and the full C++ runner was validated end-to-end against a
+numpy reference on Silverdaw's own ONNX Runtime (drums/bass RMS matched to four
+decimals on both CPU and DirectML).
+
 **On-disk layout & media store (implemented):** Each separation writes its WAVs into a
 folder named after the source's **original file name** — `stems\<sourceFileName>-stems`
 beside the saved project
@@ -499,7 +521,7 @@ Non-destructive clip operations on the timeline. Each operation mutates the `Val
   sample library item's context menu; it is hidden for stems, and a one-time
   model download is offered on first use
 - A stem picker is shown first (vocals / drums / bass / other, all ticked by default) — only the chosen stems are separated, which proportionally shortens the run
-- A **Fast / Balanced / Best** quality preset (Best adds vocal shifts for the cleanest vocal); **Preferences ▸ Stems** also offers optional vocal cleanup (de-bleed + denoise + expander) and an optional downloadable **Vocal Quality Pack** (a higher-quality Mel-Band RoFormer vocal model)
+- A **Fast / Balanced / Best** quality preset (Best adds vocal shifts for the cleanest vocal); **Preferences ▸ Stems** also offers optional vocal cleanup (de-bleed + denoise + expander) and two optional downloadable quality packs — a **Vocal Quality Pack** (a higher-quality Mel-Band RoFormer vocal model) and a **Rhythm Quality Pack** (a higher-quality 4-stem BS-RoFormer drums/bass model)
 - Progress shown in a non-blocking dialog driven by `STEM_PROGRESS` events; the counter reflects the selected stems
 - Stems are imported to the library as top-level **stem** items. When started
   from a timeline clip they are also placed on new tracks (one per stem), each
@@ -1793,6 +1815,7 @@ playable at every point — no broken-build day):
 - [x] Mixture-consistency residual — when all four stems are requested, synthesise `other = mixture − (vocals + drums + bass)` and skip the `other` model run (~25 % faster)
 - [x] Vocal quality work — "Best" preset adds vocal-only demucs `shifts` test-time augmentation; optional cross-stem de-bleed (`VocalDebleeder`) + RNNoise + expander vocal cleanup; objective `SilverdawStemEval` SI-SDR/SDR harness
 - [x] Optional **Vocal Quality Pack** — MIT Mel-Band RoFormer vocal model (`MelRoformerVocals` + `MelRoformerSpectral`), downloaded on demand; hybrid path (RoFormer vocals + htdemucs drums/bass + residual other) with htdemucs fallback; validated end-to-end against a reference and unit-tested round-trip
+- [x] Optional **Rhythm Quality Pack** — MIT 4-stem BS-RoFormer drums/bass model (`BsRoformerRhythm` + `BsRoformerSpectral`), self-exported from ZFTurbo's MUSDB18-HQ checkpoint, downloaded on demand; one model run extracts both drums + bass, composing with the vocal pack into a full RoFormer hybrid (residual other) with per-stem htdemucs fallback; 8 s window with DirectML→CPU out-of-memory fallback; validated end-to-end (C++ runner vs numpy reference) and unit-tested round-trip
 - [x] DirectML GPU acceleration (issue tracked) — DirectML-build ONNX Runtime bundled (`onnxruntime.dll` + `DirectML.dll`); `useGpu` threaded to session options, opt-in and adapter-gated (Preferences ▸ Stems), TDR/timeout-recovery hardened
 - [x] Per-separation stem folder `stems\<sourceName>-stems` (disambiguated) beside the saved project file — written to a temporary workspace (`<temp>/Silverdaw/stems`) for unsaved projects and migrated into the project folder on first save — with stems inheriting the source's media GUID so they resolve tags/artwork from the project's central `metadata/` + `covers/` store, so stems travel with the portable project folder and keep the source's tags/artwork after the source is removed
 - [ ] Loop slicer: transient and grid markers in PixiJS
@@ -2027,6 +2050,7 @@ robustness without changing the core editing model.
 - **Desktop creation tool** — not for live DJ performance
 - **Demucs** — htdemucs-ft 4-stem model (vocals/drums/bass/other), MIT-licensed ONNX export, downloaded on first use
 - **Mel-Band RoFormer** — optional MIT-licensed vocal model (Kim Vocal 2 / SYHFT) for the "Vocal Quality Pack", downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
+- **BS-RoFormer** — optional MIT-licensed 4-stem model (ZFTurbo MUSDB18-HQ) for the "Rhythm Quality Pack" (drums/bass), self-exported and downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
 - **ONNX Runtime (DirectML)** — MIT; runs both stem models on CPU or any DX12 GPU
 - **JUCE is backend only** — no JUCE UI components used; all rendering is Electron + PixiJS
 - **Cross-layer logging** — every session writes `debug/<stamp>/{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (dev builds; flag-gated in release)

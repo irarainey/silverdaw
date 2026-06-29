@@ -730,6 +730,14 @@ export interface StemSeparatePayload {
    * stays the residual. Resolved by main from the pack's install directory.
    */
   roformerModelPath?: string
+  /**
+   * Optional 4-stem BS-RoFormer ("Rhythm Quality Pack") core `.onnx` path. When
+   * present (the pack is installed and the user enabled it), the backend
+   * produces the DRUMS and BASS stems with this higher-quality model (one run,
+   * both extracted) instead of the htdemucs drums/bass specialists; vocals and
+   * `other` are unaffected. Resolved by main from the pack's install directory.
+   */
+  rhythmModelPath?: string
   /** Friendly source name used for the stem WAV filenames and track names. */
   sourceName: string
   /** Stems the user chose to extract (non-empty). */

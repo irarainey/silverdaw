@@ -65,6 +65,9 @@ export interface StemPrefs {
   // Use the optional Mel-Band RoFormer "Vocal Quality Pack" for higher-quality
   // vocals when it is installed (default off; ignored if the pack is absent).
   useVocalPack: boolean
+  // Use the optional 4-stem BS-RoFormer "Rhythm Quality Pack" for higher-quality
+  // drums + bass when it is installed (default off; ignored if the pack is absent).
+  useRhythmPack: boolean
   enhanceVocals: boolean
   vocalEnhanceStrength: VocalEnhanceStrength
   enhanceDrums: boolean
@@ -167,6 +170,7 @@ export function buildDefaultPrefs(): Preferences {
       useGpu: false,
       quality: 'balanced',
       useVocalPack: false,
+      useRhythmPack: false,
       enhanceVocals: false,
       vocalEnhanceStrength: 'medium',
       enhanceDrums: false,
@@ -236,6 +240,7 @@ export function sanitiseStemPrefs(partial: unknown, base: StemPrefs): StemPrefs 
       ? (p.quality as StemQuality)
       : base.quality,
     useVocalPack: boolOr(p.useVocalPack, base.useVocalPack),
+    useRhythmPack: boolOr(p.useRhythmPack, base.useRhythmPack),
     enhanceVocals: boolOr(p.enhanceVocals, base.enhanceVocals),
     vocalEnhanceStrength: STEM_ENHANCE_STRENGTHS.includes(p.vocalEnhanceStrength as VocalEnhanceStrength)
       ? (p.vocalEnhanceStrength as VocalEnhanceStrength)

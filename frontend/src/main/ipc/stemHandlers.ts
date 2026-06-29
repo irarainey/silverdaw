@@ -18,6 +18,7 @@ import type {
 } from '../../shared/types'
 import { HTDEMUCS_FT_MANIFEST } from '../stems/htdemucsModel'
 import { MEL_BAND_ROFORMER_MANIFEST, ROFORMER_CORE_FILENAME } from '../stems/melBandRoformerModel'
+import { BS_ROFORMER_RHYTHM_MANIFEST, RHYTHM_CORE_FILENAME } from '../stems/bsRoformerRhythmModel'
 import { ModelStore, ModelDownloadError } from '../stems/modelStore'
 import { detectGpuFromInfo } from '../stems/gpuDetect'
 import { sanitiseStemModelDir } from '../preferences'
@@ -188,5 +189,56 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
 
   ipcMain.on(IPC.stems.cancelVocalPackDownload, () => {
     activePackDownload?.abort()
+  })
+
+  // ─── Optional 4-stem BS-RoFormer "Rhythm Quality Pack" ──────────────────────
+  const rhythmPackDir = join(app.getPath('userData'), 'models', BS_ROFORMER_RHYTHM_MANIFEST.id)
+  const rhythmPackStore = (): ModelStore =>
+    new ModelStore({ manifest: BS_ROFORMER_RHYTHM_MANIFEST, modelDir: rhythmPackDir })
+  let activeRhythmDownload: AbortController | null = null
+
+  ipcMain.handle(IPC.stems.getRhythmPackState, async (): Promise<StemModelState> => {
+    const state = await rhythmPackStore().readInstallState()
+    return {
+      installed: state.installed,
+      presentBytes: state.presentBytes,
+      totalBytes: state.totalBytes,
+      fileCount: state.files.length
+    }
+  })
+
+  // Resolve the installed core .onnx path for the separation request (a single
+  // self-contained graph — no sibling .data). Empty string when not installed.
+  ipcMain.handle(IPC.stems.getRhythmPackPath, async (): Promise<string> => {
+    const state = await rhythmPackStore().readInstallState()
+    return state.installed ? join(rhythmPackDir, RHYTHM_CORE_FILENAME) : ''
+  })
+
+  ipcMain.handle(IPC.stems.ensureRhythmPack, async (): Promise<EnsureStemModelResult> => {
+    if (activeRhythmDownload) {
+      return { ok: false, error: 'A rhythm pack download is already in progress.' }
+    }
+    const controller = new AbortController()
+    activeRhythmDownload = controller
+    try {
+      await rhythmPackStore().ensureDownloaded((progress) => {
+        const win = ctx.getMainWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(IPC.stems.rhythmPackDownloadProgress, progress)
+        }
+      }, controller.signal)
+      return { ok: true }
+    } catch (err) {
+      if (err instanceof ModelDownloadError) {
+        return { ok: false, error: err.message, fileName: err.fileName }
+      }
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      activeRhythmDownload = null
+    }
+  })
+
+  ipcMain.on(IPC.stems.cancelRhythmPackDownload, () => {
+    activeRhythmDownload?.abort()
   })
 }

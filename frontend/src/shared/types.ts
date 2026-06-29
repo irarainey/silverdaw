@@ -113,6 +113,7 @@ export interface StemPrefsDto {
   useGpu: boolean
   quality: StemQuality
   useVocalPack: boolean
+  useRhythmPack: boolean
   enhanceVocals: boolean
   vocalEnhanceStrength: VocalEnhanceStrength
   enhanceDrums: boolean

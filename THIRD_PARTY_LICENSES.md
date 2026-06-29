@@ -146,6 +146,19 @@ checked against pinned SHA-256 hashes; they are not shipped in the installer.
   are distributed by their author under MIT (the same posture as the htdemucs
   weights above).
 
+### BS-RoFormer "Rhythm Quality Pack" (optional)
+
+- **Licence**: MIT — 4-stem weights © ZFTurbo
+  (`ZFTurbo/Music-Source-Separation-Training`, the
+  `model_bs_roformer_ep_17_sdr_9.6568` checkpoint trained on MUSDB18-HQ).
+  Architecture from `lucidrains/BS-RoFormer` (MIT). Silverdaw exports the
+  checkpoint to a host-STFT ONNX (STFT/iSTFT stripped out of the graph) using an
+  MIT export pipeline derived from `elicwhite/bs-roformer-web`.
+- **Use**: optional higher-quality drums + bass model, used in place of the
+  htdemucs drums/bass specialists when the user enables and downloads the pack.
+- **Source**: <https://github.com/ZFTurbo/Music-Source-Separation-Training>
+  (checkpoint + config, v1.0.12).
+
 ## Branding
 
 The Silverdaw name, logo, and icons are © the Silverdaw contributors. They are

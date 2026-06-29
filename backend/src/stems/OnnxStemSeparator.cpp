@@ -24,6 +24,7 @@
 
 #include "Log.h"
 #include "StemShifts.h"
+#include "BsRoformerRhythm.h"
 #include "MelRoformerVocals.h"
 #include "VocalDebleeder.h"
 
@@ -340,6 +341,15 @@ class OnnxStemSeparator : public StemSeparator
             extractedSum.clear();
         }
 
+        // Rhythm pack (4-stem BS-RoFormer) produces drums AND bass from a single
+        // model run, so run it lazily on the first of the two and cache both; the
+        // second stem is then served from the cache without a second inference.
+        const bool useRhythmPack = (isSelected("drums") || isSelected("bass")) &&
+                                   request.rhythmModelFile != juce::File() &&
+                                   request.rhythmModelFile.existsAsFile();
+        BsRoformerRhythmStems rhythmStems;
+        bool rhythmDone = false;
+
         // Whether a given stem has its optional post-separation cleanup enabled.
         const auto cleanupEnabledFor = [&request](const juce::String& st) -> bool
         {
@@ -411,6 +421,33 @@ class OnnxStemSeparator : public StemSeparator
                         request.roformerModelFile, rawMix, request.useGpu,
                         [&](double f) { onProgress("separate", stemBase + sepSpan * f, stem); },
                         shouldCancel);
+                }
+                else if (useRhythmPack && (juce::String(stem) == "drums" ||
+                                           juce::String(stem) == "bass"))
+                {
+                    // 4-stem BS-RoFormer rhythm pack: separate from the RAW
+                    // (denormalised) mixture; it returns drums + bass at the
+                    // mixture's level (no further denormalisation needed). The
+                    // model runs once and both stems are cached.
+                    if (! rhythmDone)
+                    {
+                        juce::AudioBuffer<float> rawMix(kModelChannels, numSamples);
+                        for (int ch = 0; ch < kModelChannels; ++ch)
+                        {
+                            const float* mix = mixture.getReadPointer(ch);
+                            float* d = rawMix.getWritePointer(ch);
+                            for (int i = 0; i < numSamples; ++i)
+                                d[i] = mix[i] * norm.std + norm.mean;
+                        }
+                        silverdaw::log::info("stems", "drums/bass via BS-RoFormer rhythm pack");
+                        rhythmStems = roformerRhythm.separate(
+                            request.rhythmModelFile, rawMix, request.useGpu,
+                            [&](double f) { onProgress("separate", stemBase + sepSpan * f, stem); },
+                            shouldCancel);
+                        rhythmDone = true;
+                    }
+                    stemBuffer = juce::String(stem) == "drums" ? rhythmStems.drums
+                                                               : rhythmStems.bass;
                 }
                 else
                 {
@@ -747,6 +784,10 @@ class OnnxStemSeparator : public StemSeparator
     // Optional Mel-Band RoFormer vocal pack (owns its own ONNX session); used
     // only when a request supplies a RoFormer model file.
     MelRoformerVocals roformerVocals;
+
+    // Optional 4-stem BS-RoFormer rhythm pack (owns its own ONNX session); used
+    // only when a request supplies a rhythm model file. Produces drums + bass.
+    BsRoformerRhythm roformerRhythm;
 };
 
 } // namespace

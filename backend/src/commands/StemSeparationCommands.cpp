@@ -194,6 +194,10 @@ void handleStemSeparate(const juce::var& payload,
     // renderer supplies it (the pack is installed and enabled), vocals use it.
     const auto roformerPath = readOptionalString(payload, "roformerModelPath").value_or(juce::String{});
     if (roformerPath.isNotEmpty()) request.roformerModelFile = juce::File(roformerPath);
+    // Optional 4-stem BS-RoFormer ("Rhythm Quality Pack") core .onnx. When the
+    // renderer supplies it (the pack is installed and enabled), drums + bass use it.
+    const auto rhythmPath = readOptionalString(payload, "rhythmModelPath").value_or(juce::String{});
+    if (rhythmPath.isNotEmpty()) request.rhythmModelFile = juce::File(rhythmPath);
     // Clip-scoped separation: when a timeline clip is named, extract only that
     // clip's window of the source ([inMs, inMs+durationMs)) so the stem files are
     // clip-length. A library-item separation (no clipId) leaves the window at

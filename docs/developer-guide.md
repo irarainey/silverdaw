@@ -1184,6 +1184,22 @@ n_fft 2048 / hop 441, complex-mask multiply, iSTFT, 11 s-chunk overlap-add) is
 unit-tested by an identity-mask round-trip and was validated end-to-end against a
 numpy reference of the model's reference WebGPU host.
 
+**Optional Rhythm Quality Pack** (opt-in, downloaded separately): a higher-quality
+4-stem **BS-RoFormer** model (MIT — an export of ZFTurbo's MUSDB18-HQ checkpoint;
+`BsRoformerRhythm` + the host-side STFT engine `BsRoformerSpectral`, run through
+the same ONNX Runtime). When the pack is installed and `stems.useRhythmPack` is
+on, the renderer passes its `.onnx` path as `rhythmModelPath`; the backend then
+produces **drums and bass** with it (one model run extracts both; vocals stay
+htdemucs or the vocal pack, `other` stays the residual), so it composes with the
+vocal pack into a fully RoFormer hybrid with htdemucs fallback when absent. The
+model applies its mask in-graph and returns the masked per-stem spectrogram (the
+host runs STFT n_fft 2048 / hop 441 and per-stem iSTFT, 8 s-chunk overlap-add);
+it is exported at an 8 s window (the largest that fits a modest GPU's VRAM) and
+the runner transparently retries on the CPU provider if DirectML runs out of
+memory. The host pipeline is unit-tested by an identity round-trip, and the C++
+runner was validated end-to-end against a numpy reference (drums/bass RMS matched
+to four decimals).
+
 GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
 Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`
 shipped alongside); the renderer threads a `useGpu` flag through to the backend
