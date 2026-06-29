@@ -61,3 +61,6 @@ lint-output.txt
 
 # Personal BPM eval manifest (use manifest.example.csv as a template)
 backend/tools/bpm_eval/manifest.csv
+
+# Local dev scratch (Roformer validation: model weights, audition wavs)
+.tmp_roformer/

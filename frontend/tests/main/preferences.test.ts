@@ -78,6 +78,7 @@ describe('sanitiseStemPrefs', () => {
   const stemBase: StemPrefs = {
     useGpu: false,
     quality: 'balanced',
+    useVocalPack: false,
     enhanceVocals: false,
     vocalEnhanceStrength: 'medium',
     enhanceDrums: false,

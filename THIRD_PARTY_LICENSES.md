@@ -115,6 +115,37 @@ satisfy the attribution requirements of those licences.
 - **Licence**: MIT — © Borewit and contributors.
 - **Project**: <https://github.com/Borewit/music-metadata>
 
+## Downloaded models & runtimes (fetched on first use, not bundled)
+
+These are downloaded on demand into the user's app-data folder and integrity-
+checked against pinned SHA-256 hashes; they are not shipped in the installer.
+
+### ONNX Runtime (+ DirectML) — © Microsoft
+
+- **Licence**: MIT.
+- **Use**: runs the stem-separation models on CPU or any DirectX 12 GPU.
+- **Project**: <https://github.com/microsoft/onnxruntime>
+
+### htdemucs fine-tuned — 4-stem separation model
+
+- **Licence**: MIT — © Meta Platforms, Inc. (Demucs). ONNX export ©
+  StemSplitio, also MIT.
+- **Use**: the default 4-stem (vocals/drums/bass/other) separation model.
+- **Source**: <https://huggingface.co/StemSplitio/htdemucs-ft-onnx>
+
+### Mel-Band RoFormer "Vocal Quality Pack" (optional)
+
+- **Licence**: MIT — vocal weights © Kimberley Jensen / SYH99999
+  (`SYH99999/MelBandRoformerBigSYHFTV1Fast`); ONNX export © musetric, also MIT.
+  Architecture from *Mel-Band RoFormer* (Wang, Lu, Won; arXiv:2310.01809) /
+  `lucidrains/BS-RoFormer` (MIT).
+- **Use**: optional higher-quality vocal model, used in place of the htdemucs
+  vocal specialist when the user enables and downloads the pack.
+- **Source**: <https://huggingface.co/musetric/vocal-separation-roformer-onnx>
+- **Note**: the upstream training-data provenance is undocumented; the weights
+  are distributed by their author under MIT (the same posture as the htdemucs
+  weights above).
+
 ## Branding
 
 The Silverdaw name, logo, and icons are © the Silverdaw contributors. They are

@@ -17,6 +17,7 @@ import type {
   StemModelState
 } from '../../shared/types'
 import { HTDEMUCS_FT_MANIFEST } from '../stems/htdemucsModel'
+import { MEL_BAND_ROFORMER_MANIFEST, ROFORMER_CORE_FILENAME } from '../stems/melBandRoformerModel'
 import { ModelStore, ModelDownloadError } from '../stems/modelStore'
 import { detectGpuFromInfo } from '../stems/gpuDetect'
 import { sanitiseStemModelDir } from '../preferences'
@@ -136,5 +137,56 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
 
   ipcMain.on(IPC.stems.cancelModelDownload, () => {
     activeDownload?.abort()
+  })
+
+  // ─── Optional Mel-Band RoFormer "Vocal Quality Pack" ────────────────────────
+  const vocalPackDir = join(app.getPath('userData'), 'models', MEL_BAND_ROFORMER_MANIFEST.id)
+  const vocalPackStore = (): ModelStore =>
+    new ModelStore({ manifest: MEL_BAND_ROFORMER_MANIFEST, modelDir: vocalPackDir })
+  let activePackDownload: AbortController | null = null
+
+  ipcMain.handle(IPC.stems.getVocalPackState, async (): Promise<StemModelState> => {
+    const state = await vocalPackStore().readInstallState()
+    return {
+      installed: state.installed,
+      presentBytes: state.presentBytes,
+      totalBytes: state.totalBytes,
+      fileCount: state.files.length
+    }
+  })
+
+  // Resolve the installed core .onnx path for the separation request (the backend
+  // loads its sibling .onnx.data automatically). Empty string when not installed.
+  ipcMain.handle(IPC.stems.getVocalPackPath, async (): Promise<string> => {
+    const state = await vocalPackStore().readInstallState()
+    return state.installed ? join(vocalPackDir, ROFORMER_CORE_FILENAME) : ''
+  })
+
+  ipcMain.handle(IPC.stems.ensureVocalPack, async (): Promise<EnsureStemModelResult> => {
+    if (activePackDownload) {
+      return { ok: false, error: 'A vocal pack download is already in progress.' }
+    }
+    const controller = new AbortController()
+    activePackDownload = controller
+    try {
+      await vocalPackStore().ensureDownloaded((progress) => {
+        const win = ctx.getMainWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(IPC.stems.vocalPackDownloadProgress, progress)
+        }
+      }, controller.signal)
+      return { ok: true }
+    } catch (err) {
+      if (err instanceof ModelDownloadError) {
+        return { ok: false, error: err.message, fileName: err.fileName }
+      }
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      activePackDownload = null
+    }
+  })
+
+  ipcMain.on(IPC.stems.cancelVocalPackDownload, () => {
+    activePackDownload?.abort()
   })
 }

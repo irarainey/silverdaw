@@ -722,6 +722,14 @@ export interface StemSeparatePayload {
   /** Source clip for timeline placement; omit for library-source separation. */
   clipId?: string
   modelDir: string
+  /**
+   * Optional Mel-Band RoFormer ("Vocal Quality Pack") core `.onnx` path. When
+   * present (the pack is installed and the user enabled it), the backend
+   * produces the VOCALS stem with this higher-quality model instead of the
+   * htdemucs vocal specialist; drums/bass still come from htdemucs and `other`
+   * stays the residual. Resolved by main from the pack's install directory.
+   */
+  roformerModelPath?: string
   /** Friendly source name used for the stem WAV filenames and track names. */
   sourceName: string
   /** Stems the user chose to extract (non-empty). */

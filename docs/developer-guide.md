@@ -1157,12 +1157,32 @@ atomically.
 Each specialist model processes fixed 7.8 s stereo segments with a
 quality-selectable overlap (**Fast / Balanced / Best** → 0.10 / 0.25 / 0.50,
 sent as `quality` on `STEM_SEPARATE`) and triangular-window weighted overlap-add.
-When all four stems are requested the `other` model run is skipped and
-`other = mixture − (vocals + drums + bass)` is synthesised instead — a
-mixture-consistency residual that is faster and loses no energy. Separation runs
-on a background thread and never touches the audio callback; progress is reported
-via `STEM_PROGRESS`, each stem lands the instant its WAV is written
+"Best" also applies **vocal test-time augmentation** (the demucs `shifts` trick,
+4 deterministic time-shifts averaged — vocals only, so ~2× cost) to cut the
+"watery"/phase artefacts. When all four stems are requested the `other` model run
+is skipped and `other = mixture − (vocals + drums + bass)` is synthesised instead
+— a mixture-consistency residual that is faster and loses no energy. Separation
+runs on a background thread and never touches the audio callback; progress is
+reported via `STEM_PROGRESS`, each stem lands the instant its WAV is written
 (`STEM_PARTIAL`), and `STEM_READY` backfills the rest.
+
+**Optional vocal cleanup** (opt-in, vocals only) runs after separation: a
+cross-stem **de-bleed** (`VocalDebleeder`, a conservative STFT Wiener soft mask
+using `instrumental = mixture − vocal` as the interferer reference) removes
+pitched instrument bleed the broadband denoiser can't, then RNNoise + a sub-bass
+high-pass/expander. Objective tuning uses the `SilverdawStemEval` dev tool
+(SI-SDR/SDR vs a reference stem).
+
+**Optional Vocal Quality Pack** (opt-in, downloaded separately): a higher-quality
+**Mel-Band RoFormer** vocal model (MIT; `MelRoformerVocals` + the host-side STFT
+engine `MelRoformerSpectral`, run through the same ONNX Runtime). When the pack is
+installed and `stems.useVocalPack` is on, the renderer passes its `.onnx` path as
+`roformerModelPath`; the backend then produces **vocals** with it (drums/bass stay
+htdemucs on the original mix, `other` stays the residual), so it's a drop-in
+vocal-quality upgrade with htdemucs fallback when absent. The host pipeline (STFT
+n_fft 2048 / hop 441, complex-mask multiply, iSTFT, 11 s-chunk overlap-add) is
+unit-tested by an identity-mask round-trip and was validated end-to-end against a
+numpy reference of the model's reference WebGPU host.
 
 GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
 Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`

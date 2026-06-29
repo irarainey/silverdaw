@@ -244,6 +244,26 @@ const api = {
     ipcRenderer.on(IPC.stems.modelDownloadProgress, listener)
     return () => ipcRenderer.removeListener(IPC.stems.modelDownloadProgress, listener)
   },
+  // ─── Optional Mel-Band RoFormer "Vocal Quality Pack" ────────────────────────
+  /** Install state of the optional higher-quality vocal pack. */
+  getVocalPackState: (): Promise<StemModelState> => ipcRenderer.invoke(IPC.stems.getVocalPackState),
+  /** Installed pack core `.onnx` path for the request, or '' when not installed. */
+  getVocalPackPath: (): Promise<string> => ipcRenderer.invoke(IPC.stems.getVocalPackPath),
+  /** Download + integrity-verify the vocal pack; honour an in-flight cancel. */
+  ensureVocalPack: (): Promise<EnsureStemModelResult> =>
+    ipcRenderer.invoke(IPC.stems.ensureVocalPack),
+  /** Abort the active vocal-pack download, if any. */
+  cancelVocalPackDownload: (): void => {
+    ipcRenderer.send(IPC.stems.cancelVocalPackDownload)
+  },
+  onVocalPackDownloadProgress: (
+    handler: (progress: StemModelDownloadProgress) => void
+  ): (() => void) => {
+    const listener = (_evt: IpcRendererEvent, progress: StemModelDownloadProgress): void =>
+      handler(progress)
+    ipcRenderer.on(IPC.stems.vocalPackDownloadProgress, listener)
+    return () => ipcRenderer.removeListener(IPC.stems.vocalPackDownloadProgress, listener)
+  },
   /** Copy a stem source file's metadata + cover art into the stem output folder. */
   writeStemSidecar: (stemDir: string, sourceFilePath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.stems.writeSidecar, { stemDir, sourceFilePath }),

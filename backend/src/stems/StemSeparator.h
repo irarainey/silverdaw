@@ -70,6 +70,11 @@ struct StemSeparationRequest
     double lengthMs = 0.0;
     // Directory holding the four htdemucs-ft .onnx files.
     juce::File modelDir;
+    // Optional Mel-Band RoFormer ("Vocal Quality Pack") .onnx core. When set and
+    // its file exists, the VOCALS stem is produced by this higher-quality model
+    // instead of the htdemucs vocal specialist; drums/bass still come from
+    // htdemucs and `other` stays the residual. Empty = htdemucs vocals (default).
+    juce::File roformerModelFile;
     // Directory the stems are written to (created by the command).
     juce::File outputDir;
     // Short unique token appended to each stem file's basename (a GUID) so
@@ -86,6 +91,13 @@ struct StemSeparationRequest
     // model runs (slower). Resolved from the requested quality preset by the
     // command layer; the default mirrors the "balanced" preset.
     double overlap = 0.25;
+    // Test-time augmentation passes (the demucs `shifts` trick) applied to the
+    // VOCALS stem only — vocals are the artefact-sensitive stem and shifting the
+    // other specialists would multiply cost for little gain. Each extra shift is
+    // one more full pass over the vocal model, so `shifts=4` is ~2x the whole job
+    // (vocals is one of three model runs). 1 = single pass (no augmentation).
+    // Resolved from the quality preset by the command layer.
+    int shifts = 1;
     // Request GPU-accelerated inference. Honoured only when the backend was
     // built with a hardware-accelerated ONNX Runtime (SILVERDAW_ONNXRUNTIME_
     // DIRECTML); otherwise the separator logs once and runs on the CPU. The

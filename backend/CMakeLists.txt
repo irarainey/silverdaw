@@ -435,6 +435,7 @@ add_library(silverdaw_backend_core STATIC
     src/dsp/EnhancerDsp.cpp
     src/dsp/VocalEnhancer.cpp
     src/dsp/VocalDenoiser.cpp
+    src/dsp/VocalDebleeder.cpp
     src/dsp/DrumEnhancer.cpp
     src/dsp/BassEnhancer.cpp
     src/dsp/OtherEnhancer.cpp
@@ -479,6 +480,7 @@ add_library(silverdaw_backend_core STATIC
     # stems (bridge/job plumbing — ONNX-free, always built)
     src/stems/StemBroadcast.cpp
     src/stems/StemSeparationEngine.cpp
+    src/stems/MelRoformerSpectral.cpp
     src/stems/StemSeparatorFactory.cpp)
 
 target_compile_definitions(silverdaw_backend_core PUBLIC
@@ -531,7 +533,9 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
     endif()
     # The real ONNX inference is only compiled when stem separation is enabled;
     # the factory falls back to a stub otherwise.
-    target_sources(silverdaw_backend_core PRIVATE src/stems/OnnxStemSeparator.cpp)
+    target_sources(silverdaw_backend_core PRIVATE
+        src/stems/OnnxStemSeparator.cpp
+        src/stems/MelRoformerVocals.cpp)
 endif()
 
 if(SILVERDAW_ENABLE_COVERAGE)
@@ -623,7 +627,8 @@ tests/MixdownRenderTests.cpp
         tests/VocalDenoiserTests.cpp
         tests/DrumEnhancerTests.cpp
         tests/BassEnhancerTests.cpp
-        tests/OtherEnhancerTests.cpp)
+        tests/OtherEnhancerTests.cpp
+        tests/MelRoformerSpectralTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
 
@@ -631,6 +636,19 @@ tests/MixdownRenderTests.cpp
     # Run: SilverdawBpmEval <manifest>  (manifest lines: <path>|<referenceBpm>)
     add_executable(SilverdawBpmEval tools/bpm_eval/BpmEval.cpp)
     target_link_libraries(SilverdawBpmEval PRIVATE silverdaw_backend_core)
+
+    # Offline stem-separation quality harness (dev tool, not shipped, not a CTest
+    # test). Run: SilverdawStemEval <manifest>
+    # (manifest lines: <referenceWav>|<estimateWav>[|label]). Reports SI-SDR / SDR.
+    add_executable(SilverdawStemEval tools/stem_eval/StemEval.cpp)
+    target_link_libraries(SilverdawStemEval PRIVATE silverdaw_backend_core)
+
+    # Dev probe for the Mel-Band RoFormer vocal pack (needs ONNX + a model file).
+    # Run: SilverdawRoformerProbe <core.onnx> <inputWav> <outputVocalWav>
+    if(SILVERDAW_ENABLE_STEM_SEPARATION)
+        add_executable(SilverdawRoformerProbe tools/roformer_probe/RoformerProbe.cpp)
+        target_link_libraries(SilverdawRoformerProbe PRIVATE silverdaw_backend_core)
+    endif()
 
     if(SILVERDAW_ENABLE_COVERAGE)
         set(SILVERDAW_BACKEND_COVERAGE_DIR ${CMAKE_BINARY_DIR}/coverage)

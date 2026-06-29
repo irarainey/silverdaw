@@ -5,6 +5,7 @@
 #include "TestRegistry.h"
 
 #include "VocalEnhancer.h"
+#include "VocalDebleeder.h"
 
 #include <cmath>
 #include <limits>
@@ -151,6 +152,76 @@ void testNonFiniteInputSanitised()
     require(allFinite(buf), "NaN/Inf samples must be sanitised to finite output");
 }
 
+// ─── Cross-stem de-bleed (VocalDebleeder) ───────────────────────────────────
+
+// A vocal sitting alone (silent instrumental) must pass through essentially
+// unchanged: the Wiener mask is ~1 everywhere, and the STFT round-trip is COLA.
+void testDebleedSilentInstrumentalPreservesVocal()
+{
+    const int n = 16384;
+    auto vocal = makeSine(440.0, 0.5, n);
+    const auto original = vocal;
+    juce::AudioBuffer<float> instrumental(2, n);
+    instrumental.clear();
+
+    VocalDebleeder::process(vocal, instrumental, kSr, VocalEnhanceStrength::Medium);
+
+    // Compare away from the edges where the overlap-add has full window coverage.
+    const double before = rms(original, 0, 4096, 8192);
+    const double after = rms(vocal, 0, 4096, 8192);
+    require(before > 0.0, "test signal has energy");
+    require(std::abs(after - before) / before < 0.05,
+            "silent instrumental leaves the vocal essentially unchanged");
+    require(allFinite(vocal), "de-bleed output stays finite");
+}
+
+// A vocal tone that ALSO blares in the instrumental at the same frequency is
+// bleed: the mask should pull it down. A different-frequency vocal is preserved.
+void testDebleedAttenuatesSharedFrequencyBleed()
+{
+    const int n = 16384;
+    // Shared 1 kHz content (bleed): strong in the instrumental, present in vocal.
+    auto sharedVocal = makeSine(1000.0, 0.3, n);
+    auto sharedInstr = makeSine(1000.0, 0.9, n);
+    const double sharedBefore = rms(sharedVocal, 0, 4096, 8192);
+    VocalDebleeder::process(sharedVocal, sharedInstr, kSr, VocalEnhanceStrength::Strong);
+    const double sharedAfter = rms(sharedVocal, 0, 4096, 8192);
+    require(sharedAfter < sharedBefore * 0.8,
+            "instrumental-dominated frequency is attenuated in the vocal");
+
+    // Vocal-only frequency with the instrumental energy elsewhere is preserved.
+    auto soloVocal = makeSine(440.0, 0.5, n);
+    auto otherInstr = makeSine(5000.0, 0.9, n);
+    const double soloBefore = rms(soloVocal, 0, 4096, 8192);
+    VocalDebleeder::process(soloVocal, otherInstr, kSr, VocalEnhanceStrength::Strong);
+    const double soloAfter = rms(soloVocal, 0, 4096, 8192);
+    require(soloAfter > soloBefore * 0.9, "vocal-owned frequency is preserved");
+}
+
+void testDebleedShortOrSilentIsSafe()
+{
+    // Shorter than one FFT frame: a guaranteed no-op (cannot STFT).
+    juce::AudioBuffer<float> shortVocal(2, 512);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < 512; ++i) shortVocal.setSample(ch, i, 0.3f);
+    const auto before = shortVocal;
+    juce::AudioBuffer<float> shortInstr(2, 512);
+    shortInstr.clear();
+    VocalDebleeder::process(shortVocal, shortInstr, kSr, VocalEnhanceStrength::Medium);
+    for (int i = 0; i < 512; ++i)
+        require(shortVocal.getSample(0, i) == before.getSample(0, i),
+                "sub-frame input is left untouched");
+
+    // NaN/Inf input is rejected (no-op), never propagated.
+    juce::AudioBuffer<float> nanVocal = makeSine(440.0, 0.5, 8192);
+    nanVocal.setSample(0, 10, std::numeric_limits<float>::quiet_NaN());
+    juce::AudioBuffer<float> instr(2, 8192);
+    instr.clear();
+    VocalDebleeder::process(nanVocal, instr, kSr, VocalEnhanceStrength::Medium);
+    require(std::isnan(nanVocal.getSample(0, 10)),
+            "non-finite input is rejected as a no-op rather than partially processed");
+}
+
 } // namespace
 
 void addVocalEnhancerTests(std::vector<TestCase>& tests)
@@ -164,6 +235,12 @@ void addVocalEnhancerTests(std::vector<TestCase>& tests)
                      testExpanderAttenuatesQuietBleed});
     tests.push_back({"VocalEnhancer keeps silence silent without NaN", testSilenceStaysSilentNoNaN});
     tests.push_back({"VocalEnhancer sanitises non-finite input", testNonFiniteInputSanitised});
+    tests.push_back({"VocalDebleeder preserves a vocal with a silent instrumental",
+                     testDebleedSilentInstrumentalPreservesVocal});
+    tests.push_back({"VocalDebleeder attenuates shared-frequency bleed, keeps solo vocal",
+                     testDebleedAttenuatesSharedFrequencyBleed});
+    tests.push_back({"VocalDebleeder is safe on sub-frame / non-finite input",
+                     testDebleedShortOrSilentIsSafe});
 }
 
 } // namespace silverdaw::tests

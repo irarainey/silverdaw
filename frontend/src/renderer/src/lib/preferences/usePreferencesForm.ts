@@ -39,6 +39,7 @@ export interface PreferencesForm {
   autosaveEnabled: Ref<boolean>
   autosaveIntervalSeconds: Ref<number>
   useGpuForStems: Ref<boolean>
+  useVocalPack: Ref<boolean>
   enhanceVocals: Ref<boolean>
   vocalEnhanceStrength: Ref<VocalEnhanceStrength>
   enhanceDrums: Ref<boolean>
@@ -129,6 +130,7 @@ export function usePreferencesForm(): PreferencesForm {
   const autosaveEnabled = ref(true)
   const autosaveIntervalSeconds = ref(30)
   const useGpuForStems = ref(false)
+  const useVocalPack = ref(false)
   const enhanceVocals = ref(false)
   const vocalEnhanceStrength = ref<VocalEnhanceStrength>('medium')
   const enhanceDrums = ref(false)
@@ -155,6 +157,7 @@ export function usePreferencesForm(): PreferencesForm {
   const initialAutosaveEnabled = ref(true)
   const initialAutosaveSeconds = ref(30)
   const initialUseGpuForStems = ref(false)
+  const initialUseVocalPack = ref(false)
   const initialEnhanceVocals = ref(false)
   const initialVocalEnhanceStrength = ref<VocalEnhanceStrength>('medium')
   const initialEnhanceDrums = ref(false)
@@ -182,6 +185,7 @@ export function usePreferencesForm(): PreferencesForm {
       autosaveEnabled.value !== initialAutosaveEnabled.value ||
       autosaveIntervalSeconds.value !== initialAutosaveSeconds.value ||
       useGpuForStems.value !== initialUseGpuForStems.value ||
+      useVocalPack.value !== initialUseVocalPack.value ||
       enhanceVocals.value !== initialEnhanceVocals.value ||
       vocalEnhanceStrength.value !== initialVocalEnhanceStrength.value ||
       enhanceDrums.value !== initialEnhanceDrums.value ||
@@ -218,6 +222,7 @@ export function usePreferencesForm(): PreferencesForm {
       keepAwakeMode.value = keepAwake
       const stemPrefs = await window.silverdaw.getStemPrefs()
       useGpuForStems.value = stemPrefs.useGpu
+      useVocalPack.value = stemPrefs.useVocalPack
       enhanceVocals.value = stemPrefs.enhanceVocals
       vocalEnhanceStrength.value = stemPrefs.vocalEnhanceStrength
       enhanceDrums.value = stemPrefs.enhanceDrums
@@ -239,6 +244,7 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputDeviceName.value = null
       keepAwakeMode.value = 'auto'
       useGpuForStems.value = false
+      useVocalPack.value = false
       enhanceVocals.value = false
       vocalEnhanceStrength.value = 'medium'
       enhanceDrums.value = false
@@ -272,6 +278,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialAutosaveEnabled.value = autosaveEnabled.value
     initialAutosaveSeconds.value = autosaveIntervalSeconds.value
     initialUseGpuForStems.value = useGpuForStems.value
+    initialUseVocalPack.value = useVocalPack.value
     initialEnhanceVocals.value = enhanceVocals.value
     initialVocalEnhanceStrength.value = vocalEnhanceStrength.value
     initialEnhanceDrums.value = enhanceDrums.value
@@ -389,6 +396,9 @@ export function usePreferencesForm(): PreferencesForm {
     if (useGpuForStems.value !== initialUseGpuForStems.value) {
       window.silverdaw.setStemPrefs({ useGpu: useGpuForStems.value })
     }
+    if (useVocalPack.value !== initialUseVocalPack.value) {
+      window.silverdaw.setStemPrefs({ useVocalPack: useVocalPack.value })
+    }
     if (
       enhanceVocals.value !== initialEnhanceVocals.value ||
       vocalEnhanceStrength.value !== initialVocalEnhanceStrength.value
@@ -455,6 +465,7 @@ export function usePreferencesForm(): PreferencesForm {
     autosaveEnabled,
     autosaveIntervalSeconds,
     useGpuForStems,
+    useVocalPack,
     enhanceVocals,
     vocalEnhanceStrength,
     enhanceDrums,

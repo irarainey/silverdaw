@@ -286,6 +286,7 @@ async function dispatchSeparation(
   const modelDir = await window.silverdaw.getStemModelDir()
   const useGpu = await resolveUseGpu()
   const enhance = await resolveStemEnhance()
+  const roformerModelPath = await resolveVocalPackPath()
   const jobId = crypto.randomUUID()
   registerStemJob(jobId, target)
   beginStemSeparation(jobId, target, stems)
@@ -294,6 +295,7 @@ async function dispatchSeparation(
     sourceItemId: target.sourceItemId,
     clipId: target.clipId,
     modelDir,
+    roformerModelPath,
     sourceName: target.sourceName,
     stems: [...stems],
     quality,
@@ -360,6 +362,23 @@ async function resolveStemEnhance(): Promise<{
       enhanceOther: false,
       otherEnhanceStrength: 'medium'
     }
+  }
+}
+
+/**
+ * Resolves the optional Mel-Band RoFormer "Vocal Quality Pack" core .onnx path
+ * for the request: returns it only when the user enabled the pack AND it is
+ * installed. Any lookup failure (or pack absent / disabled) returns undefined,
+ * so the backend falls back to the htdemucs vocal specialist.
+ */
+async function resolveVocalPackPath(): Promise<string | undefined> {
+  try {
+    const prefs = await window.silverdaw.getStemPrefs()
+    if (!prefs.useVocalPack) return undefined
+    const path = await window.silverdaw.getVocalPackPath()
+    return path && path.length > 0 ? path : undefined
+  } catch {
+    return undefined
   }
 }
 

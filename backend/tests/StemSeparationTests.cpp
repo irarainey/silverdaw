@@ -6,12 +6,16 @@
 #include "TestRegistry.h"
 
 #include <atomic>
+#include <cmath>
+#include <vector>
 
 #include "BridgeServer.h"
 #include "ProjectSession.h"
 #include "StemSeparationCommands.h"
 #include "StemSeparationEngine.h"
 #include "StemSeparator.h"
+#include "StemShifts.h"
+#include "StemMetrics.h"
 
 namespace silverdaw::tests
 {
@@ -171,6 +175,73 @@ void testOverlapForStemQuality()
                 "unknown quality falls back to balanced");
 }
 
+void testShiftsForStemQuality()
+{
+    // Only "best" pays for vocal test-time augmentation; fast/balanced/unknown
+    // stay single-pass so the default separation time is unchanged.
+    require(silverdaw::shiftsForStemQuality("best") > 1, "best uses multiple vocal shifts");
+    require(silverdaw::shiftsForStemQuality("fast") == 1, "fast is single-pass");
+    require(silverdaw::shiftsForStemQuality("balanced") == 1, "balanced is single-pass");
+    require(silverdaw::shiftsForStemQuality("") == 1, "absent quality is single-pass");
+    require(silverdaw::shiftsForStemQuality("bogus") == 1, "unknown quality is single-pass");
+}
+
+void testShiftOffsets()
+{
+    // Single pass always yields just {0} — the unshifted run, no behaviour change.
+    require(silverdaw::shiftOffsetsFor(1, 22050) == std::vector<int>{0}, "shifts<=1 is {0}");
+    require(silverdaw::shiftOffsetsFor(0, 22050) == std::vector<int>{0}, "shifts=0 clamps to {0}");
+
+    // Deterministic, ascending, starts at 0, stays within [0, maxShift).
+    const auto four = silverdaw::shiftOffsetsFor(4, 22050);
+    require(four.size() == 4, "four distinct shift offsets");
+    require(four.front() == 0, "first offset is the unshifted run");
+    for (size_t i = 1; i < four.size(); ++i)
+        require(four[i] > four[i - 1], "offsets strictly ascending");
+    require(four.back() < 22050, "offsets stay below max shift (demucs spreads up to max)");
+
+    // Degenerate max shift collapses to a single unique run (no wasted passes).
+    require(silverdaw::shiftOffsetsFor(4, 0) == std::vector<int>{0}, "zero max shift dedupes to {0}");
+}
+
+void testStemMetrics()
+{
+    juce::AudioBuffer<float> ref(2, 1000);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < 1000; ++i)
+            ref.setSample(ch, i, std::sin(0.05f * static_cast<float>(i)) * (ch == 0 ? 1.0f : 0.8f));
+
+    // Identical estimate: both metrics hit the ceiling (perfect separation).
+    require(silverdaw::siSdrDb(ref, ref) >= silverdaw::kStemMetricCeilingDb - 1e-6,
+            "identical buffers give ceiling SI-SDR");
+    require(silverdaw::sdrDb(ref, ref) >= silverdaw::kStemMetricCeilingDb - 1e-6,
+            "identical buffers give ceiling SDR");
+
+    // Scale invariance: a half-gain copy is still perfect SI-SDR (gain is not a
+    // separation error) but plain SDR penalises the level mismatch.
+    juce::AudioBuffer<float> half(2, 1000);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < 1000; ++i)
+            half.setSample(ch, i, ref.getSample(ch, i) * 0.5f);
+    require(silverdaw::siSdrDb(ref, half) >= silverdaw::kStemMetricCeilingDb - 1e-6,
+            "scaled copy is perfect SI-SDR");
+    require(silverdaw::sdrDb(ref, half) < 40.0, "plain SDR penalises the level mismatch");
+
+    // Uncorrelated estimate scores far worse than a correlated one.
+    juce::AudioBuffer<float> noise(2, 1000);
+    juce::Random rng(1234);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < 1000; ++i)
+            noise.setSample(ch, i, rng.nextFloat() * 2.0f - 1.0f);
+    require(silverdaw::siSdrDb(ref, noise) < silverdaw::siSdrDb(ref, half),
+            "noise scores worse than a correct (scaled) stem");
+
+    // Silent reference is a no-op (nothing to separate) -> 0 dB, never NaN/inf.
+    juce::AudioBuffer<float> silent(2, 1000);
+    silent.clear();
+    requireNear(silverdaw::siSdrDb(silent, noise), 0.0, 1e-9, "silent reference yields 0 dB");
+}
+
 } // namespace
 
 void addStemSeparationTests(std::vector<TestCase>& tests)
@@ -180,6 +251,9 @@ void addStemSeparationTests(std::vector<TestCase>& tests)
     tests.push_back({"stem job propagates cancel", testJobPropagatesCancel});
     tests.push_back({"default separator fails fast without model", testDefaultSeparatorFailsFastWithoutModel});
     tests.push_back({"stem quality maps to overlap", testOverlapForStemQuality});
+    tests.push_back({"stem quality maps to vocal shifts", testShiftsForStemQuality});
+    tests.push_back({"shift offsets are deterministic and deduped", testShiftOffsets});
+    tests.push_back({"stem metrics: SI-SDR scale-invariance and SDR", testStemMetrics});
     tests.push_back({"stems output base dir follows the project", testStemsOutputBaseDir});
 }
 

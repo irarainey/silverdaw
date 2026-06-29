@@ -23,6 +23,9 @@
 #endif
 
 #include "Log.h"
+#include "StemShifts.h"
+#include "MelRoformerVocals.h"
+#include "VocalDebleeder.h"
 
 namespace silverdaw
 {
@@ -299,10 +302,6 @@ class OnnxStemSeparator : public StemSeparator
         const auto window = makeTransitionWindow(kSegmentSamples);
         const double overlap = std::clamp(request.overlap, 0.0, kMaxOverlap);
         const int stride = std::max(1, static_cast<int>(kSegmentSamples * (1.0 - overlap)));
-        std::vector<int> offsets;
-        for (int start = 0; start < numSamples; start += stride)
-            offsets.push_back(start);
-        if (offsets.empty()) offsets.push_back(0);
 
         onProgress("prepare", kPreparePercent, "");
 
@@ -391,16 +390,44 @@ class OnnxStemSeparator : public StemSeparator
             }
             else
             {
-                stemBuffer = separateOneStem(request.modelDir, stem, mixture, numSamples, window,
-                                             offsets, memInfo, onProgress, shouldCancel, stemBase,
-                                             sepSpan);
-
-                // Undo the per-track normalisation applied before inference.
-                for (int ch = 0; ch < kModelChannels; ++ch)
+                const bool useRoformerVocals = juce::String(stem) == "vocals" &&
+                                               request.roformerModelFile != juce::File() &&
+                                               request.roformerModelFile.existsAsFile();
+                if (useRoformerVocals)
                 {
-                    float* d = stemBuffer.getWritePointer(ch);
-                    for (int i = 0; i < numSamples; ++i)
-                        d[i] = d[i] * norm.std + norm.mean;
+                    // Mel-Band RoFormer vocal pack: separate from the RAW (denormalised)
+                    // mixture in its own peak-normalised domain; it returns the vocal at
+                    // the mixture's level, so no further denormalisation is needed.
+                    juce::AudioBuffer<float> rawMix(kModelChannels, numSamples);
+                    for (int ch = 0; ch < kModelChannels; ++ch)
+                    {
+                        const float* mix = mixture.getReadPointer(ch);
+                        float* d = rawMix.getWritePointer(ch);
+                        for (int i = 0; i < numSamples; ++i)
+                            d[i] = mix[i] * norm.std + norm.mean;
+                    }
+                    silverdaw::log::info("stems", "vocals via Mel-Band RoFormer pack");
+                    stemBuffer = roformerVocals.separate(
+                        request.roformerModelFile, rawMix, request.useGpu,
+                        [&](double f) { onProgress("separate", stemBase + sepSpan * f, stem); },
+                        shouldCancel);
+                }
+                else
+                {
+                    // Vocals get test-time augmentation (shifts) in "best" quality;
+                    // every other specialist runs single-pass (shifts=1).
+                    const int stemShifts = juce::String(stem) == "vocals" ? std::max(1, request.shifts) : 1;
+                    stemBuffer = separateOneStem(request.modelDir, stem, mixture, numSamples, window,
+                                                 stride, stemShifts, memInfo, onProgress, shouldCancel,
+                                                 stemBase, sepSpan);
+
+                    // Undo the per-track normalisation applied before inference.
+                    for (int ch = 0; ch < kModelChannels; ++ch)
+                    {
+                        float* d = stemBuffer.getWritePointer(ch);
+                        for (int i = 0; i < numSamples; ++i)
+                            d[i] = d[i] * norm.std + norm.mean;
+                    }
                 }
 
                 // Accumulate the extracted (denormalised) sources so `other` can be
@@ -435,6 +462,24 @@ class OnnxStemSeparator : public StemSeparator
                                          + vocalEnhanceStrengthToString(request.vocalEnhance.strength)
                                          + " denoiseWet=" + juce::String(wet, 2));
                 onProgress("cleanup", cleanupBase, stem);
+                // Cross-stem de-bleed first: build the interferer estimate
+                // (instrumental = mixture - vocal, in the denormalised domain) and
+                // push down pitched instrument bleed the broadband denoiser cannot
+                // touch. The `other` residual was already accumulated from the
+                // UNPROCESSED vocal above, so cleaning here keeps it consistent.
+                {
+                    juce::AudioBuffer<float> instrumental(kModelChannels, numSamples);
+                    for (int ch = 0; ch < kModelChannels; ++ch)
+                    {
+                        const float* mix = mixture.getReadPointer(ch);
+                        const float* voc = stemBuffer.getReadPointer(ch);
+                        float* ins = instrumental.getWritePointer(ch);
+                        for (int i = 0; i < numSamples; ++i)
+                            ins[i] = (mix[i] * norm.std + norm.mean) - voc[i];
+                    }
+                    VocalDebleeder::process(stemBuffer, instrumental, kModelSampleRate,
+                                            request.vocalEnhance.strength);
+                }
                 // The denoiser is the slow cleanup path; tick the bar across the
                 // reserved slice as it runs (it owns the first 90% of the slice,
                 // leaving room for the quick expander stage that follows).
@@ -490,12 +535,15 @@ class OnnxStemSeparator : public StemSeparator
     }
 
   private:
-    // Run one specialist model over every overlapping window and reconstruct its
-    // source via weighted overlap-add. Input mixture is already normalised.
+    // Run one specialist model over a track and reconstruct its source via
+    // weighted overlap-add. When `shifts > 1` (vocals, "best" quality) the model
+    // is also run on a few small leading-zero time-shifts of the input and the
+    // realigned outputs are averaged — the demucs `shifts` trick, which cancels
+    // the translation-variance phase/edge artefacts on the stem. `shifts = 1` is
+    // the plain single pass. Input mixture is already normalised.
     juce::AudioBuffer<float> separateOneStem(const juce::File& modelDir, const char* stem,
                                              const juce::AudioBuffer<float>& mixture, int numSamples,
-                                             const std::vector<float>& window,
-                                             const std::vector<int>& offsets,
+                                             const std::vector<float>& window, int stride, int shifts,
                                              const Ort::MemoryInfo& memInfo,
                                              const StemProgressFn& onProgress,
                                              const StemCancelFn& shouldCancel, double stemBase,
@@ -508,13 +556,6 @@ class OnnxStemSeparator : public StemSeparator
         const auto outputName = session.GetOutputNameAllocated(0, allocator);
 
         const int sourceIndex = sourceIndexForStem(stem);
-
-        // Overlap-add accumulators: weighted sum per channel + the weight total.
-        // float is ample here — each output sample is the sum of at most two
-        // overlapping windows — and halves the bandwidth of this hot loop.
-        std::vector<float> accLeft(static_cast<size_t>(numSamples), 0.0f);
-        std::vector<float> accRight(static_cast<size_t>(numSamples), 0.0f);
-        std::vector<float> weightSum(static_cast<size_t>(numSamples), 0.0f);
 
         // Reusable input tensor over a fixed-length, zero-padded window in
         // [ch0 samples..., ch1 samples...] layout.
@@ -545,46 +586,88 @@ class OnnxStemSeparator : public StemSeparator
         const float* outLeft = outputData.data() + static_cast<size_t>(sourceIndex) * sourceStride;
         const float* outRight = outLeft + channelStride;
 
-        for (size_t w = 0; w < offsets.size(); ++w)
+        // Deterministic shift offsets (always includes 0). Up to 0.5 s, matching
+        // demucs' max_shift; for shifts=1 this is just {0} (single pass).
+        const auto shiftOffsets = shiftOffsetsFor(shifts, kModelSampleRate / 2);
+
+        // Final per-shift-averaged accumulators for the un-shifted output.
+        std::vector<float> finalLeft(static_cast<size_t>(numSamples), 0.0f);
+        std::vector<float> finalRight(static_cast<size_t>(numSamples), 0.0f);
+
+        // Total model runs across all shifts, for a smooth progress bar.
+        long long totalWindows = 0;
+        for (int sh : shiftOffsets)
+            totalWindows += (static_cast<long long>(numSamples + sh) + stride - 1) / stride;
+        long long windowsDone = 0;
+
+        for (int sh : shiftOffsets)
         {
-            if (shouldCancel()) throw StemSeparationError(StemFailureCode::Cancelled, "Cancelled");
-            const int start = offsets[w];
-            const int valid = std::min(kSegmentSamples, numSamples - start);
+            // The shifted signal has `sh` leading zeros, so content[idx] =
+            // mixture[idx - sh] for idx >= sh, and the timeline is `sh` longer.
+            const int effLen = numSamples + sh;
+            std::vector<float> accLeft(static_cast<size_t>(effLen), 0.0f);
+            std::vector<float> accRight(static_cast<size_t>(effLen), 0.0f);
+            std::vector<float> weightSum(static_cast<size_t>(effLen), 0.0f);
 
-            // Only the final, partial window needs re-zeroing for its pad tail;
-            // full windows are completely overwritten by the copy below.
-            if (valid < kSegmentSamples) std::fill(inputData.begin(), inputData.end(), 0.0f);
-            for (int ch = 0; ch < kModelChannels; ++ch)
+            for (int start = 0; start < effLen; start += stride)
             {
-                const float* src = mixture.getReadPointer(ch) + start;
-                std::copy_n(src, valid,
-                            inputData.begin() + static_cast<size_t>(ch) * kSegmentSamples);
+                if (shouldCancel()) throw StemSeparationError(StemFailureCode::Cancelled, "Cancelled");
+                const int valid = std::min(kSegmentSamples, effLen - start);
+
+                // Real (non-zero) content within this window is [contentBegin,
+                // contentEnd) in shifted-timeline coords. Anything outside (the
+                // leading zero-pad or the final partial tail) stays silent.
+                const int contentBegin = std::max(start, sh);
+                const int contentEnd = start + valid;
+                const int contentLen = std::max(0, contentEnd - contentBegin);
+                if (contentLen < kSegmentSamples) std::fill(inputData.begin(), inputData.end(), 0.0f);
+                for (int ch = 0; ch < kModelChannels; ++ch)
+                {
+                    if (contentLen <= 0) continue;
+                    const float* src = mixture.getReadPointer(ch) + (contentBegin - sh);
+                    std::copy_n(src, contentLen,
+                                inputData.begin() + static_cast<size_t>(ch) * kSegmentSamples +
+                                    static_cast<size_t>(contentBegin - start));
+                }
+
+                session.Run(Ort::RunOptions{nullptr}, binding);
+
+                for (int i = 0; i < valid; ++i)
+                {
+                    const float wgt = window[static_cast<size_t>(i)];
+                    const size_t pos = static_cast<size_t>(start + i);
+                    accLeft[pos] += wgt * outLeft[i];
+                    accRight[pos] += wgt * outRight[i];
+                    weightSum[pos] += wgt;
+                }
+
+                ++windowsDone;
+                onProgress("separate",
+                           stemBase + stemSpan * static_cast<double>(windowsDone) /
+                                          static_cast<double>(std::max<long long>(1, totalWindows)),
+                           stem);
             }
 
-            session.Run(Ort::RunOptions{nullptr}, binding);
-
-            for (int i = 0; i < valid; ++i)
+            // Normalise this shift's overlap-add and fold it into the average,
+            // dropping the `sh` leading-zero samples to realign with the output.
+            for (int i = 0; i < numSamples; ++i)
             {
-                const float wgt = window[static_cast<size_t>(i)];
-                const size_t pos = static_cast<size_t>(start + i);
-                accLeft[pos] += wgt * outLeft[i];
-                accRight[pos] += wgt * outRight[i];
-                weightSum[pos] += wgt;
+                const size_t pos = static_cast<size_t>(i + sh);
+                const float denom = weightSum[pos];
+                const float inv = denom > 0.0f ? 1.0f / denom : 0.0f;
+                finalLeft[static_cast<size_t>(i)] += accLeft[pos] * inv;
+                finalRight[static_cast<size_t>(i)] += accRight[pos] * inv;
             }
-
-            onProgress("separate",
-                       stemBase + stemSpan * static_cast<double>(w + 1) / offsets.size(), stem);
         }
 
+        const float shiftNorm = 1.0f / static_cast<float>(std::max<size_t>(1, shiftOffsets.size()));
         juce::AudioBuffer<float> stemBuffer(kModelChannels, numSamples);
         float* left = stemBuffer.getWritePointer(0);
         float* right = stemBuffer.getWritePointer(1);
         for (int i = 0; i < numSamples; ++i)
         {
-            const float denom = weightSum[static_cast<size_t>(i)];
-            const float inv = denom > 0.0f ? 1.0f / denom : 0.0f;
-            left[i] = accLeft[static_cast<size_t>(i)] * inv;
-            right[i] = accRight[static_cast<size_t>(i)] * inv;
+            left[i] = finalLeft[static_cast<size_t>(i)] * shiftNorm;
+            right[i] = finalRight[static_cast<size_t>(i)] * shiftNorm;
         }
         return stemBuffer;
     }
@@ -660,6 +743,10 @@ class OnnxStemSeparator : public StemSeparator
     bool epUsesGpu = false;
     // Declared last so cached sessions are destroyed before `env`.
     std::map<std::string, std::unique_ptr<Ort::Session>> sessionCache;
+
+    // Optional Mel-Band RoFormer vocal pack (owns its own ONNX session); used
+    // only when a request supplies a RoFormer model file.
+    MelRoformerVocals roformerVocals;
 };
 
 } // namespace

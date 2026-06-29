@@ -133,6 +133,13 @@ declare global {
       onStemModelDownloadProgress(
         handler: (progress: SharedStemModelDownloadProgress) => void
       ): () => void
+      getVocalPackState(): Promise<SharedStemModelState>
+      getVocalPackPath(): Promise<string>
+      ensureVocalPack(): Promise<SharedEnsureStemModelResult>
+      cancelVocalPackDownload(): void
+      onVocalPackDownloadProgress(
+        handler: (progress: SharedStemModelDownloadProgress) => void
+      ): () => void
       writeStemSidecar(stemDir: string, sourceFilePath: string): Promise<boolean>
       readStemSidecar(stemDir: string): Promise<AudioMetadata | null>
       writeSampleSidecar(sampleFilePath: string, sourceFilePath: string): Promise<boolean>

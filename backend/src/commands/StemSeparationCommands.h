@@ -37,6 +37,12 @@ void handleStemSeparateCancel(const juce::var& payload,
 // safe. Exposed for unit testing.
 double overlapForStemQuality(const juce::String& quality);
 
+// Maps a requested quality preset to the number of vocal test-time-augmentation
+// passes (the demucs `shifts` trick), applied to the vocals stem only. Higher =
+// fewer phase/edge artefacts at a linear cost in vocal-model runs. Unknown or
+// absent values fall back to the "balanced" default. Exposed for unit testing.
+int shiftsForStemQuality(const juce::String& quality);
+
 // Base folder a project's separated stems are written under: a "stems" subfolder
 // beside the project file when it has been saved (so the whole project folder is
 // portable), otherwise the disposable temporary workspace for unsaved projects.

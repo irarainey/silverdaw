@@ -96,6 +96,12 @@ export const IPC = {
     ensureModel: 'stems:ensureModel',
     cancelModelDownload: 'stems:cancelModelDownload',
     modelDownloadProgress: 'stems:modelDownloadProgress',
+    // Optional Mel-Band RoFormer "Vocal Quality Pack" (higher-quality vocals).
+    getVocalPackState: 'stems:getVocalPackState',
+    getVocalPackPath: 'stems:getVocalPackPath',
+    ensureVocalPack: 'stems:ensureVocalPack',
+    cancelVocalPackDownload: 'stems:cancelVocalPackDownload',
+    vocalPackDownloadProgress: 'stems:vocalPackDownloadProgress',
     writeSidecar: 'stems:writeSidecar',
     readSidecar: 'stems:readSidecar'
   },

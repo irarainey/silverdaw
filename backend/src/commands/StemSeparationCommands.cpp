@@ -189,6 +189,11 @@ void handleStemSeparate(const juce::var& payload,
     request.fileNameToken = juce::Uuid().toDashedString();
     request.stems = std::move(selectedStems);
     request.overlap = overlapForStemQuality(readOptionalString(payload, "quality").value_or(juce::String{}));
+    request.shifts = shiftsForStemQuality(readOptionalString(payload, "quality").value_or(juce::String{}));
+    // Optional Mel-Band RoFormer ("Vocal Quality Pack") core .onnx. When the
+    // renderer supplies it (the pack is installed and enabled), vocals use it.
+    const auto roformerPath = readOptionalString(payload, "roformerModelPath").value_or(juce::String{});
+    if (roformerPath.isNotEmpty()) request.roformerModelFile = juce::File(roformerPath);
     // Clip-scoped separation: when a timeline clip is named, extract only that
     // clip's window of the source ([inMs, inMs+durationMs)) so the stem files are
     // clip-length. A library-item separation (no clipId) leaves the window at
@@ -273,6 +278,16 @@ double overlapForStemQuality(const juce::String& quality)
     if (quality == "fast") return 0.10;
     if (quality == "best") return 0.50;
     return 0.25; // balanced
+}
+
+int shiftsForStemQuality(const juce::String& quality)
+{
+    // Vocal test-time-augmentation passes. Fast and balanced stay single-pass so
+    // the default separation time is unchanged; only "best" pays the ~2x cost for
+    // visibly fewer phase/edge artefacts on the vocal stem. Unknown/absent values
+    // fall back to the balanced (single-pass) default.
+    if (quality == "best") return 4;
+    return 1; // fast / balanced / unknown
 }
 
 } // namespace silverdaw
