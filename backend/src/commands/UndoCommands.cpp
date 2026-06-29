@@ -25,6 +25,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
            type == "TRACK_SET_SENDS" || type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
            type == "TRACK_SET_PAN" ||
+           type == "TRACK_SET_AUTOMATION" ||
            type == "CLIP_SET_ENVELOPE" ||
            type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
@@ -70,6 +71,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_SET_TONE") return "Change track tone";
     if (type == "TRACK_SET_LEVELER") return "Change track leveler";
     if (type == "TRACK_SET_PAN") return "Change track pan";
+    if (type == "TRACK_SET_AUTOMATION") return "Edit track automation";
     if (type == "CLIP_SET_ENVELOPE") return "Edit clip volume envelope";
     if (type == "PROJECT_SET_REVERB") return "Change reverb";
     if (type == "PROJECT_SET_DELAY") return "Change delay";
@@ -147,6 +149,12 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
              type == "TRACK_SET_PAN")
     {
         idPart = readOptionalString(payload, "trackId").value_or(juce::String{});
+    }
+    else if (type == "TRACK_SET_AUTOMATION")
+    {
+        // Coalesce per (track, parameter) so editing two params doesn't fold into one step.
+        idPart = readOptionalString(payload, "trackId").value_or(juce::String{}) + "/" +
+                 readOptionalString(payload, "paramId").value_or(juce::String{});
     }
     else if (type == "PROJECT_SET_MASTER_VOLUME" ||
              type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY")

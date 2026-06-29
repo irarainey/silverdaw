@@ -111,6 +111,12 @@ juce::var ProjectState::tracksAsJson() const
                                   static_cast<double>(track.getProperty(kPan, 0.0)));
         }
 
+        // Per-track effect automation lanes (absent unless the user drew a curve).
+        if (track.hasProperty(kAutomation))
+        {
+            trackObj->setProperty("automation", track.getProperty(kAutomation));
+        }
+
         juce::Array<juce::var> clipsArray;
         for (int c = 0; c < track.getNumChildren(); ++c)
         {

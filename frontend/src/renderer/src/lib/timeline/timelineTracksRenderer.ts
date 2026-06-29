@@ -5,6 +5,7 @@ import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics } from 'pixi.js'
 import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useUiStore } from '@/stores/uiStore'
 import {
   GRID_BAR,
   GRID_BEAT,
@@ -18,6 +19,8 @@ import {
   TRACK_HEADER_BG
 } from './constants'
 import { buildTrackRowLayout } from './trackLayout'
+import { drawAutomationLane } from './automationLaneRenderer'
+import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import type { GridGeometry } from './useGridGeometry'
 import type { createClipRenderer } from './clipRenderer'
 import { horizontalOverscanPx } from './timelineWindow'
@@ -138,11 +141,12 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
     const overscan = horizontalOverscanPx(viewWidth)
     const worldLeft = Math.max(0, scrollX.value + headerWidth() - overscan)
     const worldRight = scrollX.value + rightEdge + overscan
-    const rowLayout = buildTrackRowLayout(tracks)
+    const rowLayout = buildTrackRowLayout(tracks, makeLaneHeightOf())
     const visibleRows: {
       track: (typeof tracks)[number]
       worldY: number
       rowHeight: number
+      clipHeight: number
     }[] = []
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i]
@@ -180,13 +184,16 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
         .stroke({ color: RULER_TICK, width: 1, alpha: 0.6 })
       headers.addChild(header)
 
-      visibleRows.push({ track, worldY, rowHeight })
+      visibleRows.push({ track, worldY, rowHeight, clipHeight: slot.clipHeight })
     }
 
     drawGrid(width)
 
     let visibleClipCount = 0
-    for (const { track, worldY, rowHeight } of visibleRows) {
+    const ui = useUiStore()
+    const headerW = headerWidth()
+    for (const { track, worldY, rowHeight, clipHeight } of visibleRows) {
+      const laneParam = ui.automationLanes[track.id]
       const trackPalette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
       for (const clipId of track.clipIds) {
         const clip = project.clips[clipId]
@@ -195,13 +202,22 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
           typeof clip.colorIndex === 'number'
             ? TRACK_PALETTE[clip.colorIndex % TRACK_PALETTE.length]!
             : trackPalette
-        clipRenderer.drawClip(clip, worldY, rowHeight, palette, worldLeft, worldRight, track.pan ?? 0)
+        clipRenderer.drawClip(clip, worldY, clipHeight, palette, worldLeft, worldRight, track.pan ?? 0)
         ++visibleClipCount
       }
       // Overlap hatch sits above the clip blocks; crossfade curves above that.
-      clipRenderer.drawClipOverlaps(track, worldY, rowHeight, worldLeft, worldRight)
+      clipRenderer.drawClipOverlaps(track, worldY, clipHeight, worldLeft, worldRight)
       // Crossfade overlays sit above both partner clips.
-      clipRenderer.drawTrackTransitions(track, worldY, rowHeight, worldLeft, worldRight)
+      clipRenderer.drawTrackTransitions(track, worldY, clipHeight, worldLeft, worldRight)
+      // Automation lane occupies the reserved strip below the clips when shown.
+      if (laneParam && rowHeight > clipHeight) {
+        const tracks = tracksLayer.value
+        const G = GraphicsCtor.value
+        if (tracks && G) {
+          drawAutomationLane(tracks, G, laneParam, track.automation?.[laneParam], worldY, clipHeight,
+                             headerW, pxPerSecond.value, worldRowRight)
+        }
+      }
     }
     return { rows: visibleRows.length, clips: visibleClipCount }
   }

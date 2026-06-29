@@ -5,6 +5,8 @@
 
 import { send as sendBridge } from '@/lib/bridgeService'
 import { sanitizeEnvelopePoints } from '@/lib/envelope'
+import { sanitizeBreakpoints } from '@/lib/automation/breakpoints'
+import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
@@ -13,9 +15,25 @@ import {
   MAX_TRACK_VOLUME,
   TRACK_PALETTE
 } from './projectTypes'
-import type { Clip } from './projectTypes'
+import type { AutomationParamId, AutomationPoint, Clip } from './projectTypes'
 import { filePathToDisplayName, hydrateTransitions } from './projectHelpers'
 import type { SnapshotTarget } from './projectSnapshotTypes'
+
+/** Rebuild a track's automation map from the snapshot lanes (sanitised, lanes with
+ *  fewer than two points dropped). Returns undefined when the track has no curves. */
+function hydrateAutomation(
+  lanes: ReadonlyArray<{ paramId: string; points: ReadonlyArray<{ timeMs: number; value: number }> }> | undefined
+): Partial<Record<AutomationParamId, AutomationPoint[]>> | undefined {
+  if (!lanes || lanes.length === 0) return undefined
+  const out: Partial<Record<AutomationParamId, AutomationPoint[]>> = {}
+  for (const lane of lanes) {
+    const descriptor = AUTOMATION_PARAMS[lane.paramId as AutomationParamId]
+    if (!descriptor) continue
+    const pts = sanitizeBreakpoints(lane.points, { min: descriptor.min, max: descriptor.max })
+    if (pts.length >= 2) out[lane.paramId as AutomationParamId] = pts
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
 
 /**
  * Rebuild renderer tracks and clips from the backend snapshot, keeping optimistic
@@ -95,6 +113,8 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
     }
     // Transitions are backend-authoritative and cleared by absent snapshot data.
     track.transitions = hydrateTransitions(t.transitions)
+    // Automation lanes are backend-authoritative too.
+    track.automation = hydrateAutomation(t.automation)
     for (const c of t.clips) {
       const offset = Math.max(0, c.offsetMs)
       // Library item id is the clip source of truth; skip unknown ids.

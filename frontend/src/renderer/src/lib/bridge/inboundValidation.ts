@@ -51,6 +51,7 @@ import {
   isTrackToneAppliedPayload,
   isTrackLevelerAppliedPayload,
   isTrackPanAppliedPayload,
+  isTrackAutomationAppliedPayload,
   isClipEnvelopeAppliedPayload,
   isProjectReverbAppliedPayload,
   isProjectDelayAppliedPayload,
@@ -175,6 +176,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isTrackLevelerAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_PAN_APPLIED':
       return isTrackPanAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_AUTOMATION_APPLIED':
+      return isTrackAutomationAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'CLIP_ENVELOPE_APPLIED':
       return isClipEnvelopeAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_REVERB_APPLIED':

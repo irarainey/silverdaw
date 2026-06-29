@@ -120,6 +120,12 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
     () => redraw()
   )
 
+  // Automation lane expand/collapse + param switch.
+  watch(
+    () => Object.entries(ui.automationLanes).map(([k, v]) => `${k}:${v}`).join('|'),
+    () => redraw()
+  )
+
   // Transition overlays can change without clip movement.
   watch(
     () =>

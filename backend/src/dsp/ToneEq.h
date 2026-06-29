@@ -51,6 +51,25 @@ public:
         if (snap) snapRequested.store(true, std::memory_order_release);
     }
 
+    /** Audio-thread-safe filter-only target update for per-track automation. Touches only the
+     *  filter corners (not bass/mid/treble), so a curve can sweep the Filter while the manual
+     *  EQ stays put. `snap` is set on a transport discontinuity (seek/loop) so the sweep jumps
+     *  to the curve value instead of gliding the 20 ms smoother across the jump. */
+    void setFilterTarget(float filter, bool snap) noexcept
+    {
+        float lowCutHz = kLowCutOffHz;
+        float highCutHz = kHighCutOffHz;
+        filterToCorners(filter, lowCutHz, highCutHz);
+        targetLowCutHz.store(lowCutHz, std::memory_order_relaxed);
+        targetHighCutHz.store(highCutHz, std::memory_order_relaxed);
+        if (snap) snapRequested.store(true, std::memory_order_release);
+    }
+
+    /** Audio-thread per-band dB automation (touches one shelf/peak target only). */
+    void setBassTarget(float db, bool snap) noexcept { targetBassDb.store(sanitizeDb(db), std::memory_order_relaxed); if (snap) snapRequested.store(true, std::memory_order_release); }
+    void setMidTarget(float db, bool snap) noexcept { targetMidDb.store(sanitizeDb(db), std::memory_order_relaxed); if (snap) snapRequested.store(true, std::memory_order_release); }
+    void setTrebleTarget(float db, bool snap) noexcept { targetTrebleDb.store(sanitizeDb(db), std::memory_order_relaxed); if (snap) snapRequested.store(true, std::memory_order_release); }
+
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
         if (! prepared || numSamples <= 0) return;

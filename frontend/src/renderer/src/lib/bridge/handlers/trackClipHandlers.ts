@@ -4,6 +4,7 @@
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { log } from '@/lib/log'
+import type { AutomationParamId } from '@shared/bridge-protocol'
 import type { BridgeInboundHandler, BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
 
 // CLIP_ADDED and CLIP_ADD_FAILED share one reconciliation path; failures remove and toast.
@@ -25,6 +26,7 @@ export const trackClipBridgeHandlers: BridgeInboundHandlers<
   | 'TRACK_SENDS_APPLIED'
   | 'TRACK_PAN_APPLIED'
   | 'TRACK_LEVELER_APPLIED'
+  | 'TRACK_AUTOMATION_APPLIED'
   | 'CLIP_ENVELOPE_APPLIED'
 > = {
   CLIP_ADDED: handleClipAddResult,
@@ -145,6 +147,22 @@ export const trackClipBridgeHandlers: BridgeInboundHandlers<
     log.info(
       'bridge',
       `CLIP_ENVELOPE_APPLIED clipId=${payload.clipId} points=${payload.points?.length ?? 0}`
+    )
+  },
+
+  TRACK_AUTOMATION_APPLIED: (payload) => {
+    // Mirror backend-normalised automation points without waiting for PROJECT_STATE.
+    useProjectStore().setTrackAutomation(
+      payload.trackId,
+      payload.paramId as AutomationParamId,
+      payload.points ?? [],
+      { localOnly: true }
+    )
+    log.info(
+      'bridge',
+      `TRACK_AUTOMATION_APPLIED trackId=${payload.trackId} paramId=${payload.paramId} points=${
+        payload.points?.length ?? 0
+      }`
     )
   }
 }

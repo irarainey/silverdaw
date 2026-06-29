@@ -16,6 +16,8 @@
 #include "ProjectState.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
+#include "TrackAutomationSnapshot.h"
+#include "BreakpointCurve.h"
 #include "ValueTreeJson.h"
 #include "WarpProcessor.h"
 
@@ -479,6 +481,122 @@ void testBusGraphConcurrentParamUpdatesAreSafe()
     bg.releaseResources();
 }
 
+// M-auto: a track's filter automation that sweeps to a hard low-pass and back to
+// neutral must reopen the high end; the level lane returning to 0 dB must restore
+// full gain. Verifies the curve-clamp + ToneEq glide actually settle to identity.
+void testBusGraphFilterAndLevelAutomationResetToNeutral()
+{
+    constexpr int kBlock = 256;
+    constexpr double kRate = 44100.0;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, kRate);
+
+    std::atomic<juce::int64> pos{0};
+    bg.setTimelineSamplesSource(&pos);
+
+    ConstantSource src(0.5F);
+    bg.attachClip("t1", "c1", &src);
+
+    auto snap = std::make_unique<silverdaw::TrackAutomationSnapshot>();
+    {
+        silverdaw::BreakpointCurve f(silverdaw::InterpDomain::linear);
+        f.addPoint(0.0, 0.0F);
+        f.addPoint(7000.0, -1.0F);  // hard low-pass
+        f.addPoint(8000.0, 0.0F);   // back to neutral
+        f.addPoint(20000.0, 0.0F);
+        f.finalise();
+        const int fi = static_cast<int>(silverdaw::AutomationParam::filter);
+        snap->has[fi] = true;
+        snap->curves[fi] = std::move(f);
+
+        silverdaw::BreakpointCurve lv(silverdaw::InterpDomain::linear);
+        lv.addPoint(0.0, 0.0F);
+        lv.addPoint(7000.0, -60.0F); // silent
+        lv.addPoint(8000.0, 0.0F);   // unity again
+        lv.addPoint(20000.0, 0.0F);
+        lv.finalise();
+        const int li = static_cast<int>(silverdaw::AutomationParam::level);
+        snap->has[li] = true;
+        snap->curves[li] = std::move(lv);
+    }
+    bg.setTrackAutomationPtr("t1", snap.get());
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+
+    const auto runTo = [&](double ms) -> double {
+        pos.store(static_cast<juce::int64>(ms / 1000.0 * kRate));
+        double mag = 0.0;
+        for (int b = 0; b < 8; ++b) { out.clear(); bg.getNextAudioBlock(info); mag = out.getMagnitude(0, 0, kBlock); }
+        return mag;
+    };
+
+    const double dip = runTo(7000.0);
+    const double after = runTo(12000.0);
+    require(dip < 0.05, "filter+level dip should be near-silent (LPF closed, level -60dB)");
+    requireNear(after, 0.5, 0.05, "after the sweep returns to neutral, full DC level is restored");
+
+    // Clearing the lane mid-dip must restore neutral, not freeze the last value.
+    runTo(7000.0);
+    bg.setTrackAutomationPtr("t1", nullptr);
+    bg.snapParamToDefault("t1", silverdaw::AutomationParam::filter);
+    bg.snapParamToDefault("t1", silverdaw::AutomationParam::level);
+    double cleared = 0.0;
+    for (int b = 0; b < 8; ++b) { out.clear(); bg.getNextAudioBlock(info); cleared = out.getMagnitude(0, 0, kBlock); }
+    requireNear(cleared, 0.5, 0.05, "clearing a lane restores the track to unity, not the last automated value");
+
+    bg.releaseResources();
+}
+
+// M-auto: discontinuity matrix — a level lane must snap (not glide) when the
+// transport seeks backwards, when cursors are force-snapped on play, and when the
+// snapshot pointer swaps mid-stream. Each jump must land on the curve value in one
+// block; a stuck/gliding value would fail the immediate-magnitude checks.
+void testBusGraphAutomationSnapsAcrossDiscontinuities()
+{
+    constexpr int kBlock = 256;
+    constexpr double kRate = 44100.0;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, kRate);
+
+    std::atomic<juce::int64> pos{0};
+    bg.setTimelineSamplesSource(&pos);
+    ConstantSource src(1.0F);
+    bg.attachClip("t1", "c1", &src);
+
+    auto mk = [](float v0, float v1) {
+        auto s = std::make_unique<silverdaw::TrackAutomationSnapshot>();
+        silverdaw::BreakpointCurve lv(silverdaw::InterpDomain::linear);
+        lv.addPoint(0.0, v0);          // 0 dB unity
+        lv.addPoint(10000.0, v1);      // ramp to v1 dB
+        lv.finalise();
+        const int li = static_cast<int>(silverdaw::AutomationParam::level);
+        s->has[li] = true; s->curves[li] = std::move(lv);
+        return s;
+    };
+    auto snap = mk(0.0F, -60.0F);
+    bg.setTrackAutomationPtr("t1", snap.get());
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    const auto block = [&](double ms) -> double {
+        pos.store(static_cast<juce::int64>(ms / 1000.0 * kRate));
+        out.clear(); bg.getNextAudioBlock(info); return out.getMagnitude(0, 0, kBlock);
+    };
+
+    block(10000.0);                    // near silent at the end of the ramp
+    bg.snapAutomationCursors();        // play-start snap
+    require(block(0.0) > 0.9, "seek-to-start snaps level to unity in one block, no glide");
+    require(block(10000.0) < 0.1, "seek to ramp end snaps to -60 dB in one block");
+
+    auto snap2 = mk(0.0F, 0.0F);       // flat unity
+    bg.setTrackAutomationPtr("t1", snap2.get());
+    require(block(10000.0) > 0.9, "snapshot swap re-cursors and applies the new curve immediately");
+
+    bg.setTrackAutomationPtr("t1", nullptr);
+    bg.releaseResources();
+}
+
 // M3: the project-FX setters and resetSharedFx are now lock-free. Hammer them
 // (plus the unlocked tone/leveler setters) from a writer thread while the audio
 // callback pumps the shared FX: output must stay finite with no crash or deadlock.
@@ -638,6 +756,8 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"SharedFx Echo reproduces a delayed copy and terminates", testSharedFxEchoRepeatsAndTerminates});
     tests.push_back({"BusGraph equal-power pan gains (unity centre, constant power)", testEqualPowerPanGains});
     tests.push_back({"BusGraph lock-free pan publishes equal-power gains through the mix", testBusGraphPanAppliedThroughMix});
+    tests.push_back({"BusGraph filter+level automation resets to neutral after a sweep", testBusGraphFilterAndLevelAutomationResetToNeutral});
+    tests.push_back({"BusGraph automation snaps across seek/snapshot discontinuities", testBusGraphAutomationSnapsAcrossDiscontinuities});
     tests.push_back({"BusGraph stays safe under concurrent lock-free param updates", testBusGraphConcurrentParamUpdatesAreSafe});
     tests.push_back({"BusGraph stays safe under concurrent lock-free project-FX updates", testBusGraphLockFreeProjectFxUpdatesAreSafe});
     tests.push_back({"SharedFx requestReset cuts the tail on the next audio block", testSharedFxRequestResetCutsTailNextBlock});

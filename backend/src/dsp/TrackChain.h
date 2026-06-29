@@ -22,6 +22,8 @@ public:
         juce::ignoreUnused(maxBlockSize);
         tone.prepare(sampleRate, numChannels);
         leveler.prepare(sampleRate, numChannels);
+        levelGain = 1.0F;
+        targetLevelGain = 1.0F;
     }
 
     /** Clears DSP state on stop/seek; pause deliberately does not reset. */
@@ -29,6 +31,7 @@ public:
     {
         tone.reset();
         leveler.reset();
+        levelGain = targetLevelGain;
     }
 
     /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity.
@@ -41,11 +44,34 @@ public:
     /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity. */
     void setLeveler(float amount, bool snap) noexcept { leveler.setParams(amount, snap); }
 
+    /** Audio-thread filter-only automation update (see `ToneEq::setFilterTarget`). */
+    void setFilterTarget(float filter, bool snap) noexcept { tone.setFilterTarget(filter, snap); }
+    void setBassTarget(float db, bool snap) noexcept { tone.setBassTarget(db, snap); }
+    void setMidTarget(float db, bool snap) noexcept { tone.setMidTarget(db, snap); }
+    void setTrebleTarget(float db, bool snap) noexcept { tone.setTrebleTarget(db, snap); }
+
+    /** Automatable post-chain track level in dB. Ramped per block to avoid clicks;
+     *  `snap` lands immediately on seek/loop. 0 dB is unity. */
+    void setLevelTarget(float db, bool snap) noexcept
+    {
+        targetLevelGain = juce::Decibels::decibelsToGain(db, -120.0F);
+        if (snap) levelGain = targetLevelGain;
+    }
+
     /** Processes only the active buffer region; identity params remain sample-transparent. */
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
         tone.process(buffer, startSample, numSamples);
         leveler.process(buffer, startSample, numSamples);
+        if (levelGain != targetLevelGain)
+        {
+            buffer.applyGainRamp(startSample, numSamples, levelGain, targetLevelGain);
+            levelGain = targetLevelGain;
+        }
+        else if (levelGain != 1.0F)
+        {
+            buffer.applyGain(startSample, numSamples, levelGain);
+        }
     }
 
     TrackChain(const TrackChain&) = delete;
@@ -57,6 +83,8 @@ public:
 private:
     ToneEq tone;
     Leveler leveler;
+    float levelGain = 1.0F;
+    float targetLevelGain = 1.0F;
 };
 
 } // namespace silverdaw

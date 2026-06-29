@@ -22,6 +22,7 @@ import {
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { trackIndexAtWorldY } from '@/lib/timeline/trackLayout'
+import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
@@ -47,6 +48,9 @@ export interface UseTimelineContextMenuInputs {
   /** Width of the pinned track-header column, used to tell a right-click on the
    *  clip lane apart from one on the header controls. */
   headerWidth: () => number
+  /** Right-click delete of an automation breakpoint; returns true if one was
+   *  removed (so the context menu suppresses itself). */
+  removeAutomationPointAt?: (clientX: number, clientY: number) => boolean
   /** Dialog open actions; injected so the menu doesn't depend on the
    *  full `useClipDialogs` return type. */
   dialogs: ClipDialogActions
@@ -264,6 +268,11 @@ export function useTimelineContextMenu(
   function onContextMenu(e: MouseEvent): void {
     const host = inputs.host.value
     if (!host) return
+    // Right-click on an automation breakpoint deletes it (no menu).
+    if (inputs.removeAutomationPointAt?.(e.clientX, e.clientY)) {
+      e.preventDefault()
+      return
+    }
     const rect = host.getBoundingClientRect()
     const worldX = e.clientX - rect.left + inputs.scrollX.value
     const worldY = e.clientY - rect.top + inputs.scrollY.value
@@ -287,7 +296,7 @@ export function useTimelineContextMenu(
     // header column hosts its own controls, so anything left of it is ignored.
     const localX = e.clientX - rect.left
     if (localX >= inputs.headerWidth()) {
-      const hit = trackIndexAtWorldY(project.tracks, worldY)
+      const hit = trackIndexAtWorldY(project.tracks, worldY, makeLaneHeightOf())
       const trackId = hit ? (project.tracks[hit.index]?.id ?? null) : null
       if (trackId) {
         e.preventDefault()

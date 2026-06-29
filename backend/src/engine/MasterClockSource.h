@@ -125,6 +125,11 @@ class MasterClockSource : public juce::AudioSource
         return positionSamples.load(std::memory_order_relaxed);
     }
 
+    /** The block-start transport counter, for the audio thread to read directly
+     *  (e.g. per-track automation sampling in BusGraph). Increments after the
+     *  child renders, so the child sees the block-start position. */
+    const std::atomic<juce::int64>& positionAtomicRef() const noexcept { return positionSamples; }
+
     double getSampleRate() const noexcept
     {
         return sampleRate.load(std::memory_order_acquire);

@@ -1,9 +1,11 @@
 #pragma once
 
 #include "SharedFx.h"
+#include "TrackAutomationSnapshot.h"
 #include "TrackChain.h"
 
 #include <atomic>
+#include <cmath>
 #include <memory>
 #include <unordered_map>
 
@@ -139,11 +141,26 @@ public:
 
         const int sendChannels = juce::jmin(2, outChannels);
 
+        // Block-start transport position for automation sampling (the master clock
+        // increments after the child renders, so this is the block's first sample).
+        const juce::int64 blockStartSamples =
+            timelineSamplesPtr != nullptr ? timelineSamplesPtr->load(std::memory_order_relaxed) : 0;
+        const double rate = preparedRate > 0.0 ? preparedRate : 44100.0;
+
+        // When any track is automated, cap the sub-block to a fixed control quantum
+        // so the curve is sampled at the same granularity live (small device blocks)
+        // and offline (large mixdown blocks) — keeping the two paths in parity. With
+        // no automation the chunk stays the full prepared block (zero overhead).
+        const int chunk = trackAutomation.empty()
+                              ? preparedMax
+                              : juce::jmin(preparedMax, kAutomationControlQuantum);
+
         int remaining = info.numSamples;
         int dst = info.startSample;
         while (remaining > 0)
         {
-            const int n = juce::jmin(remaining, preparedMax);
+            const int n = juce::jmin(remaining, chunk);
+            const juce::int64 subStartSamples = blockStartSamples + (dst - info.startSample);
 
             for (int ch = 0; ch < 2; ++ch)
             {
@@ -153,6 +170,8 @@ public:
 
             for (auto& kv : runtimes)
             {
+                applyTrackAutomation(kv.first, *kv.second, subStartSamples, n, rate);
+
                 scratch.clear(0, n);
                 juce::AudioSourceChannelInfo sub(&scratch, 0, n);
                 kv.second->getNextAudioBlock(sub);
@@ -366,6 +385,68 @@ public:
         sharedFx.requestReset();
     }
 
+    /** Wire the block-start transport counter for automation sampling (once, at setup). */
+    void setTimelineSamplesSource(const std::atomic<juce::int64>* p) noexcept
+    {
+        timelineSamplesPtr = p;
+    }
+
+    /** Force the next automated block to snap (no glide) — call on transport start
+     *  so playback lands exactly on the curve value at the playhead. */
+    void snapAutomationCursors() noexcept
+    {
+        const juce::ScopedLock sl(lock);
+        for (auto& kv : trackAutomation) kv.second.lastEndSamples = -1;
+    }
+
+    /** Snap one param's DSP target back to its neutral default — used when a lane is
+     *  cleared so the chain stops holding the last automated value. */
+    void snapParamToDefault(const juce::String& trackId, AutomationParam p) noexcept
+    {
+        const juce::ScopedLock sl(lock);
+        auto it = runtimes.find(trackId);
+        if (it == runtimes.end()) return;
+        auto& rt = *it->second;
+        switch (p)
+        {
+            case AutomationParam::filter: rt.chain.setFilterTarget(0.0F, true); break;
+            case AutomationParam::toneBass: rt.chain.setBassTarget(0.0F, true); break;
+            case AutomationParam::toneMid: rt.chain.setMidTarget(0.0F, true); break;
+            case AutomationParam::toneTreble: rt.chain.setTrebleTarget(0.0F, true); break;
+            case AutomationParam::leveler: rt.chain.setLeveler(0.0F, true); break;
+            case AutomationParam::level: rt.chain.setLevelTarget(0.0F, true); break;
+            case AutomationParam::reverbSend: rt.reverbSend.store(0.0F, std::memory_order_relaxed); break;
+            case AutomationParam::delaySend: rt.delaySend.store(0.0F, std::memory_order_relaxed); break;
+            case AutomationParam::pan:
+                rt.pan.store(0.0F, std::memory_order_relaxed);
+                rt.panGainL.store(1.0F, std::memory_order_relaxed);
+                rt.panGainR.store(1.0F, std::memory_order_relaxed);
+                break;
+            case AutomationParam::count_: break;
+        }
+    }
+
+    /** Publish a track's automation snapshot (or nullptr to clear). The snapshot
+     *  memory is owned + retired by the caller (AudioEngine). Resets the sampling
+     *  cursor when the pointer changes so the next block re-seeks cleanly. */
+    void setTrackAutomationPtr(const juce::String& trackId, const TrackAutomationSnapshot* snap)
+    {
+        if (trackId.isEmpty()) return;
+        const juce::ScopedLock sl(lock);
+        if (snap == nullptr)
+        {
+            trackAutomation.erase(trackId);
+            return;
+        }
+        auto& st = trackAutomation[trackId];
+        if (st.snapshot != snap)
+        {
+            st.snapshot = snap;
+            for (auto& s : st.seg) s = 0;
+            st.lastEndSamples = -1;
+        }
+    }
+
     bool sharedFxTerminated()
     {
         // Lock-free: reads atomic done flags written by the audio-thread tail detectors.
@@ -411,11 +492,53 @@ public:
         pendingLeveler.clear();
         pendingSends.clear();
         pendingPans.clear();
+        trackAutomation.clear();
         sharedFx.reset();
     }
 
 private:
     juce::CriticalSection lock;
+
+    // Samples this track's automation curves at `subStartSamples` and writes the
+    // results into the live DSP targets, snapping the smoother on a transport
+    // discontinuity (seek/loop). Audio thread, under `lock`; allocation-free.
+    void applyTrackAutomation(const juce::String& trackId, TrackRuntime& rt,
+                              juce::int64 subStartSamples, int numSamples, double rate) noexcept
+    {
+        auto it = trackAutomation.find(trackId);
+        if (it == trackAutomation.end()) return;
+        auto& st = it->second;
+        const TrackAutomationSnapshot* snap = st.snapshot;
+        if (snap == nullptr) return;
+
+        const bool discontinuity = (subStartSamples != st.lastEndSamples);
+        const double ms = static_cast<double>(subStartSamples) / rate * 1000.0;
+
+        const auto sample = [&](AutomationParam p) {
+            const int pi = static_cast<int>(p);
+            return snap->curve(p).valueAtMs(ms, st.seg[pi]);
+        };
+        if (snap->hasParam(AutomationParam::filter)) rt.chain.setFilterTarget(sample(AutomationParam::filter), discontinuity);
+        if (snap->hasParam(AutomationParam::toneBass)) rt.chain.setBassTarget(sample(AutomationParam::toneBass), discontinuity);
+        if (snap->hasParam(AutomationParam::toneMid)) rt.chain.setMidTarget(sample(AutomationParam::toneMid), discontinuity);
+        if (snap->hasParam(AutomationParam::toneTreble)) rt.chain.setTrebleTarget(sample(AutomationParam::toneTreble), discontinuity);
+        if (snap->hasParam(AutomationParam::leveler)) rt.chain.setLeveler(sample(AutomationParam::leveler), discontinuity);
+        if (snap->hasParam(AutomationParam::level)) rt.chain.setLevelTarget(sample(AutomationParam::level), discontinuity);
+        if (snap->hasParam(AutomationParam::reverbSend)) rt.reverbSend.store(sample(AutomationParam::reverbSend), std::memory_order_relaxed);
+        if (snap->hasParam(AutomationParam::delaySend)) rt.delaySend.store(sample(AutomationParam::delaySend), std::memory_order_relaxed);
+        if (snap->hasParam(AutomationParam::pan))
+        {
+            const float p = sample(AutomationParam::pan);
+            float gL = 1.0F, gR = 1.0F;
+            equalPowerPanGains(p, gL, gR);
+            rt.pan.store(p, std::memory_order_relaxed);
+            rt.panGainL.store(gL, std::memory_order_relaxed);
+            rt.panGainR.store(gR, std::memory_order_relaxed);
+        }
+
+        st.lastEndSamples = subStartSamples + numSamples;
+    }
+
     std::atomic<juce::uint64> skippedBlocks{0};
     std::unordered_map<juce::String, std::unique_ptr<TrackRuntime>> runtimes;
     std::unordered_map<juce::String, TrackRuntime*> clipToTrack;
@@ -447,6 +570,24 @@ private:
     juce::AudioBuffer<float> scratch;
     int preparedMax = 0;
     double preparedRate = 0.0;
+
+    // Fixed automation sampling granularity (frames). Keeps live and offline render
+    // sampling the curves identically regardless of their differing block sizes.
+    static constexpr int kAutomationControlQuantum = 256;
+
+    // Per-track effect automation. The snapshot pointer is owned by AudioEngine
+    // (retire queue); BusGraph holds it plus the audio-thread sampling cursors.
+    // The whole map is read/written only under `lock`, so the message thread's
+    // pointer swap and the audio thread's cursor walk never race.
+    struct AutomationState
+    {
+        const TrackAutomationSnapshot* snapshot = nullptr;
+        std::size_t seg[TrackAutomationSnapshot::kNumParams] = {};
+        juce::int64 lastEndSamples = -1; // for seek/loop discontinuity detection
+    };
+    std::unordered_map<juce::String, AutomationState> trackAutomation;
+    // Block-start transport counter, read live on the audio thread (MasterClock).
+    const std::atomic<juce::int64>* timelineSamplesPtr = nullptr;
 };
 
 } // namespace silverdaw

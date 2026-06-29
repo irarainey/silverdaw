@@ -155,9 +155,9 @@ Silverdaw currently supports the core arrangement workflow:
   the surface never feels broken. **Track FX** edits the selected track and hosts
   a **Tone** rack — a 3-band EQ (**Bass / Mid / Treble**) — a **Filter** rack
   (a single bipolar DJ-style sweep, low-pass at the left through off at centre
-  to high-pass at the right), a **Leveler** (a single **Amount** knob `0..1`
+  to high-pass at the right), a **Compressor** (a single **Amount** knob `0..1`
   driving a hand-rolled stereo-linked soft-knee compressor; Amount 0 is a
-  bit-exact passthrough), and a **Reverb & Delay** rack setting how much the
+  bit-exact passthrough; internal class `Leveler`), and a **Reverb & Delay** rack setting how much the
   track feeds the project-wide Reverb and Delay buses. **Project FX** hosts the
   shared, song-wide returns those amounts route into: a **Reverb** and a
   **Delay** (tempo-locked). All are edited live (slider drags coalesce into one undo
@@ -320,8 +320,8 @@ The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
 wider mixer / effects / automation work (a deeper per-clip processor chain —
 saturation — applied both live and in mixdown, beyond the per-track Tone EQ +
-Filter, the per-track Leveler, the project-wide Reverb and Delay sends,
-and the per-clip Volume Shape that already ship), loop slicing, and a CI matrix that
+Filter, the per-track Compressor, the project-wide Reverb and Delay sends,
+the track effect automation lanes, and the per-clip Volume Shape that already ship), loop slicing, and a CI matrix that
 enforces a coverage floor over the existing backend and frontend test suites.
 
 ## Bridge protocol
@@ -1725,6 +1725,28 @@ paste onto a track. Keyboard `Ctrl+V` pastes onto the **selected** track; the cl
 track-lane right-click menus paste onto the **right-clicked** track (selecting it first). The
 new clip always lands at the playhead. Overlap rules are evaluated only on that destination;
 the source-track's clips don't constrain placement.
+
+### Track effect automation
+
+Each track header has an **A** toggle that opens an automation lane (a strip reserved at the
+bottom of the track row; clips compress above it, so a collapsed lane leaves the timeline
+layout untouched). A parameter picker chooses what the lane edits — **Filter**, **Pan**, the
+3-band **Tone**, **Reverb/Delay sends**, **Compressor**, or **Gain** (a post-FX track level in
+dB, distinct from the header fader and clip Volume Shape). Click to add a breakpoint, drag to
+move, right-click or Alt-click to remove; a selected point fine-nudges with arrow keys; a drag
+stream coalesces into one undo step. Lane-header controls raise/lower the whole curve, set the
+value at the playhead, copy/paste a curve between tracks, and reset to default. The picker marks
+already-automated params with a ● dot, and the value editor shows the sign convention (Filter:
+negative = LPF, positive = HPF). Curves are stored on
+each `TRACK` as one `automation` array-of-lanes property (`{ paramId, points: [{ timeMs,
+value }] }`), round-tripped through `PROJECT_STATE` and `.silverdaw`. The backend publishes an
+immutable `TrackAutomationSnapshot` per track (lock-free + retire queue) and samples it on a
+fixed 256-frame control quantum at the block-start transport position, driving the existing
+smoothed targets and snapping on seek/loop/play discontinuities, restoring neutral when a lane
+clears; mixdown samples the same curves so
+exports match playback. Authoring helpers (`setAutomationRamp`, `copyAutomationToTrack`,
+`createFilterCrossfade`) build curves directly — e.g. an opposing filter sweep across two
+tracks. Values are stored in native units; only the lane renderer normalises to pixels.
 
 ## Rendering performance
 

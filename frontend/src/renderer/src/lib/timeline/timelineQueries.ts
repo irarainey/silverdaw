@@ -6,6 +6,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { RULER_HEIGHT, SCROLLBAR_WIDTH } from './constants'
 import { trackIndexAtWorldY } from './trackLayout'
+import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import type { GridGeometry } from './useGridGeometry'
 import type { ClipHitRegion } from './useDragHandlers'
 
@@ -231,7 +232,7 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     const y = clientY - rect.top
     if (y < RULER_HEIGHT) return null
     const worldY = y + scrollY.value
-    const hit = trackIndexAtWorldY(project.tracks, worldY)
+    const hit = trackIndexAtWorldY(project.tracks, worldY, makeLaneHeightOf())
     if (!hit) return null
     return project.tracks[hit.index]?.id ?? null
   }

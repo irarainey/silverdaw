@@ -11,8 +11,13 @@
 import { MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, RULER_HEIGHT, TRACK_GAP, TRACK_HEIGHT } from './constants'
 
 interface TrackLike {
+  id?: string
   heightPx?: number
 }
+
+/** Extra rows of automation-lane height a track adds when its lane is expanded.
+ *  Provided by the caller (UI store) so this module stays store-agnostic. */
+export type LaneHeightOf = (track: TrackLike) => number
 
 /** Effective vertical height of a single track row in CSS pixels. A stored
  *  override is clamped to [MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT] so legacy or
@@ -27,11 +32,15 @@ export function trackHeightOf(track: TrackLike | undefined | null): number {
 /** World-space (i.e. unscrolled) top y of track at `index`, including
  *  the ruler offset and inter-row gaps. Returns `RULER_HEIGHT` for
  *  index 0 or an empty array. */
-export function trackTopWorldYAt(tracks: readonly TrackLike[], index: number): number {
+export function trackTopWorldYAt(
+  tracks: readonly TrackLike[],
+  index: number,
+  laneHeightOf?: LaneHeightOf
+): number {
   let y = RULER_HEIGHT
   const upTo = Math.min(index, tracks.length)
   for (let i = 0; i < upTo; i++) {
-    y += trackHeightOf(tracks[i]) + TRACK_GAP
+    y += trackHeightOf(tracks[i]) + (laneHeightOf?.(tracks[i]!) ?? 0) + TRACK_GAP
   }
   return y
 }
@@ -39,40 +48,45 @@ export function trackTopWorldYAt(tracks: readonly TrackLike[], index: number): n
 /** Total content height for the whole stack of tracks: sum of heights
  *  plus inter-row gaps (no gap after the last row). Returns 0 for an
  *  empty array. */
-export function tracksContentHeight(tracks: readonly TrackLike[]): number {
+export function tracksContentHeight(
+  tracks: readonly TrackLike[],
+  laneHeightOf?: LaneHeightOf
+): number {
   if (tracks.length === 0) return 0
   let total = 0
-  for (const t of tracks) total += trackHeightOf(t)
+  for (const t of tracks) total += trackHeightOf(t) + (laneHeightOf?.(t) ?? 0)
   total += TRACK_GAP * (tracks.length - 1)
   return total
 }
 
-/** Pre-computed `{ top, height }` for every row in world space. Cheaper
- *  than calling `trackTopWorldYAt` N times in a drawing pass. */
+/** Pre-computed `{ top, height, clipHeight }` for every row in world space.
+ *  `height` is the full row (clips + expanded automation lane); `clipHeight`
+ *  is the clip area only (lane occupies the bottom strip). */
 export function buildTrackRowLayout(
-  tracks: readonly TrackLike[]
-): { readonly top: number; readonly height: number }[] {
-  const rows: { top: number; height: number }[] = []
+  tracks: readonly TrackLike[],
+  laneHeightOf?: LaneHeightOf
+): { readonly top: number; readonly height: number; readonly clipHeight: number }[] {
+  const rows: { top: number; height: number; clipHeight: number }[] = []
   let y = RULER_HEIGHT
   for (const t of tracks) {
-    const h = trackHeightOf(t)
-    rows.push({ top: y, height: h })
+    const clipHeight = trackHeightOf(t)
+    const h = clipHeight + (laneHeightOf?.(t) ?? 0)
+    rows.push({ top: y, height: h, clipHeight })
     y += h + TRACK_GAP
   }
   return rows
 }
 
-/** Find the track row containing the world-space y coordinate `worldY`.
- *  Returns the index, top, and height of that row, or `null` if `worldY`
- *  is in the ruler, in an inter-row gap, or below the last row. */
+/** Find the track row containing the world-space y coordinate `worldY`. */
 export function trackIndexAtWorldY(
   tracks: readonly TrackLike[],
-  worldY: number
+  worldY: number,
+  laneHeightOf?: LaneHeightOf
 ): { index: number; rowTop: number; rowHeight: number } | null {
   if (worldY < RULER_HEIGHT) return null
   let y = RULER_HEIGHT
   for (let i = 0; i < tracks.length; i++) {
-    const h = trackHeightOf(tracks[i])
+    const h = trackHeightOf(tracks[i]) + (laneHeightOf?.(tracks[i]!) ?? 0)
     if (worldY >= y && worldY < y + h) {
       return { index: i, rowTop: y, rowHeight: h }
     }

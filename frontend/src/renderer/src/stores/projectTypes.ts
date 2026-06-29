@@ -1,10 +1,14 @@
 import { MAX_TRACK_GAIN_LINEAR } from '@/lib/audio/db'
 import type {
+  AutomationParamId,
+  AutomationPoint,
   ClipEnvelopePoint,
   ClipWarpMode,
   DelayNoteValue,
   TransitionRecipe
 } from '@shared/bridge-protocol'
+
+export type { AutomationParamId, AutomationPoint }
 
 export interface Clip {
   readonly id: string
@@ -102,6 +106,9 @@ export interface Track {
   levelerAmount?: number
   /** Clip-to-clip crossfades on this track (§12.1); hydrated from PROJECT_STATE. */
   transitions?: Transition[]
+  /** Per-track effect automation curves, keyed by parameter id. A lane is present
+   *  only when it has a drawn curve (>= 2 breakpoints). */
+  automation?: Partial<Record<AutomationParamId, AutomationPoint[]>>
 }
 
 /** Project-shared Reverb. Scalars linear [0,1]; `mix` 0 = inaudible. */

@@ -10,6 +10,7 @@ import type { useUiStore } from '@/stores/uiStore'
 import type { useLibraryStore } from '@/stores/libraryStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
+import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { log } from '@/lib/log'
 
 type TransportStore = ReturnType<typeof useTransportStore>
@@ -157,6 +158,24 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
         ui.requestTimelineZoom(zoomAction)
         return
       }
+    }
+
+    // Automation point selected: arrows fine-nudge it. Up/Down = value (5% range,
+    // Shift = 1%); Left/Right = time (5 ms, Alt = 1 ms). Endpoints keep their time.
+    if (ui.selectedAutomationPoint && !e.ctrlKey && !e.metaKey &&
+        (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault()
+      e.stopPropagation()
+      const { trackId, paramId, index } = ui.selectedAutomationPoint
+      const range = AUTOMATION_PARAMS[paramId].max - AUTOMATION_PARAMS[paramId].min
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        const step = range * (e.shiftKey ? 0.01 : 0.05) * (e.key === 'ArrowUp' ? 1 : -1)
+        project.nudgeAutomationPoint(trackId, paramId, index, 0, step)
+      } else {
+        const dt = (e.altKey ? 1 : 5) * (e.key === 'ArrowLeft' ? -1 : 1)
+        project.nudgeAutomationPoint(trackId, paramId, index, dt, 0)
+      }
+      return
     }
 
     if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {

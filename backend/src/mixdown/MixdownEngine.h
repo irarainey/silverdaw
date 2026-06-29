@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <juce_core/juce_core.h>
@@ -59,6 +60,13 @@ struct MixdownSnapshot
         float reverbSend{0.0F};
         float delaySend{0.0F};
         float pan{0.0F};
+        // Per-track effect automation lanes (paramId + breakpoints), for export parity.
+        struct AutomationLane
+        {
+            juce::String paramId;
+            std::vector<std::pair<double, float>> points; // (timeMs, value)
+        };
+        std::vector<AutomationLane> automation;
         std::vector<ClipSnapshot> clips;
     };
 

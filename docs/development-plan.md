@@ -491,17 +491,21 @@ how a beginner actually thinks about the work:
 - **Per clip** — "fix this one bit" → the Volume Shape envelope on the clip
   itself, which also covers fade-in / fade-out (see §7.11).
 - **Per track** — "shape this instrument" → a small set of always-the-same
-  controls (Tone, Leveler, Reverb amount, Delay amount) in the new **Track FX**
-  tab of the bottom panel (see §7.12).
+  controls (Tone, Compressor, Reverb amount, Delay amount) in the **Track FX**
+  tab of the bottom panel (see §7.12). These same parameters — plus a post-FX
+  **Gain** — can also be automated over the timeline (see §7.11.1).
 - **Per project** — "the song's space" → one shared Reverb and one shared
   Delay for the whole project, with character set once.
 
 User-facing language favours familiar, DAW-standard terms — **Reverb**,
-**Delay**, **Pan**, **Bass / Mid / Treble** — so the app reads the way users
-expect across tools, while still avoiding the most technical jargon
+**Delay**, **Pan**, **Bass / Mid / Treble**, **Compressor** — so the app reads
+the way users expect across tools, while still avoiding the most technical jargon
 (no "low shelf / parametric peak / high shelf", and **Volume Shape** rather than
-"automation / envelope"). The implementation names inside the codebase keep the
-matching technical terms (`reverb*`, `delay*`).
+"automation/envelope" for the per-clip volume tailoring). Track effect
+automation lanes (§7.11.1) do use the word **automation**, since they are an
+explicit timeline-absolute draw-a-curve surface. The implementation names inside
+the codebase keep the matching technical terms (`reverb*`, `delay*`, and
+`leveler*` for the Compressor).
 
 #### 7.9.1 Engine architecture (Phase 5 foundation)
 
@@ -781,10 +785,10 @@ DSP class in `code`.
   exponentially to whichever corner is active while the other parks at
   identity. Coefficient updates use smoothed parameter changes on the audio
   thread to avoid zipper noise.
-- **Leveler** — gentle dynamics control with one user-facing **Amount**
+- **Compressor** — gentle dynamics control with one user-facing **Amount**
   knob (0..100 %) that drives a curated path through a hand-rolled
   stereo-linked soft-knee compressor (the engine carries no `juce_dsp`,
-  so the compressor is written by hand) plus
+  so the compressor is written by hand; the internal DSP class is `Leveler`) plus
   a **deterministic static makeup gain map** keyed off Amount only (no
   live loudness analysis, no perceived-loudness promise — the map is
   tuned by ear so the perceived level stays roughly comparable across
@@ -899,8 +903,8 @@ silence.
   **Volume** button (see §7.11). There is no separate fade control, no
   timeline drag handles, and no standalone dialog; on the timeline the
   envelope is reflected in the waveform's height rather than as an overlay.
-- **Per-track Tone / Leveler / Reverb amount / Delay amount** — surfaced
-  in a new **Track FX** tab of the bottom panel (shares its space with
+- **Per-track Tone / Compressor / Reverb amount / Delay amount** — surfaced
+  in a **Track FX** tab of the bottom panel (shares its space with
   the Library; tabbed surface with optional split view — see §7.12).
 - **Project Reverb / Delay** — a small **Project FX** subtab within the
   same bottom panel area, or pinned at the top of the Track FX tab so
@@ -1058,9 +1062,36 @@ min/max scan is scaled in place — so it stays cheap at zoomed-out views
 with many clips. The editable envelope line and breakpoint handles live
 only in the **Clip Editor**, drawn over its waveform.
 
-**Deferred to Phase 8:** pan envelopes, send-level envelopes, plugin
-parameter envelopes — all built on top of the same `EnvelopeSnapshot`
-primitive once it has shipped.
+**Now shipped as track effect automation (§7.11.1):** timeline-absolute curves
+for Pan, Tone, send levels, Compressor, Filter, and a post-FX Gain are
+available as track lanes (distinct from the clip-relative Volume Shape above).
+Plugin parameter envelopes remain deferred to Phase 8.
+
+### 7.11.1 Track Effect Automation
+
+Each track has a collapsible **automation lane** (toggled by the **A** button in
+the track header) anchored to the timeline below its clips. A lane edits one
+parameter at a time, chosen in the lane header: **Filter**, **Pan**, **Bass /
+Mid / Treble**, **Reverb Send**, **Delay Send**, **Compressor**, or **Gain**
+(a post-FX track level in dB, distinct from the header volume fader and the
+per-clip Volume Shape). Curves are stored in real units per parameter and shown
+by descriptor; the data model holds several automated params per track even
+though one lane is visible.
+
+Editing reuses the clip-volume breakpoint primitives: click-add, drag-move,
+right-click or Alt-click to delete, Shift snap-to-beat; a selected point
+nudges with arrow keys (Up/Down value, Left/Right time, Alt = fine). Lane
+header controls raise/lower the whole curve, set the value at the playhead,
+copy/paste a curve between tracks, and reset to default; the value scale shows
+min / current / max with a hover tooltip on points. The A button reads
+muted-blue when a collapsed track still has automation.
+
+Backend: `AutomationParam`/`TrackAutomationSnapshot` carry a `BreakpointCurve`
+per param, published lock-free with a retire queue; `BusGraph` samples them at a
+fixed 256-frame control quantum and drives the runtime targets (filter, tone,
+sends, pan, Compressor, level), snapping on a seek/loop/play discontinuity and
+restoring neutral when a lane clears. Mixdown samples the same curves for parity.
+Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` + `TRACK_AUTOMATION_APPLIED`.
 
 ### 7.12 Sample Browser & Library
 - Current implementation is a project-scoped **LibraryPanel** of source, stem, sample, and clip items; user-scoped folder scanning is deferred to Phase 8
@@ -1887,8 +1918,8 @@ robustness without changing the core editing model.
   path is stable.
 - [ ] Harmonic compatibility indicators between clips, beyond basic key
   display and manual pitch controls.
-- [ ] Pan, send-level and plugin-parameter automation once clip volume
-  envelope editing is stable.
+- [x] Pan, send-level, tone, filter, compressor and **Gain** track automation
+  (timeline lanes; §7.11.1). Plugin-parameter automation remains for Phase 8.
 - [ ] CI coverage gates and expanded Electron e2e smoke tests once the feature
   surface stabilises. (issue #17)
 

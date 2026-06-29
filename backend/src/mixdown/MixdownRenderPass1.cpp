@@ -4,10 +4,13 @@
 #include "Log.h"
 #include "MixdownBroadcast.h"
 #include "SharedFx.h"  // delayNoteToMs
+#include "TrackAutomationSnapshot.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <climits>
+#include <memory>
 #include <vector>
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -86,6 +89,39 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         busGraph.setTrackLeveler(trackSnap.id, trackSnap.levelerAmount, /*snap*/ true);
         busGraph.setTrackSends(trackSnap.id, trackSnap.reverbSend, trackSnap.delaySend);
         busGraph.setTrackPan(trackSnap.id, trackSnap.pan);
+    }
+
+    // Per-track automation: build immutable snapshots (owned here for the render's
+    // lifetime) and publish to the offline bus graph. The graph samples them against
+    // `mixdownPos`, updated to the project frame before each block, so the export
+    // tracks the curves identically to live playback (same control quantum).
+    std::vector<std::unique_ptr<silverdaw::TrackAutomationSnapshot>> automationSnaps;
+    std::atomic<juce::int64> mixdownPos{0};
+    busGraph.setTimelineSamplesSource(&mixdownPos);
+    for (const auto& trackSnap : snapshot.tracks)
+    {
+        if (trackSnap.automation.empty()) continue;
+        auto snap = std::make_unique<silverdaw::TrackAutomationSnapshot>();
+        for (const auto& lane : trackSnap.automation)
+        {
+            silverdaw::AutomationParam param{};
+            if (!silverdaw::automationParamFromString(lane.paramId, param)) continue;
+            silverdaw::BreakpointCurve curve(silverdaw::InterpDomain::linear);
+            curve.reserve(lane.points.size());
+            for (const auto& pt : lane.points) curve.addPoint(pt.first, pt.second);
+            curve.finalise();
+            if (!curve.isEmpty())
+            {
+                const int pi = static_cast<int>(param);
+                snap->has[pi] = true;
+                snap->curves[pi] = std::move(curve);
+            }
+        }
+        if (snap->hasAny())
+        {
+            busGraph.setTrackAutomationPtr(trackSnap.id, snap.get());
+            automationSnaps.push_back(std::move(snap));
+        }
     }
 
     busGraph.setProjectReverb(snapshot.reverbSize, snapshot.reverbDecay, snapshot.reverbTone,
@@ -210,6 +246,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         }
 
         juce::AudioSourceChannelInfo busInfo(&mixBus, 0, blockFrames);
+        mixdownPos.store(projectFramesRendered, std::memory_order_relaxed);
         busGraph.getNextAudioBlock(busInfo);
 
         if (! juce::approximatelyEqual(snapshot.masterGain, 1.0F))

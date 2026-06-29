@@ -61,3 +61,11 @@ export const TRANSITION_LINE_ALPHA = 0.9
 export const OVERLAP_HATCH = 0xfbbf24 // amber-400
 export const OVERLAP_HATCH_ALPHA = 0.55
 export const OVERLAP_HATCH_SPACING_PX = 7
+
+// Automation lane: a strip reserved at the bottom of a track row when a
+// parameter's curve is shown. Clips compress into the remaining height above it.
+export const AUTOMATION_LANE_HEIGHT = 88
+export const AUTOMATION_LANE_BG = 0x111114
+export const AUTOMATION_LINE = 0x38bdf8 // sky-400
+export const AUTOMATION_HANDLE = 0xe0f2fe // sky-100
+export const AUTOMATION_HANDLE_RADIUS_PX = 4

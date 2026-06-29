@@ -155,6 +155,17 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             const float pan = projectState.getTrackPan(toneTrackId);
             if (pan != 0.0F)
                 engine.setTrackPan(toneTrackId, pan);
+
+            // Restore per-track effect automation lanes.
+            const auto lanes = projectState.getTrackAutomationLanes(toneTrackId);
+            for (const auto& lane : lanes)
+            {
+                const juce::String paramId =
+                    lane.getProperty(juce::Identifier{"paramId"}, juce::var()).toString();
+                const auto& pts = lane.getProperty(juce::Identifier{"points"}, juce::var());
+                if (paramId.isNotEmpty() && pts.isArray())
+                    engine.setTrackAutomation(toneTrackId, paramId, *pts.getArray());
+            }
         }
         for (int c = 0; c < track.getNumChildren(); ++c)
         {

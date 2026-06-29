@@ -62,7 +62,7 @@ onBeforeUnmount(gesture.endGesture)
 
 <template>
   <ClipEffectModule
-    :title="'Leveler'"
+    :title="'Compressor'"
     :cols="1"
     :rows="1"
   >
@@ -74,7 +74,7 @@ onBeforeUnmount(gesture.endGesture)
         :min="0"
         :max="1"
         :step="0.01"
-        assistive-label="Leveler amount"
+        assistive-label="Compressor amount"
         title="Double-click to reset to 0%"
         @input="onInput($event)"
         @change="onChange($event)"

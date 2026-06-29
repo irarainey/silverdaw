@@ -51,6 +51,6 @@ const selectedTrackId = computed(() =>
     v-else
     class="flex h-full min-h-0 w-full items-center justify-center px-4 text-center text-xs text-zinc-500"
   >
-    Select a track to edit its Tone, Filter, Leveler, and Reverb &amp; Delay.
+    Select a track to edit its Tone, Filter, Compressor, and Reverb &amp; Delay.
   </div>
 </template>

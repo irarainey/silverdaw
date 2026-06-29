@@ -285,6 +285,34 @@ export interface TrackSetLevelerPayload extends GestureHints {
   amount: number
 }
 
+/** One breakpoint on a track automation curve. */
+export interface AutomationPoint {
+  /** Timeline-absolute ms (>= 0). */
+  timeMs: number
+  /** Value in the parameter's native unit (dB, signed position, 0..1, …). */
+  value: number
+}
+
+/** Automatable track parameters (must match the backend `AutomationParam`). */
+export type AutomationParamId =
+  | 'filter'
+  | 'pan'
+  | 'toneBass'
+  | 'toneMid'
+  | 'toneTreble'
+  | 'reverbSend'
+  | 'delaySend'
+  | 'leveler'
+  | 'level'
+
+/** Per-track effect automation curve for one parameter (one atomic mutation per
+ *  drag); backend sorts/clamps/dedupes. Fewer than two points clears the lane. */
+export interface TrackSetAutomationPayload extends GestureHints {
+  trackId: string
+  paramId: AutomationParamId
+  points: AutomationPoint[]
+}
+
 /** One breakpoint on a clip volume envelope. */
 export interface ClipEnvelopePoint {
   /** Clip-local post-warp ms in `[0, clipDuration]`. */
@@ -407,6 +435,7 @@ export interface BridgeOutboundMap {
   TRACK_SET_TONE: TrackSetTonePayload
   TRACK_SET_LEVELER: TrackSetLevelerPayload
   TRACK_SET_PAN: TrackSetPanPayload
+  TRACK_SET_AUTOMATION: TrackSetAutomationPayload
   CLIP_SET_ENVELOPE: ClipSetEnvelopePayload
   TRANSITION_CREATE: TransitionCreatePayload
   TRANSITION_DELETE: TransitionDeletePayload
@@ -889,6 +918,7 @@ export const bridgeOutboundPayloadKinds: {
   TRACK_SET_TONE: 'payload',
   TRACK_SET_LEVELER: 'payload',
   TRACK_SET_PAN: 'payload',
+  TRACK_SET_AUTOMATION: 'payload',
   CLIP_SET_ENVELOPE: 'payload',
   TRANSITION_CREATE: 'payload',
   TRANSITION_DELETE: 'payload',

@@ -6,11 +6,49 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { useUiStore } from '@/stores/uiStore'
-import type { ProjectState, Track } from './projectTypes'
+import { sanitizeBreakpoints, flatCurve, insertBreakpoint, moveBreakpoint } from '@/lib/automation/breakpoints'
+import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
+import type { AutomationParamId, AutomationPoint, ProjectState, Track } from './projectTypes'
 import { DEFAULT_TRACK_LENGTH_MS, MAX_TRACK_VOLUME, TRACK_PALETTE } from './projectTypes'
 
 type TrackActionsThis = ProjectState & {
   pushAllGains(): void
+  setTrackAutomation(
+    trackId: string,
+    paramId: AutomationParamId,
+    points: AutomationPoint[],
+    opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+  ): void
+  setAutomationRamp(
+    trackId: string,
+    paramId: AutomationParamId,
+    startMs: number,
+    endMs: number,
+    startValue: number,
+    endValue: number
+  ): void
+}
+
+/** The track property that holds each param's static (resting) value — the
+ *  level used when no automation curve exists. Lets the lane baseline reflect
+ *  the FX rack and vice-versa. */
+const STATIC_FIELD: Partial<Record<AutomationParamId, keyof Track>> = {
+  filter: 'toneFilter',
+  pan: 'pan',
+  toneBass: 'toneBassDb',
+  toneMid: 'toneMidDb',
+  toneTreble: 'toneTrebleDb',
+  reverbSend: 'reverbSend',
+  delaySend: 'delaySend',
+  leveler: 'levelerAmount'
+}
+
+/** A param's resting native value for a track: its static FX field, or the
+ *  descriptor default when unset. */
+export function trackStaticAutomationValue(track: Track, paramId: AutomationParamId): number {
+  const field = STATIC_FIELD[paramId]
+  const v = field ? track[field] : undefined
+  return typeof v === 'number' ? v : AUTOMATION_PARAMS[paramId].defaultValue
 }
 
 export const trackActions = {
@@ -144,6 +182,120 @@ export const trackActions = {
           gestureEnd: opts?.gestureEnd
         })
       }
+    },
+
+    /** Set a track's automation curve for one parameter. `points` with fewer than
+     *  two breakpoints clears the lane. localOnly reconciles backend acks. */
+    setTrackAutomation(
+      trackId: string,
+      paramId: AutomationParamId,
+      points: AutomationPoint[],
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const d = AUTOMATION_PARAMS[paramId]
+      if (!d) return
+      const cleaned = sanitizeBreakpoints(points, { min: d.min, max: d.max })
+      const next = cleaned.length >= 2 ? cleaned : undefined
+
+      const map = track.automation ? { ...track.automation } : {}
+      if (next) map[paramId] = next
+      else delete map[paramId]
+      track.automation = Object.keys(map).length > 0 ? map : undefined
+      this.peaksRevision++
+
+      if (!opts?.localOnly) {
+        sendBridge('TRACK_SET_AUTOMATION', {
+          trackId,
+          paramId,
+          points: cleaned,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /** Author a 2-point ramp for a param over `[startMs,endMs]` (one undo step). */
+    setAutomationRamp(
+      trackId: string,
+      paramId: AutomationParamId,
+      startMs: number,
+      endMs: number,
+      startValue: number,
+      endValue: number
+    ): void {
+      const lo = Math.max(0, Math.min(startMs, endMs))
+      const hi = Math.max(startMs, endMs)
+      if (hi - lo < 1) return
+      this.setTrackAutomation(trackId, paramId, [
+        { timeMs: lo, value: startValue },
+        { timeMs: hi, value: endValue }
+      ])
+    },
+
+    /** Copy a param's curve from one track to another, optionally inverting it. */
+    copyAutomationToTrack(
+      srcTrackId: string,
+      dstTrackId: string,
+      paramId: AutomationParamId,
+      invert = false
+    ): void {
+      const src = this.tracks.find((t) => t.id === srcTrackId)?.automation?.[paramId]
+      if (!src) return
+      const d = AUTOMATION_PARAMS[paramId]
+      const mid = (d.min + d.max) / 2
+      const points = src.map((p) => ({ timeMs: p.timeMs, value: invert ? mid * 2 - p.value : p.value }))
+      this.setTrackAutomation(dstTrackId, paramId, points)
+    },
+
+    /** One-gesture opposing filter sweep across two tracks: A rises, B mirrors. */
+    createFilterCrossfade(trackAId: string, trackBId: string, startMs: number, endMs: number): void {
+      runInUndoGroup('Filter crossfade', () => {
+        this.setAutomationRamp(trackAId, 'filter', startMs, endMs, -1, 1)
+        this.setAutomationRamp(trackBId, 'filter', startMs, endMs, 1, -1)
+      })
+    },
+
+    /** Shift a param's whole curve up/down by `delta` native units. With no
+     *  curve, lays a flat line at the static baseline + delta across the track,
+     *  giving a one-click whole-timeline level change. */
+    shiftTrackAutomation(trackId: string, paramId: AutomationParamId, delta: number): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track || delta === 0) return
+      const existing = track.automation?.[paramId]
+      const base = existing && existing.length >= 2
+        ? existing
+        : flatCurve(track.lengthMs, trackStaticAutomationValue(track, paramId))
+      runInUndoGroup('Shift automation', () => {
+        this.setTrackAutomation(trackId, paramId, base.map((p) => ({ timeMs: p.timeMs, value: p.value + delta })))
+      })
+    },
+
+    /** Set a param's value at the playhead. With no curve, lays a flat baseline
+     *  first so the new point reads against the track's resting level. */
+    setAutomationValueAt(trackId: string, paramId: AutomationParamId, timeMs: number, value: number): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const d = AUTOMATION_PARAMS[paramId]
+      const base = track.automation?.[paramId] && track.automation[paramId]!.length >= 2
+        ? track.automation[paramId]!
+        : flatCurve(track.lengthMs, trackStaticAutomationValue(track, paramId))
+      const { points } = insertBreakpoint(base, timeMs, value, { min: d.min, max: d.max })
+      runInUndoGroup('Set automation point', () => {
+        this.setTrackAutomation(trackId, paramId, points)
+      })
+    },
+
+    /** Nudge one breakpoint by time/value deltas (keyboard fine-edit). */
+    nudgeAutomationPoint(trackId: string, paramId: AutomationParamId, index: number, dTimeMs: number, dValue: number): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      const pts = track?.automation?.[paramId]
+      if (!pts || index < 0 || index >= pts.length) return
+      const d = AUTOMATION_PARAMS[paramId]
+      const p = pts[index]!
+      const next = moveBreakpoint(pts.map((q) => ({ ...q })), index, p.timeMs + dTimeMs, p.value + dValue, { min: d.min, max: d.max })
+      this.setTrackAutomation(trackId, paramId, next)
     },
 
     removeTrack(trackId: string): void {

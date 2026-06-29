@@ -126,6 +126,21 @@ export const TrackPanAppliedPayloadSchema = z.object({
 })
 export type TrackPanAppliedPayload = z.infer<typeof TrackPanAppliedPayloadSchema>
 
+const AutomationPointSchema = z.object({
+  timeMs: z.number().nonnegative(),
+  value: z.number()
+})
+export type AutomationPointAck = z.infer<typeof AutomationPointSchema>
+
+/** Ack for `TRACK_SET_AUTOMATION`; echoes the sorted/clamped points. Empty clears. */
+export const TrackAutomationAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  paramId: z.string(),
+  points: z.array(AutomationPointSchema),
+  ok: z.boolean()
+})
+export type TrackAutomationAppliedPayload = z.infer<typeof TrackAutomationAppliedPayloadSchema>
+
 const ClipEnvelopePointSchema = z.object({
   timeMs: z.number().nonnegative(),
   gain: z.number().min(0).max(4)
@@ -252,6 +267,15 @@ export const ProjectStateTrackSchema = z.object({
   levelerAmount: z.number().optional(),
   /** Equal-power pan, signed `[-1, 1]` (0 = centre). */
   pan: z.number().optional(),
+  /** Per-track effect automation lanes: `{ paramId, points: [{ timeMs, value }] }`. */
+  automation: z
+    .array(
+      z.object({
+        paramId: z.string(),
+        points: z.array(AutomationPointSchema)
+      })
+    )
+    .optional(),
   clips: z.array(ProjectStateClipSchema),
   transitions: z.array(ProjectStateTransitionSchema).optional()
 })
@@ -706,6 +730,7 @@ export interface BridgeInboundMap {
   TRACK_TONE_APPLIED: TrackToneAppliedPayload
   TRACK_LEVELER_APPLIED: TrackLevelerAppliedPayload
   TRACK_PAN_APPLIED: TrackPanAppliedPayload
+  TRACK_AUTOMATION_APPLIED: TrackAutomationAppliedPayload
   CLIP_ENVELOPE_APPLIED: ClipEnvelopeAppliedPayload
   PROJECT_REVERB_APPLIED: ProjectReverbAppliedPayload
   PROJECT_DELAY_APPLIED: ProjectDelayAppliedPayload
@@ -766,6 +791,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_TONE_APPLIED',
   'TRACK_LEVELER_APPLIED',
   'TRACK_PAN_APPLIED',
+  'TRACK_AUTOMATION_APPLIED',
   'CLIP_ENVELOPE_APPLIED',
   'PROJECT_REVERB_APPLIED',
   'PROJECT_DELAY_APPLIED',
@@ -906,6 +932,12 @@ export function isTrackLevelerAppliedPayload(value: unknown): value is TrackLeve
 
 export function isTrackPanAppliedPayload(value: unknown): value is TrackPanAppliedPayload {
   return TrackPanAppliedPayloadSchema.safeParse(value).success
+}
+
+export function isTrackAutomationAppliedPayload(
+  value: unknown
+): value is TrackAutomationAppliedPayload {
+  return TrackAutomationAppliedPayloadSchema.safeParse(value).success
 }
 
 export function isClipEnvelopeAppliedPayload(value: unknown): value is ClipEnvelopeAppliedPayload {

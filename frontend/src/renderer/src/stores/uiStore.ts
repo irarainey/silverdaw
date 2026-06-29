@@ -3,6 +3,7 @@
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
 import type { SkipButtonTarget, WaveformDisplayMode } from '@shared/types'
+import type { AutomationParamId } from '@shared/bridge-protocol'
 
 export type { SkipButtonTarget, WaveformDisplayMode }
 
@@ -36,6 +37,17 @@ interface UiState {
   timelineScrollRequest: TimelineScrollRequest | null
   timelineZoomRequest: TimelineZoomRequest | null
   timelineRevealTrackRequest: TimelineRevealTrackRequest | null
+  /** Per-track automation lane: trackId -> shown parameter. Present = lane expanded.
+   *  Session UI state (not persisted with the project). */
+  automationLanes: Record<string, AutomationParamId>
+  /** Per-track automation-lane height (px); falls back to the default when absent. */
+  automationLaneHeights: Record<string, number>
+  /** Clipboard for an automation curve copied from a lane (paste into another). */
+  automationClipboard: { paramId: AutomationParamId; points: { timeMs: number; value: number }[] } | null
+  /** Selected automation breakpoint for keyboard nudging; null when none. */
+  selectedAutomationPoint: { trackId: string; paramId: AutomationParamId; index: number } | null
+  /** Hover readout for an automation breakpoint (client px + label); null when away. */
+  automationHoverTip: { x: number; y: number; text: string } | null
   /** Global shortcuts defer while the Clip Editor preview dialog is open. */
   clipEditorOpen: boolean
   hydrated: boolean
@@ -137,6 +149,11 @@ export const useUiStore = defineStore('ui', {
     timelineScrollRequest: null,
     timelineZoomRequest: null,
     timelineRevealTrackRequest: null,
+    automationLanes: {},
+    automationLaneHeights: {},
+    automationClipboard: null,
+    selectedAutomationPoint: null,
+    automationHoverTip: null,
     clipEditorOpen: false,
     hydrated: false
   }),
@@ -278,6 +295,32 @@ export const useUiStore = defineStore('ui', {
         trackId,
         id: nextTimelineRevealTrackRequestId++
       }
+    },
+
+    /** Show a parameter's automation lane on a track (or collapse it with null). */
+    setTrackAutomationLane(trackId: string, paramId: AutomationParamId | null): void {
+      const next = { ...this.automationLanes }
+      if (paramId) next[trackId] = paramId
+      else delete next[trackId]
+      this.automationLanes = next
+    },
+
+    /** Resize a track's automation lane (clamped). */
+    setTrackAutomationLaneHeight(trackId: string, heightPx: number): void {
+      this.automationLaneHeights = {
+        ...this.automationLaneHeights,
+        [trackId]: Math.max(48, Math.min(220, Math.round(heightPx)))
+      }
+    },
+
+    /** Copy a lane's curve to the clipboard for pasting into another track. */
+    copyAutomationCurve(paramId: AutomationParamId, points: { timeMs: number; value: number }[]): void {
+      this.automationClipboard = { paramId, points: points.map((p) => ({ ...p })) }
+    },
+
+    /** Track the breakpoint to be keyboard-nudged (set on grab, cleared otherwise). */
+    setSelectedAutomationPoint(p: { trackId: string; paramId: AutomationParamId; index: number } | null): void {
+      this.selectedAutomationPoint = p
     },
 
     requestTimelineZoom(action: TimelineZoomAction): void {

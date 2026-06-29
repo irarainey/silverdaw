@@ -6,9 +6,15 @@ import type { Application } from 'pixi.js'
 import { effectiveClipTempoRatio, isClipTempoWarpActive, useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
+import { buildTrackRowLayout } from './trackLayout'
+import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
+import { laneRegion, laneYToValue } from './automationLaneRenderer'
+import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
+import { flatCurve, insertBreakpoint, moveBreakpoint, removeBreakpoint } from '@/lib/automation/breakpoints'
 import { RULER_HEIGHT, SCROLLBAR_HEIGHT } from './constants'
 import type { GridGeometry } from './useGridGeometry'
 import { createTimelineQueries } from './timelineQueries'
@@ -33,6 +39,8 @@ export interface DragHandlers {
   isDraggingPlayhead: Ref<boolean>
   /** CSS cursor for live hover affordance. */
   hoverCursor: Ref<'default' | 'ew-resize' | 'grab' | 'grabbing'>
+  /** Right-click delete of an automation breakpoint; true if one was removed. */
+  removeAutomationPointAt(clientX: number, clientY: number): boolean
 }
 
 export interface DragHandlersOptions {
@@ -62,6 +70,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   const project = useProjectStore()
   const library = useLibraryStore()
   const transport = useTransportStore()
+  const ui = useUiStore()
   const {
     host,
     app,
@@ -124,6 +133,133 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   let pendingDragSuppressSeek = false
   let draggedMarkerId: string | null = null
 
+  // ── Automation lane editing (bottom strip of a track row) ───────────────────
+  let autoTrackId: string | null = null
+  let autoParam: import('@shared/bridge-protocol').AutomationParamId | null = null
+  let autoPointIndex = -1
+  let autoGestureId = ''
+
+  /** If the pointer is inside a track's expanded automation lane, begin an add /
+   *  move / remove edit and return true. Otherwise return false. */
+  function tryBeginAutomationEdit(e: PointerEvent): boolean {
+    if (!host.value) return false
+    const trackId = pointerToTrackId(e.clientY)
+    if (!trackId) return false
+    const param = ui.automationLanes[trackId]
+    if (!param) return false
+    const idx = project.tracks.findIndex((t) => t.id === trackId)
+    const slot = buildTrackRowLayout(project.tracks, makeLaneHeightOf())[idx]
+    if (!slot) return false
+    const rect = host.value.getBoundingClientRect()
+    const worldY = e.clientY - rect.top + scrollY.value
+    const { top, bottom } = laneRegion(slot.top, slot.clipHeight)
+    if (worldY < top || worldY > bottom) return false
+    const ms = pointerToRawMsClamped(e.clientX)
+    if (ms === null) return false
+
+    let points = (project.tracks[idx]?.automation?.[param] ?? []).map((p) => ({ ...p }))
+    if (points.length < 2) {
+      const d = AUTOMATION_PARAMS[param]
+      points = flatCurve(Math.max(1, project.durationMs), d.defaultValue)
+    }
+    const pps = geometry.pxPerSecond.value
+    const hitR = 8
+    let nearest = -1
+    for (let i = 0; i < points.length; i++) {
+      const dx = Math.abs(((points[i]!.timeMs - ms) / 1000) * pps)
+      const dy = Math.abs(laneYToValue(param, worldY, top) - points[i]!.value)
+      if (dx < hitR && nearest < 0) nearest = i
+      void dy
+    }
+    if (e.altKey && nearest >= 0) {
+      points = removeBreakpoint(points, nearest)
+      project.setTrackAutomation(trackId, param, points)
+      return true
+    }
+    const value = laneYToValue(param, worldY, top)
+    const d = AUTOMATION_PARAMS[param]
+    autoTrackId = trackId
+    autoParam = param
+    autoGestureId = `auto-${trackId}-${param}-${Date.now()}`
+    if (nearest >= 0) {
+      autoPointIndex = nearest
+    } else {
+      const r = insertBreakpoint(points, ms, value, { min: d.min, max: d.max })
+      points = r.points
+      autoPointIndex = r.index
+    }
+    ui.setSelectedAutomationPoint({ trackId, paramId: param, index: autoPointIndex })
+    project.setTrackAutomation(trackId, param, points, { gestureId: autoGestureId })
+    window.addEventListener('pointermove', onAutoMove)
+    window.addEventListener('pointerup', onAutoUp)
+    window.addEventListener('pointercancel', onAutoUp)
+    e.preventDefault()
+    return true
+  }
+
+  function onAutoMove(e: PointerEvent): void {
+    if (!autoTrackId || !autoParam || !host.value) return
+    const idx = project.tracks.findIndex((t) => t.id === autoTrackId)
+    const slot = buildTrackRowLayout(project.tracks, makeLaneHeightOf())[idx]
+    if (!slot) return
+    const rect = host.value.getBoundingClientRect()
+    const worldY = e.clientY - rect.top + scrollY.value
+    const { top } = laneRegion(slot.top, slot.clipHeight)
+    const ms = pointerToRawMsClamped(e.clientX) ?? 0
+    const value = laneYToValue(autoParam, worldY, top)
+    const d = AUTOMATION_PARAMS[autoParam]
+    const points = (project.tracks[idx]?.automation?.[autoParam] ?? []).map((p) => ({ ...p }))
+    if (autoPointIndex < 0 || autoPointIndex >= points.length) return
+    const next = moveBreakpoint(points, autoPointIndex, ms, value, { min: d.min, max: d.max })
+    project.setTrackAutomation(autoTrackId, autoParam, next, { gestureId: autoGestureId })
+  }
+
+  function onAutoUp(): void {
+    if (autoTrackId && autoParam) {
+      const idx = project.tracks.findIndex((t) => t.id === autoTrackId)
+      const points = project.tracks[idx]?.automation?.[autoParam] ?? []
+      project.setTrackAutomation(autoTrackId, autoParam, [...points], {
+        gestureId: autoGestureId,
+        gestureEnd: true
+      })
+    }
+    autoTrackId = null
+    autoParam = null
+    autoPointIndex = -1
+    window.removeEventListener('pointermove', onAutoMove)
+    window.removeEventListener('pointerup', onAutoUp)
+    window.removeEventListener('pointercancel', onAutoUp)
+  }
+
+  /** Right-click delete: if the pointer is over an interior breakpoint in an
+   *  expanded lane, remove it and return true. Shared with the context menu. */
+  function removeAutomationPointAt(clientX: number, clientY: number): boolean {
+    if (!host.value) return false
+    const trackId = pointerToTrackId(clientY)
+    if (!trackId) return false
+    const param = ui.automationLanes[trackId]
+    if (!param) return false
+    const idx = project.tracks.findIndex((t) => t.id === trackId)
+    const slot = buildTrackRowLayout(project.tracks, makeLaneHeightOf())[idx]
+    if (!slot) return false
+    const rect = host.value.getBoundingClientRect()
+    const worldY = clientY - rect.top + scrollY.value
+    const { top, bottom } = laneRegion(slot.top, slot.clipHeight)
+    if (worldY < top || worldY > bottom) return false
+    const ms = pointerToRawMsClamped(clientX)
+    if (ms === null) return false
+    const points = (project.tracks[idx]?.automation?.[param] ?? []).map((p) => ({ ...p }))
+    if (points.length < 2) return false
+    const pps = geometry.pxPerSecond.value
+    let nearest = -1
+    for (let i = 0; i < points.length; i++) {
+      if (Math.abs(((points[i]!.timeMs - ms) / 1000) * pps) < 8) { nearest = i; break }
+    }
+    if (nearest < 0) return false
+    project.setTrackAutomation(trackId, param, removeBreakpoint(points, nearest))
+    return true
+  }
+
   function startClipAutoScroll(pointer: ClipDragPointer): void {
     latestClipDragPointer = pointer
     if (clipAutoScrollFrame !== null) return
@@ -168,6 +304,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const y = e.clientY - rect.top
     const bottomLimit = a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
     if (y > bottomLimit) return
+
+    // Automation lane editing claims the bottom strip of an expanded track row.
+    if (tryBeginAutomationEdit(e)) return
+    ui.setSelectedAutomationPoint(null)
 
     const markerId = hitTestMarker(e.clientX, e.clientY)
     if (markerId) {
@@ -470,10 +610,34 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const trimHit = hitTestTrimEdge(e.clientX, e.clientY)
     const next = trimHit ? 'ew-resize' : 'default'
     if (hoverCursor.value !== next) hoverCursor.value = next
+    updateAutomationHoverTip(e.clientX, e.clientY)
+  }
+
+  /** Show a value readout when hovering a breakpoint in an expanded lane. */
+  function updateAutomationHoverTip(clientX: number, clientY: number): void {
+    if (!host.value) { ui.automationHoverTip = null; return }
+    const trackId = pointerToTrackId(clientY)
+    const param = trackId ? ui.automationLanes[trackId] : undefined
+    if (!trackId || !param) { ui.automationHoverTip = null; return }
+    const idx = project.tracks.findIndex((t) => t.id === trackId)
+    const slot = buildTrackRowLayout(project.tracks, makeLaneHeightOf())[idx]
+    const pts = project.tracks[idx]?.automation?.[param]
+    if (!slot || !pts || pts.length < 2) { ui.automationHoverTip = null; return }
+    const { top, bottom } = laneRegion(slot.top, slot.clipHeight)
+    const rect = host.value.getBoundingClientRect()
+    const worldY = clientY - rect.top + scrollY.value
+    if (worldY < top || worldY > bottom) { ui.automationHoverTip = null; return }
+    const ms = pointerToRawMsClamped(clientX) ?? 0
+    const pps = geometry.pxPerSecond.value
+    const hit = pts.find((p) => Math.abs(((p.timeMs - ms) / 1000) * pps) < 8)
+    ui.automationHoverTip = hit
+      ? { x: clientX, y: clientY, text: AUTOMATION_PARAMS[param].format(hit.value) }
+      : null
   }
 
   function onHostPointerLeave(): void {
     if (hoverCursor.value !== 'default') hoverCursor.value = 'default'
+    ui.automationHoverTip = null
   }
 
   // Watch the host ref because template refs may be populated asynchronously.
@@ -513,5 +677,5 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     stopClipAutoScroll()
   })
 
-  return { isDraggingPlayhead, hoverCursor }
+  return { isDraggingPlayhead, hoverCursor, removeAutomationPointAt }
 }

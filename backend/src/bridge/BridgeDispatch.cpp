@@ -390,6 +390,13 @@ bool dispatchTrack(const DispatchContext& ctx)
                                             " pan=" + payload.getProperty("pan", "").toString());
         silverdaw::handleTrackSetPan(payload, engine, projectState, bridge);
     }
+    else if (type == "TRACK_SET_AUTOMATION")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_AUTOMATION trackId=" +
+                                            payload.getProperty("trackId", "").toString() +
+                                            " paramId=" + payload.getProperty("paramId", "").toString());
+        silverdaw::handleTrackSetAutomation(payload, engine, projectState, bridge);
+    }
     else
     {
         return false;

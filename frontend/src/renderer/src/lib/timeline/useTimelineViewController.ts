@@ -10,6 +10,7 @@ import { SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH, RULER_HEIGHT } from '@/lib/timeline/
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
 import { useTimelineScroll } from '@/lib/timeline/useTimelineScroll'
 import { tracksContentHeight as tracksContentHeight_, buildTrackRowLayout } from '@/lib/timeline/trackLayout'
+import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import { usePixiApp } from '@/lib/timeline/usePixiApp'
 import { useDragHandlers, type ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import { useDropZone } from '@/lib/timeline/useDropZone'
@@ -48,7 +49,7 @@ export function useTimelineViewController(
   const geometry = useGridGeometry()
   const { pxPerSecond, headerWidth, headerWidthRef, contentPx } = geometry
 
-  const tracksContentHeightPx = computed(() => tracksContentHeight_(project.tracks))
+  const tracksContentHeightPx = computed(() => tracksContentHeight_(project.tracks, makeLaneHeightOf()))
   const scroll = useTimelineScroll({ contentPx, headerWidthRef, tracksContentHeightPx })
   const {
     scrollX, scrollY, viewportWidth, viewportHeight,
@@ -66,7 +67,7 @@ export function useTimelineViewController(
     onReady: () => { redrawNow(); updatePlayhead() }
   })
 
-  const { isDraggingPlayhead, hoverCursor } = useDragHandlers({
+  const { isDraggingPlayhead, hoverCursor, removeAutomationPointAt } = useDragHandlers({
     host, app: pixi.app, scrollX, scrollY, maxScrollX, showScrollbar, geometry,
     getClipHitRegions: () => clipHitRegions,
     onClipMoved: () => { redraw(); updatePlayhead() },
@@ -167,6 +168,7 @@ export function useTimelineViewController(
     scrollY,
     getClipHitRegions: () => clipHitRegions,
     headerWidth,
+    removeAutomationPointAt,
     dialogs
   })
   const {
@@ -372,7 +374,7 @@ export function useTimelineViewController(
       if (!request) return
       const index = project.tracks.findIndex((t) => t.id === request.trackId)
       if (index < 0) return
-      const slot = buildTrackRowLayout(project.tracks)[index]
+      const slot = buildTrackRowLayout(project.tracks, makeLaneHeightOf())[index]
       if (!slot) return
       // Content-relative bounds: 0 = first track top (just below the ruler).
       const rowTop = slot.top - RULER_HEIGHT

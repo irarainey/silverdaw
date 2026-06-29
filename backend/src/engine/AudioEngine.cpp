@@ -9,7 +9,11 @@
 namespace silverdaw
 {
 
-AudioEngine::AudioEngine() = default;
+AudioEngine::AudioEngine()
+{
+    // The bus graph samples automation against the master transport counter.
+    busGraph.setTimelineSamplesSource(&master.positionAtomicRef());
+}
 
 AudioEngine::~AudioEngine()
 {
@@ -74,6 +78,8 @@ void AudioEngine::shutdown()
     sourcePlayer.setSource(nullptr);
     topMixer.removeAllInputs();
     busGraph.clear();
+    automationCurrent.clear();
+    retiredAutomation.clear();
     tracks.clear();
     deviceManager.closeAudioDevice();
     readAheadThread.stopThread(1000);
@@ -302,6 +308,7 @@ void AudioEngine::play()
     // runs entirely on the audio thread (no message-thread block) and preserves the downbeat
     // position; non-sleep-prone endpoints skip it and play instantly.
     master.setPlaying(true);
+    busGraph.snapAutomationCursors();
     silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
                                        " pos=" + juce::String(master.getPositionSamples()) +
                                        " wakePreroll=" +
@@ -433,6 +440,7 @@ void AudioEngine::pause()
         track->retiredEnvelopes.clear();
         track->retiredEdgeFades.clear();
     }
+    retiredAutomation.clear();
     silverdaw::log::info("engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
 }
 
@@ -451,6 +459,7 @@ void AudioEngine::stop()
         track->retiredEnvelopes.clear();
         track->retiredEdgeFades.clear();
     }
+    retiredAutomation.clear();
     silverdaw::log::info("engine", "stop");
 }
 
@@ -500,6 +509,90 @@ void AudioEngine::setTrackSends(const juce::String& trackId, float reverbSend, f
 void AudioEngine::setTrackPan(const juce::String& trackId, float pan)
 {
     busGraph.setTrackPan(trackId, pan);
+}
+
+void AudioEngine::setTrackAutomation(const juce::String& trackId, const juce::String& paramId,
+                                     const juce::Array<juce::var>& points)
+{
+    if (trackId.isEmpty()) return;
+    AutomationParam param{};
+    if (!automationParamFromString(paramId, param)) return;
+
+    // Build a fresh immutable snapshot from the track's existing lanes, swapping
+    // in this param's new curve. Then publish the raw pointer and retire the old.
+    auto next = std::make_unique<TrackAutomationSnapshot>();
+    if (auto it = automationCurrent.find(trackId); it != automationCurrent.end() && it->second)
+    {
+        const auto& prev = *it->second;
+        for (int i = 0; i < TrackAutomationSnapshot::kNumParams; ++i)
+        {
+            if (i == static_cast<int>(param)) continue;
+            if (prev.has[i])
+            {
+                next->has[i] = true;
+                next->curves[i] = prev.curves[i];
+            }
+        }
+    }
+
+    if (points.size() >= 2)
+    {
+        const int pi = static_cast<int>(param);
+        // Pan / tone interpolate musically in their native unit; all current params
+        // are linear (signed positions, dB values, 0..1 levels).
+        BreakpointCurve curve(InterpDomain::linear);
+        curve.reserve(static_cast<std::size_t>(points.size()));
+        for (const auto& p : points)
+        {
+            if (!p.isObject()) continue;
+            const double t = static_cast<double>(p.getProperty("timeMs", 0.0));
+            const double v = static_cast<double>(p.getProperty("value", 0.0));
+            curve.addPoint(t, static_cast<float>(v));
+        }
+        curve.finalise();
+        if (!curve.isEmpty())
+        {
+            next->has[pi] = true;
+            next->curves[pi] = std::move(curve);
+        }
+    }
+
+    if (!next->hasAny())
+    {
+        busGraph.setTrackAutomationPtr(trackId, nullptr);
+        if (auto it = automationCurrent.find(trackId); it != automationCurrent.end())
+        {
+            if (it->second)
+            {
+                for (int i = 0; i < TrackAutomationSnapshot::kNumParams; ++i)
+                    if (it->second->has[i])
+                        busGraph.snapParamToDefault(trackId, static_cast<AutomationParam>(i));
+                retiredAutomation.push_back(std::move(it->second));
+            }
+            automationCurrent.erase(it);
+        }
+        return;
+    }
+
+    // Any param that had a lane but no longer does must snap back to neutral, or the
+    // chain would hold its last automated value (stuck filter/level after a clear).
+    if (auto it = automationCurrent.find(trackId); it != automationCurrent.end() && it->second)
+    {
+        for (int i = 0; i < TrackAutomationSnapshot::kNumParams; ++i)
+            if (it->second->has[i] && !next->has[i])
+                busGraph.snapParamToDefault(trackId, static_cast<AutomationParam>(i));
+    }
+
+    busGraph.setTrackAutomationPtr(trackId, next.get());
+    if (auto it = automationCurrent.find(trackId); it != automationCurrent.end())
+    {
+        if (it->second) retiredAutomation.push_back(std::move(it->second));
+        it->second = std::move(next);
+    }
+    else
+    {
+        automationCurrent.emplace(trackId, std::move(next));
+    }
 }
 
 void AudioEngine::setProjectReverb(float size, float decay, float tone, float mix, bool snap)

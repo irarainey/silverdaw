@@ -68,6 +68,26 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
         track.delaySend = project.getTrackDelaySend(track.id);
         track.pan = project.getTrackPan(track.id);
 
+        // Per-track effect automation lanes for export parity with playback.
+        const auto autoLanes = project.getTrackAutomationLanes(track.id);
+        for (const auto& lane : autoLanes)
+        {
+            const juce::String paramId =
+                lane.getProperty(juce::Identifier{"paramId"}, juce::var()).toString();
+            const auto& ptsVar = lane.getProperty(juce::Identifier{"points"}, juce::var());
+            if (paramId.isEmpty() || !ptsVar.isArray()) continue;
+            MixdownSnapshot::TrackSnapshot::AutomationLane outLane;
+            outLane.paramId = paramId;
+            for (const auto& p : *ptsVar.getArray())
+            {
+                if (!p.isObject()) continue;
+                outLane.points.emplace_back(
+                    static_cast<double>(p.getProperty("timeMs", 0.0)),
+                    static_cast<float>(static_cast<double>(p.getProperty("value", 0.0))));
+            }
+            if (outLane.points.size() >= 2) track.automation.push_back(std::move(outLane));
+        }
+
         const bool trackMuted = project.getTrackMuted(track.id);
         const bool trackSoloed = project.getTrackSoloed(track.id);
         silverdaw::log::info(

@@ -86,6 +86,13 @@ class AudioEngine
 
     void setTrackPan(const juce::String& trackId, float pan);
 
+    // Per-track effect automation: builds an immutable snapshot for `trackId`
+    // (merging this param's curve with the track's other lanes), publishes it to
+    // the BusGraph lock-free, and retires the previous snapshot. `points` is the
+    // normalised `{ timeMs, value }` array; fewer than two points clears the lane.
+    void setTrackAutomation(const juce::String& trackId, const juce::String& paramId,
+                            const juce::Array<juce::var>& points);
+
     void setProjectReverb(float size, float decay, float tone, float mix, bool snap);
 
     // Delay time is staged while playing; feedback, tone, and mix apply live.
@@ -292,6 +299,12 @@ class AudioEngine
     juce::AudioDeviceManager deviceManager;
     juce::AudioSourcePlayer sourcePlayer;
     BusGraph busGraph;
+
+    // Per-track automation snapshots owned here (message thread). `current` holds
+    // the live snapshot per track; `retired` holds superseded ones until a stop
+    // reclaims them, so the audio thread never frees. See setTrackAutomation.
+    std::unordered_map<juce::String, std::unique_ptr<TrackAutomationSnapshot>> automationCurrent;
+    std::vector<std::unique_ptr<TrackAutomationSnapshot>> retiredAutomation;
 
     void rebuildDevicesSnapshot(bool rescan);
 

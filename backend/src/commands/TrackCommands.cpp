@@ -250,4 +250,33 @@ void handleTrackSetLeveler(const juce::var& payload, silverdaw::AudioEngine& eng
                      {{"trackId", trackId}, {"amount", canonAmount}});
 }
 
+// Per-track effect automation curve for one parameter. Stores/normalises the
+// curve, acks with the persisted points, and (P1b) publishes it to the engine.
+void handleTrackSetAutomation(const juce::var& payload, silverdaw::AudioEngine& engine,
+                              silverdaw::ProjectState& projectState,
+                              silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+    const juce::String paramId = tryGetRequiredString(payload, "paramId").value_or(juce::String{});
+    if (paramId.isEmpty()) return;
+
+    juce::Array<juce::var> points;
+    const auto& pointsVar = payload.getProperty("points", juce::var());
+    if (pointsVar.isArray())
+    {
+        points = *pointsVar.getArray();
+    }
+
+    const bool changed = projectState.setTrackAutomation(trackId, paramId, points);
+    if (!changed) return;
+
+    // Ack with the normalised persisted shape the engine receives.
+    const auto stored = projectState.getTrackAutomation(trackId, paramId);
+    engine.setTrackAutomation(trackId, paramId, stored);
+
+    broadcastApplied(bridge, "TRACK_AUTOMATION_APPLIED",
+                     {{"trackId", trackId}, {"paramId", paramId}, {"points", juce::var(stored)}});
+}
+
 } // namespace silverdaw

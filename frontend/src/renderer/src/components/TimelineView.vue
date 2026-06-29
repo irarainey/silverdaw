@@ -7,6 +7,9 @@ import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 import SampleTypeDialog from '@/components/SampleTypeDialog.vue'
 import { useTimelineViewController } from '@/lib/timeline/useTimelineViewController'
+import { useUiStore } from '@/stores/uiStore'
+
+const ui = useUiStore()
 
 const host = ref<HTMLDivElement | null>(null)
 const scrollbarTrack = ref<HTMLDivElement | null>(null)
@@ -202,5 +205,14 @@ const {
       :clip-id="sampleTypeClipId"
       @close="dialogs.closeSampleType()"
     />
+
+    <!-- Hover readout for an automation breakpoint (offset off the cursor). -->
+    <div
+      v-if="ui.automationHoverTip"
+      class="pointer-events-none fixed z-50 rounded bg-zinc-900/95 px-1.5 py-0.5 text-[10px] font-mono text-sky-200 ring-1 ring-sky-700"
+      :style="{ left: ui.automationHoverTip.x + 12 + 'px', top: ui.automationHoverTip.y - 22 + 'px' }"
+    >
+      {{ ui.automationHoverTip.text }}
+    </div>
   </div>
 </template>

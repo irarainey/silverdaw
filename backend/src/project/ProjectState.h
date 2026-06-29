@@ -117,6 +117,18 @@ class ProjectState : public juce::ValueTree::Listener
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
     juce::Array<juce::var> getClipEnvelope(const juce::String& clipId) const;
 
+    // Per-track effect automation: one `automation` array property holds a lane
+    // per automated parameter (`{ paramId, points: [{ timeMs, value }] }`). A lane
+    // with fewer than two points is dropped (no curve). `paramId` is the bridge
+    // string id ("filter", "pan", "toneBass", …). Returns true iff the tree changed.
+    bool setTrackAutomation(const juce::String& trackId, const juce::String& paramId,
+                            const juce::Array<juce::var>& points);
+    /** Points for one automated parameter, or empty when the lane is absent. */
+    juce::Array<juce::var> getTrackAutomation(const juce::String& trackId,
+                                              const juce::String& paramId) const;
+    /** The whole lanes array for a track (for snapshot/serialisation), or empty. */
+    juce::Array<juce::var> getTrackAutomationLanes(const juce::String& trackId) const;
+
     // Transitions store partners only; overlap is derived from live clip geometry.
 
     // Derived edge fades are ready for AudioEngine::setClipEdgeFade.
@@ -611,6 +623,14 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kEnvelopePoints;
     static const juce::Identifier kEnvelopeTimeMs;
     static const juce::Identifier kEnvelopeGain;
+
+    // Per-track effect automation: one `automation` array of `{ paramId, points }`
+    // lanes; each point is `{ timeMs, value }`.
+    static const juce::Identifier kAutomation;
+    static const juce::Identifier kAutomationParamId;
+    static const juce::Identifier kAutomationPoints;
+    static const juce::Identifier kAutomationTimeMs;
+    static const juce::Identifier kAutomationValue;
 
     // Transition overlap is derived, never stored.
     static const juce::Identifier kTransition;

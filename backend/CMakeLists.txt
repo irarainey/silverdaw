@@ -464,6 +464,7 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectFile.cpp
     src/project/ProjectSession.cpp
     src/project/ProjectState.cpp
+    src/project/ProjectStateAutomation.cpp
     src/project/ProjectStateClips.cpp
     src/project/ProjectStateLibrary.cpp
     src/project/ProjectStateLibraryAnalysis.cpp
@@ -614,6 +615,7 @@ if(SILVERDAW_BUILD_TESTS)
         tests/FxDspTests.cpp
         tests/LoudnessTests.cpp
         tests/EnvelopeFadeTests.cpp
+        tests/AutomationTests.cpp
 tests/MixdownRenderTests.cpp
         tests/StemSeparationTests.cpp
         tests/BpmDetectorTests.cpp
