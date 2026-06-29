@@ -74,7 +74,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   Tone Bass / Mid / Treble, Reverb / Delay sends, Compressor, or **Gain** (a
   post-FX track level). Add, drag, right-click or Alt-click to delete, and
   arrow-key nudge points; raise/lower or copy/paste a whole curve; values play
-  live and render identically in the mixdown.
+  live and render identically in the mixdown. Each Track FX control has an
+  **A** button to automate it: the slider sets the resting value, and a drawn
+  curve overlays it over time.
 - **Per-clip volume shaping.** Draw a volume envelope right on a clip's waveform
   in the Clip Editor to swell, duck, fade in, or fade out, or chop a selected
   range to silence or full volume with hard edges — all non-destructive

@@ -115,6 +115,20 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
     () => redraw()
   )
 
+  // Static Track FX values are the automation lane's resting baseline line, so a
+  // change to Tone / Filter / sends / Compressor must repaint the open lane.
+  watch(
+    () =>
+      project.tracks
+        .map((t) =>
+          [t.toneBassDb, t.toneMidDb, t.toneTrebleDb, t.toneFilter, t.reverbSend, t.delaySend, t.levelerAmount]
+            .map((v) => v ?? 0)
+            .join(',')
+        )
+        .join('|'),
+    () => redraw()
+  )
+
   watch(
     () => project.markers.map((marker) => `${marker.id}:${marker.positionMs}`).join('|'),
     () => redraw()

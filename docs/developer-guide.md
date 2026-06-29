@@ -1739,7 +1739,17 @@ value at the playhead, copy/paste a curve between tracks, and reset to default. 
 already-automated params with a ● dot, and the value editor shows the sign convention (Filter:
 negative = LPF, positive = HPF). Curves are stored on
 each `TRACK` as one `automation` array-of-lanes property (`{ paramId, points: [{ timeMs,
-value }] }`), round-tripped through `PROJECT_STATE` and `.silverdaw`. The backend publishes an
+value }] }`), round-tripped through `PROJECT_STATE` and `.silverdaw`. A lane with no curve shows a
+faint baseline line at the parameter's **static (resting) value**, so the line tracks the live
+Track FX control; the first point you draw starts from that value. A curve that settles flat at
+the static value is treated as a no-op and the lane auto-clears. Each static Track FX
+control (and the header **Pan**) carries a small **A** button that opens that parameter's lane
+(`useFxAutomation`); while a curve owns the value the static control is **disabled**, dimmed, and
+shows an **AUTO** tag, so it is clear the lane is in charge (the static value is the resting
+baseline the curve rides). The keyboard/value nudges snap to the parameter default so 0 / centre
+is always reachable. The lane resizes via a thin middle splitter (redistributes height between
+waveform and lane) and the row's bottom edge (grows both together), clamped to a minimum that
+keeps the readout visible. The backend publishes an
 immutable `TrackAutomationSnapshot` per track (lock-free + retire queue) and samples it on a
 fixed 256-frame control quantum at the block-start transport position, driving the existing
 smoothed targets and snapping on seek/loop/play discontinuities, restoring neutral when a lane

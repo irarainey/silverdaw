@@ -1080,11 +1080,23 @@ though one lane is visible.
 
 Editing reuses the clip-volume breakpoint primitives: click-add, drag-move,
 right-click or Alt-click to delete, Shift snap-to-beat; a selected point
-nudges with arrow keys (Up/Down value, Left/Right time, Alt = fine). Lane
-header controls raise/lower the whole curve, set the value at the playhead,
-copy/paste a curve between tracks, and reset to default; the value scale shows
-min / current / max with a hover tooltip on points. The A button reads
-muted-blue when a collapsed track still has automation.
+nudges with arrow keys (Up/Down value, Left/Right time, Alt = fine, snapping to
+the default so 0 / centre is reachable). Lane header controls raise/lower the
+whole curve, set the value at the playhead, copy/paste a curve between tracks,
+and reset to default; the value scale shows min / current / max with a hover
+tooltip on points. The A button reads muted-blue when a collapsed track still
+has automation.
+
+**Static control relationship (resting value + overlay).** Each parameter has a
+static Track FX value (the slider in the Track FX rack, or the header Pan). With
+no curve that static value plays flat; the lane shows it as a faint baseline
+line and seeds the first point from it. Drawing a curve overlays the same
+parameter and overrides the static value, so the static control is disabled,
+dimmed, and tagged **AUTO**, with a small **A** button on each control to open
+its lane. Flattening a curve back to the static value auto-clears the lane, and
+clearing always restores the static value (sound-preserving). This is
+per-parameter — a track can be part static, part automated. Track **Gain** is
+lane-only (the header fader stays the overall trim).
 
 Backend: `AutomationParam`/`TrackAutomationSnapshot` carry a `BreakpointCurve`
 per param, published lock-free with a retire queue; `BusGraph` samples them at a

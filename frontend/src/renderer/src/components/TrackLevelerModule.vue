@@ -9,6 +9,7 @@
 import { computed, onBeforeUnmount } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useFxGesture } from '@/lib/fx/useFxGesture'
+import { useFxAutomation } from '@/lib/fx/useFxAutomation'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import FxRangeControl from '@/components/FxRangeControl.vue'
 
@@ -16,6 +17,7 @@ const props = defineProps<{ trackId: string }>()
 
 const project = useProjectStore()
 const gesture = useFxGesture('leveler')
+const fxAuto = useFxAutomation(computed(() => props.trackId))
 
 const track = computed(() => project.tracks.find((t) => t.id === props.trackId) ?? null)
 
@@ -76,9 +78,12 @@ onBeforeUnmount(gesture.endGesture)
         :step="0.01"
         assistive-label="Compressor amount"
         title="Double-click to reset to 0%"
+        automatable
+        :automated="fxAuto.isAutomated('leveler')"
         @input="onInput($event)"
         @change="onChange($event)"
         @reset="onReset"
+        @automate="fxAuto.automate('leveler')"
       />
     </div>
   </ClipEffectModule>

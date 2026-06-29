@@ -9,13 +9,16 @@
 import { computed, onBeforeUnmount } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useFxGesture } from '@/lib/fx/useFxGesture'
+import { useFxAutomation } from '@/lib/fx/useFxAutomation'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import FxRangeControl from '@/components/FxRangeControl.vue'
+import type { AutomationParamId } from '@shared/bridge-protocol'
 
 const props = defineProps<{ trackId: string }>()
 
 const project = useProjectStore()
 const gesture = useFxGesture('send')
+const fxAuto = useFxAutomation(computed(() => props.trackId))
 
 const track = computed(() => project.tracks.find((t) => t.id === props.trackId) ?? null)
 
@@ -93,9 +96,12 @@ onBeforeUnmount(gesture.endGesture)
         :step="0.01"
         :assistive-label="send.label + ' send amount'"
         title="Double-click to reset to 0%"
+        automatable
+        :automated="fxAuto.isAutomated(send.key as AutomationParamId)"
         @input="onInput(send, $event)"
         @change="onChange(send, $event)"
         @reset="onReset(send)"
+        @automate="fxAuto.automate(send.key as AutomationParamId)"
       />
     </div>
   </ClipEffectModule>

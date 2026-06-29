@@ -4,6 +4,7 @@
 import { onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Application } from 'pixi.js'
 import { effectiveClipTempoRatio, isClipTempoWarpActive, useProjectStore } from '@/stores/projectStore'
+import { trackStaticAutomationValue } from '@/stores/projectTrackActions'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -159,8 +160,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
 
     let points = (project.tracks[idx]?.automation?.[param] ?? []).map((p) => ({ ...p }))
     if (points.length < 2) {
-      const d = AUTOMATION_PARAMS[param]
-      points = flatCurve(Math.max(1, project.durationMs), d.defaultValue)
+      const track = project.tracks[idx]
+      const baseline = track ? trackStaticAutomationValue(track, param) : AUTOMATION_PARAMS[param].defaultValue
+      points = flatCurve(Math.max(1, project.durationMs), baseline)
     }
     const pps = geometry.pxPerSecond.value
     const hitR = 8

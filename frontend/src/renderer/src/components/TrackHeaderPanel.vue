@@ -11,8 +11,8 @@ import {
   MAX_TRACK_DB,
   taperPositionToLinear
 } from '@/lib/audio/db'
-import { RULER_HEIGHT, AUTOMATION_LANE_HEIGHT } from '@/lib/timeline/constants'
-import { buildTrackRowLayout } from '@/lib/timeline/trackLayout'
+import { RULER_HEIGHT, AUTOMATION_LANE_HEIGHT, MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT } from '@/lib/timeline/constants'
+import { buildTrackRowLayout, trackHeightOf } from '@/lib/timeline/trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import { AUTOMATABLE_PARAM_IDS, AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { sampleBreakpoints } from '@/lib/automation/breakpoints'
@@ -88,12 +88,17 @@ function laneScale(trackId: string): { min: string; cur: string; max: string; cu
   return { min: d.format(d.min), cur: d.format(v), max: d.format(d.max), curVal: v }
 }
 
-/** Nudge the whole curve up (+1) or down (-1) by 5% of the param range. */
+/** Nudge the whole curve up (+1) or down (-1) by 5% of the param range,
+ *  snapping to the default value when a step would otherwise skip over it. */
 function nudgeLane(trackId: string, dir: 1 | -1): void {
   const param = ui.automationLanes[trackId]
   if (!param) return
   const d = AUTOMATION_PARAMS[param]
-  project.shiftTrackAutomation(trackId, param, (d.max - d.min) * 0.05 * dir)
+  const step = (d.max - d.min) * 0.05 * dir
+  const cur = laneScale(trackId).curVal
+  let delta = step
+  if ((cur - d.defaultValue) * (cur + step - d.defaultValue) < 0) delta = d.defaultValue - cur
+  project.shiftTrackAutomation(trackId, param, delta)
 }
 
 /** Hint for the editable value box, naming the sign convention per param. */
@@ -135,6 +140,12 @@ function paramAutomated(trackId: string, pid: AutomationParamId): boolean {
   return Array.isArray(pts) && pts.length >= 2
 }
 
+/** Open a param's automation lane from a static control (Option A link). */
+function automateParam(trackId: string, pid: AutomationParamId): void {
+  project.selectTrack(trackId)
+  ui.setTrackAutomationLane(trackId, ui.automationLanes[trackId] === pid ? null : pid)
+}
+
 /** Reset the visible param's curve to its default (clears all breakpoints). */
 function resetAutomation(trackId: string): void {
   const param = ui.automationLanes[trackId]
@@ -160,25 +171,65 @@ function pasteAutomation(trackId: string): void {
   })))
 }
 
-/** Drag the clip/lane boundary to resize the automation lane. */
-let laneResize: { trackId: string; startY: number; startH: number } | null = null
-function onLaneHandlePointerDown(trackId: string, ev: PointerEvent): void {
+// ─── Lane resize: middle splitter + bottom-edge (both) ────────────────────
+// `clip` = waveform height (trackHeightOf / setTrackHeight); `lane` =
+// ui.automationLaneHeights. The middle handle redistributes between them
+// (total constant); the bottom edge grows/shrinks both together.
+let laneResize:
+  | { trackId: string; startY: number; startClip: number; startLane: number; mode: 'split' | 'both'; moved: boolean }
+  | null = null
+
+function laneHeightOfTrack(trackId: string): number {
+  return ui.automationLaneHeights[trackId] ?? AUTOMATION_LANE_HEIGHT
+}
+
+function beginLaneResize(trackId: string, mode: 'split' | 'both', ev: PointerEvent): void {
   if (ev.button !== 0) return
   ev.preventDefault()
   ev.stopPropagation()
-  laneResize = { trackId, startY: ev.clientY, startH: ui.automationLaneHeights[trackId] ?? AUTOMATION_LANE_HEIGHT }
-  window.addEventListener('pointermove', onLaneHandleMove)
-  window.addEventListener('pointerup', onLaneHandleUp)
+  const track = project.tracks.find((t) => t.id === trackId)
+  if (!track) return
+  laneResize = {
+    trackId,
+    startY: ev.clientY,
+    startClip: trackHeightOf(track),
+    startLane: laneHeightOfTrack(trackId),
+    mode,
+    moved: false
+  }
+  window.addEventListener('pointermove', onLaneResizeMove)
+  window.addEventListener('pointerup', onLaneResizeUp)
+  window.addEventListener('pointercancel', onLaneResizeUp)
 }
-function onLaneHandleMove(ev: PointerEvent): void {
+
+function onLaneResizeMove(ev: PointerEvent): void {
   if (!laneResize) return
-  // Dragging up grows the lane (shrinks the waveform).
-  ui.setTrackAutomationLaneHeight(laneResize.trackId, laneResize.startH - (ev.clientY - laneResize.startY))
+  const dy = ev.clientY - laneResize.startY
+  if (!laneResize.moved && Math.abs(dy) < 1) return
+  laneResize.moved = true
+  if (laneResize.mode === 'split') {
+    // Drag down → waveform grows, lane shrinks (move the boundary with the cursor).
+    const clip = Math.max(MIN_TRACK_HEIGHT, Math.min(MAX_TRACK_HEIGHT, Math.round(laneResize.startClip + dy)))
+    project.setTrackHeightLocal(laneResize.trackId, clip)
+    ui.setTrackAutomationLaneHeight(laneResize.trackId, laneResize.startLane - dy)
+  } else {
+    // Bottom edge → both grow/shrink equally with the drag.
+    const half = dy / 2
+    const clip = Math.max(MIN_TRACK_HEIGHT, Math.min(MAX_TRACK_HEIGHT, Math.round(laneResize.startClip + half)))
+    project.setTrackHeightLocal(laneResize.trackId, clip)
+    ui.setTrackAutomationLaneHeight(laneResize.trackId, laneResize.startLane + half)
+  }
 }
-function onLaneHandleUp(): void {
+
+function onLaneResizeUp(): void {
+  window.removeEventListener('pointermove', onLaneResizeMove)
+  window.removeEventListener('pointerup', onLaneResizeUp)
+  window.removeEventListener('pointercancel', onLaneResizeUp)
+  const drag = laneResize
   laneResize = null
-  window.removeEventListener('pointermove', onLaneHandleMove)
-  window.removeEventListener('pointerup', onLaneHandleUp)
+  if (!drag || !drag.moved) return
+  const t = project.tracks.find((x) => x.id === drag.trackId)
+  if (t) project.setTrackHeight(drag.trackId, trackHeightOf(t)) // commit clip height once
 }
 
 // ─── Resize-handle drag ───────────────────────────────────────────────────
@@ -196,7 +247,7 @@ function onHeaderClick(track: { id: string }, ev: MouseEvent): void {
   const target = ev.target as HTMLElement | null
   if (
     target?.closest(
-      'button, input, a, [role="slider"], .track-grip, .track-resize-handle, .track-volume-slider'
+      'button, input, select, a, [role="slider"], .track-grip, .track-resize-handle, .track-volume-slider'
     )
   ) {
     return
@@ -438,9 +489,11 @@ function isTrackFxShowing(trackId: string): boolean {
                 max="1"
                 step="0.01"
                 :value="track.pan ?? 0"
-                :title="'Pan ' + panDisplay(track.pan) + ' — double-click to centre'"
+                :title="paramAutomated(track.id, 'pan') ? 'Automated over the timeline — edit the lane to change pan' : ('Pan ' + panDisplay(track.pan) + ' — double-click to centre')"
                 aria-label="Track pan"
-                class="track-pan h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
+                class="track-pan h-1 min-w-0 flex-1 appearance-none rounded-full bg-zinc-700"
+                :class="paramAutomated(track.id, 'pan') ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'"
+                :disabled="paramAutomated(track.id, 'pan')"
                 @input="(e) => onPanInput(track.id, Number((e.target as HTMLInputElement).value))"
                 @change="(e) => onPanChange(track.id, Number((e.target as HTMLInputElement).value))"
                 @dblclick.stop="onPanReset(track.id)"
@@ -448,6 +501,20 @@ function isTrackFxShowing(trackId: string): boolean {
               <span class="w-10 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-500">
                 {{ panDisplay(track.pan) }}
               </span>
+              <button
+                type="button"
+                class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border text-[8px] font-bold leading-none transition-colors"
+                :class="paramAutomated(track.id, 'pan')
+                  ? 'border-sky-400 bg-sky-500 text-zinc-950'
+                  : ui.automationLanes[track.id] === 'pan'
+                    ? 'border-sky-500 bg-zinc-800 text-sky-300'
+                    : 'border-zinc-600 bg-zinc-800 text-zinc-400 hover:border-sky-500 hover:text-sky-300'"
+                :title="ui.automationLanes[track.id] === 'pan' ? 'Editing pan automation lane' : 'Automate pan over the timeline'"
+                aria-label="Automate pan"
+                @click="automateParam(track.id, 'pan')"
+              >
+                A
+              </button>
             </div>
           </div>
 
@@ -573,6 +640,7 @@ function isTrackFxShowing(trackId: string): boolean {
             height: ((rowLayout[i]?.height ?? 0) - (rowLayout[i]?.clipHeight ?? 0)) + 'px',
             width: headerWidth + 'px'
           }"
+          @click="onHeaderClick(track, $event)"
         >
           <div class="mb-1.5 flex items-center gap-1">
             <select
@@ -706,8 +774,8 @@ function isTrackFxShowing(trackId: string): boolean {
               </svg>
             </button>
           </div>
-          <div class="flex flex-1 items-center justify-between text-[9px] leading-none text-zinc-400">
-            <div class="flex h-full flex-col justify-between py-1.5">
+          <div class="flex items-start text-[9px] leading-none text-zinc-400">
+            <div class="flex flex-col gap-1">
               <span>{{ laneScale(track.id).max }}</span>
               <input
                 v-if="editingLaneTrackId === track.id"
@@ -717,14 +785,14 @@ function isTrackFxShowing(trackId: string): boolean {
                 autofocus
                 :title="editHint(track.id)"
                 :placeholder="editHint(track.id)"
-                class="my-1 w-16 rounded border border-sky-500 bg-zinc-950 px-1 text-[10px] text-sky-200 outline-none"
+                class="w-16 rounded border border-sky-500 bg-zinc-950 px-1 text-[10px] text-sky-200 outline-none"
                 @keydown.enter.prevent="commitEditValue(track.id)"
                 @keydown.esc.prevent="editingLaneTrackId = null"
                 @blur="commitEditValue(track.id)"
               >
               <span
                 v-else
-                class="my-1.5 cursor-text text-sky-300"
+                class="cursor-text text-sky-300"
                 :title="'Double-click to set the value at the playhead. ' + editHint(track.id)"
                 @dblclick="startEditValue(track.id)"
               >{{ laneScale(track.id).cur }}</span>
@@ -733,22 +801,24 @@ function isTrackFxShowing(trackId: string): boolean {
           </div>
         </div>
 
-        <!-- Resize handle between clips and the lane (waveform vs effect split). -->
+        <!-- Middle splitter: redistributes height between waveform and lane. A
+             persistent divider line shows where to grab. -->
         <div
           v-for="(track, i) in project.tracks"
           v-show="ui.automationLanes[track.id]"
           :key="'lh-' + track.id"
-          class="track-resize-handle pointer-events-auto absolute left-0"
+          class="track-resize-handle lane-split-handle pointer-events-auto absolute left-0"
           :style="{
             top: ((rowLayout[i]?.top ?? 0) + (rowLayout[i]?.clipHeight ?? 0) - RULER_HEIGHT - Math.floor(HANDLE_PX / 2)) + 'px',
             height: HANDLE_PX + 'px',
             width: headerWidth + 'px'
           }"
-          title="Drag to resize the automation lane"
-          @pointerdown="onLaneHandlePointerDown(track.id, $event)"
+          title="Drag to resize the waveform vs the automation lane"
+          @pointerdown="beginLaneResize(track.id, 'split', $event)"
         />
 
-        <!-- Resize handles straddle row gaps for a larger hit zone. -->
+        <!-- Bottom edge: resize the whole row. When a lane is open this grows /
+             shrinks the waveform and the lane together; otherwise just the track. -->
         <div
           v-for="(track, i) in project.tracks"
           :key="'rh-' + track.id"
@@ -759,7 +829,7 @@ function isTrackFxShowing(trackId: string): boolean {
             width: headerWidth + 'px'
           }"
           :title="'Drag to resize track \u2014 ' + Math.round(rowLayout[i]?.height ?? 0) + 'px'"
-          @pointerdown="onHandlePointerDown(track, $event)"
+          @pointerdown="ui.automationLanes[track.id] ? beginLaneResize(track.id, 'both', $event) : onHandlePointerDown(track, $event)"
         />
 
         <!-- Drop indicator for the current reorder slot. -->
@@ -870,6 +940,27 @@ function isTrackFxShowing(trackId: string): boolean {
 }
 .track-resize-handle:active {
   background: rgba(244, 244, 245, 0.6); /* zinc-100 while dragging */
+}
+
+/* Thin persistent divider centred in the hit strip so the waveform/lane split
+   is an obvious but unobtrusive grab target. */
+.lane-split-handle {
+  background: linear-gradient(
+    to bottom,
+    transparent 2px,
+    rgba(82, 82, 91, 0.85) 2px,
+    rgba(82, 82, 91, 0.85) 3px,
+    transparent 3px
+  );
+}
+.lane-split-handle:hover {
+  background: linear-gradient(
+    to bottom,
+    transparent 1px,
+    rgba(56, 189, 248, 0.75) 1px,
+    rgba(56, 189, 248, 0.75) 4px,
+    transparent 4px
+  );
 }
 
 /* Drop indicator for the current reorder slot. */

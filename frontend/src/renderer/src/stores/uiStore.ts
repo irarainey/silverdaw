@@ -305,11 +305,11 @@ export const useUiStore = defineStore('ui', {
       this.automationLanes = next
     },
 
-    /** Resize a track's automation lane (clamped). */
+    /** Resize a track's automation lane (clamped so the readout always fits). */
     setTrackAutomationLaneHeight(trackId: string, heightPx: number): void {
       this.automationLaneHeights = {
         ...this.automationLaneHeights,
-        [trackId]: Math.max(48, Math.min(220, Math.round(heightPx)))
+        [trackId]: Math.max(76, Math.min(220, Math.round(heightPx)))
       }
     },
 

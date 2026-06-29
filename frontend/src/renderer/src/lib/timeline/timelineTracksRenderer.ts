@@ -4,6 +4,7 @@
 import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics } from 'pixi.js'
 import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
+import { trackStaticAutomationValue } from '@/stores/projectTrackActions'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import {
@@ -215,7 +216,8 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
         const G = GraphicsCtor.value
         if (tracks && G) {
           drawAutomationLane(tracks, G, laneParam, track.automation?.[laneParam], worldY, clipHeight,
-                             headerW, pxPerSecond.value, worldRowRight)
+                             headerW, pxPerSecond.value, worldRowRight,
+                             trackStaticAutomationValue(track, laneParam))
         }
       }
     }

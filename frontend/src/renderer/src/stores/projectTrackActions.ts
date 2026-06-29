@@ -197,7 +197,20 @@ export const trackActions = {
       const d = AUTOMATION_PARAMS[paramId]
       if (!d) return
       const cleaned = sanitizeBreakpoints(points, { min: d.min, max: d.max })
-      const next = cleaned.length >= 2 ? cleaned : undefined
+
+      // A curve that has settled flat at the track's resting (static) value is a
+      // no-op overlay — drop it so the lane/indicator clears and the static
+      // control takes over (e.g. flattening pan back to centre). Only on a
+      // settled edit (discrete change or gesture end), never mid-drag.
+      let effective = cleaned
+      const settled = !opts?.gestureId || opts?.gestureEnd === true
+      if (settled && effective.length >= 2) {
+        const baseline = trackStaticAutomationValue(track, paramId)
+        const tol = Math.max(1e-4, (d.max - d.min) * 1e-3)
+        const flat = effective.every((p) => Math.abs(p.value - effective[0]!.value) <= tol)
+        if (flat && Math.abs(effective[0]!.value - baseline) <= tol) effective = []
+      }
+      const next = effective.length >= 2 ? effective : undefined
 
       const map = track.automation ? { ...track.automation } : {}
       if (next) map[paramId] = next
@@ -209,7 +222,7 @@ export const trackActions = {
         sendBridge('TRACK_SET_AUTOMATION', {
           trackId,
           paramId,
-          points: cleaned,
+          points: effective,
           gestureId: opts?.gestureId,
           gestureEnd: opts?.gestureEnd
         })
@@ -287,14 +300,17 @@ export const trackActions = {
       })
     },
 
-    /** Nudge one breakpoint by time/value deltas (keyboard fine-edit). */
+    /** Nudge one breakpoint by time/value deltas (keyboard fine-edit). A value
+     *  nudge snaps to the parameter default when it would otherwise step past it. */
     nudgeAutomationPoint(trackId: string, paramId: AutomationParamId, index: number, dTimeMs: number, dValue: number): void {
       const track = this.tracks.find((t) => t.id === trackId)
       const pts = track?.automation?.[paramId]
       if (!pts || index < 0 || index >= pts.length) return
       const d = AUTOMATION_PARAMS[paramId]
       const p = pts[index]!
-      const next = moveBreakpoint(pts.map((q) => ({ ...q })), index, p.timeMs + dTimeMs, p.value + dValue, { min: d.min, max: d.max })
+      let value = p.value + dValue
+      if (dValue !== 0 && (p.value - d.defaultValue) * (value - d.defaultValue) < 0) value = d.defaultValue
+      const next = moveBreakpoint(pts.map((q) => ({ ...q })), index, p.timeMs + dTimeMs, value, { min: d.min, max: d.max })
       this.setTrackAutomation(trackId, paramId, next)
     },
 

@@ -46,13 +46,16 @@ export function drawAutomationLane(
   clipHeight: number,
   headerWidth: number,
   pxPerSecond: number,
-  rightEdgePx: number
+  rightEdgePx: number,
+  baselineValue: number
 ): void {
   const { top, bottom } = laneRegion(worldY, clipHeight)
   // Thin divider separating clips from the lane (no solid background).
   const chrome = new G()
   chrome.moveTo(headerWidth, top).lineTo(rightEdgePx, top).stroke({ color: AUTOMATION_LANE_BG, width: 1, alpha: 0.9 })
-  const restY = valueToLaneY(paramId, automationDescriptor(paramId).defaultValue, top)
+  // Faint guide line at the parameter's resting (static FX) value, so a lane
+  // with no curve reflects the live track value rather than a fixed default.
+  const restY = valueToLaneY(paramId, baselineValue, top)
   chrome.moveTo(headerWidth, restY).lineTo(rightEdgePx, restY).stroke({ color: AUTOMATION_LINE, width: 1, alpha: 0.2 })
   layer.addChild(chrome)
 

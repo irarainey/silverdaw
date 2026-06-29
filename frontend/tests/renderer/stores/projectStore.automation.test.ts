@@ -170,12 +170,33 @@ describe('projectStore — setTrackAutomation', () => {
     seedTrack(project)
     project.setTrackAutomation('t1', 'filter', [
       { timeMs: 0, value: 0 },
-      { timeMs: 500, value: 0 },
+      { timeMs: 500, value: 0.2 },
       { timeMs: 1000, value: 0 }
     ])
     project.nudgeAutomationPoint('t1', 'filter', 1, 50, 5) // value clamps to max 1
     const lane = project.tracks[0]!.automation?.filter
     expect(lane?.[1]?.timeMs).toBe(550)
     expect(lane?.[1]?.value).toBe(1)
+  })
+
+  it('clears the lane when a curve settles flat at the static resting value', () => {
+    const project = useProjectStore()
+    seedTrack(project) // toneFilter unset -> static filter resting value is 0
+    project.setTrackAutomation('t1', 'filter', [
+      { timeMs: 0, value: 0 },
+      { timeMs: 1000, value: 0 }
+    ])
+    expect(project.tracks[0]!.automation?.filter).toBeUndefined()
+  })
+
+  it('keeps a flat curve that differs from the static resting value', () => {
+    const project = useProjectStore()
+    seedTrack(project)
+    project.tracks[0]!.toneBassDb = 0 // static bass resting = 0
+    project.setTrackAutomation('t1', 'toneBass', [
+      { timeMs: 0, value: 6 },
+      { timeMs: 1000, value: 6 }
+    ])
+    expect(project.tracks[0]!.automation?.toneBass).toHaveLength(2)
   })
 })

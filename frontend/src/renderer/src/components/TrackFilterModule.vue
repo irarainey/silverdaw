@@ -11,6 +11,7 @@
 import { computed, onBeforeUnmount } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useFxGesture } from '@/lib/fx/useFxGesture'
+import { useFxAutomation } from '@/lib/fx/useFxAutomation'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import FxRangeControl from '@/components/FxRangeControl.vue'
 
@@ -18,6 +19,7 @@ const props = defineProps<{ trackId: string }>()
 
 const project = useProjectStore()
 const gesture = useFxGesture('filter')
+const fxAuto = useFxAutomation(computed(() => props.trackId))
 
 const track = computed(() => project.tracks.find((t) => t.id === props.trackId) ?? null)
 
@@ -85,9 +87,12 @@ onBeforeUnmount(gesture.endGesture)
         :step="0.01"
         assistive-label="Filter sweep, low-pass left to high-pass right"
         title="Double-click to recentre (off)"
+        automatable
+        :automated="fxAuto.isAutomated('filter')"
         @input="onInput($event)"
         @change="onChange($event)"
         @reset="onReset"
+        @automate="fxAuto.automate('filter')"
       />
       <div class="flex justify-between px-0.5 text-[9px] uppercase tracking-wider text-zinc-600">
         <span>LPF</span>

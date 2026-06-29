@@ -9,22 +9,26 @@
 import { computed, onBeforeUnmount } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useFxGesture } from '@/lib/fx/useFxGesture'
+import { useFxAutomation } from '@/lib/fx/useFxAutomation'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import FxRangeControl from '@/components/FxRangeControl.vue'
+import type { AutomationParamId } from '@shared/bridge-protocol'
 
 const props = defineProps<{ trackId: string }>()
 
 const project = useProjectStore()
 const gesture = useFxGesture('tone')
+const fxAuto = useFxAutomation(computed(() => props.trackId))
 
 const track = computed(() => project.tracks.find((t) => t.id === props.trackId) ?? null)
 
 // `key` is the `setTrackTone` patch field; `prop` is the (default-
-// suppressed) store property holding the persisted dB value.
+// suppressed) store property holding the persisted dB value; `param` is the
+// automation lane id for the same band.
 const TONE_BANDS = [
-  { key: 'bassDb', prop: 'toneBassDb', label: 'Bass' },
-  { key: 'midDb', prop: 'toneMidDb', label: 'Mid' },
-  { key: 'trebleDb', prop: 'toneTrebleDb', label: 'Treble' }
+  { key: 'bassDb', prop: 'toneBassDb', label: 'Bass', param: 'toneBass' },
+  { key: 'midDb', prop: 'toneMidDb', label: 'Mid', param: 'toneMid' },
+  { key: 'trebleDb', prop: 'toneTrebleDb', label: 'Treble', param: 'toneTreble' }
 ] as const
 
 type ToneBand = (typeof TONE_BANDS)[number]
@@ -95,9 +99,12 @@ onBeforeUnmount(gesture.endGesture)
         :step="0.5"
         :assistive-label="band.label + ' gain in decibels'"
         title="Double-click to reset to 0 dB"
+        automatable
+        :automated="fxAuto.isAutomated(band.param as AutomationParamId)"
         @input="onInput(band, $event)"
         @change="onChange(band, $event)"
         @reset="onReset(band)"
+        @automate="fxAuto.automate(band.param as AutomationParamId)"
       />
     </div>
   </ClipEffectModule>
