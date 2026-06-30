@@ -141,13 +141,17 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   })
 
   // ─── Optional Mel-Band RoFormer "Vocal Quality Pack" ────────────────────────
-  const vocalPackDir = join(app.getPath('userData'), 'models', MEL_BAND_ROFORMER_MANIFEST.id)
-  const vocalPackStore = (): ModelStore =>
-    new ModelStore({ manifest: MEL_BAND_ROFORMER_MANIFEST, modelDir: vocalPackDir })
+  const vocalPackManagedDir = join(app.getPath('userData'), 'models', MEL_BAND_ROFORMER_MANIFEST.id)
+  // A located override directory (a user-supplied / manually-placed copy) wins;
+  // otherwise the app-managed download location is used. Resolved per call.
+  const effectiveVocalPackDir = (): string =>
+    sanitiseStemModelDir(prefs.get().paths.vocalPackDir) ?? vocalPackManagedDir
+  const vocalPackStoreFor = (dir: string): ModelStore =>
+    new ModelStore({ manifest: MEL_BAND_ROFORMER_MANIFEST, modelDir: dir })
   let activePackDownload: AbortController | null = null
 
   ipcMain.handle(IPC.stems.getVocalPackState, async (): Promise<StemModelState> => {
-    const state = await vocalPackStore().readInstallState()
+    const state = await vocalPackStoreFor(effectiveVocalPackDir()).readInstallState()
     return {
       installed: state.installed,
       presentBytes: state.presentBytes,
@@ -159,8 +163,9 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   // Resolve the installed core .onnx path for the separation request (the backend
   // loads its sibling .onnx.data automatically). Empty string when not installed.
   ipcMain.handle(IPC.stems.getVocalPackPath, async (): Promise<string> => {
-    const state = await vocalPackStore().readInstallState()
-    return state.installed ? join(vocalPackDir, ROFORMER_CORE_FILENAME) : ''
+    const dir = effectiveVocalPackDir()
+    const state = await vocalPackStoreFor(dir).readInstallState()
+    return state.installed ? join(dir, ROFORMER_CORE_FILENAME) : ''
   })
 
   ipcMain.handle(IPC.stems.ensureVocalPack, async (): Promise<EnsureStemModelResult> => {
@@ -170,12 +175,18 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
     const controller = new AbortController()
     activePackDownload = controller
     try {
-      await vocalPackStore().ensureDownloaded((progress) => {
+      // Download always targets the app-managed location; a successful fetch makes
+      // it authoritative, so any stale located override is cleared.
+      await vocalPackStoreFor(vocalPackManagedDir).ensureDownloaded((progress) => {
         const win = ctx.getMainWindow()
         if (win && !win.isDestroyed()) {
           win.webContents.send(IPC.stems.vocalPackDownloadProgress, progress)
         }
       }, controller.signal)
+      if (prefs.get().paths.vocalPackDir !== undefined) {
+        prefs.get().paths.vocalPackDir = undefined
+        prefs.flushSaveSync()
+      }
       return { ok: true }
     } catch (err) {
       if (err instanceof ModelDownloadError) {
@@ -187,18 +198,38 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
     }
   })
 
+  // Validate a user-supplied folder against the manifest; on success stamp it
+  // with the revision sentinel and persist it as the vocal-pack override dir.
+  ipcMain.handle(
+    IPC.stems.locateVocalPack,
+    async (_evt, dir: unknown): Promise<LocateStemModelResult> => {
+      const candidate = sanitiseStemModelDir(dir)
+      if (!candidate) return { ok: false, error: 'No folder was selected.' }
+      try {
+        await vocalPackStoreFor(candidate).adoptDirectory(candidate)
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+      prefs.get().paths.vocalPackDir = candidate
+      prefs.flushSaveSync()
+      return { ok: true, directory: candidate }
+    }
+  )
+
   ipcMain.on(IPC.stems.cancelVocalPackDownload, () => {
     activePackDownload?.abort()
   })
 
   // ─── Optional 4-stem BS-RoFormer "Rhythm Quality Pack" ──────────────────────
-  const rhythmPackDir = join(app.getPath('userData'), 'models', BS_ROFORMER_RHYTHM_MANIFEST.id)
-  const rhythmPackStore = (): ModelStore =>
-    new ModelStore({ manifest: BS_ROFORMER_RHYTHM_MANIFEST, modelDir: rhythmPackDir })
+  const rhythmPackManagedDir = join(app.getPath('userData'), 'models', BS_ROFORMER_RHYTHM_MANIFEST.id)
+  const effectiveRhythmPackDir = (): string =>
+    sanitiseStemModelDir(prefs.get().paths.rhythmPackDir) ?? rhythmPackManagedDir
+  const rhythmPackStoreFor = (dir: string): ModelStore =>
+    new ModelStore({ manifest: BS_ROFORMER_RHYTHM_MANIFEST, modelDir: dir })
   let activeRhythmDownload: AbortController | null = null
 
   ipcMain.handle(IPC.stems.getRhythmPackState, async (): Promise<StemModelState> => {
-    const state = await rhythmPackStore().readInstallState()
+    const state = await rhythmPackStoreFor(effectiveRhythmPackDir()).readInstallState()
     return {
       installed: state.installed,
       presentBytes: state.presentBytes,
@@ -210,8 +241,9 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   // Resolve the installed core .onnx path for the separation request (a single
   // self-contained graph — no sibling .data). Empty string when not installed.
   ipcMain.handle(IPC.stems.getRhythmPackPath, async (): Promise<string> => {
-    const state = await rhythmPackStore().readInstallState()
-    return state.installed ? join(rhythmPackDir, RHYTHM_CORE_FILENAME) : ''
+    const dir = effectiveRhythmPackDir()
+    const state = await rhythmPackStoreFor(dir).readInstallState()
+    return state.installed ? join(dir, RHYTHM_CORE_FILENAME) : ''
   })
 
   ipcMain.handle(IPC.stems.ensureRhythmPack, async (): Promise<EnsureStemModelResult> => {
@@ -221,12 +253,16 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
     const controller = new AbortController()
     activeRhythmDownload = controller
     try {
-      await rhythmPackStore().ensureDownloaded((progress) => {
+      await rhythmPackStoreFor(rhythmPackManagedDir).ensureDownloaded((progress) => {
         const win = ctx.getMainWindow()
         if (win && !win.isDestroyed()) {
           win.webContents.send(IPC.stems.rhythmPackDownloadProgress, progress)
         }
       }, controller.signal)
+      if (prefs.get().paths.rhythmPackDir !== undefined) {
+        prefs.get().paths.rhythmPackDir = undefined
+        prefs.flushSaveSync()
+      }
       return { ok: true }
     } catch (err) {
       if (err instanceof ModelDownloadError) {
@@ -237,6 +273,24 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
       activeRhythmDownload = null
     }
   })
+
+  // Validate a user-supplied folder against the manifest; on success stamp it
+  // with the revision sentinel and persist it as the rhythm-pack override dir.
+  ipcMain.handle(
+    IPC.stems.locateRhythmPack,
+    async (_evt, dir: unknown): Promise<LocateStemModelResult> => {
+      const candidate = sanitiseStemModelDir(dir)
+      if (!candidate) return { ok: false, error: 'No folder was selected.' }
+      try {
+        await rhythmPackStoreFor(candidate).adoptDirectory(candidate)
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+      prefs.get().paths.rhythmPackDir = candidate
+      prefs.flushSaveSync()
+      return { ok: true, directory: candidate }
+    }
+  )
 
   ipcMain.on(IPC.stems.cancelRhythmPackDownload, () => {
     activeRhythmDownload?.abort()

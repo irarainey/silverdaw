@@ -1145,18 +1145,31 @@ The OS busy cursor stays in its `progress` state through these stages.
 
 ## Stem separation
 
-Stem separation splits a track into **vocals, drums, bass and other** using the
-MIT-licensed `htdemucs-ft` ONNX export (a "bag" of four specialist models, one per
-source) run through ONNX Runtime in the backend (`OnnxStemSeparator.cpp`). ONNX
-Runtime is fetched and bundled via CMake (`onnxruntime.dll` ships beside the
-backend); the ~1.2 GB model weights are **not** shipped — the Electron main
-process (`src/main/stems/`, a pinned manifest + a dependency-injected `ModelStore`)
-downloads them on first use, verifies each file's SHA-256 + size, and commits
-atomically.
+Stem separation splits a track into **vocals, drums, bass and other**. The
+primary engine is a pair of optional MIT-licensed **RoFormer quality models** — a
+Mel-Band RoFormer for vocals and a 4-stem BS-RoFormer for drums/bass (see below)
+— which are downloaded once and then used automatically. The MIT-licensed
+`htdemucs-ft` ONNX export (a "bag" of four specialist models, one per source, run
+through ONNX Runtime in the backend, `OnnxStemSeparator.cpp`) is the **backup**:
+it is used per stem only when that stem's quality model isn't installed (or the
+user forces the backup via `stems.useBackupModel`), and it is the zero-config
+path fetched on first use when no quality models are present. ONNX Runtime is
+fetched and bundled via CMake (`onnxruntime.dll` ships beside the backend); the
+model weights (htdemucs ~1.2 GB; the quality packs ~1 GB together) are **not**
+shipped — the Electron main process (`src/main/stems/`, pinned manifests + a
+dependency-injected `ModelStore`) downloads them on demand, verifies each file's
+SHA-256 + size, and commits atomically.
 
-Each specialist model processes fixed 7.8 s stereo segments with a
+A fully pack-covered run needs no htdemucs weights on disk at all: the backend
+only validates the htdemucs files for stems it will actually produce with the
+backup, and `other` is the residual `mixture − (vocals + drums + bass)` whenever
+all four stems are produced.
+
+Each htdemucs specialist model processes fixed 7.8 s stereo segments with a
 quality-selectable overlap (**Fast / Balanced / Best** → 0.10 / 0.25 / 0.50,
-sent as `quality` on `STEM_SEPARATE`) and triangular-window weighted overlap-add.
+sent as `quality` on `STEM_SEPARATE`) and triangular-window weighted overlap-add;
+the same preset overlap now also drives the RoFormer packs' chunk stride, so the
+Fast/Balanced/Best knob is a real speed/quality control on either engine.
 "Best" also applies **vocal test-time augmentation** (the demucs `shifts` trick,
 4 deterministic time-shifts averaged — vocals only, so ~2× cost) to cut the
 "watery"/phase artefacts. When all four stems are requested the `other` model run
@@ -1173,32 +1186,33 @@ pitched instrument bleed the broadband denoiser can't, then RNNoise + a sub-bass
 high-pass/expander. Objective tuning uses the `SilverdawStemEval` dev tool
 (SI-SDR/SDR vs a reference stem).
 
-**Optional Vocal Quality Pack** (opt-in, downloaded separately): a higher-quality
-**Mel-Band RoFormer** vocal model (MIT; `MelRoformerVocals` + the host-side STFT
-engine `MelRoformerSpectral`, run through the same ONNX Runtime). When the pack is
-installed and `stems.useVocalPack` is on, the renderer passes its `.onnx` path as
-`roformerModelPath`; the backend then produces **vocals** with it (drums/bass stay
-htdemucs on the original mix, `other` stays the residual), so it's a drop-in
-vocal-quality upgrade with htdemucs fallback when absent. The host pipeline (STFT
-n_fft 2048 / hop 441, complex-mask multiply, iSTFT, 11 s-chunk overlap-add) is
-unit-tested by an identity-mask round-trip and was validated end-to-end against a
-numpy reference of the model's reference WebGPU host.
+**Vocal Quality Pack** (primary vocal engine, downloaded separately): a
+higher-quality **Mel-Band RoFormer** vocal model (MIT; `MelRoformerVocals` + the
+host-side STFT engine `MelRoformerSpectral`, run through the same ONNX Runtime).
+When the pack is installed it is used **automatically** (unless
+`stems.useBackupModel` forces htdemucs): the renderer passes its `.onnx` path as
+`roformerModelPath` and the backend produces **vocals** with it (drums/bass come
+from the rhythm pack, `other` stays the residual). The host pipeline (STFT
+n_fft 2048 / hop 441, complex-mask multiply, iSTFT, preset-driven chunk overlap)
+is unit-tested by an identity-mask round-trip and was validated end-to-end
+against a numpy reference of the model's reference WebGPU host. htdemucs is the
+backup when the pack is absent.
 
-**Optional Rhythm Quality Pack** (opt-in, downloaded separately): a higher-quality
-4-stem **BS-RoFormer** model (MIT — an export of ZFTurbo's MUSDB18-HQ checkpoint;
-`BsRoformerRhythm` + the host-side STFT engine `BsRoformerSpectral`, run through
-the same ONNX Runtime). When the pack is installed and `stems.useRhythmPack` is
-on, the renderer passes its `.onnx` path as `rhythmModelPath`; the backend then
-produces **drums and bass** with it (one model run extracts both; vocals stay
-htdemucs or the vocal pack, `other` stays the residual), so it composes with the
-vocal pack into a fully RoFormer hybrid with htdemucs fallback when absent. The
-model applies its mask in-graph and returns the masked per-stem spectrogram (the
-host runs STFT n_fft 2048 / hop 441 and per-stem iSTFT, 8 s-chunk overlap-add);
-it is exported at an 8 s window (the largest that fits a modest GPU's VRAM) and
-the runner transparently retries on the CPU provider if DirectML runs out of
-memory. The host pipeline is unit-tested by an identity round-trip, and the C++
-runner was validated end-to-end against a numpy reference (drums/bass RMS matched
-to four decimals).
+**Rhythm Quality Pack** (primary drums/bass engine, downloaded separately): a
+higher-quality 4-stem **BS-RoFormer** model (MIT — an export of ZFTurbo's
+MUSDB18-HQ checkpoint; `BsRoformerRhythm` + the host-side STFT engine
+`BsRoformerSpectral`, run through the same ONNX Runtime). When installed it is
+used **automatically** (unless the backup is forced): the renderer passes its
+`.onnx` path as `rhythmModelPath` and the backend produces **drums and bass**
+with it (one model run extracts both; vocals come from the vocal pack, `other`
+stays the residual), composing with the vocal pack into a fully RoFormer hybrid.
+The model applies its mask in-graph and returns the masked per-stem spectrogram
+(the host runs STFT n_fft 2048 / hop 441 and per-stem iSTFT, preset-driven chunk
+overlap); it is exported at an 8 s window (the largest that fits a modest GPU's
+VRAM) and the runner transparently retries on the CPU provider if DirectML runs
+out of memory. The host pipeline is unit-tested by an identity round-trip, and
+the C++ runner was validated end-to-end against a numpy reference (drums/bass RMS
+matched to four decimals). htdemucs is the backup when the pack is absent.
 
 GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
 Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`

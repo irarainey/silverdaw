@@ -278,8 +278,42 @@ class OnnxStemSeparator : public StemSeparator
     {
         onProgress("prepare", 0.0, "");
 
+        // Which engine produces each stem. The optional RoFormer quality packs are
+        // the primary engine when installed: vocals come from the vocal pack and
+        // drums/bass from the 4-stem rhythm pack. htdemucs is the BACKUP — used per
+        // stem only when that stem's pack is absent (or the renderer withheld it
+        // because the user forced the backup model). `other` is the residual
+        // mixture - (vocals + drums + bass) whenever all four stems are produced.
+        const bool haveVocalPack = request.roformerModelFile != juce::File() &&
+                                   request.roformerModelFile.existsAsFile();
+        const bool haveRhythmPack = request.rhythmModelFile != juce::File() &&
+                                    request.rhythmModelFile.existsAsFile();
+        const auto isSelected = [&request](const char* stem)
+        {
+            if (request.stems.empty()) return true;
+            return std::find(request.stems.begin(), request.stems.end(), juce::String(stem)) !=
+                   request.stems.end();
+        };
+        const bool allFourSelected = isSelected("vocals") && isSelected("drums") &&
+                                     isSelected("bass") && isSelected("other");
+
+        // True when this stem will be produced by the htdemucs backup (so its
+        // weight file must be present). `other` is covered by the residual when
+        // all four stems are produced, so it only needs htdemucs on a partial
+        // selection that still includes `other`.
+        const auto stemUsesBackup = [&](const juce::String& s)
+        {
+            if (s == "vocals") return ! haveVocalPack;
+            if (s == "drums" || s == "bass") return ! haveRhythmPack;
+            if (s == "other") return ! allFourSelected;
+            return true;
+        };
+
+        // Validate only the htdemucs weights actually needed: a fully pack-covered
+        // run requires no htdemucs model on disk at all.
         for (const auto* stem : kStemNames)
         {
+            if (! isSelected(stem) || ! stemUsesBackup(juce::String(stem))) continue;
             if (! modelFileFor(request.modelDir, stem).existsAsFile())
                 throw StemSeparationError(StemFailureCode::Model,
                                           juce::String("Missing model weight: ") +
@@ -312,12 +346,6 @@ class OnnxStemSeparator : public StemSeparator
         // Only run the stems the user selected; an empty selection means all four.
         // Skipping a stem skips its specialist model entirely, so a partial
         // selection is proportionally faster.
-        const auto isSelected = [&request](const char* stem)
-        {
-            if (request.stems.empty()) return true;
-            return std::find(request.stems.begin(), request.stems.end(), juce::String(stem)) !=
-                   request.stems.end();
-        };
         const size_t selectedCount =
             request.stems.empty() ? kStemNames.size() : request.stems.size();
 
@@ -332,8 +360,8 @@ class OnnxStemSeparator : public StemSeparator
         // specialist: this folds every unclaimed component back into the catch-all
         // stem (the full residual) and skips one model run. kStemNames lists
         // `other` last, so the three extracted sources are always summed first.
-        const bool mixtureConsistency = isSelected("vocals") && isSelected("drums") &&
-                                        isSelected("bass") && isSelected("other");
+        // This is also what lets a fully pack-covered run need no htdemucs at all.
+        const bool mixtureConsistency = allFourSelected;
         juce::AudioBuffer<float> extractedSum;
         if (mixtureConsistency)
         {
@@ -344,9 +372,7 @@ class OnnxStemSeparator : public StemSeparator
         // Rhythm pack (4-stem BS-RoFormer) produces drums AND bass from a single
         // model run, so run it lazily on the first of the two and cache both; the
         // second stem is then served from the cache without a second inference.
-        const bool useRhythmPack = (isSelected("drums") || isSelected("bass")) &&
-                                   request.rhythmModelFile != juce::File() &&
-                                   request.rhythmModelFile.existsAsFile();
+        const bool useRhythmPack = haveRhythmPack && (isSelected("drums") || isSelected("bass"));
         BsRoformerRhythmStems rhythmStems;
         bool rhythmDone = false;
 
@@ -400,9 +426,7 @@ class OnnxStemSeparator : public StemSeparator
             }
             else
             {
-                const bool useRoformerVocals = juce::String(stem) == "vocals" &&
-                                               request.roformerModelFile != juce::File() &&
-                                               request.roformerModelFile.existsAsFile();
+                const bool useRoformerVocals = juce::String(stem) == "vocals" && haveVocalPack;
                 if (useRoformerVocals)
                 {
                     // Mel-Band RoFormer vocal pack: separate from the RAW (denormalised)
@@ -418,7 +442,7 @@ class OnnxStemSeparator : public StemSeparator
                     }
                     silverdaw::log::info("stems", "vocals via Mel-Band RoFormer pack");
                     stemBuffer = roformerVocals.separate(
-                        request.roformerModelFile, rawMix, request.useGpu,
+                        request.roformerModelFile, rawMix, request.useGpu, overlap,
                         [&](double f) { onProgress("separate", stemBase + sepSpan * f, stem); },
                         shouldCancel);
                 }
@@ -441,7 +465,7 @@ class OnnxStemSeparator : public StemSeparator
                         }
                         silverdaw::log::info("stems", "drums/bass via BS-RoFormer rhythm pack");
                         rhythmStems = roformerRhythm.separate(
-                            request.rhythmModelFile, rawMix, request.useGpu,
+                            request.rhythmModelFile, rawMix, request.useGpu, overlap,
                             [&](double f) { onProgress("separate", stemBase + sepSpan * f, stem); },
                             shouldCancel);
                         rhythmDone = true;

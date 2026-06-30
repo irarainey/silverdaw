@@ -21,10 +21,6 @@ namespace silverdaw
 namespace
 {
 constexpr int kModelSampleRate = 44100;
-// Track-level chunk stride: 8 s, matching the reference host. With the ~11 s
-// model window this overlaps neighbouring chunks, cross-faded by a Hamming
-// window so chunk seams are inaudible.
-constexpr int kStepSamples = 8 * kModelSampleRate;
 } // namespace
 
 struct MelRoformerVocals::Impl
@@ -84,7 +80,8 @@ MelRoformerVocals::~MelRoformerVocals() = default;
 
 juce::AudioBuffer<float> MelRoformerVocals::separate(
     const juce::File& modelFile, const juce::AudioBuffer<float>& mixture, bool useGpu,
-    const std::function<void(double)>& onProgress, const std::function<bool()>& shouldCancel)
+    double overlap, const std::function<void(double)>& onProgress,
+    const std::function<bool()>& shouldCancel)
 {
     using Spec = MelRoformerSpectral;
     const int numSamples = mixture.getNumSamples();
@@ -133,7 +130,14 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
                                      static_cast<float>(Spec::kChunkSamples));
 
     const std::array<int64_t, 4> shape{1, Spec::kPackedBins, Spec::kFrames, 2};
-    const int step = std::min(kStepSamples, Spec::kChunkSamples);
+    // Chunk stride from the quality preset's overlap: higher overlap blends more
+    // neighbouring windows (smoother seams) at the cost of more model runs. The
+    // chunk recombination is normalised by an accumulated window counter, so any
+    // overlap reconstructs at unity gain.
+    const double ov = juce::jlimit(0.0, 0.9, overlap);
+    const int step = std::max(
+        1, std::min(Spec::kChunkSamples,
+                    static_cast<int>(Spec::kChunkSamples * (1.0 - ov))));
     const int totalSteps = std::max(1, (numSamples + step - 1) / step);
     int stepIndex = 0;
 

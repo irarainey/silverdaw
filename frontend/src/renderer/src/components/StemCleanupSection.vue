@@ -48,18 +48,18 @@ const strength = defineModel<StemEnhanceStrength>('strength', { required: true }
       <label
         v-for="option in options"
         :key="option.value"
-        class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+        class="flex cursor-pointer items-center gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-1.5"
       >
         <input
           v-model="strength"
           type="radio"
           :name="radioName"
           :value="option.value"
-          class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+          class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
         >
-        <span class="flex-1">
-          <span class="block font-medium text-zinc-200">{{ option.label }}</span>
-          <span class="mt-0.5 block text-zinc-500">{{ option.hint }}</span>
+        <span class="flex-1 leading-tight">
+          <span class="font-medium text-zinc-200">{{ option.label }}</span>
+          <span class="text-zinc-500"> — {{ option.hint }}</span>
         </span>
       </label>
     </div>

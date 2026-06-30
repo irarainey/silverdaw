@@ -201,6 +201,16 @@ async function ensureModelThenDispatch(
   quality: StemQuality
 ): Promise<void> {
   const notifications = useNotificationsStore()
+
+  // The RoFormer quality packs are the primary engine; htdemucs is only needed
+  // when a selected stem isn't pack-covered (or the user forced the backup). If
+  // the packs cover everything, dispatch straight away — htdemucs may not even
+  // be installed, and the backend won't require it.
+  if (!(await htdemucsRequired(stems))) {
+    await dispatchSeparation(target, stems, quality)
+    return
+  }
+
   let state: { installed: boolean; presentBytes: number; totalBytes: number; fileCount: number }
   try {
     state = await window.silverdaw.getStemModelState()
@@ -368,15 +378,16 @@ async function resolveStemEnhance(): Promise<{
 }
 
 /**
- * Resolves the optional Mel-Band RoFormer "Vocal Quality Pack" core .onnx path
- * for the request: returns it only when the user enabled the pack AND it is
- * installed. Any lookup failure (or pack absent / disabled) returns undefined,
- * so the backend falls back to the htdemucs vocal specialist.
+ * Resolves the Mel-Band RoFormer "Vocal Quality Pack" core .onnx path for the
+ * request. The packs are the primary engine, so this returns the path whenever
+ * the pack is installed — UNLESS the user forced the htdemucs backup model. Any
+ * lookup failure (or pack absent) returns undefined, so the backend falls back
+ * to the htdemucs vocal specialist.
  */
 async function resolveVocalPackPath(): Promise<string | undefined> {
   try {
     const prefs = await window.silverdaw.getStemPrefs()
-    if (!prefs.useVocalPack) return undefined
+    if (prefs.useBackupModel) return undefined
     const path = await window.silverdaw.getVocalPackPath()
     return path && path.length > 0 ? path : undefined
   } catch {
@@ -385,19 +396,48 @@ async function resolveVocalPackPath(): Promise<string | undefined> {
 }
 
 /**
- * Resolves the optional 4-stem BS-RoFormer "Rhythm Quality Pack" core .onnx path
- * for the request: returns it only when the user enabled the pack AND it is
- * installed. Any lookup failure (or pack absent / disabled) returns undefined,
- * so the backend falls back to the htdemucs drums/bass specialists.
+ * Resolves the 4-stem BS-RoFormer "Rhythm Quality Pack" core .onnx path for the
+ * request. Used automatically whenever the pack is installed, unless the user
+ * forced the htdemucs backup model. Any lookup failure (or pack absent) returns
+ * undefined, so the backend falls back to the htdemucs drums/bass specialists.
  */
 async function resolveRhythmPackPath(): Promise<string | undefined> {
   try {
     const prefs = await window.silverdaw.getStemPrefs()
-    if (!prefs.useRhythmPack) return undefined
+    if (prefs.useBackupModel) return undefined
     const path = await window.silverdaw.getRhythmPackPath()
     return path && path.length > 0 ? path : undefined
   } catch {
     return undefined
+  }
+}
+
+/**
+ * Whether the htdemucs backup model is required for this selection: true when
+ * the user forced the backup, or when any selected stem would fall back to
+ * htdemucs because its quality pack isn't installed. `other` is covered by the
+ * residual (no model) only when all four stems are produced, so a partial
+ * selection that includes `other` still needs the htdemucs `other` specialist.
+ */
+export async function htdemucsRequired(stems: readonly StemName[]): Promise<boolean> {
+  try {
+    const prefs = await window.silverdaw.getStemPrefs()
+    if (prefs.useBackupModel) return true
+    const sel = new Set(stems)
+    const vocalPath = sel.has('vocals') ? await window.silverdaw.getVocalPackPath() : ''
+    const rhythmPath =
+      sel.has('drums') || sel.has('bass') ? await window.silverdaw.getRhythmPackPath() : ''
+    const needVocals = sel.has('vocals') && !(vocalPath && vocalPath.length > 0)
+    const needRhythm =
+      (sel.has('drums') || sel.has('bass')) && !(rhythmPath && rhythmPath.length > 0)
+    const allFour =
+      sel.has('vocals') && sel.has('drums') && sel.has('bass') && sel.has('other')
+    const needOther = sel.has('other') && !allFour
+    return needVocals || needRhythm || needOther
+  } catch {
+    // On any lookup failure, assume the backup may be needed so we don't dispatch
+    // a job the backend can't fulfil; the worst case is an unnecessary prompt.
+    return true
   }
 }
 

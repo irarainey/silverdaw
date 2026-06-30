@@ -43,8 +43,7 @@ const {
   autosaveEnabled,
   autosaveIntervalSeconds,
   useGpuForStems,
-  useVocalPack,
-  useRhythmPack,
+  useBackupModel,
   enhanceVocals,
   vocalEnhanceStrength,
   enhanceDrums,
@@ -216,8 +215,7 @@ function onSave(): void {
             <PreferencesStemsTab
               v-else-if="activeTab === 'stems'"
               v-model:use-gpu-for-stems="useGpuForStems"
-              v-model:use-vocal-pack="useVocalPack"
-              v-model:use-rhythm-pack="useRhythmPack"
+              v-model:use-backup-model="useBackupModel"
               v-model:enhance-vocals="enhanceVocals"
               v-model:vocal-enhance-strength="vocalEnhanceStrength"
               v-model:enhance-drums="enhanceDrums"

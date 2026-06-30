@@ -44,6 +44,13 @@ export interface PathPrefs {
    * app-managed download location is used.
    */
   stemModelDir?: string
+  /**
+   * Optional override directories pointing at user-supplied / manually-placed
+   * copies of the RoFormer quality packs (the per-pack "locate" flow). Empty /
+   * undefined means the app-managed download location is used.
+   */
+  vocalPackDir?: string
+  rhythmPackDir?: string
 }
 
 // Stem-separation preferences. GPU acceleration is OPT-IN (default off): on some
@@ -62,12 +69,12 @@ export interface PathPrefs {
 export interface StemPrefs {
   useGpu: boolean
   quality: StemQuality
-  // Use the optional Mel-Band RoFormer "Vocal Quality Pack" for higher-quality
-  // vocals when it is installed (default off; ignored if the pack is absent).
-  useVocalPack: boolean
-  // Use the optional 4-stem BS-RoFormer "Rhythm Quality Pack" for higher-quality
-  // drums + bass when it is installed (default off; ignored if the pack is absent).
-  useRhythmPack: boolean
+  // The MIT RoFormer quality packs (Vocal + Rhythm) are the primary separation
+  // engine and are used automatically whenever they are installed. htdemucs is
+  // the BACKUP, used per stem only when that stem's pack is absent. Set this to
+  // force the htdemucs backup for every stem even when the packs are installed
+  // (e.g. for speed or troubleshooting). Default off.
+  useBackupModel: boolean
   enhanceVocals: boolean
   vocalEnhanceStrength: VocalEnhanceStrength
   enhanceDrums: boolean
@@ -169,8 +176,7 @@ export function buildDefaultPrefs(): Preferences {
     stems: {
       useGpu: false,
       quality: 'balanced',
-      useVocalPack: false,
-      useRhythmPack: false,
+      useBackupModel: false,
       enhanceVocals: false,
       vocalEnhanceStrength: 'medium',
       enhanceDrums: false,
@@ -239,8 +245,7 @@ export function sanitiseStemPrefs(partial: unknown, base: StemPrefs): StemPrefs 
     quality: STEM_QUALITIES.includes(p.quality as StemQuality)
       ? (p.quality as StemQuality)
       : base.quality,
-    useVocalPack: boolOr(p.useVocalPack, base.useVocalPack),
-    useRhythmPack: boolOr(p.useRhythmPack, base.useRhythmPack),
+    useBackupModel: boolOr(p.useBackupModel, base.useBackupModel),
     enhanceVocals: boolOr(p.enhanceVocals, base.enhanceVocals),
     vocalEnhanceStrength: STEM_ENHANCE_STRENGTHS.includes(p.vocalEnhanceStrength as VocalEnhanceStrength)
       ? (p.vocalEnhanceStrength as VocalEnhanceStrength)

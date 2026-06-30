@@ -136,6 +136,7 @@ declare global {
       getVocalPackState(): Promise<SharedStemModelState>
       getVocalPackPath(): Promise<string>
       ensureVocalPack(): Promise<SharedEnsureStemModelResult>
+      locateVocalPack(dir: string): Promise<SharedLocateStemModelResult>
       cancelVocalPackDownload(): void
       onVocalPackDownloadProgress(
         handler: (progress: SharedStemModelDownloadProgress) => void
@@ -143,6 +144,7 @@ declare global {
       getRhythmPackState(): Promise<SharedStemModelState>
       getRhythmPackPath(): Promise<string>
       ensureRhythmPack(): Promise<SharedEnsureStemModelResult>
+      locateRhythmPack(dir: string): Promise<SharedLocateStemModelResult>
       cancelRhythmPackDownload(): void
       onRhythmPackDownloadProgress(
         handler: (progress: SharedStemModelDownloadProgress) => void

@@ -51,10 +51,10 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Stem separation.** Split a track into vocals, drums, bass, and other parts
   and drop each onto its own track to remix and recombine — non-destructive, with
   optional GPU acceleration. Each stem keeps the original's tempo, key, and
-  artwork. A **Best** quality mode sharpens the vocal, optional one-click cleanup
-  tames vocal bleed, and optional downloadable quality packs swap in
-  higher-quality models — a **Vocal Quality Pack** for the cleanest acapella and a
-  **Rhythm Quality Pack** for sharper drums and bass.
+  artwork. High-quality **RoFormer models** (downloaded once, ~1 GB) do the
+  separation by default, with a built-in backup model that needs no setup. A
+  **Fast / Balanced / Best** speed control and optional one-click cleanup let you
+  trade speed for polish.
 - **Tempo and pitch.** Clips can automatically match the project tempo and be
   pitch-shifted independently, all without changing the source file.
 - **Saved clips and samples.** Save reusable clips to the library and bake any

@@ -51,7 +51,7 @@ int main(int argc, char** argv)
     try
     {
         vocals = roformer.separate(
-            modelFile, mix, useGpu,
+            modelFile, mix, useGpu, 0.25,
             [](double f) { std::printf("\r  progress %.0f%%", f * 100.0); std::fflush(stdout); },
             [] { return false; });
     }

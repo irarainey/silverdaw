@@ -22,10 +22,6 @@ namespace
 {
 using Spec = BsRoformerSpectral;
 constexpr int kModelSampleRate = 44100;
-// Track-level chunk stride: 50% of the ~8 s window, cross-faded by a Hann
-// recombination window (normalised by an accumulated counter, so any window
-// works) so chunk seams are inaudible. Matches ZFTurbo's num_overlap=2.
-constexpr int kStepSamples = Spec::kChunkSamples / 2;
 // The 4-stem model emits [drums, bass, other, vocals]; we keep drums + bass.
 constexpr int kDrumsIndex = 0;
 constexpr int kBassIndex = 1;
@@ -85,7 +81,8 @@ struct BsRoformerRhythm::Impl
     // One full separation pass on the configured provider. May throw
     // Ort::Exception (e.g. DirectML out-of-memory); the caller retries on CPU.
     BsRoformerRhythmStems run(const juce::File& modelFile, const juce::AudioBuffer<float>& mixture,
-                              bool useGpu, const std::function<void(double)>& onProgress,
+                              bool useGpu, double overlap,
+                              const std::function<void(double)>& onProgress,
                               const std::function<bool()>& shouldCancel)
     {
         configureProvider(useGpu);
@@ -135,7 +132,13 @@ struct BsRoformerRhythm::Impl
         const std::array<int64_t, 4> inShape{1, Spec::kChannels, Spec::kBins, Spec::kFrames};
         const std::array<int64_t, 5> outShape{1, Spec::kNumStems, Spec::kChannels, Spec::kBins,
                                               Spec::kFrames};
-        const int step = std::min(kStepSamples, Spec::kChunkSamples);
+        // Chunk stride from the quality preset's overlap (higher overlap = more
+        // model runs, smoother seams). The recombination is normalised by an
+        // accumulated counter, so any overlap reconstructs at unity gain.
+        const double ov = juce::jlimit(0.0, 0.9, overlap);
+        const int step = std::max(
+            1, std::min(Spec::kChunkSamples,
+                        static_cast<int>(Spec::kChunkSamples * (1.0 - ov))));
         const int totalSteps = std::max(1, (numSamples + step - 1) / step);
         int stepIndex = 0;
 
@@ -233,12 +236,13 @@ BsRoformerRhythm::~BsRoformerRhythm() = default;
 
 BsRoformerRhythmStems BsRoformerRhythm::separate(
     const juce::File& modelFile, const juce::AudioBuffer<float>& mixture, bool useGpu,
-    const std::function<void(double)>& onProgress, const std::function<bool()>& shouldCancel)
+    double overlap, const std::function<void(double)>& onProgress,
+    const std::function<bool()>& shouldCancel)
 {
     if (mixture.getNumSamples() <= 0) return {};
     try
     {
-        return impl->run(modelFile, mixture, useGpu, onProgress, shouldCancel);
+        return impl->run(modelFile, mixture, useGpu, overlap, onProgress, shouldCancel);
     }
     catch (const Ort::Exception& e)
     {
@@ -246,7 +250,7 @@ BsRoformerRhythmStems BsRoformerRhythm::separate(
         {
             silverdaw::log::info("stems", juce::String("Rhythm RoFormer GPU run failed (")
                                               + e.what() + "); retrying on CPU.");
-            return impl->run(modelFile, mixture, false, onProgress, shouldCancel);
+            return impl->run(modelFile, mixture, false, overlap, onProgress, shouldCancel);
         }
         throw;
     }

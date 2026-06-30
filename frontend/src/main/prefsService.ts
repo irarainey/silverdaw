@@ -76,7 +76,9 @@ export class PrefsService {
             typeof savedPaths.defaultClipDir === 'string' && savedPaths.defaultClipDir.length > 0
               ? savedPaths.defaultClipDir
               : defaults.paths.defaultClipDir,
-          stemModelDir: sanitiseStemModelDir(savedPaths.stemModelDir)
+          stemModelDir: sanitiseStemModelDir(savedPaths.stemModelDir),
+          vocalPackDir: sanitiseStemModelDir(savedPaths.vocalPackDir),
+          rhythmPackDir: sanitiseStemModelDir(savedPaths.rhythmPackDir)
         },
         autosave: {
           enabled:

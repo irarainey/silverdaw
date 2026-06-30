@@ -252,6 +252,9 @@ const api = {
   /** Download + integrity-verify the vocal pack; honour an in-flight cancel. */
   ensureVocalPack: (): Promise<EnsureStemModelResult> =>
     ipcRenderer.invoke(IPC.stems.ensureVocalPack),
+  /** Adopt a user-supplied folder holding the vocal pack as the override dir. */
+  locateVocalPack: (dir: string): Promise<LocateStemModelResult> =>
+    ipcRenderer.invoke(IPC.stems.locateVocalPack, dir),
   /** Abort the active vocal-pack download, if any. */
   cancelVocalPackDownload: (): void => {
     ipcRenderer.send(IPC.stems.cancelVocalPackDownload)
@@ -272,6 +275,9 @@ const api = {
   /** Download + integrity-verify the rhythm pack; honour an in-flight cancel. */
   ensureRhythmPack: (): Promise<EnsureStemModelResult> =>
     ipcRenderer.invoke(IPC.stems.ensureRhythmPack),
+  /** Adopt a user-supplied folder holding the rhythm pack as the override dir. */
+  locateRhythmPack: (dir: string): Promise<LocateStemModelResult> =>
+    ipcRenderer.invoke(IPC.stems.locateRhythmPack, dir),
   /** Abort the active rhythm-pack download, if any. */
   cancelRhythmPackDownload: (): void => {
     ipcRenderer.send(IPC.stems.cancelRhythmPackDownload)

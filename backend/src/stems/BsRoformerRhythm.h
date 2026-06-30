@@ -45,7 +45,7 @@ public:
     // two stereo buffers of the same length as `mixture`, at the mixture's level.
     BsRoformerRhythmStems separate(const juce::File& modelFile,
                                    const juce::AudioBuffer<float>& mixture, bool useGpu,
-                                   const std::function<void(double)>& onProgress,
+                                   double overlap, const std::function<void(double)>& onProgress,
                                    const std::function<bool()>& shouldCancel);
 
 private:
