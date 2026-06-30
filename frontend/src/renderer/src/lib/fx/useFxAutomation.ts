@@ -7,11 +7,14 @@
 import { computed, type Ref } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { useTransportStore } from '@/stores/transportStore'
+import { sampleBreakpoints } from '@/lib/automation/breakpoints'
 import type { AutomationParamId } from '@shared/bridge-protocol'
 
 export function useFxAutomation(trackId: Ref<string | null>) {
   const ui = useUiStore()
   const project = useProjectStore()
+  const transport = useTransportStore()
 
   /** A drawn curve (>=2 points) owns the parameter and overrides the static value. */
   function isAutomated(paramId: AutomationParamId): boolean {
@@ -19,6 +22,20 @@ export function useFxAutomation(trackId: Ref<string | null>) {
     if (!id) return false
     const pts = project.tracks.find((t) => t.id === id)?.automation?.[paramId]
     return Array.isArray(pts) && pts.length >= 2
+  }
+
+  /** Value to SHOW on the static control. When a curve owns the parameter, this
+   *  is the curve's value at the current playhead (so the slider follows the
+   *  automation live during playback / scrub); otherwise the static value the
+   *  caller passes. Reactive to `transport.positionMs`. */
+  function displayValue(paramId: AutomationParamId, staticValue: number): number {
+    const id = trackId.value
+    if (!id) return staticValue
+    const pts = project.tracks.find((t) => t.id === id)?.automation?.[paramId]
+    if (Array.isArray(pts) && pts.length >= 2) {
+      return sampleBreakpoints(pts, transport.positionMs)
+    }
+    return staticValue
   }
 
   /** True when the lane is currently showing this parameter. */
@@ -42,5 +59,5 @@ export function useFxAutomation(trackId: Ref<string | null>) {
     return !!map && Object.values(map).some((p) => Array.isArray(p) && p.length >= 2)
   })
 
-  return { isAutomated, isLaneOpen, automate, anyAutomated }
+  return { isAutomated, displayValue, isLaneOpen, automate, anyAutomated }
 }

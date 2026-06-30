@@ -71,6 +71,14 @@ const {
 // ─── Pan slider (under the gain fader) ──────────────────────────────────────
 const { panDisplay, onPanInput, onPanChange, onPanReset } = useTrackPan()
 
+/** Pan value to show on the header slider/readout: the automation curve at the
+ *  playhead when pan is automated (so it follows playback), else the static pan. */
+function panValue(track: { pan?: number; automation?: { pan?: { timeMs: number; value: number }[] } }): number {
+  const pts = track.automation?.pan
+  if (Array.isArray(pts) && pts.length >= 2) return sampleBreakpoints(pts, transport.positionMs)
+  return track.pan ?? 0
+}
+
 // Cache per-track row layout for template lookups.
 const rowLayout = computed(() => buildTrackRowLayout(project.tracks, makeLaneHeightOf()))
 const transport = useTransportStore()
@@ -488,18 +496,18 @@ function isTrackFxShowing(trackId: string): boolean {
                 min="-1"
                 max="1"
                 step="0.01"
-                :value="track.pan ?? 0"
+                :value="panValue(track)"
                 :title="paramAutomated(track.id, 'pan') ? 'Automated over the timeline — edit the lane to change pan' : ('Pan ' + panDisplay(track.pan) + ' — double-click to centre')"
                 aria-label="Track pan"
                 class="track-pan h-1 min-w-0 flex-1 appearance-none rounded-full bg-zinc-700"
-                :class="paramAutomated(track.id, 'pan') ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'"
+                :class="paramAutomated(track.id, 'pan') ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'"
                 :disabled="paramAutomated(track.id, 'pan')"
                 @input="(e) => onPanInput(track.id, Number((e.target as HTMLInputElement).value))"
                 @change="(e) => onPanChange(track.id, Number((e.target as HTMLInputElement).value))"
                 @dblclick.stop="onPanReset(track.id)"
               >
               <span class="w-10 shrink-0 text-right font-mono text-[10px] tabular-nums text-zinc-500">
-                {{ panDisplay(track.pan) }}
+                {{ panDisplay(panValue(track)) }}
               </span>
               <button
                 type="button"

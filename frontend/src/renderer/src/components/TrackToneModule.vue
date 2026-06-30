@@ -35,7 +35,9 @@ type ToneBand = (typeof TONE_BANDS)[number]
 
 function bandValue(band: ToneBand): number {
   const v = track.value?.[band.prop]
-  return typeof v === 'number' ? v : 0
+  const staticV = typeof v === 'number' ? v : 0
+  // While automated, follow the curve at the playhead; else the static value.
+  return fxAuto.displayValue(band.param as AutomationParamId, staticV)
 }
 
 function bandDisplay(band: ToneBand): string {

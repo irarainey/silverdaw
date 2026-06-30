@@ -250,18 +250,26 @@ Electron Shell
 
 ---
 
-## 6. Stem Separation — Demucs Integration
+## 6. Stem Separation
 
-**Model:** htdemucs fine-tuned (Demucs v4), **4-stem** — separates a stereo track
-into vocals, drums, bass and other. The chosen weights are the MIT-licensed
-community ONNX export `StemSplitio/htdemucs-ft-onnx` (a "bag" of four specialist
-models, one per source — so 4-stem is native, not derived). They are downloaded
-on first use and the stem-separation UI stays disabled until the model is
-present.
+**Engines:** The primary separation engine is a pair of optional MIT-licensed
+**RoFormer quality models** — a Mel-Band RoFormer for **vocals** and a 4-stem
+BS-RoFormer for **drums + bass** — downloaded once and then used automatically
+(see the quality-pack subsections below). The **backup** model is htdemucs
+fine-tuned (Demucs v4), **4-stem** — the MIT-licensed community ONNX export
+`StemSplitio/htdemucs-ft-onnx` (a "bag" of four specialist models, one per
+source). htdemucs is used per stem only when that stem's quality pack is absent,
+or for every stem when the user enables "Always use the backup model"; it is
+also the zero-config path fetched on first use when no quality packs are
+installed. A fully pack-covered run needs **no** htdemucs weights on disk —
+`OnnxStemSeparator.cpp` validates only the htdemucs files for the stems it will
+actually produce with the backup.
 
 **Integration:** ONNX Runtime C++ API. The runtime dependencies that ship beside
-`SilverdawBackend.exe` are the `.onnx` model files, `onnxruntime.dll`, and — for
-the default DirectML build — `DirectML.dll`. GPU acceleration via the DirectML
+`SilverdawBackend.exe` are `onnxruntime.dll` and — for the default DirectML
+build — `DirectML.dll`. The model **weights are not shipped**: htdemucs and both
+RoFormer packs are downloaded on demand (or located from an existing copy) into
+app-data / user-selected directories. GPU acceleration via the DirectML
 execution provider on Windows is **implemented**: the bundled ONNX Runtime is a
 DirectML build (a CPU+GPU superset — a single `onnxruntime.dll` serves both EPs),
 and the renderer threads a `useGpu` flag through to the backend's session options
@@ -321,27 +329,29 @@ library items persist with the project (kind `stem` + a `derivedFrom` pointer to
 the source) and reload like standalone files, and a stem cannot be removed from
 the library while its timeline clip is still present.
 
-**Inference (implemented):** Each specialist `.onnx` takes a fixed-length 7.8 s
-(343 980-sample) stereo segment and emits all four demucs sources
-(`[1, 4, 2, segment]`, source order drums/bass/other/vocals); the backend keeps
-only the source each model is fine-tuned for. A full track is processed
-demucs-style — per-track mean/standard-deviation normalisation, fixed segments
-with a quality-selectable window overlap, and triangular-window weighted
+**Inference — htdemucs backup path (implemented):** Each htdemucs specialist
+`.onnx` takes a fixed-length 7.8 s (343 980-sample) stereo segment and emits all
+four demucs sources (`[1, 4, 2, segment]`, source order drums/bass/other/vocals);
+the backend keeps only the source each model is fine-tuned for. A full track is
+processed demucs-style — per-track mean/standard-deviation normalisation, fixed
+segments with a quality-selectable window overlap, and triangular-window weighted
 overlap-add reconstruction (`OnnxStemSeparator.cpp`). The stem dialog exposes a
 **Fast / Balanced / Best** quality preset that the renderer sends as
 `quality` on `STEM_SEPARATE`; the backend maps it to the inference overlap
-(0.10 / 0.25 / 0.50, balanced being the long-standing default and the fallback
-for an absent value). **Best** additionally applies vocal **test-time
-augmentation** — the demucs `shifts` trick, four deterministic time-shifts of the
-input averaged after realignment, applied to the **vocals** specialist only (so
-the cost is ~2× the whole job, not 4×) — which cancels the translation-variance
-phase artefacts ("watery"/"metallic" swirl) on the vocal. The segmentation,
-layout and source-index handling were validated against the real htdemucs-ft
-weights. When all four stems are requested the backend skips the `other` model
-run and synthesises `other = mixture − (vocals + drums + bass)` (a
-mixture-consistency residual that is mathematically identical to adding the full
-residual to the model's `other`, captures any energy the three specialists miss,
-and runs ~25 % faster).
+(0.10 / 0.25 / 0.50, balanced being the default and the fallback for an absent
+value). The **same preset overlap also drives the RoFormer packs' chunk stride**
+(threaded into the `MelRoformerVocals` / `BsRoformerRhythm` runners), so the
+speed/quality knob is meaningful on either engine. **Best** additionally applies
+vocal **test-time augmentation** on the htdemucs vocal path — the demucs `shifts`
+trick, four deterministic time-shifts of the input averaged after realignment,
+applied to the **vocals** specialist only (so the cost is ~2× the whole job, not
+4×) — which cancels the translation-variance phase artefacts ("watery"/"metallic"
+swirl) on the vocal. The segmentation, layout and source-index handling were
+validated against the real htdemucs-ft weights. When all four stems are produced
+the backend skips the `other` model run and synthesises
+`other = mixture − (vocals + drums + bass)` (a mixture-consistency residual that
+captures any energy the specialists miss and runs faster) — this is also what
+lets a fully pack-covered run need no htdemucs at all.
 
 **Optional vocal cleanup (implemented, opt-in, vocals only):** after the vocal
 stem is produced it can be run through a small cleanup chain — a **cross-stem
@@ -1160,7 +1170,10 @@ no curve that static value plays flat; the lane shows it as a faint baseline
 line and seeds the first point from it. Drawing a curve overlays the same
 parameter and overrides the static value, so the static control is disabled,
 dimmed, and tagged **AUTO**, with a small **A** button on each control to open
-its lane. Flattening a curve back to the static value auto-clears the lane, and
+its lane. While automated, the disabled control is **read-only but live**: its
+slider and readout follow the curve's value at the playhead, so during playback
+(or scrub) you can watch each FX slider move to reflect the current automated
+value. Flattening a curve back to the static value auto-clears the lane, and
 clearing always restores the static value (sound-preserving). This is
 per-parameter — a track can be part static, part automated. Track **Gain** is
 lane-only (the header fader stays the overall trim).

@@ -25,7 +25,9 @@ const amount = computed(() =>
   typeof track.value?.levelerAmount === 'number' ? track.value.levelerAmount : 0
 )
 
-const percent = computed(() => `${Math.round(amount.value * 100)}%`)
+// While automated, the slider + readout follow the curve at the playhead.
+const amountDisplay = computed(() => fxAuto.displayValue('leveler', amount.value))
+const percent = computed(() => `${Math.round(amountDisplay.value * 100)}%`)
 
 function onInput(value: number): void {
   if (!track.value || !Number.isFinite(value)) return
@@ -72,7 +74,7 @@ onBeforeUnmount(gesture.endGesture)
       <FxRangeControl
         label="Amount"
         :display="percent"
-        :value="amount"
+        :value="amountDisplay"
         :min="0"
         :max="1"
         :step="0.01"

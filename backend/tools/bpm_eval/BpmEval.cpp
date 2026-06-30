@@ -4,21 +4,15 @@
 // tempos and prints an octave-aware accuracy report. This is the objective
 // yardstick for tuning beat detection — the project had been relying on
 // subjective "looks out" feedback, which cannot prove a change helps or
-// regresses. Keep this decoupled from the unit-test suite so it can grow with
-// the drum-stem / downbeat work without bloating CI.
+// regresses. Keep this decoupled from the unit-test suite so it can grow without
+// bloating CI.
 //
 // Usage:
-//   SilverdawBpmEval <manifest> [--drums]
+//   SilverdawBpmEval <manifest>
 // Manifest lines: `<path>|<referenceBpm>[|<refFirstBeatSec>]`; '#'/blank ignored.
 // `path` may be any format JUCE can read (wav always; mp3/flac if supported).
-//
-// --drums: also separate a drums-only stem (htdemucs, fast overlap, first 2 min)
-//   and analyse THAT, printing a `drm` row beside the full-mix `mix` row. Requires
-//   env SILVERDAW_STEM_MODEL_DIR (the htdemucs-ft dir) and onnxruntime.dll beside
-//   the exe. Optional env SILVERDAW_STEM_USE_GPU=1.
 
 #include "../../src/dsp/BpmDetector.h"
-#include "../../src/stems/StemSeparator.h"
 
 #include <cmath>
 #include <cstdio>
@@ -63,30 +57,6 @@ double octaveAwareError(double detected, double reference, double& outRatio)
     }
     outRatio = bestRatio;
     return bestSigned;
-}
-
-// Snap a tempo to the metrical octave (x0.25..x4) nearest a reference tempo in
-// log space. Used so the clean drum-stem PERIOD adopts the right metrical LEVEL
-// from the full mix (which gets the octave right even when its precise period is
-// wrong), instead of locking to half/double time. Safe by construction: a track
-// the mix already reads correctly is unchanged.
-double snapOctaveToReference(double bpm, double referenceBpm)
-{
-    if (bpm <= 0.0 || referenceBpm <= 0.0) return bpm;
-    const double mults[] = {0.25, 0.5, 1.0, 2.0, 4.0};
-    double best = bpm;
-    double bestDist = std::numeric_limits<double>::infinity();
-    for (double m : mults)
-    {
-        const double cand = bpm * m;
-        const double dist = std::abs(std::log(cand / referenceBpm));
-        if (dist < bestDist)
-        {
-            bestDist = dist;
-            best = cand;
-        }
-    }
-    return best;
 }
 
 // Signed distance (seconds) from a reference downbeat to the nearest grid line of
@@ -188,45 +158,6 @@ void printSummary(const char* label, const Accum& acc)
         std::cout << " | phase mean|offset|=" << (acc.sumAbsPhaseBeat / acc.phaseScored) << " beat, within 0.10="
                   << acc.phaseGood << "/" << acc.phaseScored;
     std::cout << '\n';
-}
-
-// Separate a drums-only stem (fast overlap, first windowMs) to a temp WAV and
-// return it. Reuses one separator instance so the ~300 MB model loads once.
-juce::File separateDrums(silverdaw::StemSeparator& sep, const juce::File& src, const juce::File& modelDir,
-                         const juce::File& outDir, double windowMs, bool gpu, juce::String& err)
-{
-    silverdaw::StemSeparationRequest req;
-    req.jobId = "eval";
-    req.sourceName = src.getFileNameWithoutExtension();
-    req.sourceFile = src;
-    req.startMs = 0.0;
-    req.lengthMs = windowMs;
-    req.modelDir = modelDir;
-    req.outputDir = outDir;
-    req.fileNameToken = juce::Uuid().toString().substring(0, 8);
-    req.stems = {"drums"};
-    req.overlap = 0.10; // fast preset
-    req.useGpu = gpu;
-
-    juce::File drums;
-    try
-    {
-        const auto result = sep.separate(
-            req, [](const char*, double, const char*) {},
-            [&](const char* stem, const juce::File& f) {
-                if (juce::String(stem) == "drums") drums = f;
-            },
-            [] { return false; });
-        if (drums == juce::File())
-            for (const auto& s : result.stems)
-                if (s.stem == "drums") drums = s.file;
-    }
-    catch (const std::exception& ex)
-    {
-        err = ex.what();
-        return {};
-    }
-    return drums;
 }
 
 } // namespace
@@ -577,13 +508,10 @@ int main(int argc, char** argv)
 
     if (argc < 2)
     {
-        std::cerr << "usage: SilverdawBpmEval <manifest> [--drums]\n"
+        std::cerr << "usage: SilverdawBpmEval <manifest>\n"
                   << "       SilverdawBpmEval --onsets <path> <startSec> <endSec>\n";
         return 2;
     }
-    bool drumsMode = false;
-    for (int i = 2; i < argc; ++i)
-        if (juce::String(argv[i]) == "--drums") drumsMode = true;
 
     const juce::File manifestFile(juce::File::getCurrentWorkingDirectory().getChildFile(argv[1]));
     if (!manifestFile.existsAsFile())
@@ -599,33 +527,6 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    juce::File modelDir;
-    juce::File tmpDir;
-    std::unique_ptr<silverdaw::StemSeparator> separator;
-    bool useGpu = false;
-    if (drumsMode)
-    {
-        const char* md = std::getenv("SILVERDAW_STEM_MODEL_DIR");
-        if (md == nullptr || juce::String(md).isEmpty())
-        {
-            std::cerr << "[eval] --drums needs env SILVERDAW_STEM_MODEL_DIR (the htdemucs-ft dir)\n";
-            return 2;
-        }
-        modelDir = juce::File(juce::String(md));
-        if (!modelDir.isDirectory())
-        {
-            std::cerr << "[eval] model dir not found: " << modelDir.getFullPathName().toStdString() << '\n';
-            return 2;
-        }
-        const char* g = std::getenv("SILVERDAW_STEM_USE_GPU");
-        useGpu = (g != nullptr && juce::String(g).trim() == "1");
-        tmpDir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("silverdaw-bpm-eval");
-        tmpDir.createDirectory();
-        separator = silverdaw::createDefaultStemSeparator();
-        std::cout << "[eval] --drums on | model=" << modelDir.getFullPathName().toStdString()
-                  << " | gpu=" << (useGpu ? 1 : 0) << '\n';
-    }
-
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
     silverdaw::BpmDetector detector;
@@ -634,7 +535,6 @@ int main(int argc, char** argv)
     std::cout << "  ---  -------  --------  ------  -------  -----  --------- -----  -----  ----\n";
 
     Accum mixAcc;
-    Accum drumAcc;
 
     for (const auto& e : entries)
     {
@@ -649,32 +549,10 @@ int main(int argc, char** argv)
 
         const auto mix = detector.analyse(f, fm);
         scoreRow("mix", mix, e, f.getFileName(), mixAcc);
-
-        if (drumsMode)
-        {
-            juce::String err;
-            const auto drumsFile = separateDrums(*separator, f, modelDir, tmpDir, 120000.0, useGpu, err);
-            if (drumsFile == juce::File() || !drumsFile.existsAsFile())
-            {
-                std::cout << "  drm  (separation failed: " << err.toStdString() << ")\n";
-            }
-            else
-            {
-                auto drm = detector.analyse(drumsFile, fm);
-                // Adopt the metrical octave from the full mix (mix gets the level
-                // right even when its precise period is off); drums supply the
-                // clean period. Safe: unchanged when already on the mix octave.
-                drm.bpm = snapOctaveToReference(drm.bpm, mix.bpm);
-                scoreRow("drm", drm, e, f.getFileName(), drumAcc);
-                drumsFile.deleteFile();
-            }
-        }
     }
 
     std::cout << '\n';
     printSummary("mix", mixAcc);
-    if (drumsMode) printSummary("drm", drumAcc);
     std::cout << '\n';
-    if (tmpDir != juce::File()) tmpDir.deleteRecursively();
     return 0;
 }

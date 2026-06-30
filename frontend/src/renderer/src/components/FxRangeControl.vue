@@ -68,7 +68,7 @@ function num(target: EventTarget | null): number {
     </span>
     <input
       class="fx-range-input w-full"
-      :class="{ 'fx-range-input--disabled opacity-40': automated }"
+      :class="{ 'fx-range-input--disabled opacity-70': automated }"
       type="range"
       :min="min"
       :max="max"

@@ -33,7 +33,9 @@ type Send = (typeof SENDS)[number]
 
 function sendValue(send: Send): number {
   const v = track.value?.[send.prop]
-  return typeof v === 'number' ? v : 0
+  const staticV = typeof v === 'number' ? v : 0
+  // While automated, follow the curve at the playhead; else the static value.
+  return fxAuto.displayValue(send.key as AutomationParamId, staticV)
 }
 
 function percent(send: Send): string {

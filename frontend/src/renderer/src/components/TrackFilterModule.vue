@@ -27,9 +27,12 @@ const filter = computed(() =>
   typeof track.value?.toneFilter === 'number' ? track.value.toneFilter : 0
 )
 
+// While automated, the slider + readout follow the curve at the playhead.
+const filterDisplay = computed(() => fxAuto.displayValue('filter', filter.value))
+
 // Negative drives the low-pass (High Cut); positive the high-pass (Low Cut).
 const display = computed(() => {
-  const v = filter.value
+  const v = filterDisplay.value
   if (Math.abs(v) < 0.005) return 'Off'
   return v < 0 ? `LPF ${Math.round(-v * 100)}%` : `HPF ${Math.round(v * 100)}%`
 })
@@ -81,7 +84,7 @@ onBeforeUnmount(gesture.endGesture)
       <FxRangeControl
         label="Filter"
         :display="display"
-        :value="filter"
+        :value="filterDisplay"
         :min="-1"
         :max="1"
         :step="0.01"

@@ -126,27 +126,30 @@ checked against pinned SHA-256 hashes; they are not shipped in the installer.
 - **Use**: runs the stem-separation models on CPU or any DirectX 12 GPU.
 - **Project**: <https://github.com/microsoft/onnxruntime>
 
-### htdemucs fine-tuned — 4-stem separation model
+### htdemucs fine-tuned — 4-stem separation model (backup)
 
 - **Licence**: MIT — © Meta Platforms, Inc. (Demucs). ONNX export ©
   StemSplitio, also MIT.
-- **Use**: the default 4-stem (vocals/drums/bass/other) separation model.
+- **Use**: the backup 4-stem (vocals/drums/bass/other) separation model — used
+  per stem when that stem's RoFormer quality pack is not installed, or for every
+  stem when the user enables "Always use the backup model". Also the zero-config
+  path fetched on first use when no quality packs are present.
 - **Source**: <https://huggingface.co/StemSplitio/htdemucs-ft-onnx>
 
-### Mel-Band RoFormer "Vocal Quality Pack" (optional)
+### Mel-Band RoFormer "Vocal Quality Pack" (primary vocal model)
 
 - **Licence**: MIT — vocal weights © Kimberley Jensen / SYH99999
   (`SYH99999/MelBandRoformerBigSYHFTV1Fast`); ONNX export © musetric, also MIT.
   Architecture from *Mel-Band RoFormer* (Wang, Lu, Won; arXiv:2310.01809) /
   `lucidrains/BS-RoFormer` (MIT).
-- **Use**: optional higher-quality vocal model, used in place of the htdemucs
-  vocal specialist when the user enables and downloads the pack.
+- **Use**: higher-quality vocal model, used automatically for vocals once
+  installed (in place of the htdemucs backup) unless the user forces the backup.
 - **Source**: <https://huggingface.co/musetric/vocal-separation-roformer-onnx>
 - **Note**: the upstream training-data provenance is undocumented; the weights
   are distributed by their author under MIT (the same posture as the htdemucs
   weights above).
 
-### BS-RoFormer "Rhythm Quality Pack" (optional)
+### BS-RoFormer "Rhythm Quality Pack" (primary drums/bass model)
 
 - **Licence**: MIT — 4-stem weights © ZFTurbo
   (`ZFTurbo/Music-Source-Separation-Training`, the
@@ -154,8 +157,9 @@ checked against pinned SHA-256 hashes; they are not shipped in the installer.
   Architecture from `lucidrains/BS-RoFormer` (MIT). Silverdaw exports the
   checkpoint to a host-STFT ONNX (STFT/iSTFT stripped out of the graph) using an
   MIT export pipeline derived from `elicwhite/bs-roformer-web`.
-- **Use**: optional higher-quality drums + bass model, used in place of the
-  htdemucs drums/bass specialists when the user enables and downloads the pack.
+- **Use**: higher-quality drums + bass model, used automatically for drums and
+  bass once installed (in place of the htdemucs backup) unless the user forces
+  the backup. One model run extracts both drums and bass.
 - **Source**: <https://github.com/ZFTurbo/Music-Source-Separation-Training>
   (checkpoint + config, v1.0.12).
 
