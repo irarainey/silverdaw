@@ -1444,6 +1444,48 @@ project transport.
   because the current Web Audio + temp-WAV path already serves playback when
   Web Audio can decode the file.
 
+### 7.16 DJ Performance Effects (turntable brake)
+Emulates a vinyl record-stop as a **non-destructive per-clip** on/off effect. At
+the clip's end, playback decelerates to a stop: a varispeed ramp where the
+source-read rate goes 1 → 0, coupling pitch and tempo so the audio pitches down
+and grinds to a halt.
+- **Physical model (Technics SL-1210)**: hitting the stop button applies a
+  roughly **constant brake torque** to the platter flywheel, so angular velocity
+  (and thus the playback rate) decays **linearly** to zero over a **fixed
+  wall-clock platter-stop time** (~0.6 s for a punchy DJ stop; factory ~0.7–1.0 s
+  for 33⅓ → 0). Because the stop time is fixed in *seconds*, a faster track spans
+  more *beats* while braking, not fewer — the opposite of a beat-quantised model,
+  and the reason a fixed duration sounds authentic. The linear rate ramp gives the
+  recognisable accelerating downward pitch glide (pitch is the log of rate).
+- **DSP core** (`backend/src/dsp/BrakeSnapshot.h`): an immutable snapshot
+  published to the audio thread by pointer (mirrors `EnvelopeSnapshot` /
+  `EdgeFadeSnapshot`). The source-distance-consumed mapping is **stateless and
+  analytic** (`S(u) = T/(p+1)·(1−(1−u/T)^(p+1))` for rate curve `(1−u/T)^p`,
+  default power 2 = a curved record-stop that drops fast then eases), so live
+  playback and offline mixdown match regardless of block size, and seeks/scrubs/loops cannot desync it. The
+  varispeed read uses **4-point Catmull-Rom (cubic) interpolation** (exact for
+  linear data, low grain for audio), and a **rate-keyed raised-cosine end fade**
+  takes the tail to silence once the rate drops below an audible threshold — so
+  the slowdown stays smooth and the stop is clean instead of grinding through
+  sub-audio mush. The platter-stop time is the single constant `kPlatterStopSeconds`.
+- **Placement** (`OffsetSource`): integrated in the no-warp branch upstream of
+  the read-ahead buffer, so it composes with trim/envelope and is shared by
+  live playback, the clip-editor preview, and mixdown export — parity for free.
+- **Persistence**: stored as a boolean `brake` flag on the clip, suppressed on
+  disk/wire when off. The duration + curve are an **application preference**
+  (General tab: Duration short/medium/long, Curve linear/curved/steep), held as
+  engine-global defaults the renderer pushes over the bridge (`BRAKE_SETTINGS_SET`)
+  on change and on every (re)connect — the keep-awake pattern. Changing it
+  re-applies live to all braked clips and to mixdown export; the backend keeps the
+  built-in `kPlatterStopSeconds` / `kDefaultCurvePower` as the fallback default.
+- **UI**: the timeline context menu has a single **Brake** toggle; a `BRAKE`
+  clip-header badge plus a red **tail overlay on the waveform** (the curved speed
+  ramp + groove ticks that bunch at full speed and spread apart as it stops,
+  tracking the configured duration/curve) show the effect over the affected region.
+- **v1 scope**: forward, non-warped clips only (Rubber Band's pitch-preserving
+  warp can't yet compose with the varispeed ramp). Backspin (pull-back at an
+  arbitrary point) is the planned follow-up DJ effect.
+
 ---
 
 ## 8. Implementation Plan

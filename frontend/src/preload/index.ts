@@ -8,7 +8,8 @@ import type {
   StemModelDownloadProgress,
   StemModelInfo,
   StemModelState,
-  StemPrefsDto
+  StemPrefsDto,
+  BrakePrefsDto
 } from '../shared/types'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 
@@ -191,6 +192,11 @@ const api = {
   /** Stem GPU intent is gated on detection but persisted regardless. */
   setStemPrefs: (partial: Partial<StemPrefsDto>): void => {
     ipcRenderer.send(IPC.prefs.setStems, partial)
+  },
+  // ─── Turntable-brake defaults ───────────────────────────────────────────
+  getBrakeSettings: (): Promise<BrakePrefsDto> => ipcRenderer.invoke(IPC.prefs.getBrake),
+  setBrakeSettings: (partial: Partial<BrakePrefsDto>): void => {
+    ipcRenderer.send(IPC.prefs.setBrake, partial)
   },
   // ─── Autosave folder + manifest IPCs ────────────────────────────────────
   /** Resolve an autosave bucket after strict `projectId` validation. */

@@ -151,6 +151,11 @@ juce::var ProjectState::tracksAsJson() const
             {
                 clipObj->setProperty("reversed", true);
             }
+            // Emit only a set brake; clips without a brake stay absent.
+            if (static_cast<bool>(clip.getProperty(kBrake, false)))
+            {
+                clipObj->setProperty("brake", true);
+            }
             if (clip.hasProperty(kClipName))
             {
                 clipObj->setProperty("name", clip.getProperty(kClipName).toString());

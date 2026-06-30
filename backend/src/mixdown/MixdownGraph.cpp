@@ -67,6 +67,17 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
         }
     }
 
+    if (clip.brakeSeconds > 0.0)
+    {
+        const auto brakeLenSamples =
+            static_cast<juce::int64>(juce::jmax(0.0, clip.brakeSeconds) * out->sourceRate);
+        out->brakeSnapshot = BrakeSnapshot::create(brakeLenSamples, clip.brakeCurve);
+        if (out->brakeSnapshot != nullptr && !out->brakeSnapshot->isEmpty())
+        {
+            out->offsetSource->setBrakeSnapshot(out->brakeSnapshot.get());
+        }
+    }
+
     if (clip.warpEnabled)
     {
         out->warp = std::make_unique<WarpProcessor>(out->sourceChannels,

@@ -197,6 +197,34 @@ bool AudioEngine::setPreviewReversed(bool reversed)
     return true;
 }
 
+bool AudioEngine::setPreviewBrake(double brakeSeconds, double curvePower)
+{
+    if (preview.offsetSource == nullptr) return false;
+
+    const double sr = preview.sampleRate > 0.0 ? preview.sampleRate : 44100.0;
+    const auto brakeLenSamples =
+        static_cast<juce::int64>(juce::jmax(0.0, brakeSeconds) * sr);
+
+    auto snapshot = BrakeSnapshot::create(brakeLenSamples, curvePower);
+    const BrakeSnapshot* published =
+        (snapshot != nullptr && !snapshot->isEmpty()) ? snapshot.get() : nullptr;
+
+    preview.offsetSource->setBrakeSnapshot(published);
+    if (preview.brakeSnapshot != nullptr)
+    {
+        preview.retiredBrakes.push_back(std::move(preview.brakeSnapshot));
+    }
+    preview.brakeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
+
+    silverdaw::log::debug("preview",
+                          std::string("setPreviewBrake seconds=") + std::to_string(brakeSeconds));
+    if (preview.transportSource != nullptr && !preview.transportSource->isPlaying())
+    {
+        rebuildPreviewReadAhead();
+    }
+    return true;
+}
+
 void AudioEngine::rebuildPreviewReadAhead()
 {
     if (preview.transportSource == nullptr || preview.offsetSource == nullptr) return;

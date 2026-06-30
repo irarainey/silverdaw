@@ -146,6 +146,22 @@ void handleClipSetReversed(const juce::var& payload, silverdaw::AudioEngine& eng
     engine.setClipReversed(clipId, reversed);
 }
 
+void handleClipSetBrake(const juce::var& payload, silverdaw::AudioEngine& engine,
+                        silverdaw::ProjectState& projectState)
+{
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    const bool on = static_cast<bool>(payload.getProperty("on", false));
+    silverdaw::log::info("bridge", "recv CLIP_SET_BRAKE clipId=" + clipId +
+                                       " on=" + (on ? "true" : "false"));
+    if (clipId.isEmpty())
+    {
+        return;
+    }
+    projectState.setClipBrake(clipId, on);
+    engine.setClipBrake(clipId, on ? engine.getBrakeDefaultSeconds() : 0.0,
+                        engine.getBrakeDefaultCurve());
+}
+
 void handleClipRename(const juce::var& payload, silverdaw::ProjectState& projectState)
 {
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});

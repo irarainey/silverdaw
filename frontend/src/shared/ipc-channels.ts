@@ -51,6 +51,8 @@ export const IPC = {
     setAudioOutput: 'prefs:setAudioOutput',
     getKeepAwake: 'prefs:getKeepAwake',
     setKeepAwake: 'prefs:setKeepAwake',
+    getBrake: 'prefs:getBrake',
+    setBrake: 'prefs:setBrake',
     getStems: 'prefs:getStems',
     setStems: 'prefs:setStems'
   },

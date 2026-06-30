@@ -221,6 +221,14 @@ class ProjectState : public juce::ValueTree::Listener
     /** Read a clip's reverse flag. Defaults to false. */
     bool isClipReversed(const juce::String& clipId) const;
 
+    // Clip brake (turntable record-stop): a non-destructive on/off flag. When set, the
+    // clip decelerates to a stop over a fixed platter-stop time at its end. Absent = off,
+    // suppressed on disk/wire (mirrors `reversed`).
+    bool setClipBrake(const juce::String& clipId, bool brake);
+
+    /** Read a clip's brake flag. Defaults to false. */
+    bool isClipBrake(const juce::String& clipId) const;
+
     /** Read the clip's `inMs` (where in the source file it starts reading). 0 if unknown. */
     double getClipInMs(const juce::String& clipId) const;
 
@@ -558,6 +566,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kColorIndex;
     static const juce::Identifier kLocked;
     static const juce::Identifier kReversed;
+    static const juce::Identifier kBrake;
     static const juce::Identifier kViewPxPerSecond;
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kViewSelectedTrack;

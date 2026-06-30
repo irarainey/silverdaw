@@ -42,6 +42,7 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
     const LINK_BADGE_FULL_W = 18
     const LOCK_BADGE_FULL_W = 14
     const WARP_BADGE_FULL_W = 40
+    const BRAKE_BADGE_FULL_W = 44
     const STATUS_BADGE_H = 14
     const STATUS_BADGE_R = 5
     const BADGE_GAP = 4
@@ -75,10 +76,13 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
     const WARP_BADGE_W = warpIsPending || warpIsActive ? WARP_BADGE_FULL_W : 0
     const pitchShifted = (clip.semitones ?? 0) !== 0 || (clip.cents ?? 0) !== 0
     const PITCH_BADGE_W = pitchShifted ? PITCH_BADGE_FULL_W : 0
+    const hasBrake = clip.brake === true
+    const BRAKE_BADGE_W = hasBrake ? BRAKE_BADGE_FULL_W : 0
     const BADGE_COUNT =
       (isLinked ? 1 : 0) +
       (isLocked ? 1 : 0) +
       (pitchShifted ? 1 : 0) +
+      (hasBrake ? 1 : 0) +
       (warpIsPending || warpIsActive ? 1 : 0)
     const BADGES_W =
       BADGE_COUNT === 0
@@ -87,6 +91,7 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
           LINK_BADGE_W +
           LOCK_BADGE_W +
           PITCH_BADGE_W +
+          BRAKE_BADGE_W +
           WARP_BADGE_W +
           Math.max(0, BADGE_COUNT - 1) * BADGE_GAP
     const maxTextW = Math.max(0, clipW - PAD_X * 2 - BADGES_W)
@@ -213,6 +218,35 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
       badge.y = Math.round(cy - 8)
       tracksL.addChild(badge)
       badgeRight -= PITCH_BADGE_FULL_W + BADGE_GAP
+    }
+    if (hasBrake) {
+      const bg = acquireGraphics(G)
+      const cx = badgeRight - BRAKE_BADGE_FULL_W / 2
+      const cy = clipInnerY + HEADER_H / 2
+      bg
+        .roundRect(
+          cx - BRAKE_BADGE_FULL_W / 2,
+          cy - STATUS_BADGE_H / 2,
+          BRAKE_BADGE_FULL_W,
+          STATUS_BADGE_H,
+          STATUS_BADGE_R
+        )
+        .fill({ color: 0x3f1d1d, alpha: 0.95 })
+        .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
+      tracksL.addChild(bg)
+      const badge = new T({
+        text: 'BRAKE',
+        style: {
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          fontSize: 9,
+          fontWeight: '700',
+          fill: 0xfca5a5
+        }
+      })
+      badge.x = Math.round(cx - 15)
+      badge.y = Math.round(cy - 7)
+      tracksL.addChild(badge)
+      badgeRight -= BRAKE_BADGE_FULL_W + BADGE_GAP
     }
     if (warpIsPending) {
       const badge = acquireGraphics(G)

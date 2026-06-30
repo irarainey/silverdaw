@@ -62,6 +62,16 @@ export const OVERLAP_HATCH = 0xfbbf24 // amber-400
 export const OVERLAP_HATCH_ALPHA = 0.55
 export const OVERLAP_HATCH_SPACING_PX = 7
 
+// ─── Turntable brake (record-stop) ──────────────────────────────────────────
+// Overlay marking the tail region where a clip decelerates to a stop. Red reads
+// as "stop" and stays distinct from the blue crossfade curves and amber overlap
+// hatch. The duration + curve come from the brake-settings store (the app
+// preference, mirrored to the backend), so the overlay tracks the live setting.
+export const BRAKE_FILL = 0xf87171 // red-400
+export const BRAKE_FILL_ALPHA = 0.16
+export const BRAKE_LINE = 0xfca5a5 // red-300
+export const BRAKE_LINE_ALPHA = 0.95
+
 // Automation lane: a strip reserved at the bottom of a track row when a
 // parameter's curve is shown. Clips compress into the remaining height above it.
 export const AUTOMATION_LANE_HEIGHT = 88

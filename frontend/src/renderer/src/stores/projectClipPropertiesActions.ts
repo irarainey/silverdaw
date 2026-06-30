@@ -57,6 +57,21 @@ export const clipPropertiesActions = {
       log.info('project', `setClipReversed id=${clipId} -> ${next ? 'reversed' : 'forward'}`)
     },
 
+    /** Toggle a per-clip turntable brake (record-stop). A per-instance timeline effect:
+     *  when on, the clip decelerates to a stop over a fixed platter-stop time at its end.
+     *  Applies to forward, non-warped clips only. */
+    setClipBrake(clipId: string, on: boolean): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const next = on === true
+      const current = clip.brake === true
+      if (next === current) return
+      clip.brake = next ? true : undefined
+      this.peaksRevision++
+      sendBridge('CLIP_SET_BRAKE', { clipId, on: next })
+      log.info('project', `setClipBrake id=${clipId} -> ${next ? 'on' : 'off'}`)
+    },
+
     /** Set or clear a persisted clip display-name override. */
     renameClip(clipId: string, name: string): boolean {
       const clip = this.clips[clipId]

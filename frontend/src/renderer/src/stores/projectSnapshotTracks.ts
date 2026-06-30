@@ -196,7 +196,8 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
         pendingAutoWarp:
           c.pendingAutoWarp === true && c.warpEnabled !== true ? true : undefined,
         locked: c.locked === true ? true : undefined,
-        reversed: c.reversed === true ? true : undefined
+        reversed: c.reversed === true ? true : undefined,
+        brake: c.brake === true ? true : undefined
       }
       target.clips[c.id] = placeholder
       track.clipIds.push(c.id)

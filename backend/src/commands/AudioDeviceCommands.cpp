@@ -149,6 +149,18 @@ void handleAudioKeepAwakeSet(const juce::var& payload, silverdaw::AudioEngine& e
     silverdaw::log::info("audio", juce::String("keep-awake mode set to ") + *modeStr);
 }
 
+void handleSetBrakeSettings(const juce::var& payload, silverdaw::AudioEngine& engine)
+{
+    const double seconds =
+        static_cast<double>(payload.getProperty("seconds", BrakeSnapshot::kPlatterStopSeconds));
+    const double curve =
+        static_cast<double>(payload.getProperty("curve", BrakeSnapshot::kDefaultCurvePower));
+    const auto message = juce::String("recv BRAKE_SETTINGS_SET seconds=") + juce::String(seconds, 3) +
+                         " curve=" + juce::String(curve, 3);
+    silverdaw::log::info("bridge", message);
+    engine.setBrakeDefaults(seconds, curve);
+}
+
 void handleAudioFileProbe(const juce::var& payload, silverdaw::AudioEngine& engine,
                           silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool)
 {

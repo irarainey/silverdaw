@@ -4,6 +4,8 @@ import type { VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, Ot
 import { useAppStore } from '@/stores/appStore'
 import { useUiStore, type SkipButtonTarget, type WaveformDisplayMode } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
+import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
+import type { BrakeDurationDto, BrakeCurveDto } from '@shared/types'
 import {
   BACKEND_PREFERENCE,
   preferredBackendFor,
@@ -23,6 +25,8 @@ export interface PreferencesForm {
   showAdvancedBackend: Ref<boolean>
   pickBackend: (typeName: string) => void
   keepAwakeMode: Ref<KeepAwakeMode>
+  brakeDuration: Ref<BrakeDurationDto>
+  brakeCurve: Ref<BrakeCurveDto>
   loggingEnabled: Ref<boolean>
   devToolsEnabled: Ref<boolean>
   logDirectory: Ref<string>
@@ -63,6 +67,7 @@ export function usePreferencesForm(): PreferencesForm {
   const appStore = useAppStore()
   const ui = useUiStore()
   const audioDevices = useAudioDeviceStore()
+  const brakeSettings = useBrakeSettingsStore()
   const uniqueDevices = useUniqueAudioDevices()
 
   // Pending audio output; `null/null` means system default.
@@ -113,6 +118,11 @@ export function usePreferencesForm(): PreferencesForm {
 
   const keepAwakeMode = ref<KeepAwakeMode>('auto')
   const initialKeepAwakeMode = ref<KeepAwakeMode>('auto')
+
+  const brakeDuration = ref<BrakeDurationDto>('medium')
+  const brakeCurve = ref<BrakeCurveDto>('curved')
+  const initialBrakeDuration = ref<BrakeDurationDto>('medium')
+  const initialBrakeCurve = ref<BrakeCurveDto>('curved')
 
   const loggingEnabled = ref(false)
   const devToolsEnabled = ref(false)
@@ -196,7 +206,9 @@ export function usePreferencesForm(): PreferencesForm {
       otherEnhanceStrength.value !== initialOtherEnhanceStrength.value ||
       audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
       audioOutputDeviceName.value !== initialAudioOutputDeviceName.value ||
-      keepAwakeMode.value !== initialKeepAwakeMode.value
+      keepAwakeMode.value !== initialKeepAwakeMode.value ||
+      brakeDuration.value !== initialBrakeDuration.value ||
+      brakeCurve.value !== initialBrakeCurve.value
   )
 
   async function loadCurrent(): Promise<void> {
@@ -220,6 +232,9 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputTypeName.value = audioPref.typeName
       audioOutputDeviceName.value = audioPref.deviceName
       keepAwakeMode.value = keepAwake
+      const brakePrefs = await window.silverdaw.getBrakeSettings()
+      brakeDuration.value = brakePrefs.duration
+      brakeCurve.value = brakePrefs.curve
       const stemPrefs = await window.silverdaw.getStemPrefs()
       useGpuForStems.value = stemPrefs.useGpu
       useBackupModel.value = stemPrefs.useBackupModel
@@ -243,6 +258,8 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputTypeName.value = null
       audioOutputDeviceName.value = null
       keepAwakeMode.value = 'auto'
+      brakeDuration.value = 'medium'
+      brakeCurve.value = 'curved'
       useGpuForStems.value = false
       useBackupModel.value = false
       enhanceVocals.value = false
@@ -290,6 +307,8 @@ export function usePreferencesForm(): PreferencesForm {
     initialAudioOutputTypeName.value = audioOutputTypeName.value
     initialAudioOutputDeviceName.value = audioOutputDeviceName.value
     initialKeepAwakeMode.value = keepAwakeMode.value
+    initialBrakeDuration.value = brakeDuration.value
+    initialBrakeCurve.value = brakeCurve.value
   }
 
   async function chooseProjectDir(): Promise<void> {
@@ -393,6 +412,12 @@ export function usePreferencesForm(): PreferencesForm {
     if (keepAwakeMode.value !== initialKeepAwakeMode.value) {
       audioDevices.setKeepAwakeMode(keepAwakeMode.value)
     }
+    if (
+      brakeDuration.value !== initialBrakeDuration.value ||
+      brakeCurve.value !== initialBrakeCurve.value
+    ) {
+      brakeSettings.setBrakeSettings(brakeDuration.value, brakeCurve.value)
+    }
     if (useGpuForStems.value !== initialUseGpuForStems.value) {
       window.silverdaw.setStemPrefs({ useGpu: useGpuForStems.value })
     }
@@ -449,6 +474,8 @@ export function usePreferencesForm(): PreferencesForm {
     showAdvancedBackend,
     pickBackend,
     keepAwakeMode,
+    brakeDuration,
+    brakeCurve,
     loggingEnabled,
     devToolsEnabled,
     logDirectory,

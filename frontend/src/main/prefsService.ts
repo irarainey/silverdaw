@@ -15,6 +15,7 @@ import {
   sanitiseRecentList,
   sanitiseStemPrefs,
   sanitiseStemModelDir,
+  sanitiseBrakePrefs,
   sanitiseUiPrefs,
   type AudioOutputPrefs,
   type AutosavePrefs,
@@ -105,6 +106,7 @@ export class PrefsService {
           parsed.keepAwakeMode === 'on' || parsed.keepAwakeMode === 'off'
             ? parsed.keepAwakeMode
             : defaults.keepAwakeMode,
+        brake: sanitiseBrakePrefs(parsed.brake, defaults.brake),
         recentProjects: sanitiseRecentList(parsed.recentProjects),
         stems: sanitiseStemPrefs(parsed.stems, defaults.stems)
       }

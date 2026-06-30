@@ -59,6 +59,9 @@ export interface Clip {
   locked?: boolean
   /** Plays the clip window backwards (non-destructive). Propagated across library-clip siblings. */
   reversed?: boolean
+  /** Turntable brake (record-stop): when set, the clip decelerates to a stop over a fixed
+   *  platter-stop time at its end. Per-instance timeline effect; forward, non-warped clips only. */
+  brake?: boolean
 }
 
 export interface Marker {

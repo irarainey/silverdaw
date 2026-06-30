@@ -228,6 +228,17 @@ export function useTimelineContextMenu(
           : 'Play the clip backwards (non-destructive).'
       })
     }
+    // Turntable brake (record-stop): when on, the clip decelerates to a stop over a
+    // fixed platter-stop time (~1 s, like a Technics deck) at its end. Per-instance
+    // timeline effect; forward, non-warped clips only (the engine can't compose it
+    // with pitch-preserving warp yet), so it is hidden for reversed or warped clips.
+    if (clip && !clip.reversed && !clip.warpEnabled) {
+      items.push({
+        command: 'clip.brake',
+        label: clip.brake ? '\u2713 Brake' : 'Brake',
+        title: 'Decelerate the clip to a stop at its end, like a turntable record-stop'
+      })
+    }
     // §12.1 — crossfade recipe + removal. A clip can fade out into its
     // following neighbour (it is the LEFT partner) and/or fade in from its
     // preceding neighbour (the RIGHT partner), so a sandwiched clip can show
@@ -428,6 +439,8 @@ export function useTimelineContextMenu(
           project.setClipReversed(clipId, next)
         }
       }
+    } else if (command === 'clip.brake') {
+      if (clip) project.setClipBrake(clipId, !clip.brake)
     } else if (command.startsWith('clip.color:')) {
       const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
       if (Number.isFinite(idx)) project.setClipColor(clipId, idx)

@@ -244,6 +244,13 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                 {
                     engine.setClipReversed(clipId, true);
                 }
+
+                // Replay persisted brake (turntable record-stop) with the engine defaults.
+                if (static_cast<bool>(clip.getProperty("brake", false)))
+                {
+                    engine.setClipBrake(clipId, engine.getBrakeDefaultSeconds(),
+                                        engine.getBrakeDefaultCurve());
+                }
             }
             else
             {

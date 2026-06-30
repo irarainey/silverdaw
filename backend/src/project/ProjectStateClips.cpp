@@ -184,6 +184,32 @@ bool ProjectState::isClipReversed(const juce::String& clipId) const
     return static_cast<bool>(clip.getProperty(kReversed, false));
 }
 
+bool ProjectState::setClipBrake(const juce::String& clipId, bool brake)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    if (brake)
+    {
+        clip.setProperty(kBrake, true, &undoManager);
+    }
+    else
+    {
+        // Absent means no brake on disk and wire.
+        clip.removeProperty(kBrake, &undoManager);
+    }
+    return true;
+}
+
+bool ProjectState::isClipBrake(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+    return static_cast<bool>(clip.getProperty(kBrake, false));
+}
+
 bool ProjectState::setClipFilePath(const juce::String& clipId, const juce::String& filePath)
 {
     auto clip = findClip(clipId);

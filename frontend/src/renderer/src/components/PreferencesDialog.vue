@@ -37,6 +37,8 @@ const {
   cleanupProjectFiles,
   skipButtonTarget,
   waveformDisplayMode,
+  brakeDuration,
+  brakeCurve,
   defaultProjectSampleRate,
   defaultProjectDir,
   defaultClipDir,
@@ -181,6 +183,8 @@ function onSave(): void {
               v-model:cleanup-project-files="cleanupProjectFiles"
               v-model:skip-button-target="skipButtonTarget"
               v-model:waveform-display-mode="waveformDisplayMode"
+              v-model:brake-duration="brakeDuration"
+              v-model:brake-curve="brakeCurve"
             />
             <PreferencesProjectTab
               v-else-if="activeTab === 'project'"
