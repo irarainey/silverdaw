@@ -234,17 +234,28 @@ export function useTimelineContextMenu(
     // with pitch-preserving warp yet), so it is hidden for reversed or warped clips.
     // Turntable brake / backspin: tail effects that compose with warp (the part
     // before the effect is warped; the tail is a direct varispeed read). Reverse is
-    // still excluded (out of scope). Mutually exclusive with each other.
+    // still excluded (out of scope). A clip can have a brake OR a backspin, never
+    // both, so each is disabled while the other is set (turn that one off first).
     if (clip && !clip.reversed) {
+      const brakeOn = clip.brake === true
+      const backspinOn = clip.backspin === true
       items.push({
         command: 'clip.brake',
-        label: clip.brake ? '\u2713 Brake' : 'Brake',
-        title: 'Decelerate the clip to a stop at its end, like a turntable record-stop'
+        label: brakeOn ? '\u2713 Brake' : 'Brake',
+        disabled: !brakeOn && backspinOn,
+        title:
+          !brakeOn && backspinOn
+            ? 'Turn off Backspin first — a clip can have a brake or a backspin, not both'
+            : 'Decelerate the clip to a stop at its end, like a turntable record-stop'
       })
       items.push({
         command: 'clip.backspin',
-        label: clip.backspin ? '\u2713 Backspin' : 'Backspin',
-        title: 'Rewind the clip backwards at its end, like a DJ pulling the vinyl back'
+        label: backspinOn ? '\u2713 Backspin' : 'Backspin',
+        disabled: !backspinOn && brakeOn,
+        title:
+          !backspinOn && brakeOn
+            ? 'Turn off Brake first — a clip can have a brake or a backspin, not both'
+            : 'Rewind the clip backwards at its end, like a DJ pulling the vinyl back'
       })
     }
     // §12.1 — crossfade recipe + removal. A clip can fade out into its

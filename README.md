@@ -94,6 +94,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Reverse a clip.** Play any clip back-to-front from the timeline right-click
   menu or a toggle in the Clip Editor (with live preview) — non-destructive, so
   the source file is never altered.
+- **DJ turntable effects.** Add a **Brake** (a vinyl record-stop that slows the
+  clip to a halt) or a **Backspin** (a reverse rewind, like pulling the record
+  back) at the end of any clip from the right-click menu — non-destructive, one
+  or the other per clip, working on warped clips too and carried through to
+  export. Tune how long they take and how they feel in **Preferences ▸ Effects**.
 - **Single or stereo waveforms.** Choose whether clips show one combined
   waveform or stacked left / right channels, in Preferences — applied across the
   timeline and the Clip Editor.

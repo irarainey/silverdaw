@@ -1468,9 +1468,9 @@ and grinds to a halt.
   takes the tail to silence once the rate drops below an audible threshold — so
   the slowdown stays smooth and the stop is clean instead of grinding through
   sub-audio mush. The platter-stop time is the single constant `kPlatterStopSeconds`.
-- **Placement** (`OffsetSource`): integrated in the no-warp branch upstream of
-  the read-ahead buffer, so it composes with trim/envelope and is shared by
-  live playback, the clip-editor preview, and mixdown export — parity for free.
+- **Placement** (`OffsetSource`): integrated upstream of the read-ahead buffer,
+  so it composes with trim / envelope / warp (see "Composes with warp" below) and
+  is shared by live playback and mixdown export — parity for free.
 - **Persistence**: stored as a boolean `brake` flag on the clip, suppressed on
   disk/wire when off. The duration + curve are an **application preference**
   (Effects tab: Duration short/medium/long, Curve linear/curved/steep), held as
@@ -2201,7 +2201,7 @@ robustness without changing the core editing model.
   store, composables, the bridge-protocol zod schemas, the dB taper helpers,
   the Clip Editor viewport/warp-draft/target composables, and the clip-lock
   store actions). The backend ships with its own custom test harness (no Catch2
-  dependency) wired into CTest as `SilverdawBackendTests` — **155 cases** at the
+  dependency) wired into CTest as `SilverdawBackendTests` — **164 cases** at the
   time of writing, the registry count being asserted by the harness itself. They
   span `ProjectState` (tracks / clips / dirty, view / library / markers /
   replaceTree, export-settings JSON round-trip, master volume round-trip,
@@ -2211,7 +2211,10 @@ robustness without changing the core editing model.
   duration mapping), the strict bridge payload validation helpers, the
   `AudioEngine::setPreviewWarp` audio-thread / message-thread race, the
   `LoudnessAnalyzer` (silence, -23 LUFS sine target, gain-shift identity,
-  sample-rate guard), and the stem / FX / Leveler / mixdown-parity subsystems
+  sample-rate guard), the per-clip envelope / edge-fade / **turntable brake** and
+  **backspin** `OffsetSource` render math (analytic curves, block-size invariance,
+  rewind-fit, PROJECT_STATE flag round-trips), and the stem / FX / Leveler /
+  mixdown-parity subsystems
   added across Phases 5–6. Clip-lock currently lives in the frontend store /
   context-menu tests rather than a dedicated backend persistence case.
   Electron e2e tests and an enforced coverage floor remain planned hardening
