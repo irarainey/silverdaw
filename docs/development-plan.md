@@ -1498,7 +1498,10 @@ and on disk).
   live/offline match). Source position is continuous at the trigger (only the
   velocity flips), so there is no pop. Cubic interpolation + the same rate-keyed end
   fade as the brake; integrated in `OffsetSource` next to the brake (backspin wins
-  if both are somehow set), shared by live/preview/mixdown.
+  if both are somehow set), shared by live/preview/mixdown. The render **scales the
+  rewind to fit the source available before the clip start**, so the spin always
+  spans the full duration (rewinding gentler on short clips) instead of slamming
+  into the clip start and freezing — otherwise a long backspin sounded short.
 - **Preference** (Effects tab): **Duration** short/medium/long + **Intensity**
   gentle/medium/wild (peak reverse speed 4×/6×/8×), pushed as `BACKSPIN_SETTINGS_SET`
   exactly like the brake settings.

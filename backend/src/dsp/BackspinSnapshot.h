@@ -95,7 +95,7 @@ class BackspinSnapshot
     static constexpr double kDefaultSpinSpeed = 6.0; // peak reverse rate (x normal speed)
     static constexpr double kMinSpinSpeed = 2.0;
     static constexpr double kMaxSpinSpeed = 12.0;
-    static constexpr double kDefaultCurvePower = 2.0; // momentum decay shape
+    static constexpr double kDefaultCurvePower = 3.0; // front-loaded: fast pull then a quick decay
     static constexpr double kMinCurvePower = 1.0;
     static constexpr double kMaxCurvePower = 4.0;
 

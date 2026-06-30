@@ -839,6 +839,66 @@ void testOffsetSourceBackspinRewindsAndIsBlockInvariant()
                     "clearing the backspin restores 1x forward playback");
 }
 
+// Regression: a long, fast backspin would rewind more source than is available
+// before the clip start and FREEZE there for the rest of the region (so a "long"
+// backspin sounded short). The render must scale the rewind to fit the available
+// source so the spin spans the FULL duration and reaches the clip start only at
+// the very end — never bottoming out early.
+void testOffsetSourceBackspinScalesToFitShortClip()
+{
+    using silverdaw::BackspinSnapshot;
+    using silverdaw::OffsetSource;
+
+    RampSource child;
+    OffsetSource os(&child);
+    os.prepareToPlay(256, 48000.0);
+
+    const juce::int64 inSrc = 1000;
+    const juce::int64 dur = 600;
+    os.setOffsetSamples(0);
+    os.setInSourceSamples(inSrc);
+    os.setClipDurationSamples(dur);
+
+    // spinLen 500 over a 600-sample clip: only 100 samples precede the trigger,
+    // but speed 6 / power 2 requests 6*500/3 = 1000 samples of rewind (10x too much).
+    const juce::int64 spinLen = 500;
+    auto spin = BackspinSnapshot::create(spinLen, 6.0, 2.0);
+    os.setBackspinSnapshot(spin.get());
+
+    const juce::int64 tailStart = dur - spinLen; // = 100; s0 = inSrc + 100 = 1100
+    const double s0 = static_cast<double>(inSrc + tailStart);
+
+    juce::AudioBuffer<float> whole(1, static_cast<int>(dur));
+    whole.clear();
+    {
+        juce::AudioSourceChannelInfo info(&whole, 0, static_cast<int>(dur));
+        os.setNextReadPosition(0);
+        os.getNextAudioBlock(info);
+    }
+
+    // RampSource value == source position. At the MIDDLE of the spin the read must
+    // still be clearly mid-rewind (between the trigger and the clip start), not
+    // pinned at the clip start as the old clamp-and-freeze behaviour would do.
+    const int mid = static_cast<int>(tailStart) + static_cast<int>(spinLen / 2);
+    const float midPos = whole.getSample(0, mid);
+    require(midPos > static_cast<float>(inSrc) + 3.0F,
+            "scaled backspin is still rewinding at the midpoint (not frozen at the clip start)");
+    require(midPos < static_cast<float>(s0) - 3.0F,
+            "scaled backspin has rewound past the trigger by the midpoint");
+
+    // Source position is non-increasing across the whole spin (a true rewind) and
+    // never reads before the clip start.
+    float prev = static_cast<float>(s0) + 1.0F;
+    for (int j = 0; j < static_cast<int>(spinLen); ++j)
+    {
+        if (spin->gainAt(static_cast<double>(j), static_cast<double>(spinLen)) < 1.0F) break;
+        const float v = whole.getSample(0, static_cast<int>(tailStart) + j);
+        require(v <= prev + 1.0e-2F, "scaled backspin rewinds monotonically (no forward jump)");
+        require(v >= static_cast<float>(inSrc) - 1.0e-2F, "scaled backspin never reads before the clip start");
+        prev = v;
+    }
+}
+
 } // namespace
 
 void addEnvelopeFadeTests(std::vector<TestCase>& tests)
@@ -859,6 +919,7 @@ void addEnvelopeFadeTests(std::vector<TestCase>& tests)
     tests.push_back({"BackspinSnapshot rewind endpoints and monotonicity", testBackspinSnapshotRewindEndpointsAndMonotonic});
     tests.push_back({"BackspinSnapshot rate magnitude and end fade", testBackspinSnapshotRateAndEndFade});
     tests.push_back({"OffsetSource backspin rewinds and is block-size invariant", testOffsetSourceBackspinRewindsAndIsBlockInvariant});
+    tests.push_back({"OffsetSource backspin scales the rewind to fit a short clip", testOffsetSourceBackspinScalesToFitShortClip});
 }
 
 } // namespace silverdaw::tests

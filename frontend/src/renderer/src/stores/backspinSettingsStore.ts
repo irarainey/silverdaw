@@ -20,8 +20,10 @@ export const BACKSPIN_INTENSITY_SPEED: Record<BackspinIntensityDto, number> = {
   medium: 6,
   wild: 8
 }
-// Momentum-decay curve power. Fixed (not exposed) to keep the preference to two knobs.
-export const BACKSPIN_CURVE_POWER = 2
+// Momentum-decay curve power. Fixed (not exposed) to keep the preference to two
+// knobs. Higher = more front-loaded (a fast pull-back that slows down quickly),
+// which sounds more like a real backspin than a steady reverse.
+export const BACKSPIN_CURVE_POWER = 3
 
 interface BackspinSettingsState {
   duration: BackspinDurationDto

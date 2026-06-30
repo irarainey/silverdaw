@@ -48,7 +48,7 @@ describe('backspinSettingsStore', () => {
     const store = useBackspinSettingsStore()
     store.setBackspinSettings('long', 'wild')
     expect(setBackspinSettings).toHaveBeenCalledWith({ duration: 'long', intensity: 'wild' })
-    expect(sendMock).toHaveBeenCalledWith('BACKSPIN_SETTINGS_SET', { seconds: 0.9, speed: 8, curve: 2 })
+    expect(sendMock).toHaveBeenCalledWith('BACKSPIN_SETTINGS_SET', { seconds: 0.9, speed: 8, curve: 3 })
   })
 
   it('re-hydrates from prefs and re-sends to the backend on connect', async () => {
@@ -57,6 +57,6 @@ describe('backspinSettingsStore', () => {
     expect(getBackspinSettings).toHaveBeenCalled()
     expect(store.duration).toBe('long')
     expect(store.intensity).toBe('wild')
-    expect(sendMock).toHaveBeenCalledWith('BACKSPIN_SETTINGS_SET', { seconds: 0.9, speed: 8, curve: 2 })
+    expect(sendMock).toHaveBeenCalledWith('BACKSPIN_SETTINGS_SET', { seconds: 0.9, speed: 8, curve: 3 })
   })
 })

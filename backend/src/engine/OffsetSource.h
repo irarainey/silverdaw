@@ -584,10 +584,19 @@ class OffsetSource : public juce::PositionableAudioSource
         const double minSrc = static_cast<double>(inSrc); // never rewind before the clip start
         const int scratchCap = brakeScratch.getNumSamples();
         const double spinSpeed = spin.getSpinSpeed();
-        // The contiguous span grows with the spin speed (|rate| up to spinSpeed), so
-        // size each sub-chunk so the read still fits the scratch buffer.
+        // Cap the rewind to the source available before the clip start. Without this the
+        // spin (which rewinds spinSpeed*T/(p+1) of source) slams into the clip start and
+        // FREEZES for the rest of the region on any clip shorter than ~3x the spin length,
+        // so a long backspin sounds short. Instead, scale the rewind uniformly so it spans
+        // the FULL duration — a gentler rewind that still ends right at the clip start.
+        const double available = juce::jmax(0.0, s0 - minSrc);
+        const double requestedTotal = spin.totalRewound(effLen);
+        const double rewindScale =
+            (requestedTotal > available && requestedTotal > 0.0) ? (available / requestedTotal) : 1.0;
+        // The contiguous span grows with the (scaled) spin speed, so size each sub-chunk
+        // so the read still fits the scratch buffer.
         const int maxChunk =
-            juce::jmax(1, static_cast<int>((scratchCap - 8) / juce::jmax(1.0, spinSpeed)));
+            juce::jmax(1, static_cast<int>((scratchCap - 8) / juce::jmax(1.0, spinSpeed * rewindScale)));
         const int scratchPlanes = juce::jmin(numCh, kMaxWarpChannels);
 
         for (int done = 0; done < count;)
@@ -596,8 +605,8 @@ class OffsetSource : public juce::PositionableAudioSource
             const double uStart = static_cast<double>(tailAudibleStart - tailStart) + done;
             const double uEnd = uStart + static_cast<double>(n - 1);
             // Source positions DECREASE with u (rewind): uStart is the latest (highest).
-            const double posHi = juce::jmax(minSrc, s0 - spin.sourceRewoundAt(uStart, effLen));
-            const double posLo = juce::jmax(minSrc, s0 - spin.sourceRewoundAt(uEnd, effLen));
+            const double posHi = juce::jmax(minSrc, s0 - rewindScale * spin.sourceRewoundAt(uStart, effLen));
+            const double posLo = juce::jmax(minSrc, s0 - rewindScale * spin.sourceRewoundAt(uEnd, effLen));
 
             const juce::int64 spanStart =
                 juce::jmax(static_cast<juce::int64>(0), static_cast<juce::int64>(std::floor(posLo)) - 1);
@@ -616,7 +625,7 @@ class OffsetSource : public juce::PositionableAudioSource
             for (int i = 0; i < n; ++i)
             {
                 const double u = uStart + static_cast<double>(i);
-                const double srcPos = juce::jmax(minSrc, s0 - spin.sourceRewoundAt(u, effLen));
+                const double srcPos = juce::jmax(minSrc, s0 - rewindScale * spin.sourceRewoundAt(u, effLen));
                 const double local = srcPos - static_cast<double>(spanStart);
                 const int i1 = static_cast<int>(std::floor(local));
                 const float frac = static_cast<float>(local - static_cast<double>(i1));
