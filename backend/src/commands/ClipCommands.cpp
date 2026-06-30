@@ -162,6 +162,22 @@ void handleClipSetBrake(const juce::var& payload, silverdaw::AudioEngine& engine
                         engine.getBrakeDefaultCurve());
 }
 
+void handleClipSetBackspin(const juce::var& payload, silverdaw::AudioEngine& engine,
+                           silverdaw::ProjectState& projectState)
+{
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    const bool on = static_cast<bool>(payload.getProperty("on", false));
+    silverdaw::log::info("bridge", "recv CLIP_SET_BACKSPIN clipId=" + clipId +
+                                       " on=" + (on ? "true" : "false"));
+    if (clipId.isEmpty())
+    {
+        return;
+    }
+    projectState.setClipBackspin(clipId, on);
+    engine.setClipBackspin(clipId, on ? engine.getBackspinDefaultSeconds() : 0.0,
+                           engine.getBackspinDefaultSpeed(), engine.getBackspinDefaultCurve());
+}
+
 void handleClipRename(const juce::var& payload, silverdaw::ProjectState& projectState)
 {
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});

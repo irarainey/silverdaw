@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { SkipButtonTarget, WaveformDisplayMode } from '@/stores/uiStore'
-import type { BrakeDurationDto, BrakeCurveDto } from '@shared/types'
 
 const toastsEnabled = defineModel<boolean>('toastsEnabled', { required: true })
 const followPlayback = defineModel<boolean>('followPlayback', { required: true })
@@ -9,8 +8,6 @@ const matchProjectTempoOnDrop = defineModel<boolean>('matchProjectTempoOnDrop', 
 const cleanupProjectFiles = defineModel<boolean>('cleanupProjectFiles', { required: true })
 const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { required: true })
 const waveformDisplayMode = defineModel<WaveformDisplayMode>('waveformDisplayMode', { required: true })
-const brakeDuration = defineModel<BrakeDurationDto>('brakeDuration', { required: true })
-const brakeCurve = defineModel<BrakeCurveDto>('brakeCurve', { required: true })
 </script>
 
 <template>
@@ -102,39 +99,33 @@ const brakeCurve = defineModel<BrakeCurveDto>('brakeCurve', { required: true })
       </p>
       <div class="space-y-2">
         <label
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="skipButtonTarget"
             type="radio"
             name="skip-button-target"
             value="timelineEnds"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">Start and end of the timeline</span>
-            <span class="mt-0.5 block text-zinc-500">
-              Previous jumps to the start of the project; next jumps to
-              the end.
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">Timeline ends</span>
+            <span class="text-zinc-500"> — Jump to project start / end</span>
           </span>
         </label>
         <label
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="skipButtonTarget"
             type="radio"
             name="skip-button-target"
             value="markers"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">Previous and next marker</span>
-            <span class="mt-0.5 block text-zinc-500">
-              Step through your timeline markers. Past the last marker
-              in either direction, jumps to the start or end instead.
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">Markers</span>
+            <span class="text-zinc-500"> — Step through timeline markers</span>
           </span>
         </label>
       </div>
@@ -149,74 +140,34 @@ const brakeCurve = defineModel<BrakeCurveDto>('brakeCurve', { required: true })
       </p>
       <div class="space-y-2">
         <label
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="waveformDisplayMode"
             type="radio"
             name="waveform-display-mode"
             value="summary"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">Single waveform</span>
-            <span class="mt-0.5 block text-zinc-500">
-              Show one combined waveform per clip. Cleaner and easier
-              to read at a glance.
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">Single waveform</span>
+            <span class="text-zinc-500"> — One combined waveform per clip</span>
           </span>
         </label>
         <label
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="waveformDisplayMode"
             type="radio"
             name="waveform-display-mode"
             value="stereo"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">Left and right channels</span>
-            <span class="mt-0.5 block text-zinc-500">
-              Stack separate left and right waveforms for stereo clips
-              so you can see differences between the channels.
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">Left and right</span>
+            <span class="text-zinc-500"> — Separate L / R for stereo clips</span>
           </span>
-        </label>
-      </div>
-    </div>
-    <div class="mt-4">
-      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-        Turntable brake
-      </h2>
-      <p class="mb-3 text-zinc-500">
-        The brake (right-click a clip ▸ Brake) decelerates the clip to a stop at
-        its end, like a vinyl record-stop. These set how long it takes and how
-        the slowdown is shaped, for every braked clip.
-      </p>
-      <div class="space-y-2">
-        <label class="flex cursor-pointer items-center gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2">
-          <span class="w-20 font-medium text-zinc-200">Duration</span>
-          <select
-            v-model="brakeDuration"
-            class="flex-1 cursor-pointer rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-200 accent-sky-500"
-          >
-            <option value="short">Short — quick stop (~0.4 s)</option>
-            <option value="medium">Medium — balanced (~0.6 s)</option>
-            <option value="long">Long — drawn-out (~0.9 s)</option>
-          </select>
-        </label>
-        <label class="flex cursor-pointer items-center gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2">
-          <span class="w-20 font-medium text-zinc-200">Curve</span>
-          <select
-            v-model="brakeCurve"
-            class="flex-1 cursor-pointer rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-200 accent-sky-500"
-          >
-            <option value="linear">Linear — constant slowdown</option>
-            <option value="curved">Curved — fast then easing (record-stop)</option>
-            <option value="steep">Steep — very fast then a long sag</option>
-          </select>
         </label>
       </div>
     </div>

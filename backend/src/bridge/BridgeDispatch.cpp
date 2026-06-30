@@ -135,6 +135,10 @@ bool dispatchClip(const DispatchContext& ctx)
     {
         silverdaw::handleClipSetBrake(payload, engine, projectState);
     }
+    else if (type == "CLIP_SET_BACKSPIN")
+    {
+        silverdaw::handleClipSetBackspin(payload, engine, projectState);
+    }
     else if (type == "CLIP_REMOVE")
     {
         silverdaw::log::info("bridge", "recv CLIP_REMOVE clipId=" + payload.getProperty("clipId", "").toString());
@@ -303,6 +307,10 @@ bool dispatchPreview(const DispatchContext& ctx)
     else if (type == "PREVIEW_SET_BRAKE")
     {
         silverdaw::handlePreviewSetBrake(payload, engine, projectState);
+    }
+    else if (type == "PREVIEW_SET_BACKSPIN")
+    {
+        silverdaw::handlePreviewSetBackspin(payload, engine, projectState);
     }
     else
     {
@@ -629,6 +637,10 @@ bool dispatchAudioDevice(const DispatchContext& ctx)
     else if (type == "BRAKE_SETTINGS_SET")
     {
         silverdaw::handleSetBrakeSettings(payload, engine);
+    }
+    else if (type == "BACKSPIN_SETTINGS_SET")
+    {
+        silverdaw::handleSetBackspinSettings(payload, engine);
     }
     else if (type == "AUDIO_FILE_PROBE")
     {

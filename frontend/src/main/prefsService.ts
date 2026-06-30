@@ -16,6 +16,7 @@ import {
   sanitiseStemPrefs,
   sanitiseStemModelDir,
   sanitiseBrakePrefs,
+  sanitiseBackspinPrefs,
   sanitiseUiPrefs,
   type AudioOutputPrefs,
   type AutosavePrefs,
@@ -107,6 +108,7 @@ export class PrefsService {
             ? parsed.keepAwakeMode
             : defaults.keepAwakeMode,
         brake: sanitiseBrakePrefs(parsed.brake, defaults.brake),
+        backspin: sanitiseBackspinPrefs(parsed.backspin, defaults.backspin),
         recentProjects: sanitiseRecentList(parsed.recentProjects),
         stems: sanitiseStemPrefs(parsed.stems, defaults.stems)
       }

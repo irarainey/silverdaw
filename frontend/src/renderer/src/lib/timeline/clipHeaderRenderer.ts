@@ -43,6 +43,7 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
     const LOCK_BADGE_FULL_W = 14
     const WARP_BADGE_FULL_W = 40
     const BRAKE_BADGE_FULL_W = 44
+    const SPIN_BADGE_FULL_W = 38
     const STATUS_BADGE_H = 14
     const STATUS_BADGE_R = 5
     const BADGE_GAP = 4
@@ -78,11 +79,14 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
     const PITCH_BADGE_W = pitchShifted ? PITCH_BADGE_FULL_W : 0
     const hasBrake = clip.brake === true
     const BRAKE_BADGE_W = hasBrake ? BRAKE_BADGE_FULL_W : 0
+    const hasBackspin = clip.backspin === true
+    const SPIN_BADGE_W = hasBackspin ? SPIN_BADGE_FULL_W : 0
     const BADGE_COUNT =
       (isLinked ? 1 : 0) +
       (isLocked ? 1 : 0) +
       (pitchShifted ? 1 : 0) +
       (hasBrake ? 1 : 0) +
+      (hasBackspin ? 1 : 0) +
       (warpIsPending || warpIsActive ? 1 : 0)
     const BADGES_W =
       BADGE_COUNT === 0
@@ -92,6 +96,7 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
           LOCK_BADGE_W +
           PITCH_BADGE_W +
           BRAKE_BADGE_W +
+          SPIN_BADGE_W +
           WARP_BADGE_W +
           Math.max(0, BADGE_COUNT - 1) * BADGE_GAP
     const maxTextW = Math.max(0, clipW - PAD_X * 2 - BADGES_W)
@@ -247,6 +252,35 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
       badge.y = Math.round(cy - 7)
       tracksL.addChild(badge)
       badgeRight -= BRAKE_BADGE_FULL_W + BADGE_GAP
+    }
+    if (hasBackspin) {
+      const bg = acquireGraphics(G)
+      const cx = badgeRight - SPIN_BADGE_FULL_W / 2
+      const cy = clipInnerY + HEADER_H / 2
+      bg
+        .roundRect(
+          cx - SPIN_BADGE_FULL_W / 2,
+          cy - STATUS_BADGE_H / 2,
+          SPIN_BADGE_FULL_W,
+          STATUS_BADGE_H,
+          STATUS_BADGE_R
+        )
+        .fill({ color: 0x2e1065, alpha: 0.95 })
+        .stroke({ color: 0xffffff, width: 1, alpha: 0.95 })
+      tracksL.addChild(bg)
+      const badge = new T({
+        text: 'SPIN',
+        style: {
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          fontSize: 9,
+          fontWeight: '700',
+          fill: 0xc4b5fd
+        }
+      })
+      badge.x = Math.round(cx - 11)
+      badge.y = Math.round(cy - 7)
+      tracksL.addChild(badge)
+      badgeRight -= SPIN_BADGE_FULL_W + BADGE_GAP
     }
     if (warpIsPending) {
       const badge = acquireGraphics(G)

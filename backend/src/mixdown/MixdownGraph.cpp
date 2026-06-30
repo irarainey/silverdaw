@@ -77,6 +77,17 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
             out->offsetSource->setBrakeSnapshot(out->brakeSnapshot.get());
         }
     }
+    if (clip.backspinSeconds > 0.0)
+    {
+        const auto backspinLenSamples =
+            static_cast<juce::int64>(juce::jmax(0.0, clip.backspinSeconds) * out->sourceRate);
+        out->backspinSnapshot = BackspinSnapshot::create(backspinLenSamples, clip.backspinSpeed,
+                                                         clip.backspinCurve);
+        if (out->backspinSnapshot != nullptr && !out->backspinSnapshot->isEmpty())
+        {
+            out->offsetSource->setBackspinSnapshot(out->backspinSnapshot.get());
+        }
+    }
 
     if (clip.warpEnabled)
     {

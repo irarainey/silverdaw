@@ -12,6 +12,7 @@ import type {
   StemGpuStatus as SharedStemGpuStatus,
   StemPrefsDto as SharedStemPrefsDto,
   BrakePrefsDto as SharedBrakePrefsDto,
+  BackspinPrefsDto as SharedBackspinPrefsDto,
   LocateStemModelResult as SharedLocateStemModelResult
 } from '@shared/types'
 import type { BackendStatus } from '@shared/ipc-channels'
@@ -131,6 +132,8 @@ declare global {
       setStemPrefs(partial: Partial<SharedStemPrefsDto>): void
       getBrakeSettings(): Promise<SharedBrakePrefsDto>
       setBrakeSettings(partial: Partial<SharedBrakePrefsDto>): void
+      getBackspinSettings(): Promise<SharedBackspinPrefsDto>
+      setBackspinSettings(partial: Partial<SharedBackspinPrefsDto>): void
       ensureStemModel(): Promise<SharedEnsureStemModelResult>
       cancelStemModelDownload(): void
       onStemModelDownloadProgress(

@@ -66,7 +66,9 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
 
     // Snapshot on the message thread before worker dispatch.
     auto snapshot = silverdaw::snapshotProjectForMixdown(
-        projectState, engine.getBrakeDefaultSeconds(), engine.getBrakeDefaultCurve());
+        projectState, engine.getBrakeDefaultSeconds(), engine.getBrakeDefaultCurve(),
+        engine.getBackspinDefaultSeconds(), engine.getBackspinDefaultSpeed(),
+        engine.getBackspinDefaultCurve());
     // Use the live resolver so mixdown matches decoded-cache playback and warp timing.
     for (auto& trackSnap : snapshot.tracks)
     {

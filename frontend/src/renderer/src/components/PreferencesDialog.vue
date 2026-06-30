@@ -7,6 +7,7 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { usePreferencesForm } from '@/lib/preferences/usePreferencesForm'
 import PreferencesAudioTab from './PreferencesAudioTab.vue'
 import PreferencesDeveloperTab from './PreferencesDeveloperTab.vue'
+import PreferencesEffectsTab from './PreferencesEffectsTab.vue'
 import PreferencesGeneralTab from './PreferencesGeneralTab.vue'
 import PreferencesProjectTab from './PreferencesProjectTab.vue'
 import PreferencesStemsTab from './PreferencesStemsTab.vue'
@@ -39,6 +40,8 @@ const {
   waveformDisplayMode,
   brakeDuration,
   brakeCurve,
+  backspinDuration,
+  backspinIntensity,
   defaultProjectSampleRate,
   defaultProjectDir,
   defaultClipDir,
@@ -67,13 +70,14 @@ const {
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 
-type PreferencesTab = 'general' | 'project' | 'audio' | 'stems' | 'developer'
+type PreferencesTab = 'general' | 'project' | 'audio' | 'effects' | 'stems' | 'developer'
 const activeTab = ref<PreferencesTab>('general')
 
 const tabs: Array<{ id: PreferencesTab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'project', label: 'Project' },
   { id: 'audio', label: 'Audio' },
+  { id: 'effects', label: 'Effects' },
   { id: 'stems', label: 'Stems' },
   { id: 'developer', label: 'Developer' }
 ]
@@ -145,7 +149,7 @@ function onSave(): void {
           </h1>
         </div>
 
-        <div class="flex max-h-[70vh] min-h-90 overflow-hidden">
+        <div class="flex h-[70vh] overflow-hidden">
           <nav
             class="flex w-40 shrink-0 flex-col gap-0.5 border-r border-zinc-800 bg-zinc-950/40 py-3 text-xs"
             role="tablist"
@@ -183,8 +187,13 @@ function onSave(): void {
               v-model:cleanup-project-files="cleanupProjectFiles"
               v-model:skip-button-target="skipButtonTarget"
               v-model:waveform-display-mode="waveformDisplayMode"
+            />
+            <PreferencesEffectsTab
+              v-else-if="activeTab === 'effects'"
               v-model:brake-duration="brakeDuration"
               v-model:brake-curve="brakeCurve"
+              v-model:backspin-duration="backspinDuration"
+              v-model:backspin-intensity="backspinIntensity"
             />
             <PreferencesProjectTab
               v-else-if="activeTab === 'project'"

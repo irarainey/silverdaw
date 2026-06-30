@@ -53,6 +53,8 @@ export const IPC = {
     setKeepAwake: 'prefs:setKeepAwake',
     getBrake: 'prefs:getBrake',
     setBrake: 'prefs:setBrake',
+    getBackspin: 'prefs:getBackspin',
+    setBackspin: 'prefs:setBackspin',
     getStems: 'prefs:getStems',
     setStems: 'prefs:setStems'
   },

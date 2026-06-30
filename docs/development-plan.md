@@ -1444,7 +1444,7 @@ project transport.
   because the current Web Audio + temp-WAV path already serves playback when
   Web Audio can decode the file.
 
-### 7.16 DJ Performance Effects (turntable brake)
+### 7.16 DJ Performance Effects (turntable brake + backspin)
 Emulates a vinyl record-stop as a **non-destructive per-clip** on/off effect. At
 the clip's end, playback decelerates to a stop: a varispeed ramp where the
 source-read rate goes 1 → 0, coupling pitch and tempo so the audio pitches down
@@ -1473,7 +1473,7 @@ and grinds to a halt.
   live playback, the clip-editor preview, and mixdown export — parity for free.
 - **Persistence**: stored as a boolean `brake` flag on the clip, suppressed on
   disk/wire when off. The duration + curve are an **application preference**
-  (General tab: Duration short/medium/long, Curve linear/curved/steep), held as
+  (Effects tab: Duration short/medium/long, Curve linear/curved/steep), held as
   engine-global defaults the renderer pushes over the bridge (`BRAKE_SETTINGS_SET`)
   on change and on every (re)connect — the keep-awake pattern. Changing it
   re-applies live to all braked clips and to mixdown export; the backend keeps the
@@ -1483,8 +1483,28 @@ and grinds to a halt.
   ramp + groove ticks that bunch at full speed and spread apart as it stops,
   tracking the configured duration/curve) show the effect over the affected region.
 - **v1 scope**: forward, non-warped clips only (Rubber Band's pitch-preserving
-  warp can't yet compose with the varispeed ramp). Backspin (pull-back at an
-  arbitrary point) is the planned follow-up DJ effect.
+  warp can't yet compose with the varispeed ramp).
+
+#### Turntable backspin (reverse rewind)
+The companion DJ effect: at the clip's end the audio **rewinds backwards** at a
+high speed that decays to a stop, like a DJ yanking the platter back — the
+recognisable reverse "rewind" whoosh (pitched up and fast at first, dropping as
+the spin slows). It shares the brake's architecture and is **mutually exclusive**
+with the brake (toggling one clears the other, enforced in the store, the engine,
+and on disk).
+- **DSP** (`backend/src/dsp/BackspinSnapshot.h`): the reverse-rate magnitude decays
+  as `spinSpeed·(1−u/T)^p`; the source position rewinds backward from the trigger
+  by the analytic `Rewound(u) = spinSpeed·T/(p+1)·(1−(1−u/T)^(p+1))` (stateless, so
+  live/offline match). Source position is continuous at the trigger (only the
+  velocity flips), so there is no pop. Cubic interpolation + the same rate-keyed end
+  fade as the brake; integrated in `OffsetSource` next to the brake (backspin wins
+  if both are somehow set), shared by live/preview/mixdown.
+- **Preference** (Effects tab): **Duration** short/medium/long + **Intensity**
+  gentle/medium/wild (peak reverse speed 4×/6×/8×), pushed as `BACKSPIN_SETTINGS_SET`
+  exactly like the brake settings.
+- **UI**: context-menu **Backspin** toggle, a violet `SPIN` clip-header badge, and a
+  violet **tail overlay** (back-pointing chevrons that thin out as the spin slows +
+  the decaying rate curve) to read clearly as "reverse" and distinct from the brake.
 
 ---
 

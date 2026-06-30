@@ -251,6 +251,12 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                     engine.setClipBrake(clipId, engine.getBrakeDefaultSeconds(),
                                         engine.getBrakeDefaultCurve());
                 }
+                if (static_cast<bool>(clip.getProperty("backspin", false)))
+                {
+                    engine.setClipBackspin(clipId, engine.getBackspinDefaultSeconds(),
+                                           engine.getBackspinDefaultSpeed(),
+                                           engine.getBackspinDefaultCurve());
+                }
             }
             else
             {

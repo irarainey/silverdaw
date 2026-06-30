@@ -229,6 +229,11 @@ class ProjectState : public juce::ValueTree::Listener
     /** Read a clip's brake flag. Defaults to false. */
     bool isClipBrake(const juce::String& clipId) const;
 
+    bool setClipBackspin(const juce::String& clipId, bool backspin);
+
+    /** Read a clip's backspin flag. Defaults to false. */
+    bool isClipBackspin(const juce::String& clipId) const;
+
     /** Read the clip's `inMs` (where in the source file it starts reading). 0 if unknown. */
     double getClipInMs(const juce::String& clipId) const;
 
@@ -567,6 +572,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kLocked;
     static const juce::Identifier kReversed;
     static const juce::Identifier kBrake;
+    static const juce::Identifier kBackspin;
     static const juce::Identifier kViewPxPerSecond;
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kViewSelectedTrack;

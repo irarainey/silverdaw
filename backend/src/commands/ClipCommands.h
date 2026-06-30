@@ -21,6 +21,7 @@ void handleClipSetEnvelope(const juce::var& payload, AudioEngine& engine, Projec
 void handleClipSetLocked(const juce::var& payload, ProjectState& projectState);
 void handleClipSetReversed(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
 void handleClipSetBrake(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
+void handleClipSetBackspin(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
 void handleClipRename(const juce::var& payload, ProjectState& projectState);
 void handleClipRebind(const juce::var& payload, ProjectState& projectState);
 void handleClipSetWarp(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,

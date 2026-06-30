@@ -62,6 +62,9 @@ export interface Clip {
   /** Turntable brake (record-stop): when set, the clip decelerates to a stop over a fixed
    *  platter-stop time at its end. Per-instance timeline effect; forward, non-warped clips only. */
   brake?: boolean
+  /** Turntable backspin (reverse rewind): when set, the clip rewinds backwards at speed at its
+   *  end, like a DJ pulling the vinyl back. Mutually exclusive with `brake`; forward, non-warped only. */
+  backspin?: boolean
 }
 
 export interface Marker {

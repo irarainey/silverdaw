@@ -72,6 +72,15 @@ export const BRAKE_FILL_ALPHA = 0.16
 export const BRAKE_LINE = 0xfca5a5 // red-300
 export const BRAKE_LINE_ALPHA = 0.95
 
+// ─── Turntable backspin (reverse rewind) ────────────────────────────────────
+// Overlay marking the tail region where a clip rewinds backwards to a stop.
+// Violet distinguishes it from the red brake and blue crossfades. Duration +
+// curve come from the backspin-settings store (the app preference).
+export const BACKSPIN_FILL = 0xa78bfa // violet-400
+export const BACKSPIN_FILL_ALPHA = 0.16
+export const BACKSPIN_LINE = 0xc4b5fd // violet-300
+export const BACKSPIN_LINE_ALPHA = 0.95
+
 // Automation lane: a strip reserved at the bottom of a track row when a
 // parameter's curve is shown. Clips compress into the remaining height above it.
 export const AUTOMATION_LANE_HEIGHT = 88

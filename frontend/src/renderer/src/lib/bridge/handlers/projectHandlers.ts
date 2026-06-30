@@ -6,6 +6,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useAppStore } from '@/stores/appStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
+import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import * as engineRecovery from '@/lib/engineRecovery'
 import { log } from '@/lib/log'
@@ -40,6 +41,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     void useAudioDeviceStore().applyKeepAwakeOnReady()
     // The backend also resets to its built-in brake defaults on connect; re-apply the saved settings.
     void useBrakeSettingsStore().applyBrakeSettingsOnReady()
+    void useBackspinSettingsStore().applyBackspinSettingsOnReady()
     // Recovery distinguishes empty reconnect snapshots from restored resets.
     engineRecovery.onProjectStateApplied(payload)
   },

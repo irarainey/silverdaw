@@ -9,6 +9,7 @@
 #include "BridgeAuth.h"
 #include "EdgeFadeSnapshot.h"
 #include "BrakeSnapshot.h"
+#include "BackspinSnapshot.h"
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
 #include "MixdownEngine.h"
@@ -694,6 +695,150 @@ void testOffsetSourceBrakeLargeBlockMatchesPiecewise()
     }
 }
 
+void testBackspinSnapshotRewindEndpointsAndMonotonic()
+{
+    using silverdaw::BackspinSnapshot;
+
+    const double T = 1000.0;
+    const double speed = 4.0;
+    auto bs = BackspinSnapshot::create(static_cast<juce::int64>(T), speed, 2.0);
+
+    requireNear(bs->sourceRewoundAt(0.0, T), 0.0, 1.0e-9, "backspin rewinds nothing at the trigger");
+    requireNear(bs->sourceRewoundAt(T, T), speed * T / 3.0, 1.0e-6,
+                "power-2 backspin rewinds spinSpeed*T/3 of source");
+    requireNear(bs->totalRewound(T), speed * T / 3.0, 1.0e-6, "totalRewound matches sourceRewoundAt(T)");
+
+    double prev = -1.0;
+    for (double u = 0.0; u <= T; u += 25.0)
+    {
+        const double s = bs->sourceRewoundAt(u, T);
+        require(s >= prev - 1.0e-9, "rewound source is monotonic non-decreasing");
+        prev = s;
+    }
+
+    auto empty = BackspinSnapshot::create(0, speed, 2.0);
+    require(empty->isEmpty(), "zero-length backspin is empty");
+}
+
+void testBackspinSnapshotRateAndEndFade()
+{
+    using silverdaw::BackspinSnapshot;
+
+    const double T = 1000.0;
+    auto bs = BackspinSnapshot::create(static_cast<juce::int64>(T), 4.0, 2.0);
+
+    requireNear(bs->rateMagAt(0.0, T), 4.0, 1.0e-9, "spin starts at full reverse speed");
+    requireNear(bs->rateMagAt(T, T), 0.0, 1.0e-9, "spin reaches zero at the stop");
+    requireNear(bs->rateMagAt(T / 2.0, T), 1.0, 1.0e-9, "power-2 rate at half is speed*0.25");
+
+    require(bs->gainAt(0.0, T) == 1.0F, "end fade is unity at full speed");
+    require(bs->gainAt(T * 0.5, T) == 1.0F, "end fade is unity well before the stop");
+    require(bs->gainAt(T, T) == 0.0F, "end fade reaches silence exactly at the stop");
+    require(bs->gainAt(T - 1.0, T) < 1.0F, "end fade ramps down just before the stop");
+}
+
+void testOffsetSourceBackspinRewindsAndIsBlockInvariant()
+{
+    using silverdaw::BackspinSnapshot;
+    using silverdaw::OffsetSource;
+
+    RampSource child;
+    OffsetSource os(&child);
+    const int blockSize = 256;
+    os.prepareToPlay(blockSize, 48000.0);
+
+    const juce::int64 inSrc = 2000;
+    const juce::int64 dur = 1000;
+    os.setOffsetSamples(0);
+    os.setInSourceSamples(inSrc);
+    os.setClipDurationSamples(dur);
+
+    const juce::int64 spinLen = 400; // the last 400 samples rewind backward
+    const double speed = 4.0;
+    auto spin = BackspinSnapshot::create(spinLen, speed, 2.0);
+    os.setBackspinSnapshot(spin.get());
+
+    const juce::int64 tailStart = dur - spinLen; // clipStart is 0
+    const double s0 = static_cast<double>(inSrc + tailStart);
+
+    const auto renderWhole = [&](juce::AudioBuffer<float>& out) {
+        out.setSize(1, static_cast<int>(dur));
+        out.clear();
+        juce::AudioSourceChannelInfo info(&out, 0, static_cast<int>(dur));
+        os.setNextReadPosition(0);
+        os.getNextAudioBlock(info);
+    };
+
+    juce::AudioBuffer<float> whole;
+    renderWhole(whole);
+
+    // Pre-spin region plays at 1x forward in source order.
+    for (int i = 0; i < tailStart; ++i)
+        requireNear(whole.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-2,
+                    "pre-spin region plays forward at 1x");
+
+    // Backspin region follows the analytic reverse rewind curve (skip the end fade).
+    for (int j = 0; j < spinLen; ++j)
+    {
+        const double u = static_cast<double>(j);
+        if (spin->gainAt(u, static_cast<double>(spinLen)) < 1.0F) continue;
+        const double expected = s0 - spin->sourceRewoundAt(u, static_cast<double>(spinLen));
+        requireNear(whole.getSample(0, static_cast<int>(tailStart) + j),
+                    static_cast<float>(expected), 0.25,
+                    "backspin source position follows the analytic rewind curve");
+    }
+
+    // Source position is non-increasing through the spin (it rewinds backward).
+    for (int j = 1; j < static_cast<int>(spinLen); ++j)
+    {
+        if (spin->gainAt(static_cast<double>(j), static_cast<double>(spinLen)) < 1.0F) break;
+        const float step = whole.getSample(0, static_cast<int>(tailStart) + j)
+                         - whole.getSample(0, static_cast<int>(tailStart) + j - 1);
+        require(step <= 1.0e-2F, "backspin rewinds (source position is non-increasing)");
+    }
+
+    // Block-size invariance (parity): render in odd small chunks and confirm the
+    // stateless analytic mapping produces sample-identical output.
+    juce::AudioBuffer<float> piecewise(1, static_cast<int>(dur));
+    piecewise.clear();
+    const int chunk = 37;
+    for (juce::int64 p = 0; p < dur;)
+    {
+        const int n = static_cast<int>(juce::jmin(static_cast<juce::int64>(chunk), dur - p));
+        juce::AudioBuffer<float> tmp(1, n);
+        tmp.clear();
+        juce::AudioSourceChannelInfo info(&tmp, 0, n);
+        os.setNextReadPosition(p);
+        os.getNextAudioBlock(info);
+        for (int i = 0; i < n; ++i) piecewise.setSample(0, static_cast<int>(p) + i, tmp.getSample(0, i));
+        p += n;
+    }
+    for (int i = 0; i < static_cast<int>(dur); ++i)
+        requireNear(piecewise.getSample(0, i), whole.getSample(0, i), 1.0e-3,
+                    "backspin render is block-size invariant (stateless analytic mapping)");
+
+    // v1 gate: a reversed clip ignores the backspin (plain window mirror).
+    os.setReversed(true);
+    juce::AudioBuffer<float> revBuf(1, static_cast<int>(dur));
+    revBuf.clear();
+    {
+        juce::AudioSourceChannelInfo info(&revBuf, 0, static_cast<int>(dur));
+        os.setNextReadPosition(0);
+        os.getNextAudioBlock(info);
+    }
+    requireNear(revBuf.getSample(0, 0), static_cast<float>(inSrc + dur - 1), 1.0e-2,
+                "reversed clip ignores the backspin in v1 (plain mirror)");
+    os.setReversed(false);
+
+    // Clearing the snapshot restores 1x forward playback.
+    os.setBackspinSnapshot(nullptr);
+    juce::AudioBuffer<float> cleared;
+    renderWhole(cleared);
+    for (int i = 0; i < static_cast<int>(dur); ++i)
+        requireNear(cleared.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-2,
+                    "clearing the backspin restores 1x forward playback");
+}
+
 } // namespace
 
 void addEnvelopeFadeTests(std::vector<TestCase>& tests)
@@ -711,6 +856,9 @@ void addEnvelopeFadeTests(std::vector<TestCase>& tests)
     tests.push_back({"BrakeSnapshot rate curve and click-guard", testBrakeSnapshotRateAndClickGuard});
     tests.push_back({"OffsetSource brake decelerates and is block-size invariant", testOffsetSourceBrakeDeceleratesAndIsBlockInvariant});
     tests.push_back({"OffsetSource brake renders large read-ahead blocks without garbling", testOffsetSourceBrakeLargeBlockMatchesPiecewise});
+    tests.push_back({"BackspinSnapshot rewind endpoints and monotonicity", testBackspinSnapshotRewindEndpointsAndMonotonic});
+    tests.push_back({"BackspinSnapshot rate magnitude and end fade", testBackspinSnapshotRateAndEndFade});
+    tests.push_back({"OffsetSource backspin rewinds and is block-size invariant", testOffsetSourceBackspinRewindsAndIsBlockInvariant});
 }
 
 } // namespace silverdaw::tests

@@ -5,7 +5,8 @@ import { useAppStore } from '@/stores/appStore'
 import { useUiStore, type SkipButtonTarget, type WaveformDisplayMode } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
-import type { BrakeDurationDto, BrakeCurveDto } from '@shared/types'
+import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
+import type { BrakeDurationDto, BrakeCurveDto, BackspinDurationDto, BackspinIntensityDto } from '@shared/types'
 import {
   BACKEND_PREFERENCE,
   preferredBackendFor,
@@ -27,6 +28,8 @@ export interface PreferencesForm {
   keepAwakeMode: Ref<KeepAwakeMode>
   brakeDuration: Ref<BrakeDurationDto>
   brakeCurve: Ref<BrakeCurveDto>
+  backspinDuration: Ref<BackspinDurationDto>
+  backspinIntensity: Ref<BackspinIntensityDto>
   loggingEnabled: Ref<boolean>
   devToolsEnabled: Ref<boolean>
   logDirectory: Ref<string>
@@ -68,6 +71,7 @@ export function usePreferencesForm(): PreferencesForm {
   const ui = useUiStore()
   const audioDevices = useAudioDeviceStore()
   const brakeSettings = useBrakeSettingsStore()
+  const backspinSettings = useBackspinSettingsStore()
   const uniqueDevices = useUniqueAudioDevices()
 
   // Pending audio output; `null/null` means system default.
@@ -123,6 +127,11 @@ export function usePreferencesForm(): PreferencesForm {
   const brakeCurve = ref<BrakeCurveDto>('curved')
   const initialBrakeDuration = ref<BrakeDurationDto>('medium')
   const initialBrakeCurve = ref<BrakeCurveDto>('curved')
+
+  const backspinDuration = ref<BackspinDurationDto>('long')
+  const backspinIntensity = ref<BackspinIntensityDto>('medium')
+  const initialBackspinDuration = ref<BackspinDurationDto>('long')
+  const initialBackspinIntensity = ref<BackspinIntensityDto>('medium')
 
   const loggingEnabled = ref(false)
   const devToolsEnabled = ref(false)
@@ -208,7 +217,9 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputDeviceName.value !== initialAudioOutputDeviceName.value ||
       keepAwakeMode.value !== initialKeepAwakeMode.value ||
       brakeDuration.value !== initialBrakeDuration.value ||
-      brakeCurve.value !== initialBrakeCurve.value
+      brakeCurve.value !== initialBrakeCurve.value ||
+      backspinDuration.value !== initialBackspinDuration.value ||
+      backspinIntensity.value !== initialBackspinIntensity.value
   )
 
   async function loadCurrent(): Promise<void> {
@@ -235,6 +246,9 @@ export function usePreferencesForm(): PreferencesForm {
       const brakePrefs = await window.silverdaw.getBrakeSettings()
       brakeDuration.value = brakePrefs.duration
       brakeCurve.value = brakePrefs.curve
+      const backspinPrefs = await window.silverdaw.getBackspinSettings()
+      backspinDuration.value = backspinPrefs.duration
+      backspinIntensity.value = backspinPrefs.intensity
       const stemPrefs = await window.silverdaw.getStemPrefs()
       useGpuForStems.value = stemPrefs.useGpu
       useBackupModel.value = stemPrefs.useBackupModel
@@ -260,6 +274,8 @@ export function usePreferencesForm(): PreferencesForm {
       keepAwakeMode.value = 'auto'
       brakeDuration.value = 'medium'
       brakeCurve.value = 'curved'
+      backspinDuration.value = 'long'
+      backspinIntensity.value = 'medium'
       useGpuForStems.value = false
       useBackupModel.value = false
       enhanceVocals.value = false
@@ -309,6 +325,8 @@ export function usePreferencesForm(): PreferencesForm {
     initialKeepAwakeMode.value = keepAwakeMode.value
     initialBrakeDuration.value = brakeDuration.value
     initialBrakeCurve.value = brakeCurve.value
+    initialBackspinDuration.value = backspinDuration.value
+    initialBackspinIntensity.value = backspinIntensity.value
   }
 
   async function chooseProjectDir(): Promise<void> {
@@ -418,6 +436,12 @@ export function usePreferencesForm(): PreferencesForm {
     ) {
       brakeSettings.setBrakeSettings(brakeDuration.value, brakeCurve.value)
     }
+    if (
+      backspinDuration.value !== initialBackspinDuration.value ||
+      backspinIntensity.value !== initialBackspinIntensity.value
+    ) {
+      backspinSettings.setBackspinSettings(backspinDuration.value, backspinIntensity.value)
+    }
     if (useGpuForStems.value !== initialUseGpuForStems.value) {
       window.silverdaw.setStemPrefs({ useGpu: useGpuForStems.value })
     }
@@ -476,6 +500,8 @@ export function usePreferencesForm(): PreferencesForm {
     keepAwakeMode,
     brakeDuration,
     brakeCurve,
+    backspinDuration,
+    backspinIntensity,
     loggingEnabled,
     devToolsEnabled,
     logDirectory,

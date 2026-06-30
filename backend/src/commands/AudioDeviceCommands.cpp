@@ -161,6 +161,22 @@ void handleSetBrakeSettings(const juce::var& payload, silverdaw::AudioEngine& en
     engine.setBrakeDefaults(seconds, curve);
 }
 
+void handleSetBackspinSettings(const juce::var& payload, silverdaw::AudioEngine& engine)
+{
+    const double seconds =
+        static_cast<double>(payload.getProperty("seconds", BackspinSnapshot::kDefaultSpinSeconds));
+    const double speed =
+        static_cast<double>(payload.getProperty("speed", BackspinSnapshot::kDefaultSpinSpeed));
+    const double curve =
+        static_cast<double>(payload.getProperty("curve", BackspinSnapshot::kDefaultCurvePower));
+    const auto message = juce::String("recv BACKSPIN_SETTINGS_SET seconds=") +
+                         juce::String(seconds, 3) +
+                         " speed=" + juce::String(speed, 3) +
+                         " curve=" + juce::String(curve, 3);
+    silverdaw::log::info("bridge", message);
+    engine.setBackspinDefaults(seconds, speed, curve);
+}
+
 void handleAudioFileProbe(const juce::var& payload, silverdaw::AudioEngine& engine,
                           silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool)
 {

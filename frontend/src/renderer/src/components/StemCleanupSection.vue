@@ -48,7 +48,7 @@ const strength = defineModel<StemEnhanceStrength>('strength', { required: true }
       <label
         v-for="option in options"
         :key="option.value"
-        class="flex cursor-pointer items-center gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-1.5"
+        class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
       >
         <input
           v-model="strength"
@@ -57,7 +57,7 @@ const strength = defineModel<StemEnhanceStrength>('strength', { required: true }
           :value="option.value"
           class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
         >
-        <span class="flex-1 leading-tight">
+        <span class="min-w-0 flex-1 truncate leading-tight">
           <span class="font-medium text-zinc-200">{{ option.label }}</span>
           <span class="text-zinc-500"> — {{ option.hint }}</span>
         </span>

@@ -238,6 +238,11 @@ export function useTimelineContextMenu(
         label: clip.brake ? '\u2713 Brake' : 'Brake',
         title: 'Decelerate the clip to a stop at its end, like a turntable record-stop'
       })
+      items.push({
+        command: 'clip.backspin',
+        label: clip.backspin ? '\u2713 Backspin' : 'Backspin',
+        title: 'Rewind the clip backwards at its end, like a DJ pulling the vinyl back'
+      })
     }
     // §12.1 — crossfade recipe + removal. A clip can fade out into its
     // following neighbour (it is the LEFT partner) and/or fade in from its
@@ -441,6 +446,8 @@ export function useTimelineContextMenu(
       }
     } else if (command === 'clip.brake') {
       if (clip) project.setClipBrake(clipId, !clip.brake)
+    } else if (command === 'clip.backspin') {
+      if (clip) project.setClipBackspin(clipId, !clip.backspin)
     } else if (command.startsWith('clip.color:')) {
       const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
       if (Number.isFinite(idx)) project.setClipColor(clipId, idx)

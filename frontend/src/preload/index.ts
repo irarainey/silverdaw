@@ -9,7 +9,8 @@ import type {
   StemModelInfo,
   StemModelState,
   StemPrefsDto,
-  BrakePrefsDto
+  BrakePrefsDto,
+  BackspinPrefsDto
 } from '../shared/types'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 
@@ -197,6 +198,11 @@ const api = {
   getBrakeSettings: (): Promise<BrakePrefsDto> => ipcRenderer.invoke(IPC.prefs.getBrake),
   setBrakeSettings: (partial: Partial<BrakePrefsDto>): void => {
     ipcRenderer.send(IPC.prefs.setBrake, partial)
+  },
+  // ─── Turntable-backspin defaults ────────────────────────────────────────
+  getBackspinSettings: (): Promise<BackspinPrefsDto> => ipcRenderer.invoke(IPC.prefs.getBackspin),
+  setBackspinSettings: (partial: Partial<BackspinPrefsDto>): void => {
+    ipcRenderer.send(IPC.prefs.setBackspin, partial)
   },
   // ─── Autosave folder + manifest IPCs ────────────────────────────────────
   /** Resolve an autosave bucket after strict `projectId` validation. */

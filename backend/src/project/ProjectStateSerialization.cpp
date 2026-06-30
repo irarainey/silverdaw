@@ -156,6 +156,10 @@ juce::var ProjectState::tracksAsJson() const
             {
                 clipObj->setProperty("brake", true);
             }
+            if (static_cast<bool>(clip.getProperty(kBackspin, false)))
+            {
+                clipObj->setProperty("backspin", true);
+            }
             if (clip.hasProperty(kClipName))
             {
                 clipObj->setProperty("name", clip.getProperty(kClipName).toString());

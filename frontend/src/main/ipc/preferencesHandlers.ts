@@ -14,7 +14,7 @@ import type {
   PathPrefs,
   ToastPrefs
 } from '../preferences'
-import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseUiPrefs } from '../preferences'
+import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -202,6 +202,17 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     const next = sanitiseBrakePrefs(partial, store.brake)
     if (next.duration === store.brake.duration && next.curve === store.brake.curve) return
     store.brake = next
+    prefs.flushSaveSync()
+  })
+
+  // ─── Turntable-backspin defaults (duration + intensity presets) ─────────
+  ipcMain.handle(IPC.prefs.getBackspin, () => ({ ...prefs.get().backspin }))
+
+  ipcMain.on(IPC.prefs.setBackspin, (_evt, partial: unknown) => {
+    const store = prefs.get()
+    const next = sanitiseBackspinPrefs(partial, store.backspin)
+    if (next.duration === store.backspin.duration && next.intensity === store.backspin.intensity) return
+    store.backspin = next
     prefs.flushSaveSync()
   })
 }

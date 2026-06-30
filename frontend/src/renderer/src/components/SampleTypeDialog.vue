@@ -71,39 +71,33 @@ function onKeydown(e: KeyboardEvent): void {
 
         <div class="dialog-body flex flex-col gap-2 text-xs">
           <label
-            class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+            class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
           >
             <input
               v-model="choice"
               type="radio"
               name="sample-type"
               value="music"
-              class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+              class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
             >
-            <span class="flex-1">
-              <span class="block font-medium text-zinc-200">Music</span>
-              <span class="mt-0.5 block text-zinc-500">
-                A loop or musical phrase. Keeps the source tempo, beat markers, key,
-                and cover art, and warps to the project tempo when dropped onto a track.
-              </span>
+            <span class="min-w-0 flex-1 truncate leading-tight">
+              <span class="font-medium text-zinc-200">Music</span>
+              <span class="text-zinc-500"> — Keeps tempo, beats &amp; key; warps on drop</span>
             </span>
           </label>
           <label
-            class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+            class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
           >
             <input
               v-model="choice"
               type="radio"
               name="sample-type"
               value="simple"
-              class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+              class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
             >
-            <span class="flex-1">
-              <span class="block font-medium text-zinc-200">Simple</span>
-              <span class="mt-0.5 block text-zinc-500">
-                A one-shot sound effect or vocal snippet. Carries no tempo or beat
-                metadata and is never warped when dropped onto a track.
-              </span>
+            <span class="min-w-0 flex-1 truncate leading-tight">
+              <span class="font-medium text-zinc-200">Simple</span>
+              <span class="text-zinc-500"> — One-shot; no metadata, never warps</span>
             </span>
           </label>
         </div>

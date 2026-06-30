@@ -120,6 +120,15 @@ export interface BrakePrefs {
   curve: BrakeCurve
 }
 
+// Turntable-backspin effect defaults (a global app preference). Duration + the
+// spin intensity (peak reverse speed); the curve is fixed in the renderer.
+export type BackspinDuration = 'short' | 'medium' | 'long'
+export type BackspinIntensity = 'gentle' | 'medium' | 'wild'
+export interface BackspinPrefs {
+  duration: BackspinDuration
+  intensity: BackspinIntensity
+}
+
 export interface Preferences {
   window: WindowPrefs
   ui: UiPrefs
@@ -130,6 +139,7 @@ export interface Preferences {
   audioOutput: AudioOutputPrefs
   keepAwakeMode: KeepAwakeMode
   brake: BrakePrefs
+  backspin: BackspinPrefs
   stems: StemPrefs
   /** MRU `.silverdaw` paths, newest first, capped and case-insensitive. */
   recentProjects: string[]
@@ -185,6 +195,7 @@ export function buildDefaultPrefs(): Preferences {
     audioOutput: { typeName: null, deviceName: null },
     keepAwakeMode: 'auto',
     brake: { duration: 'medium', curve: 'curved' },
+    backspin: { duration: 'long', intensity: 'medium' },
     stems: {
       useGpu: false,
       quality: 'balanced',
@@ -287,6 +298,18 @@ export function sanitiseBrakePrefs(partial: unknown, base: BrakePrefs): BrakePre
   return {
     duration: BRAKE_DURATIONS.has(p.duration as BrakeDuration) ? (p.duration as BrakeDuration) : base.duration,
     curve: BRAKE_CURVES.has(p.curve as BrakeCurve) ? (p.curve as BrakeCurve) : base.curve
+  }
+}
+
+const BACKSPIN_DURATIONS: ReadonlySet<BackspinDuration> = new Set(['short', 'medium', 'long'])
+const BACKSPIN_INTENSITIES: ReadonlySet<BackspinIntensity> = new Set(['gentle', 'medium', 'wild'])
+
+// Single source of truth for backspin-prefs validation.
+export function sanitiseBackspinPrefs(partial: unknown, base: BackspinPrefs): BackspinPrefs {
+  const p = (partial && typeof partial === 'object' ? partial : {}) as Partial<Record<keyof BackspinPrefs, unknown>>
+  return {
+    duration: BACKSPIN_DURATIONS.has(p.duration as BackspinDuration) ? (p.duration as BackspinDuration) : base.duration,
+    intensity: BACKSPIN_INTENSITIES.has(p.intensity as BackspinIntensity) ? (p.intensity as BackspinIntensity) : base.intensity
   }
 }
 

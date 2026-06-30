@@ -3,6 +3,7 @@
 #include "EdgeFadeSnapshot.h"
 #include "EnvelopeSnapshot.h"
 #include "BrakeSnapshot.h"
+#include "BackspinSnapshot.h"
 #include "WarpProcessor.h"
 
 #include <atomic>
@@ -95,6 +96,19 @@ class OffsetSource : public juce::PositionableAudioSource
     const BrakeSnapshot* getBrakeSnapshot() const noexcept
     {
         return brakeSnap.load(std::memory_order_acquire);
+    }
+
+    // The backspin (turntable rewind) reverses the source read over the clip tail at
+    // a high decaying speed; v1 applies it only to forward, non-warped clips. Brake
+    // and backspin are mutually exclusive tail effects; backspin takes priority if
+    // both are somehow set.
+    void setBackspinSnapshot(const BackspinSnapshot* snapshot) noexcept
+    {
+        backspinSnap.store(snapshot, std::memory_order_release);
+    }
+    const BackspinSnapshot* getBackspinSnapshot() const noexcept
+    {
+        return backspinSnap.load(std::memory_order_acquire);
     }
 
     static juce::int64 timelineSamplesForSourceSamples(juce::int64 sourceSamples, WarpProcessor* w) noexcept
@@ -229,10 +243,13 @@ class OffsetSource : public juce::PositionableAudioSource
             }
             else
             {
+                const BackspinSnapshot* backspin = backspinSnap.load(std::memory_order_acquire);
                 const BrakeSnapshot* brake = brakeSnap.load(std::memory_order_acquire);
-                // v1: brake only forward, non-warped clips (warp is already excluded
-                // here; reverse is excluded explicitly).
-                const bool brakeActive = brake != nullptr && !brake->isEmpty() && !rev;
+                // v1: tail effects apply to forward, non-warped clips only (warp is
+                // already excluded here; reverse is excluded explicitly). Backspin and
+                // brake are mutually exclusive; backspin wins if both are set.
+                const bool backspinActive = backspin != nullptr && !backspin->isEmpty() && !rev;
+                const bool brakeActive = !backspinActive && brake != nullptr && !brake->isEmpty() && !rev;
                 float* planes[kMaxWarpChannels] = {nullptr};
                 const int numCh = juce::jmin(audible.buffer->getNumChannels(), kMaxWarpChannels);
                 for (int c = 0; c < numCh; ++c)
@@ -240,19 +257,21 @@ class OffsetSource : public juce::PositionableAudioSource
                     planes[c] = audible.buffer->getWritePointer(c, audible.startSample);
                 }
 
-                if (!brakeActive)
+                if (!backspinActive && !brakeActive)
                 {
                     const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
                     readChildReversibleBlock(planes, numCh, sourcePos, audibleSamples, rev, inSrc, sourceDur);
                 }
                 else
                 {
-                    // The brake decelerates over the last `effLen` of the clip's
+                    // The tail effect occupies the last `effLen` of the clip's
                     // (non-warped) timeline footprint; split this block into the
-                    // normal part and the braked part.
-                    const juce::int64 effLen = juce::jmin(brake->getBrakeLenSamples(), dur);
-                    const juce::int64 brakeStart = clipEnd - effLen;
-                    const juce::int64 normalEnd = juce::jmin(audibleEnd, brakeStart);
+                    // normal (forward) part and the effected part.
+                    const juce::int64 effLen = backspinActive
+                        ? juce::jmin(backspin->getBackspinLenSamples(), dur)
+                        : juce::jmin(brake->getBrakeLenSamples(), dur);
+                    const juce::int64 tailStart = clipEnd - effLen;
+                    const juce::int64 normalEnd = juce::jmin(audibleEnd, tailStart);
                     const int normalCount =
                         static_cast<int>(juce::jmax(static_cast<juce::int64>(0), normalEnd - audibleStart));
                     if (normalCount > 0)
@@ -260,13 +279,22 @@ class OffsetSource : public juce::PositionableAudioSource
                         const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
                         readChildReversibleBlock(planes, numCh, sourcePos, normalCount, rev, inSrc, sourceDur);
                     }
-                    const juce::int64 brakeAudibleStart = juce::jmax(audibleStart, brakeStart);
-                    const int brakeCount = static_cast<int>(audibleEnd - brakeAudibleStart);
-                    if (brakeCount > 0)
+                    const juce::int64 tailAudibleStart = juce::jmax(audibleStart, tailStart);
+                    const int tailCount = static_cast<int>(audibleEnd - tailAudibleStart);
+                    if (tailCount > 0)
                     {
-                        renderBrakeBlock(planes, numCh, normalCount, *brake,
-                                         static_cast<double>(effLen), brakeStart, brakeAudibleStart,
-                                         brakeCount, clipStart, inSrc, sourceDur);
+                        if (backspinActive)
+                        {
+                            renderBackspinBlock(planes, numCh, normalCount, *backspin,
+                                                static_cast<double>(effLen), tailStart, tailAudibleStart,
+                                                tailCount, clipStart, inSrc, sourceDur);
+                        }
+                        else
+                        {
+                            renderBrakeBlock(planes, numCh, normalCount, *brake,
+                                             static_cast<double>(effLen), tailStart, tailAudibleStart,
+                                             tailCount, clipStart, inSrc, sourceDur);
+                        }
                     }
                 }
                 lastBlockEnded = false;
@@ -398,6 +426,7 @@ class OffsetSource : public juce::PositionableAudioSource
     std::atomic<const EnvelopeSnapshot*> envelope{nullptr};
     std::atomic<const EdgeFadeSnapshot*> edgeFade{nullptr};
     std::atomic<const BrakeSnapshot*> brakeSnap{nullptr};
+    std::atomic<const BackspinSnapshot*> backspinSnap{nullptr};
     std::atomic<WarpProcessor*> warp{nullptr};
     std::atomic<bool> warpReseekRequested{false};
     std::atomic<bool> reversed{false};
@@ -524,6 +553,82 @@ class OffsetSource : public juce::PositionableAudioSource
                     const float* s = brakeScratch.getReadPointer(juce::jmin(c, scratchPlanes - 1));
                     const float p0 = s[k0], p1 = s[k1], p2 = s[k2], p3 = s[k3];
                     // Catmull-Rom: exact for linear data, smooth for audio (low grain).
+                    const float out =
+                        p1 + 0.5F * frac *
+                                 ((p2 - p0) +
+                                  frac * ((2.0F * p0 - 5.0F * p1 + 4.0F * p2 - p3) +
+                                          frac * (3.0F * (p1 - p2) + p3 - p0)));
+                    dst[c][dstOffset + done + i] = out * g;
+                }
+            }
+            done += n;
+        }
+    }
+
+    // Renders `count` reverse-rewind ("turntable backspin") output samples into
+    // dst[*] starting at dstOffset. The source position rewinds BACKWARD from the
+    // trigger `s0` by the analytic, STATELESS curve `BackspinSnapshot::sourceRewoundAt(u)`,
+    // so live and offline render identically regardless of block size. Reads a
+    // contiguous forward source span per sub-chunk and 4-point cubic-interpolates;
+    // a rate-keyed fade silences the tail as the spin stops. Forward, non-warped
+    // clips only (v1). Reuses `brakeScratch` (brake/backspin are mutually exclusive).
+    void renderBackspinBlock(float* const* dst, int numCh, int dstOffset,
+                             const BackspinSnapshot& spin, double effLen,
+                             juce::int64 tailStart, juce::int64 tailAudibleStart, int count,
+                             juce::int64 clipStart, juce::int64 inSrc, juce::int64 sourceDur)
+    {
+        if (child == nullptr || count <= 0 || numCh <= 0) return;
+
+        // Forward source position at the spin trigger; the read rewinds backward from here.
+        const double s0 = static_cast<double>(inSrc + (tailStart - clipStart));
+        const double minSrc = static_cast<double>(inSrc); // never rewind before the clip start
+        const int scratchCap = brakeScratch.getNumSamples();
+        const double spinSpeed = spin.getSpinSpeed();
+        // The contiguous span grows with the spin speed (|rate| up to spinSpeed), so
+        // size each sub-chunk so the read still fits the scratch buffer.
+        const int maxChunk =
+            juce::jmax(1, static_cast<int>((scratchCap - 8) / juce::jmax(1.0, spinSpeed)));
+        const int scratchPlanes = juce::jmin(numCh, kMaxWarpChannels);
+
+        for (int done = 0; done < count;)
+        {
+            const int n = juce::jmin(maxChunk, count - done);
+            const double uStart = static_cast<double>(tailAudibleStart - tailStart) + done;
+            const double uEnd = uStart + static_cast<double>(n - 1);
+            // Source positions DECREASE with u (rewind): uStart is the latest (highest).
+            const double posHi = juce::jmax(minSrc, s0 - spin.sourceRewoundAt(uStart, effLen));
+            const double posLo = juce::jmax(minSrc, s0 - spin.sourceRewoundAt(uEnd, effLen));
+
+            const juce::int64 spanStart =
+                juce::jmax(static_cast<juce::int64>(0), static_cast<juce::int64>(std::floor(posLo)) - 1);
+            const juce::int64 spanEndExclusive = static_cast<juce::int64>(std::ceil(posHi)) + 3;
+            int spanLen = static_cast<int>(spanEndExclusive - spanStart);
+            spanLen = juce::jlimit(1, scratchCap, spanLen);
+
+            brakeScratch.clear(0, spanLen);
+            {
+                float* sp[kMaxWarpChannels] = {nullptr};
+                for (int c = 0; c < scratchPlanes; ++c) sp[c] = brakeScratch.getWritePointer(c);
+                readChildReversibleBlock(sp, scratchPlanes, spanStart, spanLen,
+                                         /*rev*/ false, inSrc, sourceDur);
+            }
+
+            for (int i = 0; i < n; ++i)
+            {
+                const double u = uStart + static_cast<double>(i);
+                const double srcPos = juce::jmax(minSrc, s0 - spin.sourceRewoundAt(u, effLen));
+                const double local = srcPos - static_cast<double>(spanStart);
+                const int i1 = static_cast<int>(std::floor(local));
+                const float frac = static_cast<float>(local - static_cast<double>(i1));
+                const int k0 = juce::jlimit(0, spanLen - 1, i1 - 1);
+                const int k1 = juce::jlimit(0, spanLen - 1, i1);
+                const int k2 = juce::jlimit(0, spanLen - 1, i1 + 1);
+                const int k3 = juce::jlimit(0, spanLen - 1, i1 + 2);
+                const float g = spin.gainAt(u, effLen);
+                for (int c = 0; c < numCh; ++c)
+                {
+                    const float* s = brakeScratch.getReadPointer(juce::jmin(c, scratchPlanes - 1));
+                    const float p0 = s[k0], p1 = s[k1], p2 = s[k2], p3 = s[k3];
                     const float out =
                         p1 + 0.5F * frac *
                                  ((p2 - p0) +

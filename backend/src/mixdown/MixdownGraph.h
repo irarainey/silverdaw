@@ -5,6 +5,7 @@
 #include "AudioEngine.h"   // OffsetSource
 #include "EdgeFadeSnapshot.h"
 #include "BrakeSnapshot.h"
+#include "BackspinSnapshot.h"
 #include "EnvelopeSnapshot.h"
 #include "MixdownEngine.h"  // MixdownSnapshot
 #include "MixdownTiming.h"
@@ -91,6 +92,7 @@ struct OfflineClip
     std::unique_ptr<EnvelopeSnapshot> envelopeSnapshot;
     std::unique_ptr<EdgeFadeSnapshot> edgeFadeSnapshot;
     std::unique_ptr<BrakeSnapshot> brakeSnapshot;
+    std::unique_ptr<BackspinSnapshot> backspinSnapshot;
     std::unique_ptr<juce::AudioTransportSource> transport;
     // Member order preserves JUCE source lifetimes during teardown.
     std::unique_ptr<ClipSummingSource> summingSource;
