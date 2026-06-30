@@ -1395,18 +1395,26 @@ project transport.
 
 ### Agreed near-term sequence
 
+Phases 1–7 are essentially complete: the Phase 5 mixing/effects/automation work
+(engine refactor, Volume Shape, Tone + Filter, shared Reverb + Delay, Leveler,
+pan, master metering, mixdown), the Phase 6 stem engine (RoFormer-first quality
+packs with the htdemucs backup, DirectML, vocal cleanup), the Phase 7 polish /
+performance / packaging pass, and Track FX automation (§7.11.1) have all shipped.
+
 The current focus order, ahead of the longer phase list below:
 
-1. **Finish Phase 5 mixing & core effects** — building on the shipped Tone
-   controls, Volume Shape, Reverb + Delay, mute/solo/pan, and the per-track
-   Leveler. **Clip transitions (§12.1) are pulled in as part of this work**, since
-   they build directly on the per-clip Volume Shape, Tone EQ and the shared Delay.
-2. **Fast import-to-arrangement (§12.6)** — promoted up the list as a core remix
-   accelerator, tackled once the core effects are in place.
-3. **Stem support (Phase 6)** — the next major focus after the above.
+1. **Loop slicer (finish Phase 6)** — the one outstanding item inside the
+   otherwise-complete core phases: transient / grid / manual slice markers in
+   PixiJS plus the slice-to-timeline and slice-to-sample flows (§7.6). It
+   composes existing primitives (Split, Save-as-Sample, beat-grid markers) so it
+   is the smallest, most self-contained next step.
+2. **Fast import-to-arrangement (§12.6)** — a core remix accelerator
+   (conform-on-drop, multi-file import to a rough arrangement) that was queued
+   behind stems and is the next major workflow feature.
+3. **MIDI / DJ control (§12.9)** — high-interest; tackled after the above.
 
-MIDI/scratch (§12.9) and recording (§12.8) remain high-interest but sit after
-this near-term sequence. Final ordering beyond this is still under review.
+Recording / live input (§12.8) and the Phase 8 hardening backlog are
+**deprioritised** for now. Final ordering beyond this is still under review.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -2031,16 +2039,18 @@ robustness without changing the core editing model.
   store, composables, the bridge-protocol zod schemas, the dB taper helpers,
   the Clip Editor viewport/warp-draft/target composables, and the clip-lock
   store actions). The backend ships with its own custom test harness (no Catch2
-  dependency) wired into CTest as `SilverdawBackendTests` — 19 cases at the
-  time of writing covering `ProjectState` (tracks / clips / dirty, view /
-  library / markers / replaceTree, export-settings JSON round-trip, master
-  volume round-trip, net-zero edits returning to clean, suppressed-property
-  drift on undo, derived library metadata not marking dirty), `ProjectFile`,
-  `PeaksCache`, `ValueTreeJson`, `BridgeAuth`, `WarpProcessor` (basic stretch +
-  timeline duration mapping), the strict bridge payload validation helpers,
-  the `AudioEngine::setPreviewWarp` audio-thread / message-thread race, and
-  the `LoudnessAnalyzer` (silence, -23 LUFS sine target, gain-shift identity,
-  sample-rate guard). Clip-lock currently lives in the frontend store /
+  dependency) wired into CTest as `SilverdawBackendTests` — **153 cases** at the
+  time of writing, the registry count being asserted by the harness itself. They
+  span `ProjectState` (tracks / clips / dirty, view / library / markers /
+  replaceTree, export-settings JSON round-trip, master volume round-trip,
+  net-zero edits returning to clean, suppressed-property drift on undo, derived
+  library metadata not marking dirty), `ProjectFile`, `PeaksCache`,
+  `ValueTreeJson`, `BridgeAuth`, `WarpProcessor` (basic stretch + timeline
+  duration mapping), the strict bridge payload validation helpers, the
+  `AudioEngine::setPreviewWarp` audio-thread / message-thread race, the
+  `LoudnessAnalyzer` (silence, -23 LUFS sine target, gain-shift identity,
+  sample-rate guard), and the stem / FX / Leveler / mixdown-parity subsystems
+  added across Phases 5–6. Clip-lock currently lives in the frontend store /
   context-menu tests rather than a dedicated backend persistence case.
   Electron e2e tests and an enforced coverage floor remain planned hardening
   work.
