@@ -120,11 +120,13 @@ application is heading — they are **planned directions, not yet available**, a
 are not part of the current feature set. See the
 [Development Plan](docs/development-plan.md) for detail and status.
 
-- **More built-in effects and transitions.** Building on the per-track Tone EQ
-  and bipolar Filter, the equal-power pan, the per-track Compressor, the
-  project-wide Reverb and Delay sends, the track effect automation lanes, and
-  the per-clip volume shaping that already ship, a wider set of mixing effects,
-  clip-to-clip transitions, and stereo width controls for polishing a mix.
+- **Richer transitions and stereo width.** The core mixing toolkit already
+  ships — Tone EQ and bipolar Filter, equal-power Pan, a per-track Compressor,
+  project-wide Reverb and Delay sends, track effect automation, per-clip volume
+  shaping, and clip-to-clip crossfade transitions (drag one clip's edge over its
+  neighbour). Still to come: more transition styles such as bass swaps, filter
+  fades, and delay tails; a one-click move to duck the music under a vocal;
+  stereo width controls; and the occasional extra effect to round out the set.
 - **More editing power.** Extra clip actions, phrase-aware snapping, and
   finer manual correction of the detected beat grid.
 - **MIDI devices and scratch authoring.** Support for external MIDI controllers
