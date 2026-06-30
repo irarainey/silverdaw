@@ -243,7 +243,7 @@ Electron Shell
         ├── LibraryPanel        — source / stem / sample / clip tiles, metadata, drag source
         ├── ClipEditorDialog    — full-waveform clip editor with preview voice
         ├── TransportBar        — play/pause, BPM, position, audio-device chip
-        ├── PreferencesDialog   — General / Project / Audio / Developer tabs
+        ├── PreferencesDialog   — General / Project / Audio / Stems / Developer tabs
         ├── RecoveryDialog      — autosave restore picker on launch
         └── ClipContextMenu     — edit actions, relink entry and colour swatches
 ```
@@ -306,11 +306,15 @@ out of the installer and downloaded on first use.
 **Model store (implemented):** The model files are fetched on first use by the
 Electron main process (the headless backend has no network stack —
 `JUCE_USE_CURL=0`) into the user's app-data directory. `src/main/stems/` holds
-the pinned manifest (`htdemucsModel.ts`) and a dependency-injected `ModelStore`
-(`modelStore.ts`) that checks presence, downloads missing files with progress,
-verifies each file's SHA-256 + byte size, commits atomically, and records the
-manifest revision in an `.installed` sentinel so later launches skip re-hashing.
-The backend loads the ONNX sessions from the resolved model directory.
+three pinned manifests — `htdemucsModel.ts` (backup), `melBandRoformerModel.ts`
+(vocal pack) and `bsRoformerRhythmModel.ts` (rhythm pack) — and a
+dependency-injected `ModelStore` (`modelStore.ts`) that checks presence,
+downloads missing files with progress, verifies each file's SHA-256 + byte size,
+commits atomically, and records the manifest revision in an `.installed`
+sentinel so later launches skip re-hashing. Each model can also be **located**
+from an existing on-disk copy (an override directory per model: `stemModelDir`,
+`vocalPackDir`, `rhythmPackDir`). The backend loads the ONNX sessions from the
+resolved model directories.
 
 **Target UX:** Separation runs on a background thread and never touches the audio
 callback. Progress is emitted as `STEM_PROGRESS` events and shown in a
@@ -1822,8 +1826,9 @@ playable at every point — no broken-build day):
 - VST3 hosting (scope decided then — per-track or per-clip).
 - Master Limiter, LUFS / RMS readouts.
 - Live delay-time changes during playback (BPM sweep).
-- Pan / send / plugin-param envelopes (the breakpoint primitive
-  shipped here is the foundation).
+- Plugin-param envelopes (Pan / send / tone / filter / compressor / gain track
+  automation shipped later in §7.11.1; **plugin**-parameter envelopes still await
+  VST3 hosting).
 
 ### Phase 6 — Stem Separation, Loop Slicing & Fine-Clip Editor
 
@@ -1889,9 +1894,10 @@ playable at every point — no broken-build day):
   tile imagery, previous/next button target, **waveform display** mode —
   single summary vs. stacked left/right channels), Project (default Save /
   Open / Import dirs + autosave config), **Audio** (output device selection +
-  driver picker with Bluetooth-latency heuristic), Developer (separate
-  diagnostic logging, log folder and DevTools toggles). Theme selection is
-  deferred to Phase 8.
+  driver picker with Bluetooth-latency heuristic), **Stems** (separation-model
+  download / locate, per-stem cleanup, "Always use the backup model", GPU
+  acceleration), Developer (separate diagnostic logging, log folder and DevTools
+  toggles). Theme selection is deferred to Phase 8.
 - [x] Undo/redo surfaced in the Edit menu (Ctrl+Z / Ctrl+Y). Each
   bridge envelope that mutates the ValueTree is wrapped in its own
   JUCE `UndoManager` transaction by `dispatchBridgeMessage`; drag
@@ -1983,7 +1989,7 @@ playable at every point — no broken-build day):
   side routes through `silverdaw::log::warn` / `info` / `error`
   rather than raw `std::cerr` / `std::cout` (except for the
   log-init failure path and the JUCE entry banner).
-- [x] Windows NSIS installer packaging for the Electron app + `SilverdawBackend.exe` + icons + licences + `.silverdaw` file association. The backend statically links the MSVC runtime, so the installer does not need to bootstrap the Visual C++ Redistributable. ffmpeg, ONNX Runtime and Demucs model bundling remain tied to their future feature work.
+- [x] Windows NSIS installer packaging for the Electron app + `SilverdawBackend.exe` + icons + licences + `.silverdaw` file association. The backend statically links the MSVC runtime, so the installer does not need to bootstrap the Visual C++ Redistributable. ONNX Runtime + DirectML DLLs are bundled; the stem-separation model weights (htdemucs backup + RoFormer quality packs) are kept out of the installer and downloaded on demand / located from an existing copy. ffmpeg bundling remains tied to its future feature work.
 
 ### Phase 8 — Post-Core Hardening & Compatibility Enhancements
 

@@ -1186,7 +1186,7 @@ pitched instrument bleed the broadband denoiser can't, then RNNoise + a sub-bass
 high-pass/expander. Objective tuning uses the `SilverdawStemEval` dev tool
 (SI-SDR/SDR vs a reference stem).
 
-**Vocal Quality Pack** (primary vocal engine, downloaded separately): a
+**Vocal Quality Pack** (primary vocal engine, downloaded on demand): a
 higher-quality **Mel-Band RoFormer** vocal model (MIT; `MelRoformerVocals` + the
 host-side STFT engine `MelRoformerSpectral`, run through the same ONNX Runtime).
 When the pack is installed it is used **automatically** (unless
@@ -1198,7 +1198,7 @@ is unit-tested by an identity-mask round-trip and was validated end-to-end
 against a numpy reference of the model's reference WebGPU host. htdemucs is the
 backup when the pack is absent.
 
-**Rhythm Quality Pack** (primary drums/bass engine, downloaded separately): a
+**Rhythm Quality Pack** (primary drums/bass engine, downloaded on demand): a
 higher-quality 4-stem **BS-RoFormer** model (MIT — an export of ZFTurbo's
 MUSDB18-HQ checkpoint; `BsRoformerRhythm` + the host-side STFT engine
 `BsRoformerSpectral`, run through the same ONNX Runtime). When installed it is
@@ -1213,6 +1213,13 @@ VRAM) and the runner transparently retries on the CPU provider if DirectML runs
 out of memory. The host pipeline is unit-tested by an identity round-trip, and
 the C++ runner was validated end-to-end against a numpy reference (drums/bass RMS
 matched to four decimals). htdemucs is the backup when the pack is absent.
+
+In **Preferences ▸ Stems** the two packs are presented as one combined
+**Download models** action (~1 GB), each with its own **Locate** button to point
+at an existing on-disk copy; htdemucs appears in a secondary **Backup model**
+section with an **Always use the backup model** override. Each pack/model
+persists its located directory override (`vocalPackDir` / `rhythmPackDir` /
+`stemModelDir`).
 
 GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
 Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`
@@ -1459,7 +1466,7 @@ User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`
 and edited via the in-app **Edit → Preferences…** dialog. The dialog is
 **transactional**: every field is held in a local working copy until you click
 **Save**; **Cancel** (and `Esc`) discard pending edits without touching the
-engine or the file. The settings are organised into four tabs on a left-hand
+engine or the file. The settings are organised into five tabs on a left-hand
 sidebar:
 
 - **General** — toast notifications, follow-playback auto-scroll, library tile
@@ -1470,6 +1477,11 @@ sidebar:
 - **Audio** — output device + driver selection (see below), and the
   **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
   `PROJECT.targetSampleRate` on new projects.
+- **Stems** — stem-separation model management (a combined **Download models**
+  for the two RoFormer quality packs, with per-model **Locate** for an existing
+  copy, and a secondary **Backup model** section with an **Always use the backup
+  model** toggle), per-stem cleanup options, and the experimental **GPU
+  acceleration** toggle.
 - **Developer** — diagnostic logging, log folder and DevTools access.
 
 Persisted fields:
@@ -1521,6 +1533,15 @@ Persisted fields:
   back to that default.
 - **Show Developer Tools** — gates the visibility of the **Debug** menu and
   DevTools shortcuts independently of file logging.
+- **Stem-separation settings** — `stems.useGpu` (GPU acceleration, default off),
+  `stems.quality` (Fast / Balanced / Best — the inference + RoFormer chunk
+  overlap), `stems.useBackupModel` (force the htdemucs backup for every stem,
+  default off), and the per-stem cleanup toggles + strengths (`enhanceVocals` /
+  `enhanceDrums` / `enhanceBass` / `enhanceOther` and their `*Strength`).
+- **Located model directories** — optional override paths to existing on-disk
+  copies of each separation model: `paths.stemModelDir` (htdemucs backup),
+  `paths.vocalPackDir` and `paths.rhythmPackDir` (the RoFormer packs). Empty =
+  use the app-managed download location.
 
 QoL settings take effect on **Save**; developer settings require a restart and
 the dialog surfaces that explicitly.
@@ -1795,8 +1816,12 @@ Track FX control; the first point you draw starts from that value. A curve that 
 the static value is treated as a no-op and the lane auto-clears. Each static Track FX
 control (and the header **Pan**) carries a small **A** button that opens that parameter's lane
 (`useFxAutomation`); while a curve owns the value the static control is **disabled**, dimmed, and
-shows an **AUTO** tag, so it is clear the lane is in charge (the static value is the resting
-baseline the curve rides). The keyboard/value nudges snap to the parameter default so 0 / centre
+shows an **AUTO** tag, so it is clear the lane is in charge. While automated the control is
+**read-only but live**: its slider and readout follow the curve's value sampled at the playhead
+(`useFxAutomation.displayValue` reading `transport.positionMs`), so during playback or scrub the
+Filter / Tone / Sends / Compressor sliders and the header Pan animate to the current automated
+value (the static value remains the resting baseline the curve rides). The keyboard/value nudges
+snap to the parameter default so 0 / centre
 is always reachable. The lane resizes via a thin middle splitter (redistributes height between
 waveform and lane) and the row's bottom edge (grows both together), clamped to a minimum that
 keeps the readout visible. The backend publishes an
