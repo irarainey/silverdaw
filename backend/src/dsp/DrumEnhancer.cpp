@@ -247,7 +247,17 @@ void DrumEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
     if (! (sampleRate > 0.0) || ! std::isfinite(sampleRate)) return;
 
     const juce::ScopedNoDenormals noDenormals;
-    const StrengthParams params = paramsFor(options.strength);
+    StrengthParams params = paramsFor(options.strength);
+    double transientBoostDb = transientBoostDbFor(options.strength);
+    // A clean RoFormer drum stem needs little cleanup and far less punch: halve
+    // the expander reach (it mostly self-bypasses anyway) and the transient boost
+    // so the kit stays natural instead of being over-shaped.
+    if (options.cleanModel)
+    {
+        params.ratio = 1.0 + (params.ratio - 1.0) * 0.5;
+        params.rangeDb *= 0.5;
+        transientBoostDb *= 0.4;
+    }
 
     sanitiseInPlace(buffer);
     applyHighPass(buffer, sampleRate, params.highPassHz);
@@ -257,7 +267,7 @@ void DrumEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
 
     // ...then always shape the transients for punch, with a soft limiter so the
     // boosted onsets can never hard-clip. Both are no-ops on silence.
-    applyTransientDesigner(buffer, sampleRate, transientBoostDbFor(options.strength));
+    applyTransientDesigner(buffer, sampleRate, transientBoostDb);
     softLimitInPlace(buffer);
 }
 

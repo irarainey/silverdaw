@@ -1197,12 +1197,15 @@ runs on a background thread and never touches the audio callback; progress is
 reported via `STEM_PROGRESS`, each stem lands the instant its WAV is written
 (`STEM_PARTIAL`), and `STEM_READY` backfills the rest.
 
-**Optional vocal cleanup** (opt-in, vocals only) runs after separation: a
-cross-stem **de-bleed** (`VocalDebleeder`, a conservative STFT Wiener soft mask
-using `instrumental = mixture − vocal` as the interferer reference) removes
-pitched instrument bleed the broadband denoiser can't, then RNNoise + a sub-bass
-high-pass/expander. Objective tuning uses the `SilverdawStemEval` dev tool
-(SI-SDR/SDR vs a reference stem).
+**Optional vocal cleanup** (opt-in, vocals only) runs after separation and is
+**model-aware**. For an **htdemucs** vocal it runs the full chain: a cross-stem
+**de-bleed** (`VocalDebleeder`, a conservative STFT Wiener soft mask using
+`instrumental = mixture − vocal` as the interferer reference) removes pitched
+instrument bleed the broadband denoiser can't, then RNNoise + a sub-bass
+high-pass/expander. For the high-SDR **RoFormer** vocal the de-bleed is **skipped
+entirely** (it over-cuts a clean vocal on dense mixes) and the RNNoise wet +
+expander are gentled (the `cleanModel` path). Objective tuning uses the
+`SilverdawStemEval` dev tool (SI-SDR/SDR vs a reference stem).
 
 **Vocal Quality Pack** (primary vocal engine, downloaded on demand): a
 higher-quality **Mel-Band RoFormer** vocal model (MIT; `MelRoformerVocals` + the
@@ -1224,7 +1227,11 @@ used **automatically** (unless the backup is forced): the renderer passes its
 `.onnx` path as `rhythmModelPath` and the backend produces **drums and bass**
 with it (one model run extracts both; vocals come from the vocal pack, `other`
 stays the residual), composing with the vocal pack into a fully RoFormer hybrid.
-The model applies its mask in-graph and returns the masked per-stem spectrogram
+**Cascaded vocal pre-removal:** when both packs are active the rhythm pack is fed
+`mixture − vocal` (using the dedicated vocal pack's high-SDR estimate) rather than
+the raw mixture, so residual vocal energy can't bleed into drums / bass — the
+vocal estimate is the one already extracted for the vocals stem, or one internal
+vocal pass when vocals wasn't selected. The model applies its mask in-graph and returns the masked per-stem spectrogram
 (the host runs STFT n_fft 2048 / hop 441 and per-stem iSTFT, preset-driven chunk
 overlap); it is exported at an 8 s window (the largest that fits a modest GPU's
 VRAM) and the runner transparently retries on the CPU provider if DirectML runs
@@ -1289,9 +1296,11 @@ have a small purpose-built DSP unit in `backend/src/dsp/` (`DrumEnhancer`,
 enhancement stage; the vocal path runs an RNNoise denoise and then
 `VocalEnhancer`:
 
-- **Vocals** — **RNNoise** (xiph, BSD-2-Clause; fetched and statically linked via
-  CMake) suppresses broadband noise and separation artefacts, then `VocalEnhancer`
-  applies a subsonic high-pass and a gentle downward expander on the quiet bleed.
+- **Vocals** — for the htdemucs backup vocal a cross-stem **de-bleed** (a Wiener
+  mask built from `mixture − vocal`) runs first, then **RNNoise** (xiph,
+  BSD-2-Clause; fetched and statically linked via CMake) suppresses broadband
+  noise and separation artefacts, then `VocalEnhancer` applies a subsonic
+  high-pass and a gentle downward expander on the quiet bleed.
 - **Drums** — high-pass + expander cleanup, then a **transient designer** that
   emphasises the attack of each hit for punch.
 - **Bass** — high-pass + low-passed-detector expander cleanup, then a **harmonic
@@ -1300,6 +1309,21 @@ enhancement stage; the vocal path runs an RNNoise denoise and then
 - **Other** (the residual) — high-pass + a shallow STFT spectral attenuation that
   shaves the musical-noise floor, then a mid/side **stereo widener** that opens up
   the image while preserving the mono sum.
+
+**Model-aware gentling.** The cleanup parameters were tuned for the dirtier
+htdemucs stems; the RoFormer quality packs produce far cleaner stems, so each
+`*EnhanceOptions` struct carries a `cleanModel` flag the separator sets per stem:
+vocals when `haveVocalPack`, drums/bass when `useRhythmPack`, and the residual
+`other` only when it is the full mixture-consistency residual built from both packs
+(`mixtureConsistency && haveVocalPack && haveRhythmPack`). On the clean path the
+processing is scaled right back: the vocal **cross-stem de-bleed is skipped
+entirely** (it would gut a clean vocal on dense mixes — the symptom that prompted
+this) and the denoise wet + expander run far gentler; the drum transient boost is
+×0.4, the bass harmonic blend and the residual widener / spectral reduction are
+×0.5, and the drum/bass expander range and ratio-excess are halved. The htdemucs
+backup path keeps the original (stronger) settings (`cleanModel=false`). Because the
+vocal-removal cascade already strips vocal bleed from the rhythm input, aggressive
+post-cleanup is largely redundant on the RoFormer path.
 
 On the drum, bass and residual paths the cleanup stage self-bypasses on dense,
 sustained or low-contrast material, but the enhancement stage still runs

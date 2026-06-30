@@ -53,6 +53,11 @@ struct DrumEnhanceOptions
 {
     bool enabled = false;
     DrumEnhanceStrength strength = DrumEnhanceStrength::Medium;
+    // True when the drums came from the high-SDR RoFormer rhythm pack rather than
+    // the htdemucs backup. The transient designer and cleanup expander are then
+    // scaled back, because the stem is already clean and the htdemucs-grade punch
+    // over-processes it.
+    bool cleanModel = false;
 };
 
 // Stateless offline drum-stem enhancer. `process` mutates `buffer` in place at

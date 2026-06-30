@@ -56,6 +56,10 @@ struct OtherEnhanceOptions
 {
     bool enabled = false;
     OtherEnhanceStrength strength = OtherEnhanceStrength::Medium;
+    // True when the residual was built from the high-SDR RoFormer hybrid (clean
+    // vocals + rhythm), so it carries less subtraction swirl. The stereo widener
+    // and spectral cleanup are then scaled back.
+    bool cleanModel = false;
 };
 
 // Stateless offline residual-stem enhancer. `process` mutates `buffer` in place

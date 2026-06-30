@@ -40,6 +40,24 @@ StrengthParams paramsFor(VocalEnhanceStrength strength) noexcept
     }
 }
 
+// Gentle tuning for a high-SDR vocal (the RoFormer pack). The stem is already
+// clean, so the expander only needs to nudge inter-phrase residue: a lower
+// high-pass, a deeper threshold (acts on less material), a near-1 ratio and a
+// small range cap, so quiet vocal tails / harmonies are never gated.
+StrengthParams cleanModelParamsFor(VocalEnhanceStrength strength) noexcept
+{
+    switch (strength)
+    {
+        case VocalEnhanceStrength::Light:
+            return {40.0, 54.0, 1.15, 3.0};
+        case VocalEnhanceStrength::Strong:
+            return {60.0, 42.0, 1.6, 6.0};
+        case VocalEnhanceStrength::Medium:
+        default:
+            return {50.0, 48.0, 1.35, 4.0};
+    }
+}
+
 // Detector ballistics. Fast enough to ride vocal onsets, slow enough on release
 // that the expander relaxes smoothly into phrases instead of pumping.
 constexpr double kAttackMs = 5.0;
@@ -116,8 +134,20 @@ const char* vocalEnhanceStrengthToString(VocalEnhanceStrength strength) noexcept
     }
 }
 
-float vocalDenoiseWetFor(VocalEnhanceStrength strength) noexcept
+float vocalDenoiseWetFor(VocalEnhanceStrength strength, bool cleanModel) noexcept
 {
+    if (cleanModel)
+    {
+        // A high-SDR vocal has little broadband noise; a small wet just shaves
+        // residual hiss/artefacts without dulling sung tone.
+        switch (strength)
+        {
+            case VocalEnhanceStrength::Light: return 0.10F;
+            case VocalEnhanceStrength::Strong: return 0.30F;
+            case VocalEnhanceStrength::Medium:
+            default: return 0.20F;
+        }
+    }
     switch (strength)
     {
         case VocalEnhanceStrength::Light: return 0.5F;
@@ -135,7 +165,8 @@ void VocalEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
     if (! (sampleRate > 0.0) || ! std::isfinite(sampleRate)) return;
 
     const juce::ScopedNoDenormals noDenormals;
-    const StrengthParams params = paramsFor(options.strength);
+    const StrengthParams params = options.cleanModel ? cleanModelParamsFor(options.strength)
+                                                     : paramsFor(options.strength);
 
     sanitiseInPlace(buffer);
     applyHighPass(buffer, sampleRate, params.highPassHz);

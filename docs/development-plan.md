@@ -73,7 +73,7 @@ The Electron process launches the JUCE backend as a child process on startup and
 | FFT                          | KISS FFT                              | Implemented as part of the BTrack vendor copy. No FFTW dependency.                                                                                            |
 | Time-stretch / pitch shift   | Rubber Band Library                   | Implemented for real-time per-clip warp / pitch-shift playback.                                                                                               |
 | Stem separation              | RoFormer quality models (default) + htdemucs-ft backup, via ONNX Runtime | Implemented; see Section 6. Primary engine is the MIT RoFormer quality models (Mel-Band RoFormer vocals + 4-stem BS-RoFormer drums/bass), used automatically once downloaded; htdemucs-ft is the zero-config backup used per stem when a pack is absent. CPU by default, optional DirectML GPU (auto CPU fallback). Weights downloaded on demand. Fast/Balanced/Best drives overlap on both engines. |
-| Vocal-stem cleanup           | RNNoise (xiph, v0.1.1) + de-bleed     | Optional post-separation vocal cleanup: a cross-stem STFT Wiener de-bleed plus RNNoise broadband denoise (BSD-2-Clause) and a sub-bass high-pass/expander. Fetched and statically linked via CMake `FetchContent`. |
+| Vocal-stem cleanup           | RNNoise (xiph, v0.1.1) + de-bleed     | Optional, model-aware post-separation vocal cleanup: htdemucs vocals get a cross-stem STFT Wiener de-bleed + RNNoise broadband denoise (BSD-2-Clause) + sub-bass high-pass/expander; the high-SDR RoFormer vocal skips the de-bleed and runs gentler denoise/expander. RNNoise is fetched and statically linked via CMake `FetchContent`. |
 | Decoding unsupported formats | Renderer Web Audio + temp WAV today; ffmpeg later | Web Audio covers many unsupported-by-JUCE formats today. ffmpeg is a later compatibility / robustness upgrade, not a core workflow blocker. |
 
 > **Note:** JUCE UI subsystems (`Component`, `AudioThumbnail`, `OpenGLContext`) are not used. All rendering is handled by the Electron frontend.
@@ -365,8 +365,12 @@ pitched instrument bleed, far less artefact-prone than blind spectral
 subtraction), then RNNoise broadband denoise, then a sub-bass high-pass + gentle
 downward expander. It is gated by `stems.enhanceVocals` with a light/medium/strong
 intensity; the `other` residual stays consistent because it is accumulated from
-the *unprocessed* vocal. A dev tool `SilverdawStemEval` reports objective SI-SDR /
-SDR against a reference stem for tuning.
+the *unprocessed* vocal. **The chain is model-aware:** it was tuned for the dirtier
+htdemucs vocal, so for the high-SDR RoFormer vocal the **de-bleed is skipped
+entirely** (against a clean stem the mixture-relative mask over-cuts the vocal on
+dense mixes) and the denoise + expander run far gentler — each enhancer carries a
+`cleanModel` flag the separator sets per stem. A dev tool `SilverdawStemEval`
+reports objective SI-SDR / SDR against a reference stem for tuning.
 
 **Engine selection (implemented):** the two RoFormer quality models below are the
 **primary** separation engine. When a pack is installed the renderer passes its
@@ -406,7 +410,14 @@ produces **drums and bass** with it (`BsRoformerRhythm` + the host-side STFT/iST
 engine `BsRoformerSpectral`): the model runs **once** and both stems are extracted
 (the model's own vocals/other outputs are discarded — vocals come from the vocal
 pack, `other` stays the residual). It composes with the vocal pack into a full
-RoFormer hybrid, with htdemucs fallback per stem when the pack is absent. The
+RoFormer hybrid, with htdemucs fallback per stem when the pack is absent.
+**Cascaded vocal pre-removal:** when both quality packs are active the rhythm
+pack is fed `mixture − vocal` (using the dedicated vocal pack's high-SDR estimate)
+rather than the raw mixture, so residual vocal energy can no longer bleed into
+drums / bass. The vocal estimate is the one already produced for the vocals stem;
+if the user did not select vocals, one internal vocal pass is run purely for the
+cancellation. Residual `other` stays mixture-consistent
+(`mixture − (vocals + drums + bass)`). The
 model applies its mask in-graph and returns the masked per-stem spectrogram; the
 host runs the STFT (n_fft 2048 / hop 441) and a per-stem iSTFT with preset-driven
 chunk overlap. It is exported at an 8 s window (T=801) — the largest that stays
@@ -449,9 +460,11 @@ low-confidence hint: it has no independent confidence measurement, so its
 automatic classification defers to the source via `derivedFrom`. Marking the stem
 as **Treat as Music** reveals the beat grid on every clip using that stem.
 
-**Future:** an optional experimental 6-stem model (adds guitar + piano), an
-fp16 GPU compute path, and extending the cross-stem de-bleed to drums/bass (using
-the higher-quality vocal/instrumental split as the sidechain reference).
+**Future:** an optional experimental 6-stem model (adds guitar + piano) and an
+fp16 GPU compute path. *(Keeping vocal energy out of drums/bass — once a "future"
+idea here as a cross-stem de-bleed on the rhythm stems — now ships as the
+**cascaded vocal pre-removal**: the rhythm pack is fed `mixture − vocal` using the
+high-SDR vocal split, see §6.)*
 
 ---
 
@@ -589,7 +602,7 @@ Design converged via rubber-duck across Gemini 3.1 Pro, MAI-Code, and GPT-5.5.
   sample library item's context menu; it is hidden for stems, and a one-time
   model download is offered on first use
 - A stem picker is shown first (vocals / drums / bass / other, all ticked by default) — only the chosen stems are separated, which proportionally shortens the run
-- A **Fast / Balanced / Best** speed control (drives the inference/chunk overlap on both the RoFormer packs and the htdemucs backup; Best also adds vocal shifts on the htdemucs vocal path); **Preferences ▸ Stems** offers a single combined **Download quality models** action (the RoFormer vocal + rhythm models, ~1 GB, used automatically once installed), an **Always use the backup model** override (forces htdemucs), and optional per-stem cleanup (de-bleed + denoise + expander)
+- A **Fast / Balanced / Best** speed control (drives the inference/chunk overlap on both the RoFormer packs and the htdemucs backup; Best also adds vocal shifts on the htdemucs vocal path); **Preferences ▸ Stems** offers a single combined **Download quality models** action (the RoFormer vocal + rhythm models, ~1 GB, used automatically once installed), an **Always use the backup model** override (forces htdemucs), and optional, model-aware per-stem cleanup/enhancement (vocal de-bleed/denoise/expander on htdemucs vocals — de-bleed skipped and gentled for the RoFormer vocal — plus purpose-built drum / bass / other enhancers, themselves gentled for the RoFormer rhythm stems)
 - Progress shown in a non-blocking dialog driven by `STEM_PROGRESS` events; the counter reflects the selected stems
 - Stems are imported to the library as top-level **stem** items. When started
   from a timeline clip they are also placed on new tracks (one per stem), each
@@ -1892,6 +1905,8 @@ playable at every point — no broken-build day):
 - [x] Vocal quality work — "Best" preset adds vocal-only demucs `shifts` test-time augmentation; optional cross-stem de-bleed (`VocalDebleeder`) + RNNoise + expander vocal cleanup; objective `SilverdawStemEval` SI-SDR/SDR harness
 - [x] Optional **Vocal Quality Pack** — MIT Mel-Band RoFormer vocal model (`MelRoformerVocals` + `MelRoformerSpectral`), downloaded on demand; hybrid path (RoFormer vocals + htdemucs drums/bass + residual other) with htdemucs fallback; validated end-to-end against a reference and unit-tested round-trip
 - [x] Optional **Rhythm Quality Pack** — MIT 4-stem BS-RoFormer drums/bass model (`BsRoformerRhythm` + `BsRoformerSpectral`), self-exported from ZFTurbo's MUSDB18-HQ checkpoint, downloaded on demand; one model run extracts both drums + bass, composing with the vocal pack into a full RoFormer hybrid (residual other) with per-stem htdemucs fallback; 8 s window with DirectML→CPU out-of-memory fallback; validated end-to-end (C++ runner vs numpy reference) and unit-tested round-trip
+- [x] **Cascaded vocal pre-removal** — when the vocal and rhythm packs both run, the rhythm pack is fed `mixture − vocal` (the dedicated vocal pack's estimate) instead of the raw mixture, so vocal energy can't bleed into drums/bass. Reuses the already-extracted vocal when vocals is selected, else runs one internal vocal pass for the cancellation; residual `other` stays mixture-consistent
+- [x] **Model-aware cleanup gentling** — the per-stem cleanup/enhancement was tuned for the dirtier htdemucs stems and over-processed the clean RoFormer stems (the vocal cross-stem de-bleed could gut a clean vocal on dense mixes). Each enhancer now carries a `cleanModel` flag the separator sets per stem — vocals when `haveVocalPack`, drums/bass when `useRhythmPack`, `other` only for the full both-pack mixture-consistency residual (`mixtureConsistency && haveVocalPack && haveRhythmPack`): vocals skip the de-bleed entirely and run a gentler denoise + expander; drum transient boost ×0.4, bass harmonic blend ×0.5, other widener/spectral ×0.5, drum/bass expander range halved. The htdemucs backup path keeps the original settings; covered by two new harness tests (155 total)
 - [x] **RoFormer-first engine pivot** — the two quality packs are the **primary** engine, used automatically once installed; htdemucs is the **backup** (per-stem fallback when a pack is absent, plus a single **Always use the backup model** override `stems.useBackupModel`). Backend validates only the htdemucs weights a run actually needs (a fully pack-covered run needs none); the Fast/Balanced/Best preset overlap now drives the RoFormer chunk stride too. Preferences ▸ Stems combines both packs into one **Download quality models (~1 GB)** action with combined progress; htdemucs is presented as the secondary "Backup model". `htdemucsRequired` decision logic unit-tested
 - [x] DirectML GPU acceleration (issue tracked) — DirectML-build ONNX Runtime bundled (`onnxruntime.dll` + `DirectML.dll`); `useGpu` threaded to session options, opt-in and adapter-gated (Preferences ▸ Stems), TDR/timeout-recovery hardened
 - [x] Per-separation stem folder `stems\<sourceName>-stems` (disambiguated) beside the saved project file — written to a temporary workspace (`<temp>/Silverdaw/stems`) for unsaved projects and migrated into the project folder on first save — with stems inheriting the source's media GUID so they resolve tags/artwork from the project's central `metadata/` + `covers/` store, so stems travel with the portable project folder and keep the source's tags/artwork after the source is removed
@@ -2099,7 +2114,7 @@ robustness without changing the core editing model.
   store, composables, the bridge-protocol zod schemas, the dB taper helpers,
   the Clip Editor viewport/warp-draft/target composables, and the clip-lock
   store actions). The backend ships with its own custom test harness (no Catch2
-  dependency) wired into CTest as `SilverdawBackendTests` — **153 cases** at the
+  dependency) wired into CTest as `SilverdawBackendTests` — **155 cases** at the
   time of writing, the registry count being asserted by the harness itself. They
   span `ProjectState` (tracks / clips / dirty, view / library / markers /
   replaceTree, export-settings JSON round-trip, master volume round-trip,

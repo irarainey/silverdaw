@@ -385,7 +385,16 @@ void OtherEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
     if (! (sampleRate > 0.0) || ! std::isfinite(sampleRate)) return;
 
     const juce::ScopedNoDenormals noDenormals;
-    const StrengthParams params = paramsFor(options.strength);
+    StrengthParams params = paramsFor(options.strength);
+    double stereoWidth = stereoWidthFor(options.strength);
+    // A residual from the clean RoFormer hybrid carries less subtraction swirl:
+    // cap the spectral reduction lower and halve the widening so the catch-all
+    // stem keeps its natural balance.
+    if (options.cleanModel)
+    {
+        params.maxReductionDb *= 0.5;
+        stereoWidth *= 0.5;
+    }
 
     sanitiseInPlace(buffer);
     if (buffer.getMagnitude(0, buffer.getNumSamples()) <= kSilenceFloor) return;
@@ -396,7 +405,7 @@ void OtherEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
     // Enhancement: open up the stereo image (mid preserved, so it stays
     // mono-compatible), with a soft limiter so the widened side can never
     // hard-clip. No-op on mono and on silence.
-    applyStereoWidener(buffer, stereoWidthFor(options.strength));
+    applyStereoWidener(buffer, stereoWidth);
     softLimitInPlace(buffer);
 }
 
