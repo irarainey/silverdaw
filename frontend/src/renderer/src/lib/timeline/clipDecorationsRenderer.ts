@@ -202,9 +202,9 @@ export function createClipDecorationsRenderer(deps: ClipDecorationsRendererDeps)
     for (const id of track.clipIds) {
       const clip = project.clips[id]
       if (!clip || clip.brake !== true) continue
-      // The engine applies the brake to forward, non-warped clips only; don't
-      // draw a misleading overlay on a clip where it won't take effect.
-      if (clip.reversed === true || clip.warpEnabled === true) continue
+      // The engine applies the brake to forward clips (it composes with warp now);
+      // reverse is still excluded, so don't draw a misleading overlay there.
+      if (clip.reversed === true) continue
 
       // The brake occupies the last `T_stop` of the clip (clamped to its length),
       // and always decelerates fully to a stop across that span.
@@ -279,7 +279,7 @@ export function createClipDecorationsRenderer(deps: ClipDecorationsRendererDeps)
     for (const id of track.clipIds) {
       const clip = project.clips[id]
       if (!clip || clip.backspin !== true) continue
-      if (clip.reversed === true || clip.warpEnabled === true) continue
+      if (clip.reversed === true) continue
 
       const durMs = effectiveClipDurationMs(clip)
       const spinMs = Math.min(spinMsMax, durMs)

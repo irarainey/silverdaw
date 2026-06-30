@@ -232,7 +232,10 @@ export function useTimelineContextMenu(
     // fixed platter-stop time (~1 s, like a Technics deck) at its end. Per-instance
     // timeline effect; forward, non-warped clips only (the engine can't compose it
     // with pitch-preserving warp yet), so it is hidden for reversed or warped clips.
-    if (clip && !clip.reversed && !clip.warpEnabled) {
+    // Turntable brake / backspin: tail effects that compose with warp (the part
+    // before the effect is warped; the tail is a direct varispeed read). Reverse is
+    // still excluded (out of scope). Mutually exclusive with each other.
+    if (clip && !clip.reversed) {
       items.push({
         command: 'clip.brake',
         label: clip.brake ? '\u2713 Brake' : 'Brake',

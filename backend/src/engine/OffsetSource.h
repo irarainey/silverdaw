@@ -224,10 +224,31 @@ class OffsetSource : public juce::PositionableAudioSource
             audible.numSamples = audibleSamples;
             auto* w = currentWarp;
             const bool rev = reversed.load(std::memory_order_acquire);
-            if (w != nullptr)
+
+            // Tail effects (turntable brake / backspin). Mutually exclusive; backspin
+            // wins if both are set. Reverse is excluded (out of scope). v1 now composes
+            // with warp: the part before the effect is warped normally, then the tail is
+            // read straight from the source as a varispeed (a record-stop is pitch-
+            // changing, so it can't go through the pitch-preserving stretcher). The warp
+            // tempo ratio only positions the tail and scales its rate for continuity.
+            const BackspinSnapshot* backspin = backspinSnap.load(std::memory_order_acquire);
+            const BrakeSnapshot* brake = brakeSnap.load(std::memory_order_acquire);
+            const bool backspinActive = backspin != nullptr && !backspin->isEmpty() && !rev;
+            const bool brakeActive = !backspinActive && brake != nullptr && !brake->isEmpty() && !rev;
+            const bool tailActive = backspinActive || brakeActive;
+            const double rateScale = (w != nullptr && w->isActive()) ? w->getTempoRatio() : 1.0;
+
+            float* planes[kMaxWarpChannels] = {nullptr};
+            const int numCh = juce::jmin(audible.buffer->getNumChannels(), kMaxWarpChannels);
+            for (int c = 0; c < numCh; ++c)
             {
-                // Only reseek warp on discontinuities; steady-state playback lets the stretcher
-                // keep history.
+                planes[c] = audible.buffer->getWritePointer(c, audible.startSample);
+            }
+
+            // Warp `cnt` output samples (from `audibleStart`) through the stretcher,
+            // reseeking only on a discontinuity so steady-state keeps its history.
+            const auto warpInto = [&](int cnt) {
+                if (w == nullptr || cnt <= 0) return;
                 const bool forceReseek = warpReseekRequested.exchange(false, std::memory_order_acq_rel);
                 if (forceReseek || lastBlockEnded || audibleStart != lastAudibleEnd)
                 {
@@ -236,70 +257,65 @@ class OffsetSource : public juce::PositionableAudioSource
                         inSrc + static_cast<juce::int64>(static_cast<double>(audibleStart - clipStart) * ratio);
                     w->seekSource(warpedSourcePos);
                 }
-                pullThroughWarp(*w, *audible.buffer, audible.startSample, audibleSamples,
-                                rev, inSrc, sourceDur);
-                lastBlockEnded = false;
-                lastAudibleEnd = audibleEnd;
-            }
-            else
-            {
-                const BackspinSnapshot* backspin = backspinSnap.load(std::memory_order_acquire);
-                const BrakeSnapshot* brake = brakeSnap.load(std::memory_order_acquire);
-                // v1: tail effects apply to forward, non-warped clips only (warp is
-                // already excluded here; reverse is excluded explicitly). Backspin and
-                // brake are mutually exclusive; backspin wins if both are set.
-                const bool backspinActive = backspin != nullptr && !backspin->isEmpty() && !rev;
-                const bool brakeActive = !backspinActive && brake != nullptr && !brake->isEmpty() && !rev;
-                float* planes[kMaxWarpChannels] = {nullptr};
-                const int numCh = juce::jmin(audible.buffer->getNumChannels(), kMaxWarpChannels);
-                for (int c = 0; c < numCh; ++c)
-                {
-                    planes[c] = audible.buffer->getWritePointer(c, audible.startSample);
-                }
+                pullThroughWarp(*w, *audible.buffer, audible.startSample, cnt, rev, inSrc, sourceDur);
+            };
 
-                if (!backspinActive && !brakeActive)
+            if (!tailActive)
+            {
+                if (w != nullptr)
+                {
+                    warpInto(audibleSamples);
+                }
+                else
                 {
                     const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
                     readChildReversibleBlock(planes, numCh, sourcePos, audibleSamples, rev, inSrc, sourceDur);
                 }
-                else
+            }
+            else
+            {
+                // Split this block at the effect trigger (last `effLen` of the timeline
+                // footprint). The pre-tail part plays normally (warped or direct); the
+                // tail part renders the varispeed straight from the source.
+                const juce::int64 effLen = backspinActive
+                    ? juce::jmin(backspin->getBackspinLenSamples(), dur)
+                    : juce::jmin(brake->getBrakeLenSamples(), dur);
+                const juce::int64 tailStart = clipEnd - effLen;
+                const juce::int64 normalEnd = juce::jmin(audibleEnd, tailStart);
+                const int normalCount =
+                    static_cast<int>(juce::jmax(static_cast<juce::int64>(0), normalEnd - audibleStart));
+                if (normalCount > 0)
                 {
-                    // The tail effect occupies the last `effLen` of the clip's
-                    // (non-warped) timeline footprint; split this block into the
-                    // normal (forward) part and the effected part.
-                    const juce::int64 effLen = backspinActive
-                        ? juce::jmin(backspin->getBackspinLenSamples(), dur)
-                        : juce::jmin(brake->getBrakeLenSamples(), dur);
-                    const juce::int64 tailStart = clipEnd - effLen;
-                    const juce::int64 normalEnd = juce::jmin(audibleEnd, tailStart);
-                    const int normalCount =
-                        static_cast<int>(juce::jmax(static_cast<juce::int64>(0), normalEnd - audibleStart));
-                    if (normalCount > 0)
+                    if (w != nullptr)
+                    {
+                        warpInto(normalCount);
+                    }
+                    else
                     {
                         const juce::int64 sourcePos = (audibleStart - clipStart) + inSrc;
                         readChildReversibleBlock(planes, numCh, sourcePos, normalCount, rev, inSrc, sourceDur);
                     }
-                    const juce::int64 tailAudibleStart = juce::jmax(audibleStart, tailStart);
-                    const int tailCount = static_cast<int>(audibleEnd - tailAudibleStart);
-                    if (tailCount > 0)
+                }
+                const juce::int64 tailAudibleStart = juce::jmax(audibleStart, tailStart);
+                const int tailCount = static_cast<int>(audibleEnd - tailAudibleStart);
+                if (tailCount > 0)
+                {
+                    if (backspinActive)
                     {
-                        if (backspinActive)
-                        {
-                            renderBackspinBlock(planes, numCh, normalCount, *backspin,
-                                                static_cast<double>(effLen), tailStart, tailAudibleStart,
-                                                tailCount, clipStart, inSrc, sourceDur);
-                        }
-                        else
-                        {
-                            renderBrakeBlock(planes, numCh, normalCount, *brake,
-                                             static_cast<double>(effLen), tailStart, tailAudibleStart,
-                                             tailCount, clipStart, inSrc, sourceDur);
-                        }
+                        renderBackspinBlock(planes, numCh, normalCount, *backspin,
+                                            static_cast<double>(effLen), tailStart, tailAudibleStart,
+                                            tailCount, clipStart, inSrc, sourceDur, rateScale);
+                    }
+                    else
+                    {
+                        renderBrakeBlock(planes, numCh, normalCount, *brake,
+                                         static_cast<double>(effLen), tailStart, tailAudibleStart,
+                                         tailCount, clipStart, inSrc, sourceDur, rateScale);
                     }
                 }
-                lastBlockEnded = false;
-                lastAudibleEnd = audibleEnd;
             }
+            lastBlockEnded = false;
+            lastAudibleEnd = audibleEnd;
 
             applyClipGain(*audible.buffer,
                           audible.startSample, audibleSamples,
@@ -500,16 +516,23 @@ class OffsetSource : public juce::PositionableAudioSource
     void renderBrakeBlock(float* const* dst, int numCh, int dstOffset,
                           const BrakeSnapshot& brake, double effLen,
                           juce::int64 brakeStart, juce::int64 brakeAudibleStart, int count,
-                          juce::int64 clipStart, juce::int64 inSrc, juce::int64 sourceDur)
+                          juce::int64 clipStart, juce::int64 inSrc, juce::int64 sourceDur,
+                          double sourceRateScale = 1.0)
     {
         if (child == nullptr || count <= 0 || numCh <= 0) return;
 
-        // Absolute source position where the brake begins (= linear playback pos there).
-        const juce::int64 baseSrc = inSrc + (brakeStart - clipStart);
+        // Absolute source position where the brake begins. For a warped clip the warp
+        // read source at `sourceRateScale` (tempo ratio) per timeline sample, so the
+        // trigger position and the decelerating read scale by it (the brake decelerates
+        // from the warped rate to 0 — continuous at the trigger, pitch no longer
+        // preserved as a real record-stop is a varispeed). 1.0 for non-warped clips.
+        const juce::int64 baseSrc =
+            inSrc + static_cast<juce::int64>(static_cast<double>(brakeStart - clipStart) * sourceRateScale);
         const int scratchCap = brakeScratch.getNumSamples();
-        // A sub-chunk of M output samples consumes ≤ M source samples (rate ≤ 1); the
-        // span adds ≤ 2 interpolation neighbours, so M ≤ cap-3 always fits the scratch.
-        const int maxChunk = juce::jmax(1, scratchCap - 8);
+        // The span grows with the read rate (≤ sourceRateScale), so size each sub-chunk
+        // so the contiguous read still fits the scratch buffer.
+        const int maxChunk =
+            juce::jmax(1, static_cast<int>((scratchCap - 8) / juce::jmax(1.0, sourceRateScale)));
         const int scratchPlanes = juce::jmin(numCh, kMaxWarpChannels);
 
         for (int done = 0; done < count;)
@@ -517,8 +540,8 @@ class OffsetSource : public juce::PositionableAudioSource
             const int n = juce::jmin(maxChunk, count - done);
             const double uStart = static_cast<double>(brakeAudibleStart - brakeStart) + done;
             const double uEnd = uStart + static_cast<double>(n - 1);
-            const double sStart = brake.sourceConsumedAt(uStart, effLen);
-            const double sEnd = brake.sourceConsumedAt(uEnd, effLen);
+            const double sStart = sourceRateScale * brake.sourceConsumedAt(uStart, effLen);
+            const double sEnd = sourceRateScale * brake.sourceConsumedAt(uEnd, effLen);
 
             // Contiguous forward span with one guard sample either side for the
             // 4-point cubic (Catmull-Rom) interpolation.
@@ -539,7 +562,8 @@ class OffsetSource : public juce::PositionableAudioSource
             for (int i = 0; i < n; ++i)
             {
                 const double u = uStart + static_cast<double>(i);
-                const double local = brake.sourceConsumedAt(u, effLen) - static_cast<double>(spanStart);
+                const double local =
+                    sourceRateScale * brake.sourceConsumedAt(u, effLen) - static_cast<double>(spanStart);
                 const int i1 = static_cast<int>(std::floor(local));
                 const float frac = static_cast<float>(local - static_cast<double>(i1));
                 // Cubic needs idx-1 .. idx+2; clamp each to the span (edges only).
@@ -575,12 +599,17 @@ class OffsetSource : public juce::PositionableAudioSource
     void renderBackspinBlock(float* const* dst, int numCh, int dstOffset,
                              const BackspinSnapshot& spin, double effLen,
                              juce::int64 tailStart, juce::int64 tailAudibleStart, int count,
-                             juce::int64 clipStart, juce::int64 inSrc, juce::int64 sourceDur)
+                             juce::int64 clipStart, juce::int64 inSrc, juce::int64 sourceDur,
+                             double sourceRateScale = 1.0)
     {
         if (child == nullptr || count <= 0 || numCh <= 0) return;
 
-        // Forward source position at the spin trigger; the read rewinds backward from here.
-        const double s0 = static_cast<double>(inSrc + (tailStart - clipStart));
+        // Forward source position at the spin trigger. For a warped clip the warp read
+        // source at `sourceRateScale` (tempo ratio) per timeline sample, so the trigger
+        // position and the rewind distance scale by it (the spin reverses relative to the
+        // warped playback). 1.0 for non-warped clips.
+        const double s0 =
+            static_cast<double>(inSrc) + static_cast<double>(tailStart - clipStart) * sourceRateScale;
         const double minSrc = static_cast<double>(inSrc); // never rewind before the clip start
         const int scratchCap = brakeScratch.getNumSamples();
         const double spinSpeed = spin.getSpinSpeed();
@@ -590,13 +619,15 @@ class OffsetSource : public juce::PositionableAudioSource
         // so a long backspin sounds short. Instead, scale the rewind uniformly so it spans
         // the FULL duration — a gentler rewind that still ends right at the clip start.
         const double available = juce::jmax(0.0, s0 - minSrc);
-        const double requestedTotal = spin.totalRewound(effLen);
+        const double requestedTotal = sourceRateScale * spin.totalRewound(effLen);
         const double rewindScale =
             (requestedTotal > available && requestedTotal > 0.0) ? (available / requestedTotal) : 1.0;
+        // Effective multiplier applied to the analytic rewind distance (fit x warp ratio).
+        const double rewMul = rewindScale * sourceRateScale;
         // The contiguous span grows with the (scaled) spin speed, so size each sub-chunk
         // so the read still fits the scratch buffer.
         const int maxChunk =
-            juce::jmax(1, static_cast<int>((scratchCap - 8) / juce::jmax(1.0, spinSpeed * rewindScale)));
+            juce::jmax(1, static_cast<int>((scratchCap - 8) / juce::jmax(1.0, spinSpeed * rewMul)));
         const int scratchPlanes = juce::jmin(numCh, kMaxWarpChannels);
 
         for (int done = 0; done < count;)
@@ -605,8 +636,8 @@ class OffsetSource : public juce::PositionableAudioSource
             const double uStart = static_cast<double>(tailAudibleStart - tailStart) + done;
             const double uEnd = uStart + static_cast<double>(n - 1);
             // Source positions DECREASE with u (rewind): uStart is the latest (highest).
-            const double posHi = juce::jmax(minSrc, s0 - rewindScale * spin.sourceRewoundAt(uStart, effLen));
-            const double posLo = juce::jmax(minSrc, s0 - rewindScale * spin.sourceRewoundAt(uEnd, effLen));
+            const double posHi = juce::jmax(minSrc, s0 - rewMul * spin.sourceRewoundAt(uStart, effLen));
+            const double posLo = juce::jmax(minSrc, s0 - rewMul * spin.sourceRewoundAt(uEnd, effLen));
 
             const juce::int64 spanStart =
                 juce::jmax(static_cast<juce::int64>(0), static_cast<juce::int64>(std::floor(posLo)) - 1);
@@ -625,7 +656,7 @@ class OffsetSource : public juce::PositionableAudioSource
             for (int i = 0; i < n; ++i)
             {
                 const double u = uStart + static_cast<double>(i);
-                const double srcPos = juce::jmax(minSrc, s0 - rewindScale * spin.sourceRewoundAt(u, effLen));
+                const double srcPos = juce::jmax(minSrc, s0 - rewMul * spin.sourceRewoundAt(u, effLen));
                 const double local = srcPos - static_cast<double>(spanStart);
                 const int i1 = static_cast<int>(std::floor(local));
                 const float frac = static_cast<float>(local - static_cast<double>(i1));

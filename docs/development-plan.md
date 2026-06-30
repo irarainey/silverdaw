@@ -1482,8 +1482,13 @@ and grinds to a halt.
   clip-header badge plus a red **tail overlay on the waveform** (the curved speed
   ramp + groove ticks that bunch at full speed and spread apart as it stops,
   tracking the configured duration/curve) show the effect over the affected region.
-- **v1 scope**: forward, non-warped clips only (Rubber Band's pitch-preserving
-  warp can't yet compose with the varispeed ramp).
+- **Composes with warp**: a record-stop is pitch-*changing*, so it cannot go
+  through the pitch-*preserving* stretcher (unlike reverse, which is rate-neutral
+  and passes through fine). Instead the clip is warped normally up to the effect
+  trigger, then the tail is read straight from the source as a varispeed; the warp
+  tempo ratio only positions the tail's start and scales its rate so it's
+  continuous. The clip's length is untouched (the tail lives in the timeline
+  domain). **v1 scope**: forward clips only — reverse is still excluded.
 
 #### Turntable backspin (reverse rewind)
 The companion DJ effect: at the clip's end the audio **rewinds backwards** at a
@@ -2159,6 +2164,16 @@ robustness without changing the core editing model.
 - [ ] Renderer memory investigation: eliminate avoidable in-memory PCM
   retention per import and decide whether the backend's read-ahead buffer
   needs a bounded shared cache for many-track projects.
+- [ ] **Optional "freeze / bounce" of warped clips** — bake a warped clip's
+  time-stretched audio to a cached WAV at its target BPM so playback reads a
+  plain file instead of running Rubber Band live, saving real-time CPU on
+  many-warped-clip projects and letting every per-clip effect compose trivially
+  (today a record-stop brake/backspin has to bypass the pitch-preserving
+  stretcher for its tail — see §7.16). Must stay **opt-in** and not regress the
+  instant, live warp UX: warp tweaks would invalidate and re-render the bake in
+  the background (with the live stretcher as the fallback until the bake is
+  ready). Consider exposing it as an explicit "Freeze clip" action rather than
+  automatic, given the re-render cost on every warp change.
 - [ ] User-scoped sample library folder scanning, beyond the current
   project-scoped imported-audio library.
 - [ ] Drag selected timeline regions directly into the browser panel to save
