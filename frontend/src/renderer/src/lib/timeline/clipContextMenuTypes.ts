@@ -24,4 +24,7 @@ export interface ClipContextMenuItem {
   swatches?: ReadonlyArray<{ cssHex: string; label?: string }>
   /** Palette index to outline as the current selection inside `swatches`. */
   selectedSwatch?: number
+  /** When provided, the row opens a nested flyout of these items on hover
+   *  instead of firing a command itself. Each child fires its own `command`. */
+  submenu?: ReadonlyArray<ClipContextMenuItem>
 }

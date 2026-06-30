@@ -21,3 +21,5 @@ export const COL_VOL_ENDPOINT = 0x8b5cf6
 export const COL_VOL_MIDPOINT = 0xc4b5fd
 export const COL_VOL_MIDPOINT_DIM = 0xc4b5fd
 export const COL_VOL_DOT_STROKE = 0x2e1065
+export const COL_SLICE = 0x34d399
+export const COL_SLICE_HANDLE = 0x6ee7b7

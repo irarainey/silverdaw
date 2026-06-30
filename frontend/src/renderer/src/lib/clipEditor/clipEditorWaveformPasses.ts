@@ -29,6 +29,8 @@ import {
   COL_RULER_BORDER,
   COL_RULER_TICK,
   COL_SELECTION,
+  COL_SLICE,
+  COL_SLICE_HANDLE,
   COL_VOL_DOT_STROKE,
   COL_VOL_ENDPOINT,
   COL_VOL_LINE,
@@ -284,6 +286,39 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
     layer.addChild(edges)
   }
 
+  // --- Loop-slice markers (world layer) ---------------------------------------
+  // Vertical lines at each source-ms slice point, with a small top grab handle,
+  // drawn only while Slice mode is active. Mirrors the beat-grid line pass but
+  // reads the draft marker list rather than a uniform grid.
+  function drawSliceMarkers(layer: Container, g: SceneGeometry): void {
+    if (!deps.sliceEditActive()) return
+    const markers = deps.sliceMarkers()
+    if (markers.length === 0) return
+    const { fromMs, toMs } = bandMsRange(g)
+
+    const lines = acquireGraphics()
+    if (!lines) return
+    const handleH = 7
+    const handleW = 5
+    for (const m of markers) {
+      if (m < fromMs - 1 || m > toMs + 1) continue
+      const x = Math.round(worldX(m, g)) + 0.5
+      lines.moveTo(x, g.waveTop).lineTo(x, g.H)
+    }
+    lines.stroke({ color: COL_SLICE, width: 1, alpha: 0.9 })
+
+    const handles = acquireGraphics()
+    if (!handles) return
+    for (const m of markers) {
+      if (m < fromMs - 1 || m > toMs + 1) continue
+      const x = Math.round(worldX(m, g))
+      handles.poly([x - handleW, g.waveTop, x + handleW, g.waveTop, x, g.waveTop + handleH])
+    }
+    handles.fill(COL_SLICE_HANDLE)
+    layer.addChild(lines)
+    layer.addChild(handles)
+  }
+
   // --- Volume Shape (gain envelope) overlay (world layer) ----------------------
   function drawVolumeOverlay(layer: Container, g: SceneGeometry): void {
     if (!deps.volumeShapeAvailable()) return
@@ -370,6 +405,7 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
     drawWaveform,
     drawBeatGrid,
     drawSelection,
+    drawSliceMarkers,
     drawVolumeOverlay
   }
 }

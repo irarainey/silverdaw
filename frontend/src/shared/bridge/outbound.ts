@@ -237,6 +237,14 @@ export interface ClipSaveAsSamplePayload {
   audioType?: 'simple' | 'music'
 }
 
+export interface ClipSliceToSamplesPayload {
+  clipId: string
+  /** See ClipSaveAsSamplePayload.audioType. */
+  audioType?: 'simple' | 'music'
+  /** Ascending source-time windows; each is written as its own library sample. */
+  slices: ReadonlyArray<{ itemId: string; inMs: number; durationMs: number }>
+}
+
 // ─── Effects envelopes (Bass / Mid / Treble / Leveler / Sends / shared FX) ──
 //
 // Mutation envelopes optionally carry `gestureId` + `gestureEnd` so the backend
@@ -416,6 +424,7 @@ export interface BridgeOutboundMap {
   CLIP_REBIND: ClipRebindPayload
   CLIP_SET_WARP: ClipSetWarpPayload
   CLIP_SAVE_AS_SAMPLE: ClipSaveAsSamplePayload
+  CLIP_SLICE_TO_SAMPLES: ClipSliceToSamplesPayload
   LIBRARY_ITEM_SAVE_AS_SAMPLE: LibraryItemSaveAsSamplePayload
   CLIP_EDITOR_PEAKS_REQUEST: ClipEditorPeaksRequestPayload
   LIBRARY_ADD: LibraryAddPayload
@@ -915,6 +924,7 @@ export const bridgeOutboundPayloadKinds: {
   CLIP_REBIND: 'payload',
   CLIP_SET_WARP: 'payload',
   CLIP_SAVE_AS_SAMPLE: 'payload',
+  CLIP_SLICE_TO_SAMPLES: 'payload',
   LIBRARY_ITEM_SAVE_AS_SAMPLE: 'payload',
   CLIP_EDITOR_PEAKS_REQUEST: 'payload',
   LIBRARY_ADD: 'payload',

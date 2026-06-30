@@ -25,7 +25,7 @@ constexpr int kModelSampleRate = 44100;
 
 struct MelRoformerVocals::Impl
 {
-    Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "silverdaw-roformer"};
+    Ort::Env env{ORT_LOGGING_LEVEL_ERROR, "silverdaw-roformer"};
     Ort::SessionOptions sessionOptions;
     std::unique_ptr<Ort::Session> session;
     juce::String sessionPath;

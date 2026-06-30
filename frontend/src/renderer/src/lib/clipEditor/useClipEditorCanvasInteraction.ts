@@ -3,9 +3,11 @@
 import type { Ref } from 'vue'
 import { hitTestHandle, overlayGainToY, overlayLaneIndexForY, overlayYToGain, sourceMsToVolumeTime, volumeOverlayLanes, volumeTimeToSourceMs } from '@/lib/clipEditor/volumeOverlay'
 import { snapTimelineMsToBeat, type BeatSnapContext } from '@/lib/clipEditor/envelopeBeatSnap'
+import { hitTestSliceMarker } from '@/lib/clipEditor/sliceOverlay'
 import type { LibraryItem } from '@/stores/libraryStore'
 import type { usePreviewStore } from '@/stores/previewStore'
 import type { ClipEditorVolumeShapeDraft } from '@/lib/clipEditor/useClipEditorVolumeShapeDraft'
+import type { ClipEditorSliceDraft } from '@/lib/clipEditor/useClipEditorSliceDraft'
 
 type PreviewStore = ReturnType<typeof usePreviewStore>
 
@@ -13,6 +15,7 @@ export interface ClipEditorCanvasInteractionDeps {
   getCanvas: () => HTMLCanvasElement | null
   preview: PreviewStore
   volumeShapeDraft: ClipEditorVolumeShapeDraft
+  sliceDraft: ClipEditorSliceDraft
 
   // Writable view/selection state owned by the viewport composable.
   selectionInMs: Ref<number>
@@ -31,6 +34,7 @@ export interface ClipEditorCanvasInteractionDeps {
   playheadAbsMs: () => number
   hasPlaybackSelection: () => boolean
   volumeEditActive: () => boolean
+  sliceEditActive: () => boolean
   volumeShapeDurationMs: () => number
   draftEffectiveRatio: () => number
   sourceItem: () => LibraryItem | null
@@ -76,6 +80,12 @@ export function useClipEditorCanvasInteraction(
     // Volume edit mode owns the canvas pointer before selection logic.
     if (deps.volumeEditActive()) {
       onCanvasEnvelopePointerDown(e, rect, vIn, vDur)
+      return
+    }
+
+    // Slice mode owns the pointer next: add / drag / remove slice markers.
+    if (deps.sliceEditActive()) {
+      onCanvasSlicePointerDown(e, rect, vIn, vDur, fullIn, fullEnd)
       return
     }
 
@@ -217,6 +227,44 @@ export function useClipEditorCanvasInteraction(
     window.addEventListener('mouseup', onUp)
   }
 
+  // Slice mode: click empty space to add a marker (then drag it), click a marker
+  // to drag, Alt/right-click a marker to remove. Markers are source-absolute ms.
+  function onCanvasSlicePointerDown(
+    e: MouseEvent,
+    rect: DOMRect,
+    vIn: number,
+    vDur: number,
+    fullIn: number,
+    fullEnd: number
+  ): void {
+    const xToSource = (clientX: number): number =>
+      Math.max(fullIn, Math.min(fullEnd, vIn + ((clientX - rect.left) / rect.width) * vDur))
+    const markerXs = deps.sliceDraft.markers.value.map((m) => ((m - vIn) / vDur) * rect.width)
+    const lx = e.clientX - rect.left
+    const hit = hitTestSliceMarker(markerXs, lx, 6)
+
+    if (hit !== null && (e.altKey || e.button === 2)) {
+      deps.sliceDraft.removeMarker(hit)
+      e.preventDefault()
+      return
+    }
+    if (e.button === 2) return
+
+    let dragIndex = hit ?? deps.sliceDraft.addMarker(xToSource(e.clientX))
+    e.preventDefault()
+    if (dragIndex < 0) return
+
+    const onMove = (ev: MouseEvent): void => {
+      dragIndex = deps.sliceDraft.moveMarker(dragIndex, xToSource(ev.clientX))
+    }
+    const onUp = (): void => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
   // Beat-grid slide-to-align: drag horizontally to shift the grid phase so the
   // markers line up with the audio. Live-previews the new anchor on every move
   // and persists once on release. Requires an existing tempo (guarded upstream).
@@ -250,9 +298,9 @@ export function useClipEditorCanvasInteraction(
     window.addEventListener('mouseup', onUp)
   }
 
-  // Let right-click delete breakpoints while shaping volume.
+  // Let right-click delete breakpoints / slice markers without the browser menu.
   function onCanvasContextMenu(e: MouseEvent): void {
-    if (deps.volumeEditActive()) e.preventDefault()
+    if (deps.volumeEditActive() || deps.sliceEditActive()) e.preventDefault()
   }
 
   function seekPlayheadToSourceMs(sourceMs: number): void {

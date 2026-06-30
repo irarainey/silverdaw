@@ -208,6 +208,7 @@ export function useClipEditorWaveform(deps: ClipEditorWaveformDeps): ClipEditorW
     passes.drawBeatGrid(world, src, g)
     passes.drawRulerTicks(rulerTicks, g)
     passes.drawSelection(world, g)
+    passes.drawSliceMarkers(world, g)
     passes.drawVolumeOverlay(world, g)
 
     const sx = Math.round(g.scrollPx)

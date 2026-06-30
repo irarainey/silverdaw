@@ -28,6 +28,10 @@ export interface ClipEditorWaveformDeps {
   draftPoints: () => readonly ClipEnvelopePoint[]
   draftEffectiveRatio: () => number
   draftReversed: () => boolean
+  /** True while Slice mode is active (draws the slice-marker overlay). */
+  sliceEditActive: () => boolean
+  /** Slice markers in source-absolute ms (ascending). */
+  sliceMarkers: () => readonly number[]
   editorHiResPeaks: () => EditorHiResPeaks | null
   channelPeaksByItemId: () => Record<string, ItemChannelPeaks>
   waveformDisplayMode: () => 'summary' | 'stereo'

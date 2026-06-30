@@ -5,6 +5,7 @@
 import { MAX_ZOOM } from '@/lib/clipEditor/useClipEditorViewport'
 
 const volumeEditMode = defineModel<boolean>('volumeEditMode', { required: true })
+const sliceEditMode = defineModel<boolean>('sliceEditMode', { required: true })
 const viewExpanded = defineModel<boolean>('viewExpanded', { required: true })
 
 defineProps<{
@@ -67,6 +68,29 @@ defineEmits<{
       @click="volumeEditMode = !volumeEditMode"
     >
       Volume
+    </button>
+    <!-- Loop-slice mode toggle: chop the clip into adjacent clips on a grid or
+         by hand. Shares the Volume toggle's gating (timeline clip, Clip view). -->
+    <button
+      v-if="editsTimelineClip"
+      type="button"
+      class="rounded px-2 py-1 text-[11px] font-medium"
+      :class="
+        sliceEditMode && !viewExpanded
+          ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+          : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40'
+      "
+      :disabled="viewExpanded"
+      :title="
+        viewExpanded
+          ? 'Switch to the Clip view to slice'
+          : sliceEditMode
+            ? 'Slice mode on — drag to add markers, Alt-click to remove'
+            : 'Chop the clip into slices on a grid or by hand'
+      "
+      @click="sliceEditMode = !sliceEditMode"
+    >
+      Slice
     </button>
     <!-- Region gate: flatten the selected range to silence or full volume with
          hard edges. Acts on the current selection; enabled once a range exists. -->

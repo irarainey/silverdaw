@@ -6,6 +6,7 @@ import ClipEditorBeatGridPanel from '@/components/ClipEditorBeatGridPanel.vue'
 import ClipEditorPlaybackControls from '@/components/ClipEditorPlaybackControls.vue'
 import ClipEditorSelectionInfo from '@/components/ClipEditorSelectionInfo.vue'
 import ClipEditorViewControls from '@/components/ClipEditorViewControls.vue'
+import ClipEditorSlicePanel from '@/components/ClipEditorSlicePanel.vue'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import { useClipEditorController, type ClipEditorProps } from '@/lib/clipEditor/useClipEditorController'
 
@@ -42,6 +43,14 @@ const {
   playheadAbsMs,
   viewInMs,
   volumeEditMode,
+  sliceEditMode,
+  sliceEditActive,
+  sliceAvailable,
+  sliceSubdivision,
+  sliceCount,
+  onGenerateSliceGrid,
+  onSliceToTimeline,
+  onSliceToSamples,
   viewExpanded,
   editsTimelineClip,
   editsExistingClip,
@@ -165,6 +174,7 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
               />
               <ClipEditorViewControls
                 v-model:volume-edit-mode="volumeEditMode"
+                v-model:slice-edit-mode="sliceEditMode"
                 v-model:view-expanded="viewExpanded"
                 :edits-timeline-clip="editsTimelineClip"
                 :edits-existing-clip="editsExistingClip"
@@ -226,6 +236,21 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 <ClipEditorBeatGridPanel
                   :grid="beatGrid"
                   :source-bpm="sourceBpm"
+                />
+              </ClipEffectModule>
+              <ClipEffectModule
+                v-if="sliceEditActive"
+                title="Slice"
+                :cols="1"
+                :rows="2"
+              >
+                <ClipEditorSlicePanel
+                  v-model:subdivision="sliceSubdivision"
+                  :slice-count="sliceCount"
+                  :can-slice="sliceAvailable"
+                  @generate="onGenerateSliceGrid"
+                  @slice-to-timeline="onSliceToTimeline"
+                  @slice-to-samples="onSliceToSamples"
                 />
               </ClipEffectModule>
             </div>
