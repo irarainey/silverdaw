@@ -1459,13 +1459,20 @@ packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer*
 
 The current focus order, ahead of the longer phase list below:
 
-1. **Fast import-to-arrangement (§12.6)** — a core remix accelerator
-   (conform-on-drop, multi-file import to a rough arrangement) that was queued
-   behind stems and is the next major workflow feature.
-2. **MIDI / DJ control (§12.9)** — high-interest; tackled after the above.
+The next major focus is **under review** — the core remix workflow is complete and
+no single feature is committed as "next". Candidates, strongest first:
 
-Recording / live input (§12.8) and the Phase 8 hardening backlog are
-**deprioritised** for now. Final ordering beyond this is still under review.
+1. **Transitions completion (§12.1)** — the crossfade engine ships; the remaining
+   FX-based recipes (Bass swap, Filter fade, Delay out) and "Vocal Focus" ducking
+   need genuinely new per-clip FX automation tied to transition geometry.
+2. **MIDI / DJ control (§12.9)** — high-interest; wanted fairly early.
+
+**Deferred to future enhancements:** Fast import-to-arrangement (§12.6) — its
+useful halves (warp-to-BPM + downbeat anchor on drop) already ship, and the
+remaining auto-pitch-on-drop idea was kicked down the road (a user may want to
+keep a clip's pitch deliberately different; it also needs the §12.4 mode-aware
+key model first). Recording / live input (§12.8) and the Phase 8 hardening backlog
+remain **deprioritised**. Final ordering is still under review.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -2364,26 +2371,27 @@ Implementation increments (foundations first; each keeps build + tests green):
   and right channels: balance and independent channel level (and, later, basic
   mid/side width), so a clip's stereo image can be tweaked in the mixer.
 
-### 12.6 Fast import-to-arrangement — *promoted: after core effects, before stems (see near-term sequence)*
+### 12.6 Fast import-to-arrangement — *largely delivered / deferred to future enhancements*
 
-These scored highest in triage as on-ethos remix accelerators:
+Most of this cluster either already shipped incrementally or has been
+deprioritised. **Conform-on-drop already happens today** — dropping a library
+item auto-warps to project BPM (gated by `matchProjectTempoOnDrop`) and anchors
+the source downbeat to the grid. In-context library audition was dropped (the
+Clip Editor already auditions a clip). What remains is parked for later:
 
-- [ ] **In-context library audition at project BPM/key** — preview a
-  loop/stem warped to the project tempo (and optionally pitched to a compatible
-  key) *before* dragging it in, reusing existing non-destructive warp settings.
-  Currently deferred in Phase 8 — **consider promoting** given remix speed is core.
-- [ ] **Conform on drop** — a single drop optionally auto-warps to
-  project BPM, anchors to the source downbeat, and suggests a key-shift. Bundles
-  existing auto-warp + downbeat anchor + key-match behind one sensible default.
-- [ ] **Multi-file import to rough arrangement** — drag several
-  songs/loops in and auto-place them sequentially with optional default
-  transitions, as a fast starting point.
-- [ ] **Find compatible next clip / library filters** — filter/sort
-  the library by BPM-near-project, compatible key, duration and tags. More
-  on-ethos than generic FX-preset browsing; folds into the Phase 8 library polish.
-- [ ] **Replace source, preserve edits** — swap a clip's underlying
-  loop/sample while keeping timeline position, trim, volume shape, pitch and warp where
-  compatible (extends the existing `CLIP_REBIND`).
+- [ ] **Auto pitch-shift on drop** — *future, low priority.* Extend conform-on-drop
+  to also suggest a key-shift. Deliberately deferred: a user may want to keep a
+  clip's pitch different, and it can only ever transpose (never convert
+  major↔minor), so it needs the §12.4 **mode-aware** Camelot / Open-Key model +
+  Key-match action first, and must stay an overridable suggestion.
+- [ ] **Multi-file import to rough arrangement** — *dropped.* Auto-placing several
+  songs/loops sequentially is not a wanted workflow.
+- [ ] **Find compatible next clip / library filters** — *moved to Phase 8 library
+  polish (§12.4 / library).* Filter/sort the library by BPM-near-project,
+  compatible key, duration and tags.
+- [ ] **Replace source, preserve edits** — *future, low priority.* Swap a clip's
+  underlying loop/sample while keeping timeline position, trim, volume shape,
+  pitch and warp where compatible (extends `CLIP_REBIND`).
 
 ### 12.7 Onboarding & simplicity — *cross-cutting*
 
