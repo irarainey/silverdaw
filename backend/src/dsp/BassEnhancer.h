@@ -56,6 +56,11 @@ struct BassEnhanceOptions
 {
     bool enabled = false;
     BassEnhanceStrength strength = BassEnhanceStrength::Medium;
+    // True when the bass came from the high-SDR RoFormer rhythm pack rather than
+    // the htdemucs backup. The harmonic exciter and cleanup expander are then
+    // scaled back, because the already-clean stem doesn't need the htdemucs-grade
+    // definition boost.
+    bool cleanModel = false;
 };
 
 // Stateless offline bass-stem enhancer. `process` mutates `buffer` in place at

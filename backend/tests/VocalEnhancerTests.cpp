@@ -222,6 +222,52 @@ void testDebleedShortOrSilentIsSafe()
             "non-finite input is rejected as a no-op rather than partially processed");
 }
 
+void testCleanModelExpanderIsGentler()
+{
+    // Same loud→quiet signal as the bleed test. The clean-model (RoFormer) path
+    // must attenuate the quiet inter-phrase tail LESS than the htdemucs-grade
+    // default, since a high-SDR vocal needs far gentler cleanup.
+    const int loud = static_cast<int>(kSr);
+    const int quiet = static_cast<int>(3.0 * kSr);
+    auto make = [&]() {
+        juce::AudioBuffer<float> b(2, loud + quiet);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            float* d = b.getWritePointer(ch);
+            for (int i = 0; i < loud; ++i)
+                d[i] = static_cast<float>(0.7 * std::sin(kTwoPi * 1000.0 * i / kSr));
+            for (int i = 0; i < quiet; ++i)
+                d[loud + i] = static_cast<float>(0.003 * std::sin(kTwoPi * 1000.0 * i / kSr));
+        }
+        return b;
+    };
+    const int win = static_cast<int>(0.5 * kSr);
+    const int quietStart = (loud + quiet) - win;
+
+    auto def = make();
+    VocalEnhancer::process(def, kSr, {true, VocalEnhanceStrength::Medium, /*cleanModel*/ false});
+    const double quietDefault = rms(def, 0, quietStart, win);
+
+    auto clean = make();
+    VocalEnhancer::process(clean, kSr, {true, VocalEnhanceStrength::Medium, /*cleanModel*/ true});
+    const double quietClean = rms(clean, 0, quietStart, win);
+
+    require(allFinite(clean), "clean-model output stays finite");
+    require(dbfs(quietClean) > dbfs(quietDefault) + 1.0,
+            "clean-model expander must attenuate the quiet tail less than the default");
+}
+
+void testCleanModelDenoiseWetIsLower()
+{
+    // The clean-model denoise wet must be strictly lower than the default at every
+    // strength so a high-SDR vocal is barely denoised.
+    for (auto s : {VocalEnhanceStrength::Light, VocalEnhanceStrength::Medium,
+                   VocalEnhanceStrength::Strong})
+        require(vocalDenoiseWetFor(s, /*cleanModel*/ true) <
+                    vocalDenoiseWetFor(s, /*cleanModel*/ false),
+                "clean-model denoise wet must be lower than the default");
+}
+
 } // namespace
 
 void addVocalEnhancerTests(std::vector<TestCase>& tests)
@@ -241,6 +287,10 @@ void addVocalEnhancerTests(std::vector<TestCase>& tests)
                      testDebleedAttenuatesSharedFrequencyBleed});
     tests.push_back({"VocalDebleeder is safe on sub-frame / non-finite input",
                      testDebleedShortOrSilentIsSafe});
+    tests.push_back({"VocalEnhancer clean-model expander is gentler than default",
+                     testCleanModelExpanderIsGentler});
+    tests.push_back({"VocalEnhancer clean-model denoise wet is lower than default",
+                     testCleanModelDenoiseWetIsLower});
 }
 
 } // namespace silverdaw::tests

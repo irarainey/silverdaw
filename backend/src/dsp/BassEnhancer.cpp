@@ -269,7 +269,17 @@ void BassEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
     if (! (sampleRate > 0.0) || ! std::isfinite(sampleRate)) return;
 
     const juce::ScopedNoDenormals noDenormals;
-    const StrengthParams params = paramsFor(options.strength);
+    StrengthParams params = paramsFor(options.strength);
+    double harmonicBlend = harmonicBlendFor(options.strength);
+    // A clean RoFormer bass stem needs little cleanup and less exciter: halve the
+    // expander reach (it mostly self-bypasses on sustained bass anyway) and the
+    // parallel harmonic blend so the low end stays natural.
+    if (options.cleanModel)
+    {
+        params.ratio = 1.0 + (params.ratio - 1.0) * 0.5;
+        params.rangeDb *= 0.5;
+        harmonicBlend *= 0.5;
+    }
 
     sanitiseInPlace(buffer);
     applyHighPass(buffer, sampleRate, params.highPassHz);
@@ -279,7 +289,7 @@ void BassEnhancer::process(juce::AudioBuffer<float>& buffer, double sampleRate,
 
     // ...then always add upper harmonics for definition, with a soft limiter so the
     // added energy can never hard-clip. Both are no-ops on silence.
-    applyHarmonicExciter(buffer, sampleRate, harmonicBlendFor(options.strength));
+    applyHarmonicExciter(buffer, sampleRate, harmonicBlend);
     softLimitInPlace(buffer);
 }
 

@@ -36,12 +36,19 @@ const char* vocalEnhanceStrengthToString(VocalEnhanceStrength strength) noexcept
 // Maps a strength onto the RNNoise denoiser's wet/dry mix (see VocalDenoiser):
 // Light leans on the original signal, Strong is fully denoised. Kept next to the
 // strength enum so the denoise intensity and the expander tuning stay in step.
-float vocalDenoiseWetFor(VocalEnhanceStrength strength) noexcept;
+// `cleanModel` selects a much gentler wet for a high-SDR vocal (the RoFormer
+// pack), whose stem barely needs denoising; the default (htdemucs) is unchanged.
+float vocalDenoiseWetFor(VocalEnhanceStrength strength, bool cleanModel = false) noexcept;
 
 struct VocalEnhanceOptions
 {
     bool enabled = false;
     VocalEnhanceStrength strength = VocalEnhanceStrength::Medium;
+    // True when the vocal came from the high-SDR RoFormer pack rather than the
+    // htdemucs backup. The cleanup then runs a far gentler expander (and the
+    // caller skips the cross-stem de-bleed + softens the denoise), because the
+    // stem is already clean and the htdemucs-grade settings would eat the vocal.
+    bool cleanModel = false;
 };
 
 // Stateless offline vocal-stem enhancer. `process` mutates `buffer` in place at

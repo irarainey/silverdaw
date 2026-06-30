@@ -376,6 +376,30 @@ class OnnxStemSeparator : public StemSeparator
         BsRoformerRhythmStems rhythmStems;
         bool rhythmDone = false;
 
+        // Cascaded separation: when both quality packs are in play, subtract the
+        // dedicated vocal pack's (high-SDR) vocal estimate from the mixture BEFORE
+        // the rhythm pack runs, so residual vocal energy can't bleed into drums /
+        // bass. The vocal is captured (unprocessed, at mixture level) the instant
+        // it is produced for output; if the user did not request vocals we run one
+        // internal vocal pass solely for this cancellation. Only meaningful when
+        // both RoFormer packs are active — the htdemucs backup path is unchanged.
+        const bool removeVocalsBeforeRhythm = haveVocalPack && useRhythmPack;
+        juce::AudioBuffer<float> vocalForRemoval;
+        bool vocalForRemovalReady = false;
+
+        // Build the raw (denormalised) stereo mixture the RoFormer packs consume.
+        const auto buildRawMix = [&]() {
+            juce::AudioBuffer<float> raw(kModelChannels, numSamples);
+            for (int ch = 0; ch < kModelChannels; ++ch)
+            {
+                const float* mix = mixture.getReadPointer(ch);
+                float* d = raw.getWritePointer(ch);
+                for (int i = 0; i < numSamples; ++i)
+                    d[i] = mix[i] * norm.std + norm.mean;
+            }
+            return raw;
+        };
+
         // Whether a given stem has its optional post-separation cleanup enabled.
         const auto cleanupEnabledFor = [&request](const juce::String& st) -> bool
         {
@@ -432,41 +456,76 @@ class OnnxStemSeparator : public StemSeparator
                     // Mel-Band RoFormer vocal pack: separate from the RAW (denormalised)
                     // mixture in its own peak-normalised domain; it returns the vocal at
                     // the mixture's level, so no further denormalisation is needed.
-                    juce::AudioBuffer<float> rawMix(kModelChannels, numSamples);
-                    for (int ch = 0; ch < kModelChannels; ++ch)
-                    {
-                        const float* mix = mixture.getReadPointer(ch);
-                        float* d = rawMix.getWritePointer(ch);
-                        for (int i = 0; i < numSamples; ++i)
-                            d[i] = mix[i] * norm.std + norm.mean;
-                    }
+                    auto rawMix = buildRawMix();
                     silverdaw::log::info("stems", "vocals via Mel-Band RoFormer pack");
                     stemBuffer = roformerVocals.separate(
                         request.roformerModelFile, rawMix, request.useGpu, overlap,
                         [&](double f) { onProgress("separate", stemBase + sepSpan * f, stem); },
                         shouldCancel);
+
+                    // Capture this (unprocessed) vocal so the rhythm pack can be fed
+                    // a vocal-removed mixture — cleanup runs later and must not alter
+                    // the estimate used for cancellation.
+                    if (removeVocalsBeforeRhythm)
+                    {
+                        vocalForRemoval.makeCopyOf(stemBuffer);
+                        vocalForRemovalReady = true;
+                    }
                 }
                 else if (useRhythmPack && (juce::String(stem) == "drums" ||
                                            juce::String(stem) == "bass"))
                 {
-                    // 4-stem BS-RoFormer rhythm pack: separate from the RAW
-                    // (denormalised) mixture; it returns drums + bass at the
-                    // mixture's level (no further denormalisation needed). The
-                    // model runs once and both stems are cached.
+                    // 4-stem BS-RoFormer rhythm pack: one model run yields drums +
+                    // bass at the mixture's level (no further denormalisation needed);
+                    // both stems are cached. When the vocal pack is also active the
+                    // pack is fed `mixture - vocal` so vocal energy can't bleed into
+                    // drums / bass (cascaded separation).
                     if (! rhythmDone)
                     {
-                        juce::AudioBuffer<float> rawMix(kModelChannels, numSamples);
-                        for (int ch = 0; ch < kModelChannels; ++ch)
+                        auto rawMix = buildRawMix();
+                        double rhythmBase = stemBase;
+                        double rhythmSpan = sepSpan;
+                        juce::AudioBuffer<float> rhythmInput;
+
+                        if (removeVocalsBeforeRhythm)
                         {
-                            const float* mix = mixture.getReadPointer(ch);
-                            float* d = rawMix.getWritePointer(ch);
-                            for (int i = 0; i < numSamples; ++i)
-                                d[i] = mix[i] * norm.std + norm.mean;
+                            // Need a vocal estimate to subtract. Normally captured
+                            // from the vocals output above; if vocals wasn't selected,
+                            // run one internal vocal pass (front 40% of the band).
+                            if (! vocalForRemovalReady)
+                            {
+                                const double vocalSpan = sepSpan * 0.4;
+                                silverdaw::log::info("stems",
+                                    "pre-removing vocals for rhythm (internal vocal pass)");
+                                vocalForRemoval = roformerVocals.separate(
+                                    request.roformerModelFile, rawMix, request.useGpu, overlap,
+                                    [&](double f) { onProgress("separate", stemBase + vocalSpan * f, stem); },
+                                    shouldCancel);
+                                vocalForRemovalReady = true;
+                                rhythmBase = stemBase + vocalSpan;
+                                rhythmSpan = sepSpan - vocalSpan;
+                            }
+                            rhythmInput.setSize(kModelChannels, numSamples);
+                            for (int ch = 0; ch < kModelChannels; ++ch)
+                            {
+                                const float* raw = rawMix.getReadPointer(ch);
+                                const float* voc = vocalForRemoval.getReadPointer(ch);
+                                float* d = rhythmInput.getWritePointer(ch);
+                                for (int i = 0; i < numSamples; ++i)
+                                    d[i] = raw[i] - voc[i];
+                            }
+                            silverdaw::log::info("stems",
+                                "drums/bass via BS-RoFormer rhythm pack (vocal-removed input)");
                         }
-                        silverdaw::log::info("stems", "drums/bass via BS-RoFormer rhythm pack");
+                        else
+                        {
+                            rhythmInput = std::move(rawMix);
+                            silverdaw::log::info("stems", "drums/bass via BS-RoFormer rhythm pack");
+                        }
+
                         rhythmStems = roformerRhythm.separate(
-                            request.rhythmModelFile, rawMix, request.useGpu, overlap,
-                            [&](double f) { onProgress("separate", stemBase + sepSpan * f, stem); },
+                            request.rhythmModelFile, rhythmInput, request.useGpu, overlap,
+                            [&](double f) { onProgress("separate", rhythmBase + rhythmSpan * f, stem); },
                             shouldCancel);
                         rhythmDone = true;
                     }
@@ -517,17 +576,27 @@ class OnnxStemSeparator : public StemSeparator
             // stage then pushes down residual sub-bass and inter-phrase bleed.
             if (request.vocalEnhance.enabled && juce::String(stem) == "vocals")
             {
-                const float wet = vocalDenoiseWetFor(request.vocalEnhance.strength);
+                // The RoFormer vocal pack produces a high-SDR stem; the cleanup
+                // (tuned for the dirtier htdemucs vocal) is gentled for it — the
+                // cross-stem de-bleed is skipped entirely (it would gut a clean
+                // vocal on dense mixes) and the denoise / expander run softened.
+                const bool vocalFromRoformer = haveVocalPack;
+                auto vocalOpts = request.vocalEnhance;
+                vocalOpts.cleanModel = vocalFromRoformer;
+                const float wet = vocalDenoiseWetFor(request.vocalEnhance.strength, vocalFromRoformer);
                 silverdaw::log::info("stems",
                                      juce::String("applied vocal cleanup strength=")
                                          + vocalEnhanceStrengthToString(request.vocalEnhance.strength)
+                                         + (vocalFromRoformer ? " (clean-model: de-bleed skipped)" : "")
                                          + " denoiseWet=" + juce::String(wet, 2));
                 onProgress("cleanup", cleanupBase, stem);
-                // Cross-stem de-bleed first: build the interferer estimate
-                // (instrumental = mixture - vocal, in the denormalised domain) and
-                // push down pitched instrument bleed the broadband denoiser cannot
-                // touch. The `other` residual was already accumulated from the
-                // UNPROCESSED vocal above, so cleaning here keeps it consistent.
+                // Cross-stem de-bleed (htdemucs path only): build the interferer
+                // estimate (instrumental = mixture - vocal, in the denormalised
+                // domain) and push down pitched instrument bleed the broadband
+                // denoiser cannot touch. The `other` residual was already
+                // accumulated from the UNPROCESSED vocal above, so this stays
+                // consistent. Skipped for the clean RoFormer vocal.
+                if (! vocalFromRoformer)
                 {
                     juce::AudioBuffer<float> instrumental(kModelChannels, numSamples);
                     for (int ch = 0; ch < kModelChannels; ++ch)
@@ -549,40 +618,53 @@ class OnnxStemSeparator : public StemSeparator
                     [&](double f) {
                         onProgress("cleanup", cleanupBase + cleanupSpan * 0.90 * f, stem);
                     });
-                VocalEnhancer::process(stemBuffer, kModelSampleRate, request.vocalEnhance);
+                VocalEnhancer::process(stemBuffer, kModelSampleRate, vocalOpts);
                 onProgress("cleanup", stemBase + stemSpan, stem);
             }
             // Optional drum cleanup. Same contract: drums only, applied after the
             // raw drum buffer has been folded into the residual sum.
             if (request.drumEnhance.enabled && juce::String(stem) == "drums")
             {
+                // Gentled when the drums came from the RoFormer rhythm pack.
+                auto drumOpts = request.drumEnhance;
+                drumOpts.cleanModel = useRhythmPack;
                 silverdaw::log::info("stems",
                                      juce::String("applied drum cleanup strength=")
-                                         + drumEnhanceStrengthToString(request.drumEnhance.strength));
+                                         + drumEnhanceStrengthToString(request.drumEnhance.strength)
+                                         + (drumOpts.cleanModel ? " (clean-model)" : ""));
                 onProgress("cleanup", cleanupBase, stem);
-                DrumEnhancer::process(stemBuffer, kModelSampleRate, request.drumEnhance);
+                DrumEnhancer::process(stemBuffer, kModelSampleRate, drumOpts);
                 onProgress("cleanup", stemBase + stemSpan, stem);
             }
             // Optional bass cleanup. Same contract: bass only, applied after the
             // raw bass buffer has been folded into the residual sum.
             if (request.bassEnhance.enabled && juce::String(stem) == "bass")
             {
+                // Gentled when the bass came from the RoFormer rhythm pack.
+                auto bassOpts = request.bassEnhance;
+                bassOpts.cleanModel = useRhythmPack;
                 silverdaw::log::info("stems",
                                      juce::String("applied bass cleanup strength=")
-                                         + bassEnhanceStrengthToString(request.bassEnhance.strength));
+                                         + bassEnhanceStrengthToString(request.bassEnhance.strength)
+                                         + (bassOpts.cleanModel ? " (clean-model)" : ""));
                 onProgress("cleanup", cleanupBase, stem);
-                BassEnhancer::process(stemBuffer, kModelSampleRate, request.bassEnhance);
+                BassEnhancer::process(stemBuffer, kModelSampleRate, bassOpts);
                 onProgress("cleanup", stemBase + stemSpan, stem);
             }
             // Optional residual cleanup. Applied to the synthesised `other` stem
             // only, just before it is written (nothing downstream depends on it).
             if (request.otherEnhance.enabled && juce::String(stem) == "other")
             {
+                // The residual is clean when built from a full RoFormer hybrid
+                // (clean vocals + rhythm), so gentle the widener / spectral pass.
+                auto otherOpts = request.otherEnhance;
+                otherOpts.cleanModel = mixtureConsistency && haveVocalPack && haveRhythmPack;
                 silverdaw::log::info("stems",
                                      juce::String("applied other cleanup strength=")
-                                         + otherEnhanceStrengthToString(request.otherEnhance.strength));
+                                         + otherEnhanceStrengthToString(request.otherEnhance.strength)
+                                         + (otherOpts.cleanModel ? " (clean-model)" : ""));
                 onProgress("cleanup", cleanupBase, stem);
-                OtherEnhancer::process(stemBuffer, kModelSampleRate, request.otherEnhance);
+                OtherEnhancer::process(stemBuffer, kModelSampleRate, otherOpts);
                 onProgress("cleanup", stemBase + stemSpan, stem);
             }
             writeStemWav(outFile, stemBuffer);
