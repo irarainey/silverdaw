@@ -232,7 +232,7 @@ bool isGpuDeviceLost(const Ort::Exception& e)
 class OnnxStemSeparator : public StemSeparator
 {
   public:
-    OnnxStemSeparator() : env(ORT_LOGGING_LEVEL_WARNING, "silverdaw-stems")
+    OnnxStemSeparator() : env(ORT_LOGGING_LEVEL_ERROR, "silverdaw-stems")
     {
         applyExecutionProvider(false);
     }

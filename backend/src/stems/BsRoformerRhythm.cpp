@@ -29,7 +29,7 @@ constexpr int kBassIndex = 1;
 
 struct BsRoformerRhythm::Impl
 {
-    Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "silverdaw-bsroformer"};
+    Ort::Env env{ORT_LOGGING_LEVEL_ERROR, "silverdaw-bsroformer"};
     Ort::SessionOptions sessionOptions;
     std::unique_ptr<Ort::Session> session;
     juce::String sessionPath;

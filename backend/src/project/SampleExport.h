@@ -15,6 +15,9 @@ class PeaksCache;
 void handleClipSaveAsSample(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                             BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
                             const juce::String& projectPath);
+void handleClipSliceToSamples(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
+                              BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
+                              const juce::String& projectPath);
 void handleLibraryItemSaveAsSample(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                                    BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
                                    const juce::String& projectPath);

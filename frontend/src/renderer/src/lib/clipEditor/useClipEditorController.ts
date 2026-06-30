@@ -11,6 +11,7 @@ import { useClipEditorViewport } from '@/lib/clipEditor/useClipEditorViewport'
 import { useClipEditorWarpDraft } from '@/lib/clipEditor/useClipEditorWarpDraft'
 import { useClipEditorDirtyState } from '@/lib/clipEditor/useClipEditorDirtyState'
 import { useClipEditorVolumeShapeDraft } from '@/lib/clipEditor/useClipEditorVolumeShapeDraft'
+import { useClipEditorSliceDraft } from '@/lib/clipEditor/useClipEditorSliceDraft'
 import { useClipEditorReverseDraft } from '@/lib/clipEditor/useClipEditorReverseDraft'
 import { useClipEditorWaveform } from '@/lib/clipEditor/useClipEditorWaveform'
 import { useClipEditorPreview } from '@/lib/clipEditor/useClipEditorPreview'
@@ -180,6 +181,58 @@ export function useClipEditorController(
     selectionEndMs: () => selectionEndMs.value
   })
 
+  // Loop-slice draft (markers in source-absolute ms). Slice and Volume are
+  // mutually exclusive canvas modes; slicing acts on a placed timeline clip's
+  // source window in the cropped Clip view.
+  const sliceDraft = useClipEditorSliceDraft()
+  const sliceEditMode = ref(false)
+  const sliceAvailable = computed(() => editsTimelineClip.value)
+  const sliceEditActive = computed(
+    () => sliceEditMode.value && sliceAvailable.value && !viewExpanded.value
+  )
+  const sliceCount = computed(() => sliceDraft.markers.value.length)
+
+  function reseedSliceWindow(): void {
+    const clip = timelineClip.value
+    if (clip) sliceDraft.initialise(clip.inMs, clip.durationMs)
+    else sliceDraft.initialise(0, 0)
+  }
+
+  function onGenerateSliceGrid(): void {
+    reseedSliceWindow()
+    const src = sourceItem.value
+    sliceDraft.generateToGrid(src?.bpm, src?.beatAnchorSec ?? src?.beats?.[0])
+    if (sliceDraft.markers.value.length === 0) {
+      notifications.pushInfo('No beat grid available to slice on — drag markers by hand.')
+    }
+  }
+
+  function onSliceToTimeline(): void {
+    const clip = timelineClip.value
+    if (!clip) return
+    const markers = sliceDraft.committedMarkers()
+    if (markers.length === 0) {
+      notifications.pushError('Add slice markers first — drag on the waveform or generate a grid.')
+      return
+    }
+    const made = project.sliceClipToTimeline(clip.id, markers)
+    if (made > 0) {
+      notifications.pushInfo(`Sliced into ${made + 1} clips.`)
+      emit('close')
+    }
+  }
+
+  function onSliceToSamples(): void {
+    const clip = timelineClip.value
+    if (!clip) return
+    const markers = sliceDraft.committedMarkers()
+    if (markers.length === 0) {
+      notifications.pushError('Add slice markers first — drag on the waveform or generate a grid.')
+      return
+    }
+    const n = project.sliceClipToSamples(clip.id, markers)
+    if (n > 0) notifications.pushInfo(`Saving ${n} samples…`)
+  }
 
   // Dirty-state + save/crop affordances live in `useClipEditorDirtyState`.
   const {
@@ -265,6 +318,8 @@ export function useClipEditorController(
         initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
         initialiseReverseDraft(timelineClip.value)
         volumeEditMode.value = false
+        sliceEditMode.value = false
+        reseedSliceWindow()
         loopEnabled.value = false
         resetHiResRequestKey()
         resetCropHistory()
@@ -299,6 +354,8 @@ export function useClipEditorController(
       if (!props.open) return
       viewExpanded.value = false
       volumeEditMode.value = false
+      sliceEditMode.value = false
+      reseedSliceWindow()
       resetZoom()
       resetPreviewLoadKey()
       initSelectionForItem()
@@ -332,6 +389,23 @@ export function useClipEditorController(
   watch(volumeEditActive, () => {
     drawWaveform()
   })
+
+  // Slice mode and Volume mode are mutually exclusive; turning one on clears the
+  // other. Reseed the slice window when entering, and clear stale markers on exit.
+  watch(volumeEditMode, (on) => {
+    if (on) sliceEditMode.value = false
+  })
+  watch(sliceEditMode, (on) => {
+    if (on) {
+      volumeEditMode.value = false
+      reseedSliceWindow()
+    } else {
+      sliceDraft.clear()
+    }
+    drawWaveform()
+  })
+  // Marker ref is reassigned per edit, so a shallow watch is enough.
+  watch(() => sliceDraft.markers.value, () => drawWaveform())
 
   // Sliding the beat grid (or applying a manual BPM) mutates the source item's
   // anchor/tempo locally; redraw so the grid markers track the pointer live
@@ -367,8 +441,9 @@ export function useClipEditorController(
   // Switching Source/Clip view resets bounds, zoom, preview, and keeps selection visible.
   watch(viewExpanded, async (expanded) => {
     if (expanded) {
-      // Source view has no envelope-edit overlay.
+      // Source view has no envelope-edit or slice overlay.
       volumeEditMode.value = false
+      sliceEditMode.value = false
     }
     if (!expanded) {
       // Snap cropped view to selection when one exists.
@@ -524,6 +599,8 @@ export function useClipEditorController(
     draftPoints: () => volumeShapeDraft.draftPoints.value,
     draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
     draftReversed: () => reverseDraft.reversed.value,
+    sliceEditActive: () => sliceEditActive.value,
+    sliceMarkers: () => sliceDraft.markers.value,
     editorHiResPeaks: () => library.editorHiResPeaks,
     channelPeaksByItemId: () => library.channelPeaksByItemId,
     waveformDisplayMode: () => ui.waveformDisplayMode,
@@ -545,6 +622,7 @@ export function useClipEditorController(
     getCanvas: () => getCanvas(),
     preview,
     volumeShapeDraft,
+    sliceDraft,
     selectionInMs,
     selectionDurationMs,
     scrollMs,
@@ -559,6 +637,7 @@ export function useClipEditorController(
     playheadAbsMs: () => playheadAbsMs.value,
     hasPlaybackSelection: () => hasPlaybackSelection.value,
     volumeEditActive: () => volumeEditActive.value,
+    sliceEditActive: () => sliceEditActive.value,
     volumeShapeDurationMs: () => volumeShapeDurationMs.value,
     draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
     sourceItem: () => sourceItem.value,
@@ -684,6 +763,14 @@ export function useClipEditorController(
     playheadAbsMs,
     viewInMs,
     volumeEditMode,
+    sliceEditMode,
+    sliceEditActive,
+    sliceAvailable,
+    sliceSubdivision: sliceDraft.subdivision,
+    sliceCount,
+    onGenerateSliceGrid,
+    onSliceToTimeline,
+    onSliceToSamples,
     viewExpanded,
     editsTimelineClip,
     editsExistingClip,

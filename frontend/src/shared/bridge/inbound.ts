@@ -470,6 +470,9 @@ const SampleSavedSuccessSchema = z.object({
   sourceItemId: z.string().optional(),
   /** Source window start in ms; shifts the inherited beat grid for a music sample. */
   sourceInMs: z.number().optional(),
+  /** Batch slice-to-samples progress, so the renderer shows one summary toast. */
+  batchIndex: z.number().int().optional(),
+  batchTotal: z.number().int().optional(),
   error: z.string().optional()
 })
 export const SampleSavedPayloadSchema = z.discriminatedUnion('ok', [

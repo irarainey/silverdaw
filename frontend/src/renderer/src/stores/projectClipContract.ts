@@ -82,5 +82,7 @@ export type ProjectClipThis = ProjectState & {
 
   trimClip(clipId: string, startMs: number, inMs: number, durationMs: number): void
 
+  splitClipAt(clipId: string, atMs: number): string | null
+
   wouldClipOverlap(trackId: string, startMs: number, durationMs: number): boolean
 }

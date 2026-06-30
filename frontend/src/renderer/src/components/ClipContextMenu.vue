@@ -29,6 +29,10 @@ const menuEl = ref<HTMLDivElement | null>(null)
 // the viewport. Updated on open + on resize.
 const displayX = ref(0)
 const displayY = ref(0)
+// Which row's submenu flyout is open, and which side it opens on (flip near the
+// right edge so it stays on-screen).
+const openSubmenuIndex = ref<number | null>(null)
+const submenuToLeft = ref(false)
 
 function computePosition(): void {
   const el = menuEl.value
@@ -43,12 +47,14 @@ function computePosition(): void {
   const maxY = window.innerHeight - rect.height - margin
   displayX.value = Math.max(margin, Math.min(maxX, props.x))
   displayY.value = Math.max(margin, Math.min(maxY, props.y))
+  submenuToLeft.value = displayX.value + rect.width + 180 > window.innerWidth
 }
 
 watch(
   () => [props.open, props.x, props.y] as const,
   ([open]) => {
     if (!open) return
+    openSubmenuIndex.value = null
     // The element may not exist yet on the first open; defer one tick
     // so `menuEl` is mounted and we can measure its width/height.
     requestAnimationFrame(computePosition)
@@ -149,7 +155,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <button
-            v-else
+            v-else-if="!item.submenu"
             type="button"
             role="menuitem"
             data-borderless-button="true"
@@ -165,6 +171,54 @@ onBeforeUnmount(() => {
           >
             {{ item.label }}
           </button>
+          <div
+            v-else
+            class="relative"
+            @mouseenter="openSubmenuIndex = i"
+            @mouseleave="openSubmenuIndex = null"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              data-borderless-button="true"
+              class="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors"
+              :class="
+                item.disabled
+                  ? 'cursor-not-allowed text-zinc-600'
+                  : 'cursor-pointer text-zinc-200 hover:bg-zinc-800 hover:text-zinc-50'
+              "
+              :disabled="item.disabled"
+              :title="item.title"
+            >
+              <span>{{ item.label }}</span>
+              <span class="text-zinc-500">›</span>
+            </button>
+            <div
+              v-if="openSubmenuIndex === i && !item.disabled"
+              class="absolute top-0 min-w-[150px] rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-xl"
+              :class="submenuToLeft ? 'right-full mr-0.5' : 'left-full ml-0.5'"
+              role="menu"
+            >
+              <button
+                v-for="(sub, si) in item.submenu"
+                :key="sub.command + si"
+                type="button"
+                role="menuitem"
+                data-borderless-button="true"
+                class="flex w-full items-center px-3 py-1.5 text-left transition-colors"
+                :class="
+                  sub.disabled
+                    ? 'cursor-not-allowed text-zinc-600'
+                    : 'cursor-pointer text-zinc-200 hover:bg-zinc-800 hover:text-zinc-50'
+                "
+                :disabled="sub.disabled"
+                :title="sub.title"
+                @click="onItemClick(sub)"
+              >
+                {{ sub.label }}
+              </button>
+            </div>
+          </div>
         </template>
       </div>
     </div>

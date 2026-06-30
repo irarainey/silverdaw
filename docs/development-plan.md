@@ -538,9 +538,51 @@ Non-destructive clip operations on the timeline. Each operation mutates the `Val
 - **Reverse** — right-click ▸ Reverse (a checkmarked toggle) or the **Reverse** toggle in the Clip Editor toolbar plays the clip's source window back-to-front. It is non-destructive: the source file is never rewritten — the audio engine reads the clip window in reverse. From the context menu the toggle propagates to every linked saved clip sibling; in the Clip Editor it is part of the transactional draft, previewed live, and committed on **Save** following the same scope as the other draft edits. Persisted on the clip's `reversed` ValueTree property (absent == forward) via `CLIP_SET_REVERSED` / `PREVIEW_SET_REVERSED`.
 
 ### 7.6 Loop Slicing
-- Slice on BTrack transient positions, beat grid divisions, or manual markers
-- Slices are sub-regions of the parent clip — no audio copying
-- Slices can be laid back on the timeline as individual clips or saved as samples
+
+Chop a clip into evenly-gridded or hand-placed slices and either lay them back on
+the timeline as adjacent clips or harvest them as individual library samples.
+Non-destructive throughout — the source file is never modified: timeline slices
+are sub-windows of the parent clip, while slice-to-samples exports derived WAVs.
+Design converged via rubber-duck across Gemini 3.1 Pro, MAI-Code, and GPT-5.5.
+
+- **Surface.** The primary home is the **Clip Editor** as a **Slice** mode toggle
+  (mirroring the Volume Shape overlay): full-source waveform, zoom, and looped
+  audition. A thin timeline context-menu **Chop to Grid** submenu (1 bar · 1/2 bar
+  · 1/4 · 1/8 · 1/16) is a cheap wrapper over the same commit path for the common
+  "chop a loop" case.
+- **Slice points (source-absolute draft).** Markers are held in **source-time ms**
+  — the Clip Editor's native coordinate space — and only converted to timeline
+  positions at commit (`timelineAt = clip.startMs + (markerSourceMs − clip.inMs) /
+  effectiveTempoRatio`). Two v1 sources, both freely editable after generation:
+  - **Grid** — derived client-side from the library item's `bpm` + `beatAnchorSec`
+    and a subdivision (1 bar / 1/2 bar / 1/4 / 1/8 / 1/16 / 1/32), reusing the
+    existing beat-grid math (`envelopeBeatSnap.ts`). No backend call.
+  - **Manual** — click the waveform to add, drag to move, Alt/right-click to
+    remove (reuse the `volumeOverlay.ts` interaction pattern).
+  - *Transient detection is deferred to v2* — the BpmDetector ODF is beat-phase
+    tuned (~5.8 ms hop), unfit for crisp slice points; a sample-accurate onset
+    pass is a later job.
+- **Slice to timeline.** Client-side reuse of the proven `splitClipAt` path:
+  convert all markers up front, then split the original clip **right→left**
+  (descending) so each peel leaves the remaining left coordinates valid — O(N),
+  not the O(N²) / N-file-open storm a left→right roll would cause. One
+  `runInUndoGroup('Slice clip')`. Reuses `splitClipAt`, which rejects **locked**
+  and **linked** clips with a toast (no auto-unlink in v1); Slice mode is only
+  offered for a placed timeline clip. Warp-aware via the clip's effective tempo
+  ratio.
+- **Slice to samples.** A new
+  `CLIP_SLICE_TO_SAMPLES { clipId, audioType?, slices: [{ itemId, inMs, durationMs }] }`
+  whose backend handler writes one WAV per slice through the existing sample
+  writer (`saveWindowAsSampleAsync`, default `simple` one-shots), reusing the §7.2
+  naming/folder convention. Each slice emits a `SAMPLE_SAVED` carrying optional
+  `batchIndex` / `batchTotal` so the renderer shows a single summary toast instead
+  of N. Undo is per-sample (one transaction each); a single grouped transaction is
+  a follow-up. No throwaway timeline clips.
+- **Guards.** Hard cap (≤128 slices), minimum slice length (~20 ms), head/tail are
+  implicit boundaries (never zero-length siblings). Boundary declick (a short
+  auto edge-fade reusing the transitions `EdgeFadeSnapshot`) is a v1.1 polish —
+  zero-crossing snap is intentionally **not** forced, as it would push cuts off
+  the musical grid; butted slices are sample-continuous until rearranged.
 
 ### 7.7 Stem Separation
 - Triggered from the clip context menu (**Separate Stems**) or from a source or
@@ -1398,20 +1440,16 @@ project transport.
 Phases 1–7 are essentially complete: the Phase 5 mixing/effects/automation work
 (engine refactor, Volume Shape, Tone + Filter, shared Reverb + Delay, Leveler,
 pan, master metering, mixdown), the Phase 6 stem engine (RoFormer-first quality
-packs with the htdemucs backup, DirectML, vocal cleanup), the Phase 7 polish /
-performance / packaging pass, and Track FX automation (§7.11.1) have all shipped.
+packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer**
+(§7.6), the Phase 7 polish / performance / packaging pass, and Track FX automation
+(§7.11.1) have all shipped — closing out the core phases.
 
 The current focus order, ahead of the longer phase list below:
 
-1. **Loop slicer (finish Phase 6)** — the one outstanding item inside the
-   otherwise-complete core phases: transient / grid / manual slice markers in
-   PixiJS plus the slice-to-timeline and slice-to-sample flows (§7.6). It
-   composes existing primitives (Split, Save-as-Sample, beat-grid markers) so it
-   is the smallest, most self-contained next step.
-2. **Fast import-to-arrangement (§12.6)** — a core remix accelerator
+1. **Fast import-to-arrangement (§12.6)** — a core remix accelerator
    (conform-on-drop, multi-file import to a rough arrangement) that was queued
    behind stems and is the next major workflow feature.
-3. **MIDI / DJ control (§12.9)** — high-interest; tackled after the above.
+2. **MIDI / DJ control (§12.9)** — high-interest; tackled after the above.
 
 Recording / live input (§12.8) and the Phase 8 hardening backlog are
 **deprioritised** for now. Final ordering beyond this is still under review.
@@ -1857,8 +1895,30 @@ playable at every point — no broken-build day):
 - [x] **RoFormer-first engine pivot** — the two quality packs are the **primary** engine, used automatically once installed; htdemucs is the **backup** (per-stem fallback when a pack is absent, plus a single **Always use the backup model** override `stems.useBackupModel`). Backend validates only the htdemucs weights a run actually needs (a fully pack-covered run needs none); the Fast/Balanced/Best preset overlap now drives the RoFormer chunk stride too. Preferences ▸ Stems combines both packs into one **Download quality models (~1 GB)** action with combined progress; htdemucs is presented as the secondary "Backup model". `htdemucsRequired` decision logic unit-tested
 - [x] DirectML GPU acceleration (issue tracked) — DirectML-build ONNX Runtime bundled (`onnxruntime.dll` + `DirectML.dll`); `useGpu` threaded to session options, opt-in and adapter-gated (Preferences ▸ Stems), TDR/timeout-recovery hardened
 - [x] Per-separation stem folder `stems\<sourceName>-stems` (disambiguated) beside the saved project file — written to a temporary workspace (`<temp>/Silverdaw/stems`) for unsaved projects and migrated into the project folder on first save — with stems inheriting the source's media GUID so they resolve tags/artwork from the project's central `metadata/` + `covers/` store, so stems travel with the portable project folder and keep the source's tags/artwork after the source is removed
-- [ ] Loop slicer: transient and grid markers in PixiJS
-- [ ] Slice-to-timeline and slice-to-sample flows
+- [x] **Loop slicer (§7.6)** — converged design (Gemini 3.1 Pro + MAI-Code +
+  GPT-5.5); incremental, build + tests green at each step:
+  - [x] **L1 — Source-time slice model + grid generation.** A Clip Editor draft
+    array of slice markers in source-absolute ms; `generateGridSlices(bpm,
+    beatAnchorSec, subdivision, window)` reusing `envelopeBeatSnap.ts`. Pure
+    unit-tested helper, no UI yet.
+  - [x] **L2 — Slice overlay + mode toggle.** A **Slice** toggle in the Clip
+    Editor toolbar and an on-waveform marker overlay (mirroring `volumeOverlay.ts`
+    /`useClipEditorCanvasInteraction.ts`): manual add / drag / Alt-remove, grid
+    subdivision picker, min-length + ≤128 guards, head/tail implicit.
+  - [x] **L3 — Slice to timeline.** Convert markers up front via the original
+    clip's fixed `inMs`/`startMs`/ratio, split **right→left** through `splitClipAt`
+    in one `runInUndoGroup('Slice clip')`. Reuses split's locked/linked guards
+    (rejected with a toast, no auto-unlink in v1); warp-aware via the effective
+    tempo ratio. Vitest for ordering + coordinate mapping.
+  - [x] **L4 — Slice to samples (backend batch).**
+    `CLIP_SLICE_TO_SAMPLES { clipId, audioType?, slices: [{ itemId, inMs, durationMs }] }`;
+    backend `handleClipSliceToSamples` writes one WAV per slice via the existing
+    `saveWindowAsSampleAsync`; `SAMPLE_SAVED` carries optional `batchIndex` /
+    `batchTotal` so the renderer shows one summary toast. Vitest coverage of the
+    envelope construction.
+  - [x] **L5 — Timeline "Chop to Grid" context submenu.** Thin wrapper over the L3
+    commit (1 bar · 1/2 bar · 1/4 · 1/8 · 1/16) for the common case, no editor
+    round-trip. Added hover-flyout submenu support to the clip context menu.
 - [x] Fine-clip editor — shipped as the in-app **Clip Editor** dialog (§7.14): full-source waveform, sample-accurate selection, looped audition through a backend preview voice, Save-as-new-clip and Apply-trim with linked-clip propagation, hi-res peaks on demand. A dedicated BrowserWindow surface remains a future option.
 
 ### Phase 7 — Polish, Performance & Packaging

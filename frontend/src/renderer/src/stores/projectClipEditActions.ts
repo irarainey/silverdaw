@@ -11,6 +11,7 @@ import {
   isClipTempoWarpActive,
   CLIP_FIT_EPSILON_MS
 } from '@/lib/clip/clipTiming'
+import { MAX_SLICES } from '@/lib/clipEditor/loopSlice'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import type { Clip } from './projectTypes'
@@ -130,6 +131,34 @@ export const clipEditActions = {
         )
         return newId
       })
+    },
+
+    /** Slice a clip into adjacent timeline clips at the given source-ms markers. */
+    sliceClipToTimeline(clipId: string, markersSourceMs: readonly number[]): number {
+      const clip = this.clips[clipId]
+      if (!clip) return 0
+      const ratio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
+      const clipEnd = clip.startMs + clip.durationMs / ratio
+      // Convert source-ms markers to timeline positions using the ORIGINAL clip's
+      // fixed origin, keep strict-interior cuts, and split right→left so each peel
+      // leaves the remaining left coordinates valid (O(N), not the O(N²) / N file
+      // open storm a left→right roll would cause). One undo step for the whole chop.
+      const positions = markersSourceMs
+        .map((m) => clip.startMs + (m - clip.inMs) / ratio)
+        .filter((t) => t > clip.startMs + 1 && t < clipEnd - 1)
+        .sort((a, b) => b - a)
+        .slice(0, MAX_SLICES)
+      if (positions.length === 0) return 0
+      let made = 0
+      runInUndoGroup('Slice clip', () => {
+        for (const atMs of positions) {
+          // splitClipAt already rejects locked/linked clips with a toast; stop on
+          // the first refusal so we never leave a half-sliced clip behind.
+          if (this.splitClipAt(clipId, atMs) === null) return
+          made++
+        }
+      })
+      return made
     },
 
     /** Duplicate appends after the last copy while leaving the source selected. */

@@ -217,11 +217,12 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                              silverdaw::ProjectState& projectState, juce::ThreadPool& peakPool,
                              const silverdaw::PeaksCache& cache, silverdaw::BridgeServer& bridge,
                              std::optional<SampleWarpOptions> warpOptions = std::nullopt,
-                             juce::String audioType = {}, juce::String sourceItemId = {})
+                             juce::String audioType = {}, juce::String sourceItemId = {},
+                             int batchIndex = -1, int batchTotal = -1)
 {
     peakPool.addJob(
         [clipId, libraryItemId, newItemId, sampleName, outputDir, sourceFile, inMs, durationMs,
-         warpOptions, audioType, sourceItemId, &engine, &projectState, &cache, &bridge]
+         warpOptions, audioType, sourceItemId, batchIndex, batchTotal, &engine, &projectState, &cache, &bridge]
         {
             const auto safeName = sanitiseSampleFileName(sampleName);
             const auto outDir = juce::File(outputDir);
@@ -247,9 +248,14 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
 
             juce::MessageManager::callAsync(
                 [clipId, libraryItemId, newItemId, safeName, outFile, actualDurationMs, sampleRate, channels,
-                 ok, error, peaks, peaksFile, inMs, audioType, sourceItemId, &engine, &projectState, &bridge]
+                 ok, error, peaks, peaksFile, inMs, audioType, sourceItemId, batchIndex, batchTotal, &engine, &projectState, &bridge]
                 {
                     auto* obj = new juce::DynamicObject();
+                    if (batchTotal > 0)
+                    {
+                        obj->setProperty("batchIndex", batchIndex);
+                        obj->setProperty("batchTotal", batchTotal);
+                    }
                     if (clipId.isNotEmpty()) obj->setProperty("clipId", clipId);
                     if (libraryItemId.isNotEmpty()) obj->setProperty("libraryItemId", libraryItemId);
                     obj->setProperty("itemId", newItemId);
@@ -367,6 +373,45 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
     saveWindowAsSampleAsync(clipId, {}, itemId, sampleName, outputDir, juce::File(sourcePath),
                             projectState.getClipInMs(clipId), projectState.getClipDurationMs(clipId),
                             engine, projectState, peakPool, cache, bridge, sampleWarp, audioType, libraryItemId);
+}
+
+void handleClipSliceToSamples(const juce::var& payload, silverdaw::AudioEngine& engine,
+                              silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                              juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                              const juce::String& projectPath)
+{
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    if (clipId.isEmpty()) return;
+    const juce::String audioType = tryGetString(payload, "audioType").value_or(juce::String{});
+
+    const juce::var slicesVar = payload.getProperty("slices", juce::var());
+    if (!slicesVar.isArray()) return;
+    const auto& slices = *slicesVar.getArray();
+    if (slices.isEmpty()) return;
+
+    // Same source/output resolution as a single Save-as-Sample; slices are bare
+    // source windows (no warp baking) written into the per-source samples folder.
+    const juce::String libraryItemId = projectState.getClipLibraryItemId(clipId);
+    auto sourcePath = projectState.getLibraryItemPlaybackPath(libraryItemId);
+    if (sourcePath.isEmpty()) sourcePath = projectState.getClipFilePath(clipId);
+    juce::String namePath = projectState.getLibraryItemFilePath(libraryItemId);
+    if (namePath.isEmpty()) namePath = sourcePath;
+    const juce::String outputDir = sampleOutputDir(projectPath, namePath);
+    const juce::String baseName = juce::File(namePath).getFileNameWithoutExtension();
+
+    const int total = slices.size();
+    for (int i = 0; i < total; ++i)
+    {
+        const juce::var& s = slices.getReference(i);
+        const juce::String itemId = tryGetString(s, "itemId").value_or(juce::String{});
+        const double inMs = static_cast<double>(s.getProperty("inMs", juce::var(0.0)));
+        const double durationMs = static_cast<double>(s.getProperty("durationMs", juce::var(0.0)));
+        if (itemId.isEmpty() || durationMs <= 0.0) continue;
+        const juce::String sampleName = baseName + " " + juce::String(i + 1);
+        saveWindowAsSampleAsync(clipId, {}, itemId, sampleName, outputDir, juce::File(sourcePath),
+                                inMs, durationMs, engine, projectState, peakPool, cache, bridge,
+                                std::nullopt, audioType, libraryItemId, i, total);
+    }
 }
 
 void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& engine,

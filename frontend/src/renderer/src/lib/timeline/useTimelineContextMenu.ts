@@ -25,6 +25,7 @@ import { trackIndexAtWorldY } from '@/lib/timeline/trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
+import { generateGridSlices, type SliceSubdivision } from '@/lib/clipEditor/loopSlice'
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
 import { TRANSITION_RECIPES } from '@/lib/transitions/transitionRecipes'
 import { requestStemSeparationForClip } from '@/lib/stems/stemSeparationFlow'
@@ -167,6 +168,29 @@ export function useTimelineContextMenu(
       label: clip?.locked ? 'Split at Playhead (clip is locked)' : 'Split at Playhead',
       disabled: isLinkedClip || !playheadOverClip
     })
+    // Quick chop: slice the whole clip onto the beat grid without opening the
+    // editor. Only offered for an unlocked, unlinked clip with a known tempo
+    // (the editor's Slice mode adds manual markers and 1/32).
+    const chopSrc = clip ? library.byId[clip.libraryItemId] : undefined
+    if (clip && !clip.locked && !isLinkedClip && chopSrc?.bpm && chopSrc.bpm > 0) {
+      const SUBS: { sub: SliceSubdivision; label: string }[] = [
+        { sub: '1 bar', label: '1 bar' },
+        { sub: '1/2 bar', label: '1/2 bar' },
+        { sub: '1/4', label: '1/4' },
+        { sub: '1/8', label: '1/8' },
+        { sub: '1/16', label: '1/16' }
+      ]
+      items.push({
+        command: 'clip.chopGrid',
+        label: 'Chop to Grid',
+        separatorAbove: true,
+        title: 'Slice the clip into adjacent clips on the beat grid',
+        submenu: SUBS.map(({ sub, label }) => ({
+          command: `clip.chopGrid:${sub}`,
+          label
+        }))
+      })
+    }
     if (clip) {
       const track = project.tracks.find((t) => t.id === clip.trackId)
       const selected =
@@ -369,6 +393,19 @@ export function useTimelineContextMenu(
       project.setClipLocked(clipId, false)
     } else if (command === 'clip.split') {
       project.splitClipAt(clipId, transport.positionMs)
+    } else if (command.startsWith('clip.chopGrid:')) {
+      const subdivision = command.slice('clip.chopGrid:'.length) as SliceSubdivision
+      const src = clip ? library.byId[clip.libraryItemId] : undefined
+      if (clip && src) {
+        const markers = generateGridSlices({
+          sourceBpm: src.bpm,
+          anchorSec: src.beatAnchorSec ?? src.beats?.[0],
+          subdivision,
+          windowInMs: clip.inMs,
+          windowDurationMs: clip.durationMs
+        })
+        project.sliceClipToTimeline(clipId, markers)
+      }
     } else if (command === 'clip.saveToLibrary') {
       project.saveClipToLibrary(clipId)
     } else if (command === 'clip.saveSample') {

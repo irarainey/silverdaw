@@ -190,7 +190,15 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     if (item && media) library.setItemMetadata(payload.itemId, media)
     useProjectStore().peaksRevision++
   }
-  notifications.pushInfo(`Saved sample "${payload.name}".`)
+  // A batch slice-to-samples run shows ONE summary toast on the final item
+  // instead of N per-sample toasts.
+  if (payload.batchTotal && payload.batchTotal > 1) {
+    if ((payload.batchIndex ?? 0) >= payload.batchTotal - 1) {
+      notifications.pushInfo(`Saved ${payload.batchTotal} samples.`)
+    }
+  } else {
+    notifications.pushInfo(`Saved sample "${payload.name}".`)
+  }
   log.info('bridge', `SAMPLE_SAVED itemId=${payload.itemId} file=${payload.fileName}`)
 }
 

@@ -47,6 +47,36 @@ export const clipLibraryActions = {
       })
     },
 
+    /**
+     * Harvest a clip's slices (the segments between source-ms cut markers, plus
+     * head and tail) as individual library samples in one backend batch. Returns
+     * the number of samples requested.
+     */
+    sliceClipToSamples(
+      clipId: string,
+      markersSourceMs: readonly number[],
+      audioType: 'simple' | 'music' = 'simple'
+    ): number {
+      const clip = this.clips[clipId]
+      if (!clip) return 0
+      const clipEnd = clip.inMs + clip.durationMs
+      const cuts = markersSourceMs
+        .filter((m) => m > clip.inMs && m < clipEnd)
+        .slice()
+        .sort((a, b) => a - b)
+      const bounds = [clip.inMs, ...cuts, clipEnd]
+      const slices: { itemId: string; inMs: number; durationMs: number }[] = []
+      for (let i = 0; i < bounds.length - 1; i++) {
+        const inMs = bounds[i]!
+        const durationMs = bounds[i + 1]! - inMs
+        if (durationMs <= 0) continue
+        slices.push({ itemId: `sample-${crypto.randomUUID()}`, inMs, durationMs })
+      }
+      if (slices.length === 0) return 0
+      sendBridge('CLIP_SLICE_TO_SAMPLES', { clipId, audioType, slices })
+      return slices.length
+    },
+
     /** Rebind a library-clip instance to its source item while preserving its trim window. */
     unlinkClipFromLibrary(clipId: string): boolean {
       const clip = this.clips[clipId]

@@ -59,6 +59,12 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   pitch-shifted independently, all without changing the source file.
 - **Saved clips and samples.** Save reusable clips to the library and bake any
   clip down to a fresh sample when you want to commit its current sound.
+- **Loop slicing.** Chop a clip into slices — on a bar or beat grid (from a whole
+  bar down to 1/32) or with hand-placed markers — then lay the slices back on the
+  timeline as separate clips, or save each one as its own sample to rearrange and
+  rebuild. Right-click a clip for a quick **Chop to Grid**, or open the Clip
+  Editor's **Slice** mode for hands-on control. Non-destructive — the source file
+  is untouched.
 - **Portable projects.** Saving a project nests it in its own folder and keeps
   its generated stems and samples beside the project file, so the whole folder
   can be moved or synced between machines (for example via cloud storage) and
