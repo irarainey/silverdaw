@@ -135,6 +135,9 @@ checked against pinned SHA-256 hashes; they are not shipped in the installer.
   stem when the user enables "Always use the backup model". Also the zero-config
   path fetched on first use when no quality packs are present.
 - **Source**: <https://huggingface.co/StemSplitio/htdemucs-ft-onnx>
+  (re-hosted byte-identically by Silverdaw at
+  <https://huggingface.co/silverdaw/htdemucs-ft-onnx> so every model ships from
+  one self-owned namespace).
 
 ### Mel-Band RoFormer "Vocal Quality Pack" (primary vocal model)
 
@@ -145,6 +148,9 @@ checked against pinned SHA-256 hashes; they are not shipped in the installer.
 - **Use**: higher-quality vocal model, used automatically for vocals once
   installed (in place of the htdemucs backup) unless the user forces the backup.
 - **Source**: <https://huggingface.co/musetric/vocal-separation-roformer-onnx>
+  (re-hosted byte-identically by Silverdaw at
+  <https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx> for a stable
+  download URL).
 - **Note**: the upstream training-data provenance is undocumented; the weights
   are distributed by their author under MIT (the same posture as the htdemucs
   weights above).
@@ -161,7 +167,9 @@ checked against pinned SHA-256 hashes; they are not shipped in the installer.
   bass once installed (in place of the htdemucs backup) unless the user forces
   the backup. One model run extracts both drums and bass.
 - **Source**: <https://github.com/ZFTurbo/Music-Source-Separation-Training>
-  (checkpoint + config, v1.0.12).
+  (checkpoint + config, v1.0.12). Silverdaw's host-STFT ONNX export is
+  distributed at
+  <https://huggingface.co/silverdaw/bs-roformer-rhythm-onnx>.
 
 ## Branding
 

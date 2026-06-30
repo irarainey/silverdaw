@@ -1,10 +1,11 @@
-// Manifest for the optional Mel-Band RoFormer "Vocal Quality Pack" — a
-// higher-quality VOCALS model used in place of the htdemucs vocal specialist
-// (drums/bass stay htdemucs; `other` stays the residual).
+// Manifest for the Mel-Band RoFormer "Vocal Quality Pack" — the primary VOCALS
+// model, used automatically when installed (htdemucs is the backup; `other`
+// stays the residual).
 //
-// Weights are the MIT-licensed ONNX export at
-// `huggingface.co/musetric/vocal-separation-roformer-onnx` (Kim Vocal 2 / SYHFT
-// Mel-Band RoFormer; weight license MIT, inherited from
+// Served from Silverdaw's own re-host
+// `huggingface.co/silverdaw/mel-band-roformer-vocals-onnx` (a byte-identical copy
+// of the MIT export at `huggingface.co/musetric/vocal-separation-roformer-onnx`;
+// Kim Vocal 2 / SYHFT Mel-Band RoFormer, weight license MIT, inherited from
 // `SYH99999/MelBandRoformerBigSYHFTV1Fast`). The neural core is a small graph
 // (`.onnx`) plus a large external-weights file (`.onnx.data`) that must sit
 // beside it; onnxruntime loads the `.data` automatically. Downloaded on first
@@ -12,7 +13,7 @@
 
 import type { ModelFile, ModelManifest } from './htdemucsModel'
 
-const REPO = 'musetric/vocal-separation-roformer-onnx'
+const REPO = 'silverdaw/mel-band-roformer-vocals-onnx'
 const REVISION = 'main'
 
 function resolveUrl(fileName: string): string {

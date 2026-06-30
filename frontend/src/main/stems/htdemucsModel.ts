@@ -1,11 +1,14 @@
 // Manifest for the htdemucs fine-tuned 4-stem model (vocals/drums/bass/other).
 //
-// The weights are the community ONNX export at
-// `huggingface.co/StemSplitio/htdemucs-ft-onnx` (MIT-licensed). htdemucs_ft is a
-// "bag" of four specialist models — one per source — so 4-stem output is native.
-// Files are too large to ship in the installer (~1.2 GB total), so they are
-// downloaded on first use and integrity-checked. The revision and per-file
-// SHA-256 are pinned (HF LFS `oid` == content SHA-256) for reproducibility.
+// This is Silverdaw's BACKUP separation engine — used when the higher-quality
+// RoFormer packs aren't installed (or the user forces the backup). The weights
+// are a byte-identical re-host of the community ONNX export at
+// `huggingface.co/StemSplitio/htdemucs-ft-onnx` (MIT-licensed), served from
+// Silverdaw's own `huggingface.co/silverdaw/htdemucs-ft-onnx` so every model
+// ships from one self-owned namespace. htdemucs_ft is a "bag" of four specialist
+// models — one per source — so 4-stem output is native. Files are too large to
+// ship in the installer (~1.2 GB total), so they are downloaded on first use and
+// integrity-checked. The per-file SHA-256 are pinned for reproducibility.
 //
 // `StemName` is re-exported from the bridge schema — the single source of truth
 // for the stem vocabulary across both processes — so the manifest can't drift.
@@ -33,8 +36,8 @@ export interface ModelManifest {
   readonly totalBytes: number
 }
 
-const REPO = 'StemSplitio/htdemucs-ft-onnx'
-const REVISION = '8616370ed541bc183dbe15fb0d54d5f49918f47e'
+const REPO = 'silverdaw/htdemucs-ft-onnx'
+const REVISION = 'main'
 
 function resolveUrl(fileName: string): string {
   return `https://huggingface.co/${REPO}/resolve/${REVISION}/${fileName}`

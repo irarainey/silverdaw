@@ -12,10 +12,10 @@
 // largest chunk that stays within a modest GPU's VRAM — and fp16-quantised.
 // Downloaded on first use and integrity-checked by SHA-256.
 //
-// NOTE: the export is self-hosted; `REPO`/`REVISION` below are a placeholder for
-// the publish location and must point at the uploaded `.onnx` before the
-// in-app download works. The SHA-256 and size are of the actual exported file,
-// so a manually-placed copy is detected as installed without a download.
+// Published at `huggingface.co/silverdaw/bs-roformer-rhythm-onnx` (public, MIT).
+// The SHA-256 and size below are of the actual exported file, so a manually
+// placed copy is detected as installed without a download, and the in-app
+// download verifies integrity against them.
 
 import type { ModelFile, ModelManifest } from './htdemucsModel'
 
