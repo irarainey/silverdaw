@@ -15,7 +15,8 @@
 // Published at `huggingface.co/silverdaw/bs-roformer-rhythm-onnx` (public, MIT).
 // The SHA-256 and size below are of the actual exported file, so a manually
 // placed copy is detected as installed without a download, and the in-app
-// download verifies integrity against them.
+// download verifies integrity against them. The export recipe that produces
+// this file lives at `backend/tools/roformer_export`.
 
 import type { ModelFile, ModelManifest } from './htdemucsModel'
 
