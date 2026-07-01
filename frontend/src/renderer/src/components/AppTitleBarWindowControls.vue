@@ -20,8 +20,8 @@ const emit = defineEmits<{
       data-borderless-button="true"
       class="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-0"
       :disabled="props.disabled"
-      aria-label="Minimize"
-      title="Minimize"
+      aria-label="Minimise"
+      title="Minimise"
       @click="emit('minimize')"
     >
       <svg
@@ -42,8 +42,8 @@ const emit = defineEmits<{
       data-borderless-button="true"
       class="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-0"
       :disabled="props.disabled"
-      aria-label="Maximize or restore"
-      title="Maximize / Restore"
+      aria-label="Maximise or restore"
+      title="Maximise / Restore"
       @click="emit('toggleMaximize')"
     >
       <svg

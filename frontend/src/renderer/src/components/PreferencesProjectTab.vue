@@ -124,6 +124,9 @@ const cleanupProjectFiles = defineModel<boolean>('cleanupProjectFiles', { requir
             else in the project uses them. Your original imported audio files are
             never deleted. Off by default — removal only unlinks from the project.
           </span>
+          <span class="mt-1.5 block font-medium text-amber-500/90">
+            Warning: deleting these files cannot be undone.
+          </span>
         </span>
       </label>
     </div>

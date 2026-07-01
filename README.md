@@ -35,7 +35,10 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 ## Key features
 
 - **Project library.** Import audio into a per-project library and drag it
-  straight onto the timeline. Files are grouped and easy to reuse.
+  straight onto the timeline. Files are grouped and easy to reuse. Tiles show a
+  track's cover art (or a per-kind icon when there's none); right-click a tile to
+  **Update Image…** with your own picture, or **Remove** / **Restore** the image —
+  all per-tile and non-destructive.
 - **Timeline arranging.** Move, split, duplicate, cut, copy, paste, trim, colour,
   and delete clips across multiple tracks. Drag clips or nudge them with the
   keyboard; clips snap to the beat grid by default, with a modifier for fine,
@@ -69,6 +72,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   its generated stems and samples beside the project file, so the whole folder
   can be moved or synced between machines (for example via cloud storage) and
   still open — as long as the original source files sit at the same location.
+- **Tidy up on remove.** Optionally have Silverdaw delete a stem's or sample's
+  generated file — and the now-empty folder it leaves behind — from disk when you
+  remove it from the library. Off by default (removal just unlinks it from the
+  project); your original imported files are never touched. This can't be undone.
+  Turn it on in **Preferences ▸ Project**.
 - **Track, project, and master controls.** Per-track volume faders with a
   bipolar equal-power **Pan** control in each track header, plus mute, solo,
   and a collapsible bottom panel with **Track FX**, **Project FX**, and

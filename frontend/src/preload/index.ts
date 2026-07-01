@@ -322,9 +322,21 @@ const api = {
   /** Read a source's media (tags + cover bytes) back by media GUID, or null when absent. */
   getProjectMedia: (mediaId: string): Promise<AudioMetadata | null> =>
     ipcRenderer.invoke(IPC.media.get, mediaId),
-  /** Delete a removed item's generated stem/sample WAVs and orphaned media files. */
-  cleanupProjectFiles: (payload: { wavPaths: string[]; mediaIds: string[] }): Promise<boolean> =>
-    ipcRenderer.invoke(IPC.media.cleanup, payload)
+  /** Delete a removed item's orphaned media-store files (cover art + tag sidecars).
+   *  Stem/sample WAVs are deleted by the audio backend over the bridge, not here. */
+  cleanupProjectFiles: (payload: { mediaIds: string[] }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.media.cleanup, payload),
+  /** Pick a new cover image and copy it into the covers dir as a per-item override.
+   *  Returns the stored basename + bytes, or `{ cancelled: true }`. */
+  updateItemCover: (payload: {
+    itemId: string
+    previousCoverFile?: string
+  }): Promise<
+    { cancelled: true } | { cancelled: false; coverFile: string; data: ArrayBuffer; mimeType: string }
+  > => ipcRenderer.invoke(IPC.media.updateCover, payload),
+  /** Read a per-item override cover back by its basename, or null when absent. */
+  getItemCover: (coverFile: string): Promise<{ data: ArrayBuffer; mimeType: string } | null> =>
+    ipcRenderer.invoke(IPC.media.getCover, coverFile)
 }as const
 
 contextBridge.exposeInMainWorld('silverdaw', api)

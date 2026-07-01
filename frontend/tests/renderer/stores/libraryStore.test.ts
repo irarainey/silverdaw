@@ -615,6 +615,137 @@ describe('libraryStore', () => {
     expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: stemId })
   })
 
+  it('sends cleanup:true and no undo group when removing a sample with file cleanup on', async () => {
+    const { useUiStore } = await import('@/stores/uiStore')
+    const library = useLibraryStore()
+    useUiStore().cleanupProjectFiles = true
+
+    const sampleId = library.addItem({
+      filePath: 'C:\\proj\\samples\\Song\\Song-sample-001.wav',
+      fileName: 'Song-sample-001.wav',
+      kind: 'sample',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+
+    sendMock.mockClear()
+    expect(library.removeItem(sampleId!)).toBe(true)
+    // The removal is irreversible, so it carries the cleanup flag and is NOT wrapped in
+    // an EDIT_GROUP (no undo step).
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: sampleId, cleanup: true })
+    expect(sendMock).not.toHaveBeenCalledWith('EDIT_GROUP_BEGIN', expect.anything())
+    expect(sendMock).not.toHaveBeenCalledWith('EDIT_GROUP_END')
+  })
+
+  it('keeps a normal undoable removal (no cleanup flag) when file cleanup is off', () => {
+    const library = useLibraryStore()
+    const sampleId = library.addItem({
+      filePath: 'C:\\proj\\samples\\Song\\Song-sample-002.wav',
+      fileName: 'Song-sample-002.wav',
+      kind: 'sample',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+
+    sendMock.mockClear()
+    expect(library.removeItem(sampleId!)).toBe(true)
+    // No cleanup flag, and wrapped in an undo group — a normal undoable, dirtying edit.
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: sampleId })
+    expect(sendMock).toHaveBeenCalledWith('EDIT_GROUP_BEGIN', { label: 'Remove from library' })
+    expect(sendMock).toHaveBeenCalledWith('EDIT_GROUP_END')
+  })
+
+  it('hides and restores a tile cover image via a per-item flag + bridge message', () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\anthem.wav',
+      fileName: 'anthem.wav',
+      durationMs: 5_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+
+    sendMock.mockClear()
+    library.setItemCoverArtHidden(sourceId!, true)
+    expect(library.getItem(sourceId!)?.coverArtHidden).toBe(true)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_HIDDEN', {
+      itemId: sourceId,
+      hidden: true
+    })
+
+    // Idempotent: setting the same value again does not re-send.
+    sendMock.mockClear()
+    library.setItemCoverArtHidden(sourceId!, true)
+    expect(sendMock).not.toHaveBeenCalled()
+
+    // Restoring clears the flag (undefined, not false, so it stays absent from save).
+    library.setItemCoverArtHidden(sourceId!, false)
+    expect(library.getItem(sourceId!)?.coverArtHidden).toBeUndefined()
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_HIDDEN', {
+      itemId: sourceId,
+      hidden: false
+    })
+  })
+
+  it('updateItemCoverArt sets a per-item override, swaps the cover, and clears hide', async () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\track.wav',
+      fileName: 'track.wav',
+      durationMs: 5_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    // The tile was previously hidden; a freshly-picked image should reveal it.
+    library.getItem(sourceId!)!.coverArtHidden = true
+
+    const coverFile = `override-${sourceId}.png`
+    globalThis.window = {
+      silverdaw: {
+        updateItemCover: vi
+          .fn()
+          .mockResolvedValue({ cancelled: false, coverFile, data: new ArrayBuffer(4), mimeType: 'image/png' })
+      }
+    } as unknown as Window & typeof globalThis
+
+    sendMock.mockClear()
+    await library.updateItemCoverArt(sourceId!)
+
+    const item = library.getItem(sourceId!)
+    expect(item?.coverArtOverride).toBe(coverFile)
+    expect(item?.coverArtUrl).toBe('blob:cover')
+    expect(item?.coverArtHidden).toBeUndefined()
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_OVERRIDE', { itemId: sourceId, coverFile })
+    // Clearing the hide is persisted too.
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_HIDDEN', { itemId: sourceId, hidden: false })
+  })
+
+  it('updateItemCoverArt makes no changes when the picker is cancelled', async () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\track2.wav',
+      fileName: 'track2.wav',
+      durationMs: 5_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    globalThis.window = {
+      silverdaw: { updateItemCover: vi.fn().mockResolvedValue({ cancelled: true }) }
+    } as unknown as Window & typeof globalThis
+
+    sendMock.mockClear()
+    await library.updateItemCoverArt(sourceId!)
+    expect(library.getItem(sourceId!)?.coverArtOverride).toBeUndefined()
+    expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_OVERRIDE', expect.anything())
+  })
+
   it('normalises metadata and display names', () => {
     const library = useLibraryStore()
     const itemId = library.addItem({

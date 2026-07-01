@@ -135,6 +135,18 @@ export interface LibraryAddPayload {
 /** Drop a library item from the persisted catalogue. */
 export interface LibraryRemovePayload {
   itemId: string
+  /** True when the item's generated file is being deleted from disk ("clean up project
+   *  files"). The backend then removes the item without marking the project dirty or
+   *  recording an undo step, because the removal is irreversible. */
+  cleanup?: boolean
+}
+
+/** Delete a removed library item's generated stem/sample files and prune the
+ *  per-source folder any last file left empty. The backend confines every path to
+ *  the project's stems/samples artifact trees, so a user's original imported source
+ *  can never be deleted. Sent only when the "clean up project files" preference is on. */
+export interface LibraryDeleteArtifactsPayload {
+  paths: string[]
 }
 
 /** Force a full analysis refresh: backend rebuilds its decoded-WAV cache and reruns BPM/beat detection. */
@@ -154,6 +166,20 @@ export interface LibraryReanalysePayload {
 export interface LibraryItemSetAudioTypePayload {
   itemId: string
   audioType: 'simple' | 'music' | 'auto'
+}
+
+/** Hide (or restore) a library item's cover art on its tile without deleting the shared
+ *  media-store image. A per-item display flag persisted in the project. */
+export interface LibraryItemSetCoverHiddenPayload {
+  itemId: string
+  hidden: boolean
+}
+
+/** Point a library item at a per-item custom cover image (the basename of a file copied
+ *  into the project's covers dir). Empty `coverFile` clears the override. */
+export interface LibraryItemSetCoverOverridePayload {
+  itemId: string
+  coverFile: string
 }
 
 /**
@@ -444,8 +470,11 @@ export interface BridgeOutboundMap {
   CLIP_EDITOR_PEAKS_REQUEST: ClipEditorPeaksRequestPayload
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
+  LIBRARY_DELETE_ARTIFACTS: LibraryDeleteArtifactsPayload
   LIBRARY_REANALYSE: LibraryReanalysePayload
   LIBRARY_ITEM_SET_AUDIO_TYPE: LibraryItemSetAudioTypePayload
+  LIBRARY_ITEM_SET_COVER_HIDDEN: LibraryItemSetCoverHiddenPayload
+  LIBRARY_ITEM_SET_COVER_OVERRIDE: LibraryItemSetCoverOverridePayload
   LIBRARY_ITEM_SET_MANUAL_TEMPO: LibraryItemSetManualTempoPayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
@@ -976,8 +1005,11 @@ export const bridgeOutboundPayloadKinds: {
   CLIP_EDITOR_PEAKS_REQUEST: 'payload',
   LIBRARY_ADD: 'payload',
   LIBRARY_REMOVE: 'payload',
+  LIBRARY_DELETE_ARTIFACTS: 'payload',
   LIBRARY_REANALYSE: 'payload',
   LIBRARY_ITEM_SET_AUDIO_TYPE: 'payload',
+  LIBRARY_ITEM_SET_COVER_HIDDEN: 'payload',
+  LIBRARY_ITEM_SET_COVER_OVERRIDE: 'payload',
   LIBRARY_ITEM_SET_MANUAL_TEMPO: 'payload',
   TRACK_ADD: 'payload',
   TRACK_REMOVE: 'payload',

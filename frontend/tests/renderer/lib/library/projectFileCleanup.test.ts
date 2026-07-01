@@ -4,11 +4,16 @@ import {
   removedItemFileInfo,
   type RemovedItemFile
 } from '@/lib/library/projectFileCleanup'
+import { send } from '@/lib/bridgeService'
 import type { LibraryItem } from '@/stores/libraryStore'
 
 vi.mock('@/lib/log', () => ({
   log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }
 }))
+
+vi.mock('@/lib/bridgeService', () => ({ send: vi.fn() }))
+
+const sendMock = vi.mocked(send)
 
 function item(partial: Partial<LibraryItem> & { id: string }): LibraryItem {
   return {
@@ -30,7 +35,10 @@ function stubCleanup(): ReturnType<typeof vi.fn> {
   return fn
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.clearAllMocks()
+})
 
 describe('removedItemFileInfo', () => {
   it('returns the WAV path for a stem', () => {
@@ -58,10 +66,11 @@ describe('cleanupRemovedItemFiles', () => {
   it('does nothing when there are no files and no orphan media', () => {
     const fn = stubCleanup()
     cleanupRemovedItemFiles([{ mediaId: 'guid-1' }], [item({ id: 'src', mediaId: 'guid-1' })], {})
+    expect(sendMock).not.toHaveBeenCalled()
     expect(fn).not.toHaveBeenCalled()
   })
 
-  it('deletes WAVs and only media GUIDs no longer referenced by a remaining item', () => {
+  it('deletes WAVs via the backend bridge and orphan media via the main process', () => {
     const fn = stubCleanup()
     const removed: RemovedItemFile[] = [
       { wavPath: 'C:\\proj\\stems\\song-stems\\vocals.wav', mediaId: 'guid-shared' },
@@ -71,16 +80,17 @@ describe('cleanupRemovedItemFiles', () => {
     const source = item({ id: 'src', mediaId: 'guid-shared' })
     const byId = { src: source }
     cleanupRemovedItemFiles(removed, [source], byId)
+    // WAVs go to the audio backend over the bridge.
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_DELETE_ARTIFACTS', {
+      paths: ['C:\\proj\\stems\\song-stems\\vocals.wav', 'C:\\proj\\samples\\song\\hit.wav']
+    })
+    // Only the orphaned media GUID goes to the main process.
     expect(fn).toHaveBeenCalledTimes(1)
-    const arg = fn.mock.calls[0]![0] as { wavPaths: string[]; mediaIds: string[] }
-    expect(arg.wavPaths).toEqual([
-      'C:\\proj\\stems\\song-stems\\vocals.wav',
-      'C:\\proj\\samples\\song\\hit.wav'
-    ])
-    expect(arg.mediaIds).toEqual(['guid-orphan'])
+    expect(fn.mock.calls[0]![0] as { mediaIds: string[] }).toEqual({ mediaIds: ['guid-orphan'] })
   })
 
-  it('deletes WAVs even when there are no orphan media GUIDs', () => {
+  it('deletes WAVs via the bridge without calling the main process when no media is orphaned', () => {
     const fn = stubCleanup()
     const source = item({ id: 'src', mediaId: 'guid-1' })
     cleanupRemovedItemFiles(
@@ -88,7 +98,20 @@ describe('cleanupRemovedItemFiles', () => {
       [source],
       { src: source }
     )
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_DELETE_ARTIFACTS', {
+      paths: ['C:\\proj\\stems\\song-stems\\drums.wav']
+    })
+    // No orphan media → the main-process cleanup is not invoked at all.
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('cleans up orphan media without a bridge send when no WAVs were captured', () => {
+    const fn = stubCleanup()
+    // A removed item that owns no artifact WAV but whose media GUID is now orphaned.
+    cleanupRemovedItemFiles([{ mediaId: 'guid-orphan' }], [], {})
+    expect(sendMock).not.toHaveBeenCalled()
     expect(fn).toHaveBeenCalledTimes(1)
-    expect((fn.mock.calls[0]![0] as { mediaIds: string[] }).mediaIds).toEqual([])
+    expect(fn.mock.calls[0]![0] as { mediaIds: string[] }).toEqual({ mediaIds: ['guid-orphan'] })
   })
 })

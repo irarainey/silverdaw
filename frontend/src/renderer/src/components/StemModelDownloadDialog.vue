@@ -61,7 +61,7 @@ function onCancel(): void {
             id="stem-model-title"
             class="dialog-title"
           >
-            Stem separation model
+            Stem Separation Model
           </h1>
         </div>
 

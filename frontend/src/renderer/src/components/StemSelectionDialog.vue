@@ -73,7 +73,7 @@ function onCancel(): void {
             id="stem-selection-title"
             class="dialog-title"
           >
-            Separate stems
+            Separate Stems
           </h1>
         </div>
 

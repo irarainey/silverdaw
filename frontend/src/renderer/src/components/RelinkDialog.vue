@@ -120,7 +120,7 @@ async function relinkOne(row: MissingFileRow): Promise<void> {
             id="relink-title"
             class="dialog-title"
           >
-            Missing audio files
+            Missing Audio Files
           </h1>
           <p class="mt-1 text-xs text-zinc-400">
             {{ missingFiles.length }}

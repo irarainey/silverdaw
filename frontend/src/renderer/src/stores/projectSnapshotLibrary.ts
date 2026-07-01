@@ -4,7 +4,7 @@
 import { decodeAudioToPeaks } from '@/lib/audioDecode'
 import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
-import { getProjectMedia } from '@/lib/library/projectMedia'
+import { getProjectMedia, getItemCover } from '@/lib/library/projectMedia'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 import type { AudioMetadata } from '@shared/types'
 import { filePathToBasename } from './projectHelpers'
@@ -24,6 +24,14 @@ export async function refreshLibraryItemMedia(
     // GUID (older projects) fall back to the file's own embedded tags.
     let metadata: AudioMetadata | null = mediaId ? await getProjectMedia(mediaId) : null
     if (!metadata) metadata = await window.silverdaw.readAudioMetadata(filePath)
+    // A per-item custom cover overrides the shared media-store cover for this tile only.
+    const overrideFile = library.getItem(itemId)?.coverArtOverride
+    if (overrideFile) {
+      const override = await getItemCover(overrideFile)
+      if (override) {
+        metadata = { ...(metadata ?? {}), coverArt: override } as AudioMetadata
+      }
+    }
     library.setItemMetadata(itemId, metadata)
   } catch (err) {
     log.warn('library', `media refresh failed for ${filePath}: ${String(err)}`)
@@ -120,6 +128,8 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
           ? item.cents
           : undefined,
         mediaId: item.mediaId,
+        coverArtHidden: item.coverArtHidden === true ? true : undefined,
+        coverArtOverride: item.coverArtOverride,
         fromSnapshot: true
       })
       // Persisted analysis hydrates immediately; new imports use LIBRARY_ITEM_ANALYSIS.

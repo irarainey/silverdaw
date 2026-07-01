@@ -1251,7 +1251,7 @@ Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` + `TRACK_AUTOMATION_AP
 - **Drag-to-timeline** creates a clip at the drop position; auto-warp can match
   eligible clips to the project BPM when the preference is enabled
 - **Saved clips** — right-click a timeline clip → **Save Clip to Library** turns its trim window into a reusable library entry. Saved clips are non-destructive references back into their source file (same audio, same WAV cache, same BPM/key) and preserve the clip's warp defaults, grouped underneath the source they came from with a disclosure chevron whose tooltip is **Show saved clips** or **Hide saved clips**. Dragging a saved clip tile onto a track creates a **linked timeline clip**: it stores the saved clip's library id, shows a small chain badge in its title strip and is blocked from edge-resize on the timeline. The Clip Editor's **Apply trim** propagates the new window to every linked timeline instance atomically (collision-checked per track). Right-click ▸ **Unlink from library** rebinds the instance to the underlying source item, preserving its current window. Saved clip removal silently unlinks every dependent timeline clip first — the audio plays on as an independent clip referencing the underlying source file. The Clip Editor's **Save Selection to Library** is the second producer of saved clips.
-- **Tile images:** library tiles can show embedded cover art or the fallback audio icon; this is toggleable via the persisted `uiStore.showLibraryTileImages` preference. List view is deferred to Phase 8.
+- **Tile images:** library tiles can show embedded cover art or a fallback icon; this is toggleable via the persisted `uiStore.showLibraryTileImages` preference. The fallback is styled **per kind** when no cover shows (an original source: sky music-note on a sky tint; a stem: teal layers icon on a teal tint; a saved sample: indigo bars icon on an indigo tint), plus the persistent stem / sample corner badge. A tile's right-click menu manages its cover art: **Update Image…** (pick a new image, copied into the project's `covers/` dir as a per-item `coverArtOverride` shown on that tile only), **Remove Image** / **Restore Image** (a per-item `coverArtHidden` display flag that suppresses the cover without deleting the shared media-store image). Both are per-item, persisted in the project, and never mutate the GUID-keyed shared media store. List view is deferred to Phase 8.
 - **Inline rename:** single-click the name on any library tile (or pick **Rename…** from the right-click menu) edits it inline. Saved clips inherit a sensible default name from their source + offset.
 - **Vertical scroll:** virtualised list once item count exceeds visible height; library never overflows the panel.
 - **Tags:** Phase 8 chip-input on each card, stored on library items.
@@ -2068,7 +2068,10 @@ playable at every point — no broken-build day):
   tile imagery, previous/next button target, **waveform display** mode —
   single summary vs. stacked left/right channels), **Timeline** (grid / snap
   and timeline-interaction defaults), Project (default Save /
-  Open / Import dirs + autosave config), **Audio** (output device selection —
+  Open / Import dirs + autosave config + **clean up project files on remove**
+  (with a *cannot be undone* warning) — the backend deletes a removed stem/sample's
+  generated file and its emptied folder, off by default, and that removal is
+  non-undoable and doesn't mark the project dirty), **Audio** (output device selection —
   real named devices only, each with an off-by-default **Keep awake** toggle —
   plus the driver picker with Bluetooth-latency heuristic), **Effects** (global
   defaults for the per-clip DJ turntable **Brake** — duration + curve — and

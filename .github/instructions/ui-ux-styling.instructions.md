@@ -211,17 +211,17 @@ Selected/active items use the `sky` accent consistently:
 
 User-facing copy favours the familiar, DAW-standard name for each feature — the
 words the audience already meets in other tools — while avoiding the deepest
-signal-processing jargon. **Reverb**, **Delay**, and **Pan** are used directly;
-do **not** soften them to non-standard labels like "Room", "Echo", or
-"Balance" (which only add confusion). The codebase keeps matching internal
-terms (plan §7.9). Where a plain word is clearer than an engineer's term, use
-the **left** column in the UI:
+signal-processing jargon. **Reverb**, **Delay**, **Pan**, and **Compressor**
+are used directly; do **not** soften them to non-standard labels like "Room",
+"Echo", or "Balance" (which only add confusion). The codebase keeps matching
+internal terms (plan §7.9) — note the internal DSP class behind the user-facing
+**Compressor** is `Leveler`, but the UI always says "Compressor". Where a plain
+word is clearer than an engineer's term, use the **left** column in the UI:
 
 | Say (user-facing) | Not (over-technical) |
 | --- | --- |
 | Tone, with **Bass / Mid / Treble** | EQ / low shelf / parametric peak / high shelf |
 | **Low Cut** | high-pass filter |
-| **Leveler** | Compressor |
 | **Volume Shape** | automation / envelope |
 
 Wording rules:

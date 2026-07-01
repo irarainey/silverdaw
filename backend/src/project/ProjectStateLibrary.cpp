@@ -167,6 +167,46 @@ bool ProjectState::removeLibraryItem(const juce::String& itemId)
     return false;
 }
 
+bool ProjectState::removeLibraryItemNonDirty(const juce::String& itemId)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+
+    // Suppress the dirty listeners and remove without the undo manager, then mirror the
+    // removal into the clean snapshot so root stays equivalent to it (no pending change).
+    const SuppressDirtyScope suppress(*this);
+    bool removed = false;
+    for (int i = library.getNumChildren() - 1; i >= 0; --i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            library.removeChild(item, nullptr);
+            removed = true;
+            break;
+        }
+    }
+    if (!removed) return false;
+
+    if (cleanSnapshot.isValid())
+    {
+        auto snapLibrary = cleanSnapshot.getChildWithName(kLibrary);
+        if (snapLibrary.isValid())
+        {
+            for (int i = snapLibrary.getNumChildren() - 1; i >= 0; --i)
+            {
+                auto snapItem = snapLibrary.getChild(i);
+                if (snapItem.getProperty(kId).toString() == itemId)
+                {
+                    snapLibrary.removeChild(snapItem, nullptr);
+                    break;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 bool ProjectState::setLibraryItemFilePath(const juce::String& itemId, const juce::String& filePath)
 {
     if (filePath.isEmpty()) return false;
@@ -331,6 +371,15 @@ juce::var ProjectState::libraryAsJson() const
         if (item.hasProperty(kCollapsed) && bool(item.getProperty(kCollapsed)))
         {
             obj->setProperty("collapsed", true);
+        }
+        if (item.hasProperty(kCoverArtHidden) && bool(item.getProperty(kCoverArtHidden)))
+        {
+            obj->setProperty("coverArtHidden", true);
+        }
+        if (item.hasProperty(kCoverArtOverride))
+        {
+            const auto coverFile = item.getProperty(kCoverArtOverride).toString();
+            if (coverFile.isNotEmpty()) obj->setProperty("coverArtOverride", coverFile);
         }
         // Saved-clip warp defaults are copied on drop, not live-linked.
         if (item.hasProperty(kWarpEnabled))

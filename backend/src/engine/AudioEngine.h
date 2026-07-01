@@ -167,6 +167,11 @@ class AudioEngine
 
     void unloadPreview();
 
+    // Release any open reader the engine holds on `file` (currently the preview voice)
+    // so the file can be deleted cleanly — a lingering JUCE reader keeps a deleted WAV
+    // in Windows delete-pending limbo, which blocks removing its per-source folder.
+    void releaseReadersForFile(const juce::File& file);
+
     void playPreview();
 
     void pausePreview();
@@ -393,6 +398,11 @@ class AudioEngine
         double inMs = 0.0;
         double durationMs = 0.0;
         double sourceDurationMs = 0.0;
+        // Absolute path of the file currently loaded into the preview voice, so the
+        // engine can release this reader before that file is deleted from disk (an
+        // open JUCE reader keeps the WAV delete-pending on Windows, which would block
+        // removing its now-empty per-source folder).
+        juce::File sourceFile;
     };
     Preview preview;
     std::atomic<juce::int64> previewGeneration{0};

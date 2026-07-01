@@ -208,7 +208,11 @@ bool dispatchLibrary(const DispatchContext& ctx)
     }
     else if (type == "LIBRARY_REMOVE")
     {
-        silverdaw::handleLibraryRemove(payload, projectState);
+        silverdaw::handleLibraryRemove(payload, projectState, session);
+    }
+    else if (type == "LIBRARY_DELETE_ARTIFACTS")
+    {
+        silverdaw::handleLibraryDeleteArtifacts(payload, session, engine);
     }
     else if (type == "LIBRARY_REANALYSE")
     {
@@ -217,6 +221,14 @@ bool dispatchLibrary(const DispatchContext& ctx)
     else if (type == "LIBRARY_ITEM_SET_AUDIO_TYPE")
     {
         silverdaw::handleLibraryItemSetAudioType(payload, projectState);
+    }
+    else if (type == "LIBRARY_ITEM_SET_COVER_HIDDEN")
+    {
+        silverdaw::handleLibraryItemSetCoverHidden(payload, projectState);
+    }
+    else if (type == "LIBRARY_ITEM_SET_COVER_OVERRIDE")
+    {
+        silverdaw::handleLibraryItemSetCoverOverride(payload, projectState);
     }
     else if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO")
     {

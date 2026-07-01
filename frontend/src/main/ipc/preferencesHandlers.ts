@@ -108,7 +108,7 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
       if (!win) return null
       const a = (args ?? {}) as { title?: string; defaultPath?: string }
       const result = await dialog.showOpenDialog(win, {
-        title: typeof a.title === 'string' ? a.title : 'Choose folder',
+        title: typeof a.title === 'string' ? a.title : 'Choose Folder',
         defaultPath: typeof a.defaultPath === 'string' ? a.defaultPath : undefined,
         properties: ['openDirectory', 'createDirectory']
       })

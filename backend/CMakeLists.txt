@@ -624,7 +624,8 @@ tests/MixdownRenderTests.cpp
         tests/BassEnhancerTests.cpp
         tests/OtherEnhancerTests.cpp
         tests/MelRoformerSpectralTests.cpp
-        tests/BsRoformerSpectralTests.cpp)
+        tests/BsRoformerSpectralTests.cpp
+        tests/LibraryCleanupTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
 

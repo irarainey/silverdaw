@@ -161,7 +161,15 @@ declare global {
       readSampleSidecar(sampleDir: string): Promise<AudioMetadata | null>
       saveProjectMedia(mediaId: string, sourceFilePath: string): Promise<boolean>
       getProjectMedia(mediaId: string): Promise<AudioMetadata | null>
-      cleanupProjectFiles(payload: { wavPaths: string[]; mediaIds: string[] }): Promise<boolean>
+      cleanupProjectFiles(payload: { mediaIds: string[] }): Promise<boolean>
+      updateItemCover(payload: {
+        itemId: string
+        previousCoverFile?: string
+      }): Promise<
+        | { cancelled: true }
+        | { cancelled: false; coverFile: string; data: ArrayBuffer; mimeType: string }
+      >
+      getItemCover(coverFile: string): Promise<{ data: ArrayBuffer; mimeType: string } | null>
     }
   }
 }

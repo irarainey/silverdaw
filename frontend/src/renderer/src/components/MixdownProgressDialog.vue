@@ -56,7 +56,7 @@ function onCancel(): void {
             id="mixdown-progress-title"
             class="dialog-title"
           >
-            Exporting mixdown
+            Exporting Mixdown
           </h1>
         </div>
 

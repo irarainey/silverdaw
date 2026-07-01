@@ -21,6 +21,7 @@ import type {
 } from './libraryTypes'
 import { revokeItemCoverArt, libraryItemIsSample, resolveLibraryItemMediaId } from './libraryItemHelpers'
 import { cleanupRemovedItemFiles, removedItemFileInfo, type RemovedItemFile } from '@/lib/library/projectFileCleanup'
+import { updateItemCover } from '@/lib/library/projectMedia'
 
 // Stable facade for existing `@/stores/libraryStore` imports.
 export type {
@@ -176,7 +177,9 @@ export const useLibraryStore = defineStore('library', {
         semitones: kind === 'clip' ? audio.semitones : undefined,
         cents: kind === 'clip' ? audio.cents : undefined,
         unresolved: audio.unresolved === true ? true : undefined,
-        mediaId: audio.mediaId
+        mediaId: audio.mediaId,
+        coverArtHidden: audio.coverArtHidden === true ? true : undefined,
+        coverArtOverride: audio.coverArtOverride
       })
       log.info(
         'library',
@@ -255,6 +258,41 @@ export const useLibraryStore = defineStore('library', {
         itemId,
         audioType: normalised
       })
+    },
+
+    /** Hide or restore a library tile's cover art (a per-item display flag persisted in
+     *  the project) without deleting the shared media-store image. Applied optimistically. */
+    setItemCoverArtHidden(itemId: string, hidden: boolean): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      const next = hidden ? true : undefined
+      if ((item.coverArtHidden ?? false) === (next ?? false)) return
+      item.coverArtHidden = next
+      sendBridge('LIBRARY_ITEM_SET_COVER_HIDDEN', { itemId, hidden })
+      log.info('library', `setItemCoverArtHidden id=${itemId} hidden=${hidden}`)
+    },
+
+    /** Prompt for an image file and set it as this item's per-item cover override,
+     *  copied into the project's covers dir. Only the clicked tile changes (the shared
+     *  media-store cover is untouched). Clears any "remove image" hide so the new cover
+     *  shows. No-op if the picker is cancelled. */
+    async updateItemCoverArt(itemId: string): Promise<void> {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      const picked = await updateItemCover(itemId, item.coverArtOverride)
+      if (!picked) return
+      // Swap the displayed cover Blob to the new image.
+      revokeItemCoverArt(item)
+      item.coverArtUrl = URL.createObjectURL(new Blob([picked.data], { type: picked.mimeType }))
+      // Persist the override reference on the item.
+      item.coverArtOverride = picked.coverFile
+      sendBridge('LIBRARY_ITEM_SET_COVER_OVERRIDE', { itemId, coverFile: picked.coverFile })
+      // A freshly-chosen image should be visible even if the tile was hidden before.
+      if (item.coverArtHidden) {
+        item.coverArtHidden = undefined
+        sendBridge('LIBRARY_ITEM_SET_COVER_HIDDEN', { itemId, hidden: false })
+      }
+      log.info('library', `updateItemCoverArt id=${itemId} file=${picked.coverFile}`)
     },
 
     /**
@@ -402,6 +440,10 @@ export const useLibraryStore = defineStore('library', {
       // any cascaded saved clips) BEFORE the splices, while the source chain is intact.
       // Only acted on later when the "clean up project files" preference is on.
       const cleanupFiles = useUiStore().cleanupProjectFiles
+      // Deleting a stem's / sample's generated file from disk is irreversible, so that
+      // removal is NOT undoable and must not mark the project dirty (it can't be put back).
+      // Removing a saved clip never deletes a file, so it stays a normal undoable edit.
+      const nonUndoable = cleanupFiles && (item.kind === 'stem' || item.kind === 'sample')
       const removedForCleanup: RemovedItemFile[] = []
       const captureForCleanup = (removed: LibraryItem): void => {
         if (!cleanupFiles) return
@@ -425,22 +467,30 @@ export const useLibraryStore = defineStore('library', {
           for (const clipId of linkedClipIds) {
             project.unlinkClipFromLibrary(clipId)
           }
-          return this.finaliseRemoveItem(itemId, cleanupFiles, removedForCleanup, captureForCleanup)
+          return this.finaliseRemoveItem(itemId, cleanupFiles, removedForCleanup, captureForCleanup, false)
         })
       }
 
+      // A file-deleting stem/sample removal bypasses the undo group entirely (nothing to
+      // undo — the file is gone); every other removal is a single undoable step.
+      if (nonUndoable) {
+        return this.finaliseRemoveItem(itemId, cleanupFiles, removedForCleanup, captureForCleanup, true)
+      }
       return runInUndoGroup('Remove from library', () =>
-        this.finaliseRemoveItem(itemId, cleanupFiles, removedForCleanup, captureForCleanup)
+        this.finaliseRemoveItem(itemId, cleanupFiles, removedForCleanup, captureForCleanup, false)
       )
     },
 
     /** Promote stem identity, cascade-remove child clips, then remove the target item.
-     *  Must run inside a `runInUndoGroup` so the LIBRARY_REMOVE cascade is one undo step. */
+     *  Must run inside a `runInUndoGroup` so the LIBRARY_REMOVE cascade is one undo step,
+     *  unless `nonUndoable` (a file-deleting cleanup removal) is set — then each
+     *  LIBRARY_REMOVE is sent as a non-dirty, non-undoable removal. */
     finaliseRemoveItem(
       itemId: string,
       cleanupFiles: boolean,
       removedForCleanup: RemovedItemFile[],
-      captureForCleanup: (removed: LibraryItem) => void
+      captureForCleanup: (removed: LibraryItem) => void,
+      nonUndoable: boolean
     ): boolean {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return false
@@ -491,7 +541,7 @@ export const useLibraryStore = defineStore('library', {
           captureForCleanup(child)
           this.items.splice(i, 1)
           delete this.channelPeaksByItemId[child.id]
-          sendBridge('LIBRARY_REMOVE', { itemId: child.id })
+          sendBridge('LIBRARY_REMOVE', nonUndoable ? { itemId: child.id, cleanup: true } : { itemId: child.id })
           log.info('library', `removeItem id=${child.id} (cascade)`)
         }
       }
@@ -510,7 +560,7 @@ export const useLibraryStore = defineStore('library', {
         revokeItemCoverArt(removed)
       }
       delete this.channelPeaksByItemId[itemId]
-      sendBridge('LIBRARY_REMOVE', { itemId })
+      sendBridge('LIBRARY_REMOVE', nonUndoable ? { itemId, cleanup: true } : { itemId })
       log.info('library', `removeItem id=${itemId}`)
       // After all splices the remaining items are the orphan-reference baseline.
       if (cleanupFiles) cleanupRemovedItemFiles(removedForCleanup, this.items, this.byId)

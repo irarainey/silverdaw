@@ -402,6 +402,13 @@ class ProjectState : public juce::ValueTree::Listener
     /** Remove a library item by id. Returns true if it existed. Marks dirty. */
     bool removeLibraryItem(const juce::String& itemId);
 
+    // Remove a library item WITHOUT marking the project dirty or recording an undo step.
+    // Used for a "clean up project files" removal, where the item's generated file is
+    // deleted from disk: the change is irreversible (it cannot be put back), so it must
+    // not appear as an unsaved, undoable edit. The removal is mirrored into the clean
+    // snapshot so it never registers as a pending change.
+    bool removeLibraryItemNonDirty(const juce::String& itemId);
+
     // Derived BPM metadata is regenerated from source and does not mark dirty.
     bool setLibraryItemBpm(const juce::String& itemId, double bpm);
 
@@ -451,6 +458,15 @@ class ProjectState : public juce::ValueTree::Listener
 
     // Classification override beats low-confidence auto-classification.
     bool setLibraryItemAudioType(const juce::String& itemId, const juce::String& audioType);
+
+    // User override to hide a library tile's cover art without deleting the shared media
+    // store image (a per-item display flag persisted in the project; marks dirty).
+    bool setLibraryItemCoverArtHidden(const juce::String& itemId, bool hidden);
+
+    // Per-item custom cover: the basename of an override image copied into the project's
+    // covers dir, shown instead of the shared media-store cover. Empty clears it. Persisted
+    // in the project; marks dirty.
+    bool setLibraryItemCoverArtOverride(const juce::String& itemId, const juce::String& coverFile);
 
     bool hasLibraryItemForPath(const juce::String& filePath) const;
 
@@ -610,6 +626,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kDisplayName;
     static const juce::Identifier kClipName;
     static const juce::Identifier kCollapsed;
+    static const juce::Identifier kCoverArtHidden;
+    static const juce::Identifier kCoverArtOverride;
     static const juce::Identifier kLibraryItemId;
 
     // Reused on clip library items as copy-on-drop defaults.

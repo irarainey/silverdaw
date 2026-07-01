@@ -127,6 +127,42 @@ void testProjectFileSaveLoadAndViewState()
     dir.deleteRecursively();
 }
 
+// A "clean up project files" removal prunes just the removed item from the saved file,
+// in place, leaving every other saved item and field intact.
+void testProjectFileRemoveLibraryItems()
+{
+    const auto dir = makeTempDir("prune-library");
+    const auto file = dir.getChildFile("mix.silverdaw");
+
+    silverdaw::ProjectState state;
+    state.addTrack("t1");
+    require(state.addLibraryItem("keep1", "C:\\audio\\a.wav", "a.wav", 1000.0, 48000, 2), "add keep1");
+    require(state.addLibraryItem("gone", "C:\\proj\\samples\\S\\s.wav", "s.wav", 500.0, 48000, 2), "add gone");
+    require(state.addLibraryItem("keep2", "C:\\audio\\b.wav", "b.wav", 750.0, 48000, 2), "add keep2");
+    state.markClean();
+    require(silverdaw::ProjectFile::save(file, state).wasOk(), "initial save should succeed");
+
+    // Prune only "gone" from the saved file.
+    const auto result = silverdaw::ProjectFile::removeLibraryItems(file, {"gone"});
+    require(result.wasOk(), "removeLibraryItems should succeed");
+
+    silverdaw::ProjectState loaded;
+    require(silverdaw::ProjectFile::load(file, loaded).ok, "reload after prune should succeed");
+    require(!loaded.getLibraryItemFilePath("keep1").isEmpty(), "keep1 should survive the prune");
+    require(!loaded.getLibraryItemFilePath("keep2").isEmpty(), "keep2 should survive the prune");
+    require(loaded.getLibraryItemFilePath("gone").isEmpty(), "the pruned item should be gone from the file");
+    require(loaded.hasTrack("t1"), "unrelated content (the track) must be preserved");
+
+    // No-op cases: absent item and a never-saved file both succeed without error.
+    require(silverdaw::ProjectFile::removeLibraryItems(file, {"not-there"}).wasOk(),
+            "pruning an absent item is a no-op success");
+    const auto missing = dir.getChildFile("missing.silverdaw");
+    require(silverdaw::ProjectFile::removeLibraryItems(missing, {"gone"}).wasOk(),
+            "pruning an unsaved (missing) file is a no-op success");
+
+    dir.deleteRecursively();
+}
+
 // Project-internal artifact paths (inside the folder) save relative for portability;
 // original sources outside the folder stay absolute and resolve unchanged.
 void testProjectFilePortablePaths()
@@ -409,6 +445,7 @@ void addPersistenceTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"ValueTreeJson round-trip and validation", testValueTreeJsonRoundTripAndValidation});
     tests.push_back({"ProjectFile save/load and view-state update", testProjectFileSaveLoadAndViewState});
+    tests.push_back({"ProjectFile prunes library items in place", testProjectFileRemoveLibraryItems});
     tests.push_back({"ProjectFile portable relative paths", testProjectFilePortablePaths});
     tests.push_back({"project artifacts base dir follows the project", testProjectArtifactsBaseDir});
     tests.push_back({"migrate temp artifacts into project folder", testMigrateTempArtifactsIntoProject});

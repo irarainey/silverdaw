@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
             id="recovery-title"
             class="dialog-title"
           >
-            Recover unsaved work
+            Recover Unsaved Work
           </h1>
           <p class="mt-2 text-xs leading-relaxed text-zinc-400">
             Silverdaw found {{ entries.length }} project{{ entries.length === 1 ? '' : 's' }} with

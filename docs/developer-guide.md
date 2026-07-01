@@ -723,14 +723,63 @@ and samples — **carries the source's GUID** (the backend resolves it by walkin
 store entry, even after the original library item is removed. The renderer reads/writes the
 store through guarded main-process IPC (`media:get` / `media:save`, roots registered by
 `registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`. When the
-optional **Clean up project files** preference is on, removing a library item also runs
-`media:cleanup`, which deletes a stem/sample's generated WAV (confined to the
-stems/samples write roots, removing the whole per-source folder once it is empty) and the
-`<guid>` media entry once no remaining item references it — a user's original imported
-audio is never deleted. A just-emptied folder on a synced drive can briefly refuse removal
-(a cloud-filter/scanner lock that no process holds — confirmed via the Restart Manager);
-that is not fatal — the folder is queued for short background retries and, as a backstop,
-any empty per-source folder is also swept when its project next opens.
+optional **Clean up project files** preference is on, removing a library item deletes
+its generated stem/sample WAV and then prunes the per-source folder once nothing but the
+artifacts that removal took remains in it (another still-referenced stem/sample, or any
+file the app did not generate, keeps the folder) — all via the **audio backend** over the
+bridge (`LIBRARY_DELETE_ARTIFACTS { paths }`), which re-confines every path to the
+project's stems/samples artifact trees so a user's original imported audio is never
+touched. The backend counts the folder's files **before** deleting, and when its own
+artifacts are the only contents it removes the whole directory in one `deleteRecursively`
+(no delete-then-prune window). It first clears the folder's **read-only attribute** —
+sync clients such as OneDrive stamp synced folders read-only, and Windows refuses
+`RemoveDirectory` on a read-only directory with *Access denied* (this is why an earlier
+Node-`fs`/Electron attempt failed the same way). A directory removal blocked by a
+genuinely transient lock is retried on a short background timer. The GUID-keyed
+cover-art / tag **media store lives in its own `metadata/` + `covers/` folders** and is
+**shared and reference-counted** across every stem/sample/source from the same origin, so
+it is cleaned up separately in the main process (`media:cleanup`) — only once no remaining
+item references that GUID — and the artifact deletion above never touches it. As a further
+backstop for any stray empty per-source folder, the main process also sweeps empty
+artifact subdirs when a project next opens. Because deleting the file is
+irreversible, a cleanup removal is sent as `LIBRARY_REMOVE { itemId, cleanup: true }`
+and the backend removes the item via `removeLibraryItemNonDirty` — it is **not
+undoable and does not mark the project dirty** (mirrored into the clean snapshot),
+since the file can't be put back; the removal also bypasses the renderer's undo
+group. The backend then prunes just that item from the **already-saved project
+file in place** (`ProjectFile::removeLibraryItems` — a targeted JSON edit like
+`saveViewState`, not a full save), so the deleted file can never dangle in the saved
+project, **without committing the user's other unsaved edits** (they stay unsaved and
+the project stays dirty for them; an unsaved project has nothing on disk to prune). A
+normal removal (cleanup off, or a saved clip that owns no file) stays a single
+undoable edit and marks the project dirty like any other change — except that removing
+an item that was only *added this session* (never saved) is a net-zero change, so the
+project can return to clean, exactly as adding-then-removing anything else does.
+
+**Hiding a tile's cover art** — a library tile's right-click menu offers **Remove Image**
+(when the tile shows a cover) and **Restore Image** (when it is hidden). This sets a
+per-item boolean `coverArtHidden` — a display-only flag persisted on the library `ITEM`
+(`LIBRARY_ITEM_SET_COVER_HIDDEN { itemId, hidden }` → `setLibraryItemCoverArtHidden`,
+serialised as `coverArtHidden: true`, suppressed when off, marks the project dirty). It
+**never touches the shared media store**, so the image is only suppressed for that one
+item and can always be restored from the original source. The renderer suppresses the
+cover in both the tile (`groupCoverArtUrl`) and the info dialog when the flag is set. When
+no cover image shows (never had one, or hidden), the fallback tile is styled per kind so
+the three read apart at a glance: an **original source** shows a sky music-note on a sky
+tint, a **stem** a teal layers icon on a teal tint, and a **saved sample** an indigo bars
+icon on an indigo tint (plus the persistent stem / sample corner badge).
+
+**Setting a custom cover** — the same tiles offer **Update Image…**, which opens a file
+picker; the chosen image is copied into the project's `covers/` dir as a **per-item
+override** named `override-<itemId>.<ext>` and shown on that tile only (the shared
+media-store cover is untouched, so sibling stems/samples keep theirs). It persists as a
+per-item `coverArtOverride` basename on the library `ITEM`
+(`LIBRARY_ITEM_SET_COVER_OVERRIDE { itemId, coverFile }` → `setLibraryItemCoverArtOverride`,
+marks the project dirty). Main-process IPC does the pick+copy (`media:updateCover`) and the
+load-time read-back (`media:getCover`); on load the renderer uses the override in place of
+the shared cover, and picking a new image also clears any `coverArtHidden` so the new art
+is visible. The override file rides along with the rest of the media store when the project
+is first saved or Saved As (the covers dir is copied wholesale).
 
 **Temporary workspace + migrate-on-save** — until a project is first saved it has no
 folder, so generated stems and samples are written to a shared temp workspace
@@ -1415,9 +1464,12 @@ the shared media GUID and marks the item as a saved sample rather than an ordina
 import. Sample tiles use the **Saved from a clip** cover-art badge tooltip, and
 simple samples show a **Simple** audio-type pill. Deleting that library item removes the reference from
 the project and, by default, leaves the WAV file on disk; enabling **Clean up
-project files** (Preferences ▸ Project) instead deletes the generated WAV — and
-prunes its now-empty per-source folder, plus any shared cover/tag media nothing
-else still references. A simple sample bakes the clip's
+project files** (Preferences ▸ Project) instead has the **audio backend** delete the
+generated WAV — and prune its now-empty per-source folder — plus any shared cover/tag
+media (swept in the main process) nothing else still references. That file-deleting
+removal **cannot be undone and does not mark the project dirty** (the file can't be
+put back), and the item is pruned from the already-saved project file in place so it
+never dangles — without saving the user's other unsaved edits. A simple sample bakes the clip's
 warp/pitch through Rubber Band during export so the one-shot sounds like the clip did
 on the timeline; a music sample is exported at the source tempo/pitch so it can
 re-warp on drop.
@@ -1566,7 +1618,9 @@ sidebar:
   tempo on drop** (auto-warp a dropped clip to the project BPM), and the transport
   **previous / next button target**.
 - **Project** — default Save / Open / Import directories, background autosave
-  configuration, and **clean up project files on remove**.
+  configuration, and **clean up project files on remove** (with a *cannot be
+  undone* warning; a file-deleting removal is non-undoable and doesn't dirty the
+  project).
 - **Audio** — output device + driver selection (see below, with a per-device
   **Keep awake** checkbox — off by default — on each device row), and the
   **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
@@ -1676,9 +1730,10 @@ a vendor-supplied ASIO driver."* — so no outside docs are needed.
 Robustness:
 
 - **Removable devices** (USB / Bluetooth headphones) — when the saved device isn't
-  present at launch the backend silently falls back to the next available device (the
-  OS default) and the renderer pops a one-shot toast. The persisted preference is kept
-  so re-plugging works next launch.
+  present at launch the backend falls back to the next available device (the OS
+  default). This is handled silently: there's nothing the user can act on (the device
+  isn't there) and no way to dismiss a notice that would otherwise recur every launch,
+  so no toast is shown. The persisted preference is kept so re-plugging works next launch.
 - **Live unplug** — JUCE's `audioDeviceListChanged` callback fires; the backend reopens
   the next available device automatically so audio keeps flowing. A fresh `AUDIO_DEVICES_LIST`
   goes out to the renderer in the same round-trip.
@@ -1719,9 +1774,9 @@ fields stored directly on the `PROJECT` ValueTree node:
 - **Audio output device** + **driver** — per-project override of the global
   preference. Two dropdowns: device list (deduplicated across drivers) and
   driver list (Windows Audio / DirectSound / ASIO / etc.), both with a
-  "System default" entry that clears the override. If the saved device isn't
+  "Use Application Settings" entry that clears the override. If the saved device isn't
   present at project-load, an `AudioDeviceUnavailableDialog` informs the user
-  and the engine stays on the system default; the project preference is left
+  and the engine falls back to the next available device; the project preference is left
   intact so re-plugging or re-saving restores it. Shares the device list (real
   named devices only, pseudo-endpoints filtered) with the Preferences ▸ Audio
   picker via the single composable in `lib/audio/audioOutputPicker.ts`.
@@ -1837,7 +1892,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
 | Double-click a **library tile** (off the name) | Open the **Clip Editor** for that library item. Use **Show information** from the right-click menu for the read-only info dialog. |
-| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename**, **Reanalyse file** (source, stem, and sample items only), **Auto-classify** / **Treat as Music** / **Treat as Simple** (source, stem, and sample items only), **Save as Sample (Music)** / **Save as Sample (Simple)** (clip items only), and **Remove**. Removal is gated only for sources that are still in use by a timeline clip; saved clip removal silently unlinks dependent clips. |
+| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename**, **Reanalyse file** (source, stem, and sample items only), **Auto-classify** / **Treat as Music** / **Treat as Simple** (source, stem, and sample items only), **Update Image…** (source, stem, and sample tiles — pick a new cover image, copied into the project as a per-item override), **Remove Image** / **Restore Image** (source, stem, and sample tiles — hides or restores the tile's cover art without deleting the shared image file), **Save as Sample (Music)** / **Save as Sample (Simple)** (clip items only), and **Remove**. Removal is gated only for sources that are still in use by a timeline clip; saved clip removal silently unlinks dependent clips. |
 
 ### Clip Editor
 

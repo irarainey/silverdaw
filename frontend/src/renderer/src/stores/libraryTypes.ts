@@ -38,6 +38,10 @@ export interface AddLibraryItemInput {
    *  store. Carried over to every derived stem/sample so they share the source's cover
    *  art + tags, however many levels down. */
   mediaId?: string
+  /** User flag hiding this tile's cover art without deleting the shared media image. */
+  coverArtHidden?: boolean
+  /** Per-item custom cover: basename of an override image in the project's covers dir. */
+  coverArtOverride?: string
 }
 
 export interface LibraryItem {
@@ -90,6 +94,12 @@ export interface LibraryItem {
   /** Media GUID minted at first import; key into the project's central metadata/covers
    *  store, carried over to every derived stem/sample. */
   mediaId?: string
+  /** User flag hiding this tile's cover art (tile + info dialog) without deleting the
+   *  shared media-store image; persisted per-item in the project. */
+  coverArtHidden?: boolean
+  /** Per-item custom cover: basename of an override image copied into the project's
+   *  covers dir, shown instead of the shared media-store cover. Persisted per-item. */
+  coverArtOverride?: string
 }
 
 /** Per-file import progress shown while decoding, analysing, or warping. */

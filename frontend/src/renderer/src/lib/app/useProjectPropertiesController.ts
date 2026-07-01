@@ -46,7 +46,7 @@ export function useProjectPropertiesController(
   const parsedDurationMs = computed(() => parseTime(draftDurationText.value))
 
   interface AudioListOption {
-    /** Empty string represents "System default". */
+    /** Empty string represents "Use Application Settings" (no project override). */
     value: string
     label: string
     /** Saved value no longer exposed by the OS. */
@@ -56,7 +56,7 @@ export function useProjectPropertiesController(
   // Device options mirror Preferences and include unavailable saved devices.
   const deviceOptions = computed<AudioListOption[]>(() => {
     const items: AudioListOption[] = [
-      { value: '', label: 'System default', unavailable: false }
+      { value: '', label: 'Use Application Settings', unavailable: false }
     ]
     for (const d of uniqueDevices.value) {
       items.push({ value: d.name, label: d.name, unavailable: false })
@@ -80,8 +80,8 @@ export function useProjectPropertiesController(
     const items: AudioListOption[] = []
     const deviceName = draftAudioDeviceName.value
     if (!deviceName) {
-      // System default device has no explicit driver.
-      items.push({ value: '', label: 'System default', unavailable: false })
+      // Inheriting the application settings has no explicit driver.
+      items.push({ value: '', label: 'Use Application Settings', unavailable: false })
       return items
     }
     const dev = uniqueDevices.value.find(
@@ -109,7 +109,7 @@ export function useProjectPropertiesController(
     return items
   })
 
-  // Select bindings map empty string to System default and auto-pick a preferred driver.
+  // Select bindings map empty string to "Use Application Settings" and auto-pick a preferred driver.
   const draftAudioDeviceValue = computed<string>({
     get(): string {
       return draftAudioDeviceName.value ?? ''

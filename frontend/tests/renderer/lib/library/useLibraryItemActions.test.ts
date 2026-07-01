@@ -124,6 +124,63 @@ describe('useLibraryItemActions', () => {
     expect(saveSpy).toHaveBeenCalledWith(item.id, 'simple')
   })
 
+  it('offers Remove Image for an image-bearing tile and dispatches the hide', () => {
+    const item = seedAudioFile()
+    item.coverArtUrl = 'blob:cover'
+    const library = useLibraryStore()
+    const hideSpy = vi.spyOn(library, 'setItemCoverArtHidden')
+    const actions = useLibraryItemActions({ startRename: vi.fn() })
+    actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
+    let commands = actions.contextMenuItems.value.map((row) => row.command)
+    expect(commands).toContain('library.removeImage')
+    expect(commands).not.toContain('library.restoreImage')
+
+    actions.onContextMenuCommand('library.removeImage')
+    expect(hideSpy).toHaveBeenCalledWith(item.id, true)
+
+    // Once hidden, the menu offers Restore instead.
+    item.coverArtHidden = true
+    actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
+    commands = actions.contextMenuItems.value.map((row) => row.command)
+    expect(commands).toContain('library.restoreImage')
+    expect(commands).not.toContain('library.removeImage')
+
+    actions.onContextMenuCommand('library.restoreImage')
+    expect(hideSpy).toHaveBeenCalledWith(item.id, false)
+  })
+
+  it('offers Update Image for any file tile and dispatches the picker', () => {
+    const item = seedAudioFile()
+    const library = useLibraryStore()
+    const updateSpy = vi.spyOn(library, 'updateItemCoverArt').mockResolvedValue()
+    const actions = useLibraryItemActions({ startRename: vi.fn() })
+    actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
+    // Available even with no current cover (you can add one).
+    expect(actions.contextMenuItems.value.map((row) => row.command)).toContain('library.updateImage')
+
+    actions.onContextMenuCommand('library.updateImage')
+    expect(updateSpy).toHaveBeenCalledWith(item.id)
+  })
+
+  it('hides Remove Image for a tile with no cover art', () => {
+    const item = seedAudioFile()
+    const actions = useLibraryItemActions({ startRename: vi.fn() })
+    actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
+    const commands = actions.contextMenuItems.value.map((row) => row.command)
+    expect(commands).not.toContain('library.removeImage')
+    expect(commands).not.toContain('library.restoreImage')
+  })
+
+  it('offers Remove Image on a saved clip? no — only image-bearing file tiles', () => {
+    const item = seedLibraryClip()
+    const actions = useLibraryItemActions({ startRename: vi.fn() })
+    actions.openItemContextMenu({ clientX: 0, clientY: 0 } as MouseEvent, item)
+    const commands = actions.contextMenuItems.value.map((row) => row.command)
+    // Saved clips are child rows with no tile image.
+    expect(commands).not.toContain('library.removeImage')
+    expect(commands).not.toContain('library.restoreImage')
+  })
+
   it('returns no rows when no item is targeted', () => {
     const actions = useLibraryItemActions({ startRename: vi.fn() })
     expect(actions.contextMenuItems.value).toEqual([])
