@@ -175,6 +175,13 @@ export interface LibraryItemSetCoverHiddenPayload {
   hidden: boolean
 }
 
+/** Point a library item at a per-item custom cover image (the basename of a file copied
+ *  into the project's covers dir). Empty `coverFile` clears the override. */
+export interface LibraryItemSetCoverOverridePayload {
+  itemId: string
+  coverFile: string
+}
+
 /**
  * Manual tempo override for a source item. Sets a confident BPM + grid phase
  * anchor (seconds), replacing any auto-detected tempo. The backend builds a
@@ -467,6 +474,7 @@ export interface BridgeOutboundMap {
   LIBRARY_REANALYSE: LibraryReanalysePayload
   LIBRARY_ITEM_SET_AUDIO_TYPE: LibraryItemSetAudioTypePayload
   LIBRARY_ITEM_SET_COVER_HIDDEN: LibraryItemSetCoverHiddenPayload
+  LIBRARY_ITEM_SET_COVER_OVERRIDE: LibraryItemSetCoverOverridePayload
   LIBRARY_ITEM_SET_MANUAL_TEMPO: LibraryItemSetManualTempoPayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
@@ -1001,6 +1009,7 @@ export const bridgeOutboundPayloadKinds: {
   LIBRARY_REANALYSE: 'payload',
   LIBRARY_ITEM_SET_AUDIO_TYPE: 'payload',
   LIBRARY_ITEM_SET_COVER_HIDDEN: 'payload',
+  LIBRARY_ITEM_SET_COVER_OVERRIDE: 'payload',
   LIBRARY_ITEM_SET_MANUAL_TEMPO: 'payload',
   TRACK_ADD: 'payload',
   TRACK_REMOVE: 'payload',

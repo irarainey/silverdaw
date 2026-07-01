@@ -40,6 +40,8 @@ export interface AddLibraryItemInput {
   mediaId?: string
   /** User flag hiding this tile's cover art without deleting the shared media image. */
   coverArtHidden?: boolean
+  /** Per-item custom cover: basename of an override image in the project's covers dir. */
+  coverArtOverride?: string
 }
 
 export interface LibraryItem {
@@ -95,6 +97,9 @@ export interface LibraryItem {
   /** User flag hiding this tile's cover art (tile + info dialog) without deleting the
    *  shared media-store image; persisted per-item in the project. */
   coverArtHidden?: boolean
+  /** Per-item custom cover: basename of an override image copied into the project's
+   *  covers dir, shown instead of the shared media-store cover. Persisted per-item. */
+  coverArtOverride?: string
 }
 
 /** Per-file import progress shown while decoding, analysing, or warping. */

@@ -451,6 +451,7 @@ void testProjectStateCoverArtHiddenOverride()
 
     const juce::Identifier libraryId{"LIBRARY"};
     const juce::Identifier coverHidden{"coverArtHidden"};
+    const juce::Identifier coverOverride{"coverArtOverride"};
 
     // Hiding a tile's cover art is a user override — persisted and marks the project dirty.
     require(state.setLibraryItemCoverArtHidden("l1", true), "set hidden should succeed");
@@ -466,6 +467,20 @@ void testProjectStateCoverArtHiddenOverride()
             "clearing should remove the coverArtHidden property");
 
     require(!state.setLibraryItemCoverArtHidden("missing", true), "unknown item returns false");
+
+    // Per-item cover override persists (as a string basename) and marks dirty.
+    state.markClean();
+    require(state.setLibraryItemCoverArtOverride("l1", "override-l1.png"), "set override should succeed");
+    require(state.isDirty(), "setting a cover override should mark the project dirty");
+    requireEqual(state.getTree().getChildWithName(libraryId).getChild(0).getProperty(coverOverride).toString(),
+                 juce::String("override-l1.png"), "coverArtOverride basename should be stored");
+
+    state.markClean();
+    require(state.setLibraryItemCoverArtOverride("l1", ""), "clearing override should succeed");
+    require(state.isDirty(), "clearing a cover override should mark the project dirty");
+    require(!state.getTree().getChildWithName(libraryId).getChild(0).hasProperty(coverOverride),
+            "clearing should remove the coverArtOverride property");
+    require(!state.setLibraryItemCoverArtOverride("missing", "x.png"), "unknown item returns false");
 }
 
 void testProjectStateNonDirtyLibraryRemove()

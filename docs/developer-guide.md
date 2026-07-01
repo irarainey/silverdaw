@@ -769,6 +769,18 @@ the three read apart at a glance: an **original source** shows a sky music-note 
 tint, a **stem** a teal layers icon on a teal tint, and a **saved sample** an indigo bars
 icon on an indigo tint (plus the persistent stem / sample corner badge).
 
+**Setting a custom cover** — the same tiles offer **Update Image…**, which opens a file
+picker; the chosen image is copied into the project's `covers/` dir as a **per-item
+override** named `override-<itemId>.<ext>` and shown on that tile only (the shared
+media-store cover is untouched, so sibling stems/samples keep theirs). It persists as a
+per-item `coverArtOverride` basename on the library `ITEM`
+(`LIBRARY_ITEM_SET_COVER_OVERRIDE { itemId, coverFile }` → `setLibraryItemCoverArtOverride`,
+marks the project dirty). Main-process IPC does the pick+copy (`media:updateCover`) and the
+load-time read-back (`media:getCover`); on load the renderer uses the override in place of
+the shared cover, and picking a new image also clears any `coverArtHidden` so the new art
+is visible. The override file rides along with the rest of the media store when the project
+is first saved or Saved As (the covers dir is copied wholesale).
+
 **Temporary workspace + migrate-on-save** — until a project is first saved it has no
 folder, so generated stems and samples are written to a shared temp workspace
 (`<temp>/Silverdaw/{stems,samples}`; the backend derives this from `juce::File::tempDirectory`
@@ -1879,7 +1891,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
 | Double-click a **library tile** (off the name) | Open the **Clip Editor** for that library item. Use **Show information** from the right-click menu for the read-only info dialog. |
-| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename**, **Reanalyse file** (source, stem, and sample items only), **Auto-classify** / **Treat as Music** / **Treat as Simple** (source, stem, and sample items only), **Remove Image** / **Restore Image** (source, stem, and sample tiles — hides or restores the tile's cover art without deleting the shared image file), **Save as Sample (Music)** / **Save as Sample (Simple)** (clip items only), and **Remove**. Removal is gated only for sources that are still in use by a timeline clip; saved clip removal silently unlinks dependent clips. |
+| Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename**, **Reanalyse file** (source, stem, and sample items only), **Auto-classify** / **Treat as Music** / **Treat as Simple** (source, stem, and sample items only), **Update Image…** (source, stem, and sample tiles — pick a new cover image, copied into the project as a per-item override), **Remove Image** / **Restore Image** (source, stem, and sample tiles — hides or restores the tile's cover art without deleting the shared image file), **Save as Sample (Music)** / **Save as Sample (Simple)** (clip items only), and **Remove**. Removal is gated only for sources that are still in use by a timeline clip; saved clip removal silently unlinks dependent clips. |
 
 ### Clip Editor
 

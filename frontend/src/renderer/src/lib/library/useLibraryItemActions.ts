@@ -127,18 +127,22 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     // samples, and stems) can hide it — a per-item project setting that never deletes
     // the shared media-store image, so it can always be restored from the original.
     if (isFile) {
+      items.push({
+        command: 'library.updateImage',
+        label: 'Update Image\u2026',
+        separatorAbove: true,
+        title: 'Choose a new cover image for this tile. Copied into the project; affects only this tile.'
+      })
       if (item.coverArtHidden) {
         items.push({
           command: 'library.restoreImage',
           label: 'Restore Image',
-          separatorAbove: true,
           title: 'Show this tile\u2019s cover art again from the original source.'
         })
       } else if (hasEffectiveCoverArt(item)) {
         items.push({
           command: 'library.removeImage',
           label: 'Remove Image',
-          separatorAbove: true,
           title: 'Hide this tile\u2019s cover art. The image file is not deleted and can be restored.'
         })
       }
@@ -247,6 +251,11 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     if (command === 'library.restoreImage') {
       closeItemContextMenu()
       library.setItemCoverArtHidden(item.id, false)
+      return
+    }
+    if (command === 'library.updateImage') {
+      closeItemContextMenu()
+      void library.updateItemCoverArt(item.id)
       return
     }
     if (command === 'library.delete') {

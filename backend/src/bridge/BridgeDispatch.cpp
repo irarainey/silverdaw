@@ -226,6 +226,10 @@ bool dispatchLibrary(const DispatchContext& ctx)
     {
         silverdaw::handleLibraryItemSetCoverHidden(payload, projectState);
     }
+    else if (type == "LIBRARY_ITEM_SET_COVER_OVERRIDE")
+    {
+        silverdaw::handleLibraryItemSetCoverOverride(payload, projectState);
+    }
     else if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO")
     {
         silverdaw::handleLibraryItemSetManualTempo(payload, engine, projectState, bridge);

@@ -376,6 +376,11 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("coverArtHidden", true);
         }
+        if (item.hasProperty(kCoverArtOverride))
+        {
+            const auto coverFile = item.getProperty(kCoverArtOverride).toString();
+            if (coverFile.isNotEmpty()) obj->setProperty("coverArtOverride", coverFile);
+        }
         // Saved-clip warp defaults are copied on drop, not live-linked.
         if (item.hasProperty(kWarpEnabled))
         {

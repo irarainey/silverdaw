@@ -21,6 +21,7 @@ import type {
 } from './libraryTypes'
 import { revokeItemCoverArt, libraryItemIsSample, resolveLibraryItemMediaId } from './libraryItemHelpers'
 import { cleanupRemovedItemFiles, removedItemFileInfo, type RemovedItemFile } from '@/lib/library/projectFileCleanup'
+import { updateItemCover } from '@/lib/library/projectMedia'
 
 // Stable facade for existing `@/stores/libraryStore` imports.
 export type {
@@ -177,7 +178,8 @@ export const useLibraryStore = defineStore('library', {
         cents: kind === 'clip' ? audio.cents : undefined,
         unresolved: audio.unresolved === true ? true : undefined,
         mediaId: audio.mediaId,
-        coverArtHidden: audio.coverArtHidden === true ? true : undefined
+        coverArtHidden: audio.coverArtHidden === true ? true : undefined,
+        coverArtOverride: audio.coverArtOverride
       })
       log.info(
         'library',
@@ -268,6 +270,29 @@ export const useLibraryStore = defineStore('library', {
       item.coverArtHidden = next
       sendBridge('LIBRARY_ITEM_SET_COVER_HIDDEN', { itemId, hidden })
       log.info('library', `setItemCoverArtHidden id=${itemId} hidden=${hidden}`)
+    },
+
+    /** Prompt for an image file and set it as this item's per-item cover override,
+     *  copied into the project's covers dir. Only the clicked tile changes (the shared
+     *  media-store cover is untouched). Clears any "remove image" hide so the new cover
+     *  shows. No-op if the picker is cancelled. */
+    async updateItemCoverArt(itemId: string): Promise<void> {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      const picked = await updateItemCover(itemId, item.coverArtOverride)
+      if (!picked) return
+      // Swap the displayed cover Blob to the new image.
+      revokeItemCoverArt(item)
+      item.coverArtUrl = URL.createObjectURL(new Blob([picked.data], { type: picked.mimeType }))
+      // Persist the override reference on the item.
+      item.coverArtOverride = picked.coverFile
+      sendBridge('LIBRARY_ITEM_SET_COVER_OVERRIDE', { itemId, coverFile: picked.coverFile })
+      // A freshly-chosen image should be visible even if the tile was hidden before.
+      if (item.coverArtHidden) {
+        item.coverArtHidden = undefined
+        sendBridge('LIBRARY_ITEM_SET_COVER_HIDDEN', { itemId, hidden: false })
+      }
+      log.info('library', `updateItemCoverArt id=${itemId} file=${picked.coverFile}`)
     },
 
     /**

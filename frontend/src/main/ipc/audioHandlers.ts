@@ -62,6 +62,26 @@ function coverExtForMime(mime: string): string {
   return COVER_EXT_BY_MIME[mime.toLowerCase()] ?? 'img'
 }
 
+// Reverse of `coverExtForMime`: infer a cover image's MIME type from its file extension,
+// for a user-picked override image read back off disk.
+const COVER_MIME_BY_EXT: Readonly<Record<string, string>> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  bmp: 'image/bmp'
+}
+function mimeForImageExt(ext: string): string {
+  return COVER_MIME_BY_EXT[ext.replace(/^\./, '').toLowerCase()] ?? 'image/jpeg'
+}
+
+// A per-item override cover is a plain basename inside the covers dir. Reject anything
+// that could escape it (path separators / traversal).
+function isSafeCoverFile(name: unknown): name is string {
+  return typeof name === 'string' && name.length > 0 && /^[A-Za-z0-9._-]+$/.test(name)
+}
+
 // The app-owned stems base dir (JUCE userApplicationDataDirectory == appData on
 // Windows). Sidecar reads/writes are confined to folders beneath it.
 function stemsBaseDir(): string {
@@ -503,6 +523,68 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       }
     }
     return true
+  })
+
+  // Pick a new cover image from disk and copy it into the project's covers dir as a
+  // per-item override, named `override-<itemId>.<ext>`. Never touches the shared
+  // media-store cover, so only the one clicked tile changes. Returns the stored
+  // basename + bytes so the renderer can refresh the tile immediately. A previous
+  // override file (possibly a different extension) is removed. `{ cancelled: true }`
+  // when the user dismisses the picker.
+  ipcMain.handle(IPC.media.updateCover, async (_evt, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return { cancelled: true }
+    const p = payload as { itemId?: unknown; previousCoverFile?: unknown }
+    if (!isSafeCoverFile(p.itemId)) {
+      logMain('WARN ', 'media:updateCover', 'rejected unsafe itemId:', p.itemId)
+      return { cancelled: true }
+    }
+    const dirs = getProjectMediaDirs()
+    if (!dirs) {
+      logMain('WARN ', 'media:updateCover', 'no project media dirs registered')
+      return { cancelled: true }
+    }
+    const win = ctx.getMainWindow()
+    if (!win) return { cancelled: true }
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Choose Cover Image',
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return { cancelled: true }
+    const picked = result.filePaths[0]
+    try {
+      const ext = (picked.match(/\.([A-Za-z0-9]+)$/)?.[1] ?? 'jpg').toLowerCase()
+      const mimeType = mimeForImageExt(ext)
+      const buf = await readFile(picked)
+      await mkdir(dirs.coversDir, { recursive: true })
+      const coverFile = `override-${p.itemId}.${coverExtForMime(mimeType)}`
+      await writeFile(join(dirs.coversDir, coverFile), buf)
+      // Remove a prior override with a different extension so no stray file is left.
+      if (isSafeCoverFile(p.previousCoverFile) && p.previousCoverFile !== coverFile) {
+        await unlink(join(dirs.coversDir, p.previousCoverFile)).catch(() => {})
+      }
+      const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+      return { cancelled: false, coverFile, data, mimeType }
+    } catch (err) {
+      logMain('ERROR', 'media:updateCover', `failed for ${picked}:`, err)
+      return { cancelled: true }
+    }
+  })
+
+  // Read a per-item override cover back off disk (on project load) as bytes + MIME.
+  // Returns null when the file is missing or the name is unsafe.
+  ipcMain.handle(IPC.media.getCover, async (_evt, coverFile: unknown) => {
+    if (!isSafeCoverFile(coverFile)) return null
+    const dirs = getProjectMediaDirs()
+    if (!dirs) return null
+    try {
+      const buf = await readFile(join(dirs.coversDir, coverFile))
+      const data = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+      const ext = coverFile.match(/\.([A-Za-z0-9]+)$/)?.[1] ?? 'jpg'
+      return { data, mimeType: mimeForImageExt(ext) }
+    } catch {
+      return null
+    }
   })
 
   // Transcode renderer-decoded PCM for formats the backend cannot decode natively.

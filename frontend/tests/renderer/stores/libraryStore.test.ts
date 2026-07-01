@@ -692,6 +692,60 @@ describe('libraryStore', () => {
     })
   })
 
+  it('updateItemCoverArt sets a per-item override, swaps the cover, and clears hide', async () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\track.wav',
+      fileName: 'track.wav',
+      durationMs: 5_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    // The tile was previously hidden; a freshly-picked image should reveal it.
+    library.getItem(sourceId!)!.coverArtHidden = true
+
+    const coverFile = `override-${sourceId}.png`
+    globalThis.window = {
+      silverdaw: {
+        updateItemCover: vi
+          .fn()
+          .mockResolvedValue({ cancelled: false, coverFile, data: new ArrayBuffer(4), mimeType: 'image/png' })
+      }
+    } as unknown as Window & typeof globalThis
+
+    sendMock.mockClear()
+    await library.updateItemCoverArt(sourceId!)
+
+    const item = library.getItem(sourceId!)
+    expect(item?.coverArtOverride).toBe(coverFile)
+    expect(item?.coverArtUrl).toBe('blob:cover')
+    expect(item?.coverArtHidden).toBeUndefined()
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_OVERRIDE', { itemId: sourceId, coverFile })
+    // Clearing the hide is persisted too.
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_HIDDEN', { itemId: sourceId, hidden: false })
+  })
+
+  it('updateItemCoverArt makes no changes when the picker is cancelled', async () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\track2.wav',
+      fileName: 'track2.wav',
+      durationMs: 5_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    globalThis.window = {
+      silverdaw: { updateItemCover: vi.fn().mockResolvedValue({ cancelled: true }) }
+    } as unknown as Window & typeof globalThis
+
+    sendMock.mockClear()
+    await library.updateItemCoverArt(sourceId!)
+    expect(library.getItem(sourceId!)?.coverArtOverride).toBeUndefined()
+    expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_OVERRIDE', expect.anything())
+  })
+
   it('normalises metadata and display names', () => {
     const library = useLibraryStore()
     const itemId = library.addItem({

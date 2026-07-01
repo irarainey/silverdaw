@@ -219,6 +219,25 @@ bool ProjectState::setLibraryItemCoverArtHidden(const juce::String& itemId, bool
     return false;
 }
 
+bool ProjectState::setLibraryItemCoverArtOverride(const juce::String& itemId, const juce::String& coverFile)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            if (coverFile.isNotEmpty())
+                item.setProperty(kCoverArtOverride, coverFile, nullptr);
+            else
+                item.removeProperty(kCoverArtOverride, nullptr);
+            return true;
+        }
+    }
+    return false;
+}
+
 double ProjectState::getLibraryItemDurationMs(const juce::String& itemId) const
 {
     const auto library = root.getChildWithName(kLibrary);

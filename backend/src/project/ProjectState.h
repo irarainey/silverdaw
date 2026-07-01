@@ -463,6 +463,11 @@ class ProjectState : public juce::ValueTree::Listener
     // store image (a per-item display flag persisted in the project; marks dirty).
     bool setLibraryItemCoverArtHidden(const juce::String& itemId, bool hidden);
 
+    // Per-item custom cover: the basename of an override image copied into the project's
+    // covers dir, shown instead of the shared media-store cover. Empty clears it. Persisted
+    // in the project; marks dirty.
+    bool setLibraryItemCoverArtOverride(const juce::String& itemId, const juce::String& coverFile);
+
     bool hasLibraryItemForPath(const juce::String& filePath) const;
 
     // Duration in ms for a library item by id, or 0 when unknown. Used to build
@@ -622,6 +627,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kClipName;
     static const juce::Identifier kCollapsed;
     static const juce::Identifier kCoverArtHidden;
+    static const juce::Identifier kCoverArtOverride;
     static const juce::Identifier kLibraryItemId;
 
     // Reused on clip library items as copy-on-drop defaults.

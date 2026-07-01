@@ -162,6 +162,14 @@ declare global {
       saveProjectMedia(mediaId: string, sourceFilePath: string): Promise<boolean>
       getProjectMedia(mediaId: string): Promise<AudioMetadata | null>
       cleanupProjectFiles(payload: { mediaIds: string[] }): Promise<boolean>
+      updateItemCover(payload: {
+        itemId: string
+        previousCoverFile?: string
+      }): Promise<
+        | { cancelled: true }
+        | { cancelled: false; coverFile: string; data: ArrayBuffer; mimeType: string }
+      >
+      getItemCover(coverFile: string): Promise<{ data: ArrayBuffer; mimeType: string } | null>
     }
   }
 }

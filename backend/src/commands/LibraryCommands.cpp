@@ -370,6 +370,20 @@ void handleLibraryItemSetCoverHidden(const juce::var& payload, ProjectState& pro
     projectState.setLibraryItemCoverArtHidden(itemId, hidden);
 }
 
+void handleLibraryItemSetCoverOverride(const juce::var& payload, ProjectState& projectState)
+{
+    const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
+    // Empty/absent clears the override (revert to the shared media-store cover).
+    const juce::String coverFile = readOptionalString(payload, "coverFile").value_or(juce::String{});
+    silverdaw::log::info("bridge", "recv LIBRARY_ITEM_SET_COVER_OVERRIDE itemId=" + itemId + " coverFile='" + coverFile + "'");
+    if (itemId.isEmpty())
+    {
+        silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_COVER_OVERRIDE missing itemId");
+        return;
+    }
+    projectState.setLibraryItemCoverArtOverride(itemId, coverFile);
+}
+
 void handleLibraryItemSetManualTempo(const juce::var& payload, AudioEngine& engine,
                                      ProjectState& projectState, BridgeServer& bridge)
 {

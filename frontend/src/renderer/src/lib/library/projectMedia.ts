@@ -54,3 +54,33 @@ export function withoutAudioGeometry(meta: AudioMetadata): AudioMetadata {
   const { durationMs: _d, sampleRate: _s, channelCount: _c, ...rest } = meta
   return rest
 }
+
+/** Pick a new cover image and copy it into the covers dir as a per-item override.
+ *  Returns the stored basename + bytes on success, or null when cancelled / failed. */
+export async function updateItemCover(
+  itemId: string,
+  previousCoverFile?: string
+): Promise<{ coverFile: string; data: ArrayBuffer; mimeType: string } | null> {
+  try {
+    const result = await window.silverdaw.updateItemCover({ itemId, previousCoverFile })
+    if (result.cancelled) return null
+    log.info('media', `updateItemCover id=${itemId} file=${result.coverFile}`)
+    return { coverFile: result.coverFile, data: result.data, mimeType: result.mimeType }
+  } catch (err) {
+    log.warn('media', `updateItemCover failed for ${itemId}: ${String(err)}`)
+    return null
+  }
+}
+
+/** Read a per-item override cover back by its basename, or null when absent. */
+export async function getItemCover(
+  coverFile: string | undefined
+): Promise<{ data: ArrayBuffer; mimeType: string } | null> {
+  if (!coverFile) return null
+  try {
+    return await window.silverdaw.getItemCover(coverFile)
+  } catch (err) {
+    log.warn('media', `getItemCover failed for ${coverFile}: ${String(err)}`)
+    return null
+  }
+}
