@@ -10,11 +10,10 @@ import type {
   AudioOutputPrefs,
   AutosavePrefs,
   DebugPrefs,
-  KeepAwakeMode,
   PathPrefs,
   ToastPrefs
 } from '../preferences'
-import { clampAutosaveSeconds, isKeepAwakeMode, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseUiPrefs } from '../preferences'
+import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -167,26 +166,26 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     prefs.schedulePrefsSave()
   })
 
-  // ─── Per-device output keep-awake overrides (auto / on / off) ───────────
+  // ─── Per-device output keep-awake toggles (on / off) ────────────────────
   ipcMain.handle(
     IPC.prefs.getKeepAwakeByDevice,
-    (): Record<string, KeepAwakeMode> => ({ ...prefs.get().keepAwakeByDevice })
+    (): Record<string, boolean> => ({ ...prefs.get().keepAwakeByDevice })
   )
 
-  ipcMain.on(IPC.prefs.setKeepAwakeForDevice, (_evt, deviceName: unknown, mode: unknown) => {
+  ipcMain.on(IPC.prefs.setKeepAwakeForDevice, (_evt, deviceName: unknown, enabled: unknown) => {
     if (typeof deviceName !== 'string') return
     const name = deviceName.trim()
     if (name.length === 0) return
-    if (!isKeepAwakeMode(mode)) return
+    if (typeof enabled !== 'boolean') return
     const store = prefs.get()
     const next = { ...store.keepAwakeByDevice }
-    // `auto` is the implicit default — clear the override rather than store it.
-    if (mode === 'auto') {
+    // Off is the implicit default — clear the entry rather than store `false`.
+    if (enabled) {
+      if (next[name] === true) return
+      next[name] = true
+    } else {
       if (!(name in next)) return
       delete next[name]
-    } else {
-      if (next[name] === mode) return
-      next[name] = mode
     }
     store.keepAwakeByDevice = next
     prefs.schedulePrefsSave()

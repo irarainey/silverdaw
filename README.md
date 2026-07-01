@@ -99,7 +99,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   back) at the end of a clip from the right-click menu or the Clip Editor
   toolbar (with live preview) — non-destructive, one or the other per clip, applied
   to every linked copy, working on warped clips too and carried through to
-  export. Tune how long they take and how they feel in **Preferences ▸ Effects**.
+  export. Reverse, Brake, and Backspin are mutually exclusive — set one and the
+  others stay visible but disabled until you turn it off. Tune how long they take
+  and how they feel in **Preferences ▸ Effects**.
 - **Single or stereo waveforms.** Choose whether clips show one combined
   waveform or stacked left / right channels, in Preferences — applied across the
   timeline and the Clip Editor.

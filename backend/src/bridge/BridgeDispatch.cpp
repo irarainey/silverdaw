@@ -630,8 +630,8 @@ bool dispatchAudioDevice(const DispatchContext& ctx)
     }
     else if (type == "AUDIO_KEEP_AWAKE_SET")
     {
-        silverdaw::log::info("bridge", "recv AUDIO_KEEP_AWAKE_SET mode=" +
-                                           payload.getProperty("mode", "").toString());
+        silverdaw::log::info("bridge", "recv AUDIO_KEEP_AWAKE_SET enabled=" +
+                                           payload.getProperty("enabled", false).toString());
         silverdaw::handleAudioKeepAwakeSet(payload, engine);
     }
     else if (type == "BRAKE_SETTINGS_SET")

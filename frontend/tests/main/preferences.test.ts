@@ -170,21 +170,21 @@ describe('sanitiseStemModelDir', () => {
 })
 
 describe('sanitiseKeepAwakeByDevice', () => {
-  it('keeps only explicit on / off overrides keyed by a non-empty device name', () => {
+  it('keeps only devices explicitly enabled (value === true), keyed by a non-empty name', () => {
     expect(
-      sanitiseKeepAwakeByDevice({ 'USB DAC': 'on', 'Speakers (Realtek)': 'off' })
-    ).toEqual({ 'USB DAC': 'on', 'Speakers (Realtek)': 'off' })
+      sanitiseKeepAwakeByDevice({ 'USB DAC': true, 'Speakers (Realtek)': false })
+    ).toEqual({ 'USB DAC': true })
   })
 
-  it('drops auto entries (auto is the implicit default) and trims device names', () => {
-    expect(sanitiseKeepAwakeByDevice({ '  USB DAC  ': 'on', Onboard: 'auto' })).toEqual({
-      'USB DAC': 'on'
+  it('drops false entries (off is the default) and trims device names', () => {
+    expect(sanitiseKeepAwakeByDevice({ '  USB DAC  ': true, Onboard: false })).toEqual({
+      'USB DAC': true
     })
   })
 
   it('drops empty names and wrong-typed values, and tolerates non-object input', () => {
-    expect(sanitiseKeepAwakeByDevice({ '': 'on', Good: 'loud', Fine: 'off' })).toEqual({
-      Fine: 'off'
+    expect(sanitiseKeepAwakeByDevice({ '': true, Good: 'on', Fine: true })).toEqual({
+      Fine: true
     })
     expect(sanitiseKeepAwakeByDevice(undefined)).toEqual({})
     expect(sanitiseKeepAwakeByDevice(42)).toEqual({})

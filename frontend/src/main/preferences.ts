@@ -102,16 +102,11 @@ export interface AudioOutputPrefs {
   deviceName: string | null
 }
 
-/**
- * User override for the output keep-awake policy, stored **per output device** (keyed by the
- * device's reported name). `auto` follows the backend's USB-bus classification; `on` forces the
- * keep-alive dither + first-play wake burst (for a USB DAC that classification misses); `off`
- * disables it (for a device that does not need it, or where the wake burst becomes audible).
- * A device with no stored override defaults to `auto`, so automatic detection stays the default
- * unless a device is explicitly pinned — and the pin is remembered even while the device is
- * unplugged, so it re-applies on reconnect.
- */
-export type KeepAwakeMode = 'auto' | 'on' | 'off'
+// Per-device keep-awake is a simple on/off toggle stored per output device (keyed by the
+// device's reported name). Default off: a device is kept awake only when explicitly enabled —
+// and the toggle is remembered even while the device is unplugged, so it re-applies on
+// reconnect. When on, the backend runs the keep-alive dither + first-play wake so a sleep-prone
+// USB output does not clip the first beat.
 
 // Turntable-brake effect defaults (a global app preference). Stored as named
 // presets; the renderer maps them to the numeric platter-stop time + rate-curve
@@ -140,8 +135,8 @@ export interface Preferences {
   paths: PathPrefs
   autosave: AutosavePrefs
   audioOutput: AudioOutputPrefs
-  /** Per-device keep-awake overrides, keyed by device name; absent = `auto`. */
-  keepAwakeByDevice: Record<string, KeepAwakeMode>
+  /** Per-device keep-awake toggles, keyed by device name; absent / false = off. */
+  keepAwakeByDevice: Record<string, boolean>
   brake: BrakePrefs
   backspin: BackspinPrefs
   stems: StemPrefs
@@ -317,23 +312,16 @@ export function sanitiseBackspinPrefs(partial: unknown, base: BackspinPrefs): Ba
   }
 }
 
-const KEEP_AWAKE_MODES: ReadonlySet<KeepAwakeMode> = new Set(['auto', 'on', 'off'])
-
-export function isKeepAwakeMode(value: unknown): value is KeepAwakeMode {
-  return typeof value === 'string' && KEEP_AWAKE_MODES.has(value as KeepAwakeMode)
-}
-
-// Single source of truth for the per-device keep-awake map. Only non-empty device
-// names mapping to an explicit `on` / `off` override are kept — `auto` is the
-// implicit default, so `auto` entries are dropped to keep the map minimal and a
-// corrupt prefs file can never inject a wrong-typed value.
-export function sanitiseKeepAwakeByDevice(input: unknown): Record<string, KeepAwakeMode> {
-  const out: Record<string, KeepAwakeMode> = {}
+// Single source of truth for the per-device keep-awake map. Only non-empty device names
+// that are explicitly enabled (value === true) are kept — off is the default, so `false` /
+// absent entries are dropped and a corrupt prefs file can never inject a wrong-typed value.
+export function sanitiseKeepAwakeByDevice(input: unknown): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
   if (!input || typeof input !== 'object') return out
-  for (const [name, mode] of Object.entries(input as Record<string, unknown>)) {
+  for (const [name, enabled] of Object.entries(input as Record<string, unknown>)) {
     const trimmed = name.trim()
     if (trimmed.length === 0) continue
-    if (mode === 'on' || mode === 'off') out[trimmed] = mode
+    if (enabled === true) out[trimmed] = true
   }
   return out
 }

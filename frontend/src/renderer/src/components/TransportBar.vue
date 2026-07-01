@@ -17,9 +17,7 @@ const {
   audioLatencyCaption,
   quickSwitchDevices,
   toggleAudioMenu,
-  pickDevice,
   pickUniqueDevice,
-  isCurrentDevice,
   isCurrentUniqueDevice,
   positionDisplay,
   barPosition,
@@ -62,9 +60,7 @@ const {
       :master-volume="project.masterVolume"
       :set-audio-menu-root="setAudioMenuRoot"
       :toggle-audio-menu="toggleAudioMenu"
-      :pick-device="pickDevice"
       :pick-unique-device="pickUniqueDevice"
-      :is-current-device="isCurrentDevice"
       :is-current-unique-device="isCurrentUniqueDevice"
       :on-master-volume-input="onMasterVolumeInput"
     />

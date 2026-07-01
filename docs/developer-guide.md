@@ -314,10 +314,11 @@ Silverdaw currently supports the core arrangement workflow:
   referencing that item picks up the new file automatically. The Relink dialog
   groups missing references by file path so the same broken path used by ten
   clips is fixed with a single Locate File click.
-- Choose any installed audio output device or stay on the system default;
-  hot-swap from the transport bar without leaving the timeline. The selection
-  is persisted, removable devices (USB, Bluetooth) fall back to default when
-  unplugged, and the saved choice is honoured again as soon as the device
+- Choose any installed audio output device — selection is always an explicit
+  named device (there is no "System default" option); hot-swap from the
+  transport bar without leaving the timeline. The selection
+  is persisted, removable devices (USB, Bluetooth) fall back to the next
+  available device when unplugged, and the saved choice is honoured again as soon as the device
   reappears. Bluetooth output is auto-detected and the visible playhead
   compensates for radio-and-headset latency so it stays in sync with what you
   hear (~250 ms for A2DP, ~400 ms for HFP).
@@ -893,42 +894,30 @@ in true silence or a rapid replay onto a warm amp produces a tick.
 
 The wake burst is delivered to programme via a **per-play, audio-thread pre-roll** in
 [`MasterClockSource`](../backend/src/engine/MasterClockSource.h): on a stopped→playing
-transition onto a sleep-prone endpoint, the master emits silence (which the metering
+transition while keep-awake is enabled, the master emits silence (which the metering
 stage fills with the re-armed wake burst) for `kWakePrerollMs` **without advancing the
 transport**, then opens to programme. The amp is roused before the downbeat, the opening
 beat is never swallowed, the transport position (and therefore the downbeat) is preserved,
 and — crucially — it runs entirely on the audio thread, so the message thread never blocks
-(an earlier 500 ms `Thread::sleep` pre-roll froze the UI). Non-sleep-prone endpoints skip
-the pre-roll and play from the first sample.
+(an earlier 500 ms `Thread::sleep` pre-roll froze the UI). With keep-awake off, playback
+skips the pre-roll and plays from the first sample.
 
-The keep-alive — both the dither **and** the wake burst / pre-roll — is gated by a
-**device-type policy**:
-[`OutputDeviceClassifier`](../backend/src/engine/OutputDeviceClassifier.cpp) walks
-the Windows device tree (MMDevice COM + Config Manager) from the active render
-endpoint up to its physical bus enumerator (`USB` / `HDAUDIO` / `PCI` / `BTH`…) and
-`AudioEngine::updateKeepAwakePolicy` enables keep-awake only for **positively
-classified USB** endpoints (the known offenders). An unclassifiable endpoint
-(`OutputBus::unknown`) — like onboard, Bluetooth, and virtual devices — gets **no
-keep-alive at all** (no dither and no wake burst, so it plays from the first
-sample); the keep-alive's broadband wake burst is plainly audible on a never-muted
-onboard card, so it is reserved for the devices that actually sleep.
-A user preference resolves the final decision through pure
-`resolveKeepAwake(mode, bus)`: **Automatic** (the default) follows the USB-only
-classification, **Always on** forces keep-awake for the output (for a USB
-DAC the classifier misses), and **Off** disables it. The override is stored
-**per output device** (keyed by the device's reported name) in
-`preferences.json` as `keepAwakeByDevice`, so a device with no entry defaults to
-**Automatic** and a pinned device is remembered even while unplugged — it re-applies
-on reconnect. The renderer resolves the effective mode for the physically-open
-device (`audioDeviceStore.currentDeviceKeepAwakeMode`) and pushes it to the backend
-via `AUDIO_KEEP_AWAKE_SET` on every connect **and whenever the open device changes**
-(so unplugging a pinned-On USB DAC and falling back to the onboard card re-sends its
-own `auto`, rather than leaving the onboard card forced on). The engine defaults to
-**Automatic** each launch and stores a single mode; the policy
-is re-evaluated on init, device selection, and device-list changes; the keep-alive only
-ever runs for the **currently selected** output, and only if it is sleep-prone. The
-gate simply stops writing — returning the output to **truly silent** digital zero —
-once the device is released or classified non-sleep-prone.
+The keep-alive — both the dither **and** the wake burst / pre-roll — is a simple
+**explicit per-device toggle**, off by default. There is no device-type
+auto-detection: a device is kept awake only when the user turns it on for that
+device (typically a USB DAC that sleeps and clips the first beat). The toggle is
+stored **per output device** (keyed by the device's reported name) in
+`preferences.json` as `keepAwakeByDevice` (a `Record<string, boolean>` holding only
+the enabled devices), so it is remembered even while the device is unplugged — it
+re-applies on reconnect. The renderer resolves the state for the physically-open
+device (`audioDeviceStore.currentDeviceKeepAwakeEnabled`) and pushes it to the
+backend via `AUDIO_KEEP_AWAKE_SET { enabled }` on every connect **and whenever the
+open device changes** (so unplugging a kept-awake USB DAC and falling back to the
+onboard card re-sends `enabled: false`, rather than leaving the onboard card running
+the tone). `AudioEngine::setKeepAwakeEnabled` forwards the flag straight to
+`OutputKeepAlive` (default off); the keep-alive only ever runs for the currently-open
+output when it is enabled. The gate simply stops writing — returning the output to
+**truly silent** digital zero — once the device is released or keep-awake is off.
 `MasterClockSource` gates the transport and clears the buffer when not playing, runs
 the wake pre-roll at play-start, and otherwise delivers the source verbatim; the
 keep-alive injection lives downstream in the metering stage. A play-start click can come from `juce::AudioTransportSource`:
@@ -1490,7 +1479,8 @@ a **WARP** pill in the editor header; the playhead is shown at the start of
 the view immediately, and Play becomes available once the backend preview
 voice is ready. Auditioning runs through an independent **backend preview
 voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
-`PREVIEW_SEEK` / `PREVIEW_SET_WARP` / `PREVIEW_SET_REVERSED` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` /
+`PREVIEW_SEEK` / `PREVIEW_SET_WARP` / `PREVIEW_SET_REVERSED` / `PREVIEW_SET_BRAKE` /
+`PREVIEW_SET_BACKSPIN` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` /
 `PREVIEW_POSITION` / `PREVIEW_ENDED`) so the main transport is unaffected. A
 monotonic `generation` counter on the preview voice means stale events for a
 preview the user has already closed are silently dropped. While playing the
@@ -1499,14 +1489,16 @@ timeline uses.
 
 The dialog is **transactional**. Whenever it opens on an existing clip
 (saved clip library item, linked timeline clip, or unlinked timeline clip)
-every edit — trim window, narrowed view, warp settings, pitch settings — is held
+every edit — trim window, narrowed view, warp settings, pitch settings, reverse,
+and the brake / backspin tail toggles — is held
 as a local draft that affects only the preview voice. The footer shows
 **Cancel** + **Save**. **Save** commits the whole draft atomically; **Cancel**
 (and `Esc`) discard it without touching the library item or the timeline.
 Save scope depends on the target:
 
 - Saved clip library item or linked timeline clip → updates the library item
-  and propagates the new window + warp + pitch to every linked timeline
+  and propagates the new window + warp + pitch (and the reverse / brake /
+  backspin flags, via `library.updateLibraryClip*`) to every linked timeline
   instance in lockstep, refused with a toast if any sibling would collide
   with a neighbour on its track.
 - Unlinked timeline clip → updates only that one clip after the same
@@ -1576,12 +1568,13 @@ sidebar:
 - **Project** — default Save / Open / Import directories, background autosave
   configuration, and **clean up project files on remove**.
 - **Audio** — output device + driver selection (see below, with a per-device
-  **Keep awake** dropdown — Auto / Always on / Off — on each device row), and the
+  **Keep awake** checkbox — off by default — on each device row), and the
   **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
   `PROJECT.targetSampleRate` on new projects.
 - **Effects** — global defaults for the per-clip DJ turntable effects: the
-  **Brake** Duration (short / medium / long) and Curve (linear / curved / steep),
-  and the **Backspin** Duration and Intensity (gentle / medium / wild = 4× / 6× /
+  **Brake** Duration (short ~0.4 s / medium ~0.6 s / long ~0.9 s) and Curve
+  (linear / curved / steep), and the **Backspin** Duration (same ~0.4 / ~0.6 /
+  ~0.9 s presets) and Intensity (gentle / medium / wild = 4× / 6× /
   8× reverse speed). On save these are pushed to the engine (`BRAKE_SETTINGS_SET`
   / `BACKSPIN_SETTINGS_SET`) and re-applied live to every clip already carrying
   that effect; they are also re-sent on each backend reconnect.
@@ -1615,8 +1608,15 @@ Persisted fields:
   Defaults to `<home>/Music/`. After every successful open it remembers the folder you
   browsed to **for the rest of the session**; on next launch it resets to this default.
 - **Autosave** — enable / disable plus tick interval (clamped 5..600 s, default 30 s).
-- **Audio output device** — persisted `{ typeName, deviceName }` pair, both `null` for
-  "System default". The backend receives the pair as `SILVERDAW_OUTPUT_DEVICE_TYPE` /
+- **Audio output device** — persisted `{ typeName, deviceName }` pair. The
+  Preferences ▸ Audio list shows **real named devices only** (pseudo-endpoints like
+  the DirectSound "Primary Sound Driver" and "Microsoft Sound Mapper" are filtered
+  out, and there is no "System default" row — each device has its own keep-awake
+  toggle, which an opaque default couldn't). A `null` / `null` pair is the internal
+  "no pin" state: the backend opens the OS default and, if the pinned device is
+  unavailable (e.g. a USB DAC is unplugged), **falls back to the next available
+  device** while leaving the preference intact so re-plugging restores it. The
+  backend receives the pair as `SILVERDAW_OUTPUT_DEVICE_TYPE` /
   `SILVERDAW_OUTPUT_DEVICE_NAME` env vars at spawn time. May be overridden per
   project (see [Project properties](#project-properties)).
 - **Default project sample rate** — `ui.defaultProjectSampleRate`, `44100` or
@@ -1657,10 +1657,15 @@ the dialog surfaces that explicitly.
 ### Audio output device
 
 Pick where Silverdaw sends audio in **Preferences → Audio**, or switch live from the
-chip on the left of the transport bar without leaving the timeline. Devices are
-**deduplicated across backends** — the same physical Speakers exposed by both Windows
-Audio and DirectSound shows up as a single row in both surfaces, with the most-friendly
-backend auto-picked (Windows Audio first, falling back to DirectSound, then the rest).
+chip on the left of the transport bar without leaving the timeline. Both surfaces list
+**real named devices only** — pseudo-endpoints (the DirectSound "Primary Sound Driver",
+"Microsoft Sound Mapper") are filtered out, and there is **no "System default" option**:
+device selection is always explicit (an opaque default can't carry a per-device
+keep-awake toggle). Devices are **deduplicated across backends** — the same physical
+Speakers exposed by both Windows Audio and DirectSound shows up as a single row in both
+surfaces, with the most-friendly backend auto-picked (Windows Audio first, falling back
+to DirectSound, then the rest). The transport chip and the Preferences list share one
+composable, `lib/audio/audioOutputPicker.ts`.
 
 Advanced users can override the backend via the collapsed **Audio driver ▸** disclosure
 in Preferences (hidden until you've picked a non-default device). Each backend carries a
@@ -1671,11 +1676,11 @@ a vendor-supplied ASIO driver."* — so no outside docs are needed.
 Robustness:
 
 - **Removable devices** (USB / Bluetooth headphones) — when the saved device isn't
-  present at launch the backend silently falls back to system default and the renderer
-  pops a one-shot toast. The persisted preference is kept so re-plugging works next
-  launch.
+  present at launch the backend silently falls back to the next available device (the
+  OS default) and the renderer pops a one-shot toast. The persisted preference is kept
+  so re-plugging works next launch.
 - **Live unplug** — JUCE's `audioDeviceListChanged` callback fires; the backend reopens
-  the system default automatically so audio keeps flowing. A fresh `AUDIO_DEVICES_LIST`
+  the next available device automatically so audio keeps flowing. A fresh `AUDIO_DEVICES_LIST`
   goes out to the renderer in the same round-trip.
 - **Fast startup** — the first full device-type scan (the slow step on
   machines with ASIO drivers — typically 100–400 ms) is deferred via
@@ -1701,7 +1706,7 @@ Latency compensation:
   where you click. There's a one-off ~latency-ms snap when you press Play / Pause,
   absorbed by the renderer's existing position smoothing.
 - The transport-bar audio chip surfaces the effective latency (`~250 ms · BT`) when it's
-  non-trivial. The Preferences Audio tab shows the same line with a Bluetooth caveat.
+  non-trivial (>30 ms), as a caption under the device name.
 
 ## Project properties
 
@@ -1717,9 +1722,9 @@ fields stored directly on the `PROJECT` ValueTree node:
   "System default" entry that clears the override. If the saved device isn't
   present at project-load, an `AudioDeviceUnavailableDialog` informs the user
   and the engine stays on the system default; the project preference is left
-  intact so re-plugging or re-saving restores it. Same ordering and labels as
-  the Preferences ▸ Audio dropdowns (single composable in
-  `lib/audio/audioOutputPicker.ts`).
+  intact so re-plugging or re-saving restores it. Shares the device list (real
+  named devices only, pseudo-endpoints filtered) with the Preferences ▸ Audio
+  picker via the single composable in `lib/audio/audioOutputPicker.ts`.
 - **Sample rate** — 44.1 kHz / 48 kHz dropdown. Changing the value pushes
   `PROJECT_SET_TARGET_SAMPLE_RATE` and the transport-bar **RATE** column
   updates immediately. See [Project sample rate](#project-sample-rate) for the

@@ -21,10 +21,10 @@ describe('useAudioQuickSwitch', () => {
     setActivePinia(createPinia())
   })
 
-  it('dedupes the same physical device exposed by multiple backends', () => {
+  it('dedupes real devices across backends and filters pseudo-devices', () => {
     seedTypes([
       { name: 'Windows Audio', devices: ['Speakers'] },
-      { name: 'DirectSound', devices: ['Speakers'] },
+      { name: 'DirectSound', devices: ['Speakers', 'Primary Sound Driver'] },
       { name: 'ASIO', devices: ['Studio'] }
     ])
     const { quickSwitchDevices } = useAudioQuickSwitch()
@@ -41,15 +41,15 @@ describe('useAudioQuickSwitch', () => {
     expect(audioMenuOpen.value).toBe(true)
   })
 
-  it('pickDevice routes through the store, pins to the project, and closes', () => {
+  it('pickUniqueDevice routes through the store, pins to the project, and closes', () => {
     const audioDevices = useAudioDeviceStore()
     const project = useProjectStore()
     const select = vi.spyOn(audioDevices, 'selectDevice').mockImplementation(() => {})
     const pin = vi.spyOn(project, 'setProjectAudioOutput').mockImplementation(() => {})
-    const { audioMenuOpen, toggleAudioMenu, pickDevice } = useAudioQuickSwitch()
+    const { audioMenuOpen, toggleAudioMenu, pickUniqueDevice } = useAudioQuickSwitch()
     toggleAudioMenu()
 
-    pickDevice('Windows Audio', 'Speakers')
+    pickUniqueDevice({ name: 'Speakers', backends: ['Windows Audio'] })
 
     expect(select).toHaveBeenCalledWith('Windows Audio', 'Speakers')
     expect(pin).toHaveBeenCalledWith('Windows Audio', 'Speakers')

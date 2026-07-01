@@ -2,7 +2,6 @@
 #include "AudioConstants.h"
 #include "AudioEngineWarpFactory.h"
 #include "Log.h"
-#include "OutputDeviceClassifier.h"
 
 #include <cmath>
 
@@ -63,7 +62,6 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
     // Avoid full device scans on startup; ASIO probing can block for hundreds of ms.
     rebuildDevicesSnapshot(/*rescan*/ false);
     devicesSnapshot.fellBackToDefault = didFallBack;
-    updateKeepAwakePolicy();
 
     return {};
 }
@@ -97,7 +95,6 @@ juce::String AudioEngine::selectOutputDevice(const juce::String& typeName, const
         const auto err = deviceManager.initialiseWithDefaultDevices(0, 2);
         rebuildDevicesSnapshot(/*rescan*/ false);
         devicesSnapshot.fellBackToDefault = false;
-        updateKeepAwakePolicy();
         return err;
     }
 
@@ -160,13 +157,11 @@ juce::String AudioEngine::selectOutputDevice(const juce::String& typeName, const
             }
         }
         rebuildDevicesSnapshot(/*rescan*/ false);
-        updateKeepAwakePolicy();
         return err;
     }
 
     rebuildDevicesSnapshot(/*rescan*/ false);
     devicesSnapshot.fellBackToDefault = false;
-    updateKeepAwakePolicy();
     return {};
 }
 
@@ -201,28 +196,14 @@ void AudioEngine::rebuildDevicesSnapshot(bool rescan)
     devicesSnapshot = std::move(snap);
 }
 
-void AudioEngine::setKeepAwakeMode(KeepAwakeMode mode)
+void AudioEngine::setKeepAwakeEnabled(bool enabled)
 {
-    keepAwakeMode = mode;
-    updateKeepAwakePolicy();
-}
-
-void AudioEngine::updateKeepAwakePolicy()
-{
-    // Classify the active output endpoint by its Windows connection bus; only positively-identified
-    // sleep-prone (USB) endpoints incur the keep-alive dither + one-time first-play wake, so onboard
-    // / Bluetooth / virtual / unclassifiable devices stay true digital silence and never play the
-    // audible wake burst. The user's keep-awake override (auto / on / off) takes final say so a
-    // misclassified endpoint can be corrected from Preferences.
-    const auto setup = deviceManager.getAudioDeviceSetup();
-    const auto bus = silverdaw::classifyOutputEndpoint(setup.outputDeviceName);
-    const bool keepAwake = silverdaw::resolveKeepAwake(keepAwakeMode, bus);
-    outputKeepAlive.setKeepAwakeEnabled(keepAwake);
+    // Keep-awake is an explicit per-device user choice (default off): when enabled, the
+    // keep-alive dither + first-play wake keep a sleep-prone USB output from clipping the
+    // first beat. The renderer resolves the open device's setting and pushes it here.
+    outputKeepAlive.setKeepAwakeEnabled(enabled);
     silverdaw::log::info("audio",
-                         juce::String("output device '") + setup.outputDeviceName +
-                             "' classified " + silverdaw::toString(bus) + " mode=" +
-                             silverdaw::toString(keepAwakeMode) + " -> keep-awake " +
-                             (keepAwake ? "on" : "off"));
+                         juce::String("keep-awake ") + (enabled ? "on" : "off"));
 }
 
 // Windows under-reports Bluetooth endpoint latency, so known headset names get a conservative
@@ -276,8 +257,6 @@ void AudioEngine::onDeviceListChanged()
         deviceManager.initialiseWithDefaultDevices(0, 2);
         rebuildDevicesSnapshot(/*rescan*/ false);
     }
-
-    updateKeepAwakePolicy();
 
     if (deviceListChangedCallback)
     {

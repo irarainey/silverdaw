@@ -21,10 +21,8 @@ const audioDevices = useAudioDeviceStore()
 const {
   uniqueDevices,
   audioOutputTypeName,
-  audioHasSelection,
   isAudioOutputSelectedDevice,
   pickDevice,
-  pickSystemDefault,
   backendsForSelectedDevice,
   showAdvancedBackend,
   pickBackend,
@@ -218,17 +216,12 @@ function onSave(): void {
               :set-device-keep-awake="setDeviceKeepAwake"
               :unique-devices="uniqueDevices"
               :audio-output-type-name="audioOutputTypeName"
-              :audio-has-selection="audioHasSelection"
               :is-audio-output-selected-device="isAudioOutputSelectedDevice"
               :pick-device="pickDevice"
-              :pick-system-default="pickSystemDefault"
               :backends-for-selected-device="backendsForSelectedDevice"
               :pick-backend="pickBackend"
               :audio-devices-hydrated="audioDevices.hydrated"
-              :current-sample-rate="audioDevices.currentSampleRate"
-              :current-buffer-size="audioDevices.currentBufferSize"
-              :output-latency-ms="audioDevices.outputLatencyMs"
-              :is-bluetooth-heuristic="audioDevices.isBluetoothHeuristic"
+              :rescanning="audioDevices.rescanning"
               :last-error="audioDevices.lastError"
               :request-rescan="audioDevices.requestRescan"
             />

@@ -1,34 +1,28 @@
 <script setup lang="ts">
 import { describeBackend, type UniqueDevice } from '@/lib/audio/audioOutputPicker'
-import type { KeepAwakeMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
   uniqueDevices: readonly UniqueDevice[]
   audioOutputTypeName: string | null
-  audioHasSelection: boolean
   isAudioOutputSelectedDevice: (deviceName: string) => boolean
   pickDevice: (device: UniqueDevice) => void
-  pickSystemDefault: () => void
   backendsForSelectedDevice: readonly string[]
   pickBackend: (typeName: string) => void
   audioDevicesHydrated: boolean
-  currentSampleRate: number | null
-  currentBufferSize: number | null
-  outputLatencyMs: number | null
-  isBluetoothHeuristic: boolean
+  rescanning: boolean
   lastError: string | null
   requestRescan: () => void
-  /** Draft per-device keep-awake overrides (device name → mode); absent = auto. */
-  keepAwakeByDevice: Record<string, KeepAwakeMode>
-  /** Set (or clear, with `auto`) a device's keep-awake override. */
-  setDeviceKeepAwake: (deviceName: string, mode: KeepAwakeMode) => void
+  /** Draft per-device keep-awake toggles (device name → true); absent = off. */
+  keepAwakeByDevice: Record<string, boolean>
+  /** Enable / disable a device's keep-awake toggle. */
+  setDeviceKeepAwake: (deviceName: string, enabled: boolean) => void
 }>()
 
 const defaultProjectSampleRate = defineModel<number>('defaultProjectSampleRate', { required: true })
 const showAdvancedBackend = defineModel<boolean>('showAdvancedBackend', { required: true })
 
 function onKeepAwakeChange(deviceName: string, event: Event): void {
-  props.setDeviceKeepAwake(deviceName, (event.target as HTMLSelectElement).value as KeepAwakeMode)
+  props.setDeviceKeepAwake(deviceName, (event.target as HTMLInputElement).checked)
 }
 </script>
 
@@ -71,15 +65,11 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
         Output device
       </h2>
       <p class="mb-3 text-zinc-500">
-        Pick where Silverdaw sends audio. Most users should leave this on
-        <strong class="text-zinc-300">System default</strong> so it follows your
-        Windows audio choice. Removable devices fall back to the default when
-        unplugged and reconnect automatically next launch. Each device also has a
-        <strong class="text-zinc-300">Keep awake</strong> setting — leave it on
-        <strong class="text-zinc-300">Auto</strong> unless a USB device drops its
-        first beat (<strong class="text-zinc-300">Always on</strong>) or you hear a
-        noise before playback (<strong class="text-zinc-300">Off</strong>). It's
-        remembered per device, even while it's unplugged.
+        Pick which device Silverdaw plays through. Removable devices fall back to the
+        next available one when unplugged, and reconnect automatically next launch.
+        Tick <strong class="text-zinc-300">Keep awake</strong> for a device that
+        sleeps and clips the first beat (typically a USB DAC) — it's off by default
+        and remembered per device, even while it's unplugged.
       </p>
 
       <div
@@ -92,20 +82,6 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
         v-else
         class="space-y-2"
       >
-        <label class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
-          <input
-            type="radio"
-            name="audio-output"
-            :checked="!audioHasSelection"
-            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
-            @change="pickSystemDefault"
-          >
-          <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">System default</span>
-            <span class="text-zinc-500"> — Follow Windows' current device</span>
-          </span>
-        </label>
-
         <div
           v-if="uniqueDevices.length === 0"
           class="rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5 text-zinc-600"
@@ -127,28 +103,59 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
             >
             <span class="min-w-0 flex-1 truncate text-zinc-200">{{ device.name }}</span>
           </label>
-          <select
-            :value="keepAwakeByDevice[device.name] ?? 'auto'"
-            class="shrink-0 cursor-pointer rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-200 outline-none focus:border-sky-500"
-            title="Keep awake: Auto detects sleep-prone USB devices; Always on forces it (for a USB DAC that drops its first beat); Off never wakes it (if you hear a noise before playback)"
-            @change="onKeepAwakeChange(device.name, $event)"
+          <label
+            class="flex shrink-0 cursor-pointer items-center gap-1.5 text-[11px] text-zinc-400"
+            title="Keep awake: send an inaudible signal so a sleep-prone USB device doesn't sleep and clip the first beat. Off by default; turn on only for a device that needs it."
           >
-            <option value="auto">
-              Keep awake: Auto
-            </option>
-            <option value="on">
-              Keep awake: Always on
-            </option>
-            <option value="off">
-              Keep awake: Off
-            </option>
-          </select>
+            <input
+              type="checkbox"
+              :checked="keepAwakeByDevice[device.name] === true"
+              class="h-3.5 w-3.5 shrink-0 cursor-pointer accent-sky-500"
+              @change="onKeepAwakeChange(device.name, $event)"
+            >
+            Keep awake
+          </label>
         </div>
       </div>
     </div>
 
     <div
-      v-if="audioDevicesHydrated && audioHasSelection && backendsForSelectedDevice.length > 1"
+      v-if="audioDevicesHydrated"
+      class="flex justify-end"
+    >
+      <button
+        type="button"
+        :disabled="rescanning"
+        class="flex items-center gap-1.5 rounded bg-zinc-800 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+        @click="requestRescan"
+      >
+        <svg
+          v-if="rescanning"
+          class="h-3 w-3 animate-spin"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+        >
+          <circle
+            class="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="4"
+          />
+          <path
+            class="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"
+          />
+        </svg>
+        {{ rescanning ? 'Rescanning…' : 'Rescan devices' }}
+      </button>
+    </div>
+
+    <div
+      v-if="audioDevicesHydrated && backendsForSelectedDevice.length > 1"
     >
       <button
         type="button"
@@ -188,28 +195,6 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
           </span>
         </label>
       </div>
-    </div>
-
-    <div
-      v-if="audioDevicesHydrated"
-      class="flex items-center justify-between text-zinc-500"
-    >
-      <span v-if="currentSampleRate">
-        Current: {{ Math.round(currentSampleRate) }} Hz<template
-          v-if="currentBufferSize"
-        > / {{ currentBufferSize }}-sample buffer</template><template
-          v-if="outputLatencyMs !== null && outputLatencyMs >= 30"
-        > · ~{{ Math.round(outputLatencyMs) }} ms latency<template
-          v-if="isBluetoothHeuristic"
-        > (Bluetooth — playhead auto-compensates)</template></template>
-      </span>
-      <button
-        type="button"
-        class="rounded bg-zinc-800 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none"
-        @click="requestRescan"
-      >
-        Rescan devices
-      </button>
     </div>
 
     <p

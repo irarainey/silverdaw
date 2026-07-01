@@ -72,16 +72,6 @@ describe('usePreferencesForm', () => {
     expect(form.audioOutputDeviceName.value).toBe('Speakers')
     // 'Windows Audio' outranks 'DirectSound' in BACKEND_PREFERENCE.
     expect(form.audioOutputTypeName.value).toBe('Windows Audio')
-    expect(form.audioHasSelection.value).toBe(true)
-  })
-
-  it('pickSystemDefault clears the pending audio selection', () => {
-    const form = usePreferencesForm()
-    form.pickDevice({ name: 'Speakers', backends: ['Windows Audio'] })
-    form.pickSystemDefault()
-    expect(form.audioOutputDeviceName.value).toBeNull()
-    expect(form.audioOutputTypeName.value).toBeNull()
-    expect(form.audioHasSelection.value).toBe(false)
   })
 
   it('hasChanges is false right after load and true once a working ref changes', async () => {

@@ -15,9 +15,7 @@ const props = defineProps<{
   masterVolume: number
   setAudioMenuRoot: (el: Element | ComponentPublicInstance | null) => void
   toggleAudioMenu: () => void
-  pickDevice: (typeName: string | null, deviceName: string | null) => void
   pickUniqueDevice: (device: QuickSwitchDevice) => void
-  isCurrentDevice: (typeName: string | null, deviceName: string | null) => boolean
   isCurrentUniqueDevice: (device: QuickSwitchDevice) => boolean
   onMasterVolumeInput: (event: Event) => void
 }>()
@@ -41,7 +39,7 @@ const props = defineProps<{
           audioDevices.lastError
             ? audioDevices.lastError
             : audioLatencyCaption
-              ? `Audio output: ${audioDevices.currentDeviceName || 'System default'} (${audioLatencyCaption} of output latency — playhead is auto-compensated during playback)`
+              ? `Audio output: ${audioDevices.currentDeviceName || 'not set'} (${audioLatencyCaption} of output latency — playhead is auto-compensated during playback)`
               : 'Audio output device'
         "
         @click="toggleAudioMenu"
@@ -84,20 +82,6 @@ const props = defineProps<{
         class="silverdaw-scroll absolute left-0 top-full z-40 mt-1 max-h-80 w-80 overflow-y-auto rounded border border-zinc-700 bg-zinc-900 py-1 shadow-2xl"
       >
         <button
-          type="button"
-          data-borderless-button="true"
-          class="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-zinc-800"
-          @click="pickDevice(null, null)"
-        >
-          <span class="text-zinc-200">System default</span>
-          <span
-            v-if="isCurrentDevice(null, null)"
-            class="text-sky-400"
-            aria-hidden="true"
-          >✓</span>
-        </button>
-        <div class="my-1 border-t border-zinc-800" />
-        <button
           v-for="device in quickSwitchDevices"
           :key="device.name"
           type="button"
@@ -112,14 +96,42 @@ const props = defineProps<{
             aria-hidden="true"
           >✓</span>
         </button>
+        <p
+          v-if="quickSwitchDevices.length === 0"
+          class="px-3 py-1.5 text-xs text-zinc-500"
+        >
+          No output devices detected.
+        </p>
         <div class="my-1 border-t border-zinc-800" />
         <button
           type="button"
           data-borderless-button="true"
-          class="w-full px-3 py-1 text-left text-[11px] text-zinc-400 hover:bg-zinc-800"
-          @click="audioDevices.requestRescan(); audioMenuOpen = false"
+          :disabled="audioDevices.rescanning"
+          class="flex w-full items-center gap-1.5 px-3 py-1 text-left text-[11px] text-zinc-400 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+          @click="audioDevices.requestRescan()"
         >
-          Rescan devices
+          <svg
+            v-if="audioDevices.rescanning"
+            class="h-3 w-3 animate-spin"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+            />
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+          {{ audioDevices.rescanning ? 'Rescanning…' : 'Rescan devices' }}
         </button>
       </div>
     </div>
