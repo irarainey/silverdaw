@@ -914,10 +914,17 @@ sample); the keep-alive's broadband wake burst is plainly audible on a never-mut
 onboard card, so it is reserved for the devices that actually sleep.
 A user preference resolves the final decision through pure
 `resolveKeepAwake(mode, bus)`: **Automatic** (the default) follows the USB-only
-classification, **Always on** forces keep-awake for the selected output (for a USB
-DAC the classifier misses), and **Off** disables it. The mode is persisted in
-`preferences.json` and re-applied to the backend on every connect via
-`AUDIO_KEEP_AWAKE_SET` (the engine defaults to **Automatic** each launch). The policy
+classification, **Always on** forces keep-awake for the output (for a USB
+DAC the classifier misses), and **Off** disables it. The override is stored
+**per output device** (keyed by the device's reported name) in
+`preferences.json` as `keepAwakeByDevice`, so a device with no entry defaults to
+**Automatic** and a pinned device is remembered even while unplugged — it re-applies
+on reconnect. The renderer resolves the effective mode for the physically-open
+device (`audioDeviceStore.currentDeviceKeepAwakeMode`) and pushes it to the backend
+via `AUDIO_KEEP_AWAKE_SET` on every connect **and whenever the open device changes**
+(so unplugging a pinned-On USB DAC and falling back to the onboard card re-sends its
+own `auto`, rather than leaving the onboard card forced on). The engine defaults to
+**Automatic** each launch and stores a single mode; the policy
 is re-evaluated on init, device selection, and device-list changes; the keep-alive only
 ever runs for the **currently selected** output, and only if it is sleep-prone. The
 gate simply stops writing — returning the output to **truly silent** digital zero —
@@ -1568,7 +1575,8 @@ sidebar:
   **previous / next button target**.
 - **Project** — default Save / Open / Import directories, background autosave
   configuration, and **clean up project files on remove**.
-- **Audio** — output device + driver selection (see below), and the
+- **Audio** — output device + driver selection (see below, with a per-device
+  **Keep awake** dropdown — Auto / Always on / Off — on each device row), and the
   **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
   `PROJECT.targetSampleRate` on new projects.
 - **Effects** — global defaults for the per-clip DJ turntable effects: the

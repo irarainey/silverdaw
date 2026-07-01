@@ -25,7 +25,10 @@ export interface PreferencesForm {
   backendsForSelectedDevice: ComputedRef<string[]>
   showAdvancedBackend: Ref<boolean>
   pickBackend: (typeName: string) => void
-  keepAwakeMode: Ref<KeepAwakeMode>
+  /** Draft per-device keep-awake overrides (device name → mode); absent = auto. */
+  keepAwakeByDeviceDraft: Ref<Record<string, KeepAwakeMode>>
+  /** Set (or clear, with `auto`) a device's draft keep-awake mode. */
+  setDeviceKeepAwake: (deviceName: string, mode: KeepAwakeMode) => void
   brakeDuration: Ref<BrakeDurationDto>
   brakeCurve: Ref<BrakeCurveDto>
   backspinDuration: Ref<BackspinDurationDto>
@@ -120,8 +123,26 @@ export function usePreferencesForm(): PreferencesForm {
     audioOutputTypeName.value = typeName
   }
 
-  const keepAwakeMode = ref<KeepAwakeMode>('auto')
-  const initialKeepAwakeMode = ref<KeepAwakeMode>('auto')
+  const keepAwakeByDeviceDraft = ref<Record<string, KeepAwakeMode>>({})
+  const initialKeepAwakeByDevice = ref<Record<string, KeepAwakeMode>>({})
+
+  // Compare the draft map against the initial, treating an absent entry as `auto`.
+  function keepAwakeMapChanged(): boolean {
+    const a = keepAwakeByDeviceDraft.value
+    const b = initialKeepAwakeByDevice.value
+    const names = new Set([...Object.keys(a), ...Object.keys(b)])
+    for (const name of names) {
+      if ((a[name] ?? 'auto') !== (b[name] ?? 'auto')) return true
+    }
+    return false
+  }
+
+  function setDeviceKeepAwake(deviceName: string, mode: KeepAwakeMode): void {
+    const next = { ...keepAwakeByDeviceDraft.value }
+    if (mode === 'auto') delete next[deviceName]
+    else next[deviceName] = mode
+    keepAwakeByDeviceDraft.value = next
+  }
 
   const brakeDuration = ref<BrakeDurationDto>('medium')
   const brakeCurve = ref<BrakeCurveDto>('curved')
@@ -215,7 +236,7 @@ export function usePreferencesForm(): PreferencesForm {
       otherEnhanceStrength.value !== initialOtherEnhanceStrength.value ||
       audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
       audioOutputDeviceName.value !== initialAudioOutputDeviceName.value ||
-      keepAwakeMode.value !== initialKeepAwakeMode.value ||
+      keepAwakeMapChanged() ||
       brakeDuration.value !== initialBrakeDuration.value ||
       brakeCurve.value !== initialBrakeCurve.value ||
       backspinDuration.value !== initialBackspinDuration.value ||
@@ -224,12 +245,12 @@ export function usePreferencesForm(): PreferencesForm {
 
   async function loadCurrent(): Promise<void> {
     try {
-      const [debugVal, qol, autosave, audioPref, keepAwake] = await Promise.all([
+      const [debugVal, qol, autosave, audioPref, keepAwakeByDevice] = await Promise.all([
         window.silverdaw.getDebugPreferences(),
         window.silverdaw.getQolPrefs(),
         window.silverdaw.getAutosaveConfig(),
         window.silverdaw.getAudioOutput(),
-        window.silverdaw.getKeepAwakeMode()
+        window.silverdaw.getKeepAwakeByDevice()
       ])
       loggingEnabled.value = debugVal.loggingEnabled
       devToolsEnabled.value = debugVal.devToolsEnabled
@@ -242,7 +263,9 @@ export function usePreferencesForm(): PreferencesForm {
       // Seed from the saved preference, not the live device JUCE chose.
       audioOutputTypeName.value = audioPref.typeName
       audioOutputDeviceName.value = audioPref.deviceName
-      keepAwakeMode.value = keepAwake
+      // Keep-awake is pinned per physical device; seed the draft map.
+      audioDevices.keepAwakeByDevice = { ...keepAwakeByDevice }
+      keepAwakeByDeviceDraft.value = { ...keepAwakeByDevice }
       const brakePrefs = await window.silverdaw.getBrakeSettings()
       brakeDuration.value = brakePrefs.duration
       brakeCurve.value = brakePrefs.curve
@@ -271,7 +294,7 @@ export function usePreferencesForm(): PreferencesForm {
       autosaveIntervalSeconds.value = 30
       audioOutputTypeName.value = null
       audioOutputDeviceName.value = null
-      keepAwakeMode.value = 'auto'
+      keepAwakeByDeviceDraft.value = {}
       brakeDuration.value = 'medium'
       brakeCurve.value = 'curved'
       backspinDuration.value = 'long'
@@ -322,7 +345,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialOtherEnhanceStrength.value = otherEnhanceStrength.value
     initialAudioOutputTypeName.value = audioOutputTypeName.value
     initialAudioOutputDeviceName.value = audioOutputDeviceName.value
-    initialKeepAwakeMode.value = keepAwakeMode.value
+    initialKeepAwakeByDevice.value = { ...keepAwakeByDeviceDraft.value }
     initialBrakeDuration.value = brakeDuration.value
     initialBrakeCurve.value = brakeCurve.value
     initialBackspinDuration.value = backspinDuration.value
@@ -427,8 +450,14 @@ export function usePreferencesForm(): PreferencesForm {
     ) {
       audioDevices.selectDevice(audioOutputTypeName.value, audioOutputDeviceName.value)
     }
-    if (keepAwakeMode.value !== initialKeepAwakeMode.value) {
-      audioDevices.setKeepAwakeMode(keepAwakeMode.value)
+    if (keepAwakeMapChanged()) {
+      const draft = keepAwakeByDeviceDraft.value
+      const initial = initialKeepAwakeByDevice.value
+      const names = new Set([...Object.keys(draft), ...Object.keys(initial)])
+      for (const name of names) {
+        const next = draft[name] ?? 'auto'
+        if (next !== (initial[name] ?? 'auto')) audioDevices.setKeepAwakeForDevice(name, next)
+      }
     }
     if (
       brakeDuration.value !== initialBrakeDuration.value ||
@@ -497,7 +526,8 @@ export function usePreferencesForm(): PreferencesForm {
     backendsForSelectedDevice,
     showAdvancedBackend,
     pickBackend,
-    keepAwakeMode,
+    keepAwakeByDeviceDraft,
+    setDeviceKeepAwake,
     brakeDuration,
     brakeCurve,
     backspinDuration,

@@ -42,8 +42,8 @@ interface AudioDeviceState {
   hydrated: boolean
   /** True while the backend's deferred startup scan is pending. */
   scanInProgress: boolean
-  /** User override for the output keep-awake dither + first-play wake burst. */
-  keepAwakeMode: KeepAwakeMode
+  /** Per-device keep-awake overrides (device name → mode); absent = `auto`. */
+  keepAwakeByDevice: Record<string, KeepAwakeMode>
 }
 
 export const useAudioDeviceStore = defineStore('audioDevice', {
@@ -61,7 +61,7 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
     startupFellBack: false,
     hydrated: false,
     scanInProgress: false,
-    keepAwakeMode: 'auto'
+    keepAwakeByDevice: {}
   }),
 
   getters: {
@@ -77,11 +77,18 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
 
     onSystemDefault(state): boolean {
       return !state.currentTypeName && !state.currentDeviceName
+    },
+
+    /** The keep-awake mode for the physically-open output device (absent = `auto`). */
+    currentDeviceKeepAwakeMode(state): KeepAwakeMode {
+      const name = state.currentDeviceName
+      return (name && state.keepAwakeByDevice[name]) || 'auto'
     }
   },
 
   actions: {
     applyList(payload: AudioDevicesListPayload): void {
+      const previousDeviceName = this.currentDeviceName
       this.types = payload.types
       this.currentTypeName = payload.currentTypeName
       this.currentDeviceName =
@@ -101,6 +108,12 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
         useNotificationsStore().pushInfo(
           'Saved audio output device was not available — using system default.'
         )
+      }
+      // The keep-awake policy is per physical device, so re-push the effective mode
+      // whenever the open device changes (e.g. a USB DAC is unplugged and playback
+      // falls back to the onboard card — its own override, default `auto`, applies).
+      if (this.currentDeviceName !== previousDeviceName) {
+        this.pushEffectiveKeepAwake()
       }
     },
 
@@ -157,25 +170,37 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       sendBridge('AUDIO_DEVICES_REQUEST', { refresh: false })
     },
 
-    /** Persist + apply a keep-awake override; pushes it to the backend live. */
-    setKeepAwakeMode(mode: KeepAwakeMode): void {
-      this.keepAwakeMode = mode
-      window.silverdaw.setKeepAwakeMode(mode)
-      sendBridge('AUDIO_KEEP_AWAKE_SET', { mode })
+    /** Send the current physical device's effective keep-awake mode to the backend. */
+    pushEffectiveKeepAwake(): void {
+      sendBridge('AUDIO_KEEP_AWAKE_SET', { mode: this.currentDeviceKeepAwakeMode })
+    },
+
+    /** Pin (or clear, with `auto`) the keep-awake override for a named output device,
+     *  persist it per-device, and re-push the open device's effective mode. */
+    setKeepAwakeForDevice(deviceName: string, mode: KeepAwakeMode): void {
+      const name = deviceName.trim()
+      if (name.length === 0) return
+      if (mode === 'auto') {
+        delete this.keepAwakeByDevice[name]
+      } else {
+        this.keepAwakeByDevice[name] = mode
+      }
+      window.silverdaw.setKeepAwakeForDevice(name, mode)
+      this.pushEffectiveKeepAwake()
     },
 
     /**
-     * On every bridge (re)connect the backend starts at its `auto` default, so re-send the user's
-     * persisted keep-awake override once the engine is ready.
+     * On every bridge (re)connect the backend starts at its `auto` default, so reload the
+     * persisted per-device overrides and re-send the open device's effective mode once ready.
      */
     async applyKeepAwakeOnReady(): Promise<void> {
       try {
-        this.keepAwakeMode = await window.silverdaw.getKeepAwakeMode()
+        this.keepAwakeByDevice = await window.silverdaw.getKeepAwakeByDevice()
       } catch (err) {
         log.warn('audio', `keep-awake hydrate failed, using auto: ${String(err)}`)
-        this.keepAwakeMode = 'auto'
+        this.keepAwakeByDevice = {}
       }
-      sendBridge('AUDIO_KEEP_AWAKE_SET', { mode: this.keepAwakeMode })
+      this.pushEffectiveKeepAwake()
     }
   }
 })

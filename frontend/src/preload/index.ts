@@ -182,11 +182,11 @@ const api = {
   setAudioOutput: (partial: { typeName: string | null; deviceName: string | null }): void => {
     ipcRenderer.send(IPC.prefs.setAudioOutput, partial)
   },
-  // ─── Output keep-awake override (auto / on / off) ───────────────────────
-  getKeepAwakeMode: (): Promise<'auto' | 'on' | 'off'> =>
-    ipcRenderer.invoke(IPC.prefs.getKeepAwake),
-  setKeepAwakeMode: (mode: 'auto' | 'on' | 'off'): void => {
-    ipcRenderer.send(IPC.prefs.setKeepAwake, mode)
+  // ─── Per-device output keep-awake overrides (auto / on / off) ───────────
+  getKeepAwakeByDevice: (): Promise<Record<string, 'auto' | 'on' | 'off'>> =>
+    ipcRenderer.invoke(IPC.prefs.getKeepAwakeByDevice),
+  setKeepAwakeForDevice: (deviceName: string, mode: 'auto' | 'on' | 'off'): void => {
+    ipcRenderer.send(IPC.prefs.setKeepAwakeForDevice, deviceName, mode)
   },
   // ─── Stem-separation preferences ────────────────────────────────────────
   getStemPrefs: (): Promise<StemPrefsDto> => ipcRenderer.invoke(IPC.prefs.getStems),

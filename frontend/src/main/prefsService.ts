@@ -17,6 +17,7 @@ import {
   sanitiseStemModelDir,
   sanitiseBrakePrefs,
   sanitiseBackspinPrefs,
+  sanitiseKeepAwakeByDevice,
   sanitiseUiPrefs,
   type AudioOutputPrefs,
   type AutosavePrefs,
@@ -103,10 +104,7 @@ export class PrefsService {
               ? (parsed.audioOutput as AudioOutputPrefs).deviceName
               : null
         },
-        keepAwakeMode:
-          parsed.keepAwakeMode === 'on' || parsed.keepAwakeMode === 'off'
-            ? parsed.keepAwakeMode
-            : defaults.keepAwakeMode,
+        keepAwakeByDevice: sanitiseKeepAwakeByDevice(parsed.keepAwakeByDevice),
         brake: sanitiseBrakePrefs(parsed.brake, defaults.brake),
         backspin: sanitiseBackspinPrefs(parsed.backspin, defaults.backspin),
         recentProjects: sanitiseRecentList(parsed.recentProjects),

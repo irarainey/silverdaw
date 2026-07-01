@@ -2,7 +2,7 @@
 import { describeBackend, type UniqueDevice } from '@/lib/audio/audioOutputPicker'
 import type { KeepAwakeMode } from '@shared/bridge-protocol'
 
-defineProps<{
+const props = defineProps<{
   uniqueDevices: readonly UniqueDevice[]
   audioOutputTypeName: string | null
   audioHasSelection: boolean
@@ -18,29 +18,18 @@ defineProps<{
   isBluetoothHeuristic: boolean
   lastError: string | null
   requestRescan: () => void
+  /** Draft per-device keep-awake overrides (device name → mode); absent = auto. */
+  keepAwakeByDevice: Record<string, KeepAwakeMode>
+  /** Set (or clear, with `auto`) a device's keep-awake override. */
+  setDeviceKeepAwake: (deviceName: string, mode: KeepAwakeMode) => void
 }>()
 
 const defaultProjectSampleRate = defineModel<number>('defaultProjectSampleRate', { required: true })
 const showAdvancedBackend = defineModel<boolean>('showAdvancedBackend', { required: true })
-const keepAwakeMode = defineModel<KeepAwakeMode>('keepAwakeMode', { required: true })
 
-const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hint: string }> = [
-  {
-    value: 'auto',
-    label: 'Automatic (recommended)',
-    hint: 'Keep only USB devices awake'
-  },
-  {
-    value: 'on',
-    label: 'Always on',
-    hint: 'Use if a USB device drops the first beat'
-  },
-  {
-    value: 'off',
-    label: 'Off',
-    hint: 'Use if you hear a burst before playback'
-  }
-]
+function onKeepAwakeChange(deviceName: string, event: Event): void {
+  props.setDeviceKeepAwake(deviceName, (event.target as HTMLSelectElement).value as KeepAwakeMode)
+}
 </script>
 
 <template>
@@ -85,7 +74,12 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
         Pick where Silverdaw sends audio. Most users should leave this on
         <strong class="text-zinc-300">System default</strong> so it follows your
         Windows audio choice. Removable devices fall back to the default when
-        unplugged and reconnect automatically next launch.
+        unplugged and reconnect automatically next launch. Each device also has a
+        <strong class="text-zinc-300">Keep awake</strong> setting — leave it on
+        <strong class="text-zinc-300">Auto</strong> unless a USB device drops its
+        first beat (<strong class="text-zinc-300">Always on</strong>) or you hear a
+        noise before playback (<strong class="text-zinc-300">Off</strong>). It's
+        remembered per device, even while it's unplugged.
       </p>
 
       <div
@@ -118,20 +112,38 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
         >
           No output devices detected.
         </div>
-        <label
+        <div
           v-for="device in uniqueDevices"
           :key="device.name"
-          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+          class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
-          <input
-            type="radio"
-            name="audio-output"
-            :checked="isAudioOutputSelectedDevice(device.name)"
-            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
-            @change="pickDevice(device)"
+          <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+            <input
+              type="radio"
+              name="audio-output"
+              :checked="isAudioOutputSelectedDevice(device.name)"
+              class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+              @change="pickDevice(device)"
+            >
+            <span class="min-w-0 flex-1 truncate text-zinc-200">{{ device.name }}</span>
+          </label>
+          <select
+            :value="keepAwakeByDevice[device.name] ?? 'auto'"
+            class="shrink-0 cursor-pointer rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-200 outline-none focus:border-sky-500"
+            title="Keep awake: Auto detects sleep-prone USB devices; Always on forces it (for a USB DAC that drops its first beat); Off never wakes it (if you hear a noise before playback)"
+            @change="onKeepAwakeChange(device.name, $event)"
           >
-          <span class="min-w-0 flex-1 truncate text-zinc-200">{{ device.name }}</span>
-        </label>
+            <option value="auto">
+              Keep awake: Auto
+            </option>
+            <option value="on">
+              Keep awake: Always on
+            </option>
+            <option value="off">
+              Keep awake: Off
+            </option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -206,36 +218,5 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
     >
       {{ lastError }}
     </p>
-
-    <div>
-      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-        Keep audio device awake
-      </h2>
-      <p class="mb-3 text-zinc-500">
-        Some USB audio interfaces mute their own output on silence and swallow the
-        start of the first beat. Silverdaw sends an inaudible signal to keep them
-        awake. Leave this on <strong class="text-zinc-300">Automatic</strong> unless
-        you hear a noise before playback, or a USB device still drops its first beat.
-      </p>
-      <div class="space-y-2">
-        <label
-          v-for="option in keepAwakeOptions"
-          :key="option.value"
-          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
-        >
-          <input
-            v-model="keepAwakeMode"
-            type="radio"
-            name="keep-awake-mode"
-            :value="option.value"
-            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
-          >
-          <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">{{ option.label }}</span>
-            <span class="text-zinc-500"> — {{ option.hint }}</span>
-          </span>
-        </label>
-      </div>
-    </div>
   </section>
 </template>
