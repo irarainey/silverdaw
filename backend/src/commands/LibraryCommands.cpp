@@ -356,6 +356,20 @@ void handleLibraryItemSetAudioType(const juce::var& payload, ProjectState& proje
     }
 }
 
+void handleLibraryItemSetCoverHidden(const juce::var& payload, ProjectState& projectState)
+{
+    const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
+    const bool hidden = silverdaw::bridge::readOptionalBool(payload, "hidden").value_or(false);
+    silverdaw::log::info("bridge",
+                         "recv LIBRARY_ITEM_SET_COVER_HIDDEN itemId=" + itemId + " hidden=" + (hidden ? "true" : "false"));
+    if (itemId.isEmpty())
+    {
+        silverdaw::log::warn("bridge", "LIBRARY_ITEM_SET_COVER_HIDDEN missing itemId");
+        return;
+    }
+    projectState.setLibraryItemCoverArtHidden(itemId, hidden);
+}
+
 void handleLibraryItemSetManualTempo(const juce::var& payload, AudioEngine& engine,
                                      ProjectState& projectState, BridgeServer& bridge)
 {

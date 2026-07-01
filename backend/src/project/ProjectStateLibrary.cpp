@@ -372,6 +372,10 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("collapsed", true);
         }
+        if (item.hasProperty(kCoverArtHidden) && bool(item.getProperty(kCoverArtHidden)))
+        {
+            obj->setProperty("coverArtHidden", true);
+        }
         // Saved-clip warp defaults are copied on drop, not live-linked.
         if (item.hasProperty(kWarpEnabled))
         {

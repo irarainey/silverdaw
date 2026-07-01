@@ -199,6 +199,26 @@ bool ProjectState::setLibraryItemAudioType(const juce::String& itemId, const juc
     return false;
 }
 
+bool ProjectState::setLibraryItemCoverArtHidden(const juce::String& itemId, bool hidden)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            // Suppressed when off so the flag is absent from the saved file by default.
+            if (hidden)
+                item.setProperty(kCoverArtHidden, true, nullptr);
+            else
+                item.removeProperty(kCoverArtHidden, nullptr);
+            return true;
+        }
+    }
+    return false;
+}
+
 double ProjectState::getLibraryItemDurationMs(const juce::String& itemId) const
 {
     const auto library = root.getChildWithName(kLibrary);

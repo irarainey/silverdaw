@@ -459,6 +459,10 @@ class ProjectState : public juce::ValueTree::Listener
     // Classification override beats low-confidence auto-classification.
     bool setLibraryItemAudioType(const juce::String& itemId, const juce::String& audioType);
 
+    // User override to hide a library tile's cover art without deleting the shared media
+    // store image (a per-item display flag persisted in the project; marks dirty).
+    bool setLibraryItemCoverArtHidden(const juce::String& itemId, bool hidden);
+
     bool hasLibraryItemForPath(const juce::String& filePath) const;
 
     // Duration in ms for a library item by id, or 0 when unknown. Used to build
@@ -617,6 +621,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kDisplayName;
     static const juce::Identifier kClipName;
     static const juce::Identifier kCollapsed;
+    static const juce::Identifier kCoverArtHidden;
     static const juce::Identifier kLibraryItemId;
 
     // Reused on clip library items as copy-on-drop defaults.

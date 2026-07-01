@@ -120,6 +120,7 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
           ? item.cents
           : undefined,
         mediaId: item.mediaId,
+        coverArtHidden: item.coverArtHidden === true ? true : undefined,
         fromSnapshot: true
       })
       // Persisted analysis hydrates immediately; new imports use LIBRARY_ITEM_ANALYSIS.

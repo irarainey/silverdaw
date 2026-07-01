@@ -26,6 +26,7 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
 void handleLibraryReanalyse(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                             BridgeServer& bridge, juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
 void handleLibraryItemSetAudioType(const juce::var& payload, ProjectState& projectState);
+void handleLibraryItemSetCoverHidden(const juce::var& payload, ProjectState& projectState);
 void handleLibraryItemSetManualTempo(const juce::var& payload, AudioEngine& engine,
                                      ProjectState& projectState, BridgeServer& bridge);
 

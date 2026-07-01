@@ -659,6 +659,39 @@ describe('libraryStore', () => {
     expect(sendMock).toHaveBeenCalledWith('EDIT_GROUP_END')
   })
 
+  it('hides and restores a tile cover image via a per-item flag + bridge message', () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\anthem.wav',
+      fileName: 'anthem.wav',
+      durationMs: 5_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+
+    sendMock.mockClear()
+    library.setItemCoverArtHidden(sourceId!, true)
+    expect(library.getItem(sourceId!)?.coverArtHidden).toBe(true)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_HIDDEN', {
+      itemId: sourceId,
+      hidden: true
+    })
+
+    // Idempotent: setting the same value again does not re-send.
+    sendMock.mockClear()
+    library.setItemCoverArtHidden(sourceId!, true)
+    expect(sendMock).not.toHaveBeenCalled()
+
+    // Restoring clears the flag (undefined, not false, so it stays absent from save).
+    library.setItemCoverArtHidden(sourceId!, false)
+    expect(library.getItem(sourceId!)?.coverArtHidden).toBeUndefined()
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_COVER_HIDDEN', {
+      itemId: sourceId,
+      hidden: false
+    })
+  })
+
   it('normalises metadata and display names', () => {
     const library = useLibraryStore()
     const itemId = library.addItem({

@@ -35,6 +35,15 @@ export interface LibraryItemActions {
 export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItemActions {
   const library = useLibraryStore()
 
+  // True when the tile has a cover image to hide — its own, or (for a derived stem /
+  // sample) the origin source's shared cover. Ignores `coverArtHidden` so a hidden
+  // tile still reports it has art to restore.
+  function hasEffectiveCoverArt(item: LibraryItem): boolean {
+    if (item.coverArtUrl) return true
+    const originId = item.derivedFrom?.sourceItemId
+    return !!(originId && library.byId[originId]?.coverArtUrl)
+  }
+
   const infoItemId = ref<string | null>(null)
   const editorItemId = ref<string | null>(null)
   const contextMenu = ref<{ itemId: string; x: number; y: number } | null>(null)
@@ -113,6 +122,26 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
           'Hide BPM / key / beat markers, and skip auto-warp on drop. Warp and pitch dialogs still work manually.',
         disabled: item.audioType === 'simple'
       })
+    }
+    // Cover-art visibility. Tiles that show a cover image (imported sources, saved
+    // samples, and stems) can hide it — a per-item project setting that never deletes
+    // the shared media-store image, so it can always be restored from the original.
+    if (isFile) {
+      if (item.coverArtHidden) {
+        items.push({
+          command: 'library.restoreImage',
+          label: 'Restore Image',
+          separatorAbove: true,
+          title: 'Show this tile\u2019s cover art again from the original source.'
+        })
+      } else if (hasEffectiveCoverArt(item)) {
+        items.push({
+          command: 'library.removeImage',
+          label: 'Remove Image',
+          separatorAbove: true,
+          title: 'Hide this tile\u2019s cover art. The image file is not deleted and can be restored.'
+        })
+      }
     }
     // Saved clips can always be removed — doing so just unlinks any
     // timeline clips that reference them (they keep their audio and
@@ -208,6 +237,16 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     if (command === 'library.classifySimple') {
       closeItemContextMenu()
       library.setItemAudioType(item.id, 'simple')
+      return
+    }
+    if (command === 'library.removeImage') {
+      closeItemContextMenu()
+      library.setItemCoverArtHidden(item.id, true)
+      return
+    }
+    if (command === 'library.restoreImage') {
+      closeItemContextMenu()
+      library.setItemCoverArtHidden(item.id, false)
       return
     }
     if (command === 'library.delete') {

@@ -44,13 +44,24 @@ const inUsePillClass = computed(
   () =>
     `${props.libraryClipPillClass} ${isInUse.value ? 'border-emerald-700 bg-emerald-900/60 text-emerald-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`
 )
-const tileCoverArtUrl = computed(() => props.coverArtUrl ?? props.source.coverArtUrl)
+// The parent resolves the effective cover (own or origin's, and undefined when the
+// user has hidden this item's image); honour the hidden flag so the raw source cover
+// is never re-added behind the parent's suppression.
+const tileCoverArtUrl = computed(() =>
+  props.source.coverArtHidden ? undefined : props.coverArtUrl ?? props.source.coverArtUrl
+)
 // Drives the sample tint, fallback waveform icon, and cover-art badge: a saved sample
 // asset (music OR simple) gets the sample treatment. The narrower `tileIsSample`
 // (non-musical) still drives the "Sample"-vs-BPM/key metadata pill below, so a music
 // sample shows its pitch + BPM while still reading as a sample at a glance.
 const isSampleTile = computed(() => props.tileIsSampleAsset(props.source))
 const isStemTile = computed(() => props.source.kind === 'stem')
+// Distinct fallback treatment per kind when no cover image is shown: a coloured
+// background tint + a kind-specific icon so stems, samples, and original tracks read
+// apart at a glance. Samples keep their indigo tint; stems get teal, sources sky.
+const tileFallbackBgClass = computed(() =>
+  isSampleTile.value ? 'bg-indigo-900/40' : isStemTile.value ? 'bg-teal-950/50' : 'bg-sky-950/40'
+)
 const libraryClipChildren = computed(() => props.children.filter((item) => item.kind === 'clip'))
 
 /** Compact summary for the collapse header, e.g. "3 saved clips". */
@@ -77,7 +88,7 @@ const childSummary = computed(() => {
       <div
         v-if="props.showTileImages"
         class="relative flex aspect-square w-18.75 shrink-0 items-center justify-center border-r border-zinc-800"
-        :class="isSampleTile ? 'bg-indigo-900/40' : 'bg-zinc-900'"
+        :class="tileCoverArtUrl ? 'bg-zinc-900' : tileFallbackBgClass"
       >
         <img
           v-if="tileCoverArtUrl"
@@ -97,11 +108,21 @@ const childSummary = computed(() => {
           <path d="M7 18h2V6H7v12zm4 4h2V2h-2v20zm-8-8h2v-4H3v4zm12 4h2V6h-2v12zm4-8v4h2v-4h-2z" />
         </svg>
         <svg
+          v-else-if="isStemTile"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          class="h-6 w-6 text-teal-400"
+          aria-hidden="true"
+        >
+          <path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z" />
+        </svg>
+        <svg
           v-else
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
           fill="currentColor"
-          class="h-6 w-6 text-zinc-700"
+          class="h-6 w-6 text-sky-400/80"
           aria-hidden="true"
         >
           <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm0 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />

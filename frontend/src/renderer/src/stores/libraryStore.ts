@@ -176,7 +176,8 @@ export const useLibraryStore = defineStore('library', {
         semitones: kind === 'clip' ? audio.semitones : undefined,
         cents: kind === 'clip' ? audio.cents : undefined,
         unresolved: audio.unresolved === true ? true : undefined,
-        mediaId: audio.mediaId
+        mediaId: audio.mediaId,
+        coverArtHidden: audio.coverArtHidden === true ? true : undefined
       })
       log.info(
         'library',
@@ -255,6 +256,18 @@ export const useLibraryStore = defineStore('library', {
         itemId,
         audioType: normalised
       })
+    },
+
+    /** Hide or restore a library tile's cover art (a per-item display flag persisted in
+     *  the project) without deleting the shared media-store image. Applied optimistically. */
+    setItemCoverArtHidden(itemId: string, hidden: boolean): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      const next = hidden ? true : undefined
+      if ((item.coverArtHidden ?? false) === (next ?? false)) return
+      item.coverArtHidden = next
+      sendBridge('LIBRARY_ITEM_SET_COVER_HIDDEN', { itemId, hidden })
+      log.info('library', `setItemCoverArtHidden id=${itemId} hidden=${hidden}`)
     },
 
     /**

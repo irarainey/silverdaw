@@ -95,9 +95,10 @@ export function useLibraryItemInfoController(
    */
   const metadataItem = computed(() => (isStem.value ? sourceItem.value ?? props.item : props.item))
 
-  /** Cover art for the header/thumbnail, falling back to the source's art. */
-  const coverArtUrl = computed(
-    () => props.item?.coverArtUrl ?? sourceItem.value?.coverArtUrl
+  /** Cover art for the header/thumbnail, falling back to the source's art. Suppressed
+   *  when the user has hidden this item's image (the file is kept, just not shown). */
+  const coverArtUrl = computed(() =>
+    props.item?.coverArtHidden ? undefined : props.item?.coverArtUrl ?? sourceItem.value?.coverArtUrl
   )
 
   /** Header subtitle (artist), inherited from the source for stems. */

@@ -63,6 +63,7 @@ const juce::Identifier ProjectState::kMediaId{"mediaId"};
 const juce::Identifier ProjectState::kDisplayName{"displayName"};
 const juce::Identifier ProjectState::kClipName{"clipName"};
 const juce::Identifier ProjectState::kCollapsed{"collapsed"};
+const juce::Identifier ProjectState::kCoverArtHidden{"coverArtHidden"};
 const juce::Identifier ProjectState::kLibraryItemId{"libraryItemId"};
 const juce::Identifier ProjectState::kWarpEnabled{"warpEnabled"};
 const juce::Identifier ProjectState::kWarpMode{"warpMode"};

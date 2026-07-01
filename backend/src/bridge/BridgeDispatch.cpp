@@ -222,6 +222,10 @@ bool dispatchLibrary(const DispatchContext& ctx)
     {
         silverdaw::handleLibraryItemSetAudioType(payload, projectState);
     }
+    else if (type == "LIBRARY_ITEM_SET_COVER_HIDDEN")
+    {
+        silverdaw::handleLibraryItemSetCoverHidden(payload, projectState);
+    }
     else if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO")
     {
         silverdaw::handleLibraryItemSetManualTempo(payload, engine, projectState, bridge);

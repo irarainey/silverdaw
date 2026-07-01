@@ -190,6 +190,8 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
    * borrow the original source's image to read as a clear variant of it.
    */
   function groupCoverArtUrl(item: LibraryItem): string | undefined {
+    // A per-item "remove image" flag hides the tile cover without deleting the file.
+    if (item.coverArtHidden) return undefined
     if (item.coverArtUrl) return item.coverArtUrl
     const originId = item.derivedFrom?.sourceItemId
     return originId ? library.byId[originId]?.coverArtUrl : undefined

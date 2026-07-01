@@ -168,6 +168,13 @@ export interface LibraryItemSetAudioTypePayload {
   audioType: 'simple' | 'music' | 'auto'
 }
 
+/** Hide (or restore) a library item's cover art on its tile without deleting the shared
+ *  media-store image. A per-item display flag persisted in the project. */
+export interface LibraryItemSetCoverHiddenPayload {
+  itemId: string
+  hidden: boolean
+}
+
 /**
  * Manual tempo override for a source item. Sets a confident BPM + grid phase
  * anchor (seconds), replacing any auto-detected tempo. The backend builds a
@@ -459,6 +466,7 @@ export interface BridgeOutboundMap {
   LIBRARY_DELETE_ARTIFACTS: LibraryDeleteArtifactsPayload
   LIBRARY_REANALYSE: LibraryReanalysePayload
   LIBRARY_ITEM_SET_AUDIO_TYPE: LibraryItemSetAudioTypePayload
+  LIBRARY_ITEM_SET_COVER_HIDDEN: LibraryItemSetCoverHiddenPayload
   LIBRARY_ITEM_SET_MANUAL_TEMPO: LibraryItemSetManualTempoPayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
@@ -992,6 +1000,7 @@ export const bridgeOutboundPayloadKinds: {
   LIBRARY_DELETE_ARTIFACTS: 'payload',
   LIBRARY_REANALYSE: 'payload',
   LIBRARY_ITEM_SET_AUDIO_TYPE: 'payload',
+  LIBRARY_ITEM_SET_COVER_HIDDEN: 'payload',
   LIBRARY_ITEM_SET_MANUAL_TEMPO: 'payload',
   TRACK_ADD: 'payload',
   TRACK_REMOVE: 'payload',

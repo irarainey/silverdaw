@@ -442,6 +442,32 @@ void testProjectStateViewLibraryMarkersAndReplace()
     require(state.replaceTree(wrongRoot).failed(), "replaceTree should reject non-PROJECT roots");
 }
 
+void testProjectStateCoverArtHiddenOverride()
+{
+    silverdaw::ProjectState state;
+    require(state.addLibraryItem("l1", "C:\\audio\\a.wav", "a.wav", 1000.0, 48000, 2), "library add should succeed");
+    state.markClean();
+    require(!state.isDirty(), "baseline should be clean after markClean");
+
+    const juce::Identifier libraryId{"LIBRARY"};
+    const juce::Identifier coverHidden{"coverArtHidden"};
+
+    // Hiding a tile's cover art is a user override — persisted and marks the project dirty.
+    require(state.setLibraryItemCoverArtHidden("l1", true), "set hidden should succeed");
+    require(state.isDirty(), "hiding cover art should mark the project dirty");
+    require(bool(state.getTree().getChildWithName(libraryId).getChild(0).getProperty(coverHidden)),
+            "coverArtHidden property should be set on the item");
+
+    // Clearing removes the flag entirely (suppressed-when-off).
+    state.markClean();
+    require(state.setLibraryItemCoverArtHidden("l1", false), "clear should succeed");
+    require(state.isDirty(), "restoring cover art should mark the project dirty");
+    require(!state.getTree().getChildWithName(libraryId).getChild(0).hasProperty(coverHidden),
+            "clearing should remove the coverArtHidden property");
+
+    require(!state.setLibraryItemCoverArtHidden("missing", true), "unknown item returns false");
+}
+
 void testProjectStateNonDirtyLibraryRemove()
 {
     silverdaw::ProjectState state;
@@ -884,6 +910,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState bar settings round-trip", testProjectStateBarSettingsRoundTrip});
     tests.push_back({"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty});
     tests.push_back({"ProjectState cleanup library remove is non-dirty and non-undoable", testProjectStateNonDirtyLibraryRemove});
+    tests.push_back({"ProjectState cover-art hidden override persists and marks dirty", testProjectStateCoverArtHiddenOverride});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});
     tests.push_back({"ProjectState derived library metadata does not mark dirty", testProjectStateDerivedLibraryMetadataDoesNotMarkDirty});
     tests.push_back({"ProjectState clip transitions: derive, serialise, invariants, reconcile", testProjectStateClipTransitions});

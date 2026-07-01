@@ -327,6 +327,8 @@ export const ProjectStateLibraryItemSchema = z
     /** Media GUID minted at first import; key into the project's metadata/covers store. */
     mediaId: z.string().optional(),
     collapsed: z.boolean().optional(),
+    /** User flag hiding this tile's cover art without deleting the shared media image. */
+    coverArtHidden: z.boolean().optional(),
     unresolved: z.boolean().optional(),
     /** Saved-clip warp defaults are copy-on-drop, not live-linked. */
     warpEnabled: z.boolean().optional(),
