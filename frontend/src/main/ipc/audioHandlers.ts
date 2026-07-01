@@ -325,7 +325,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       if (!win) return null
       const a = (args ?? {}) as { title?: string; defaultPath?: string }
       const result = await dialog.showOpenDialog(win, {
-        title: typeof a.title === 'string' ? a.title : 'Locate audio file',
+        title: typeof a.title === 'string' ? a.title : 'Locate Audio File',
         defaultPath:
           typeof a.defaultPath === 'string' && a.defaultPath.length > 0
             ? a.defaultPath

@@ -106,7 +106,7 @@ watch(
             id="export-mixdown-title"
             class="dialog-title"
           >
-            Export mixdown
+            Export Mixdown
           </h1>
         </div>
 

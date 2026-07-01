@@ -65,7 +65,7 @@ const {
             id="project-properties-title"
             class="dialog-title"
           >
-            Project properties
+            Project Properties
           </h1>
         </div>
 

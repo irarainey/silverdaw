@@ -1730,9 +1730,10 @@ a vendor-supplied ASIO driver."* — so no outside docs are needed.
 Robustness:
 
 - **Removable devices** (USB / Bluetooth headphones) — when the saved device isn't
-  present at launch the backend silently falls back to the next available device (the
-  OS default) and the renderer pops a one-shot toast. The persisted preference is kept
-  so re-plugging works next launch.
+  present at launch the backend falls back to the next available device (the OS
+  default). This is handled silently: there's nothing the user can act on (the device
+  isn't there) and no way to dismiss a notice that would otherwise recur every launch,
+  so no toast is shown. The persisted preference is kept so re-plugging works next launch.
 - **Live unplug** — JUCE's `audioDeviceListChanged` callback fires; the backend reopens
   the next available device automatically so audio keeps flowing. A fresh `AUDIO_DEVICES_LIST`
   goes out to the renderer in the same round-trip.

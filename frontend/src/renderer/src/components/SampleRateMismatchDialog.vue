@@ -114,7 +114,7 @@ watch(
             id="sample-rate-mismatch-title"
             class="dialog-title"
           >
-            Sample rate mismatch
+            Sample Rate Mismatch
           </h1>
         </div>
 

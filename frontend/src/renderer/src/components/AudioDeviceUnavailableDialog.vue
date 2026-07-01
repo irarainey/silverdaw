@@ -76,7 +76,7 @@ onBeforeUnmount(() => {
             id="audio-unavailable-title"
             class="dialog-title"
           >
-            Saved audio device not available
+            Saved Audio Device Not Available
           </h1>
         </div>
 

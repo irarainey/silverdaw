@@ -76,7 +76,7 @@ function onCancel(): void {
             id="stem-progress-title"
             class="dialog-title"
           >
-            Separating stems
+            Separating Stems
           </h1>
         </div>
 

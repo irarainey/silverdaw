@@ -39,7 +39,7 @@ defineProps<Readonly<{
         EBU R128 / AES Broadcast &minus;23 LUFS
       </option>
       <option value="analyze">
-        Analyze only (measure, no gain change)
+        Analyse only (measure, no gain change)
       </option>
       <option value="custom">
         Custom target&hellip;

@@ -97,7 +97,7 @@ defineProps<Readonly<{
       <label
         v-if="ditherApplies"
         class="mt-1 flex cursor-pointer items-center gap-1.5"
-        title="TPDF dither randomises the quantisation error to remove harmonic distortion at 16-bit. Recommended ON."
+        title="        TPDF dither randomises the quantisation error to remove harmonic distortion at 16-bit. Recommended on."
       >
         <input
           v-model="dither"

@@ -55,7 +55,7 @@ onBeforeUnmount(() => {
             id="unsaved-title"
             class="dialog-title"
           >
-            Save changes to {{ projectName }}?
+            Save Changes to {{ projectName }}?
           </h1>
         </div>
         <div class="dialog-body">
