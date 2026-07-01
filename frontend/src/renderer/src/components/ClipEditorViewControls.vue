@@ -16,6 +16,9 @@ defineProps<{
   canGateSelection: boolean
   reverseAvailable: boolean
   reverseActive: boolean
+  djEffectAvailable: boolean
+  brakeActive: boolean
+  backspinActive: boolean
   zoom: number
   zoomPercent: number
 }>()
@@ -26,6 +29,8 @@ defineEmits<{
   (e: 'silence-selection'): void
   (e: 'full-selection'): void
   (e: 'toggle-reverse'): void
+  (e: 'toggle-brake'): void
+  (e: 'toggle-backspin'): void
   (e: 'zoom-out'): void
   (e: 'reset-zoom'): void
   (e: 'zoom-in'): void
@@ -123,24 +128,82 @@ defineEmits<{
       Full
     </button>
     <!-- Reverse: non-destructive whole-clip backwards playback toggle. Highlights
-         when on; linked clips reverse every instance. -->
+         when on; linked clips reverse every instance. Mutually exclusive with the
+         Brake / Backspin tail effects, so it is disabled while one of those is set. -->
     <button
       v-if="reverseAvailable"
       type="button"
-      class="rounded px-2 py-1 text-[11px] font-medium"
+      class="rounded px-2 py-1 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
       :class="
         reverseActive
           ? 'bg-violet-600 text-white hover:bg-violet-500'
           : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
       "
+      :disabled="!reverseActive && (brakeActive || backspinActive)"
       :title="
-        reverseActive
-          ? 'Reverse on — the clip plays backwards (non-destructive)'
-          : 'Play the clip backwards (non-destructive)'
+        !reverseActive && brakeActive
+          ? 'Turn off Brake first — a clip can be reversed or have a turntable effect, not both'
+          : !reverseActive && backspinActive
+            ? 'Turn off Backspin first — a clip can be reversed or have a turntable effect, not both'
+            : reverseActive
+              ? 'Reverse on — the clip plays backwards (non-destructive)'
+              : 'Play the clip backwards (non-destructive)'
       "
       @click="$emit('toggle-reverse')"
     >
       Reverse
+    </button>
+    <!-- Turntable brake (record-stop): non-destructive tail effect that
+         decelerates the clip to a stop at its end. Kept visible but disabled on
+         reversed clips, and while Backspin is on (one or the other, not both). -->
+    <button
+      v-if="djEffectAvailable"
+      type="button"
+      class="rounded px-2 py-1 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
+      :class="
+        brakeActive
+          ? 'bg-red-600 text-white hover:bg-red-500'
+          : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+      "
+      :disabled="reverseActive || (!brakeActive && backspinActive)"
+      :title="
+        reverseActive
+          ? 'Not available on a reversed clip — turn off Reverse first'
+          : !brakeActive && backspinActive
+            ? 'Turn off Backspin first — a clip can have a brake or a backspin, not both'
+            : brakeActive
+              ? 'Brake on — the clip decelerates to a stop at its end (non-destructive)'
+              : 'Decelerate the clip to a stop at its end, like a turntable record-stop'
+      "
+      @click="$emit('toggle-brake')"
+    >
+      Brake
+    </button>
+    <!-- Turntable backspin (reverse rewind): non-destructive tail effect that
+         rewinds the clip backwards at its end. Kept visible but disabled on
+         reversed clips, and while Brake is on. -->
+    <button
+      v-if="djEffectAvailable"
+      type="button"
+      class="rounded px-2 py-1 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
+      :class="
+        backspinActive
+          ? 'bg-violet-600 text-white hover:bg-violet-500'
+          : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+      "
+      :disabled="reverseActive || (!backspinActive && brakeActive)"
+      :title="
+        reverseActive
+          ? 'Not available on a reversed clip — turn off Reverse first'
+          : !backspinActive && brakeActive
+            ? 'Turn off Brake first — a clip can have a brake or a backspin, not both'
+            : backspinActive
+              ? 'Backspin on — the clip rewinds backwards at its end (non-destructive)'
+              : 'Rewind the clip backwards at its end, like a DJ pulling the vinyl back'
+      "
+      @click="$emit('toggle-backspin')"
+    >
+      Backspin
     </button>
     <!-- Non-destructive crop with dialog-local undo/redo. -->
     <button

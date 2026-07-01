@@ -1471,17 +1471,24 @@ and grinds to a halt.
 - **Placement** (`OffsetSource`): integrated upstream of the read-ahead buffer,
   so it composes with trim / envelope / warp (see "Composes with warp" below) and
   is shared by live playback and mixdown export — parity for free.
-- **Persistence**: stored as a boolean `brake` flag on the clip, suppressed on
+- **Persistence**: stored as a boolean `brake` flag on the clip (propagated across
+  linked saved-clip siblings, like reverse), suppressed on
   disk/wire when off. The duration + curve are an **application preference**
   (Effects tab: Duration short/medium/long, Curve linear/curved/steep), held as
   engine-global defaults the renderer pushes over the bridge (`BRAKE_SETTINGS_SET`)
   on change and on every (re)connect — the keep-awake pattern. Changing it
   re-applies live to all braked clips and to mixdown export; the backend keeps the
   built-in `kPlatterStopSeconds` / `kDefaultCurvePower` as the fallback default.
-- **UI**: the timeline context menu has a single **Brake** toggle; a `BRAKE`
-  clip-header badge plus a red **tail overlay on the waveform** (the curved speed
-  ramp + groove ticks that bunch at full speed and spread apart as it stops,
+- **UI**: a **Brake** toggle in both the timeline right-click menu and the Clip
+  Editor toolbar (the latter auditions it live on the preview voice via
+  `PREVIEW_SET_BRAKE` and draws the same tail overlay on the editor waveform).
+  Reverse, Brake and Backspin form a **mutually-exclusive group** — in both surfaces
+  each control stays visible but is disabled while another in the group is set. A
+  `BRAKE` clip-header badge plus a red **tail overlay on the waveform** (the curved
+  speed ramp + groove ticks that bunch at full speed and spread apart as it stops,
   tracking the configured duration/curve) show the effect over the affected region.
+  Toggling brake on a linked saved clip propagates to every linked instance (like
+  reverse), routed through `library.updateLibraryClipBrake`.
 - **Composes with warp**: a record-stop is pitch-*changing*, so it cannot go
   through the pitch-*preserving* stretcher (unlike reverse, which is rate-neutral
   and passes through fine). Instead the clip is warped normally up to the effect
@@ -1496,7 +1503,7 @@ high speed that decays to a stop, like a DJ yanking the platter back — the
 recognisable reverse "rewind" whoosh (pitched up and fast at first, dropping as
 the spin slows). It shares the brake's architecture and is **mutually exclusive**
 with the brake (toggling one clears the other, enforced in the store, the engine,
-and on disk).
+and on disk; the UI additionally makes reverse part of the exclusive group).
 - **DSP** (`backend/src/dsp/BackspinSnapshot.h`): the reverse-rate magnitude decays
   as `spinSpeed·(1−u/T)^p`; the source position rewinds backward from the trigger
   by the analytic `Rewound(u) = spinSpeed·T/(p+1)·(1−(1−u/T)^(p+1))` (stateless, so
@@ -1510,7 +1517,10 @@ and on disk).
 - **Preference** (Effects tab): **Duration** short/medium/long + **Intensity**
   gentle/medium/wild (peak reverse speed 4×/6×/8×), pushed as `BACKSPIN_SETTINGS_SET`
   exactly like the brake settings.
-- **UI**: context-menu **Backspin** toggle, a violet `SPIN` clip-header badge, and a
+- **UI**: a **Backspin** toggle in both the timeline right-click menu and the Clip
+  Editor toolbar (same live-preview + editor-overlay treatment as the brake, and the
+  same linked-sibling propagation via `library.updateLibraryClipBackspin`), a violet
+  `SPIN` clip-header badge, and a
   violet **tail overlay** (back-pointing chevrons that thin out as the spin slows +
   the decaying rate curve) to read clearly as "reverse" and distinct from the brake.
 

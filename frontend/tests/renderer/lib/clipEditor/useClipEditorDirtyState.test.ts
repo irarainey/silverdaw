@@ -28,6 +28,7 @@ interface HarnessState {
   draftCents: number
   hasVolumeShapeChanged: boolean
   hasReverseChanged: boolean
+  hasDjEffectChanged: boolean
   hasGridChanged: boolean
   sourceBpm: number | undefined
   projectBpm: number
@@ -73,6 +74,7 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
     draftCents: 0,
     hasVolumeShapeChanged: false,
     hasReverseChanged: false,
+    hasDjEffectChanged: false,
     hasGridChanged: false,
     sourceBpm: 120,
     projectBpm: 120,
@@ -98,6 +100,7 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
     draftCents: () => state.draftCents,
     hasVolumeShapeChanged: () => state.hasVolumeShapeChanged,
     hasReverseChanged: () => state.hasReverseChanged,
+    hasDjEffectChanged: () => state.hasDjEffectChanged,
     hasGridChanged: () => state.hasGridChanged,
     sourceBpm: () => state.sourceBpm,
     projectBpm: () => state.projectBpm

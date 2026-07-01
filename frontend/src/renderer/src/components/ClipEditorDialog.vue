@@ -63,6 +63,11 @@ const {
   reverseAvailable,
   reverseActive,
   onToggleReverse,
+  djEffectAvailable,
+  brakeActive,
+  backspinActive,
+  onToggleBrake,
+  onToggleBackspin,
   zoom,
   onApplyCrop,
   zoomOut,
@@ -183,6 +188,9 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 :can-gate-selection="canGateSelection"
                 :reverse-available="reverseAvailable"
                 :reverse-active="reverseActive"
+                :dj-effect-available="djEffectAvailable"
+                :brake-active="brakeActive"
+                :backspin-active="backspinActive"
                 :zoom="zoom"
                 :zoom-percent="zoomPercent"
                 @apply-crop="onApplyCrop"
@@ -190,6 +198,8 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 @silence-selection="onSilenceSelection"
                 @full-selection="onFullSelection"
                 @toggle-reverse="onToggleReverse"
+                @toggle-brake="onToggleBrake"
+                @toggle-backspin="onToggleBackspin"
                 @zoom-out="zoomOut"
                 @reset-zoom="resetZoom"
                 @zoom-in="zoomIn"

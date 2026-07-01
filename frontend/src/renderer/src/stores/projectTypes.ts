@@ -60,10 +60,10 @@ export interface Clip {
   /** Plays the clip window backwards (non-destructive). Propagated across library-clip siblings. */
   reversed?: boolean
   /** Turntable brake (record-stop): when set, the clip decelerates to a stop over a fixed
-   *  platter-stop time at its end. Per-instance timeline effect; forward, non-warped clips only. */
+   *  platter-stop time at its end. Propagated across library-clip siblings. */
   brake?: boolean
   /** Turntable backspin (reverse rewind): when set, the clip rewinds backwards at speed at its
-   *  end, like a DJ pulling the vinyl back. Mutually exclusive with `brake`; forward, non-warped only. */
+   *  end, like a DJ pulling the vinyl back. Mutually exclusive with `brake`. Propagated across library-clip siblings. */
   backspin?: boolean
 }
 

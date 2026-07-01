@@ -57,9 +57,9 @@ export const clipPropertiesActions = {
       log.info('project', `setClipReversed id=${clipId} -> ${next ? 'reversed' : 'forward'}`)
     },
 
-    /** Toggle a per-clip turntable brake (record-stop). A per-instance timeline effect:
-     *  when on, the clip decelerates to a stop over a fixed platter-stop time at its end.
-     *  Applies to forward, non-warped clips only. Mutually exclusive with backspin. */
+    /** Toggle a per-clip turntable brake (record-stop). When on, the clip decelerates to a
+     *  stop over a fixed platter-stop time at its end. Sets a single clip; the library layer
+     *  fans this out across linked siblings. Mutually exclusive with backspin. */
     setClipBrake(clipId: string, on: boolean): void {
       const clip = this.clips[clipId]
       if (!clip) return
@@ -77,7 +77,8 @@ export const clipPropertiesActions = {
 
     /** Toggle a per-clip turntable backspin (reverse rewind). At the clip's end the
      *  audio rewinds backwards at speed and slows to a stop, like a DJ pulling the
-     *  vinyl back. Forward, non-warped clips only. Mutually exclusive with brake. */
+     *  vinyl back. Sets a single clip; the library layer fans this out across linked
+     *  siblings. Mutually exclusive with brake. */
     setClipBackspin(clipId: string, on: boolean): void {
       const clip = this.clips[clipId]
       if (!clip) return

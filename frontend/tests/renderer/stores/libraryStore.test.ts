@@ -855,6 +855,54 @@ describe('libraryStore', () => {
     expect(sendMock).toHaveBeenCalledWith('CLIP_SET_REVERSED', { clipId: clipB, reversed: true })
   })
 
+  it('propagates a shared brake / backspin flag to every linked timeline clip', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 20_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      fromSnapshot: true
+    })
+    const savedId = library.addLibraryClipFromSelection(sourceId!, 1_000, 2_000)!
+    const savedItem = {
+      id: savedId,
+      kind: 'clip' as const,
+      filePath: 'C:\\audio\\source.wav',
+      fileName: 'source.wav',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId!, sourceClipId: '', inMs: 1_000, durationMs: 2_000 }
+    }
+    const trackA = project.addTrack()
+    const trackB = project.addTrack()
+    const clipA = project.addClipFromLibrary(trackA, savedItem, 0)!
+    const clipB = project.addClipFromLibrary(trackB, savedItem, 0)!
+    sendMock.mockClear()
+
+    const brakeResult = library.updateLibraryClipBrake(savedId, true)
+    expect(brakeResult.ok).toBe(true)
+    expect(project.clips[clipA]!.brake).toBe(true)
+    expect(project.clips[clipB]!.brake).toBe(true)
+    expect(sendMock).toHaveBeenCalledWith('CLIP_SET_BRAKE', { clipId: clipA, on: true })
+    expect(sendMock).toHaveBeenCalledWith('CLIP_SET_BRAKE', { clipId: clipB, on: true })
+
+    // Switching to backspin clears brake on every linked instance (mutually exclusive).
+    const spinResult = library.updateLibraryClipBackspin(savedId, true)
+    expect(spinResult.ok).toBe(true)
+    expect(project.clips[clipA]!.backspin).toBe(true)
+    expect(project.clips[clipB]!.backspin).toBe(true)
+    expect(project.clips[clipA]!.brake).toBeUndefined()
+    expect(project.clips[clipB]!.brake).toBeUndefined()
+    expect(sendMock).toHaveBeenCalledWith('CLIP_SET_BACKSPIN', { clipId: clipA, on: true })
+    expect(sendMock).toHaveBeenCalledWith('CLIP_SET_BACKSPIN', { clipId: clipB, on: true })
+  })
+
   it('inherits the shared volume envelope when placing another linked instance', () => {
     const library = useLibraryStore()
     const project = useProjectStore()

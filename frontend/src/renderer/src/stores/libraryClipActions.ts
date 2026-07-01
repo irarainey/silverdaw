@@ -502,6 +502,49 @@ export const libraryClipActions = {
       return { ok: true }
     },
 
+    // Shared turntable brake for a saved clip: propagate to every linked timeline instance so
+    // braking one linked clip brakes them all (like reverse). The durable store is each clip's
+    // backend brake flag (CLIP_SET_BRAKE); `setClipBrake` self-guards and clears backspin, keeping
+    // the effects mutually exclusive across every instance.
+    updateLibraryClipBrake(itemId: string, on: boolean): { ok: boolean } {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item || item.kind !== 'clip') return { ok: false }
+      const project = useProjectStore()
+      const linkedClips = findLinkedTimelineClips(item)
+      runInUndoGroup('Brake clip', () => {
+        for (const c of linkedClips) {
+          if (!c) continue
+          project.setClipBrake(c.id, on)
+        }
+      })
+      log.info(
+        'library',
+        `updateLibraryClipBrake id=${itemId} on=${on} propagatedTo=${linkedClips.length}`
+      )
+      return { ok: true }
+    },
+
+    // Shared turntable backspin for a saved clip: propagate to every linked timeline instance so
+    // spinning one linked clip spins them all (like reverse). `setClipBackspin` self-guards and
+    // clears brake, keeping the effects mutually exclusive across every instance.
+    updateLibraryClipBackspin(itemId: string, on: boolean): { ok: boolean } {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item || item.kind !== 'clip') return { ok: false }
+      const project = useProjectStore()
+      const linkedClips = findLinkedTimelineClips(item)
+      runInUndoGroup('Backspin clip', () => {
+        for (const c of linkedClips) {
+          if (!c) continue
+          project.setClipBackspin(c.id, on)
+        }
+      })
+      log.info(
+        'library',
+        `updateLibraryClipBackspin id=${itemId} on=${on} propagatedTo=${linkedClips.length}`
+      )
+      return { ok: true }
+    },
+
     updateLibraryClipWarp(
       itemId: string,
       patch: {

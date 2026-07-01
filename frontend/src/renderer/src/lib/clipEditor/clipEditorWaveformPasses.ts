@@ -8,6 +8,16 @@ import { envelopeGainAtMs } from '@/lib/envelope'
 import { overlayGainToY, volumeOverlayLanes, volumeTimeToSourceMs } from '@/lib/clipEditor/volumeOverlay'
 import { horizontalOverscanPx } from '@/lib/timeline/timelineWindow'
 import {
+  BACKSPIN_FILL,
+  BACKSPIN_FILL_ALPHA,
+  BACKSPIN_LINE,
+  BACKSPIN_LINE_ALPHA,
+  BRAKE_FILL,
+  BRAKE_FILL_ALPHA,
+  BRAKE_LINE,
+  BRAKE_LINE_ALPHA
+} from '@/lib/timeline/constants'
+import {
   createWaveformRunMerger,
   waveformColumnDown,
   waveformColumnUp
@@ -399,6 +409,88 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
     }
   }
 
+  // --- Turntable brake / backspin tail overlay (world layer) ------------------
+  // Marks the deceleration region at the end of the loaded preview window with a
+  // red (brake) / violet (backspin) fill, a rate curve falling to a stop, and
+  // groove ticks / back-chevrons — mirroring the timeline clip overlay so the
+  // Clip Editor shows the same effect the preview auditions. Not drawn on a
+  // reversed clip (the engine can't apply a tail there).
+  function drawDjEffectTail(layer: Container, g: SceneGeometry): void {
+    const brake = deps.draftBrake()
+    const backspin = deps.draftBackspin()
+    if ((!brake && !backspin) || deps.draftReversed()) return
+
+    // The preview voice loads the view window [viewIn, viewEnd] and applies the
+    // effect at its end, so anchor the overlay to the same span.
+    const endMs = g.viewEnd
+    const winMs = g.viewEnd - g.viewIn
+    if (winMs <= 0 || g.worldPxPerMs <= 0) return
+
+    const seconds = brake ? deps.brakeSeconds() : deps.backspinSeconds()
+    const curvePower = brake ? deps.brakeCurvePower() : deps.backspinCurvePower()
+    const effectMs = Math.min(seconds * 1000, winMs)
+    if (effectMs <= 0) return
+    const startMs = endMs - effectMs
+
+    const x0 = worldX(startMs, g)
+    const x1 = worldX(endMs, g)
+    const w = x1 - x0
+    if (w < 1) return
+    const overscan = horizontalOverscanPx(g.W)
+    if (x1 < g.scrollPx - overscan || x0 > g.scrollPx + g.W + overscan) return
+
+    const yTop = g.waveTop
+    const innerH = g.waveH
+    const yBot = yTop + innerH
+    const fillColour = brake ? BRAKE_FILL : BACKSPIN_FILL
+    const fillAlpha = brake ? BRAKE_FILL_ALPHA : BACKSPIN_FILL_ALPHA
+    const lineColour = brake ? BRAKE_LINE : BACKSPIN_LINE
+    const lineAlpha = brake ? BRAKE_LINE_ALPHA : BACKSPIN_LINE_ALPHA
+
+    const overlay = acquireGraphics()
+    if (!overlay) return
+    overlay.rect(x0, yTop, w, innerH).fill({ color: fillColour, alpha: fillAlpha })
+
+    // Equal source-consumed fractions map to timeline position u/T = 1 − (1−f)^(1/(p+1)),
+    // so grooves/chevrons bunch at full speed and spread apart as the platter halts.
+    const invP = 1 / (curvePower + 1)
+    if (brake) {
+      const TICKS = 7
+      for (let k = 1; k < TICKS; k++) {
+        const u = 1 - Math.pow(1 - k / TICKS, invP)
+        const tx = x0 + w * u
+        overlay.moveTo(tx, yTop).lineTo(tx, yBot)
+      }
+      overlay.stroke({ color: lineColour, width: 1, alpha: lineAlpha * 0.4 })
+    } else {
+      const CHEVRONS = 6
+      const ch = Math.min(5, innerH * 0.3)
+      const cyp = (yTop + yBot) / 2
+      for (let k = 1; k <= CHEVRONS; k++) {
+        const u = 1 - Math.pow(1 - k / (CHEVRONS + 1), invP)
+        const cxp = x0 + w * u
+        overlay
+          .moveTo(cxp + ch * 0.6, cyp - ch)
+          .lineTo(cxp - ch * 0.6, cyp)
+          .lineTo(cxp + ch * 0.6, cyp + ch)
+      }
+      overlay.stroke({ color: lineColour, width: 1, alpha: lineAlpha * 0.55 })
+    }
+
+    // Rate curve: full speed (top) at the trigger falling to a stop (bottom) at the
+    // clip end, plus a crisp left boundary.
+    overlay.moveTo(x0, yTop).lineTo(x0, yBot)
+    const STEPS = 24
+    overlay.moveTo(x0, yTop)
+    for (let i = 1; i <= STEPS; i++) {
+      const u = i / STEPS
+      const rate = Math.pow(1 - u, curvePower)
+      overlay.lineTo(x0 + w * u, yTop + innerH * (1 - rate))
+    }
+    overlay.stroke({ color: lineColour, width: 1.5, alpha: lineAlpha })
+    layer.addChild(overlay)
+  }
+
   return {
     drawRulerBackground,
     drawRulerTicks,
@@ -406,6 +498,7 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
     drawBeatGrid,
     drawSelection,
     drawSliceMarkers,
-    drawVolumeOverlay
+    drawVolumeOverlay,
+    drawDjEffectTail
   }
 }

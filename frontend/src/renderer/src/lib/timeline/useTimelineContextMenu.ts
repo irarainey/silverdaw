@@ -218,42 +218,48 @@ export function useTimelineContextMenu(
       disabled: !clip || clip.unresolved || !hasLibraryItem
     })
     if (clip) {
-      // Single toggle row; a leading check marks the on-state since there is no
-      // natural opposite verb. Reversing a linked clip reverses every sibling.
-      items.push({
-        command: 'clip.reverse',
-        label: clip.reversed ? '\u2713 Reverse' : 'Reverse',
-        title: isLinkedClip
-          ? 'Play the clip backwards. Applies to every linked instance of this saved clip.'
-          : 'Play the clip backwards (non-destructive).'
-      })
-    }
-    // Turntable brake (record-stop): when on, the clip decelerates to a stop over a
-    // fixed platter-stop time (~1 s, like a Technics deck) at its end. Per-instance
-    // timeline effect; forward, non-warped clips only (the engine can't compose it
-    // with pitch-preserving warp yet), so it is hidden for reversed or warped clips.
-    // Turntable brake / backspin: tail effects that compose with warp (the part
-    // before the effect is warped; the tail is a direct varispeed read). Reverse is
-    // still excluded (out of scope). A clip can have a brake OR a backspin, never
-    // both, so each is disabled while the other is set (turn that one off first).
-    if (clip && !clip.reversed) {
+      // Reverse and the two turntable tail effects (brake / backspin) form a
+      // mutually-exclusive group: each row stays visible but is disabled while
+      // another in the group is set — matching the Clip Editor toolbar. A leading
+      // check marks the on-state. Reverse plays the whole clip backwards; brake is
+      // a record-stop and backspin a reverse-rewind at the clip's end. Brake and
+      // backspin compose with warp (the part before the tail is warped, the tail is
+      // a direct varispeed read). Toggling a linked clip applies to every sibling.
+      const reversed = clip.reversed === true
       const brakeOn = clip.brake === true
       const backspinOn = clip.backspin === true
+      const groupHint =
+        'a clip can be reversed or have a turntable effect, not both'
+
+      items.push({
+        command: 'clip.reverse',
+        label: reversed ? '\u2713 Reverse' : 'Reverse',
+        disabled: !reversed && (brakeOn || backspinOn),
+        title: !reversed && brakeOn
+          ? `Turn off Brake first — ${groupHint}`
+          : !reversed && backspinOn
+            ? `Turn off Backspin first — ${groupHint}`
+            : isLinkedClip
+              ? 'Play the clip backwards. Applies to every linked instance of this saved clip.'
+              : 'Play the clip backwards (non-destructive).'
+      })
       items.push({
         command: 'clip.brake',
         label: brakeOn ? '\u2713 Brake' : 'Brake',
-        disabled: !brakeOn && backspinOn,
-        title:
-          !brakeOn && backspinOn
+        disabled: !brakeOn && (reversed || backspinOn),
+        title: !brakeOn && reversed
+          ? `Turn off Reverse first — ${groupHint}`
+          : !brakeOn && backspinOn
             ? 'Turn off Backspin first — a clip can have a brake or a backspin, not both'
             : 'Decelerate the clip to a stop at its end, like a turntable record-stop'
       })
       items.push({
         command: 'clip.backspin',
         label: backspinOn ? '\u2713 Backspin' : 'Backspin',
-        disabled: !backspinOn && brakeOn,
-        title:
-          !backspinOn && brakeOn
+        disabled: !backspinOn && (reversed || brakeOn),
+        title: !backspinOn && reversed
+          ? `Turn off Reverse first — ${groupHint}`
+          : !backspinOn && brakeOn
             ? 'Turn off Brake first — a clip can have a brake or a backspin, not both'
             : 'Rewind the clip backwards at its end, like a DJ pulling the vinyl back'
       })
@@ -459,9 +465,25 @@ export function useTimelineContextMenu(
         }
       }
     } else if (command === 'clip.brake') {
-      if (clip) project.setClipBrake(clipId, !clip.brake)
+      if (clip) {
+        const next = !clip.brake
+        const parent = library.byId[clip.libraryItemId]
+        if (parent?.kind === 'clip') {
+          library.updateLibraryClipBrake(clip.libraryItemId, next)
+        } else {
+          project.setClipBrake(clipId, next)
+        }
+      }
     } else if (command === 'clip.backspin') {
-      if (clip) project.setClipBackspin(clipId, !clip.backspin)
+      if (clip) {
+        const next = !clip.backspin
+        const parent = library.byId[clip.libraryItemId]
+        if (parent?.kind === 'clip') {
+          library.updateLibraryClipBackspin(clip.libraryItemId, next)
+        } else {
+          project.setClipBackspin(clipId, next)
+        }
+      }
     } else if (command.startsWith('clip.color:')) {
       const idx = Number.parseInt(command.slice('clip.color:'.length), 10)
       if (Number.isFinite(idx)) project.setClipColor(clipId, idx)
