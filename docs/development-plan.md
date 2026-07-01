@@ -243,7 +243,7 @@ Electron Shell
         ├── LibraryPanel        — source / stem / sample / clip tiles, metadata, drag source
         ├── ClipEditorDialog    — full-waveform clip editor with preview voice
         ├── TransportBar        — play/pause, BPM, position, audio-device chip
-        ├── PreferencesDialog   — General / Project / Audio / Stems / Developer tabs
+        ├── PreferencesDialog   — General / Timeline / Project / Audio / Effects / Stems / Developer tabs
         ├── RecoveryDialog      — autosave restore picker on launch
         └── ClipContextMenu     — edit actions, relink entry and colour swatches
 ```
@@ -1476,7 +1476,7 @@ and grinds to a halt.
   disk/wire when off. The duration + curve are an **application preference**
   (Effects tab: Duration short/medium/long, Curve linear/curved/steep), held as
   engine-global defaults the renderer pushes over the bridge (`BRAKE_SETTINGS_SET`)
-  on change and on every (re)connect — the keep-awake pattern. Changing it
+  on Preferences Save and on every (re)connect — the keep-awake pattern. Changing it
   re-applies live to all braked clips and to mixdown export; the backend keeps the
   built-in `kPlatterStopSeconds` / `kDefaultCurvePower` as the fallback default.
 - **UI**: a **Brake** toggle in both the timeline right-click menu and the Clip

@@ -10,6 +10,7 @@ import PreferencesDeveloperTab from './PreferencesDeveloperTab.vue'
 import PreferencesEffectsTab from './PreferencesEffectsTab.vue'
 import PreferencesGeneralTab from './PreferencesGeneralTab.vue'
 import PreferencesProjectTab from './PreferencesProjectTab.vue'
+import PreferencesTimelineTab from './PreferencesTimelineTab.vue'
 import PreferencesStemsTab from './PreferencesStemsTab.vue'
 
 const props = defineProps<{ open: boolean }>()
@@ -70,11 +71,12 @@ const {
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 
-type PreferencesTab = 'general' | 'project' | 'audio' | 'effects' | 'stems' | 'developer'
+type PreferencesTab = 'general' | 'timeline' | 'project' | 'audio' | 'effects' | 'stems' | 'developer'
 const activeTab = ref<PreferencesTab>('general')
 
 const tabs: Array<{ id: PreferencesTab; label: string }> = [
   { id: 'general', label: 'General' },
+  { id: 'timeline', label: 'Timeline' },
   { id: 'project', label: 'Project' },
   { id: 'audio', label: 'Audio' },
   { id: 'effects', label: 'Effects' },
@@ -181,12 +183,14 @@ function onSave(): void {
             <PreferencesGeneralTab
               v-if="activeTab === 'general'"
               v-model:toasts-enabled="toastsEnabled"
-              v-model:follow-playback="followPlayback"
               v-model:show-library-tile-images="showLibraryTileImages"
-              v-model:match-project-tempo-on-drop="matchProjectTempoOnDrop"
-              v-model:cleanup-project-files="cleanupProjectFiles"
-              v-model:skip-button-target="skipButtonTarget"
               v-model:waveform-display-mode="waveformDisplayMode"
+            />
+            <PreferencesTimelineTab
+              v-else-if="activeTab === 'timeline'"
+              v-model:follow-playback="followPlayback"
+              v-model:match-project-tempo-on-drop="matchProjectTempoOnDrop"
+              v-model:skip-button-target="skipButtonTarget"
             />
             <PreferencesEffectsTab
               v-else-if="activeTab === 'effects'"
@@ -199,6 +203,7 @@ function onSave(): void {
               v-else-if="activeTab === 'project'"
               v-model:autosave-enabled="autosaveEnabled"
               v-model:autosave-interval-seconds="autosaveIntervalSeconds"
+              v-model:cleanup-project-files="cleanupProjectFiles"
               :default-project-dir="defaultProjectDir"
               :default-clip-dir="defaultClipDir"
               :choose-project-dir="chooseProjectDir"

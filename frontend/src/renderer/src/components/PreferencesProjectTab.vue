@@ -8,6 +8,7 @@ defineProps<{
 
 const autosaveEnabled = defineModel<boolean>('autosaveEnabled', { required: true })
 const autosaveIntervalSeconds = defineModel<number>('autosaveIntervalSeconds', { required: true })
+const cleanupProjectFiles = defineModel<boolean>('cleanupProjectFiles', { required: true })
 </script>
 
 <template>
@@ -75,7 +76,7 @@ const autosaveIntervalSeconds = defineModel<number>('autosaveIntervalSeconds', {
           class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
         >
         <span class="flex-1">
-          <span class="block font-medium text-zinc-200">Auto-save dirty projects in the background</span>
+          <span class="block font-medium text-zinc-200">Auto-save projects in the background</span>
           <span class="mt-0.5 block text-zinc-500">
             Periodically writes a recovery copy of any project with
             unsaved changes into
@@ -89,7 +90,7 @@ const autosaveIntervalSeconds = defineModel<number>('autosaveIntervalSeconds', {
         <label
           for="autosave-interval"
           class="text-zinc-400"
-        >Tick interval</label>
+        >Save every</label>
         <input
           id="autosave-interval"
           v-model.number="autosaveIntervalSeconds"
@@ -102,6 +103,29 @@ const autosaveIntervalSeconds = defineModel<number>('autosaveIntervalSeconds', {
         >
         <span class="text-zinc-500">seconds (5..600)</span>
       </div>
+    </div>
+
+    <div>
+      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+        File cleanup
+      </h2>
+      <label class="flex cursor-pointer items-start gap-3">
+        <input
+          v-model="cleanupProjectFiles"
+          type="checkbox"
+          class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+        >
+        <span class="flex-1">
+          <span class="block font-medium text-zinc-200">Clean up project files on remove</span>
+          <span class="mt-0.5 block text-zinc-500">
+            When you remove a stem or sample from the library, also delete its
+            generated file from the project's stems / samples folder (and the empty
+            folder it leaves behind). Cover art and tag data are removed once nothing
+            else in the project uses them. Your original imported audio files are
+            never deleted. Off by default — removal only unlinks from the project.
+          </span>
+        </span>
+      </label>
     </div>
   </section>
 </template>

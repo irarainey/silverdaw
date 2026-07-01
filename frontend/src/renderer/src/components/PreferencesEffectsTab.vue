@@ -19,9 +19,9 @@ const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity',
         Turntable brake
       </h2>
       <p class="mb-3 text-zinc-500">
-        The brake (right-click a clip ▸ Brake) decelerates the clip to a stop at
-        its end, like a vinyl record-stop. These set how long it takes and how the
-        slowdown is shaped, for every braked clip.
+        The brake decelerates a clip to a stop at its end, like a vinyl
+        record-stop. These set how long it takes and how the slowdown is shaped,
+        applied to every clip that uses it.
       </p>
 
       <p class="mb-2 font-medium text-zinc-300">
@@ -38,7 +38,7 @@ const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity',
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
             <span class="font-medium text-zinc-200">Short</span>
-            <span class="text-zinc-500"> — Quick stop (~0.4 s)</span>
+            <span class="text-zinc-500"> — Snappy (~0.4 s)</span>
           </span>
         </label>
         <label class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
@@ -96,7 +96,7 @@ const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity',
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
             <span class="font-medium text-zinc-200">Curved</span>
-            <span class="text-zinc-500"> — Fast then easing</span>
+            <span class="text-zinc-500"> — Fast, then eases</span>
           </span>
         </label>
         <label class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
@@ -109,7 +109,7 @@ const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity',
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
             <span class="font-medium text-zinc-200">Steep</span>
-            <span class="text-zinc-500"> — Very fast then a sag</span>
+            <span class="text-zinc-500"> — Very fast, then eases</span>
           </span>
         </label>
       </div>
@@ -120,9 +120,9 @@ const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity',
         Turntable backspin
       </h2>
       <p class="mb-3 text-zinc-500">
-        The backspin (right-click a clip ▸ Backspin) rewinds the clip backwards at
-        its end, like a DJ pulling the vinyl back. These set how long it spins and
-        how hard it is pulled, for every backspun clip.
+        The backspin rewinds a clip backwards at its end, like a DJ pulling the
+        vinyl back. These set how long it spins and how hard it is pulled, applied
+        to every clip that uses it.
       </p>
 
       <p class="mb-2 font-medium text-zinc-300">
@@ -184,7 +184,7 @@ const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity',
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
             <span class="font-medium text-zinc-200">Gentle</span>
-            <span class="text-zinc-500"> — Slower pull (4×)</span>
+            <span class="text-zinc-500"> — Soft pull (4×)</span>
           </span>
         </label>
         <label class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
@@ -197,7 +197,7 @@ const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity',
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
             <span class="font-medium text-zinc-200">Medium</span>
-            <span class="text-zinc-500"> — Typical pull (6×)</span>
+            <span class="text-zinc-500"> — Firm pull (6×)</span>
           </span>
         </label>
         <label class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
@@ -210,7 +210,7 @@ const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity',
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
             <span class="font-medium text-zinc-200">Wild</span>
-            <span class="text-zinc-500"> — Hard, fast pull (8×)</span>
+            <span class="text-zinc-500"> — Hard pull (8×)</span>
           </span>
         </label>
       </div>
