@@ -1719,9 +1719,9 @@ fields stored directly on the `PROJECT` ValueTree node:
 - **Audio output device** + **driver** — per-project override of the global
   preference. Two dropdowns: device list (deduplicated across drivers) and
   driver list (Windows Audio / DirectSound / ASIO / etc.), both with a
-  "System default" entry that clears the override. If the saved device isn't
+  "Use Application Settings" entry that clears the override. If the saved device isn't
   present at project-load, an `AudioDeviceUnavailableDialog` informs the user
-  and the engine stays on the system default; the project preference is left
+  and the engine falls back to the next available device; the project preference is left
   intact so re-plugging or re-saving restores it. Shares the device list (real
   named devices only, pseudo-endpoints filtered) with the Preferences ▸ Audio
   picker via the single composable in `lib/audio/audioOutputPicker.ts`.

@@ -184,7 +184,7 @@ const {
               </option>
             </select>
             <span class="text-[11px] text-zinc-500">
-              Applied on every project load. Selecting <span class="text-zinc-300">System default</span> clears the project override so the global Preferences ▸ Audio device applies instead.
+              Applied on every project load. Selecting <span class="text-zinc-300">Use Application Settings</span> clears the project override so the global Preferences ▸ Audio device applies instead.
             </span>
           </label>
 
