@@ -69,6 +69,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   its generated stems and samples beside the project file, so the whole folder
   can be moved or synced between machines (for example via cloud storage) and
   still open — as long as the original source files sit at the same location.
+- **Tidy up on remove.** Optionally have Silverdaw delete a stem's or sample's
+  generated file — and the now-empty folder it leaves behind — from disk when you
+  remove it from the library. Off by default (removal just unlinks it from the
+  project); your original imported files are never touched. Turn it on in
+  **Preferences ▸ Project**.
 - **Track, project, and master controls.** Per-track volume faders with a
   bipolar equal-power **Pan** control in each track header, plus mute, solo,
   and a collapsible bottom panel with **Track FX**, **Project FX**, and

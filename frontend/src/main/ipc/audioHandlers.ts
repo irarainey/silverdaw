@@ -20,7 +20,6 @@ import {
   registerIssuedPath
 } from '../audioPaths'
 import { logMain } from '../log'
-import { cleanupArtifactWavs } from '../projectFileCleanup'
 
 /** Singletons the audio handlers reach back into main for. */
 export interface AudioHandlersContext {
@@ -486,13 +485,15 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
   // media-store entries the renderer found are no longer referenced. Gated behind
   // the renderer's "clean up project files" preference; best-effort and never
   // touches a user's original imported audio.
+  // Delete a removed library item's orphaned media-store entries (cover art + tag
+  // sidecars keyed by media GUID). The stem/sample WAVs themselves are deleted by the
+  // audio backend over the bridge (it owns those files); this handler only sweeps the
+  // media store the main process owns. Gated behind the renderer's "clean up project
+  // files" preference; best-effort.
   ipcMain.handle(IPC.media.cleanup, async (_evt, payload: unknown) => {
     if (!payload || typeof payload !== 'object') return false
-    const p = payload as { wavPaths?: unknown; mediaIds?: unknown }
-    const wavPaths = Array.isArray(p.wavPaths) ? p.wavPaths : []
+    const p = payload as { mediaIds?: unknown }
     const mediaIds = Array.isArray(p.mediaIds) ? p.mediaIds : []
-    // Delete the artifact WAVs and prune any emptied per-source folders.
-    await cleanupArtifactWavs(wavPaths)
     if (mediaIds.length > 0) {
       const dirs = getProjectMediaDirs()
       if (dirs) {

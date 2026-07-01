@@ -10,6 +10,9 @@
 #include "ProjectState.h"
 #include "ProjectSession.h"
 
+#include <juce_events/juce_events.h>
+
+#include <map>
 #include <optional>
 
 namespace silverdaw
@@ -98,6 +101,197 @@ void handleLibraryRemove(const juce::var& payload, ProjectState& projectState)
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
     silverdaw::log::info("bridge", "recv LIBRARY_REMOVE itemId=" + itemId);
     projectState.removeLibraryItem(itemId);
+}
+
+// Background retry for removing a per-source artifact folder whose files we deleted. On
+// Windows a just-deleted WAV can briefly linger in "delete-pending" limbo (a reader
+// handle closing, or a sync client / AV scanner momentarily holding the folder), so the
+// directory removal can fail for a moment. Rather than block the message thread, a failed
+// removal is retried on a timer. Each pending folder remembers the exact filenames we are
+// allowed to delete, so the retry only ever removes a folder that still contains nothing
+// but those files (a foreign file appearing in the window aborts the removal — we never
+// blindly recurse).
+class DeferredFolderPruner final : private juce::Timer
+{
+  public:
+    void queue(const juce::File& folder, const juce::StringArray& deletableNames)
+    {
+        for (auto& p : pending)
+        {
+            if (p.folder == folder)
+            {
+                p.names.mergeArray(deletableNames);
+                p.ticks = 0;
+                if (! isTimerRunning()) startTimer(kRetryIntervalMs);
+                return;
+            }
+        }
+        pending.add({folder, deletableNames, 0});
+        if (! isTimerRunning()) startTimer(kRetryIntervalMs);
+    }
+
+  private:
+    struct Entry
+    {
+        juce::File folder;
+        juce::StringArray names;
+        int ticks;
+    };
+
+    void timerCallback() override
+    {
+        for (int i = pending.size(); --i >= 0;)
+        {
+            auto& e = pending.getReference(i);
+            if (! e.folder.isDirectory())
+            {
+                pending.remove(i); // already gone
+                continue;
+            }
+            bool onlyOurs = true;
+            for (const auto& child : e.folder.findChildFiles(juce::File::findFilesAndDirectories, false))
+                if (! e.names.contains(child.getFileName(), /*ignoreCase*/ true)) { onlyOurs = false; break; }
+            if (! onlyOurs)
+            {
+                silverdaw::log::warn("bridge", "LIBRARY_DELETE_ARTIFACTS folder gained a foreign file; keeping: "
+                                                   + e.folder.getFullPathName());
+                pending.remove(i);
+                continue;
+            }
+            // Clear the OneDrive/sync READ-ONLY stamp so RemoveDirectory isn't denied.
+            e.folder.setReadOnly(false, /*applyRecursively*/ true);
+            if (e.folder.deleteRecursively())
+            {
+                silverdaw::log::info("bridge",
+                                     "LIBRARY_DELETE_ARTIFACTS removed folder on retry: " + e.folder.getFullPathName());
+                pending.remove(i);
+            }
+            else if (++e.ticks >= kMaxTicks)
+            {
+                silverdaw::log::warn("bridge",
+                                     "LIBRARY_DELETE_ARTIFACTS gave up removing folder: " + e.folder.getFullPathName());
+                pending.remove(i);
+            }
+        }
+        if (pending.isEmpty()) stopTimer();
+    }
+
+    static constexpr int kRetryIntervalMs = 400;
+    static constexpr int kMaxTicks = 30; // ~12 s of background retries
+    juce::Array<Entry> pending;
+};
+
+DeferredFolderPruner& deferredFolderPruner()
+{
+    static DeferredFolderPruner instance;
+    return instance;
+}
+
+// Delete a removed library item's generated stem/sample artifact files. Every path is
+// re-validated against the project's stems/samples trees, so a user's original imported
+// source can never be removed. The decision is made by counting the per-source folder's
+// files BEFORE deleting anything: if the files we were asked to remove are the folder's
+// ONLY contents, the whole directory is removed in one `deleteRecursively` (files + dir
+// together) — this avoids leaving a just-deleted WAV in Windows "delete-pending" limbo
+// that would make the folder look non-empty and block its removal. If other files remain
+// (another still-referenced stem/sample, or a file the app didn't generate), only our
+// files are deleted and the folder is kept. Before any delete, the engine releases any
+// reader it holds on the file (the preview voice). A directory removal that fails behind a
+// transient lock is retried in the background. The shared cover-art / tag media store lives
+// in separate GUID-keyed folders (reference-counted across every stem/sample/source from
+// the same origin) and is cleaned up separately in the main process — never touched here.
+// Runs on the JUCE message thread.
+void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession& session, AudioEngine& engine)
+{
+    const juce::var v = payload.getProperty("paths", juce::var());
+    if (! v.isArray())
+    {
+        silverdaw::log::warn("bridge", "LIBRARY_DELETE_ARTIFACTS missing 'paths' array; ignored");
+        return;
+    }
+    const auto* arr = v.getArray();
+    if (arr == nullptr || arr->isEmpty()) return;
+
+    const auto stemsRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "stems");
+    const auto samplesRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "samples");
+
+    // Group the requested deletions by their per-source folder (a direct child of a root),
+    // WITHOUT deleting yet — so the folder's file count is read before any file goes into
+    // delete-pending limbo. Paths not sitting in a per-source folder are deleted directly.
+    std::map<juce::String, juce::StringArray> requestedByFolder;
+    int deleted = 0;
+    for (const auto& entry : *arr)
+    {
+        if (! entry.isString()) continue;
+        const juce::String path = entry.toString();
+        if (path.isEmpty() || ! juce::File::isAbsolutePath(path)) continue;
+
+        const juce::File file(path);
+        if (! file.isAChildOf(stemsRoot) && ! file.isAChildOf(samplesRoot))
+        {
+            silverdaw::log::warn("bridge",
+                                 "LIBRARY_DELETE_ARTIFACTS refusing path outside artifact roots: " + path);
+            continue;
+        }
+        // Close any engine reader on this file first, so the delete actually frees it.
+        engine.releaseReadersForFile(file);
+
+        const auto folder = file.getParentDirectory();
+        if (folder.getParentDirectory() == stemsRoot || folder.getParentDirectory() == samplesRoot)
+        {
+            requestedByFolder[folder.getFullPathName()].add(file.getFileName());
+        }
+        else
+        {
+            // Directly under a root (or deeper) — only ever unlink the file, never a root.
+            if (file.deleteFile()) ++deleted;
+            else if (file.existsAsFile())
+                silverdaw::log::warn("bridge", "LIBRARY_DELETE_ARTIFACTS could not delete " + path);
+        }
+    }
+
+    int prunedFolders = 0;
+    for (const auto& [folderPath, ourNames] : requestedByFolder)
+    {
+        const juce::File folder(folderPath);
+        if (! folder.isDirectory())
+        {
+            ++prunedFolders; // already gone
+            continue;
+        }
+        // Count how many files the folder holds that are NOT ones we were asked to delete.
+        int foreign = 0;
+        for (const auto& child : folder.findChildFiles(juce::File::findFilesAndDirectories, false))
+            if (! ourNames.contains(child.getFileName(), /*ignoreCase*/ true)) ++foreign;
+
+        silverdaw::log::info("bridge", "LIBRARY_DELETE_ARTIFACTS folder='" + folderPath
+                                           + "' ours=" + juce::String(ourNames.size())
+                                           + " foreign=" + juce::String(foreign));
+
+        if (foreign > 0)
+        {
+            // Other files remain — delete only ours and keep the folder.
+            for (const auto& name : ourNames)
+                if (folder.getChildFile(name).deleteFile()) ++deleted;
+        }
+        else
+        {
+            // Our files are the folder's only contents — remove the whole directory (its
+            // files AND the folder) in one step, so nothing is left delete-pending.
+            deleted += ourNames.size();
+            // OneDrive (and other sync clients) stamp synced folders READ-ONLY, which makes
+            // Windows refuse RemoveDirectory with ERROR_ACCESS_DENIED. Clear it (recursively)
+            // first so the removal isn't denied.
+            folder.setReadOnly(false, /*applyRecursively*/ true);
+            if (folder.deleteRecursively())
+                ++prunedFolders;
+            else
+                deferredFolderPruner().queue(folder, ourNames); // locked — retry in background
+        }
+    }
+
+    silverdaw::log::info("bridge", "recv LIBRARY_DELETE_ARTIFACTS deleted=" + juce::String(deleted)
+                                       + " prunedFolders=" + juce::String(prunedFolders));
 }
 
 void handleLibraryReanalyse(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,

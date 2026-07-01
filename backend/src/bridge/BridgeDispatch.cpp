@@ -210,6 +210,10 @@ bool dispatchLibrary(const DispatchContext& ctx)
     {
         silverdaw::handleLibraryRemove(payload, projectState);
     }
+    else if (type == "LIBRARY_DELETE_ARTIFACTS")
+    {
+        silverdaw::handleLibraryDeleteArtifacts(payload, session, engine);
+    }
     else if (type == "LIBRARY_REANALYSE")
     {
         silverdaw::handleLibraryReanalyse(payload, engine, projectState, bridge, peakPool, decodedCache);

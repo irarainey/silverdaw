@@ -70,6 +70,7 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     preview.transportSource->setPosition(0.0);
 
     topMixer.addInputSource(preview.transportSource.get(), false);
+    preview.sourceFile = filePath;
     previewGeneration.fetch_add(1, std::memory_order_acq_rel);
     silverdaw::log::info("preview", "loaded " + filePath.getFullPathName().toStdString()
                                         + " inMs=" + std::to_string(preview.inMs)
@@ -94,11 +95,28 @@ void AudioEngine::unloadPreview()
     preview.envelopeSnapshot.reset();
     preview.retiredEnvelopes.clear();
     preview.readerSource.reset();
+    preview.sourceFile = juce::File();
     preview.inMs = 0.0;
     preview.durationMs = 0.0;
     preview.sourceDurationMs = 0.0;
     preview.warpMode = "rhythmic";
     previewGeneration.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void AudioEngine::releaseReadersForFile(const juce::File& file)
+{
+    // The preview voice keeps an AudioFormatReaderSource (an open file handle) on its
+    // loaded WAV. If that WAV is about to be deleted, tear the preview down first so the
+    // handle closes and the file is really removed (not left delete-pending) — otherwise
+    // its now-empty per-source folder cannot be removed on Windows. Timeline-clip readers
+    // are not considered: the renderer refuses to remove a library item still in use by a
+    // clip, so no track holds the file at delete time.
+    if (preview.readerSource != nullptr && preview.sourceFile == file)
+    {
+        silverdaw::log::info("preview",
+                             "releasing preview reader before delete: " + file.getFullPathName().toStdString());
+        unloadPreview();
+    }
 }
 
 bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,

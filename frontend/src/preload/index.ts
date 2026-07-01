@@ -322,8 +322,9 @@ const api = {
   /** Read a source's media (tags + cover bytes) back by media GUID, or null when absent. */
   getProjectMedia: (mediaId: string): Promise<AudioMetadata | null> =>
     ipcRenderer.invoke(IPC.media.get, mediaId),
-  /** Delete a removed item's generated stem/sample WAVs and orphaned media files. */
-  cleanupProjectFiles: (payload: { wavPaths: string[]; mediaIds: string[] }): Promise<boolean> =>
+  /** Delete a removed item's orphaned media-store files (cover art + tag sidecars).
+   *  Stem/sample WAVs are deleted by the audio backend over the bridge, not here. */
+  cleanupProjectFiles: (payload: { mediaIds: string[] }): Promise<boolean> =>
     ipcRenderer.invoke(IPC.media.cleanup, payload)
 }as const
 

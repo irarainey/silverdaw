@@ -723,14 +723,25 @@ and samples — **carries the source's GUID** (the backend resolves it by walkin
 store entry, even after the original library item is removed. The renderer reads/writes the
 store through guarded main-process IPC (`media:get` / `media:save`, roots registered by
 `registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`. When the
-optional **Clean up project files** preference is on, removing a library item also runs
-`media:cleanup`, which deletes a stem/sample's generated WAV (confined to the
-stems/samples write roots, removing the whole per-source folder once it is empty) and the
-`<guid>` media entry once no remaining item references it — a user's original imported
-audio is never deleted. A just-emptied folder on a synced drive can briefly refuse removal
-(a cloud-filter/scanner lock that no process holds — confirmed via the Restart Manager);
-that is not fatal — the folder is queued for short background retries and, as a backstop,
-any empty per-source folder is also swept when its project next opens.
+optional **Clean up project files** preference is on, removing a library item deletes
+its generated stem/sample WAV and then prunes the per-source folder once nothing but the
+artifacts that removal took remains in it (another still-referenced stem/sample, or any
+file the app did not generate, keeps the folder) — all via the **audio backend** over the
+bridge (`LIBRARY_DELETE_ARTIFACTS { paths }`), which re-confines every path to the
+project's stems/samples artifact trees so a user's original imported audio is never
+touched. The backend counts the folder's files **before** deleting, and when its own
+artifacts are the only contents it removes the whole directory in one `deleteRecursively`
+(no delete-then-prune window). It first clears the folder's **read-only attribute** —
+sync clients such as OneDrive stamp synced folders read-only, and Windows refuses
+`RemoveDirectory` on a read-only directory with *Access denied* (this is why an earlier
+Node-`fs`/Electron attempt failed the same way). A directory removal blocked by a
+genuinely transient lock is retried on a short background timer. The GUID-keyed
+cover-art / tag **media store lives in its own `metadata/` + `covers/` folders** and is
+**shared and reference-counted** across every stem/sample/source from the same origin, so
+it is cleaned up separately in the main process (`media:cleanup`) — only once no remaining
+item references that GUID — and the artifact deletion above never touches it. As a further
+backstop for any stray empty per-source folder, the main process also sweeps empty
+artifact subdirs when a project next opens.
 
 **Temporary workspace + migrate-on-save** — until a project is first saved it has no
 folder, so generated stems and samples are written to a shared temp workspace
@@ -1415,9 +1426,9 @@ the shared media GUID and marks the item as a saved sample rather than an ordina
 import. Sample tiles use the **Saved from a clip** cover-art badge tooltip, and
 simple samples show a **Simple** audio-type pill. Deleting that library item removes the reference from
 the project and, by default, leaves the WAV file on disk; enabling **Clean up
-project files** (Preferences ▸ Project) instead deletes the generated WAV — and
-prunes its now-empty per-source folder, plus any shared cover/tag media nothing
-else still references. A simple sample bakes the clip's
+project files** (Preferences ▸ Project) instead has the **audio backend** delete the
+generated WAV — and prune its now-empty per-source folder — plus any shared cover/tag
+media (swept in the main process) nothing else still references. A simple sample bakes the clip's
 warp/pitch through Rubber Band during export so the one-shot sounds like the clip did
 on the timeline; a music sample is exported at the source tempo/pitch so it can
 re-warp on drop.

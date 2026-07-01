@@ -137,6 +137,14 @@ export interface LibraryRemovePayload {
   itemId: string
 }
 
+/** Delete a removed library item's generated stem/sample files and prune the
+ *  per-source folder any last file left empty. The backend confines every path to
+ *  the project's stems/samples artifact trees, so a user's original imported source
+ *  can never be deleted. Sent only when the "clean up project files" preference is on. */
+export interface LibraryDeleteArtifactsPayload {
+  paths: string[]
+}
+
 /** Force a full analysis refresh: backend rebuilds its decoded-WAV cache and reruns BPM/beat detection. */
 export interface LibraryReanalysePayload {
   itemId: string
@@ -444,6 +452,7 @@ export interface BridgeOutboundMap {
   CLIP_EDITOR_PEAKS_REQUEST: ClipEditorPeaksRequestPayload
   LIBRARY_ADD: LibraryAddPayload
   LIBRARY_REMOVE: LibraryRemovePayload
+  LIBRARY_DELETE_ARTIFACTS: LibraryDeleteArtifactsPayload
   LIBRARY_REANALYSE: LibraryReanalysePayload
   LIBRARY_ITEM_SET_AUDIO_TYPE: LibraryItemSetAudioTypePayload
   LIBRARY_ITEM_SET_MANUAL_TEMPO: LibraryItemSetManualTempoPayload
@@ -976,6 +985,7 @@ export const bridgeOutboundPayloadKinds: {
   CLIP_EDITOR_PEAKS_REQUEST: 'payload',
   LIBRARY_ADD: 'payload',
   LIBRARY_REMOVE: 'payload',
+  LIBRARY_DELETE_ARTIFACTS: 'payload',
   LIBRARY_REANALYSE: 'payload',
   LIBRARY_ITEM_SET_AUDIO_TYPE: 'payload',
   LIBRARY_ITEM_SET_MANUAL_TEMPO: 'payload',
