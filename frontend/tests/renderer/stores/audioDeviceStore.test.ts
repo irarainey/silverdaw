@@ -32,19 +32,19 @@ describe('audioDeviceStore.applyList fallback notice', () => {
     setActivePinia(createPinia())
   })
 
-  it('surfaces the saved-device fallback notice only once across repeated lists', () => {
+  it('never surfaces a toast when the saved device was unavailable at startup', () => {
     const store = useAudioDeviceStore()
     const notifications = useNotificationsStore()
     const infoSpy = vi.spyOn(notifications, 'pushInfo')
     const errorSpy = vi.spyOn(notifications, 'pushError')
 
+    // The backend has already opened a working fallback and there is nothing the user
+    // can do about the missing device, so the fallback is handled silently.
     store.applyList(makeListPayload({ fellBackToDefault: true, scanInProgress: true }))
     store.applyList(makeListPayload({ fellBackToDefault: true }))
-    store.applyList(makeListPayload({ fellBackToDefault: true }))
 
-    expect(infoSpy).toHaveBeenCalledTimes(1)
+    expect(infoSpy).not.toHaveBeenCalled()
     expect(errorSpy).not.toHaveBeenCalled()
-    expect(store.startupFellBack).toBe(true)
   })
 
   it('does not surface a notice when the saved device was available', () => {
@@ -57,7 +57,6 @@ describe('audioDeviceStore.applyList fallback notice', () => {
 
     expect(infoSpy).not.toHaveBeenCalled()
     expect(errorSpy).not.toHaveBeenCalled()
-    expect(store.startupFellBack).toBe(false)
   })
 })
 

@@ -42,8 +42,6 @@ interface AudioDeviceState {
   /** False skips user-scope preference persistence for project-scoped switches. */
   pendingPersistUserPreference: boolean
   lastError: string | null
-  /** One-shot startup fallback notice guard. */
-  startupFellBack: boolean
   /** True after the first `AUDIO_DEVICES_LIST`. */
   hydrated: boolean
   /** True while the backend's deferred startup scan is pending. */
@@ -66,7 +64,6 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
     pendingSelection: null,
     pendingPersistUserPreference: true,
     lastError: null,
-    startupFellBack: false,
     hydrated: false,
     scanInProgress: false,
     rescanning: false,
@@ -107,13 +104,9 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       this.hydrated = true
       this.scanInProgress = payload.scanInProgress === true
       this.pendingSelection = null
-      // A startup fallback may arrive in multiple close snapshots; notify once.
-      if (payload.fellBackToDefault && !this.startupFellBack) {
-        this.startupFellBack = true
-        useNotificationsStore().pushInfo(
-          'Saved audio output device was not available — using system default.'
-        )
-      }
+      // The saved device being unavailable at startup is handled silently: the backend
+      // has already opened a working fallback, and there is nothing the user can do (nor
+      // any way to dismiss a recurring notice), so no toast is shown.
       // Keep-awake is per physical device, so re-push the effective state whenever the
       // open device changes (e.g. a USB DAC is unplugged and playback falls back to the
       // onboard card — its own toggle, off by default, applies).
