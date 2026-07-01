@@ -18,6 +18,14 @@
          the third-party notices.
          Output: dist/Silverdaw-Setup-<version>.exe
 
+    Between phases 1 and 2 a bundling guard verifies that every runtime
+    binary (*.dll / *.exe) the Release backend drops next to
+    SilverdawBackend.exe is listed in the extraResources filter in
+    frontend/electron-builder.yml. That filter is an allowlist, so a new
+    dependency DLL would otherwise be silently dropped from the installer
+    and only fail at runtime on a clean machine — the guard turns that into
+    a loud, early build failure.
+
     Run from the repository root (or any directory — paths resolve relative
     to this script).
 
@@ -44,6 +52,14 @@ $backendDir = Join-Path $repoRoot 'backend'
 $frontendDir= Join-Path $repoRoot 'frontend'
 $devShell   = Join-Path $PSScriptRoot 'Invoke-DevShell.ps1'
 
+# Release builds get their own CMake build directory so we never clobber the
+# Debug cache that VS Code's `backend: build` task relies on. Ninja is a
+# single-config generator — sharing a build dir with Debug means whichever
+# configure ran last wins, and the other config silently gets the wrong
+# artefact. The Release artefacts land under `SilverdawBackend_artefacts/Release`.
+$backendBuildDir     = Join-Path $backendDir 'build-release'
+$backendArtefactsDir = Join-Path $backendBuildDir 'SilverdawBackend_artefacts\Release'
+
 function Write-Section([string]$Title) {
     Write-Host ''
     Write-Host ('=' * 72) -ForegroundColor Cyan
@@ -51,15 +67,74 @@ function Write-Section([string]$Title) {
     Write-Host ('=' * 72) -ForegroundColor Cyan
 }
 
+# Parse the backend extraResources `filter:` allowlist out of the
+# electron-builder.yml so the guard below stays in sync with whatever the
+# installer actually ships — no second hand-maintained list to drift.
+function Get-BundledBackendFilter([string]$YmlPath) {
+    $allow = New-Object System.Collections.Generic.List[string]
+    $inBackendEntry = $false
+    $inFilter = $false
+    foreach ($line in (Get-Content -LiteralPath $YmlPath)) {
+        if ($line -match '^\s*-\s*from:\s*(.+?)\s*$') {
+            # A new extraResources list item — are we entering the backend one?
+            $inBackendEntry = $matches[1] -like '*backend/build-release*'
+            $inFilter = $false
+            continue
+        }
+        if ($inBackendEntry -and $line -match '^\s*filter:\s*$') {
+            $inFilter = $true
+            continue
+        }
+        if ($inFilter) {
+            if ($line -match '^\s*#') { continue }          # comment in the list
+            elseif ($line -match '^\s*$') { continue }        # blank line
+            elseif ($line -match '^\s*-\s*([^\s#]+)\s*$') { $allow.Add($matches[1]) }
+            else { $inFilter = $false; $inBackendEntry = $false }  # dedent ends it
+        }
+    }
+    return $allow
+}
+
+# Fail the build if the Release backend emitted any runtime binary the
+# installer filter wouldn't carry.
+function Assert-BackendArtefactsBundled([string]$ArtefactsDir, [string]$YmlPath) {
+    if (-not (Test-Path $ArtefactsDir)) {
+        throw "Bundling guard: backend Release artefacts not found at $ArtefactsDir (build the backend first, or drop -SkipBackend)."
+    }
+    if (-not (Test-Path $YmlPath)) {
+        throw "Bundling guard: electron-builder config not found at $YmlPath."
+    }
+    $allow = Get-BundledBackendFilter -YmlPath $YmlPath
+    if ($allow.Count -eq 0) {
+        throw "Bundling guard: parsed zero filter entries from $YmlPath — the backend extraResources block may have moved. Fix the parser before shipping."
+    }
+    $shipped = Get-ChildItem -LiteralPath $ArtefactsDir -File |
+        Where-Object { $_.Extension -in '.dll', '.exe' }
+    $unlisted = $shipped | Where-Object { $allow -notcontains $_.Name }
+    if ($unlisted) {
+        $names = ($unlisted | ForEach-Object { $_.Name }) -join ', '
+        throw @"
+Bundling guard FAILED — the installer would ship an incomplete backend.
+
+These runtime binaries sit next to SilverdawBackend.exe but are NOT in the
+extraResources filter in frontend/electron-builder.yml, so the packaged app
+would be missing them on a clean machine:
+
+    $names
+
+Fix: add each filename to that filter (or, if it is genuinely not needed at
+runtime, exclude it deliberately and note why).
+
+  Artefacts : $ArtefactsDir
+  Allowlist : $($allow -join ', ')
+"@
+    }
+    $shippedNames = ($shipped | ForEach-Object { $_.Name }) -join ', '
+    Write-Host "Bundling guard OK — all $($shipped.Count) backend binaries are covered by the installer filter ($shippedNames)." -ForegroundColor Green
+}
+
 # 1. Backend ---------------------------------------------------------------
 if (-not $SkipBackend) {
-    # Release builds get their own CMake build directory so we never
-    # clobber the Debug cache that VS Code's `backend: build` task
-    # relies on. Ninja is a single-config generator — sharing a build
-    # dir with Debug means whichever configure ran last wins, and the
-    # other config silently gets the wrong artefact.
-    $backendBuildDir = Join-Path $backendDir 'build-release'
-
     Write-Section 'Backend: configure (Release)'
     & $devShell "cmake -S `"$backendDir`" -B `"$backendBuildDir`" -G Ninja -DCMAKE_BUILD_TYPE=Release"
     if ($LASTEXITCODE -ne 0) { throw "Backend configure failed (exit $LASTEXITCODE)" }
@@ -68,7 +143,7 @@ if (-not $SkipBackend) {
     & $devShell "cmake --build `"$backendBuildDir`" --parallel"
     if ($LASTEXITCODE -ne 0) { throw "Backend build failed (exit $LASTEXITCODE)" }
 
-    $backendExe = Join-Path $backendBuildDir 'SilverdawBackend_artefacts\Release\SilverdawBackend.exe'
+    $backendExe = Join-Path $backendArtefactsDir 'SilverdawBackend.exe'
     if (-not (Test-Path $backendExe)) {
         throw "Backend exe not found at $backendExe after a successful build"
     }
@@ -76,6 +151,12 @@ if (-not $SkipBackend) {
 } else {
     Write-Host 'Skipping backend build (--SkipBackend).' -ForegroundColor Yellow
 }
+
+# 1b. Bundling guard -------------------------------------------------------
+# Verify every runtime binary the backend drops next to the exe is covered by
+# the installer's extraResources allowlist before we spend time packaging.
+Write-Section 'Verify: backend binaries covered by installer filter'
+Assert-BackendArtefactsBundled $backendArtefactsDir (Join-Path $frontendDir 'electron-builder.yml')
 
 # 2. Frontend deps + bundles ----------------------------------------------
 Push-Location $frontendDir
