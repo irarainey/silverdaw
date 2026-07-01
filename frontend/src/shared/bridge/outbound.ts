@@ -135,6 +135,10 @@ export interface LibraryAddPayload {
 /** Drop a library item from the persisted catalogue. */
 export interface LibraryRemovePayload {
   itemId: string
+  /** True when the item's generated file is being deleted from disk ("clean up project
+   *  files"). The backend then removes the item without marking the project dirty or
+   *  recording an undo step, because the removal is irreversible. */
+  cleanup?: boolean
 }
 
 /** Delete a removed library item's generated stem/sample files and prune the

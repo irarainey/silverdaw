@@ -2068,9 +2068,10 @@ playable at every point — no broken-build day):
   tile imagery, previous/next button target, **waveform display** mode —
   single summary vs. stacked left/right channels), **Timeline** (grid / snap
   and timeline-interaction defaults), Project (default Save /
-  Open / Import dirs + autosave config + **clean up project files on remove** —
-  the backend deletes a removed stem/sample's generated file and its emptied
-  folder, off by default), **Audio** (output device selection —
+  Open / Import dirs + autosave config + **clean up project files on remove**
+  (with a *cannot be undone* warning) — the backend deletes a removed stem/sample's
+  generated file and its emptied folder, off by default, and that removal is
+  non-undoable and doesn't mark the project dirty), **Audio** (output device selection —
   real named devices only, each with an off-by-default **Keep awake** toggle —
   plus the driver picker with Bluetooth-latency heuristic), **Effects** (global
   defaults for the per-clip DJ turntable **Brake** — duration + curve — and

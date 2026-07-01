@@ -615,6 +615,50 @@ describe('libraryStore', () => {
     expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: stemId })
   })
 
+  it('sends cleanup:true and no undo group when removing a sample with file cleanup on', async () => {
+    const { useUiStore } = await import('@/stores/uiStore')
+    const library = useLibraryStore()
+    useUiStore().cleanupProjectFiles = true
+
+    const sampleId = library.addItem({
+      filePath: 'C:\\proj\\samples\\Song\\Song-sample-001.wav',
+      fileName: 'Song-sample-001.wav',
+      kind: 'sample',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+
+    sendMock.mockClear()
+    expect(library.removeItem(sampleId!)).toBe(true)
+    // The removal is irreversible, so it carries the cleanup flag and is NOT wrapped in
+    // an EDIT_GROUP (no undo step).
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: sampleId, cleanup: true })
+    expect(sendMock).not.toHaveBeenCalledWith('EDIT_GROUP_BEGIN', expect.anything())
+    expect(sendMock).not.toHaveBeenCalledWith('EDIT_GROUP_END')
+  })
+
+  it('keeps a normal undoable removal (no cleanup flag) when file cleanup is off', () => {
+    const library = useLibraryStore()
+    const sampleId = library.addItem({
+      filePath: 'C:\\proj\\samples\\Song\\Song-sample-002.wav',
+      fileName: 'Song-sample-002.wav',
+      kind: 'sample',
+      durationMs: 2_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+
+    sendMock.mockClear()
+    expect(library.removeItem(sampleId!)).toBe(true)
+    // No cleanup flag, and wrapped in an undo group — a normal undoable, dirtying edit.
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_REMOVE', { itemId: sampleId })
+    expect(sendMock).toHaveBeenCalledWith('EDIT_GROUP_BEGIN', { label: 'Remove from library' })
+    expect(sendMock).toHaveBeenCalledWith('EDIT_GROUP_END')
+  })
+
   it('normalises metadata and display names', () => {
     const library = useLibraryStore()
     const itemId = library.addItem({

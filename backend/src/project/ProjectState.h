@@ -402,6 +402,13 @@ class ProjectState : public juce::ValueTree::Listener
     /** Remove a library item by id. Returns true if it existed. Marks dirty. */
     bool removeLibraryItem(const juce::String& itemId);
 
+    // Remove a library item WITHOUT marking the project dirty or recording an undo step.
+    // Used for a "clean up project files" removal, where the item's generated file is
+    // deleted from disk: the change is irreversible (it cannot be put back), so it must
+    // not appear as an unsaved, undoable edit. The removal is mirrored into the clean
+    // snapshot so it never registers as a pending change.
+    bool removeLibraryItemNonDirty(const juce::String& itemId);
+
     // Derived BPM metadata is regenerated from source and does not mark dirty.
     bool setLibraryItemBpm(const juce::String& itemId, double bpm);
 

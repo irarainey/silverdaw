@@ -202,6 +202,69 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
     return writeProjectJsonAtomically(file, rootVar);
 }
 
+juce::Result removeLibraryItems(const juce::File& file, const juce::StringArray& itemIds)
+{
+    if (itemIds.isEmpty()) return juce::Result::ok();
+    // An unsaved project has nothing persisted yet — the item was never written to disk.
+    if (!file.existsAsFile()) return juce::Result::ok();
+
+    juce::var rootVar;
+    const auto parseResult = juce::JSON::parse(file.loadFileAsString(), rootVar);
+    if (parseResult.failed())
+    {
+        return juce::Result::fail("Malformed project file: " + parseResult.getErrorMessage());
+    }
+
+    auto* rootObj = rootVar.getDynamicObject();
+    if (rootObj == nullptr)
+    {
+        return juce::Result::fail("Project file is not a JSON object");
+    }
+
+    auto projectVar = rootObj->getProperty(kProjectKey);
+    auto* projectObj = projectVar.getDynamicObject();
+    if (projectObj == nullptr)
+    {
+        return juce::Result::fail("Project file has no \"project\" object");
+    }
+
+    auto* projectChildren = projectObj->getProperty(ValueTreeJson::kChildrenKey).getArray();
+    if (projectChildren == nullptr) return juce::Result::ok(); // no children => no library
+
+    // Locate the LIBRARY child node.
+    juce::DynamicObject* libraryObj = nullptr;
+    for (auto& childVar : *projectChildren)
+    {
+        auto* childObj = childVar.getDynamicObject();
+        if (childObj != nullptr
+            && childObj->getProperty(ValueTreeJson::kTypeKey).toString() == "LIBRARY")
+        {
+            libraryObj = childObj;
+            break;
+        }
+    }
+    if (libraryObj == nullptr) return juce::Result::ok();
+
+    auto* items = libraryObj->getProperty(ValueTreeJson::kChildrenKey).getArray();
+    if (items == nullptr) return juce::Result::ok();
+
+    bool removedAny = false;
+    for (int i = items->size(); --i >= 0;)
+    {
+        auto* itemObj = items->getReference(i).getDynamicObject();
+        if (itemObj == nullptr) continue;
+        if (itemIds.contains(itemObj->getProperty("id").toString()))
+        {
+            items->remove(i);
+            removedAny = true;
+        }
+    }
+    if (!removedAny) return juce::Result::ok(); // already gone — leave the file untouched
+
+    rootObj->setProperty(kSavedAtKey, isoTimestampNowUtc());
+    return writeProjectJsonAtomically(file, rootVar);
+}
+
 LoadResult load(const juce::File& file, ProjectState& project)
 {
     LoadResult result;

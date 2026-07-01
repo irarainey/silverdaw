@@ -208,7 +208,7 @@ bool dispatchLibrary(const DispatchContext& ctx)
     }
     else if (type == "LIBRARY_REMOVE")
     {
-        silverdaw::handleLibraryRemove(payload, projectState);
+        silverdaw::handleLibraryRemove(payload, projectState, session);
     }
     else if (type == "LIBRARY_DELETE_ARTIFACTS")
     {

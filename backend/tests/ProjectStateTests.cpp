@@ -442,6 +442,36 @@ void testProjectStateViewLibraryMarkersAndReplace()
     require(state.replaceTree(wrongRoot).failed(), "replaceTree should reject non-PROJECT roots");
 }
 
+void testProjectStateNonDirtyLibraryRemove()
+{
+    silverdaw::ProjectState state;
+    state.addTrack("t1");
+    require(state.addLibraryItem("s1", "C:\\proj\\samples\\Song\\s.wav", "s.wav", 2000.0, 48000, 2),
+            "sample library add should succeed");
+    require(state.addLibraryItem("s2", "C:\\proj\\samples\\Song2\\s2.wav", "s2.wav", 1000.0, 48000, 2),
+            "second sample library add should succeed");
+    state.markClean();
+    require(!state.isDirty(), "baseline should be clean after markClean");
+
+    int transitions = 0;
+    state.setDirtyChangedCallback([&](bool) { ++transitions; });
+
+    // A "clean up project files" removal deletes the item's file from disk (irreversible),
+    // so it must NOT mark the project dirty and must not fire the dirty callback.
+    require(state.removeLibraryItemNonDirty("s1"), "non-dirty library remove should succeed");
+    require(state.getLibraryItemFilePath("s1").isEmpty(), "the item should be gone from the library");
+    require(!state.isDirty(), "a cleanup removal must not mark the project dirty");
+    require(transitions == 0, "a cleanup removal must not fire the dirty callback");
+
+    // A NORMAL removal (cleanup preference off) of a previously-saved item MUST still mark
+    // the project dirty — it is an ordinary unsaved edit.
+    require(state.removeLibraryItem("s2"), "normal library remove should succeed");
+    require(state.isDirty(), "a normal removal of a saved item must mark the project dirty");
+    require(transitions == 1, "the normal removal should fire the dirty callback once");
+
+    require(!state.removeLibraryItemNonDirty("missing"), "removing an absent item returns false");
+}
+
 void testProjectStateNetZeroDirty()
 {
     silverdaw::ProjectState state;
@@ -853,6 +883,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState master volume round-trip", testProjectStateMasterVolumeRoundTrip});
     tests.push_back({"ProjectState bar settings round-trip", testProjectStateBarSettingsRoundTrip});
     tests.push_back({"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty});
+    tests.push_back({"ProjectState cleanup library remove is non-dirty and non-undoable", testProjectStateNonDirtyLibraryRemove});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});
     tests.push_back({"ProjectState derived library metadata does not mark dirty", testProjectStateDerivedLibraryMetadataDoesNotMarkDirty});
     tests.push_back({"ProjectState clip transitions: derive, serialise, invariants, reconcile", testProjectStateClipTransitions});

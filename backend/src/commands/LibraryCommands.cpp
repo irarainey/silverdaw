@@ -7,6 +7,7 @@
 #include "LibraryAnalysis.h"
 #include "Log.h"
 #include "PayloadHelpers.h"
+#include "ProjectFile.h"
 #include "ProjectState.h"
 #include "ProjectSession.h"
 
@@ -96,11 +97,31 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
     }
 }
 
-void handleLibraryRemove(const juce::var& payload, ProjectState& projectState)
+void handleLibraryRemove(const juce::var& payload, ProjectState& projectState, const ProjectSession& session)
 {
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
-    silverdaw::log::info("bridge", "recv LIBRARY_REMOVE itemId=" + itemId);
-    projectState.removeLibraryItem(itemId);
+    // A "clean up project files" removal deletes the item's generated file from disk, so it
+    // is irreversible: remove it without marking the project dirty or recording an undo step.
+    const bool cleanup = silverdaw::bridge::readOptionalBool(payload, "cleanup").value_or(false);
+    silverdaw::log::info("bridge", "recv LIBRARY_REMOVE itemId=" + itemId + (cleanup ? " (cleanup)" : ""));
+    if (cleanup)
+    {
+        projectState.removeLibraryItemNonDirty(itemId);
+        // Also prune the item from the ALREADY-SAVED project file so its now-deleted file
+        // can't dangle in the saved project — without committing the user's other unsaved
+        // edits (a targeted in-place edit, not a full save). No-op if never saved.
+        if (session.currentPath.isNotEmpty())
+        {
+            const auto result =
+                silverdaw::ProjectFile::removeLibraryItems(juce::File(session.currentPath), {itemId});
+            if (result.failed())
+                silverdaw::log::warn("bridge", "LIBRARY_REMOVE cleanup file-prune failed: " + result.getErrorMessage());
+        }
+    }
+    else
+    {
+        projectState.removeLibraryItem(itemId);
+    }
 }
 
 // Background retry for removing a per-source artifact folder whose files we deleted. On

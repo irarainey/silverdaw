@@ -18,7 +18,7 @@ void handleLibraryItemRelink(const juce::var& payload, AudioEngine& engine, Proj
                              const DecodedCache& decodedCache);
 void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                       BridgeServer& bridge, juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
-void handleLibraryRemove(const juce::var& payload, ProjectState& projectState);
+void handleLibraryRemove(const juce::var& payload, ProjectState& projectState, const ProjectSession& session);
 // Delete a removed library item's generated stem/sample files (confined to the
 // project's stems/samples artifact trees) and prune any per-source folder the last
 // file left empty. Gated by the renderer's "clean up project files" preference.

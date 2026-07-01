@@ -741,7 +741,20 @@ cover-art / tag **media store lives in its own `metadata/` + `covers/` folders**
 it is cleaned up separately in the main process (`media:cleanup`) — only once no remaining
 item references that GUID — and the artifact deletion above never touches it. As a further
 backstop for any stray empty per-source folder, the main process also sweeps empty
-artifact subdirs when a project next opens.
+artifact subdirs when a project next opens. Because deleting the file is
+irreversible, a cleanup removal is sent as `LIBRARY_REMOVE { itemId, cleanup: true }`
+and the backend removes the item via `removeLibraryItemNonDirty` — it is **not
+undoable and does not mark the project dirty** (mirrored into the clean snapshot),
+since the file can't be put back; the removal also bypasses the renderer's undo
+group. The backend then prunes just that item from the **already-saved project
+file in place** (`ProjectFile::removeLibraryItems` — a targeted JSON edit like
+`saveViewState`, not a full save), so the deleted file can never dangle in the saved
+project, **without committing the user's other unsaved edits** (they stay unsaved and
+the project stays dirty for them; an unsaved project has nothing on disk to prune). A
+normal removal (cleanup off, or a saved clip that owns no file) stays a single
+undoable edit and marks the project dirty like any other change — except that removing
+an item that was only *added this session* (never saved) is a net-zero change, so the
+project can return to clean, exactly as adding-then-removing anything else does.
 
 **Temporary workspace + migrate-on-save** — until a project is first saved it has no
 folder, so generated stems and samples are written to a shared temp workspace
@@ -1428,7 +1441,10 @@ simple samples show a **Simple** audio-type pill. Deleting that library item rem
 the project and, by default, leaves the WAV file on disk; enabling **Clean up
 project files** (Preferences ▸ Project) instead has the **audio backend** delete the
 generated WAV — and prune its now-empty per-source folder — plus any shared cover/tag
-media (swept in the main process) nothing else still references. A simple sample bakes the clip's
+media (swept in the main process) nothing else still references. That file-deleting
+removal **cannot be undone and does not mark the project dirty** (the file can't be
+put back), and the item is pruned from the already-saved project file in place so it
+never dangles — without saving the user's other unsaved edits. A simple sample bakes the clip's
 warp/pitch through Rubber Band during export so the one-shot sounds like the clip did
 on the timeline; a music sample is exported at the source tempo/pitch so it can
 re-warp on drop.
@@ -1577,7 +1593,9 @@ sidebar:
   tempo on drop** (auto-warp a dropped clip to the project BPM), and the transport
   **previous / next button target**.
 - **Project** — default Save / Open / Import directories, background autosave
-  configuration, and **clean up project files on remove**.
+  configuration, and **clean up project files on remove** (with a *cannot be
+  undone* warning; a file-deleting removal is non-undoable and doesn't dirty the
+  project).
 - **Audio** — output device + driver selection (see below, with a per-device
   **Keep awake** checkbox — off by default — on each device row), and the
   **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
