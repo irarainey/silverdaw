@@ -14,7 +14,7 @@ import type {
   PathPrefs,
   ToastPrefs
 } from '../preferences'
-import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseUiPrefs } from '../preferences'
+import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -191,6 +191,28 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     const unchanged = (Object.keys(next) as (keyof typeof next)[]).every((k) => next[k] === cur[k])
     if (unchanged) return
     store.stems = next
+    prefs.flushSaveSync()
+  })
+
+  // ─── Turntable-brake defaults (duration + curve presets) ────────────────
+  ipcMain.handle(IPC.prefs.getBrake, () => ({ ...prefs.get().brake }))
+
+  ipcMain.on(IPC.prefs.setBrake, (_evt, partial: unknown) => {
+    const store = prefs.get()
+    const next = sanitiseBrakePrefs(partial, store.brake)
+    if (next.duration === store.brake.duration && next.curve === store.brake.curve) return
+    store.brake = next
+    prefs.flushSaveSync()
+  })
+
+  // ─── Turntable-backspin defaults (duration + intensity presets) ─────────
+  ipcMain.handle(IPC.prefs.getBackspin, () => ({ ...prefs.get().backspin }))
+
+  ipcMain.on(IPC.prefs.setBackspin, (_evt, partial: unknown) => {
+    const store = prefs.get()
+    const next = sanitiseBackspinPrefs(partial, store.backspin)
+    if (next.duration === store.backspin.duration && next.intensity === store.backspin.intensity) return
+    store.backspin = next
     prefs.flushSaveSync()
   })
 }

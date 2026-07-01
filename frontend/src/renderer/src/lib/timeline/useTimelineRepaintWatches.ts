@@ -8,6 +8,8 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
+import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 
 export interface TimelineRepaintWatchesDeps {
   redraw: () => void
@@ -25,6 +27,8 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
   const library = useLibraryStore()
   const transport = useTransportStore()
   const ui = useUiStore()
+  const brakeSettings = useBrakeSettingsStore()
+  const backspinSettings = useBackspinSettingsStore()
   const { redraw, updatePlayhead, clampScroll, applyScroll, horizontalRebuildNeeded } = deps
 
   watch(
@@ -173,6 +177,18 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
   // Project length changes affect grid extent even when clip counts stay unchanged.
   watch(
     () => project.durationMs,
+    () => redraw()
+  )
+
+  // Brake / backspin defaults (the app preference) drive the tail-overlay extent
+  // and curve shape, so a change must repaint every braked / backspun clip.
+  watch(
+    () => [
+      brakeSettings.seconds,
+      brakeSettings.curvePower,
+      backspinSettings.seconds,
+      backspinSettings.curvePower
+    ] as const,
     () => redraw()
   )
 }

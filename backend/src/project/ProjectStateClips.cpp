@@ -184,6 +184,59 @@ bool ProjectState::isClipReversed(const juce::String& clipId) const
     return static_cast<bool>(clip.getProperty(kReversed, false));
 }
 
+bool ProjectState::setClipBrake(const juce::String& clipId, bool brake)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    if (brake)
+    {
+        clip.setProperty(kBrake, true, &undoManager);
+        clip.removeProperty(kBackspin, &undoManager);
+    }
+    else
+    {
+        // Absent means no brake on disk and wire.
+        clip.removeProperty(kBrake, &undoManager);
+    }
+    return true;
+}
+
+bool ProjectState::isClipBrake(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+    return static_cast<bool>(clip.getProperty(kBrake, false));
+}
+
+bool ProjectState::setClipBackspin(const juce::String& clipId, bool backspin)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    if (backspin)
+    {
+        clip.setProperty(kBackspin, true, &undoManager);
+        clip.removeProperty(kBrake, &undoManager);
+    }
+    else
+    {
+        clip.removeProperty(kBackspin, &undoManager);
+    }
+    return true;
+}
+
+bool ProjectState::isClipBackspin(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+    return static_cast<bool>(clip.getProperty(kBackspin, false));
+}
+
 bool ProjectState::setClipFilePath(const juce::String& clipId, const juce::String& filePath)
 {
     auto clip = findClip(clipId);

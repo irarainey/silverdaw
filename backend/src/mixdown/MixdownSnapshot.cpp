@@ -11,7 +11,12 @@ namespace silverdaw
 {
 
 
-MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
+MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
+                                          double brakeSeconds,
+                                          double brakeCurve,
+                                          double backspinSeconds,
+                                          double backspinSpeed,
+                                          double backspinCurve)
 {
     MixdownSnapshot snapshot;
     const int explicitRate = project.getTargetSampleRate();
@@ -135,6 +140,12 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project)
             clip.edgeFadeOutStartMs = edge.fadeOutStartMs;
             clip.edgeFadeOutEndMs = edge.fadeOutEndMs;
             clip.edgeFadeOutCurve = edge.fadeOutCurve;
+
+            clip.brakeSeconds = project.isClipBrake(clip.id) ? brakeSeconds : 0.0;
+            clip.brakeCurve = brakeCurve;
+            clip.backspinSeconds = project.isClipBackspin(clip.id) ? backspinSeconds : 0.0;
+            clip.backspinSpeed = backspinSpeed;
+            clip.backspinCurve = backspinCurve;
 
             const auto library = root.getChildWithName(kLibrary);
             if (library.isValid())

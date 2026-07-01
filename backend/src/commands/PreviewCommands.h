@@ -22,5 +22,7 @@ void handlePreviewSeek(const juce::var& payload, AudioEngine& engine);
 void handlePreviewSetWarp(const juce::var& payload, AudioEngine& engine);
 void handlePreviewSetEnvelope(const juce::var& payload, AudioEngine& engine);
 void handlePreviewSetReversed(const juce::var& payload, AudioEngine& engine);
+void handlePreviewSetBrake(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
+void handlePreviewSetBackspin(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
 
 } // namespace silverdaw

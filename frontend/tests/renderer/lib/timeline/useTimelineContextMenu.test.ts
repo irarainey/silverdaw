@@ -619,6 +619,82 @@ describe('useTimelineContextMenu — command dispatch', () => {
     expect(directSpy).not.toHaveBeenCalled()
   })
 
+  it('clip.brake on a linked saved clip routes to library.updateLibraryClipBrake', () => {
+    const clip = makeClip({ libraryItemId: 'saved' })
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    project.clips = { [clip.id]: clip }
+    library.items = [makeLibraryClipItem('saved')]
+    const propagateSpy = vi
+      .spyOn(library, 'updateLibraryClipBrake')
+      .mockImplementation(() => ({ ok: true }))
+    const directSpy = vi.spyOn(project, 'setClipBrake').mockImplementation(() => {})
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      headerWidth: () => 200,
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.brake')
+    expect(propagateSpy).toHaveBeenCalledWith('saved', true)
+    expect(directSpy).not.toHaveBeenCalled()
+  })
+
+  it('clip.backspin on an unlinked clip sets it directly on the instance', () => {
+    const clip = makeClip({ libraryItemId: 'src' })
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    project.clips = { [clip.id]: clip }
+    library.items = [makeAudioFileItem('src')]
+    const propagateSpy = vi
+      .spyOn(library, 'updateLibraryClipBackspin')
+      .mockImplementation(() => ({ ok: true }))
+    const directSpy = vi.spyOn(project, 'setClipBackspin').mockImplementation(() => {})
+
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      headerWidth: () => 200,
+      dialogs: useClipDialogs()
+    })
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.backspin')
+    expect(directSpy).toHaveBeenCalledWith(clip.id, true)
+    expect(propagateSpy).not.toHaveBeenCalled()
+  })
+
+  it('reverse / brake / backspin are a mutually-exclusive group (all visible, others disabled)', () => {
+    // Brake on: brake enabled, reverse + backspin disabled but still present.
+    const brakeMenu = setupMenu({ clip: makeClip({ brake: true }) })
+    expect(commandsOf(brakeMenu)).toEqual(
+      expect.arrayContaining(['clip.reverse', 'clip.brake', 'clip.backspin'])
+    )
+    expect(findItem(brakeMenu, 'clip.brake')?.disabled).toBeFalsy()
+    expect(findItem(brakeMenu, 'clip.reverse')?.disabled).toBe(true)
+    expect(findItem(brakeMenu, 'clip.backspin')?.disabled).toBe(true)
+
+    // Reversed: reverse enabled, brake + backspin disabled but still present.
+    const revMenu = setupMenu({ clip: makeClip({ reversed: true }) })
+    expect(commandsOf(revMenu)).toEqual(
+      expect.arrayContaining(['clip.reverse', 'clip.brake', 'clip.backspin'])
+    )
+    expect(findItem(revMenu, 'clip.reverse')?.disabled).toBeFalsy()
+    expect(findItem(revMenu, 'clip.brake')?.disabled).toBe(true)
+    expect(findItem(revMenu, 'clip.backspin')?.disabled).toBe(true)
+
+    // No effect: all three enabled.
+    const plainMenu = setupMenu({ clip: makeClip() })
+    expect(findItem(plainMenu, 'clip.reverse')?.disabled).toBeFalsy()
+    expect(findItem(plainMenu, 'clip.brake')?.disabled).toBeFalsy()
+    expect(findItem(plainMenu, 'clip.backspin')?.disabled).toBeFalsy()
+  })
+
   it('onContextMenuClose clears state', () => {
     const menu = useTimelineContextMenu({
       host: ref(null),

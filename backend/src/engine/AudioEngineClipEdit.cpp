@@ -252,6 +252,170 @@ bool AudioEngine::setClipEdgeFade(const juce::String& clipId,
     return true;
 }
 
+void AudioEngine::setBrakeDefaults(double seconds, double curve)
+{
+    brakeDefaultSeconds = juce::jmax(0.0, seconds);
+    brakeDefaultCurve = juce::jlimit(BrakeSnapshot::kMinCurvePower, BrakeSnapshot::kMaxCurvePower, curve);
+
+    silverdaw::log::info("engine",
+                         "setBrakeDefaults seconds=" + std::to_string(brakeDefaultSeconds) +
+                             " curve=" + std::to_string(brakeDefaultCurve));
+
+    for (const auto& [clipId, track] : tracks)
+    {
+        if (track != nullptr && track->brakeSnapshot != nullptr)
+        {
+            setClipBrake(clipId, brakeDefaultSeconds, brakeDefaultCurve);
+        }
+    }
+
+    if (preview.brakeSnapshot != nullptr)
+    {
+        setPreviewBrake(brakeDefaultSeconds, brakeDefaultCurve);
+    }
+}
+
+void AudioEngine::setBackspinDefaults(double seconds, double speed, double curve)
+{
+    backspinDefaultSeconds = juce::jmax(0.0, seconds);
+    backspinDefaultSpeed = juce::jlimit(BackspinSnapshot::kMinSpinSpeed, BackspinSnapshot::kMaxSpinSpeed, speed);
+    backspinDefaultCurve = juce::jlimit(BackspinSnapshot::kMinCurvePower, BackspinSnapshot::kMaxCurvePower, curve);
+
+    silverdaw::log::info("engine",
+                         "setBackspinDefaults seconds=" + std::to_string(backspinDefaultSeconds) +
+                             " speed=" + std::to_string(backspinDefaultSpeed) +
+                             " curve=" + std::to_string(backspinDefaultCurve));
+
+    for (const auto& [clipId, track] : tracks)
+    {
+        if (track != nullptr && track->backspinSnapshot != nullptr)
+        {
+            setClipBackspin(clipId, backspinDefaultSeconds, backspinDefaultSpeed, backspinDefaultCurve);
+        }
+    }
+
+    if (preview.backspinSnapshot != nullptr)
+    {
+        setPreviewBackspin(backspinDefaultSeconds, backspinDefaultSpeed, backspinDefaultCurve);
+    }
+}
+
+bool AudioEngine::setClipBrake(const juce::String& clipId, double brakeSeconds, double curvePower)
+{
+    auto it = tracks.find(clipId);
+    if (it == tracks.end())
+    {
+        return false;
+    }
+    auto& track = it->second;
+    if (track->offsetSource == nullptr)
+    {
+        return false;
+    }
+
+    const double sr = track->sampleRate > 0.0 ? track->sampleRate : 44100.0;
+    const auto brakeLenSamples =
+        static_cast<juce::int64>(juce::jmax(0.0, brakeSeconds) * sr);
+
+    silverdaw::log::info("engine",
+                         "setClipBrake id=" + clipId.toStdString() +
+                             " seconds=" + std::to_string(brakeSeconds) +
+                             " samples=" + std::to_string(brakeLenSamples) +
+                             " playing=" + (master.isPlaying() ? "1" : "0"));
+
+    auto snapshot = BrakeSnapshot::create(brakeLenSamples, curvePower);
+    const BrakeSnapshot* published =
+        (snapshot != nullptr && !snapshot->isEmpty()) ? snapshot.get() : nullptr;
+
+    if (published != nullptr)
+    {
+        track->offsetSource->setBackspinSnapshot(nullptr);
+        if (track->backspinSnapshot != nullptr)
+        {
+            track->retiredBackspins.push_back(std::move(track->backspinSnapshot));
+        }
+    }
+
+    track->offsetSource->setBrakeSnapshot(published);
+    if (track->brakeSnapshot != nullptr)
+    {
+        track->retiredBrakes.push_back(std::move(track->brakeSnapshot));
+    }
+    track->brakeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
+
+    // The brake is applied upstream of the JUCE read-ahead buffer, so already-buffered samples
+    // carry the old direction/rate. Rebuild the prefetch so the change is audible from the first
+    // played block rather than only after the stale buffer drains.
+    if (master.isPlaying())
+    {
+        rebuildTrackPrefetch(*track);
+    }
+    else
+    {
+        track->prefetchDirty = true;
+        rebuildTimer.startTimer(kRebuildDebounceMs);
+    }
+    return true;
+}
+
+bool AudioEngine::setClipBackspin(const juce::String& clipId, double backspinSeconds,
+                                  double spinSpeed, double curvePower)
+{
+    auto it = tracks.find(clipId);
+    if (it == tracks.end())
+    {
+        return false;
+    }
+    auto& track = it->second;
+    if (track->offsetSource == nullptr)
+    {
+        return false;
+    }
+
+    const double sr = track->sampleRate > 0.0 ? track->sampleRate : 44100.0;
+    const auto backspinLenSamples =
+        static_cast<juce::int64>(juce::jmax(0.0, backspinSeconds) * sr);
+
+    silverdaw::log::info("engine",
+                         "setClipBackspin id=" + clipId.toStdString() +
+                             " seconds=" + std::to_string(backspinSeconds) +
+                             " samples=" + std::to_string(backspinLenSamples) +
+                             " speed=" + std::to_string(spinSpeed) +
+                             " curve=" + std::to_string(curvePower) +
+                             " playing=" + (master.isPlaying() ? "1" : "0"));
+
+    auto snapshot = BackspinSnapshot::create(backspinLenSamples, spinSpeed, curvePower);
+    const BackspinSnapshot* published =
+        (snapshot != nullptr && !snapshot->isEmpty()) ? snapshot.get() : nullptr;
+
+    if (published != nullptr)
+    {
+        track->offsetSource->setBrakeSnapshot(nullptr);
+        if (track->brakeSnapshot != nullptr)
+        {
+            track->retiredBrakes.push_back(std::move(track->brakeSnapshot));
+        }
+    }
+
+    track->offsetSource->setBackspinSnapshot(published);
+    if (track->backspinSnapshot != nullptr)
+    {
+        track->retiredBackspins.push_back(std::move(track->backspinSnapshot));
+    }
+    track->backspinSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
+
+    if (master.isPlaying())
+    {
+        rebuildTrackPrefetch(*track);
+    }
+    else
+    {
+        track->prefetchDirty = true;
+        rebuildTimer.startTimer(kRebuildDebounceMs);
+    }
+    return true;
+}
+
 bool AudioEngine::setClipWarp(const juce::String& clipId,
                               std::optional<bool> enabled,
                               std::optional<juce::String> mode,

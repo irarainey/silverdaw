@@ -84,6 +84,20 @@ export const usePreviewStore = defineStore('preview', {
       if (!this.isLoaded) return
       sendBridge('PREVIEW_SET_REVERSED', { reversed })
     },
+    /** Toggle the preview voice's turntable brake (record-stop) while loaded.
+     *  Called by the Clip Editor so the audition tracks the brake draft live.
+     *  Mutually exclusive with backspin on the backend. No-op when unloaded. */
+    setBrake(on: boolean): void {
+      if (!this.isLoaded) return
+      sendBridge('PREVIEW_SET_BRAKE', { on })
+    },
+    /** Toggle the preview voice's turntable backspin (reverse rewind) while
+     *  loaded, so the audition tracks the backspin draft live. Mutually
+     *  exclusive with brake on the backend. No-op when unloaded. */
+    setBackspin(on: boolean): void {
+      if (!this.isLoaded) return
+      sendBridge('PREVIEW_SET_BACKSPIN', { on })
+    },
     /** Update the preview voice's warp engine while loaded. Mirrors
      *  `setClipWarp` semantics — partial update, `tempoRatio: null`
      *  clears the pin. Called by the Clip Editor when warp parameters

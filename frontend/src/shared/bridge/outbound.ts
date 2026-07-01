@@ -61,6 +61,19 @@ export interface ClipSetReversedPayload {
   reversed: boolean
 }
 
+/** Apply a turntable brake (record-stop) at the clip's end; `on` toggles it. */
+export interface ClipSetBrakePayload {
+  clipId: string
+  on: boolean
+}
+
+/** Apply a turntable backspin (reverse rewind) at the clip's end; `on` toggles it.
+ *  Mutually exclusive with the brake. */
+export interface ClipSetBackspinPayload {
+  clipId: string
+  on: boolean
+}
+
 /** Remove a clip; backend tears down its audio source. Renderer removes optimistically on send. */
 export interface ClipRemovePayload {
   clipId: string
@@ -418,6 +431,8 @@ export interface BridgeOutboundMap {
   CLIP_COLOR: ClipColorPayload
   CLIP_SET_LOCKED: ClipSetLockedPayload
   CLIP_SET_REVERSED: ClipSetReversedPayload
+  CLIP_SET_BRAKE: ClipSetBrakePayload
+  CLIP_SET_BACKSPIN: ClipSetBackspinPayload
   CLIP_REMOVE: ClipRemovePayload
   LIBRARY_ITEM_RELINK: LibraryItemRelinkPayload
   CLIP_RENAME: ClipRenamePayload
@@ -491,9 +506,13 @@ export interface BridgeOutboundMap {
   PREVIEW_SET_WARP: PreviewSetWarpPayload
   PREVIEW_SET_ENVELOPE: PreviewSetEnvelopePayload
   PREVIEW_SET_REVERSED: PreviewSetReversedPayload
+  PREVIEW_SET_BRAKE: PreviewSetBrakePayload
+  PREVIEW_SET_BACKSPIN: PreviewSetBackspinPayload
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   AUDIO_KEEP_AWAKE_SET: AudioKeepAwakeSetPayload
+  BRAKE_SETTINGS_SET: BrakeSettingsSetPayload
+  BACKSPIN_SETTINGS_SET: BackspinSettingsSetPayload
   EDIT_UNDO: undefined
   EDIT_REDO: undefined
   EDIT_GROUP_BEGIN: EditGroupBeginPayload
@@ -854,6 +873,16 @@ export interface PreviewSetReversedPayload {
   reversed: boolean
 }
 
+/** Apply a turntable brake to the preview voice; `on` toggles it. No ack. */
+export interface PreviewSetBrakePayload {
+  on: boolean
+}
+
+/** Apply a turntable backspin to the preview voice; `on` toggles it. No ack. */
+export interface PreviewSetBackspinPayload {
+  on: boolean
+}
+
 /**
  * Switch the audio output device. Both fields null = revert to system default; otherwise
  * both `typeName` and `deviceName` are required (JUCE resolves device names within their type).
@@ -880,6 +909,25 @@ export type KeepAwakeMode = 'auto' | 'on' | 'off'
 
 export interface AudioKeepAwakeSetPayload {
   mode: KeepAwakeMode
+}
+
+/** Global default parameters for the turntable-brake effect, pushed from the app
+ *  preference. `seconds` is the platter stop time; `curve` is the rate-curve power
+ *  (1 = linear/constant deceleration, higher = more curved). Applied to new brakes,
+ *  to all currently-braked clips, and to mixdown export. No ack. */
+export interface BrakeSettingsSetPayload {
+  seconds: number
+  curve: number
+}
+
+/** Global default parameters for the turntable-backspin effect, pushed from the app
+ *  preference. `seconds` is the spin duration; `speed` is the peak reverse rate (x
+ *  normal speed); `curve` is the momentum-decay power. Applied to new backspins, to
+ *  all currently-spun clips, and to mixdown export. No ack. */
+export interface BackspinSettingsSetPayload {
+  seconds: number
+  speed: number
+  curve: number
 }
 
 /**
@@ -918,6 +966,8 @@ export const bridgeOutboundPayloadKinds: {
   CLIP_COLOR: 'payload',
   CLIP_SET_LOCKED: 'payload',
   CLIP_SET_REVERSED: 'payload',
+  CLIP_SET_BRAKE: 'payload',
+  CLIP_SET_BACKSPIN: 'payload',
   CLIP_REMOVE: 'payload',
   LIBRARY_ITEM_RELINK: 'payload',
   CLIP_RENAME: 'payload',
@@ -991,9 +1041,13 @@ export const bridgeOutboundPayloadKinds: {
   PREVIEW_SET_WARP: 'payload',
   PREVIEW_SET_ENVELOPE: 'payload',
   PREVIEW_SET_REVERSED: 'payload',
+  PREVIEW_SET_BRAKE: 'payload',
+  PREVIEW_SET_BACKSPIN: 'payload',
   AUDIO_DEVICES_REQUEST: 'payload',
   AUDIO_DEVICE_SELECT: 'payload',
   AUDIO_KEEP_AWAKE_SET: 'payload',
+  BRAKE_SETTINGS_SET: 'payload',
+  BACKSPIN_SETTINGS_SET: 'payload',
   EDIT_UNDO: 'none',
   EDIT_REDO: 'none',
   EDIT_GROUP_BEGIN: 'payload',

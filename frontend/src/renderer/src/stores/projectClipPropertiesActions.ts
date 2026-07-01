@@ -57,6 +57,41 @@ export const clipPropertiesActions = {
       log.info('project', `setClipReversed id=${clipId} -> ${next ? 'reversed' : 'forward'}`)
     },
 
+    /** Toggle a per-clip turntable brake (record-stop). When on, the clip decelerates to a
+     *  stop over a fixed platter-stop time at its end. Sets a single clip; the library layer
+     *  fans this out across linked siblings. Mutually exclusive with backspin. */
+    setClipBrake(clipId: string, on: boolean): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const next = on === true
+      const current = clip.brake === true
+      if (next === current) return
+      clip.brake = next ? true : undefined
+      // Brake and backspin are mutually exclusive; the backend clears the other,
+      // so mirror that locally to keep the UI in sync.
+      if (next) clip.backspin = undefined
+      this.peaksRevision++
+      sendBridge('CLIP_SET_BRAKE', { clipId, on: next })
+      log.info('project', `setClipBrake id=${clipId} -> ${next ? 'on' : 'off'}`)
+    },
+
+    /** Toggle a per-clip turntable backspin (reverse rewind). At the clip's end the
+     *  audio rewinds backwards at speed and slows to a stop, like a DJ pulling the
+     *  vinyl back. Sets a single clip; the library layer fans this out across linked
+     *  siblings. Mutually exclusive with brake. */
+    setClipBackspin(clipId: string, on: boolean): void {
+      const clip = this.clips[clipId]
+      if (!clip) return
+      const next = on === true
+      const current = clip.backspin === true
+      if (next === current) return
+      clip.backspin = next ? true : undefined
+      if (next) clip.brake = undefined
+      this.peaksRevision++
+      sendBridge('CLIP_SET_BACKSPIN', { clipId, on: next })
+      log.info('project', `setClipBackspin id=${clipId} -> ${next ? 'on' : 'off'}`)
+    },
+
     /** Set or clear a persisted clip display-name override. */
     renameClip(clipId: string, name: string): boolean {
       const clip = this.clips[clipId]

@@ -28,17 +28,17 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
   {
     value: 'auto',
     label: 'Automatic (recommended)',
-    hint: 'Only USB audio interfaces are kept awake. Onboard and other devices stay silent.'
+    hint: 'Keep only USB interfaces awake'
   },
   {
     value: 'on',
     label: 'Always on',
-    hint: 'Force the keep-awake signal — use if a USB DAC drops the first beat and Automatic did not catch it.'
+    hint: 'Force it if a USB DAC drops the first beat'
   },
   {
     value: 'off',
     label: 'Off',
-    hint: 'Never send the keep-awake signal. Use if you hear a faint noise or burst before playback starts.'
+    hint: 'Use if you hear a burst before playback'
   }
 ]
 </script>
@@ -57,20 +57,20 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
         <label
           v-for="rate in [44100, 48000]"
           :key="rate"
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="defaultProjectSampleRate"
             type="radio"
             name="default-project-sample-rate"
             :value="rate"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">{{ rate.toLocaleString() }} Hz</span>
-            <span class="mt-0.5 block text-zinc-500">
-              <template v-if="rate === 44100">CD-quality default. Lower disk + CPU cost; matches most pop / streaming sources.</template>
-              <template v-else>Video / production default. Use this when working with film, video or 48 kHz multitrack stems.</template>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">{{ rate.toLocaleString() }} Hz</span>
+            <span class="text-zinc-500">
+              <template v-if="rate === 44100"> — CD quality; lower CPU + disk</template>
+              <template v-else> — Video / 48 kHz production</template>
             </span>
           </span>
         </label>
@@ -98,41 +98,39 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
         v-else
         class="space-y-2"
       >
-        <label class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2">
+        <label class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
           <input
             type="radio"
             name="audio-output"
             :checked="!audioHasSelection"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
             @change="pickSystemDefault"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">System default</span>
-            <span class="mt-0.5 block text-zinc-500">
-              Follow whichever device Windows is currently routing audio to.
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">System default</span>
+            <span class="text-zinc-500"> — Follow Windows' current device</span>
           </span>
         </label>
 
         <div
           v-if="uniqueDevices.length === 0"
-          class="rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2 text-zinc-600"
+          class="rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5 text-zinc-600"
         >
           No output devices detected.
         </div>
         <label
           v-for="device in uniqueDevices"
           :key="device.name"
-          class="flex cursor-pointer items-center gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             type="radio"
             name="audio-output"
             :checked="isAudioOutputSelectedDevice(device.name)"
-            class="h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
             @change="pickDevice(device)"
           >
-          <span class="truncate text-zinc-200">{{ device.name }}</span>
+          <span class="min-w-0 flex-1 truncate text-zinc-200">{{ device.name }}</span>
         </label>
       </div>
     </div>
@@ -163,20 +161,18 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
         <label
           v-for="backend in backendsForSelectedDevice"
           :key="backend"
-          class="flex cursor-pointer items-start gap-3 rounded px-2 py-1.5 hover:bg-zinc-900/60"
+          class="flex cursor-pointer items-center gap-3 rounded px-2 py-1.5 hover:bg-zinc-900/60"
         >
           <input
             type="radio"
             name="audio-backend"
             :checked="audioOutputTypeName === backend"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
             @change="pickBackend(backend)"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">{{ backend }}</span>
-            <span class="mt-0.5 block text-zinc-500">
-              {{ describeBackend(backend) }}
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">{{ backend }}</span>
+            <span class="text-zinc-500"> — {{ describeBackend(backend) }}</span>
           </span>
         </label>
       </div>
@@ -225,18 +221,18 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
         <label
           v-for="option in keepAwakeOptions"
           :key="option.value"
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="keepAwakeMode"
             type="radio"
             name="keep-awake-mode"
             :value="option.value"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">{{ option.label }}</span>
-            <span class="mt-0.5 block text-zinc-500">{{ option.hint }}</span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">{{ option.label }}</span>
+            <span class="text-zinc-500"> — {{ option.hint }}</span>
           </span>
         </label>
       </div>

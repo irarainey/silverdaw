@@ -33,6 +33,8 @@ export interface ClipEditorPreviewDeps {
   previewTempoRatio: () => number | undefined
   committedEnvelopePoints: () => ClipEnvelopePoint[]
   draftReversed: () => boolean
+  draftBrake: () => boolean
+  draftBackspin: () => boolean
   viewInMs: () => number
   viewDurationMs: () => number
   visibleDurationMs: () => number
@@ -50,6 +52,8 @@ export interface ClipEditorPreview {
   clearPreviewEnvelopeUpdateTimer: () => void
   scheduleDraftPreviewEnvelope: () => void
   pushDraftPreviewReversed: () => void
+  pushDraftPreviewBrake: () => void
+  pushDraftPreviewBackspin: () => void
   autoFollowPlayhead: () => void
   enforceSelectionPlaybackBounds: () => void
   loadPreviewForView: () => void
@@ -113,6 +117,17 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
   function pushDraftPreviewReversed(): void {
     if (!deps.isOpen() || !deps.editsExistingClip() || !preview.isLoaded) return
     preview.setReversed(deps.draftReversed())
+  }
+
+  // Brake/backspin are single toggles (no drag), so push them immediately too.
+  function pushDraftPreviewBrake(): void {
+    if (!deps.isOpen() || !deps.editsExistingClip() || !preview.isLoaded) return
+    preview.setBrake(deps.draftBrake())
+  }
+
+  function pushDraftPreviewBackspin(): void {
+    if (!deps.isOpen() || !deps.editsExistingClip() || !preview.isLoaded) return
+    preview.setBackspin(deps.draftBackspin())
   }
 
   // While the preview is playing, keep the playhead visible on the canvas
@@ -244,6 +259,8 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
     clearPreviewEnvelopeUpdateTimer,
     scheduleDraftPreviewEnvelope,
     pushDraftPreviewReversed,
+    pushDraftPreviewBrake,
+    pushDraftPreviewBackspin,
     autoFollowPlayhead,
     enforceSelectionPlaybackBounds,
     loadPreviewForView,

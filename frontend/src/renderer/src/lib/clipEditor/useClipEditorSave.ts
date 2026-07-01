@@ -57,6 +57,8 @@ export interface ClipEditorSaveDeps {
 
   volumeShapeCommittedPoints: () => ClipEnvelopePoint[]
   reverseCommitted: () => boolean
+  brakeCommitted: () => boolean
+  backspinCommitted: () => boolean
 }
 
 export interface ClipEditorSave {
@@ -159,6 +161,11 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
         // Reverse is a non-destructive per-clip flag; `setClipReversed` self-guards
         // against a no-op change.
         deps.project.setClipReversed(clip.id, deps.reverseCommitted())
+        // Brake/backspin are non-destructive tail flags; each self-guards and
+        // clears the other (they are mutually exclusive). This is the unlinked
+        // clip, so it is set directly (the linked branch below propagates).
+        deps.project.setClipBrake(clip.id, deps.brakeCommitted())
+        deps.project.setClipBackspin(clip.id, deps.backspinCommitted())
       })
       deps.notifications.pushInfo(`Saved changes for "${deps.titleText()}".`)
       deps.close()
@@ -180,6 +187,9 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
         // (no placed instance) skip this — they have no volume control.
         deps.library.updateLibraryClipEnvelope(entry.id, deps.volumeShapeCommittedPoints())
         deps.library.updateLibraryClipReversed(entry.id, deps.reverseCommitted())
+        // Brake/backspin propagate across every linked instance too (like reverse).
+        deps.library.updateLibraryClipBrake(entry.id, deps.brakeCommitted())
+        deps.library.updateLibraryClipBackspin(entry.id, deps.backspinCommitted())
       }
       return editResult
     })

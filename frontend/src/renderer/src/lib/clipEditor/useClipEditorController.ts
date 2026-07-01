@@ -3,6 +3,8 @@ import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
+import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import { effectiveClipDurationMs, useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { isWarpActive } from '@/lib/warp'
@@ -13,6 +15,7 @@ import { useClipEditorDirtyState } from '@/lib/clipEditor/useClipEditorDirtyStat
 import { useClipEditorVolumeShapeDraft } from '@/lib/clipEditor/useClipEditorVolumeShapeDraft'
 import { useClipEditorSliceDraft } from '@/lib/clipEditor/useClipEditorSliceDraft'
 import { useClipEditorReverseDraft } from '@/lib/clipEditor/useClipEditorReverseDraft'
+import { useClipEditorDjEffectDraft } from '@/lib/clipEditor/useClipEditorDjEffectDraft'
 import { useClipEditorWaveform } from '@/lib/clipEditor/useClipEditorWaveform'
 import { useClipEditorPreview } from '@/lib/clipEditor/useClipEditorPreview'
 import { useClipEditorCropHistory } from '@/lib/clipEditor/useClipEditorCropHistory'
@@ -41,6 +44,8 @@ export function useClipEditorController(
   const notifications = useNotificationsStore()
   const ui = useUiStore()
   const transport = useTransportStore()
+  const brakeSettings = useBrakeSettingsStore()
+  const backspinSettings = useBackspinSettingsStore()
 
 
   // Target-mode resolution is exhaustive and single-sourced in the composable.
@@ -90,13 +95,38 @@ export function useClipEditorController(
   const reverseDraft = useClipEditorReverseDraft()
   const { hasChanged: hasReverseChanged, initialise: initialiseReverseDraft } = reverseDraft
 
+  // Draft turntable-effect flags (brake / backspin); Save commits, Cancel discards.
+  // Both are tail effects available on any placed timeline clip (and, like reverse,
+  // propagate across linked saved-clip siblings on commit). Reverse
+  // and the two tail effects are mutually exclusive as a group (the engine can't
+  // compose a pitch-changing record-stop with backwards playback), so each toolbar
+  // toggle stays visible but is disabled while any other is set — turn that one off
+  // first. Brake and backspin are likewise mutually exclusive with each other.
+  const djEffectDraft = useClipEditorDjEffectDraft()
+  const { hasChanged: hasDjEffectChanged, initialise: initialiseDjEffectDraft } = djEffectDraft
+
   // Reverse is a per-clip flag available for any placed timeline clip (linked or
   // not); linked edits propagate to the shared saved clip and all its instances.
   const reverseAvailable = computed(() => editsTimelineClip.value)
   const reverseActive = computed(() => reverseDraft.reversed.value)
   function onToggleReverse(): void {
     if (!reverseAvailable.value) return
+    // Reverse is mutually exclusive with the turntable tail effects; turn the
+    // active one off first (the button is disabled while one is set).
+    if (djEffectDraft.brake.value || djEffectDraft.backspin.value) return
     reverseDraft.toggle()
+  }
+
+  const djEffectAvailable = computed(() => editsTimelineClip.value)
+  const brakeActive = computed(() => djEffectDraft.brake.value)
+  const backspinActive = computed(() => djEffectDraft.backspin.value)
+  function onToggleBrake(): void {
+    if (!djEffectAvailable.value || reverseDraft.reversed.value) return
+    djEffectDraft.toggleBrake()
+  }
+  function onToggleBackspin(): void {
+    if (!djEffectAvailable.value || reverseDraft.reversed.value) return
+    djEffectDraft.toggleBackspin()
   }
 
   // Last rendered lane layout; pointer hit-testing must match drawn geometry.
@@ -259,6 +289,7 @@ export function useClipEditorController(
     draftCents: () => draftCents.value,
     hasVolumeShapeChanged: () => hasVolumeShapeChanged.value,
     hasReverseChanged: () => hasReverseChanged.value,
+    hasDjEffectChanged: () => hasDjEffectChanged.value,
     hasGridChanged: () => beatGrid.hasGridChanged(),
     sourceBpm: () => sourceBpm.value,
     projectBpm: () => transport.bpm
@@ -275,6 +306,8 @@ export function useClipEditorController(
     clearPreviewEnvelopeUpdateTimer,
     scheduleDraftPreviewEnvelope,
     pushDraftPreviewReversed,
+    pushDraftPreviewBrake,
+    pushDraftPreviewBackspin,
     autoFollowPlayhead,
     enforceSelectionPlaybackBounds,
     loadPreviewForView,
@@ -295,6 +328,8 @@ export function useClipEditorController(
     previewTempoRatio,
     committedEnvelopePoints: volumeShapeCommittedPoints,
     draftReversed: () => reverseDraft.reversed.value,
+    draftBrake: () => djEffectDraft.brake.value,
+    draftBackspin: () => djEffectDraft.backspin.value,
     viewInMs: () => viewInMs.value,
     viewDurationMs: () => viewDurationMs.value,
     visibleDurationMs: () => visibleDurationMs.value,
@@ -317,6 +352,7 @@ export function useClipEditorController(
         initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
         initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
         initialiseReverseDraft(timelineClip.value)
+        initialiseDjEffectDraft(timelineClip.value)
         volumeEditMode.value = false
         sliceEditMode.value = false
         reseedSliceWindow()
@@ -362,6 +398,7 @@ export function useClipEditorController(
       initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
       initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
       initialiseReverseDraft(timelineClip.value)
+      initialiseDjEffectDraft(timelineClip.value)
       resetHiResRequestKey()
       resetCropHistory()
       library.setEditorHiResPeaks(null)
@@ -421,9 +458,43 @@ export function useClipEditorController(
   // and redraw so the waveform mirrors to match the new state.
   watch(
     () => reverseDraft.reversed.value,
-    () => {
+    (reversed) => {
       pushDraftPreviewReversed()
+      // Reversed clips can't carry a brake/backspin tail (the toggles hide), so
+      // clear the drafts to avoid persisting a hidden, ignored effect on Save.
+      if (reversed) djEffectDraft.clear()
       drawWaveform()
+    }
+  )
+
+  // Brake / backspin toggles → preview voice + waveform tail overlay. Single
+  // toggles, pushed immediately; redraw so the overlay appears / clears.
+  watch(
+    () => djEffectDraft.brake.value,
+    () => {
+      pushDraftPreviewBrake()
+      drawWaveform()
+    }
+  )
+  watch(
+    () => djEffectDraft.backspin.value,
+    () => {
+      pushDraftPreviewBackspin()
+      drawWaveform()
+    }
+  )
+
+  // Effect duration / curve come from a global preference; repaint the tail
+  // overlay live if the user changes it while the editor is open.
+  watch(
+    [
+      () => brakeSettings.seconds,
+      () => brakeSettings.curvePower,
+      () => backspinSettings.seconds,
+      () => backspinSettings.curvePower
+    ],
+    () => {
+      if (djEffectDraft.brake.value || djEffectDraft.backspin.value) drawWaveform()
     }
   )
 
@@ -435,6 +506,8 @@ export function useClipEditorController(
       if (!props.open || !editsExistingClip.value) return
       preview.setEnvelope(volumeShapeCommittedPoints())
       preview.setReversed(reverseDraft.reversed.value)
+      preview.setBrake(djEffectDraft.brake.value)
+      preview.setBackspin(djEffectDraft.backspin.value)
     }
   )
 
@@ -599,6 +672,12 @@ export function useClipEditorController(
     draftPoints: () => volumeShapeDraft.draftPoints.value,
     draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
     draftReversed: () => reverseDraft.reversed.value,
+    draftBrake: () => djEffectDraft.brake.value,
+    draftBackspin: () => djEffectDraft.backspin.value,
+    brakeSeconds: () => brakeSettings.seconds,
+    brakeCurvePower: () => brakeSettings.curvePower,
+    backspinSeconds: () => backspinSettings.seconds,
+    backspinCurvePower: () => backspinSettings.curvePower,
     sliceEditActive: () => sliceEditActive.value,
     sliceMarkers: () => sliceDraft.markers.value,
     editorHiResPeaks: () => library.editorHiResPeaks,
@@ -703,7 +782,9 @@ export function useClipEditorController(
     draftTempoPinned: () => draftTempoPinned.value,
     tempoRatioFromPinnedBpm: () => tempoRatioFromPinnedBpm(),
     volumeShapeCommittedPoints: () => volumeShapeCommittedPoints(),
-    reverseCommitted: () => reverseDraft.committed()
+    reverseCommitted: () => reverseDraft.committed(),
+    brakeCommitted: () => djEffectDraft.committedBrake(),
+    backspinCommitted: () => djEffectDraft.committedBackspin()
   })
 
   const { onKeydown, onWindowKeydownCapture } = useClipEditorKeyboard({
@@ -749,6 +830,11 @@ export function useClipEditorController(
     reverseAvailable,
     reverseActive,
     onToggleReverse,
+    djEffectAvailable,
+    brakeActive,
+    backspinActive,
+    onToggleBrake,
+    onToggleBackspin,
     onCanvasMouseDown,
     onCanvasContextMenu,
     onCanvasWheel,

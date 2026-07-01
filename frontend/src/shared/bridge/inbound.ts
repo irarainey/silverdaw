@@ -206,6 +206,10 @@ export const ProjectStateClipSchema = z.object({
   locked: z.boolean().optional(),
   /** Play the clip window backwards; non-destructive. Propagates across library-clip siblings. */
   reversed: z.boolean().optional(),
+  /** Turntable brake (record-stop) applied at the clip end; absent = off. */
+  brake: z.boolean().optional(),
+  /** Turntable backspin (reverse rewind) applied at the clip end; absent = off. */
+  backspin: z.boolean().optional(),
   name: z.string().optional(),
   /** Source file is missing; engine skips playback. */
   unresolved: z.boolean().optional(),

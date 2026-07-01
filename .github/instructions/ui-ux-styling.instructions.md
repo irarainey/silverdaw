@@ -110,6 +110,37 @@ class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-10
   spinners.
 - **Checkboxes / radios / native range:** tint with `accent-sky-500` (or
   `accent-sky-400` for the master volume slider).
+- **Choosing between a small fixed set of options** (a preference, a mode): use
+  the **radio-card list** pattern — a `<label>` per option in a `space-y-2`
+  column. **Canonical card:**
+
+  ```html
+  <label class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
+    <input v-model="…" type="radio" name="…" value="…" class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500">
+    <span class="min-w-0 flex-1 truncate leading-tight">
+      <span class="font-medium text-zinc-200">Label</span>
+      <span class="text-zinc-500"> — short description</span>
+    </span>
+  </label>
+  ```
+
+  Rules for these cards:
+  - **Label and description share one line** — `Label — description`, label
+    `font-medium text-zinc-200`, description `text-zinc-500`, never stacked on
+    separate `block` lines. The text span is `min-w-0 flex-1 truncate` so it
+    stays a single row.
+  - **Keep the description short** (a few words) so the whole card stays **one
+    line tall** — if it can't be said in a short phrase, it doesn't belong in the
+    description; trim it or move detail to the section's intro paragraph.
+  - Card chrome is fixed: `rounded-md` corners and `px-3 py-2.5` padding (a
+    comfortable, not cramped, row). The radio input is
+    `h-4 w-4 shrink-0 cursor-pointer accent-sky-500`.
+  - This is the single standard for option pickers in settings/preferences —
+    **do not** use a native `<select>` dropdown there (it also drags in the
+    browser focus ring; see §6). Reserve native `<select>` for long or dynamic
+    lists (e.g. device pickers, many sample rates) and still style it per §5/§6.
+  - A bare radio row with only a label (no description) keeps the same chrome and
+    just drops the description span.
 - **Disabled:** `disabled:opacity-50` (or `disabled:opacity-40` in dense panels)
   plus `disabled:cursor-not-allowed`; never just hide the control.
 - Inputs sit on `zinc-950` even inside a `zinc-900` panel — the darker well is
@@ -117,13 +148,19 @@ class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-10
 
 ## 6. Focus handling — no browser focus rings
 
-The default browser focus ring is **never** used. This is a hard rule.
+The default browser focus ring is **never** used. This is a hard rule. In
+Electron its default appearance is a **white/orange (outline) ring** — if you
+ever see that on a control, the control is wrong and must be fixed.
 
 - Every focusable element pairs `outline-none` (or `focus:outline-none`).
   Indicate focus by **recolouring the border to the accent**:
   `focus:border-sky-500` (inputs) or `focus:border-cyan-500` (some library
   fields — keep consistent within a component). Wrapper groups may use
   `focus-within:border-sky-500`.
+- **Native `<select>` is the most common offender** — it does NOT inherit a
+  global reset, so it must carry `outline-none focus:border-sky-500` explicitly
+  (do not tint it with `accent-*`; `accent` only applies to checkbox/radio/range).
+  A `<select>` without `outline-none` shows the white/orange ring and is a bug.
 - Custom range sliders strip the outline entirely
   (`outline-none focus:outline-none focus-visible:outline-none`) and style the
   thumb directly (see `TrackFxPanel.vue` `.tone-range-input`).
@@ -212,8 +249,13 @@ Wording rules:
       pattern; every interactive element has a `hover:` state.
 - [ ] Inputs follow the canonical field class; numbers are `font-mono`
       `text-right` `tabular-nums`; disabled state styled, not hidden.
-- [ ] No default browser focus ring anywhere; focus shown via accent border;
-      `focus:ring` only on prominent overlay action buttons.
+- [ ] No default browser focus ring anywhere (no white/orange ring — native
+      `<select>` needs `outline-none focus:border-sky-500`); focus shown via
+      accent border; `focus:ring` only on prominent overlay action buttons.
+- [ ] Small fixed option sets in settings/preferences use the shared radio-card
+      list pattern (`rounded-md`, `px-3 py-2.5`), not a native `<select>`; each
+      card keeps its `Label — short description` on **one line** (no stacked
+      description, description trimmed to fit).
 - [ ] Tailwind spacing scale; `rounded` controls / `rounded-lg` cards.
 - [ ] `font-mono` for all numeric readouts; correct size from the ladder.
 - [ ] Friendly terminology from the table; Title Case controls, sentence-case

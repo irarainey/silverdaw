@@ -197,6 +197,81 @@ bool AudioEngine::setPreviewReversed(bool reversed)
     return true;
 }
 
+bool AudioEngine::setPreviewBrake(double brakeSeconds, double curvePower)
+{
+    if (preview.offsetSource == nullptr) return false;
+
+    const double sr = preview.sampleRate > 0.0 ? preview.sampleRate : 44100.0;
+    const auto brakeLenSamples =
+        static_cast<juce::int64>(juce::jmax(0.0, brakeSeconds) * sr);
+
+    auto snapshot = BrakeSnapshot::create(brakeLenSamples, curvePower);
+    const BrakeSnapshot* published =
+        (snapshot != nullptr && !snapshot->isEmpty()) ? snapshot.get() : nullptr;
+
+    if (published != nullptr)
+    {
+        preview.offsetSource->setBackspinSnapshot(nullptr);
+        if (preview.backspinSnapshot != nullptr)
+        {
+            preview.retiredBackspins.push_back(std::move(preview.backspinSnapshot));
+        }
+    }
+
+    preview.offsetSource->setBrakeSnapshot(published);
+    if (preview.brakeSnapshot != nullptr)
+    {
+        preview.retiredBrakes.push_back(std::move(preview.brakeSnapshot));
+    }
+    preview.brakeSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
+
+    silverdaw::log::debug("preview",
+                          std::string("setPreviewBrake seconds=") + std::to_string(brakeSeconds));
+    if (preview.transportSource != nullptr && !preview.transportSource->isPlaying())
+    {
+        rebuildPreviewReadAhead();
+    }
+    return true;
+}
+
+bool AudioEngine::setPreviewBackspin(double backspinSeconds, double spinSpeed, double curvePower)
+{
+    if (preview.offsetSource == nullptr) return false;
+
+    const double sr = preview.sampleRate > 0.0 ? preview.sampleRate : 44100.0;
+    const auto backspinLenSamples =
+        static_cast<juce::int64>(juce::jmax(0.0, backspinSeconds) * sr);
+
+    auto snapshot = BackspinSnapshot::create(backspinLenSamples, spinSpeed, curvePower);
+    const BackspinSnapshot* published =
+        (snapshot != nullptr && !snapshot->isEmpty()) ? snapshot.get() : nullptr;
+
+    if (published != nullptr)
+    {
+        preview.offsetSource->setBrakeSnapshot(nullptr);
+        if (preview.brakeSnapshot != nullptr)
+        {
+            preview.retiredBrakes.push_back(std::move(preview.brakeSnapshot));
+        }
+    }
+
+    preview.offsetSource->setBackspinSnapshot(published);
+    if (preview.backspinSnapshot != nullptr)
+    {
+        preview.retiredBackspins.push_back(std::move(preview.backspinSnapshot));
+    }
+    preview.backspinSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
+
+    silverdaw::log::debug("preview",
+                          std::string("setPreviewBackspin seconds=") +
+                              std::to_string(backspinSeconds));
+    if (preview.transportSource != nullptr && !preview.transportSource->isPlaying())
+    {
+        rebuildPreviewReadAhead();
+    }
+    return true;
+}
+
 void AudioEngine::rebuildPreviewReadAhead()
 {
     if (preview.transportSource == nullptr || preview.offsetSource == nullptr) return;

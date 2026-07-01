@@ -123,6 +123,22 @@ export interface StemPrefsDto {
   otherEnhanceStrength: OtherEnhanceStrength
 }
 
+/** Persisted turntable-brake defaults surfaced to the renderer (preset names). */
+export type BrakeDurationDto = 'short' | 'medium' | 'long'
+export type BrakeCurveDto = 'linear' | 'curved' | 'steep'
+export interface BrakePrefsDto {
+  duration: BrakeDurationDto
+  curve: BrakeCurveDto
+}
+
+/** Persisted turntable-backspin defaults surfaced to the renderer (preset names). */
+export type BackspinDurationDto = 'short' | 'medium' | 'long'
+export type BackspinIntensityDto = 'gentle' | 'medium' | 'wild'
+export interface BackspinPrefsDto {
+  duration: BackspinDurationDto
+  intensity: BackspinIntensityDto
+}
+
 /** Where the stem model lives and whether it is a user-located copy. */
 export interface StemModelInfo {
   /** Directory the backend loads the ONNX sessions from. */

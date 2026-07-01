@@ -99,39 +99,33 @@ const waveformDisplayMode = defineModel<WaveformDisplayMode>('waveformDisplayMod
       </p>
       <div class="space-y-2">
         <label
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="skipButtonTarget"
             type="radio"
             name="skip-button-target"
             value="timelineEnds"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">Start and end of the timeline</span>
-            <span class="mt-0.5 block text-zinc-500">
-              Previous jumps to the start of the project; next jumps to
-              the end.
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">Timeline ends</span>
+            <span class="text-zinc-500"> — Jump to project start / end</span>
           </span>
         </label>
         <label
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="skipButtonTarget"
             type="radio"
             name="skip-button-target"
             value="markers"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">Previous and next marker</span>
-            <span class="mt-0.5 block text-zinc-500">
-              Step through your timeline markers. Past the last marker
-              in either direction, jumps to the start or end instead.
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">Markers</span>
+            <span class="text-zinc-500"> — Step through timeline markers</span>
           </span>
         </label>
       </div>
@@ -146,39 +140,33 @@ const waveformDisplayMode = defineModel<WaveformDisplayMode>('waveformDisplayMod
       </p>
       <div class="space-y-2">
         <label
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="waveformDisplayMode"
             type="radio"
             name="waveform-display-mode"
             value="summary"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">Single waveform</span>
-            <span class="mt-0.5 block text-zinc-500">
-              Show one combined waveform per clip. Cleaner and easier
-              to read at a glance.
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">Single waveform</span>
+            <span class="text-zinc-500"> — One combined waveform per clip</span>
           </span>
         </label>
         <label
-          class="flex cursor-pointer items-start gap-3 rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
           <input
             v-model="waveformDisplayMode"
             type="radio"
             name="waveform-display-mode"
             value="stereo"
-            class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
-          <span class="flex-1">
-            <span class="block font-medium text-zinc-200">Left and right channels</span>
-            <span class="mt-0.5 block text-zinc-500">
-              Stack separate left and right waveforms for stereo clips
-              so you can see differences between the channels.
-            </span>
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">Left and right</span>
+            <span class="text-zinc-500"> — Separate L / R for stereo clips</span>
           </span>
         </label>
       </div>

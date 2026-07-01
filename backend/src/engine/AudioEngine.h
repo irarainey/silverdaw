@@ -3,6 +3,8 @@
 #include "BusGraph.h"
 #include "AudioConstants.h"
 #include "EdgeFadeSnapshot.h"
+#include "BrakeSnapshot.h"
+#include "BackspinSnapshot.h"
 #include "EnvelopeSnapshot.h"
 #include "Log.h"
 #include "OutputKeepAlive.h"
@@ -131,6 +133,22 @@ class AudioEngine
                          EdgeFadeCurve fadeInCurve = EdgeFadeCurve::equalPower,
                          EdgeFadeCurve fadeOutCurve = EdgeFadeCurve::equalPower);
 
+    /** Apply a turntable brake (record-stop) over the last `brakeSeconds` of the clip.
+     *  `brakeSeconds <= 0` clears it. Non-destructive; applied upstream of the read-ahead
+     *  buffer like reverse/edge fades. v1 affects forward, non-warped clips only. */
+    bool setClipBrake(const juce::String& clipId, double brakeSeconds,
+                      double curvePower = BrakeSnapshot::kDefaultCurvePower);
+    double getBrakeDefaultSeconds() const { return brakeDefaultSeconds; }
+    double getBrakeDefaultCurve() const { return brakeDefaultCurve; }
+    void setBrakeDefaults(double seconds, double curve);
+    bool setClipBackspin(const juce::String& clipId, double backspinSeconds,
+                         double spinSpeed = BackspinSnapshot::kDefaultSpinSpeed,
+                         double curvePower = BackspinSnapshot::kDefaultCurvePower);
+    double getBackspinDefaultSeconds() const { return backspinDefaultSeconds; }
+    double getBackspinDefaultSpeed() const { return backspinDefaultSpeed; }
+    double getBackspinDefaultCurve() const { return backspinDefaultCurve; }
+    void setBackspinDefaults(double seconds, double speed, double curve);
+
     bool isPlaying() const;
 
     bool isContentLoaded() const;
@@ -182,6 +200,13 @@ class AudioEngine
     bool setPreviewEnvelope(const juce::Array<juce::var>& points);
 
     bool setPreviewReversed(bool reversed);
+
+    /** Apply a turntable brake to the clip-editor preview (record-stop at clip end). */
+    bool setPreviewBrake(double brakeSeconds,
+                         double curvePower = BrakeSnapshot::kDefaultCurvePower);
+    bool setPreviewBackspin(double backspinSeconds,
+                            double spinSpeed = BackspinSnapshot::kDefaultSpinSpeed,
+                            double curvePower = BackspinSnapshot::kDefaultCurvePower);
 
     juce::int64 getPreviewGeneration() const;
 
@@ -258,6 +283,10 @@ class AudioEngine
         std::vector<std::unique_ptr<EnvelopeSnapshot>> retiredEnvelopes;
         std::unique_ptr<EdgeFadeSnapshot> edgeFadeSnapshot;
         std::vector<std::unique_ptr<EdgeFadeSnapshot>> retiredEdgeFades;
+        std::unique_ptr<BrakeSnapshot> brakeSnapshot;
+        std::vector<std::unique_ptr<BrakeSnapshot>> retiredBrakes;
+        std::unique_ptr<BackspinSnapshot> backspinSnapshot;
+        std::vector<std::unique_ptr<BackspinSnapshot>> retiredBackspins;
         double sampleRate = 44100.0;
         int numChannels = 2;
         juce::int64 latencySamples = 0;
@@ -293,6 +322,12 @@ class AudioEngine
     };
     RebuildTimer rebuildTimer{*this};
     static constexpr int kRebuildDebounceMs = 150;
+
+    double brakeDefaultSeconds = BrakeSnapshot::kPlatterStopSeconds;
+    double brakeDefaultCurve = BrakeSnapshot::kDefaultCurvePower;
+    double backspinDefaultSeconds = BackspinSnapshot::kDefaultSpinSeconds;
+    double backspinDefaultSpeed = BackspinSnapshot::kDefaultSpinSpeed;
+    double backspinDefaultCurve = BackspinSnapshot::kDefaultCurvePower;
 
     bool pendingSeekPrewarm = false;
 
@@ -357,6 +392,10 @@ class AudioEngine
         std::vector<std::unique_ptr<WarpProcessor>> retiredWarps;
         std::unique_ptr<EnvelopeSnapshot> envelopeSnapshot;
         std::vector<std::unique_ptr<EnvelopeSnapshot>> retiredEnvelopes;
+        std::unique_ptr<BrakeSnapshot> brakeSnapshot;
+        std::vector<std::unique_ptr<BrakeSnapshot>> retiredBrakes;
+        std::unique_ptr<BackspinSnapshot> backspinSnapshot;
+        std::vector<std::unique_ptr<BackspinSnapshot>> retiredBackspins;
         juce::String warpMode{"rhythmic"};
         double sampleRate = 44100.0;
         double inMs = 0.0;

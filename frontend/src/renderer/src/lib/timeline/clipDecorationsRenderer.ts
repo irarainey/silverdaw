@@ -16,8 +16,18 @@ import {
   OVERLAP_HATCH,
   OVERLAP_HATCH_ALPHA,
   OVERLAP_HATCH_SPACING_PX,
+  BRAKE_FILL,
+  BRAKE_FILL_ALPHA,
+  BRAKE_LINE,
+  BRAKE_LINE_ALPHA,
+  BACKSPIN_FILL,
+  BACKSPIN_FILL_ALPHA,
+  BACKSPIN_LINE,
+  BACKSPIN_LINE_ALPHA,
   CLIP_VERTICAL_PADDING
 } from './constants'
+import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
+import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import type { GridGeometry } from './useGridGeometry'
 
 type PooledGraphics = InstanceType<NonNullable<typeof Graphics>>
@@ -34,6 +44,8 @@ export interface ClipDecorationsRendererDeps {
 export function createClipDecorationsRenderer(deps: ClipDecorationsRendererDeps) {
   const { tracksLayer, GraphicsCtor, geometry, project, acquireGraphics } = deps
   const { pxPerSecond, headerWidth } = geometry
+  const brakeSettings = useBrakeSettingsStore()
+  const backspinSettings = useBackspinSettingsStore()
 
   /** Diagonal hatch over any region where two clips on a track overlap. */
   function drawClipOverlaps(
@@ -164,5 +176,160 @@ export function createClipDecorationsRenderer(deps: ClipDecorationsRendererDeps)
     }
   }
 
-  return { drawClipOverlaps, drawTrackTransitions }
+  /** Tail overlay marking a clip's turntable brake (record-stop): a fixed
+   *  platter-stop time over which playback decelerates 1 → 0. A linear speed
+   *  ramp (constant deceleration) plus groove ticks at equal source intervals,
+   *  which bunch at full speed and spread apart as the platter halts. */
+  function drawClipBrakes(
+    track: Track,
+    rowWorldY: number,
+    rowHeight: number,
+    worldLeft: number,
+    worldRight: number
+  ): void {
+    const tracksL = tracksLayer.value
+    const G = GraphicsCtor.value
+    if (!tracksL || !G) return
+
+    const padding = CLIP_VERTICAL_PADDING
+    const innerY = rowWorldY + padding
+    const innerH = rowHeight - padding * 2
+    if (innerH <= 0) return
+
+    const brakeMsMax = brakeSettings.seconds * 1000
+    const curvePower = brakeSettings.curvePower
+
+    for (const id of track.clipIds) {
+      const clip = project.clips[id]
+      if (!clip || clip.brake !== true) continue
+      // The engine applies the brake to forward clips (it composes with warp now);
+      // reverse is still excluded, so don't draw a misleading overlay there.
+      if (clip.reversed === true) continue
+
+      // The brake occupies the last `T_stop` of the clip (clamped to its length),
+      // and always decelerates fully to a stop across that span.
+      const durMs = effectiveClipDurationMs(clip)
+      const brakeMs = Math.min(brakeMsMax, durMs)
+      if (brakeMs <= 0) continue
+      const endMs = clip.startMs + durMs
+      const startMs = endMs - brakeMs
+
+      const x0 = headerWidth() + (startMs / 1000) * pxPerSecond.value
+      const x1 = headerWidth() + (endMs / 1000) * pxPerSecond.value
+      const w = x1 - x0
+      if (w < 1) continue
+      if (x1 < worldLeft || x0 > worldRight) continue
+
+      const yTop = innerY
+      const yBot = innerY + innerH
+      const overlay = acquireGraphics(G)
+      overlay.rect(x0, yTop, w, innerH).fill({ color: BRAKE_FILL, alpha: BRAKE_FILL_ALPHA })
+
+      // Groove ticks at equal source-consumed fractions. The timeline position of
+      // source fraction f is u/T = 1 − (1−f)^(1/(p+1)), so equal grooves are dense at
+      // full speed and spread out as playback slows.
+      const invP = 1 / (curvePower + 1)
+      const TICKS = 7
+      for (let k = 1; k < TICKS; k++) {
+        const f = k / TICKS
+        const u = 1 - Math.pow(1 - f, invP) // normalised timeline position in [0, 1]
+        const tx = x0 + w * u
+        overlay.moveTo(tx, yTop).lineTo(tx, yBot)
+      }
+      overlay.stroke({ color: BRAKE_LINE, width: 1, alpha: BRAKE_LINE_ALPHA * 0.4 })
+
+      // Speed ramp: the playback rate (1−u/T)^p falling from full speed (top) at the
+      // brake start to a stop (bottom) at the clip end, plus a crisp left boundary.
+      overlay.moveTo(x0, yTop).lineTo(x0, yBot)
+      const STEPS = 24
+      overlay.moveTo(x0, yTop)
+      for (let i = 1; i <= STEPS; i++) {
+        const u = i / STEPS
+        const rate = Math.pow(1 - u, curvePower)
+        overlay.lineTo(x0 + w * u, yTop + innerH * (1 - rate))
+      }
+      overlay.stroke({ color: BRAKE_LINE, width: 1.5, alpha: BRAKE_LINE_ALPHA })
+      tracksL.addChild(overlay)
+    }
+  }
+
+  /** Tail overlay marking a clip's turntable backspin (reverse rewind): the audio
+   *  rewinds backwards at a high speed that decays to a stop. Drawn in violet with
+   *  back-pointing chevrons that thin out as the spin slows, plus a rate-magnitude
+   *  curve, to read clearly as "reverse" and distinct from the brake. */
+  function drawClipBackspins(
+    track: Track,
+    rowWorldY: number,
+    rowHeight: number,
+    worldLeft: number,
+    worldRight: number
+  ): void {
+    const tracksL = tracksLayer.value
+    const G = GraphicsCtor.value
+    if (!tracksL || !G) return
+
+    const padding = CLIP_VERTICAL_PADDING
+    const innerY = rowWorldY + padding
+    const innerH = rowHeight - padding * 2
+    if (innerH <= 0) return
+
+    const spinMsMax = backspinSettings.seconds * 1000
+    const curvePower = backspinSettings.curvePower
+
+    for (const id of track.clipIds) {
+      const clip = project.clips[id]
+      if (!clip || clip.backspin !== true) continue
+      if (clip.reversed === true) continue
+
+      const durMs = effectiveClipDurationMs(clip)
+      const spinMs = Math.min(spinMsMax, durMs)
+      if (spinMs <= 0) continue
+      const endMs = clip.startMs + durMs
+      const startMs = endMs - spinMs
+
+      const x0 = headerWidth() + (startMs / 1000) * pxPerSecond.value
+      const x1 = headerWidth() + (endMs / 1000) * pxPerSecond.value
+      const w = x1 - x0
+      if (w < 1) continue
+      if (x1 < worldLeft || x0 > worldRight) continue
+
+      const yTop = innerY
+      const yBot = innerY + innerH
+      const overlay = acquireGraphics(G)
+      overlay.rect(x0, yTop, w, innerH).fill({ color: BACKSPIN_FILL, alpha: BACKSPIN_FILL_ALPHA })
+
+      // Back-pointing chevrons (◄) along the region; spacing widens toward the end
+      // as the spin loses momentum and slows. Position uses the same equal-rewind
+      // mapping as the audio: u/T = 1 − (1−f)^(1/(p+1)).
+      const invP = 1 / (curvePower + 1)
+      const CHEVRONS = 6
+      const ch = Math.min(5, innerH * 0.3)
+      for (let k = 1; k <= CHEVRONS; k++) {
+        const f = k / (CHEVRONS + 1)
+        const u = 1 - Math.pow(1 - f, invP)
+        const cxp = x0 + w * u
+        const cyp = (yTop + yBot) / 2
+        overlay
+          .moveTo(cxp + ch * 0.6, cyp - ch)
+          .lineTo(cxp - ch * 0.6, cyp)
+          .lineTo(cxp + ch * 0.6, cyp + ch)
+      }
+      overlay.stroke({ color: BACKSPIN_LINE, width: 1, alpha: BACKSPIN_LINE_ALPHA * 0.55 })
+
+      // Rate-magnitude curve: full reverse speed (top) at the trigger falling to a
+      // stop (bottom) at the clip end, plus a crisp left boundary.
+      overlay.moveTo(x0, yTop).lineTo(x0, yBot)
+      const STEPS = 24
+      overlay.moveTo(x0, yTop)
+      for (let i = 1; i <= STEPS; i++) {
+        const u = i / STEPS
+        const rate = Math.pow(1 - u, curvePower)
+        overlay.lineTo(x0 + w * u, yTop + innerH * (1 - rate))
+      }
+      overlay.stroke({ color: BACKSPIN_LINE, width: 1.5, alpha: BACKSPIN_LINE_ALPHA })
+      tracksL.addChild(overlay)
+    }
+  }
+
+  return { drawClipOverlaps, drawTrackTransitions, drawClipBrakes, drawClipBackspins }
 }

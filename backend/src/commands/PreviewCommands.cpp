@@ -178,4 +178,22 @@ void handlePreviewSetReversed(const juce::var& payload, AudioEngine& engine)
     engine.setPreviewReversed(reversed);
 }
 
+void handlePreviewSetBrake(const juce::var& payload, AudioEngine& engine, ProjectState& projectState)
+{
+    juce::ignoreUnused(projectState);
+    const bool on = static_cast<bool>(payload.getProperty("on", false));
+    silverdaw::log::info("bridge", std::string("recv PREVIEW_SET_BRAKE on=") + (on ? "1" : "0"));
+    engine.setPreviewBrake(on ? engine.getBrakeDefaultSeconds() : 0.0,
+                           engine.getBrakeDefaultCurve());
+}
+
+void handlePreviewSetBackspin(const juce::var& payload, AudioEngine& engine, ProjectState& projectState)
+{
+    juce::ignoreUnused(projectState);
+    const bool on = static_cast<bool>(payload.getProperty("on", false));
+    silverdaw::log::info("bridge", std::string("recv PREVIEW_SET_BACKSPIN on=") + (on ? "1" : "0"));
+    engine.setPreviewBackspin(on ? engine.getBackspinDefaultSeconds() : 0.0,
+                              engine.getBackspinDefaultSpeed(), engine.getBackspinDefaultCurve());
+}
+
 } // namespace silverdaw

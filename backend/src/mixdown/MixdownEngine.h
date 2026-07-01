@@ -10,6 +10,8 @@
 #include <juce_core/juce_core.h>
 
 #include "EdgeFadeSnapshot.h"
+#include "BrakeSnapshot.h"
+#include "BackspinSnapshot.h"
 
 namespace silverdaw
 {
@@ -38,6 +40,11 @@ struct MixdownSnapshot
         double edgeFadeOutStartMs{0.0};
         double edgeFadeOutEndMs{0.0};
         EdgeFadeCurve edgeFadeOutCurve{EdgeFadeCurve::equalPower};
+        double brakeSeconds{0.0};
+        double brakeCurve{BrakeSnapshot::kDefaultCurvePower};
+        double backspinSeconds{0.0};
+        double backspinSpeed{BackspinSnapshot::kDefaultSpinSpeed};
+        double backspinCurve{BackspinSnapshot::kDefaultCurvePower};
         bool warpEnabled{false};
         juce::String warpMode; // "rhythmic" / "tonal" / "complex"
         double tempoRatio{1.0};
@@ -138,7 +145,13 @@ enum class MixdownFailureCode
 
 const char* mixdownFailureCodeToString(MixdownFailureCode code) noexcept;
 
-MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project);
+MixdownSnapshot snapshotProjectForMixdown(
+    const ProjectState& project,
+    double brakeSeconds = BrakeSnapshot::kPlatterStopSeconds,
+    double brakeCurve = BrakeSnapshot::kDefaultCurvePower,
+    double backspinSeconds = BackspinSnapshot::kDefaultSpinSeconds,
+    double backspinSpeed = BackspinSnapshot::kDefaultSpinSpeed,
+    double backspinCurve = BackspinSnapshot::kDefaultCurvePower);
 
 double computeLastClipEndMs(const MixdownSnapshot& snapshot);
 

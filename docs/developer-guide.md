@@ -195,6 +195,35 @@ Silverdaw currently supports the core arrangement workflow:
   propagates to every linked saved clip sibling; from the Clip Editor it follows
   the same save scope as the other draft edits. The flag round-trips through
   `PROJECT_STATE` and the `.silverdaw` file and is suppressed from save when off.
+- **DJ turntable effects (brake & backspin).** Two non-destructive, per-clip
+  "turntable" effects applied at a clip's **end**: a **Brake** (a vinyl
+  record-stop — the clip decelerates to a halt; a varispeed where pitch and tempo
+  fall together) and a **Backspin** (a reverse rewind that accelerates backwards
+  then slows to a stop). A clip can have a **Brake or a Backspin, never both** —
+  the two are mutually exclusive at the data level (setting one clears the other in
+  the store, `ProjectState`, and the engine). The UI extends this to a three-way
+  group with **Reverse**: in **both** the timeline right-click menu and the Clip
+  Editor toolbar, each of Reverse / Brake / Backspin stays visible but is
+  **disabled while another in the group is set** (and the engine only applies a tail
+  to forward clips). Stored as suppressed-when-off per-clip booleans `brake` /
+  `backspin` that, like reverse, **propagate across linked saved-clip siblings**.
+  They apply
+  to **live timeline playback and mixdown export**, and the **Clip Editor** exposes
+  matching **Brake** / **Backspin** toolbar toggles that audition live on the
+  preview voice, draw a matching tail overlay on the editor waveform, and commit
+  on Save. The audio engine publishes an immutable
+  `BrakeSnapshot` / `BackspinSnapshot`
+  (`backend/src/dsp/`) lock-free to the audio thread and renders the tail as a
+  varispeed directly from the source (cubic interpolation + a rate-keyed end
+  fade) inside `OffsetSource`. **Forward clips only** (reverse is excluded), but
+  they **compose with warp** — the clip is warped up to the effect trigger, then
+  the tail bypasses the pitch-preserving stretcher (a record-stop *changes* pitch,
+  so it cannot go through it) and reads the source directly, using the warp tempo
+  ratio only to start at the right place and keep the clip length. A red **BRAKE**
+  / violet **SPIN** clip-header badge and a red / violet tail overlay on the
+  waveform mark the effect. Duration + shape come from a global app preference
+  (**Preferences ▸ Effects**, below), pushed to the backend on change and on every
+  reconnect and re-applied live to all affected clips.
 - **Loop slicing.** Chop a clip into slices on a bar/beat grid (whole bar … 1/32)
   or with hand-placed markers, then commit them as **adjacent timeline clips** or
   **individual library samples**. The Clip Editor's **Slice** toolbar toggle
@@ -221,6 +250,11 @@ Silverdaw currently supports the core arrangement workflow:
   (`PROJECT_SET_MIXDOWN_START_BAR`), so a reopened project remembers how it was
   last exported. The live transport is
   force-paused and `TRANSPORT_PLAY` is rejected for the duration of a render.
+  Export renders through the **same per-clip path as live playback** — warp /
+  pitch, reverse, the volume-shape envelope and edge fades, and the turntable
+  brake / backspin tails all bake into the mixdown identically (the offline
+  graph builds the same `OffsetSource` snapshots), so what you hear is what you
+  export.
 - **Clip lock** (Ctrl+L or right-click ▸ Lock / Unlock) freezes a single
   timeline clip against accidental move / trim / split. Locked clips show a
   padlock badge in their title strip, refuse drag-move and edge-trim gestures
@@ -339,7 +373,8 @@ search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
 wider mixer / effects / automation work (a deeper per-clip processor chain —
 saturation — applied both live and in mixdown, beyond the per-track Tone EQ +
 Filter, the per-track Compressor, the project-wide Reverb and Delay sends,
-the track effect automation lanes, and the per-clip Volume Shape that already ship), and a CI matrix that
+the track effect automation lanes, the per-clip Volume Shape, and the per-clip
+turntable Brake / Backspin tails that already ship), and a CI matrix that
 enforces a coverage floor over the existing backend and frontend test suites.
 
 ## Bridge protocol
@@ -493,7 +528,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         toneBassDb?, toneMidDb?, toneTrebleDb?, toneFilter?,
         sendReverb?, sendDelay?, pan?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
-         locked?, reversed?,
+         locked?, reversed?, brake?, backspin?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
          envelopePoints?,
          effectiveDurationMs?, effectiveTempoRatio?, effectiveWarpActive?]
@@ -578,6 +613,20 @@ not propagated across linked saved clip siblings, and round-trips through
 plays the clip's source window back-to-front; it is set via `CLIP_SET_REVERSED`
 (timeline) or `PREVIEW_SET_REVERSED` (Clip Editor live preview), suppressed from
 save when off, and round-trips through `PROJECT_STATE` and the `.silverdaw` file.
+`CLIP.brake` and `CLIP.backspin` are optional, **mutually exclusive** booleans
+(absent == off) for the per-clip turntable record-stop / reverse-rewind tail
+effects; they are toggled from the timeline via `CLIP_SET_BRAKE` /
+`CLIP_SET_BACKSPIN` and from the Clip Editor's Brake / Backspin toolbar toggles.
+Like reverse, they **propagate across linked saved clip siblings** — toggling one
+on a linked clip (timeline right-click or Clip-Editor Save) routes through
+`library.updateLibraryClipBrake` / `updateLibraryClipBackspin`, which fans the flag
+out to every linked timeline instance; an unlinked clip is set directly. Their
+global duration / curve / intensity defaults are
+pushed to the engine with `BRAKE_SETTINGS_SET` / `BACKSPIN_SETTINGS_SET`. The
+Clip Editor auditions them live on the preview voice via `PREVIEW_SET_BRAKE` /
+`PREVIEW_SET_BACKSPIN`. Both flags are
+suppressed from save when off and round-trip through `PROJECT_STATE` and the
+`.silverdaw` file.
 
 **Phase 5 effects properties.** Each `TRACK` carries optional sound-shaping
 fields, all suppressed from save when at their defaults so legacy projects stay
@@ -790,8 +839,9 @@ for AAC / M4A) decodes every source file into 32-bit float regardless of its
 on-disk bit depth — a 16-bit WAV, a 24-bit FLAC, or an MP3 all become float on
 the way in, and the original file is never modified (non-destructive editing).
 
-Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp and
-the per-clip volume-shape multiplier, per-track summing, the per-track
+Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp, the
+per-clip volume-shape multiplier, the per-clip turntable brake / backspin tail
+varispeed (`OffsetSource`), per-track summing, the per-track
 Tone EQ + bipolar Filter and the per-track Leveler
 ([`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
 [`TrackChain`](../backend/src/dsp/TrackChain.h)),
@@ -1508,7 +1558,7 @@ User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`
 and edited via the in-app **Edit → Preferences…** dialog. The dialog is
 **transactional**: every field is held in a local working copy until you click
 **Save**; **Cancel** (and `Esc`) discard pending edits without touching the
-engine or the file. The settings are organised into five tabs on a left-hand
+engine or the file. The settings are organised into six tabs on a left-hand
 sidebar:
 
 - **General** — toast notifications, follow-playback auto-scroll, library tile
@@ -1519,6 +1569,12 @@ sidebar:
 - **Audio** — output device + driver selection (see below), and the
   **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
   `PROJECT.targetSampleRate` on new projects.
+- **Effects** — global defaults for the per-clip DJ turntable effects: the
+  **Brake** Duration (short / medium / long) and Curve (linear / curved / steep),
+  and the **Backspin** Duration and Intensity (gentle / medium / wild = 4× / 6× /
+  8× reverse speed). On save these are pushed to the engine (`BRAKE_SETTINGS_SET`
+  / `BACKSPIN_SETTINGS_SET`) and re-applied live to every clip already carrying
+  that effect; they are also re-sent on each backend reconnect.
 - **Stems** — stem-separation model management (a combined **Download models**
   for the two RoFormer quality packs, with per-model **Locate** for an existing
   copy, and a secondary **Backup model** section with an **Always use the backup
@@ -1761,7 +1817,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step, and compound ops (split / duplicate / paste) fold into a single undo step. |
 | `Ctrl + L` | Toggle the **lock** flag on the selected clip. Locked clips refuse drag-move, edge-trim and Split-at-playhead, and show a padlock badge in their title strip. Per-clip — linked saved clip siblings stay independently lockable. |
-| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Cut** / **Copy** / **Paste** (Cut and Copy act on the right-clicked clip — selecting it and its track first; Paste needs a clip on the clipboard and lands on this clip's track at the playhead, mirroring the Edit-menu / Ctrl+X·C·V behaviour), **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), **Chop to Grid** (a submenu — whole bar / 1/2 bar / 1/4 / 1/8 / 1/16 — that slices the whole clip onto the beat grid in one undo step; shown only for an unlocked, unlinked clip with a known tempo), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked saved clip sibling), **Save Clip to Library**, **Save as Sample…** (opens the **Save as Sample** dialog with **Music** and **Simple** choices), **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
+| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Cut** / **Copy** / **Paste** (Cut and Copy act on the right-clicked clip — selecting it and its track first; Paste needs a clip on the clipboard and lands on this clip's track at the playhead, mirroring the Edit-menu / Ctrl+X·C·V behaviour), **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), **Chop to Grid** (a submenu — whole bar / 1/2 bar / 1/4 / 1/8 / 1/16 — that slices the whole clip onto the beat grid in one undo step; shown only for an unlocked, unlinked clip with a known tempo), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked saved clip sibling), **Brake** / **Backspin** (checkmarked toggles for the turntable record-stop / reverse-rewind tail effects, also propagated across linked siblings — Reverse, Brake and Backspin form a mutually-exclusive group, so each entry stays visible but is **disabled** while any other in the group is set), **Save Clip to Library**, **Save as Sample…** (opens the **Save as Sample** dialog with **Music** and **Simple** choices), **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
 | Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
@@ -1784,7 +1840,8 @@ and the following set takes over instead:
 | Drag on waveform | Mark a sub-selection. The selection drives Save-as-new and Apply-trim. |
 | Drag on a selection handle | Fine-tune the selection edge. |
 | **Volume** toolbar toggle (cropped Clip view only) | Turn Volume Shape editing on / off. The volume line is always drawn faint as read-only context; toggling on makes its breakpoints editable. |
-| **Reverse** toolbar toggle | Play the clip back-to-front. The toggle is part of the transactional draft and previewed live; **Save** commits it (following the same scope as the other edits), **Cancel** discards. |
+| **Reverse** toolbar toggle | Play the clip back-to-front. Mutually exclusive with the Brake / Backspin tail effects — kept visible but disabled while one of those is set (turn it off first). Part of the transactional draft and previewed live; **Save** commits it (following the same scope as the other edits), **Cancel** discards. |
+| **Brake** / **Backspin** toolbar toggles | Apply a turntable record-stop (Brake) or reverse-rewind (Backspin) tail effect, drawing a matching red / violet deceleration overlay on the waveform tail. Reverse, Brake and Backspin form a mutually-exclusive group — each toggle stays visible but is disabled while any other in the group is set. Part of the transactional draft and auditioned live on the preview voice; **Save** commits the flag (propagating to every linked instance, like reverse), **Cancel** discards. |
 | Click / drag on waveform (Volume mode on) | Add a breakpoint, or drag an existing one — freehand placement by default. Endpoints keep their pinned times. |
 | `Shift` + click / drag (Volume mode on) | Snap the breakpoint to the nearest source beat while adding or moving it. |
 | `Alt` + click or right-click a breakpoint (Volume mode on) | Remove that breakpoint (pinned endpoints can't be removed). |

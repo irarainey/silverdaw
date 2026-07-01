@@ -23,11 +23,15 @@ interface Harness {
     setClipWarp: ReturnType<typeof vi.fn>
     setClipEnvelope: ReturnType<typeof vi.fn>
     setClipReversed: ReturnType<typeof vi.fn>
+    setClipBrake: ReturnType<typeof vi.fn>
+    setClipBackspin: ReturnType<typeof vi.fn>
   }
   library: {
     updateLibraryClipEdit: ReturnType<typeof vi.fn>
     updateLibraryClipEnvelope: ReturnType<typeof vi.fn>
     updateLibraryClipReversed: ReturnType<typeof vi.fn>
+    updateLibraryClipBrake: ReturnType<typeof vi.fn>
+    updateLibraryClipBackspin: ReturnType<typeof vi.fn>
     addLibraryClipFromSelection: ReturnType<typeof vi.fn>
   }
   notifications: {
@@ -45,12 +49,16 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     trimClip: vi.fn(),
     setClipWarp: vi.fn(),
     setClipEnvelope: vi.fn(),
-    setClipReversed: vi.fn()
+    setClipReversed: vi.fn(),
+    setClipBrake: vi.fn(),
+    setClipBackspin: vi.fn()
   }
   const library = {
     updateLibraryClipEdit: vi.fn(() => ({ ok: true })),
     updateLibraryClipEnvelope: vi.fn(() => ({ ok: true })),
     updateLibraryClipReversed: vi.fn(() => ({ ok: true })),
+    updateLibraryClipBrake: vi.fn(() => ({ ok: true })),
+    updateLibraryClipBackspin: vi.fn(() => ({ ok: true })),
     addLibraryClipFromSelection: vi.fn(() => 'new-id')
   }
   const notifications = { pushInfo: vi.fn(), pushError: vi.fn() }
@@ -79,7 +87,9 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     draftTempoPinned: false,
     tempoRatioFromPinnedBpm: undefined,
     volumeShapeCommittedPoints: [],
-    reverseCommitted: false
+    reverseCommitted: false,
+    brakeCommitted: false,
+    backspinCommitted: false
   }
 
   const deps: ClipEditorSaveDeps = {
@@ -111,6 +121,8 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     volumeShapeCommittedPoints: () =>
       state.volumeShapeCommittedPoints as ReturnType<ClipEditorSaveDeps['volumeShapeCommittedPoints']>,
     reverseCommitted: () => state.reverseCommitted as boolean,
+    brakeCommitted: () => state.brakeCommitted as boolean,
+    backspinCommitted: () => state.backspinCommitted as boolean,
     ...overrides
   }
 
@@ -250,6 +262,35 @@ describe('useClipEditorSave', () => {
     useClipEditorSave(h.deps).onSaveChanges()
 
     expect(h.library.updateLibraryClipReversed).toHaveBeenCalledWith('item-1', true)
+    expect(h.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('timeline-clip save commits the brake / backspin flags', () => {
+    h.state.editsSingleTimelineClip = true
+    h.state.editsLibraryClipLibrary = false
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.state.canApplyCrop = true
+    h.state.selectionInMs = 0
+    h.state.selectionDurationMs = 1000
+    h.state.brakeCommitted = true
+    h.state.backspinCommitted = false
+
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.project.setClipBrake).toHaveBeenCalledWith('clip-1', true)
+    expect(h.project.setClipBackspin).toHaveBeenCalledWith('clip-1', false)
+  })
+
+  it('linked-clip save propagates brake / backspin to all linked clips', () => {
+    h.state.editsLibraryClipLibrary = true
+    h.state.editsTimelineClip = true
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.state.backspinCommitted = true
+
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.library.updateLibraryClipBackspin).toHaveBeenCalledWith('item-1', true)
+    expect(h.library.updateLibraryClipBrake).toHaveBeenCalledWith('item-1', false)
     expect(h.close).toHaveBeenCalledTimes(1)
   })
 

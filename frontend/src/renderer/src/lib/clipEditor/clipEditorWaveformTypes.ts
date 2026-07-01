@@ -28,6 +28,16 @@ export interface ClipEditorWaveformDeps {
   draftPoints: () => readonly ClipEnvelopePoint[]
   draftEffectiveRatio: () => number
   draftReversed: () => boolean
+  /** Draft brake flag — draws the record-stop tail overlay when on. */
+  draftBrake: () => boolean
+  /** Draft backspin flag — draws the reverse-rewind tail overlay when on. */
+  draftBackspin: () => boolean
+  /** Brake tail length (s) and curve power from the global effect preference. */
+  brakeSeconds: () => number
+  brakeCurvePower: () => number
+  /** Backspin tail length (s) and curve power from the global effect preference. */
+  backspinSeconds: () => number
+  backspinCurvePower: () => number
   /** True while Slice mode is active (draws the slice-marker overlay). */
   sliceEditActive: () => boolean
   /** Slice markers in source-absolute ms (ascending). */

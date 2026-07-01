@@ -210,6 +210,10 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
       clipRenderer.drawClipOverlaps(track, worldY, clipHeight, worldLeft, worldRight)
       // Crossfade overlays sit above both partner clips.
       clipRenderer.drawTrackTransitions(track, worldY, clipHeight, worldLeft, worldRight)
+      // Turntable-brake tail overlay sits above the clip body.
+      clipRenderer.drawClipBrakes(track, worldY, clipHeight, worldLeft, worldRight)
+      // Turntable-backspin tail overlay (reverse rewind) sits above the clip body.
+      clipRenderer.drawClipBackspins(track, worldY, clipHeight, worldLeft, worldRight)
       // Automation lane occupies the reserved strip below the clips when shown.
       if (laneParam && rowHeight > clipHeight) {
         const tracks = tracksLayer.value

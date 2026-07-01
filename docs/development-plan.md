@@ -1444,6 +1444,86 @@ project transport.
   because the current Web Audio + temp-WAV path already serves playback when
   Web Audio can decode the file.
 
+### 7.16 DJ Performance Effects (turntable brake + backspin)
+Emulates a vinyl record-stop as a **non-destructive per-clip** on/off effect. At
+the clip's end, playback decelerates to a stop: a varispeed ramp where the
+source-read rate goes 1 → 0, coupling pitch and tempo so the audio pitches down
+and grinds to a halt.
+- **Physical model (Technics SL-1210)**: hitting the stop button applies a
+  roughly **constant brake torque** to the platter flywheel, so angular velocity
+  (and thus the playback rate) decays **linearly** to zero over a **fixed
+  wall-clock platter-stop time** (~0.6 s for a punchy DJ stop; factory ~0.7–1.0 s
+  for 33⅓ → 0). Because the stop time is fixed in *seconds*, a faster track spans
+  more *beats* while braking, not fewer — the opposite of a beat-quantised model,
+  and the reason a fixed duration sounds authentic. The linear rate ramp gives the
+  recognisable accelerating downward pitch glide (pitch is the log of rate).
+- **DSP core** (`backend/src/dsp/BrakeSnapshot.h`): an immutable snapshot
+  published to the audio thread by pointer (mirrors `EnvelopeSnapshot` /
+  `EdgeFadeSnapshot`). The source-distance-consumed mapping is **stateless and
+  analytic** (`S(u) = T/(p+1)·(1−(1−u/T)^(p+1))` for rate curve `(1−u/T)^p`,
+  default power 2 = a curved record-stop that drops fast then eases), so live
+  playback and offline mixdown match regardless of block size, and seeks/scrubs/loops cannot desync it. The
+  varispeed read uses **4-point Catmull-Rom (cubic) interpolation** (exact for
+  linear data, low grain for audio), and a **rate-keyed raised-cosine end fade**
+  takes the tail to silence once the rate drops below an audible threshold — so
+  the slowdown stays smooth and the stop is clean instead of grinding through
+  sub-audio mush. The platter-stop time is the single constant `kPlatterStopSeconds`.
+- **Placement** (`OffsetSource`): integrated upstream of the read-ahead buffer,
+  so it composes with trim / envelope / warp (see "Composes with warp" below) and
+  is shared by live playback and mixdown export — parity for free.
+- **Persistence**: stored as a boolean `brake` flag on the clip (propagated across
+  linked saved-clip siblings, like reverse), suppressed on
+  disk/wire when off. The duration + curve are an **application preference**
+  (Effects tab: Duration short/medium/long, Curve linear/curved/steep), held as
+  engine-global defaults the renderer pushes over the bridge (`BRAKE_SETTINGS_SET`)
+  on change and on every (re)connect — the keep-awake pattern. Changing it
+  re-applies live to all braked clips and to mixdown export; the backend keeps the
+  built-in `kPlatterStopSeconds` / `kDefaultCurvePower` as the fallback default.
+- **UI**: a **Brake** toggle in both the timeline right-click menu and the Clip
+  Editor toolbar (the latter auditions it live on the preview voice via
+  `PREVIEW_SET_BRAKE` and draws the same tail overlay on the editor waveform).
+  Reverse, Brake and Backspin form a **mutually-exclusive group** — in both surfaces
+  each control stays visible but is disabled while another in the group is set. A
+  `BRAKE` clip-header badge plus a red **tail overlay on the waveform** (the curved
+  speed ramp + groove ticks that bunch at full speed and spread apart as it stops,
+  tracking the configured duration/curve) show the effect over the affected region.
+  Toggling brake on a linked saved clip propagates to every linked instance (like
+  reverse), routed through `library.updateLibraryClipBrake`.
+- **Composes with warp**: a record-stop is pitch-*changing*, so it cannot go
+  through the pitch-*preserving* stretcher (unlike reverse, which is rate-neutral
+  and passes through fine). Instead the clip is warped normally up to the effect
+  trigger, then the tail is read straight from the source as a varispeed; the warp
+  tempo ratio only positions the tail's start and scales its rate so it's
+  continuous. The clip's length is untouched (the tail lives in the timeline
+  domain). **v1 scope**: forward clips only — reverse is still excluded.
+
+#### Turntable backspin (reverse rewind)
+The companion DJ effect: at the clip's end the audio **rewinds backwards** at a
+high speed that decays to a stop, like a DJ yanking the platter back — the
+recognisable reverse "rewind" whoosh (pitched up and fast at first, dropping as
+the spin slows). It shares the brake's architecture and is **mutually exclusive**
+with the brake (toggling one clears the other, enforced in the store, the engine,
+and on disk; the UI additionally makes reverse part of the exclusive group).
+- **DSP** (`backend/src/dsp/BackspinSnapshot.h`): the reverse-rate magnitude decays
+  as `spinSpeed·(1−u/T)^p`; the source position rewinds backward from the trigger
+  by the analytic `Rewound(u) = spinSpeed·T/(p+1)·(1−(1−u/T)^(p+1))` (stateless, so
+  live/offline match). Source position is continuous at the trigger (only the
+  velocity flips), so there is no pop. Cubic interpolation + the same rate-keyed end
+  fade as the brake; integrated in `OffsetSource` next to the brake (backspin wins
+  if both are somehow set), shared by live/preview/mixdown. The render **scales the
+  rewind to fit the source available before the clip start**, so the spin always
+  spans the full duration (rewinding gentler on short clips) instead of slamming
+  into the clip start and freezing — otherwise a long backspin sounded short.
+- **Preference** (Effects tab): **Duration** short/medium/long + **Intensity**
+  gentle/medium/wild (peak reverse speed 4×/6×/8×), pushed as `BACKSPIN_SETTINGS_SET`
+  exactly like the brake settings.
+- **UI**: a **Backspin** toggle in both the timeline right-click menu and the Clip
+  Editor toolbar (same live-preview + editor-overlay treatment as the brake, and the
+  same linked-sibling propagation via `library.updateLibraryClipBackspin`), a violet
+  `SPIN` clip-header badge, and a
+  violet **tail overlay** (back-pointing chevrons that thin out as the spin slows +
+  the decaying rate curve) to read clearly as "reverse" and distinct from the brake.
+
 ---
 
 ## 8. Implementation Plan
@@ -2094,6 +2174,16 @@ robustness without changing the core editing model.
 - [ ] Renderer memory investigation: eliminate avoidable in-memory PCM
   retention per import and decide whether the backend's read-ahead buffer
   needs a bounded shared cache for many-track projects.
+- [ ] **Optional "freeze / bounce" of warped clips** — bake a warped clip's
+  time-stretched audio to a cached WAV at its target BPM so playback reads a
+  plain file instead of running Rubber Band live, saving real-time CPU on
+  many-warped-clip projects and letting every per-clip effect compose trivially
+  (today a record-stop brake/backspin has to bypass the pitch-preserving
+  stretcher for its tail — see §7.16). Must stay **opt-in** and not regress the
+  instant, live warp UX: warp tweaks would invalidate and re-render the bake in
+  the background (with the live stretcher as the fallback until the bake is
+  ready). Consider exposing it as an explicit "Freeze clip" action rather than
+  automatic, given the re-render cost on every warp change.
 - [ ] User-scoped sample library folder scanning, beyond the current
   project-scoped imported-audio library.
 - [ ] Drag selected timeline regions directly into the browser panel to save
@@ -2121,7 +2211,7 @@ robustness without changing the core editing model.
   store, composables, the bridge-protocol zod schemas, the dB taper helpers,
   the Clip Editor viewport/warp-draft/target composables, and the clip-lock
   store actions). The backend ships with its own custom test harness (no Catch2
-  dependency) wired into CTest as `SilverdawBackendTests` — **155 cases** at the
+  dependency) wired into CTest as `SilverdawBackendTests` — **164 cases** at the
   time of writing, the registry count being asserted by the harness itself. They
   span `ProjectState` (tracks / clips / dirty, view / library / markers /
   replaceTree, export-settings JSON round-trip, master volume round-trip,
@@ -2131,7 +2221,10 @@ robustness without changing the core editing model.
   duration mapping), the strict bridge payload validation helpers, the
   `AudioEngine::setPreviewWarp` audio-thread / message-thread race, the
   `LoudnessAnalyzer` (silence, -23 LUFS sine target, gain-shift identity,
-  sample-rate guard), and the stem / FX / Leveler / mixdown-parity subsystems
+  sample-rate guard), the per-clip envelope / edge-fade / **turntable brake** and
+  **backspin** `OffsetSource` render math (analytic curves, block-size invariance,
+  rewind-fit, PROJECT_STATE flag round-trips), and the stem / FX / Leveler /
+  mixdown-parity subsystems
   added across Phases 5–6. Clip-lock currently lives in the frontend store /
   context-menu tests rather than a dedicated backend persistence case.
   Electron e2e tests and an enforced coverage floor remain planned hardening
