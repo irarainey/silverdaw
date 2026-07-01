@@ -1,6 +1,6 @@
 // Transactional form model for PreferencesDialog; nothing persists until `save()`.
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import type { VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength, KeepAwakeMode } from '@shared/bridge-protocol'
+import type { VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
 import { useAppStore } from '@/stores/appStore'
 import { useUiStore, type SkipButtonTarget, type WaveformDisplayMode } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
@@ -18,14 +18,15 @@ export interface PreferencesForm {
   uniqueDevices: Ref<readonly UniqueDevice[]>
   audioOutputTypeName: Ref<string | null>
   audioOutputDeviceName: Ref<string | null>
-  audioHasSelection: ComputedRef<boolean>
   isAudioOutputSelectedDevice: (deviceName: string) => boolean
   pickDevice: (device: UniqueDevice) => void
-  pickSystemDefault: () => void
   backendsForSelectedDevice: ComputedRef<string[]>
   showAdvancedBackend: Ref<boolean>
   pickBackend: (typeName: string) => void
-  keepAwakeMode: Ref<KeepAwakeMode>
+  /** Draft per-device keep-awake toggles (device name → true); absent = off. */
+  keepAwakeByDeviceDraft: Ref<Record<string, boolean>>
+  /** Enable / disable a device's draft keep-awake toggle. */
+  setDeviceKeepAwake: (deviceName: string, enabled: boolean) => void
   brakeDuration: Ref<BrakeDurationDto>
   brakeCurve: Ref<BrakeCurveDto>
   backspinDuration: Ref<BackspinDurationDto>
@@ -80,12 +81,15 @@ export function usePreferencesForm(): PreferencesForm {
   const initialAudioOutputTypeName = ref<string | null>(null)
   const initialAudioOutputDeviceName = ref<string | null>(null)
 
-  const audioHasSelection = computed(
-    () => !!audioOutputTypeName.value && !!audioOutputDeviceName.value
-  )
-
+  // Effective selection = the pending device if it's currently available; otherwise
+  // (nothing pinned, or the preferred device is unplugged) the physically-open device
+  // the backend fell back to. So the list always shows a real, checked device.
   function isAudioOutputSelectedDevice(deviceName: string): boolean {
-    return audioOutputDeviceName.value?.toLowerCase() === deviceName.toLowerCase()
+    const draft = audioOutputDeviceName.value
+    const draftAvailable =
+      !!draft && uniqueDevices.value.some((d) => d.name.toLowerCase() === draft.toLowerCase())
+    const effective = draftAvailable ? draft : audioDevices.currentDeviceName
+    return !!effective && effective.toLowerCase() === deviceName.toLowerCase()
   }
 
   // Auto-pick the preferred backend only when switching devices.
@@ -93,11 +97,6 @@ export function usePreferencesForm(): PreferencesForm {
     if (audioOutputDeviceName.value?.toLowerCase() === device.name.toLowerCase()) return
     audioOutputDeviceName.value = device.name
     audioOutputTypeName.value = preferredBackendFor(device)
-  }
-
-  function pickSystemDefault(): void {
-    audioOutputDeviceName.value = null
-    audioOutputTypeName.value = null
   }
 
   const backendsForSelectedDevice = computed<string[]>(() => {
@@ -120,8 +119,26 @@ export function usePreferencesForm(): PreferencesForm {
     audioOutputTypeName.value = typeName
   }
 
-  const keepAwakeMode = ref<KeepAwakeMode>('auto')
-  const initialKeepAwakeMode = ref<KeepAwakeMode>('auto')
+  const keepAwakeByDeviceDraft = ref<Record<string, boolean>>({})
+  const initialKeepAwakeByDevice = ref<Record<string, boolean>>({})
+
+  // Compare the draft map against the initial, treating an absent entry as off.
+  function keepAwakeMapChanged(): boolean {
+    const a = keepAwakeByDeviceDraft.value
+    const b = initialKeepAwakeByDevice.value
+    const names = new Set([...Object.keys(a), ...Object.keys(b)])
+    for (const name of names) {
+      if ((a[name] ?? false) !== (b[name] ?? false)) return true
+    }
+    return false
+  }
+
+  function setDeviceKeepAwake(deviceName: string, enabled: boolean): void {
+    const next = { ...keepAwakeByDeviceDraft.value }
+    if (enabled) next[deviceName] = true
+    else delete next[deviceName]
+    keepAwakeByDeviceDraft.value = next
+  }
 
   const brakeDuration = ref<BrakeDurationDto>('medium')
   const brakeCurve = ref<BrakeCurveDto>('curved')
@@ -215,7 +232,7 @@ export function usePreferencesForm(): PreferencesForm {
       otherEnhanceStrength.value !== initialOtherEnhanceStrength.value ||
       audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
       audioOutputDeviceName.value !== initialAudioOutputDeviceName.value ||
-      keepAwakeMode.value !== initialKeepAwakeMode.value ||
+      keepAwakeMapChanged() ||
       brakeDuration.value !== initialBrakeDuration.value ||
       brakeCurve.value !== initialBrakeCurve.value ||
       backspinDuration.value !== initialBackspinDuration.value ||
@@ -224,12 +241,12 @@ export function usePreferencesForm(): PreferencesForm {
 
   async function loadCurrent(): Promise<void> {
     try {
-      const [debugVal, qol, autosave, audioPref, keepAwake] = await Promise.all([
+      const [debugVal, qol, autosave, audioPref, keepAwakeByDevice] = await Promise.all([
         window.silverdaw.getDebugPreferences(),
         window.silverdaw.getQolPrefs(),
         window.silverdaw.getAutosaveConfig(),
         window.silverdaw.getAudioOutput(),
-        window.silverdaw.getKeepAwakeMode()
+        window.silverdaw.getKeepAwakeByDevice()
       ])
       loggingEnabled.value = debugVal.loggingEnabled
       devToolsEnabled.value = debugVal.devToolsEnabled
@@ -242,7 +259,9 @@ export function usePreferencesForm(): PreferencesForm {
       // Seed from the saved preference, not the live device JUCE chose.
       audioOutputTypeName.value = audioPref.typeName
       audioOutputDeviceName.value = audioPref.deviceName
-      keepAwakeMode.value = keepAwake
+      // Keep-awake is pinned per physical device; seed the draft map.
+      audioDevices.keepAwakeByDevice = { ...keepAwakeByDevice }
+      keepAwakeByDeviceDraft.value = { ...keepAwakeByDevice }
       const brakePrefs = await window.silverdaw.getBrakeSettings()
       brakeDuration.value = brakePrefs.duration
       brakeCurve.value = brakePrefs.curve
@@ -271,7 +290,7 @@ export function usePreferencesForm(): PreferencesForm {
       autosaveIntervalSeconds.value = 30
       audioOutputTypeName.value = null
       audioOutputDeviceName.value = null
-      keepAwakeMode.value = 'auto'
+      keepAwakeByDeviceDraft.value = {}
       brakeDuration.value = 'medium'
       brakeCurve.value = 'curved'
       backspinDuration.value = 'long'
@@ -322,7 +341,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialOtherEnhanceStrength.value = otherEnhanceStrength.value
     initialAudioOutputTypeName.value = audioOutputTypeName.value
     initialAudioOutputDeviceName.value = audioOutputDeviceName.value
-    initialKeepAwakeMode.value = keepAwakeMode.value
+    initialKeepAwakeByDevice.value = { ...keepAwakeByDeviceDraft.value }
     initialBrakeDuration.value = brakeDuration.value
     initialBrakeCurve.value = brakeCurve.value
     initialBackspinDuration.value = backspinDuration.value
@@ -427,8 +446,14 @@ export function usePreferencesForm(): PreferencesForm {
     ) {
       audioDevices.selectDevice(audioOutputTypeName.value, audioOutputDeviceName.value)
     }
-    if (keepAwakeMode.value !== initialKeepAwakeMode.value) {
-      audioDevices.setKeepAwakeMode(keepAwakeMode.value)
+    if (keepAwakeMapChanged()) {
+      const draft = keepAwakeByDeviceDraft.value
+      const initial = initialKeepAwakeByDevice.value
+      const names = new Set([...Object.keys(draft), ...Object.keys(initial)])
+      for (const name of names) {
+        const next = draft[name] ?? false
+        if (next !== (initial[name] ?? false)) audioDevices.setKeepAwakeForDevice(name, next)
+      }
     }
     if (
       brakeDuration.value !== initialBrakeDuration.value ||
@@ -490,14 +515,13 @@ export function usePreferencesForm(): PreferencesForm {
     uniqueDevices,
     audioOutputTypeName,
     audioOutputDeviceName,
-    audioHasSelection,
     isAudioOutputSelectedDevice,
     pickDevice,
-    pickSystemDefault,
     backendsForSelectedDevice,
     showAdvancedBackend,
     pickBackend,
-    keepAwakeMode,
+    keepAwakeByDeviceDraft,
+    setDeviceKeepAwake,
     brakeDuration,
     brakeCurve,
     backspinDuration,

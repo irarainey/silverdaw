@@ -102,13 +102,11 @@ export interface AudioOutputPrefs {
   deviceName: string | null
 }
 
-/**
- * User override for the output keep-awake policy. `auto` follows the backend's USB-bus
- * classification; `on` forces the keep-alive dither + first-play wake burst (for a USB DAC that
- * classification misses); `off` disables it (for a USB DAC that does not need it, or any endpoint
- * where the wake burst becomes audible).
- */
-export type KeepAwakeMode = 'auto' | 'on' | 'off'
+// Per-device keep-awake is a simple on/off toggle stored per output device (keyed by the
+// device's reported name). Default off: a device is kept awake only when explicitly enabled —
+// and the toggle is remembered even while the device is unplugged, so it re-applies on
+// reconnect. When on, the backend runs the keep-alive dither + first-play wake so a sleep-prone
+// USB output does not clip the first beat.
 
 // Turntable-brake effect defaults (a global app preference). Stored as named
 // presets; the renderer maps them to the numeric platter-stop time + rate-curve
@@ -137,7 +135,8 @@ export interface Preferences {
   paths: PathPrefs
   autosave: AutosavePrefs
   audioOutput: AudioOutputPrefs
-  keepAwakeMode: KeepAwakeMode
+  /** Per-device keep-awake toggles, keyed by device name; absent / false = off. */
+  keepAwakeByDevice: Record<string, boolean>
   brake: BrakePrefs
   backspin: BackspinPrefs
   stems: StemPrefs
@@ -193,7 +192,7 @@ export function buildDefaultPrefs(): Preferences {
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
-    keepAwakeMode: 'auto',
+    keepAwakeByDevice: {},
     brake: { duration: 'medium', curve: 'curved' },
     backspin: { duration: 'long', intensity: 'medium' },
     stems: {
@@ -311,6 +310,20 @@ export function sanitiseBackspinPrefs(partial: unknown, base: BackspinPrefs): Ba
     duration: BACKSPIN_DURATIONS.has(p.duration as BackspinDuration) ? (p.duration as BackspinDuration) : base.duration,
     intensity: BACKSPIN_INTENSITIES.has(p.intensity as BackspinIntensity) ? (p.intensity as BackspinIntensity) : base.intensity
   }
+}
+
+// Single source of truth for the per-device keep-awake map. Only non-empty device names
+// that are explicitly enabled (value === true) are kept — off is the default, so `false` /
+// absent entries are dropped and a corrupt prefs file can never inject a wrong-typed value.
+export function sanitiseKeepAwakeByDevice(input: unknown): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  if (!input || typeof input !== 'object') return out
+  for (const [name, enabled] of Object.entries(input as Record<string, unknown>)) {
+    const trimmed = name.trim()
+    if (trimmed.length === 0) continue
+    if (enabled === true) out[trimmed] = true
+  }
+  return out
 }
 
 // A located model directory is kept only when it is a non-empty string; anything

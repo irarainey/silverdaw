@@ -61,43 +61,84 @@ describe('audioDeviceStore.applyList fallback notice', () => {
   })
 })
 
-describe('audioDeviceStore keep-awake override', () => {
-  const setKeepAwakeMode = vi.fn()
-  const getKeepAwakeMode = vi.fn<() => Promise<'auto' | 'on' | 'off'>>()
+describe('audioDeviceStore per-device keep-awake toggle', () => {
+  const setKeepAwakeForDevice = vi.fn()
+  const getKeepAwakeByDevice = vi.fn<() => Promise<Record<string, boolean>>>()
 
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.mocked(sendBridge).mockClear()
-    setKeepAwakeMode.mockClear()
-    getKeepAwakeMode.mockReset()
-    vi.stubGlobal('window', { silverdaw: { setKeepAwakeMode, getKeepAwakeMode } })
+    setKeepAwakeForDevice.mockClear()
+    getKeepAwakeByDevice.mockReset()
+    vi.stubGlobal('window', { silverdaw: { setKeepAwakeForDevice, getKeepAwakeByDevice } })
   })
 
-  it('defaults to auto', () => {
-    expect(useAudioDeviceStore().keepAwakeMode).toBe('auto')
-  })
-
-  it('setKeepAwakeMode persists, updates state, and pushes the override to the backend', () => {
+  it('defaults an un-toggled / unknown device to off', () => {
     const store = useAudioDeviceStore()
-    store.setKeepAwakeMode('off')
-    expect(store.keepAwakeMode).toBe('off')
-    expect(setKeepAwakeMode).toHaveBeenCalledWith('off')
-    expect(sendBridge).toHaveBeenCalledWith('AUDIO_KEEP_AWAKE_SET', { mode: 'off' })
+    expect(store.currentDeviceKeepAwakeEnabled).toBe(false)
+    store.applyList(makeListPayload({ currentDeviceName: 'USB DAC' }))
+    expect(store.currentDeviceKeepAwakeEnabled).toBe(false)
   })
 
-  it('applyKeepAwakeOnReady re-sends the persisted override after a reconnect', async () => {
-    getKeepAwakeMode.mockResolvedValue('on')
+  it('setKeepAwakeForDevice enables a device, persists it, and pushes the effective state', () => {
+    const store = useAudioDeviceStore()
+    store.applyList(makeListPayload({ currentDeviceName: 'USB DAC' }))
+    vi.mocked(sendBridge).mockClear()
+
+    store.setKeepAwakeForDevice('USB DAC', true)
+    expect(store.keepAwakeByDevice['USB DAC']).toBe(true)
+    expect(store.currentDeviceKeepAwakeEnabled).toBe(true)
+    expect(setKeepAwakeForDevice).toHaveBeenCalledWith('USB DAC', true)
+    expect(sendBridge).toHaveBeenCalledWith('AUDIO_KEEP_AWAKE_SET', { enabled: true })
+  })
+
+  it('setKeepAwakeForDevice with false clears the entry', () => {
+    const store = useAudioDeviceStore()
+    store.applyList(makeListPayload({ currentDeviceName: 'USB DAC' }))
+    store.setKeepAwakeForDevice('USB DAC', true)
+    store.setKeepAwakeForDevice('USB DAC', false)
+    expect(store.keepAwakeByDevice['USB DAC']).toBeUndefined()
+    expect(store.currentDeviceKeepAwakeEnabled).toBe(false)
+    expect(setKeepAwakeForDevice).toHaveBeenLastCalledWith('USB DAC', false)
+  })
+
+  it('setKeepAwakeForDevice can enable a device that is not the current output', () => {
+    const store = useAudioDeviceStore()
+    store.applyList(makeListPayload({ currentDeviceName: 'Speakers (Realtek)' }))
+    store.setKeepAwakeForDevice('USB DAC', true)
+    expect(store.keepAwakeByDevice['USB DAC']).toBe(true)
+    // The open device is unchanged, so its effective state is still off.
+    expect(store.currentDeviceKeepAwakeEnabled).toBe(false)
+    expect(setKeepAwakeForDevice).toHaveBeenCalledWith('USB DAC', true)
+  })
+
+  it('re-pushes the effective state when the open device changes (e.g. USB unplug → onboard)', () => {
+    const store = useAudioDeviceStore()
+    store.keepAwakeByDevice = { 'USB DAC': true }
+    store.applyList(makeListPayload({ currentDeviceName: 'USB DAC' }))
+    expect(sendBridge).toHaveBeenLastCalledWith('AUDIO_KEEP_AWAKE_SET', { enabled: true })
+
+    // USB unplugged; playback falls back to the onboard card (no toggle → off).
+    store.applyList(makeListPayload({ currentDeviceName: 'Speakers (Realtek)' }))
+    expect(sendBridge).toHaveBeenLastCalledWith('AUDIO_KEEP_AWAKE_SET', { enabled: false })
+  })
+
+  it('applyKeepAwakeOnReady reloads the map and re-sends the open device state after reconnect', async () => {
+    getKeepAwakeByDevice.mockResolvedValue({ 'USB DAC': true })
+    const store = useAudioDeviceStore()
+    store.applyList(makeListPayload({ currentDeviceName: 'USB DAC' }))
+    vi.mocked(sendBridge).mockClear()
+
+    await store.applyKeepAwakeOnReady()
+    expect(store.keepAwakeByDevice).toEqual({ 'USB DAC': true })
+    expect(sendBridge).toHaveBeenCalledWith('AUDIO_KEEP_AWAKE_SET', { enabled: true })
+  })
+
+  it('applyKeepAwakeOnReady falls back to an empty map (off) when the read fails', async () => {
+    getKeepAwakeByDevice.mockRejectedValue(new Error('ipc down'))
     const store = useAudioDeviceStore()
     await store.applyKeepAwakeOnReady()
-    expect(store.keepAwakeMode).toBe('on')
-    expect(sendBridge).toHaveBeenCalledWith('AUDIO_KEEP_AWAKE_SET', { mode: 'on' })
-  })
-
-  it('applyKeepAwakeOnReady falls back to auto when the preference read fails', async () => {
-    getKeepAwakeMode.mockRejectedValue(new Error('ipc down'))
-    const store = useAudioDeviceStore()
-    await store.applyKeepAwakeOnReady()
-    expect(store.keepAwakeMode).toBe('auto')
-    expect(sendBridge).toHaveBeenCalledWith('AUDIO_KEEP_AWAKE_SET', { mode: 'auto' })
+    expect(store.keepAwakeByDevice).toEqual({})
+    expect(sendBridge).toHaveBeenCalledWith('AUDIO_KEEP_AWAKE_SET', { enabled: false })
   })
 })

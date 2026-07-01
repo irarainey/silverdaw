@@ -1422,7 +1422,8 @@ project transport.
   the same rebind, no destructive prompt needed.
 - Bridge envelopes: inbound `PREVIEW_LOAD` / `PREVIEW_PLAY` /
   `PREVIEW_PAUSE` / `PREVIEW_STOP` / `PREVIEW_SEEK` / `PREVIEW_UNLOAD`
-  / `PREVIEW_SET_ENVELOPE` / `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_REBIND`
+  / `PREVIEW_SET_ENVELOPE` / `PREVIEW_SET_REVERSED` / `PREVIEW_SET_BRAKE` /
+  `PREVIEW_SET_BACKSPIN` / `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_REBIND`
   / `CLIP_SET_ENVELOPE`; outbound
   `PREVIEW_STATE` / `PREVIEW_POSITION` / `PREVIEW_ENDED` /
   `CLIP_EDITOR_PEAKS_READY`. A monotonic `generation` counter on the
@@ -1430,9 +1431,9 @@ project transport.
   has already closed.
 - The Clip Editor opens from a timeline clip too — double-click a clip
   body (off the title strip) on the timeline (see the keyboard & mouse
-  reference in the developer guide). Trim / warp / pitch / volume-shape
-  edits are held as a draft until **Save**, whose scope follows the
-  clip's linked / unlinked state.
+  reference in the developer guide). Trim / warp / pitch / volume-shape /
+  reverse / brake / backspin edits are held as a draft until **Save**, whose
+  scope follows the clip's linked / unlinked state.
 
 ### 7.15 Audio Format Support
 - JUCE-native formats (WAV / AIFF / FLAC + MP3/WMA on Windows) decode directly on the backend.
@@ -1467,7 +1468,10 @@ and grinds to a halt.
   linear data, low grain for audio), and a **rate-keyed raised-cosine end fade**
   takes the tail to silence once the rate drops below an audible threshold — so
   the slowdown stays smooth and the stop is clean instead of grinding through
-  sub-audio mush. The platter-stop time is the single constant `kPlatterStopSeconds`.
+  sub-audio mush. The backend keeps the built-in `kPlatterStopSeconds` only as
+  the fallback default — the active platter-stop time is set by the **Effects**
+  preference (short ~0.4 s / medium ~0.6 s / long ~0.9 s), pushed live via
+  `BRAKE_SETTINGS_SET`.
 - **Placement** (`OffsetSource`): integrated upstream of the read-ahead buffer,
   so it composes with trim / envelope / warp (see "Composes with warp" below) and
   is shared by live playback and mixdown export — parity for free.
@@ -2062,9 +2066,13 @@ playable at every point — no broken-build day):
   short.
 - [x] Preferences panel: General (toasts, follow-playback, library
   tile imagery, previous/next button target, **waveform display** mode —
-  single summary vs. stacked left/right channels), Project (default Save /
-  Open / Import dirs + autosave config), **Audio** (output device selection +
-  driver picker with Bluetooth-latency heuristic), **Stems** (separation-model
+  single summary vs. stacked left/right channels), **Timeline** (grid / snap
+  and timeline-interaction defaults), Project (default Save /
+  Open / Import dirs + autosave config), **Audio** (output device selection —
+  real named devices only, each with an off-by-default **Keep awake** toggle —
+  plus the driver picker with Bluetooth-latency heuristic), **Effects** (global
+  defaults for the per-clip DJ turntable **Brake** — duration + curve — and
+  **Backspin** — duration + intensity), **Stems** (separation-model
   download / locate, per-stem cleanup, "Always use the backup model", GPU
   acceleration), Developer (separate diagnostic logging, log folder and DevTools
   toggles). Theme selection is deferred to Phase 8.

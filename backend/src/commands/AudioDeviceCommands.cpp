@@ -135,18 +135,9 @@ void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& e
 
 void handleAudioKeepAwakeSet(const juce::var& payload, silverdaw::AudioEngine& engine)
 {
-    const auto modeStr = tryGetRequiredString(payload, "mode");
-    if (!modeStr) return; // tryGetRequiredString already logged the rejection
-    const auto mode = silverdaw::keepAwakeModeFromString(*modeStr);
-    if (!mode)
-    {
-        silverdaw::log::warn("bridge",
-                             juce::String("AUDIO_KEEP_AWAKE_SET unknown mode '") + *modeStr +
-                                 "'; envelope ignored");
-        return;
-    }
-    engine.setKeepAwakeMode(*mode);
-    silverdaw::log::info("audio", juce::String("keep-awake mode set to ") + *modeStr);
+    const bool enabled = static_cast<bool>(payload.getProperty("enabled", false));
+    engine.setKeepAwakeEnabled(enabled);
+    silverdaw::log::info("audio", juce::String("keep-awake set to ") + (enabled ? "on" : "off"));
 }
 
 void handleSetBrakeSettings(const juce::var& payload, silverdaw::AudioEngine& engine)

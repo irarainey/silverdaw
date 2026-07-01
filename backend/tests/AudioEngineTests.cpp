@@ -12,7 +12,6 @@
 #include "Leveler.h"
 #include "MixdownEngine.h"
 #include "Metronome.h"
-#include "OutputDeviceClassifier.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
@@ -218,6 +217,7 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         // A loaded project NOW opens the gate: the continuous, inaudible dither holds the DAC
         // awake. Continuous noise keeps every sample non-zero with real energy the DAC's auto-mute
         // detector registers, while sitting at the format noise floor so it is inaudible.
+        ka.setKeepAwakeEnabled(true); // off by default; this test exercises the enabled path
         ka.setContentLoaded(true);
         require(ka.shouldRun(), "a loaded project must open the keep-alive gate");
 
@@ -330,46 +330,6 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         require(ka.shouldRun(), "re-enabling keep-awake on an open device must reopen the gate");
     }
 
-    // ── Pure keep-awake policy: only positively-classified USB endpoints are kept awake ──
-    {
-        require(silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::usb),
-                "USB endpoints (the sleep-prone offenders) must be kept awake");
-        require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::unknown),
-                "unknown endpoints must NOT be kept awake (no audible wake burst on misclassified "
-                "onboard devices; a missed USB DAC is covered by the user's force-on preference)");
-        require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::onboard),
-                "onboard endpoints must not incur the keep-awake tone");
-        require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::bluetooth),
-                "Bluetooth endpoints must not be kept awake by the keep-alive dither");
-        require(! silverdaw::busPrefersKeepAwake(silverdaw::OutputBus::other),
-                "other endpoints must not be kept awake");
-    }
-
-    // ── Keep-awake user override resolves over the bus classification ──
-    {
-        using silverdaw::KeepAwakeMode;
-        using silverdaw::OutputBus;
-        // autoDetect mirrors busPrefersKeepAwake.
-        require(silverdaw::resolveKeepAwake(KeepAwakeMode::autoDetect, OutputBus::usb),
-                "auto on a USB endpoint keeps awake");
-        require(! silverdaw::resolveKeepAwake(KeepAwakeMode::autoDetect, OutputBus::unknown),
-                "auto on an unclassifiable endpoint stays silent");
-        // forceOn rescues a misclassified USB DAC; forceOff silences an unwanted dither.
-        require(silverdaw::resolveKeepAwake(KeepAwakeMode::forceOn, OutputBus::unknown),
-                "force-on keeps awake even when classification missed the USB DAC");
-        require(! silverdaw::resolveKeepAwake(KeepAwakeMode::forceOff, OutputBus::usb),
-                "force-off silences the dither even on a USB endpoint");
-
-        require(silverdaw::keepAwakeModeFromString("auto") == KeepAwakeMode::autoDetect,
-                "'auto' parses to autoDetect");
-        require(silverdaw::keepAwakeModeFromString(" ON ") == KeepAwakeMode::forceOn,
-                "'on' parses to forceOn (trimmed, case-insensitive)");
-        require(silverdaw::keepAwakeModeFromString("off") == KeepAwakeMode::forceOff,
-                "'off' parses to forceOff");
-        require(! silverdaw::keepAwakeModeFromString("bogus").has_value(),
-                "an unknown mode string is rejected");
-    }
-
     // ── MeteringSource integration: the tone survives a low master gain ──
     struct ConstantSource : juce::AudioSource
     {
@@ -390,6 +350,7 @@ void testOutputKeepAliveFloorIsPostGainAndGated()
         // Silent program + loaded project + low master gain. The dither is injected POST-gain,
         // so a low master volume must NOT attenuate it (regression guard).
         silverdaw::OutputKeepAlive ka;
+        ka.setKeepAwakeEnabled(true); // off by default; exercise the enabled path
         ka.setContentLoaded(true);
         ConstantSource silentSource(0.0F);
         silverdaw::Metronome metro;
@@ -469,6 +430,7 @@ void testOutputKeepAliveWakeBurstRousesColdDeviceThenSettles()
     constexpr int n = 256;
     constexpr double sr = 48000.0;
     silverdaw::OutputKeepAlive ka;
+    ka.setKeepAwakeEnabled(true);  // keep-awake is off by default; this test exercises the on path
     ka.setContentLoaded(true); // gate open (loaded project)
     ka.prepare(sr);            // device start — arms the wake burst
 
@@ -642,9 +604,10 @@ void testMasterClockWakePrerollRousesUsbThenPlays()
     const int prerollSamples = static_cast<int>(kRate * (silverdaw::kWakePrerollMs / 1000.0));
     const int prerollBlocks = (prerollSamples + kBlock - 1) / kBlock;
 
-    // ── USB (keep-awake on by default): a wake pre-roll precedes programme without advancing time ──
+    // ── Keep-awake ON: a wake pre-roll precedes programme without advancing time ──
     {
-        silverdaw::OutputKeepAlive ka; // keep-awake defaults on (USB / unclassified)
+        silverdaw::OutputKeepAlive ka;
+        ka.setKeepAwakeEnabled(true); // explicit per-device toggle (off by default)
         FullSource src;
         silverdaw::MasterClockSource master(src, ka);
         master.prepareToPlay(kBlock, kRate);

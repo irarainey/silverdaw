@@ -10,7 +10,6 @@ import type {
   AudioOutputPrefs,
   AutosavePrefs,
   DebugPrefs,
-  KeepAwakeMode,
   PathPrefs,
   ToastPrefs
 } from '../preferences'
@@ -167,14 +166,28 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     prefs.schedulePrefsSave()
   })
 
-  // ─── Output keep-awake override (auto / on / off) ───────────────────────
-  ipcMain.handle(IPC.prefs.getKeepAwake, (): KeepAwakeMode => prefs.get().keepAwakeMode)
+  // ─── Per-device output keep-awake toggles (on / off) ────────────────────
+  ipcMain.handle(
+    IPC.prefs.getKeepAwakeByDevice,
+    (): Record<string, boolean> => ({ ...prefs.get().keepAwakeByDevice })
+  )
 
-  ipcMain.on(IPC.prefs.setKeepAwake, (_evt, mode: unknown) => {
-    if (mode !== 'auto' && mode !== 'on' && mode !== 'off') return
+  ipcMain.on(IPC.prefs.setKeepAwakeForDevice, (_evt, deviceName: unknown, enabled: unknown) => {
+    if (typeof deviceName !== 'string') return
+    const name = deviceName.trim()
+    if (name.length === 0) return
+    if (typeof enabled !== 'boolean') return
     const store = prefs.get()
-    if (store.keepAwakeMode === mode) return
-    store.keepAwakeMode = mode
+    const next = { ...store.keepAwakeByDevice }
+    // Off is the implicit default — clear the entry rather than store `false`.
+    if (enabled) {
+      if (next[name] === true) return
+      next[name] = true
+    } else {
+      if (!(name in next)) return
+      delete next[name]
+    }
+    store.keepAwakeByDevice = next
     prefs.schedulePrefsSave()
   })
 

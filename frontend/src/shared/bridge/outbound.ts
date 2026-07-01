@@ -900,15 +900,12 @@ export interface AudioDevicesRequestPayload {
 }
 
 /**
- * User override for the output keep-awake policy (the inaudible dither + first-play wake burst that
- * holds sleep-prone USB DACs awake). `auto` follows the backend's bus classification (USB only);
- * `on` forces it (for a USB DAC that classification misses); `off` disables it (for a USB DAC that
- * does not need it, or any endpoint where the wake burst becomes audible).
+ * Enable or disable the output keep-awake for the current device (the inaudible dither +
+ * first-play wake burst that holds a sleep-prone USB DAC awake). A per-device on/off toggle,
+ * off by default; the renderer resolves the open device's setting and pushes it here.
  */
-export type KeepAwakeMode = 'auto' | 'on' | 'off'
-
 export interface AudioKeepAwakeSetPayload {
-  mode: KeepAwakeMode
+  enabled: boolean
 }
 
 /** Global default parameters for the turntable-brake effect, pushed from the app

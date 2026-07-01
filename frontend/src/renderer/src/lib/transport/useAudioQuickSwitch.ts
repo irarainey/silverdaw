@@ -1,9 +1,9 @@
 // Audio-output device quick-switch for the transport bar, extracted from
 // TransportBar.vue. A compact chip shows the current output device; clicking
-// opens a popover listing every device (deduped per physical device, mirroring
-// the Preferences > Audio tab) plus a "System default" entry. Picking a device
-// routes through the same `audioDeviceStore.selectDevice` action the
-// Preferences tab uses and pins the choice to the open project.
+// opens a popover listing the real named devices (deduped per physical device
+// and pseudo-endpoints filtered — the same shared list as Preferences ▸ Audio).
+// Picking a device routes through the same `audioDeviceStore.selectDevice` action
+// the Preferences tab uses and pins the choice to the open project.
 //
 // The SFC keeps ownership of the document mousedown/keydown listeners (so the
 // popover closes on outside-click / Escape) — this module supplies the
@@ -11,6 +11,7 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
+import { preferredBackendFor, useUniqueAudioDevices } from '@/lib/audio/audioOutputPicker'
 
 export interface QuickSwitchDevice {
   name: string
@@ -25,25 +26,13 @@ export interface AudioQuickSwitch {
   quickSwitchDevices: ComputedRef<QuickSwitchDevice[]>
   preferredBackendForQuickSwitch: (device: QuickSwitchDevice) => string
   toggleAudioMenu: () => void
-  pickDevice: (typeName: string | null, deviceName: string | null) => void
   pickUniqueDevice: (device: QuickSwitchDevice) => void
-  isCurrentDevice: (typeName: string | null, deviceName: string | null) => boolean
   isCurrentUniqueDevice: (device: QuickSwitchDevice) => boolean
   onAudioMenuDocClick: (e: MouseEvent) => void
   onAudioMenuKey: (e: KeyboardEvent) => void
 }
 
 /** Same backend-preference ordering as the Preferences dialog. */
-const QUICK_SWITCH_BACKEND_PRIORITY = [
-  'Windows Audio',
-  'CoreAudio',
-  'ALSA',
-  'DirectSound',
-  'Windows Audio (Exclusive Mode)',
-  'JACK',
-  'ASIO'
-]
-
 export function useAudioQuickSwitch(): AudioQuickSwitch {
   const project = useProjectStore()
   const audioDevices = useAudioDeviceStore()
@@ -61,12 +50,8 @@ export function useAudioQuickSwitch(): AudioQuickSwitch {
     // goes amber, but the label still reads the device the user picked
     // so the failure is obvious in context rather than via a label flip.
     const pending = audioDevices.pendingSelection
-    if (pending) {
-      if (!pending.typeName && !pending.deviceName) return 'System default'
-      return pending.deviceName || 'System default'
-    }
-    if (audioDevices.onSystemDefault) return 'System default'
-    return audioDevices.currentDeviceName || 'System default'
+    if (pending?.deviceName) return pending.deviceName
+    return audioDevices.currentDeviceName || 'Audio output'
   })
 
   // Latency caption shown under the device name in the chip when the active
@@ -79,58 +64,28 @@ export function useAudioQuickSwitch(): AudioQuickSwitch {
     return audioDevices.isBluetoothHeuristic ? `~${rounded} ms · BT` : `${rounded} ms`
   })
 
-  // Unique-device list for the quick-switch popover. Identical dedupe rule to
-  // PreferencesDialog.vue — same physical device exposed by multiple Windows
-  // backends collapses into one row.
-  const quickSwitchDevices = computed<QuickSwitchDevice[]>(() => {
-    const map = new Map<string, QuickSwitchDevice>()
-    for (const type of audioDevices.types) {
-      for (const dev of type.devices) {
-        const key = dev.toLowerCase()
-        const existing = map.get(key)
-        if (existing) {
-          if (!existing.backends.includes(type.name)) existing.backends.push(type.name)
-        } else {
-          map.set(key, { name: dev, backends: [type.name] })
-        }
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
-  })
+  // Real named devices for the quick-switch popover — the shared, pseudo-device-filtered
+  // list used by Preferences ▸ Audio, so both surfaces list exactly the same devices.
+  const quickSwitchDevices = useUniqueAudioDevices()
 
   function preferredBackendForQuickSwitch(device: QuickSwitchDevice): string {
-    for (const b of QUICK_SWITCH_BACKEND_PRIORITY) {
-      if (device.backends.includes(b)) return b
-    }
-    return device.backends[0] ?? ''
+    return preferredBackendFor(device)
   }
 
   function toggleAudioMenu(): void {
     audioMenuOpen.value = !audioMenuOpen.value
   }
 
-  function pickDevice(typeName: string | null, deviceName: string | null): void {
-    audioDevices.selectDevice(typeName, deviceName)
-    // Pin the choice to the open project so it travels with the file and
-    // marks the project dirty (but isn't auto-saved). Picking "System
-    // default" (both null) clears the pin, so a previously-saved device
-    // that's missing on this machine won't be re-requested next launch.
-    project.setProjectAudioOutput(typeName, deviceName)
-    audioMenuOpen.value = false
-  }
-
   function pickUniqueDevice(device: QuickSwitchDevice): void {
-    // Auto-pick the most-friendly backend for the chosen device. The
-    // transport-bar popover deliberately doesn't expose the backend
-    // distinction — advanced users who want ASIO use Preferences →
-    // Audio → Audio driver instead.
-    pickDevice(preferredBackendForQuickSwitch(device), device.name)
-  }
-
-  function isCurrentDevice(typeName: string | null, deviceName: string | null): boolean {
-    const activeType = audioDevices.pendingSelection?.typeName ?? audioDevices.currentTypeName
-    const activeDevice = audioDevices.pendingSelection?.deviceName ?? audioDevices.currentDeviceName
-    return activeType === typeName && activeDevice === deviceName
+    // Auto-pick the most-friendly backend for the chosen device. The transport-bar
+    // popover deliberately doesn't expose the backend distinction — advanced users
+    // who want ASIO use Preferences → Audio → Audio driver instead.
+    const typeName = preferredBackendForQuickSwitch(device)
+    audioDevices.selectDevice(typeName, device.name)
+    // Pin the choice to the open project so it travels with the file and marks the
+    // project dirty (but isn't auto-saved).
+    project.setProjectAudioOutput(typeName, device.name)
+    audioMenuOpen.value = false
   }
 
   function isCurrentUniqueDevice(device: QuickSwitchDevice): boolean {
@@ -155,9 +110,7 @@ export function useAudioQuickSwitch(): AudioQuickSwitch {
     quickSwitchDevices,
     preferredBackendForQuickSwitch,
     toggleAudioMenu,
-    pickDevice,
     pickUniqueDevice,
-    isCurrentDevice,
     isCurrentUniqueDevice,
     onAudioMenuDocClick,
     onAudioMenuKey

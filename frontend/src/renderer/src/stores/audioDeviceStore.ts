@@ -7,9 +7,15 @@ import { log } from '@/lib/log'
 import type {
   AudioDeviceChangedPayload,
   AudioDevicesListPayload,
-  AudioDeviceTypeListing,
-  KeepAwakeMode
+  AudioDeviceTypeListing
 } from '@shared/bridge-protocol'
+
+// Keep the Rescan spinner visible at least this long so a fast rescan still reads as
+// "working", and give up after the safety window if the backend never replies.
+const RESCAN_MIN_SPINNER_MS = 500
+const RESCAN_SAFETY_MS = 6000
+let rescanClearTimer: ReturnType<typeof setTimeout> | null = null
+let rescanSafetyTimer: ReturnType<typeof setTimeout> | null = null
 
 interface PendingSelection {
   typeName: string | null
@@ -42,8 +48,10 @@ interface AudioDeviceState {
   hydrated: boolean
   /** True while the backend's deferred startup scan is pending. */
   scanInProgress: boolean
-  /** User override for the output keep-awake dither + first-play wake burst. */
-  keepAwakeMode: KeepAwakeMode
+  /** True from a user-initiated Rescan until the refreshed device list arrives. */
+  rescanning: boolean
+  /** Per-device keep-awake toggles (device name → true); absent / false = off. */
+  keepAwakeByDevice: Record<string, boolean>
 }
 
 export const useAudioDeviceStore = defineStore('audioDevice', {
@@ -61,7 +69,8 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
     startupFellBack: false,
     hydrated: false,
     scanInProgress: false,
-    keepAwakeMode: 'auto'
+    rescanning: false,
+    keepAwakeByDevice: {}
   }),
 
   getters: {
@@ -75,13 +84,16 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       return out
     },
 
-    onSystemDefault(state): boolean {
-      return !state.currentTypeName && !state.currentDeviceName
+    /** Whether the physically-open output device is kept awake (absent = off). */
+    currentDeviceKeepAwakeEnabled(state): boolean {
+      const name = state.currentDeviceName
+      return !!(name && state.keepAwakeByDevice[name])
     }
   },
 
   actions: {
     applyList(payload: AudioDevicesListPayload): void {
+      const previousDeviceName = this.currentDeviceName
       this.types = payload.types
       this.currentTypeName = payload.currentTypeName
       this.currentDeviceName =
@@ -101,6 +113,21 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
         useNotificationsStore().pushInfo(
           'Saved audio output device was not available — using system default.'
         )
+      }
+      // Keep-awake is per physical device, so re-push the effective state whenever the
+      // open device changes (e.g. a USB DAC is unplugged and playback falls back to the
+      // onboard card — its own toggle, off by default, applies).
+      if (this.currentDeviceName !== previousDeviceName) {
+        this.pushEffectiveKeepAwake()
+      }
+      // A user rescan resolves when this refreshed list lands; hold the spinner a beat
+      // longer so an instant rescan still reads as "working".
+      if (this.rescanning) {
+        if (rescanClearTimer) clearTimeout(rescanClearTimer)
+        rescanClearTimer = setTimeout(() => {
+          rescanClearTimer = null
+          this.finishRescan()
+        }, RESCAN_MIN_SPINNER_MS)
       }
     },
 
@@ -148,8 +175,32 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       }
     },
 
+    /** User-initiated device rescan. Shows a spinner until the refreshed list arrives
+     *  (the backend rebuilds + broadcasts synchronously; even if the device set is
+     *  unchanged the spinner confirms it did something). */
     requestRescan(): void {
-      sendBridge('AUDIO_DEVICES_REQUEST', { refresh: true })
+      if (this.rescanning) return
+      this.rescanning = true
+      if (rescanSafetyTimer) clearTimeout(rescanSafetyTimer)
+      rescanSafetyTimer = setTimeout(() => {
+        rescanSafetyTimer = null
+        this.finishRescan()
+      }, RESCAN_SAFETY_MS)
+      const sent = sendBridge('AUDIO_DEVICES_REQUEST', { refresh: true })
+      if (!sent) this.finishRescan()
+    },
+
+    /** Clear the rescan spinner + timers. */
+    finishRescan(): void {
+      if (rescanClearTimer) {
+        clearTimeout(rescanClearTimer)
+        rescanClearTimer = null
+      }
+      if (rescanSafetyTimer) {
+        clearTimeout(rescanSafetyTimer)
+        rescanSafetyTimer = null
+      }
+      this.rescanning = false
     },
 
     /** Bridge-ready fallback in case the proactive snapshot was missed. */
@@ -157,25 +208,37 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       sendBridge('AUDIO_DEVICES_REQUEST', { refresh: false })
     },
 
-    /** Persist + apply a keep-awake override; pushes it to the backend live. */
-    setKeepAwakeMode(mode: KeepAwakeMode): void {
-      this.keepAwakeMode = mode
-      window.silverdaw.setKeepAwakeMode(mode)
-      sendBridge('AUDIO_KEEP_AWAKE_SET', { mode })
+    /** Send the current physical device's effective keep-awake state to the backend. */
+    pushEffectiveKeepAwake(): void {
+      sendBridge('AUDIO_KEEP_AWAKE_SET', { enabled: this.currentDeviceKeepAwakeEnabled })
+    },
+
+    /** Enable / disable keep-awake for a named output device, persist it per-device,
+     *  and re-push the open device's effective state. */
+    setKeepAwakeForDevice(deviceName: string, enabled: boolean): void {
+      const name = deviceName.trim()
+      if (name.length === 0) return
+      if (enabled) {
+        this.keepAwakeByDevice[name] = true
+      } else {
+        delete this.keepAwakeByDevice[name]
+      }
+      window.silverdaw.setKeepAwakeForDevice(name, enabled)
+      this.pushEffectiveKeepAwake()
     },
 
     /**
-     * On every bridge (re)connect the backend starts at its `auto` default, so re-send the user's
-     * persisted keep-awake override once the engine is ready.
+     * On every bridge (re)connect the backend starts at its `auto` default, so reload the
+     * persisted per-device overrides and re-send the open device's effective mode once ready.
      */
     async applyKeepAwakeOnReady(): Promise<void> {
       try {
-        this.keepAwakeMode = await window.silverdaw.getKeepAwakeMode()
+        this.keepAwakeByDevice = await window.silverdaw.getKeepAwakeByDevice()
       } catch (err) {
         log.warn('audio', `keep-awake hydrate failed, using auto: ${String(err)}`)
-        this.keepAwakeMode = 'auto'
+        this.keepAwakeByDevice = {}
       }
-      sendBridge('AUDIO_KEEP_AWAKE_SET', { mode: this.keepAwakeMode })
+      this.pushEffectiveKeepAwake()
     }
   }
 })

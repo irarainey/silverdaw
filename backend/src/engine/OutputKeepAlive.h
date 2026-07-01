@@ -154,7 +154,8 @@ class OutputKeepAlive
     std::atomic<bool> playing{false};
     std::atomic<bool> contentLoaded{false};
     std::atomic<bool> deviceActive{false};
-    std::atomic<bool> keepAwakeEnabled{true};
+    // Off by default; the renderer pushes the open device's explicit per-device toggle.
+    std::atomic<bool> keepAwakeEnabled{false};
     // PRNG state — audio-thread only. prepare() runs from prepareToPlay during a device/sample-rate
     // (re)start, which JUCE serialises against the IO callback (the stream is stopped across the
     // restart), so this is never touched concurrently.

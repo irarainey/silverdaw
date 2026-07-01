@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 // validation helpers can be unit-tested in the node environment.
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getName: () => 'silverdaw' } }))
 
-import { sanitiseStemModelDir, sanitiseStemPrefs, sanitiseUiPrefs, type StemPrefs, type UiPrefs } from '@main/preferences'
+import { sanitiseKeepAwakeByDevice, sanitiseStemModelDir, sanitiseStemPrefs, sanitiseUiPrefs, type StemPrefs, type UiPrefs } from '@main/preferences'
 
 const base: UiPrefs = {
   trackHeaderWidth: 175,
@@ -166,5 +166,28 @@ describe('sanitiseStemModelDir', () => {
     expect(sanitiseStemModelDir('   ')).toBeUndefined()
     expect(sanitiseStemModelDir(undefined)).toBeUndefined()
     expect(sanitiseStemModelDir(123)).toBeUndefined()
+  })
+})
+
+describe('sanitiseKeepAwakeByDevice', () => {
+  it('keeps only devices explicitly enabled (value === true), keyed by a non-empty name', () => {
+    expect(
+      sanitiseKeepAwakeByDevice({ 'USB DAC': true, 'Speakers (Realtek)': false })
+    ).toEqual({ 'USB DAC': true })
+  })
+
+  it('drops false entries (off is the default) and trims device names', () => {
+    expect(sanitiseKeepAwakeByDevice({ '  USB DAC  ': true, Onboard: false })).toEqual({
+      'USB DAC': true
+    })
+  })
+
+  it('drops empty names and wrong-typed values, and tolerates non-object input', () => {
+    expect(sanitiseKeepAwakeByDevice({ '': true, Good: 'on', Fine: true })).toEqual({
+      Fine: true
+    })
+    expect(sanitiseKeepAwakeByDevice(undefined)).toEqual({})
+    expect(sanitiseKeepAwakeByDevice(42)).toEqual({})
+    expect(sanitiseKeepAwakeByDevice(null)).toEqual({})
   })
 })
