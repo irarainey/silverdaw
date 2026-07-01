@@ -28,12 +28,12 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
   {
     value: 'auto',
     label: 'Automatic (recommended)',
-    hint: 'Keep only USB interfaces awake'
+    hint: 'Keep only USB devices awake'
   },
   {
     value: 'on',
     label: 'Always on',
-    hint: 'Force it if a USB DAC drops the first beat'
+    hint: 'Use if a USB device drops the first beat'
   },
   {
     value: 'off',
@@ -69,8 +69,8 @@ const keepAwakeOptions: ReadonlyArray<{ value: KeepAwakeMode; label: string; hin
           <span class="min-w-0 flex-1 truncate leading-tight">
             <span class="font-medium text-zinc-200">{{ rate.toLocaleString() }} Hz</span>
             <span class="text-zinc-500">
-              <template v-if="rate === 44100"> — CD quality; lower CPU + disk</template>
-              <template v-else> — Video / 48 kHz production</template>
+              <template v-if="rate === 44100"> — CD quality, lighter load</template>
+              <template v-else> — Video and broadcast standard</template>
             </span>
           </span>
         </label>

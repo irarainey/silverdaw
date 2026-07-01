@@ -29,28 +29,12 @@ interface StrengthOption {
   readonly hint: string
 }
 
-const VOCAL_STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
-  { value: 'light', label: 'Light', hint: 'Gentle 60 Hz high-pass, softest expander.' },
-  { value: 'medium', label: 'Medium', hint: '80 Hz high-pass, moderate expander.' },
-  { value: 'strong', label: 'Strong', hint: '100 Hz high-pass, firmest expander.' }
-]
-
-const DRUM_STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
-  { value: 'light', label: 'Light', hint: 'Softest expander, small range.' },
-  { value: 'medium', label: 'Medium', hint: 'Moderate expander.' },
-  { value: 'strong', label: 'Strong', hint: 'Firmest expander, for punchy kits.' }
-]
-
-const BASS_STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
-  { value: 'light', label: 'Light', hint: '20 Hz high-pass, softest expander.' },
-  { value: 'medium', label: 'Medium', hint: '24 Hz high-pass, moderate expander.' },
-  { value: 'strong', label: 'Strong', hint: '28 Hz high-pass, firmest expander.' }
-]
-
-const OTHER_STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
-  { value: 'light', label: 'Light', hint: '20 Hz high-pass, gentlest cleanup.' },
-  { value: 'medium', label: 'Medium', hint: '24 Hz high-pass, moderate cleanup.' },
-  { value: 'strong', label: 'Strong', hint: '28 Hz high-pass, firmest cleanup.' }
+// One shared intensity scale for all four stems; each section's intro already
+// explains what its cleanup does, so the options only convey how strong it is.
+const STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
+  { value: 'light', label: 'Light', hint: 'Gentlest cleanup' },
+  { value: 'medium', label: 'Medium', hint: 'Balanced cleanup' },
+  { value: 'strong', label: 'Strong', hint: 'Strongest cleanup' }
 ]
 
 const { gpu, modelInfo, busy, downloadPercent, error, installed, refresh, download, cancelDownload, locate } =
@@ -284,7 +268,7 @@ onMounted(refreshQuality)
       checkbox-label="Clean up the vocal stem after separation"
       description="Trims low-frequency rumble and quiet bleed between phrases. Vocals only; off by default."
       radio-name="vocal-enhance-strength"
-      :options="VOCAL_STRENGTH_OPTIONS"
+      :options="STRENGTH_OPTIONS"
     />
 
     <StemCleanupSection
@@ -294,7 +278,7 @@ onMounted(refreshQuality)
       checkbox-label="Clean up the drum stem after separation"
       description="Trims rumble and bleed between hits and sharpens each hit's attack. Drums only; off by default."
       radio-name="drum-enhance-strength"
-      :options="DRUM_STRENGTH_OPTIONS"
+      :options="STRENGTH_OPTIONS"
     />
 
     <StemCleanupSection
@@ -304,7 +288,7 @@ onMounted(refreshQuality)
       checkbox-label="Clean up the bass stem after separation"
       description="Trims sub rumble and bleed between notes and adds harmonics for small speakers. Bass only; off by default."
       radio-name="bass-enhance-strength"
-      :options="BASS_STRENGTH_OPTIONS"
+      :options="STRENGTH_OPTIONS"
     />
 
     <StemCleanupSection
@@ -314,7 +298,7 @@ onMounted(refreshQuality)
       checkbox-label="Clean up the other (residual) stem after separation"
       description="Eases residual noise and bleed and gently widens the stereo image. Residual stem only; off by default."
       radio-name="other-enhance-strength"
-      :options="OTHER_STRENGTH_OPTIONS"
+      :options="STRENGTH_OPTIONS"
     />
 
     <div>
@@ -441,7 +425,7 @@ onMounted(refreshQuality)
           class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
         >
         <span class="flex-1">
-          <span class="block font-medium text-zinc-200">Use GPU acceleration for stem separation (experimental)</span>
+          <span class="block font-medium text-zinc-200">Use GPU acceleration for stem separation</span>
           <span class="mt-0.5 block text-zinc-500">
             <template v-if="gpu.available">
               Detected GPU:

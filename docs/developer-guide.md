@@ -221,9 +221,9 @@ Silverdaw currently supports the core arrangement workflow:
   so it cannot go through it) and reads the source directly, using the warp tempo
   ratio only to start at the right place and keep the clip length. A red **BRAKE**
   / violet **SPIN** clip-header badge and a red / violet tail overlay on the
-  waveform mark the effect. Duration + shape come from a global app preference
-  (**Preferences ▸ Effects**, below), pushed to the backend on change and on every
-  reconnect and re-applied live to all affected clips.
+  waveform mark the effect. Duration + curve / intensity come from a global app
+  preference (**Preferences ▸ Effects**, below), pushed to the backend on save and
+  on every reconnect and re-applied live to all affected clips.
 - **Loop slicing.** Chop a clip into slices on a bar/beat grid (whole bar … 1/32)
   or with hand-placed markers, then commit them as **adjacent timeline clips** or
   **individual library samples**. The Clip Editor's **Slice** toolbar toggle
@@ -980,7 +980,7 @@ returns the summary plus (for stereo) the per-channel arrays.
 The renderer keeps the per-channel peaks in a session-only
 `libraryStore.channelPeaksByItemId` map (keyed by the source item id,
 each with its own LOD pyramid). The **Waveform display** preference (Preferences ▸
-Interface) chooses between *Single waveform* (summary, default) and *Left and
+General) chooses between *Single waveform* (summary, default) and *Left and
 right channels* (stacked L/R lanes for stereo sources); the choice is persisted
 to `preferences.json` and applied to both the timeline and the Clip Editor. Mono
 sources, and rows too short to fit two readable lanes, always fall back to the
@@ -1419,7 +1419,7 @@ the shared media GUID and marks the item as a saved sample rather than an ordina
 import. Sample tiles use the **Saved from a clip** cover-art badge tooltip, and
 simple samples show a **Simple** audio-type pill. Deleting that library item removes the reference from
 the project and, by default, leaves the WAV file on disk; enabling **Clean up
-project files** (Preferences ▸ General) instead deletes the generated WAV — and
+project files** (Preferences ▸ Project) instead deletes the generated WAV — and
 prunes its now-empty per-source folder, plus any shared cover/tag media nothing
 else still references. A simple sample bakes the clip's
 warp/pitch through Rubber Band during export so the one-shot sounds like the clip did
@@ -1558,14 +1558,16 @@ User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`
 and edited via the in-app **Edit → Preferences…** dialog. The dialog is
 **transactional**: every field is held in a local working copy until you click
 **Save**; **Cancel** (and `Esc`) discard pending edits without touching the
-engine or the file. The settings are organised into six tabs on a left-hand
+engine or the file. The settings are organised into seven tabs on a left-hand
 sidebar:
 
-- **General** — toast notifications, follow-playback auto-scroll, library tile
-  imagery, the transport **previous / next button target**, and the **waveform
-  display** mode (single vs. left/right channels).
-- **Project** — default Save / Open / Import directories and background autosave
-  configuration.
+- **General** — appearance: the **waveform display** mode (single vs. left/right
+  channels), library tile imagery, and toast notifications.
+- **Timeline** — timeline behaviour: follow-playback auto-scroll, **match project
+  tempo on drop** (auto-warp a dropped clip to the project BPM), and the transport
+  **previous / next button target**.
+- **Project** — default Save / Open / Import directories, background autosave
+  configuration, and **clean up project files on remove**.
 - **Audio** — output device + driver selection (see below), and the
   **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
   `PROJECT.targetSampleRate` on new projects.
