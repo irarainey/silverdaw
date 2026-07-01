@@ -209,9 +209,13 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
       // Playhead stays above clips and headers.
       playheadLayer.value = new pixi.Container()
 
-      // Z-order keeps pinned chrome and playhead above scrolled world content.
-      instance.stage.addChild(rulerLayer.value)
+      // Z-order keeps pinned chrome and playhead above scrolled world content. The
+      // tracks layer is the scrolled world (translated by scrollY), so the pinned ruler
+      // background must sit ABOVE it — otherwise track content scrolled up under the
+      // ruler shows through behind the bar numbers, hiding them. Ticks + labels then sit
+      // above the solid ruler background.
       instance.stage.addChild(tracksLayer.value)
+      instance.stage.addChild(rulerLayer.value)
       instance.stage.addChild(rulerTicksLayer.value)
       instance.stage.addChild(headersLayer.value)
       instance.stage.addChild(playheadLayer.value)
