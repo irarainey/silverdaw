@@ -8,6 +8,7 @@ import { mkdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { IPC } from '../../shared/ipc-channels'
+import { ensureWritableTargetDir } from '../writableTarget'
 import type { PrefsService } from '../prefsService'
 
 export interface MixdownHandlersContext {
@@ -75,6 +76,7 @@ export function registerMixdownHandlers(ctx: MixdownHandlersContext): void {
         filters
       })
       if (result.canceled || !result.filePath) return null
+      if (!(await ensureWritableTargetDir(win, dirname(result.filePath)))) return null
       return result.filePath
     }
   )

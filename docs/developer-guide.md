@@ -199,6 +199,7 @@ Silverdaw currently supports the core arrangement workflow:
   propagates to every linked saved clip sibling; from the Clip Editor it follows
   the same save scope as the other draft edits. The flag round-trips through
   `PROJECT_STATE` and the `.silverdaw` file and is suppressed from save when off.
+  A reversed clip is flagged on the timeline with a teal **REV** clip-header badge.
 - **DJ turntable effects (brake & backspin).** Two non-destructive, per-clip
   "turntable" effects applied at a clip's **end**: a **Brake** (a vinyl
   record-stop — the clip decelerates to a halt; a varispeed where pitch and tempo
@@ -355,7 +356,8 @@ Silverdaw currently supports the core arrangement workflow:
 - Undo / redo (Ctrl+Z / Ctrl+Y) any project-mutating edit. Covers
   clip add / move / trim / recolour / rename / delete / relink / rebind, track
   add / remove / rename / gain / **resize / reorder**, clip **lock / unlock**,
-  library add / remove / relink / reanalyse, marker add / move / remove, BPM,
+  clip **reverse / brake / backspin** (each toggle is its own undo step), library
+  add / remove / relink / reanalyse, marker add / move / remove, BPM,
   project length, master volume and project rename. Drag streams (clip move / trim /
   track gain / marker move / master volume) coalesce same-target events within 500 ms
   into a single undo step; track resize and reorder commit a single
@@ -2249,6 +2251,16 @@ certificate we hold — so it cannot be installed locally. Upload it to Partner
 Center by hand; verify its identity first (`Build-Release.ps1` prints the
 packaged `Identity/Name`, `Publisher`, and `PublisherDisplayName`).
 
+Because it is a full-trust (`runFullTrust`) packaged desktop app it runs outside
+the AppContainer, so the loopback bridge, backend child-process spawn, and access
+to user-chosen files behave as in an unpackaged build. The `WindowsApps` install
+dir is read-only, so all writable state — preferences, projects, autosave,
+peaks/decoded caches, downloaded models and diagnostic logs — lives under the
+per-user `userData`/`temp` locations, the backend is spawned with a writable
+working directory, and user-chosen save/export destinations are pre-flighted for
+writability (a read-only choice raises a clear warning rather than a cryptic
+failure).
+
 ### Package artwork
 
 `scripts/Build-InstallerArt.py` regenerates the packaging art from the source
@@ -2332,6 +2344,11 @@ pnpm dist:dir    # win-unpacked only, no packaging
   `@shared` and `@main` path aliases. `pnpm test:coverage` runs the same
   suite with V8 coverage and writes text, HTML, lcov and JSON-summary reports
   under `frontend/coverage/`.
+- **Dead code**: a configured `frontend/knip.json` (entry points for the main /
+  preload / renderer electron-vite processes) lets `pnpm dlx knip` report unused
+  files, exports and dependencies. Treat its output as *candidates* — the zod
+  inbound/outbound schema maps and `.vue`-only usages produce false positives
+  that need manual confirmation. Run before large refactors; not wired into CI.
 
 ## License
 

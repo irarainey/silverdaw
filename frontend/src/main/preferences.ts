@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { dirname, join, resolve as pathResolve } from 'node:path'
+import { join, resolve as pathResolve } from 'node:path'
 import type { DebugPreferences, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
 import type { StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '../shared/bridge/outbound'
 
@@ -150,12 +150,13 @@ export const AUTOSAVE_MAX_SECONDS = 600
 export const AUTOSAVE_DEFAULT_SECONDS = 30
 
 // `app.getPath` is only safe after `app.whenReady`, so defaults are lazy.
-function getApplicationDirectory(): string {
-  return app.isPackaged ? dirname(app.getPath('exe')) : pathResolve(__dirname, '..', '..', '..')
-}
-
 export function getDefaultDebugLogDirectory(): string {
-  return join(getApplicationDirectory(), 'debug')
+  // Packaged installs run from a read-only WindowsApps (MSIX) directory, so the
+  // default log location must be a per-user writable path (userData). Dev builds
+  // keep logs in the repo tree for convenience.
+  return app.isPackaged
+    ? join(app.getPath('userData'), 'debug')
+    : join(pathResolve(__dirname, '..', '..', '..'), 'debug')
 }
 
 export function buildDefaultPrefs(): Preferences {

@@ -94,6 +94,9 @@ function startBackend(): void {
     resolveExePath: resolveBackendExePath,
     buildEnv: buildBackendEnv,
     getPort: () => bridgePort,
+    // Writable cwd so the backend never inherits the read-only WindowsApps
+    // install dir (MSIX); the temp dir is always writable/redirected.
+    resolveCwd: () => app.getPath('temp'),
     log: (level, scope, message) => logMain(level as LogLevel, scope, message),
     sendStatus: sendBackendStatus
   })

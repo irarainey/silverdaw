@@ -9,6 +9,7 @@ import { IPC } from '../../shared/ipc-channels'
 import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot, registerProjectMediaRoots, getProjectMediaDirs } from '../audioPaths'
 import { canonicaliseProjectPath, projectFolderPath } from '../projectPaths'
 import { sweepEmptyArtifactSubdirs } from '../projectFileCleanup'
+import { ensureWritableTargetDir } from '../writableTarget'
 import type { PrefsService } from '../prefsService'
 import { logMain } from '../log'
 
@@ -86,7 +87,7 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       })
       if (result.canceled || !result.filePath) return null
       const target = projectFolderPath(result.filePath)
-      await mkdir(dirname(target), { recursive: true })
+      if (!(await ensureWritableTargetDir(win, dirname(target)))) return null
       // The backend writes this project's stems beside the file; trust that folder
       // for renderer reads + sidecar writes ahead of the first separation.
       registerStemsWriteRoot(join(dirname(target), 'stems'))
