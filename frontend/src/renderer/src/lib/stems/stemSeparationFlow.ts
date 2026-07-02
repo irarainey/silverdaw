@@ -20,6 +20,7 @@ import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 import type { StemName, StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
+import type { StemModelState, StemModelDownloadProgress, EnsureStemModelResult } from '@shared/types'
 
 /** Canonical four-stem order; the selection dialog and dispatch use it. */
 const ALL_STEMS: readonly StemName[] = ['vocals', 'drums', 'bass', 'other']
@@ -182,7 +183,6 @@ export interface StemModelFlowState {
   receivedBytes: number
   totalBytes: number
   fileName: string
-  fileIndex: number
   fileCount: number
   error: string
 }
@@ -193,80 +193,176 @@ export function useStemModelFlow(): Readonly<Ref<StemModelFlowState | null>> {
   return readonly(flow)
 }
 
-/** Ensure the model is present (prompting a first-use download if not), then
- *  dispatch. */
+// ─── Model sources ──────────────────────────────────────────────────────────
+
+/** The downloadable stem models. The two RoFormer packs are the default engine
+ *  (fetched together); htdemucs is the backup. */
+export type StemModelKind = 'vocalPack' | 'rhythmPack' | 'htdemucs'
+
+/** Uniform adapter over each model's IPC surface so the download flow can treat
+ *  packs and the backup identically. */
+interface StemModelSource {
+  readonly kind: StemModelKind
+  getState(): Promise<StemModelState>
+  ensure(): Promise<EnsureStemModelResult>
+  onProgress(handler: (progress: StemModelDownloadProgress) => void): () => void
+  cancel(): void
+}
+
+const MODEL_SOURCES: Readonly<Record<StemModelKind, StemModelSource>> = {
+  vocalPack: {
+    kind: 'vocalPack',
+    getState: () => window.silverdaw.getVocalPackState(),
+    ensure: () => window.silverdaw.ensureVocalPack(),
+    onProgress: (handler) => window.silverdaw.onVocalPackDownloadProgress(handler),
+    cancel: () => window.silverdaw.cancelVocalPackDownload()
+  },
+  rhythmPack: {
+    kind: 'rhythmPack',
+    getState: () => window.silverdaw.getRhythmPackState(),
+    ensure: () => window.silverdaw.ensureRhythmPack(),
+    onProgress: (handler) => window.silverdaw.onRhythmPackDownloadProgress(handler),
+    cancel: () => window.silverdaw.cancelRhythmPackDownload()
+  },
+  htdemucs: {
+    kind: 'htdemucs',
+    getState: () => window.silverdaw.getStemModelState(),
+    ensure: () => window.silverdaw.ensureStemModel(),
+    onProgress: (handler) => window.silverdaw.onStemModelDownloadProgress(handler),
+    cancel: () => window.silverdaw.cancelStemModelDownload()
+  }
+}
+
+/**
+ * The models needed for a separation. By default both RoFormer quality packs
+ * are fetched together (the primary engine). htdemucs is the backup, required
+ * only when the user forces it, or when `other` is requested without the full
+ * four-stem set — the residual `other` is only produced alongside all four
+ * stems, so a partial selection needs the htdemucs `other` specialist.
+ */
+export function requiredModelKinds(
+  stems: readonly StemName[],
+  useBackupModel: boolean
+): StemModelKind[] {
+  if (useBackupModel) return ['htdemucs']
+  const kinds: StemModelKind[] = ['vocalPack', 'rhythmPack']
+  const sel = new Set(stems)
+  const allFour = sel.has('vocals') && sel.has('drums') && sel.has('bass') && sel.has('other')
+  if (sel.has('other') && !allFour) kinds.push('htdemucs')
+  return kinds
+}
+
+async function resolveRequiredSources(stems: readonly StemName[]): Promise<StemModelSource[]> {
+  let useBackup = false
+  try {
+    useBackup = (await window.silverdaw.getStemPrefs()).useBackupModel
+  } catch {
+    // On a prefs lookup failure, fall back to the htdemucs backup so we never
+    // dispatch a job the backend can't fulfil.
+    return [MODEL_SOURCES.htdemucs]
+  }
+  return requiredModelKinds(stems, useBackup).map((kind) => MODEL_SOURCES[kind])
+}
+
+// The not-yet-installed models to fetch when the user confirms, each paired with
+// its byte total so combined download progress can be computed.
+let pendingSources: ReadonlyArray<{ readonly src: StemModelSource; readonly totalBytes: number }> =
+  []
+// Cancel hook for the model currently downloading (set during confirmModelDownload).
+let activeCancel: (() => void) | null = null
+
+/** Ensure every model this separation needs is present (prompting a one-time
+ *  download of any that are missing), then dispatch. */
 async function ensureModelThenDispatch(
   target: StemSeparationTarget,
   stems: StemName[],
   quality: StemQuality
 ): Promise<void> {
   const notifications = useNotificationsStore()
+  const sources = await resolveRequiredSources(stems)
 
-  // The RoFormer quality packs are the primary engine; htdemucs is only needed
-  // when a selected stem isn't pack-covered (or the user forced the backup). If
-  // the packs cover everything, dispatch straight away — htdemucs may not even
-  // be installed, and the backend won't require it.
-  if (!(await htdemucsRequired(stems))) {
-    await dispatchSeparation(target, stems, quality)
-    return
-  }
-
-  let state: { installed: boolean; presentBytes: number; totalBytes: number; fileCount: number }
+  let states: Array<{ src: StemModelSource; state: StemModelState }>
   try {
-    state = await window.silverdaw.getStemModelState()
+    states = await Promise.all(
+      sources.map(async (src) => ({ src, state: await src.getState() }))
+    )
   } catch (err) {
-    notifications.pushError('Could not check the stem-separation model.')
-    log.error('stems', `getStemModelState failed: ${err instanceof Error ? err.message : String(err)}`)
+    notifications.pushError('Could not check the stem-separation models.')
+    log.error(
+      'stems',
+      `model state check failed: ${err instanceof Error ? err.message : String(err)}`
+    )
     return
   }
 
-  if (state.installed) {
+  const missing = states.filter(({ state }) => !state.installed)
+  if (missing.length === 0) {
     await dispatchSeparation(target, stems, quality)
     return
   }
 
+  // Prompt a single combined download of the missing models.
+  pendingSources = missing.map(({ src, state }) => ({ src, totalBytes: state.totalBytes }))
   flow.value = {
     phase: 'confirm',
     target,
     stems,
     quality,
-    receivedBytes: state.presentBytes,
-    totalBytes: state.totalBytes,
+    receivedBytes: missing.reduce((sum, { state }) => sum + state.presentBytes, 0),
+    totalBytes: missing.reduce((sum, { state }) => sum + state.totalBytes, 0),
     fileName: '',
-    fileIndex: 0,
-    fileCount: state.fileCount,
+    fileCount: missing.reduce((sum, { state }) => sum + state.fileCount, 0),
     error: ''
   }
 }
 
-/** User accepted the first-use download. Stream progress, then dispatch. */
+/** User accepted the first-use download. Fetch each missing model in turn,
+ *  streaming a single combined progress bar, then dispatch. */
 export async function confirmModelDownload(): Promise<void> {
   const current = flow.value
   if (!current || current.phase !== 'confirm') return
   const { target, stems, quality } = current
+  const sources = pendingSources
   flow.value = { ...current, phase: 'downloading', error: '' }
 
-  const off = window.silverdaw.onStemModelDownloadProgress((progress) => {
+  const grand = Math.max(
+    1,
+    sources.reduce((sum, s) => sum + s.totalBytes, 0)
+  )
+  // Bytes from models already finished in this batch; the active model's own
+  // progress (which counts from its already-present bytes) is added on top.
+  let base = 0
+  const report = (received: number, fileName: string): void => {
     if (!flow.value || flow.value.phase !== 'downloading') return
     flow.value = {
       ...flow.value,
-      receivedBytes: progress.receivedBytes,
-      totalBytes: progress.totalBytes,
-      fileName: progress.fileName,
-      fileIndex: progress.fileIndex,
-      fileCount: progress.fileCount
+      receivedBytes: Math.min(grand, base + received),
+      totalBytes: grand,
+      fileName
     }
-  })
+  }
 
   try {
-    const result = await window.silverdaw.ensureStemModel()
-    if (result.ok) {
-      flow.value = null
-      await dispatchSeparation(target, stems, quality)
-    } else if (flow.value) {
-      // A concurrent cancelFlow() nulls the state; only surface a real failure.
-      flow.value = { ...flow.value, phase: 'error', error: result.error }
+    for (const { src, totalBytes } of sources) {
+      const stop = src.onProgress((p) => report(p.receivedBytes, p.fileName))
+      activeCancel = () => src.cancel()
+      let result: EnsureStemModelResult
+      try {
+        result = await src.ensure()
+      } finally {
+        stop()
+        activeCancel = null
+      }
+      // A concurrent cancelModelFlow() nulls the flow; stop quietly then.
+      if (!flow.value) return
+      if (!result.ok) {
+        flow.value = { ...flow.value, phase: 'error', error: result.error }
+        return
+      }
+      base += totalBytes
     }
+    flow.value = null
+    await dispatchSeparation(target, stems, quality)
   } catch (err) {
     if (flow.value) {
       flow.value = {
@@ -275,16 +371,16 @@ export async function confirmModelDownload(): Promise<void> {
         error: err instanceof Error ? err.message : String(err)
       }
     }
-  } finally {
-    off()
   }
 }
 
 /** Dismiss the model flow; aborts an in-progress download. */
 export function cancelModelFlow(): void {
   if (flow.value?.phase === 'downloading') {
-    window.silverdaw.cancelStemModelDownload()
+    activeCancel?.()
   }
+  activeCancel = null
+  pendingSources = []
   flow.value = null
 }
 
@@ -409,35 +505,6 @@ async function resolveRhythmPackPath(): Promise<string | undefined> {
     return path && path.length > 0 ? path : undefined
   } catch {
     return undefined
-  }
-}
-
-/**
- * Whether the htdemucs backup model is required for this selection: true when
- * the user forced the backup, or when any selected stem would fall back to
- * htdemucs because its quality pack isn't installed. `other` is covered by the
- * residual (no model) only when all four stems are produced, so a partial
- * selection that includes `other` still needs the htdemucs `other` specialist.
- */
-export async function htdemucsRequired(stems: readonly StemName[]): Promise<boolean> {
-  try {
-    const prefs = await window.silverdaw.getStemPrefs()
-    if (prefs.useBackupModel) return true
-    const sel = new Set(stems)
-    const vocalPath = sel.has('vocals') ? await window.silverdaw.getVocalPackPath() : ''
-    const rhythmPath =
-      sel.has('drums') || sel.has('bass') ? await window.silverdaw.getRhythmPackPath() : ''
-    const needVocals = sel.has('vocals') && !(vocalPath && vocalPath.length > 0)
-    const needRhythm =
-      (sel.has('drums') || sel.has('bass')) && !(rhythmPath && rhythmPath.length > 0)
-    const allFour =
-      sel.has('vocals') && sel.has('drums') && sel.has('bass') && sel.has('other')
-    const needOther = sel.has('other') && !allFour
-    return needVocals || needRhythm || needOther
-  } catch {
-    // On any lookup failure, assume the backup may be needed so we don't dispatch
-    // a job the backend can't fulfil; the worst case is an unnecessary prompt.
-    return true
   }
 }
 

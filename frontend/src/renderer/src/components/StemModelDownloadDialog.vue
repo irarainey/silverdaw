@@ -68,9 +68,9 @@ function onCancel(): void {
         <div class="dialog-body flex flex-col gap-3">
           <template v-if="phase === 'confirm'">
             <p class="text-sm text-zinc-300">
-              Separating stems needs a one-time download of the separation model
-              ({{ fileCount }} files, {{ totalLabel }}). It is stored on this
-              computer and reused for every future separation.
+              Separating stems needs a one-time model download
+              ({{ fileCount }} files, {{ totalLabel }}), stored on this computer
+              and reused for every future separation.
             </p>
           </template>
 
