@@ -85,6 +85,18 @@ export default [
       '@typescript-eslint/no-unused-vars': 'off'
     }
   },
+  // CommonJS build/config scripts (e.g. electron-builder.store.cjs) run in Node
+  // with require/module/__dirname — give them the CommonJS source type and Node
+  // globals so those aren't flagged as undefined.
+  {
+    files: ['**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: {
+        ...globals.node
+      }
+    }
+  },
   // Renderer source: forbid direct console.* calls so all observability
   // flows through `lib/log.ts` (which forwards to the per-session file
   // logger via IPC). `lib/log.ts` itself is the only allowed exception
