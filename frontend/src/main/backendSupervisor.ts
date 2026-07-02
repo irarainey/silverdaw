@@ -8,6 +8,10 @@ export interface BackendSupervisorDeps {
   getPort: () => number
   log: (level: string, scope: string, message: string) => void
   sendStatus: (status: BackendStatus) => void
+  // Working directory for the child. Under MSIX the inherited cwd is the
+  // read-only WindowsApps install dir; a writable cwd avoids a crash if the
+  // backend or a native dep (JUCE / ONNX / lame) drops a temp/dump file there.
+  resolveCwd?: () => string
 }
 
 // Bounded respawn backoff, in milliseconds.
@@ -87,6 +91,7 @@ export class BackendSupervisor {
       child = spawn(exePath, ['--port', String(port)], {
         stdio: 'inherit',
         windowsHide: true,
+        cwd: this.deps.resolveCwd?.(),
         env: this.deps.buildEnv()
       })
     } catch (err) {
