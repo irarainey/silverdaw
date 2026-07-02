@@ -27,6 +27,8 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "TRACK_SET_PAN" ||
            type == "TRACK_SET_AUTOMATION" ||
            type == "CLIP_SET_ENVELOPE" ||
+           type == "CLIP_SET_REVERSED" || type == "CLIP_SET_BRAKE" ||
+           type == "CLIP_SET_BACKSPIN" ||
            type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
@@ -73,6 +75,9 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_SET_PAN") return "Change track pan";
     if (type == "TRACK_SET_AUTOMATION") return "Edit track automation";
     if (type == "CLIP_SET_ENVELOPE") return "Edit clip volume envelope";
+    if (type == "CLIP_SET_REVERSED") return "Reverse clip";
+    if (type == "CLIP_SET_BRAKE") return "Brake clip";
+    if (type == "CLIP_SET_BACKSPIN") return "Backspin clip";
     if (type == "PROJECT_SET_REVERB") return "Change reverb";
     if (type == "PROJECT_SET_DELAY") return "Change delay";
     if (type == "LIBRARY_ADD") return "Update library item";

@@ -883,6 +883,46 @@ void testDuplicateClipGroupUndoesInOneStep()
     require(idsAfter.contains("src"), "the source clip must survive the duplicate's undo");
 }
 
+// Regression guard: applying a clip effect (reverse / brake / backspin) after a compound
+// group (e.g. Chop to Grid) must be its OWN undo step, not folded into the group's
+// transaction. Bug: these envelope types were missing from isUndoableEnvelopeType, so the
+// dispatcher never opened a fresh transaction and the effect's ValueTree mutation accreted
+// into the still-open compound transaction — one undo reverted every effect AND the chop,
+// jumping back to before the split.
+void testClipEffectAfterGroupIsSeparateUndoStep()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "track add should succeed");
+
+    // Compound action (like Chop to Grid): one grouped transaction producing two slices.
+    silverdaw::beginUndoGroup("Chop to grid", state);
+    silverdaw::beginUndoTransactionIfNeeded("CLIP_ADD", juce::var(), state);
+    require(state.addClip("t1", "a", "lib1", 0.0, 500.0, 0.0, -1), "first slice add should succeed");
+    silverdaw::beginUndoTransactionIfNeeded("CLIP_ADD", juce::var(), state);
+    require(state.addClip("t1", "b", "lib1", 500.0, 500.0, 0.0, -1), "second slice add should succeed");
+    silverdaw::endUndoGroup();
+
+    // Apply an effect to one slice via the dispatcher's begin/end bracket.
+    silverdaw::beginUndoTransactionIfNeeded("CLIP_SET_BRAKE", juce::var(), state);
+    require(state.setClipBrake("a", true), "brake toggle should succeed");
+    silverdaw::endUndoTransactionIfNeeded("CLIP_SET_BRAKE", juce::var());
+
+    // One undo must remove ONLY the brake, leaving both chopped slices intact.
+    state.getUndoManager().beginNewTransaction();
+    require(state.getUndoManager().undo(), "one undo should reverse only the brake");
+    require(! state.isClipBrake("a"), "brake must be cleared by the undo");
+    const auto afterEffectUndo = silverdaw::collectClipIds(state);
+    require(afterEffectUndo.contains("a") && afterEffectUndo.contains("b"),
+            "both chopped slices must survive undoing the effect");
+
+    // A second undo reaches the chop group and reverts both slices together.
+    state.getUndoManager().beginNewTransaction();
+    require(state.getUndoManager().undo(), "second undo should reverse the chop group");
+    const auto afterGroupUndo = silverdaw::collectClipIds(state);
+    require(! afterGroupUndo.contains("a") && ! afterGroupUndo.contains("b"),
+            "the chop group reverts as one step only after the effect is undone");
+}
+
 // The metronome toggle persists with the project but applies SILENTLY: it neither marks the project
 // dirty nor enters the undo stack, and default-off is stored as absent (legacy round-trip clean).
 void testProjectStateMetronomeRoundTrip()
@@ -940,6 +980,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"Undo group collapses a compound edit to one step", testUndoGroupCollapsesCompoundEditToOneStep});
     tests.push_back({"Nested undo groups collapse to one step", testNestedUndoGroupsCollapseToOneStep});
     tests.push_back({"Duplicate-clip group undoes in one step", testDuplicateClipGroupUndoesInOneStep});
+    tests.push_back({"Clip effect after a group is a separate undo step", testClipEffectAfterGroupIsSeparateUndoStep});
     tests.push_back({"ProjectState metronome toggle persists silently", testProjectStateMetronomeRoundTrip});
 }
 
