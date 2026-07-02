@@ -6,7 +6,7 @@ instrument. Two surfaces:
 
 - **Backend** (`backend/`): headless JUCE 8 audio engine + WebSocket bridge,
   C++17, CMake, MSVC. Builds `SilverdawBackend.exe`.
-- **Frontend** (`frontend/`): Electron 31 + Vue 3.5 (`<script setup lang="ts">`)
+- **Frontend** (`frontend/`): Electron 42 + Vue 3.5 (`<script setup lang="ts">`)
   + Pinia 2 + PixiJS 8 + Tailwind v4, TypeScript 5.x / ES2022, electron-vite.
 
 They communicate over a loopback WebSocket using `{ type, payload }` JSON

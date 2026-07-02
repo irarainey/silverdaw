@@ -156,7 +156,7 @@ appx:
   # (electron-builder's manifest template — never `Windows.Universal`, so this
   # is a desktop Win32 app, not a PWA/UWP). MinVersion is the Windows 10 1809
   # baseline (the common Store minimum); nothing in the app requires Windows 11
-  # (Electron 31/Chromium, JUCE, runFullTrust and the DirectML/onnxruntime
+  # (Electron 42/Chromium, JUCE, runFullTrust and the DirectML/onnxruntime
   # redistributables all support Windows 10 1809+).
   minVersion: "10.0.17763.0"
   maxVersionTested: "10.0.22621.0"
