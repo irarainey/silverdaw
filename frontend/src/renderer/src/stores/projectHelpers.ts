@@ -45,12 +45,6 @@ export function fileStem(name: string): string {
   return name.replace(/\.[^.\\/:*?"<>|]+$/, '').trim() || 'Sample'
 }
 
-export function parentDir(path: string | null | undefined): string {
-  if (!path) return ''
-  const slash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
-  return slash > 0 ? path.slice(0, slash) : ''
-}
-
 /** Map wire-format transitions to the store shape; undefined for an empty list (suppressed default). */
 export function hydrateTransitions(
   raw: readonly ProjectStateTransition[] | undefined

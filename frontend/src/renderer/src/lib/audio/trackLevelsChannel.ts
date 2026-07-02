@@ -12,7 +12,6 @@ interface TrackLevel {
 
 // Plain object map (no reactivity). Reads/writes are O(1) by trackId.
 const levels: Record<string, TrackLevel> = Object.create(null)
-let lastBroadcastAtMs = 0
 
 /** Called by `bridgeService` on every inbound `TRACK_LEVELS` envelope. Tracks
  *  absent from `entries` are NOT cleared so a track that went quiet decays from
@@ -22,7 +21,6 @@ export function setTrackLevels(
   entries: ReadonlyArray<{ id: string; peakL: number; peakR: number }>
 ): void {
   const now = performance.now()
-  lastBroadcastAtMs = now
   for (const e of entries) {
     levels[e.id] = { peakL: e.peakL, peakR: e.peakR, lastUpdateMs: now }
   }
@@ -37,22 +35,8 @@ export function readTrackLevels(trackId: string): TrackLevel {
   return v
 }
 
-/** Timestamp of the most recent `TRACK_LEVELS` broadcast (any track).
- *  Used to drive a single shared RAF loop on the renderer side. */
-export function lastTrackLevelsBroadcastAtMs(): number {
-  return lastBroadcastAtMs
-}
-
 /** Reset on bridge disconnect — a stale "max ever" would otherwise
  *  linger on the meters of any track that played before the drop. */
 export function clearTrackLevels(): void {
   for (const k of Object.keys(levels)) delete levels[k]
-  lastBroadcastAtMs = 0
-}
-
-/** Drop a single track's stored peaks — used when a track is removed
- *  on the renderer so a newly-created track at the same UI slot
- *  doesn't inherit the previous occupant's residual meter. */
-export function clearTrackLevel(trackId: string): void {
-  delete levels[trackId]
 }
