@@ -21,6 +21,7 @@ import {
 import { getDefaultDebugLogDirectory } from './preferences'
 import { PrefsService } from './prefsService'
 import { createWindow } from './window'
+import { applyChromiumSecuritySwitches, hardenDefaultSession } from './sessionSecurity'
 import { destroyAllWindowsAndExit, handleMenuAction } from './menu'
 import { registerAudioHandlers } from './ipc/audioHandlers'
 import { registerAutosaveHandlers } from './ipc/autosaveHandlers'
@@ -115,6 +116,10 @@ function extractProjectPathFromArgv(argv: readonly string[]): string | null {
 }
 
 let pendingOpenPath: string | null = extractProjectPathFromArgv(process.argv)
+
+// Must run before app "ready": disables Chromium's Windows location provider
+// so packaged builds never trigger the OS location consent prompt.
+applyChromiumSecuritySwitches()
 
 const gotInstanceLock = app.requestSingleInstanceLock()
 if (!gotInstanceLock) {
@@ -255,6 +260,7 @@ app.whenReady().then(async () => {
   }
 
   // Defer backend spawn until after initial window creation to protect first paint.
+  hardenDefaultSession()
   mainWindow = createWindow(buildCreateWindowContext())
   setImmediate(startBackend)
 

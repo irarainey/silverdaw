@@ -1,10 +1,20 @@
-"""Generate NSIS installer banners and the .silverdaw file-type icon.
+"""Generate MSIX/AppX tile logos, the .silverdaw file-type icon, and the
+(legacy) NSIS installer banners.
 
 Outputs (relative to repo root):
+  frontend/resources/appx/StoreLogo.png          50x50    logo on white
+  frontend/resources/appx/Square44x44Logo.png    44x44    logo on white
+  frontend/resources/appx/Square150x150Logo.png  150x150  logo on white
+  frontend/resources/appx/Wide310x150Logo.png    310x150  logo on white
+  frontend/resources/icons/silverdaw-file.ico     multi-resolution
   frontend/resources/installerHeader.bmp     150x57   logo on white
   frontend/resources/installerSidebar.bmp    164x314  logo on black→grey gradient
   frontend/resources/uninstallerSidebar.bmp  164x314  logo on black→grey gradient
-  frontend/resources/icons/silverdaw-file.ico  multi-resolution
+
+The AppX tiles bake an opaque white plate (see APPX_TILE_BG) so the logo looks
+identical on the App Installer surface, Start tiles and the taskbar rather than
+picking up the system accent colour. Keep it in sync with
+`appx.backgroundColor` in electron-builder.yml.
 
 Run from any working directory:
   python scripts/Build-InstallerArt.py
@@ -19,7 +29,17 @@ from PIL import Image, ImageDraw
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RES_DIR = REPO_ROOT / "frontend" / "resources"
 ICON_DIR = RES_DIR / "icons"
+APPX_DIR = RES_DIR / "appx"
 SOURCE_LOGO = ICON_DIR / "256x256.png"
+
+# Solid backdrop baked into the AppX tile logos. The App Installer surface and
+# the taskbar composite a *transparent* logo over the system accent colour
+# (blue by default) / the taskbar colour, so a transparent tile shows an
+# unwanted blue plate and the dark bird can vanish on a dark taskbar. Baking an
+# opaque plate makes the icon look identical everywhere. The silvery jackdaw is
+# designed to read on light, so we use white. Keep this in sync with
+# `appx.backgroundColor` in electron-builder.yml.
+APPX_TILE_BG = (255, 255, 255)
 
 
 def _load_logo_rgba() -> Image.Image:
@@ -65,6 +85,78 @@ def _make_gradient_banner(size: tuple[int, int],
     y = (h - logo_h) // 2
     canvas.paste(resized, (x, y), resized)
     return canvas
+
+
+def _make_tile(size: tuple[int, int], logo: Image.Image,
+               logo_ratio: float,
+               bg: tuple[int, int, int] | None = APPX_TILE_BG) -> Image.Image:
+    """Centre the logo on a canvas of `size`.
+
+    `bg` is the opaque plate colour, or `None` for a fully transparent canvas
+    (used for the taskbar `altform-unplated` assets). `logo_ratio` sizes the
+    logo against the tile's shorter edge, leaving a margin so it never touches
+    the edge."""
+    w, h = size
+    fill = (*bg, 255) if bg is not None else (0, 0, 0, 0)
+    canvas = Image.new("RGBA", (w, h), fill)
+    logo_h = int(min(w, h) * logo_ratio)
+    logo_w = int(logo.width * (logo_h / logo.height))
+    resized = logo.resize((logo_w, logo_h), Image.LANCZOS)
+    x = (w - logo_w) // 2
+    y = (h - logo_h) // 2
+    canvas.paste(resized, (x, y), resized)
+    return canvas
+
+
+def _make_appx_assets(logo: Image.Image) -> list[Path]:
+    """Write the MSIX/AppX logo assets electron-builder requires, each with a
+    full set of DPI scale variants.
+
+    Windows resolves `<Name>.png` (referenced in the manifest) to the closest
+    `<Name>.scale-<pct>.png` for the display DPI/size. If only one small size
+    exists, the App Installer / shell render it at native size inside a larger
+    container and pad the surround with the system accent colour (a blue box).
+    Emitting scale-100→400 at the correct pixel sizes keeps the icon crisp and
+    edge-to-edge everywhere. The bare `<Name>.png` is kept as the scale-100
+    fallback that the manifest points at."""
+    APPX_DIR.mkdir(parents=True, exist_ok=True)
+    scales = [100, 125, 150, 200, 400]
+    # base size at scale-100, and the logo size ratio against the tile's
+    # shorter edge (leaving a consistent margin around the bird).
+    tiles = {
+        "StoreLogo": ((50, 50), 0.72),
+        "Square44x44Logo": ((44, 44), 0.72),
+        "Square150x150Logo": ((150, 150), 0.62),
+        "Wide310x150Logo": ((310, 150), 0.62),
+    }
+    written: list[Path] = []
+    for name, ((bw, bh), ratio) in tiles.items():
+        # Bare name = scale-100 fallback referenced by the manifest.
+        base = _make_tile((bw, bh), logo, ratio)
+        bare = APPX_DIR / f"{name}.png"
+        base.save(bare, "PNG")
+        written.append(bare)
+        for scale in scales:
+            size = (round(bw * scale / 100), round(bh * scale / 100))
+            out = APPX_DIR / f"{name}.scale-{scale}.png"
+            _make_tile(size, logo, ratio).save(out, "PNG")
+            written.append(out)
+
+    # Taskbar, Alt-Tab and the title bar use the Square44x44Logo "target-size"
+    # assets. The `altform-unplated` variants are drawn directly on the taskbar
+    # with NO plate, so they MUST be transparent — otherwise the icon shows as
+    # a white box on the taskbar. We ship transparent target-size assets (both
+    # the plain and unplated forms); Windows plates the plain ones with
+    # `backgroundColor` where a tile plate is expected and uses the unplated
+    # ones on the taskbar. This mirrors the transparent look of the dev
+    # (icon.ico) window icon.
+    for ts in [16, 24, 32, 48, 256]:
+        transparent = _make_tile((ts, ts), logo, 0.9, bg=None)
+        for suffix in ("", "_altform-unplated"):
+            out = APPX_DIR / f"Square44x44Logo.targetsize-{ts}{suffix}.png"
+            transparent.save(out, "PNG")
+            written.append(out)
+    return written
 
 
 def _make_banner(size: tuple[int, int], bg: tuple[int, int, int],
@@ -147,6 +239,9 @@ def main() -> None:
 
     white = (255, 255, 255)
 
+    # MSIX/AppX tile logos (transparent; tile colour comes from the manifest).
+    appx_assets = _make_appx_assets(logo)
+
     # Header banner (top of every wizard page) sits next to a white title
     # bar in MUI2 — a black background would clash visually, so we keep
     # the header on white. The sidebar is a standalone full-height panel
@@ -185,6 +280,7 @@ def main() -> None:
 
     print("wrote:")
     for p in [
+        *appx_assets,
         RES_DIR / "installerHeader.bmp",
         RES_DIR / "installerSidebar.bmp",
         RES_DIR / "uninstallerSidebar.bmp",
