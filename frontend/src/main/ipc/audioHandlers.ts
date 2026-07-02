@@ -97,42 +97,6 @@ function isWithinStemsDir(dir: unknown): dir is string {
   return isWithinStemsWriteRoot(dir)
 }
 
-// Write an already-resolved identity (tags + optional cover bytes) as a sidecar
-// (metadata.json plus a cover.<ext>) into an app-owned `dir`. Shared by both the
-// stem and sample writers — the difference is only how the identity is sourced:
-// stems re-parse the original tagged source file; samples pass the in-memory
-// inherited identity (their source may be a tagless stem/library-clip, so the file
-// on disk has nothing to parse).
-async function writeSidecarData(
-  dir: string,
-  metadata: AudioMetadata,
-  cover?: SidecarCover
-): Promise<boolean> {
-  await mkdir(dir, { recursive: true })
-  const { coverArt: _omitCover, ...rest } = metadata
-  const sidecar: MediaSidecar = { version: 1, metadata: rest }
-  if (cover && cover.data.byteLength > 0) {
-    const file = `cover.${coverExtForMime(cover.mimeType)}`
-    await writeFile(join(dir, file), Buffer.from(cover.data))
-    sidecar.cover = { file, mimeType: cover.mimeType }
-  }
-  await writeFile(join(dir, SIDECAR_METADATA_FILE), JSON.stringify(sidecar, null, 2), 'utf8')
-  return true
-}
-
-// Parse a tagged source file's metadata + cover art and persist it as a sidecar
-// into an already-validated `dir`. Used by the stem writer (the source is the
-// original imported file, which carries real tags).
-async function writeSidecarToDir(dir: string, sourceFilePath: string): Promise<boolean> {
-  const meta = normalizeMetadata(await parseFile(sourceFilePath, { duration: true, skipCovers: false }))
-  const { coverArt, ...rest } = meta
-  const cover =
-    coverArt && coverArt.data.byteLength > 0
-      ? { data: coverArt.data, mimeType: coverArt.mimeType }
-      : undefined
-  return writeSidecarData(dir, rest, cover)
-}
-
 // Read a sidecar from an already-validated `dir` back into `AudioMetadata` (cover
 // bytes attached) so the existing setItemMetadata Blob-URL flow works unchanged.
 // Returns null when no sidecar is present so the caller can fall back to the
@@ -372,87 +336,6 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       return normalizeMetadata(meta)
     } catch (err) {
       logMain('WARN ', 'audio:readMetadata', `failed for ${String(filePath)}:`, err)
-      return null
-    }
-  })
-
-  // Write a stem's source metadata + cover art into the stem output folder so the
-  // inherited identity is a real copy, independent of the source file once written.
-  ipcMain.handle(IPC.stems.writeSidecar, async (_evt, payload: unknown) => {
-    if (!payload || typeof payload !== 'object') return false
-    const p = payload as { stemDir?: unknown; sourceFilePath?: unknown }
-    if (!isWithinStemsDir(p.stemDir)) {
-      logMain('WARN ', 'stems:writeSidecar', 'rejected stemDir not under stems base:', p.stemDir)
-      return false
-    }
-    if (!isAllowedAudioPath(p.sourceFilePath)) {
-      logMain('WARN ', 'stems:writeSidecar', 'rejected source not on allow-list:', p.sourceFilePath)
-      return false
-    }
-    try {
-      return await writeSidecarToDir(canonicalisePath(p.stemDir), p.sourceFilePath)
-    } catch (err) {
-      logMain('WARN ', 'stems:writeSidecar', `failed for ${String(p.sourceFilePath)}:`, err)
-      return false
-    }
-  })
-
-  // Read back a stem sidecar as AudioMetadata (cover bytes attached). Returns null
-  // when no sidecar is present so the caller can fall back to the file's own tags.
-  ipcMain.handle(IPC.stems.readSidecar, async (_evt, stemDir: unknown) => {
-    if (!isWithinStemsDir(stemDir)) {
-      logMain('WARN ', 'stems:readSidecar', 'rejected stemDir not under stems base:', stemDir)
-      return null
-    }
-    try {
-      return await readSidecarFromDir(canonicalisePath(stemDir))
-    } catch {
-      return null
-    }
-  })
-
-  // Music samples persist their inherited identity (tags + cover) as a sidecar
-  // beside the WAV, the same format stems use. The renderer passes only the sample
-  // WAV path + its source path; main resolves the identity from the source's
-  // on-disk representation (its own sidecar when the source is a tagless stem/
-  // sample, else the file's embedded tags) — the renderer cannot supply the cover
-  // bytes (the library store keeps only a Blob URL the renderer CSP can't fetch).
-  // The sidecar folder is the WAV's parent dir (the per-source subdir the backend
-  // wrote into), confined to a Samples write root.
-  ipcMain.handle(IPC.samples.writeSidecar, async (_evt, payload: unknown) => {
-    if (!payload || typeof payload !== 'object') return false
-    const p = payload as { sampleFilePath?: unknown; sourceFilePath?: unknown }
-    if (typeof p.sampleFilePath !== 'string' || typeof p.sourceFilePath !== 'string') return false
-    if (!isAllowedAudioPath(p.sourceFilePath)) {
-      logMain('WARN ', 'samples:writeSidecar', 'rejected source not on allow-list:', p.sourceFilePath)
-      return false
-    }
-    const dir = canonicalisePath(dirname(p.sampleFilePath))
-    if (!isWithinSamplesWriteRoot(dir)) {
-      logMain('WARN ', 'samples:writeSidecar', 'rejected sampleDir not under samples root:', dir)
-      return false
-    }
-    try {
-      const identity = await resolveSourceIdentity(p.sourceFilePath)
-      if (!identity) return false
-      return await writeSidecarData(dir, identity.metadata, identity.cover)
-    } catch (err) {
-      logMain('WARN ', 'samples:writeSidecar', `failed for ${String(p.sampleFilePath)}:`, err)
-      return false
-    }
-  })
-
-  // Read back a music sample's sidecar as AudioMetadata (cover bytes attached) on
-  // project reload. Returns null when absent so the caller falls back to basic
-  // file info.
-  ipcMain.handle(IPC.samples.readSidecar, async (_evt, sampleDir: unknown) => {
-    if (!isWithinSamplesWriteRoot(sampleDir)) {
-      logMain('WARN ', 'samples:readSidecar', 'rejected sampleDir not under samples root:', sampleDir)
-      return null
-    }
-    try {
-      return await readSidecarFromDir(canonicalisePath(sampleDir))
-    } catch {
       return null
     }
   })

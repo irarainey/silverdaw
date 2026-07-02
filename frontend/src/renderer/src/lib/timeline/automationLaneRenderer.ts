@@ -12,7 +12,6 @@ import {
 } from './constants'
 import type { AutomationParamId, AutomationPoint } from '@shared/bridge-protocol'
 import { valueToFraction, automationDescriptor } from '@/lib/automation/automationParams'
-import { sampleBreakpoints } from '@/lib/automation/breakpoints'
 
 export const LANE_PX = AUTOMATION_LANE_HEIGHT
 
@@ -76,9 +75,4 @@ export function drawAutomationLane(
   }
   layer.addChild(curve)
   void bottom
-}
-
-/** Value at `ms` for rendering elsewhere (clamped to ends). */
-export function laneValueAtMs(points: AutomationPoint[], ms: number): number {
-  return sampleBreakpoints(points, ms, 'linear')
 }

@@ -155,10 +155,6 @@ declare global {
       onRhythmPackDownloadProgress(
         handler: (progress: SharedStemModelDownloadProgress) => void
       ): () => void
-      writeStemSidecar(stemDir: string, sourceFilePath: string): Promise<boolean>
-      readStemSidecar(stemDir: string): Promise<AudioMetadata | null>
-      writeSampleSidecar(sampleFilePath: string, sourceFilePath: string): Promise<boolean>
-      readSampleSidecar(sampleDir: string): Promise<AudioMetadata | null>
       saveProjectMedia(mediaId: string, sourceFilePath: string): Promise<boolean>
       getProjectMedia(mediaId: string): Promise<AudioMetadata | null>
       cleanupProjectFiles(payload: { mediaIds: string[] }): Promise<boolean>

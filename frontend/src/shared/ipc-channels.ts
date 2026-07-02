@@ -113,13 +113,7 @@ export const IPC = {
     ensureRhythmPack: 'stems:ensureRhythmPack',
     locateRhythmPack: 'stems:locateRhythmPack',
     cancelRhythmPackDownload: 'stems:cancelRhythmPackDownload',
-    rhythmPackDownloadProgress: 'stems:rhythmPackDownloadProgress',
-    writeSidecar: 'stems:writeSidecar',
-    readSidecar: 'stems:readSidecar'
-  },
-  samples: {
-    writeSidecar: 'samples:writeSidecar',
-    readSidecar: 'samples:readSidecar'
+    rhythmPackDownloadProgress: 'stems:rhythmPackDownloadProgress'
   },
   media: {
     save: 'media:save',

@@ -66,10 +66,6 @@ interface RawBridgeEnvelope {
   payload?: unknown
 }
 
-export function assertNever(value: never): never {
-  throw new Error(`[bridge] unhandled inbound message: ${JSON.stringify(value)}`)
-}
-
 /**
  * Validate a raw parsed envelope against the inbound catalogue. Returns the
  * narrowed message on success, `null` on any structural mismatch (and logs
