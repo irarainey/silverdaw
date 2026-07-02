@@ -80,7 +80,14 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
 
   ipcMain.handle(IPC.stems.getGpuStatus, async (): Promise<StemGpuStatus> => {
     try {
-      const info = await app.getGPUInfo('complete')
+      // Deliberately 'basic', not 'complete'. The 'complete' query forces the GPU
+      // process to build a GL context and gather renderer strings, which crashes
+      // that process on some drivers in packaged (installed) builds — a native
+      // crash a JS try/catch cannot contain, taking the whole app down when the
+      // Stems tab opens. 'basic' returns the vendorId our detector needs to answer
+      // "is there a real GPU?" without touching the GL path. The trade-off is we
+      // lose the friendly adapter name (the UI falls back to "compatible adapter").
+      const info = await app.getGPUInfo('basic')
       return detectGpuFromInfo(info)
     } catch {
       return { available: false, name: null }

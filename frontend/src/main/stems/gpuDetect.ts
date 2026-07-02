@@ -1,10 +1,12 @@
 // Pure GPU-detection heuristics for the stem-separation "use GPU" preference.
 //
-// Electron's `app.getGPUInfo('complete')` is impure (touches the GPU process),
-// so the side-effecting call lives in the IPC handler while the classification
-// logic lives here, where it can be unit-tested against captured shapes. The
-// goal is only to answer "is there a real hardware GPU?" so the preference
-// checkbox can be enabled or disabled — not to enumerate every adapter.
+// Electron's `app.getGPUInfo` is impure (touches the GPU process), so the
+// side-effecting call lives in the IPC handler while the classification logic
+// lives here, where it can be unit-tested against captured shapes. The handler
+// uses the 'basic' query (the 'complete' query can crash the GPU process in
+// packaged builds), so the GL renderer/vendor strings may be absent — the goal
+// is only to answer "is there a real hardware GPU?" so the preference checkbox
+// can be enabled or disabled, which the device-list fallback below handles.
 
 import type { StemGpuStatus } from '../../shared/types'
 
