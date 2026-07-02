@@ -16,6 +16,19 @@ mixes and mashups easily by combining and reshaping existing audio. It is geared
 towards DJs and producers as a studio creation tool, not a live-performance
 instrument.
 
+## Installation
+
+Silverdaw runs on Windows 10 (1809+) or Windows 11 (64-bit). There are three
+ways to install it — see the **[installation guide](INSTALL.md)** for full
+steps and the pros and cons of each:
+
+- **Microsoft Store** *(coming soon — recommended)* — one-click install, no
+  setup, automatic updates.
+- **Portable download** — a zip you unzip and run; no installation or
+  certificate.
+- **Self-signed installer** — the signed package plus a PowerShell helper, for a
+  full local install before the Store release.
+
 ## Goals and focus
 
 Silverdaw is built around a single idea: **arranging audio should be simple.**
@@ -137,6 +150,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 
 ## Documentation
 
+- **[Installation guide](INSTALL.md)** — how to install Silverdaw (Microsoft
+  Store, portable zip, or self-signed installer) with the pros and cons of each.
 - **[Developer Guide](docs/developer-guide.md)** — architecture, internals,
   build and run instructions, and contributor workflows.
 
