@@ -1,6 +1,7 @@
 # electron-builder packaging configuration for Silverdaw.
 #
-# Produces a Windows MSIX/AppX package (`Silverdaw-<version>.appx`) plus an
+# Produces a Windows MSIX/AppX package (`Silverdaw-<version>.appx`), a portable
+# zip (`Silverdaw-<version>.zip` — extract and run, no install/cert), plus an
 # unpacked app directory under `<repo>/dist/win-unpacked/` for local smoke
 # tests. The JUCE backend exe + the icon set are shipped as `extraResources`
 # so they land in `<install>/resources/` next to the asar archive — see
@@ -99,6 +100,16 @@ fileAssociations:
 win:
   target:
     - target: appx
+      arch:
+        - x64
+    # Portable distribution: a plain zip of the unpacked app. Users extract it
+    # anywhere writable and run Silverdaw.exe directly — no certificate trust
+    # and no install step (worst case a one-time, click-through SmartScreen
+    # prompt from Mark-of-the-Web). Trade-off vs the MSIX: no Start-menu entry,
+    # no `.silverdaw` association, no Apps & features uninstall, no auto-update.
+    # The exes inside are already signtool-signed (the zip itself is not
+    # signable). Produces dist/Silverdaw-<version>.zip.
+    - target: zip
       arch:
         - x64
   icon: resources/icons/icon.ico

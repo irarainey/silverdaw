@@ -20,7 +20,8 @@
          compiled JS bundles, the backend exe, the icons, the LICENSE and the
          third-party notices. electron-builder signs the package via signtool
          using the cert selected by subject name in electron-builder.yml.
-         Output: dist/Silverdaw-<version>.appx
+         Output: dist/Silverdaw-<version>.appx, plus a portable
+         dist/Silverdaw-<version>.zip (extract and run, no install/cert).
 
       5. Export the PUBLIC certificate (dist/Silverdaw-PublicCert.cer) so end
          users can trust it before sideloading, and print install instructions.
@@ -305,4 +306,14 @@ if ($package) {
     Write-Host '  # (Or double-click the .appx to use the App Installer UI.)'
 } else {
     Write-Warning "No .appx package found under $repoRoot/dist."
+}
+
+# Portable zip (no cert / no install) ------------------------------------
+$portable = Get-ChildItem -Path (Join-Path $repoRoot 'dist') -Filter 'Silverdaw-*.zip' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($portable) {
+    Write-Host ''
+    Write-Host ("Portable: {0} ({1:N1} MB)" -f $portable.FullName, ($portable.Length / 1MB)) -ForegroundColor Green
+    Write-Host '  # No certificate or install needed: extract anywhere writable and run'
+    Write-Host '  # Silverdaw.exe. (First launch may show a click-through SmartScreen prompt.)'
 }
