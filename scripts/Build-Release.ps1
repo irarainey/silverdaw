@@ -16,12 +16,15 @@
          the current user's certificate store (created on first run). The
          private key stays in the store — it is NEVER exported to the repo.
 
-      4. Package a signed MSIX/AppX that bundles the Electron runtime, the
-         compiled JS bundles, the backend exe, the icons, the LICENSE and the
-         third-party notices. electron-builder signs the package via signtool
-         using the cert selected by subject name in electron-builder.yml.
-         Output: dist/Silverdaw-<version>.appx, plus a portable
-         dist/Silverdaw-<version>.zip (extract and run, no install/cert).
+      4. Package the app three ways from the same bundles:
+         - dist/Silverdaw-<version>.appx        signed self-signed sideload package
+         - dist/Silverdaw-<version>.zip         portable (extract and run, no install/cert)
+         - dist/Silverdaw-<version>-store.appx  UNSIGNED Microsoft Store package
+                                                (Store identity; Microsoft signs at
+                                                ingestion — upload to Partner Center).
+         The sideload package + the exes it wraps are signed via signtool using
+         the cert selected by subject name in electron-builder.yml; the Store
+         package overrides the identity and disables signing.
 
       5. Export the PUBLIC certificate (dist/Silverdaw-PublicCert.cer) so end
          users can trust it before sideloading, and print install instructions.
@@ -276,6 +279,18 @@ try {
 
     pnpm dist
     if ($LASTEXITCODE -ne 0) { throw "pnpm dist failed (exit $LASTEXITCODE)" }
+
+    # Second pass: the Microsoft Store package. Same bundles, but a different
+    # identity (Store-assigned Name + Publisher) and NO signing — Microsoft
+    # re-signs at ingestion, and the Store publisher CN is not a cert we hold.
+    # electron-builder produces an unsigned "Windows Store only build" when no
+    # cert resolves (signtoolOptions overridden to null). Distinct `-store`
+    # artifactName so it sits alongside the signed sideload .appx + .zip rather
+    # than overwriting them. Upload dist/Silverdaw-<version>-store.appx manually
+    # to Partner Center.
+    Write-Section 'Frontend: build Microsoft Store package (unsigned, Store identity)'
+    pnpm dist:store
+    if ($LASTEXITCODE -ne 0) { throw "pnpm dist:store failed (exit $LASTEXITCODE)" }
 }
 finally {
     Pop-Location
@@ -292,9 +307,10 @@ Write-Host "Public cert: $publicCertPath"
 # Report what we produced -------------------------------------------------
 Write-Section 'Done'
 $package = Get-ChildItem -Path (Join-Path $repoRoot 'dist') -Filter 'Silverdaw-*.appx' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notlike '*-store.appx' } |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($package) {
-    Write-Host ("Package: {0} ({1:N1} MB)" -f $package.FullName, ($package.Length / 1MB)) -ForegroundColor Green
+    Write-Host ("Sideload package (signed): {0} ({1:N1} MB)" -f $package.FullName, ($package.Length / 1MB)) -ForegroundColor Green
     Write-Host ''
     Write-Host 'To install on a clean machine (self-signed — trust the cert first):' -ForegroundColor Cyan
     Write-Host '  # 1. Trust the publisher (one-time, elevated PowerShell). A self-signed'
@@ -305,7 +321,7 @@ if ($package) {
     Write-Host ("  Add-AppxPackage -Path '{0}'" -f $package.FullName)
     Write-Host '  # (Or double-click the .appx to use the App Installer UI.)'
 } else {
-    Write-Warning "No .appx package found under $repoRoot/dist."
+    Write-Warning "No sideload .appx package found under $repoRoot/dist."
 }
 
 # Portable zip (no cert / no install) ------------------------------------
@@ -316,4 +332,29 @@ if ($portable) {
     Write-Host ("Portable: {0} ({1:N1} MB)" -f $portable.FullName, ($portable.Length / 1MB)) -ForegroundColor Green
     Write-Host '  # No certificate or install needed: extract anywhere writable and run'
     Write-Host '  # Silverdaw.exe. (First launch may show a click-through SmartScreen prompt.)'
+}
+
+# Microsoft Store package (unsigned — upload to Partner Center) -----------
+$store = Get-ChildItem -Path (Join-Path $repoRoot 'dist') -Filter 'Silverdaw-*-store.appx' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($store) {
+    Write-Host ''
+    Write-Host ("Store package (UNSIGNED): {0} ({1:N1} MB)" -f $store.FullName, ($store.Length / 1MB)) -ForegroundColor Green
+    # Read back the packaged identity so it can be cross-checked against the
+    # Partner Center reservation before uploading.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($store.FullName)
+    try {
+        $entry = $zip.Entries | Where-Object { $_.FullName -eq 'AppxManifest.xml' }
+        $reader = New-Object System.IO.StreamReader($entry.Open())
+        $manifest = $reader.ReadToEnd(); $reader.Close()
+    } finally { $zip.Dispose() }
+    if ($manifest -match 'Name="([^"]*)"\s+ProcessorArchitecture') { Write-Host ("  Identity/Name           : {0}" -f $Matches[1]) }
+    if ($manifest -match "Publisher='([^']*)'")                     { Write-Host ("  Identity/Publisher      : {0}" -f $Matches[1]) }
+    if ($manifest -match '<PublisherDisplayName>([^<]*)</PublisherDisplayName>') { Write-Host ("  PublisherDisplayName    : {0}" -f $Matches[1]) }
+    Write-Host '  # Verify the three values above match your Partner Center reservation,'
+    Write-Host '  # then upload this .appx at https://partner.microsoft.com (Microsoft signs'
+    Write-Host '  # it at ingestion). It is UNSIGNED and cannot be installed locally.'
+} else {
+    Write-Warning "No Store .appx package found under $repoRoot/dist."
 }

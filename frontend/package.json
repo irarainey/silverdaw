@@ -20,6 +20,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "dist": "electron-vite build && electron-builder --win --x64 --config electron-builder.yml",
+    "dist:store": "electron-vite build && electron-builder --win --x64 --config electron-builder.store.cjs",
     "dist:dir": "electron-vite build && electron-builder --win --x64 --dir --config electron-builder.yml"
   },
   "dependencies": {
