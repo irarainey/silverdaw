@@ -135,40 +135,10 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   **defaults to 16-bit** and also offers 24-bit and 32-bit float depending on
   the chosen format (WAV: 16 / 24 / 32-float; FLAC and AIFF: 16 / 24).
 
-## On the roadmap
-
-Silverdaw is under active development. The items below describe where the
-application is heading — they are **planned directions, not yet available**, and
-are not part of the current feature set. See the
-[Development Plan](docs/development-plan.md) for detail and status.
-
-- **Richer transitions and stereo width.** The core mixing toolkit already
-  ships — Tone EQ and bipolar Filter, equal-power Pan, a per-track Compressor,
-  project-wide Reverb and Delay sends, track effect automation, per-clip volume
-  shaping, and clip-to-clip crossfade transitions (drag one clip's edge over its
-  neighbour). Still to come: more transition styles such as bass swaps, filter
-  fades, and delay tails; a one-click move to duck the music under a vocal;
-  stereo width controls; and the occasional extra effect to round out the set.
-- **More editing power.** Extra clip actions, phrase-aware snapping, and
-  finer manual correction of the detected beat grid.
-- **MIDI devices and scratch authoring.** Support for external MIDI controllers
-  and DJ decks, including a studio tool for crafting reusable "scratch" clips to
-  drop into a mix (not a live-performance mode).
-- **Sequence tracks.** Step-sequencing of samples and external or virtual
-  instruments — such as a drum machine — alongside ordinary audio tracks.
-- **Plugin support.** Hosting third-party audio plugins on a track.
-- **Recording.** A deliberately simple way to record live input — vocals, an
-  instrument, or any audio device — straight onto a clip, without turning into a
-  full recording studio.
-- **Sharing and distribution.** Easier export to online platforms, a Windows
-  Store build, and an online user guide.
-
 ## Documentation
 
 - **[Developer Guide](docs/developer-guide.md)** — architecture, internals,
   build and run instructions, and contributor workflows.
-- **[Development Plan](docs/development-plan.md)** — the longer-term feature and
-  design roadmap.
 
 ## License
 

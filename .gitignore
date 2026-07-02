@@ -35,6 +35,17 @@ backend/build-release/
 .DS_Store
 Thumbs.db
 *.log
+
+# Code-signing key material must never be committed. The self-signed MSIX
+# signing cert lives in the local Windows certificate store (never exported
+# to disk in the repo); these patterns are belt-and-braces in case a key or
+# PFX is ever exported into the working tree by mistake. The PUBLIC .cer that
+# users trust is written into the already-ignored dist/ directory.
+*.pfx
+*.p12
+*.pvk
+*.snk
+*.key
 .cache/
 coverage/
 frontend/coverage/

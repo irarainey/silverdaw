@@ -36,21 +36,24 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [One-shot setup (recommended)](#one-shot-setup-recommended)
   - [Manual prerequisite install](#manual-prerequisite-install)
 - [Setup and run](#setup-and-run)
-- [Packaging a Windows installer](#packaging-a-windows-installer)
-  - [Installer artwork](#installer-artwork)
-  - [One-time prerequisite](#one-time-prerequisite)
+- [Packaging for Windows](#packaging-for-windows)
+  - [Installing the signed sideload package](#installing-the-signed-sideload-package)
+  - [Portable archive](#portable-archive)
+  - [Microsoft Store package](#microsoft-store-package)
+  - [Package artwork](#package-artwork)
+  - [One-time signing setup](#one-time-signing-setup)
 - [Quality gates](#quality-gates)
 - [License](#license)
 
 ## Architecture
 
-Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engine and an Electron 31 + Vue 3 UI, linked by a per-session-authenticated localhost WebSocket bridge.
+Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engine and an Electron 42 + Vue 3 UI, linked by a per-session-authenticated localhost WebSocket bridge.
 
 - **Backend** (`backend/`) — A headless C++17 / JUCE 8 binary (`SilverdawBackend`) that owns the
   audio device, mixer, timeline, project `ValueTree` and `UndoManager`. It exposes its state and
   commands over an [IXWebSocket](https://github.com/machinezone/IXWebSocket) server bound to
   `127.0.0.1` and gated by a per-session AUTH token.
-- **Frontend** (`frontend/`) — An Electron 31 + Vue 3 (Composition API, `<script setup>`) app
+- **Frontend** (`frontend/`) — An Electron 42 + Vue 3 (Composition API, `<script setup>`) app
   built with electron-vite. The renderer talks to the bridge directly; the main process owns the
   OS dialogs, native menu, persisted preferences and backend spawn.
 
@@ -109,7 +112,8 @@ frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
     preload/             contextBridge surface exposed as window.silverdaw
     renderer/src/        Vue 3 SPA (Composition API, Pinia, PixiJS, Tailwind v4); lib/ holds composables + audio/timeline helpers
     shared/              Bridge wire-protocol facade → bridge/inbound + bridge/outbound zod schemas (also TS-tested)
-  electron-builder.yml   Windows NSIS installer config
+  electron-builder.yml   Windows packaging config (signed MSIX/AppX + portable zip)
+  electron-builder.store.cjs  Store variant of the above (unsigned, Store identity)
 scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
 .github/instructions/    Copilot/AI agent guidance per file type
 ```
@@ -343,8 +347,10 @@ Silverdaw currently supports the core arrangement workflow:
   the user can also set a BPM by hand and slide the beat grid over the waveform in
   the Clip Editor to line it up. Warp and Pitch dialogs work regardless for
   explicit speed / pitch changes.
-- Package a Windows NSIS installer with the backend, icons, licences and `.silverdaw`
-  file association. The backend is statically linked against the MSVC runtime, so
+- Package the app for Windows three ways from one release script — a signed
+  MSIX/AppX sideload package, a portable zip, and an unsigned Microsoft Store
+  package — bundling the backend, icons, licences and the `.silverdaw` file
+  association. The backend is statically linked against the MSVC runtime, so
   a clean Windows install does not need a separate Visual C++ Redistributable.
 - Undo / redo (Ctrl+Z / Ctrl+Y) any project-mutating edit. Covers
   clip add / move / trim / recolour / rename / delete / relink / rebind, track
@@ -2084,6 +2090,11 @@ Silverdaw is Windows-only. Developed in Visual Studio Code.
 JUCE 8.0.12 and IXWebSocket are fetched automatically by CMake `FetchContent`; nothing to
 install by hand.
 
+Release packaging additionally signs the MSIX with the Windows SDK `signtool.exe`.
+It ships with the MSVC **C++ build tools** workload above, and
+`scripts/Build-Release.ps1` locates it automatically — see
+[Packaging for Windows](#packaging-for-windows).
+
 The PowerShell helpers under `scripts/` (`Invoke-DevShell.ps1`, `Invoke-ClangTidy.ps1`) and the
 matching Visual Studio Code tasks import the Visual Studio Developer Shell so `cl.exe` /
 `link.exe` are on `PATH`.
@@ -2165,77 +2176,129 @@ reconfigure the Debug cache out from under your dev session (Ninja is single-con
 one directory means whichever configure ran last silently wins, and `cmake --build … --config`
 flags are ignored).
 
-## Packaging a Windows installer
+## Packaging for Windows
 
-The `scripts/Build-Release.ps1` helper does the whole release pipeline end-to-end:
+`scripts/Build-Release.ps1` is the canonical release path. From the repository
+root it runs the whole pipeline end-to-end:
 
 1. Configures + builds the JUCE backend (`SilverdawBackend.exe`) in **Release**.
-2. Compiles the Electron main / preload / renderer bundles (`electron-vite build`).
-3. Packages an **NSIS installer** with `electron-builder`, bundling the
-   backend exe + icons + `LICENSE` + `THIRD_PARTY_LICENSES.md`. Publisher metadata is set to
-   `Ira Rainey` in `electron-builder.yml`.
-
-From the repository root:
+2. Runs a **bundling guard** that fails early if any runtime binary the backend
+   drops next to `SilverdawBackend.exe` is missing from the `extraResources`
+   allowlist in `electron-builder.yml`.
+3. Ensures a self-signed **`CN=Silverdaw`** code-signing certificate exists in
+   `Cert:\CurrentUser\My` (created on first run; the private key stays in the
+   store and is **never** exported to the repo) and locates the Windows SDK
+   `signtool.exe` (electron-builder's bundled signtool cannot sign AppX).
+4. Compiles the Electron bundles and packages **three artefacts** from them.
+5. Exports the **public** certificate so users can trust the sideload package.
 
 ```powershell
 pwsh -NoProfile -File scripts/Build-Release.ps1
 ```
 
-Outputs land in the repo-root `dist/` directory (gitignored except for a
+Everything lands in the repo-root `dist/` directory (gitignored except for a
 `.gitkeep` marker):
 
-- `dist/Silverdaw-Setup-1.0.0.exe` — the NSIS installer (~90 MB). Runs a
-  standard wizard with branded header + sidebar artwork, an AGPL licence page,
-  choose-directory step, and desktop + Start menu shortcuts. The installer
-  also registers `.silverdaw` as a file association so double-clicking a
-  project in Explorer launches Silverdaw and opens it (with a single-instance
-  lock — a running Silverdaw receives the path instead of a second window
-  starting up). The packaged backend is statically linked against the MSVC
-  runtime, so users do not need to install the Visual C++ Redistributable
-  separately.
-- `dist/win-unpacked/Silverdaw.exe` — the unpacked app for local smoke
-  testing without going through the installer.
+| Output | What it is |
+| ------ | ---------- |
+| `Silverdaw-<version>.appx` | **Signed sideload package** (`CN=Silverdaw`). Installs via the App Installer once the certificate is trusted (below); registers `.silverdaw` and integrates with Start / Apps & features. |
+| `Silverdaw-<version>.zip` | **Portable archive** — extract anywhere writable and run `Silverdaw.exe`. No certificate or install step (see limitations below). |
+| `Silverdaw-<version>-store.appx` | **Unsigned Microsoft Store package** carrying the Store-assigned identity. Upload manually to Partner Center; Microsoft signs it at ingestion. Not locally installable as-is. |
+| `Silverdaw-PublicCert.cer` | The public half of the signing certificate (no private key) — import it to trust the sideload package. |
+| `win-unpacked/Silverdaw.exe` | The unpacked app, a build byproduct handy for a quick smoke test. |
 
-The installer is **not** code-signed, so Windows SmartScreen will show an "Unknown publisher"
-warning on first run even though the Publisher field is populated. Code-signing is a separate
-follow-up that requires an Authenticode certificate.
+The packaged backend is statically linked against the MSVC runtime, so a clean
+Windows machine needs no separate Visual C++ Redistributable.
 
-### Installer artwork
+### Installing the signed sideload package
 
-`scripts/Build-InstallerArt.py` regenerates the NSIS banner BMPs
-(`installerHeader.bmp`, `installerSidebar.bmp`, `uninstallerSidebar.bmp` —
-the Silverdaw logo on black) and the `.silverdaw` document icon
-(`resources/icons/silverdaw-file.ico` — white page + folded corner + logo)
-from `frontend/resources/icons/256x256.png`. Re-run it whenever the source
-logo changes; the outputs are checked into git so the normal release build
-doesn't need Python on the PATH.
+A self-signed package will not install until its certificate is trusted — this
+is by design (unlike an `.exe`, there is no click-through SmartScreen override
+for MSIX). In an elevated PowerShell:
+
+```powershell
+# Trust the publisher (one-time). Add-AppxPackage accepts the narrower
+# TrustedPeople store; the App Installer GUI (double-click) needs Trusted Root.
+Import-Certificate -FilePath dist\Silverdaw-PublicCert.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
+Add-AppxPackage -Path dist\Silverdaw-<version>.appx
+```
+
+To use the App Installer GUI (double-click the `.appx`) instead, import the
+`.cer` into `Cert:\LocalMachine\Root`. `scripts/Build-Release.ps1` prints the
+exact commands at the end of a build. The imported `.cer` is the public key
+only — it lets a machine trust packages signed by `CN=Silverdaw`; it cannot be
+used to sign anything.
+
+### Portable archive
+
+The zip needs no certificate and no install: unzip it and run `Silverdaw.exe`.
+A copy downloaded from the internet may show a one-time SmartScreen prompt
+(Mark-of-the-Web) that you can click through. Because it has no package
+identity it also has **no** Start-menu entry, no Apps & features uninstall,
+and no `.silverdaw` file association — those come only from the MSIX. An MSIX
+install runs with package identity (some paths/permissions differ from the
+plain exe), so test file-I/O behaviour in whichever form you ship.
+
+### Microsoft Store package
+
+`Silverdaw-<version>-store.appx` is built by `pnpm dist:store` (via
+`electron-builder.store.cjs`, which reuses `electron-builder.yml` and overrides
+only the Partner Center identity and disables signing). It is **unsigned** on
+purpose — Microsoft re-signs it at ingestion, and the Store publisher is not a
+certificate we hold — so it cannot be installed locally. Upload it to Partner
+Center by hand; verify its identity first (`Build-Release.ps1` prints the
+packaged `Identity/Name`, `Publisher`, and `PublisherDisplayName`).
+
+### Package artwork
+
+`scripts/Build-InstallerArt.py` regenerates the packaging art from the source
+logo `frontend/resources/icons/256x256.png` into `frontend/resources/appx/`
+(and the `.silverdaw` document icon into `frontend/resources/icons/`):
+
+- the MSIX tile logos (`StoreLogo`, `Square44x44Logo`, `Square150x150Logo`,
+  `Wide310x150Logo`) with their DPI `scale-*` variants,
+- the unplated `Square44x44Logo.targetsize-*` set (plain +
+  `altform-unplated` / `altform-lightunplated`) that Windows themes for the
+  taskbar / Start,
+- the `StoreLogo` on an opaque `#F3F3F3` plate that matches the light App
+  Installer dialog, and
+- the `.silverdaw` document icon as both `silverdaw-file.ico` and
+  `silverdaw-file[.targetsize-*].png` (referenced by the file-type `<uap:Logo>`
+  in `frontend/resources/appx-extensions.xml`).
+
+Re-run it whenever the source logo changes; the outputs are committed so a
+normal release build doesn't need Python on the PATH.
 
 ```powershell
 pip install Pillow
 python scripts/Build-InstallerArt.py
 ```
 
-### One-time prerequisite
+### One-time signing setup
 
 `electron-builder` extracts a `winCodeSign` archive on first use that contains
 macOS symlinks; Windows refuses to create symlinks unless the process has the
-right privilege. Enable **Developer Mode** once (Settings → System → For
-developers → Developer Mode = On) and re-run the build. The extracted cache is
-reused for every subsequent build, so this is a one-off setup.
+privilege. Enable **Developer Mode** once (Settings → System → For developers →
+Developer Mode = On) and re-run the build. Signing the MSIX also needs the
+Windows SDK `signtool.exe`; it ships with the MSVC C++ workload from
+[Prerequisites](#prerequisites) and `Build-Release.ps1` locates it
+automatically (failing with a clear message if it is absent).
 
-You can also iterate on packaging without rebuilding the backend or running a
-fresh `pnpm install` by passing the relevant skip flags:
+You can iterate on packaging without rebuilding the backend or reinstalling
+frontend dependencies with the skip flags:
 
 ```powershell
 pwsh -NoProfile -File scripts/Build-Release.ps1 -SkipBackend -SkipFrontendInstall
 ```
 
-Or run just the packaging step directly:
+The lower-level frontend packaging commands assume the backend, bundles, cert,
+and `SIGNTOOL_PATH` are already in place, so prefer `Build-Release.ps1`:
 
 ```powershell
 cd frontend
-pnpm dist        # full installer
-pnpm dist:dir    # win-unpacked only, no NSIS step
+pnpm dist        # signed sideload .appx + portable .zip
+pnpm dist:store  # unsigned Microsoft Store .appx
+pnpm dist:dir    # win-unpacked only, no packaging
 ```
 
 ## Quality gates

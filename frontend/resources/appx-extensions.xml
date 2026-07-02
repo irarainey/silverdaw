@@ -1,0 +1,17 @@
+<!--
+  Injected into the AppxManifest <Extensions> via appx.customExtensionsPath.
+  Contains only <uap:Extension> children (no <Extensions> wrapper). Rationale
+  and asset generation are documented in electron-builder.yml and
+  scripts/Build-InstallerArt.py. Child order is schema-significant:
+  DisplayName, Logo, InfoTip, SupportedFileTypes.
+-->
+<uap:Extension Category="windows.fileTypeAssociation">
+  <uap:FileTypeAssociation Name="silverdaw">
+    <uap:DisplayName>Silverdaw Project</uap:DisplayName>
+    <uap:Logo>assets\silverdaw-file.png</uap:Logo>
+    <uap:InfoTip>A Silverdaw project file</uap:InfoTip>
+    <uap:SupportedFileTypes>
+      <uap:FileType>.silverdaw</uap:FileType>
+    </uap:SupportedFileTypes>
+  </uap:FileTypeAssociation>
+</uap:Extension>

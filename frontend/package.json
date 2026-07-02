@@ -20,6 +20,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "dist": "electron-vite build && electron-builder --win --x64 --config electron-builder.yml",
+    "dist:store": "electron-vite build && electron-builder --win --x64 --config electron-builder.store.cjs",
     "dist:dir": "electron-vite build && electron-builder --win --x64 --dir --config electron-builder.yml"
   },
   "dependencies": {
@@ -37,7 +38,7 @@
     "@typescript-eslint/parser": "^8.0.0",
     "@vitejs/plugin-vue": "^5.1.0",
     "@vitest/coverage-v8": "^2.1.9",
-    "electron": "^31.0.0",
+    "electron": "^42.5.2",
     "electron-builder": "^26.8.1",
     "electron-vite": "^2.3.0",
     "eslint": "^9.0.0",

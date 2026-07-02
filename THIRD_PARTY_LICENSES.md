@@ -108,7 +108,7 @@ satisfy the attribution requirements of those licences.
 
 - **Licence**: MIT or Apache-2.0 (per package).
 - The full set of npm dependency licences is enumerated by
-  `pnpm licenses list` and is included in production installer builds.
+  `pnpm licenses list` and is included in production release packages.
 
 ### music-metadata
 
@@ -118,7 +118,7 @@ satisfy the attribution requirements of those licences.
 ## Downloaded models & runtimes (fetched on first use, not bundled)
 
 These are downloaded on demand into the user's app-data folder and integrity-
-checked against pinned SHA-256 hashes; they are not shipped in the installer.
+checked against pinned SHA-256 hashes; they are not shipped in the release package.
 
 ### ONNX Runtime (+ DirectML) — © Microsoft
 
@@ -180,4 +180,4 @@ identify derived works without permission.
 ## Updating this file
 
 When adding or upgrading a runtime dependency, append its licence + attribution
-here so the bundled installer remains compliant.
+here so the bundled release package remains compliant.

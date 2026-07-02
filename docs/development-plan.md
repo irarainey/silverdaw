@@ -2170,7 +2170,7 @@ playable at every point — no broken-build day):
   side routes through `silverdaw::log::warn` / `info` / `error`
   rather than raw `std::cerr` / `std::cout` (except for the
   log-init failure path and the JUCE entry banner).
-- [x] Windows NSIS installer packaging for the Electron app + `SilverdawBackend.exe` + icons + licences + `.silverdaw` file association. The backend statically links the MSVC runtime, so the installer does not need to bootstrap the Visual C++ Redistributable. ONNX Runtime + DirectML DLLs are bundled; the stem-separation model weights (htdemucs backup + RoFormer quality packs) are kept out of the installer and downloaded on demand / located from an existing copy. ffmpeg bundling remains tied to its future feature work.
+- [x] Windows release packaging for the Electron app + `SilverdawBackend.exe` + icons + licences + `.silverdaw` file association — a signed MSIX/AppX sideload package, a portable zip, and an unsigned Microsoft Store package, all produced by `scripts/Build-Release.ps1`. The backend statically links the MSVC runtime, so the package does not need to bootstrap the Visual C++ Redistributable. ONNX Runtime + DirectML DLLs are bundled; the stem-separation model weights (htdemucs backup + RoFormer quality packs) are kept out of the package and downloaded on demand / located from an existing copy. ffmpeg bundling remains tied to its future feature work.
 
 ### Phase 8 — Post-Core Hardening & Compatibility Enhancements
 
@@ -2566,8 +2566,10 @@ sequencing into the phase plan is still to be decided.
 These are expected to land around MVP stage, not before — low priority relative
 to the application itself.
 
-- [ ] **Windows Store distribution** (issue #30) — package and submit the app to
-  the Microsoft Store for one-click install, alongside the existing installer.
+- [ ] **Windows Store distribution** (issue #30) — submit the app to the
+  Microsoft Store for one-click install, alongside the signed sideload package
+  and portable zip. (Store-identity packaging already builds via
+  `pnpm dist:store`; submission to Partner Center is still pending.)
 - [ ] **Product website** (issue #39) — a public marketing/landing site for the
   application.
 - [ ] **Documentation site** (issue #40) — a **GitHub Pages** site driven by the
