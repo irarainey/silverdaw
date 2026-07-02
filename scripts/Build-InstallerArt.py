@@ -187,8 +187,21 @@ def main() -> None:
         append_images=layers[:-1],
     )
 
+    # MSIX file-type logo: the same document icon as PNGs in resources/appx/ so
+    # electron-builder copies them into the package's assets/ folder. The
+    # AppxManifest fileTypeAssociation `<uap:Logo>assets\silverdaw-file.png` (see
+    # resources/appx-extensions.xml, injected via appx.customExtensionsPath)
+    # references the base name; MRT resolves the targetsize variants per view.
+    file_logo_written: list[Path] = []
+    _make_file_icon(logo, 256).save(APPX_DIR / "silverdaw-file.png", "PNG")
+    file_logo_written.append(APPX_DIR / "silverdaw-file.png")
+    for ts in (16, 24, 32, 48, 256):
+        out = APPX_DIR / f"silverdaw-file.targetsize-{ts}.png"
+        _make_file_icon(logo, ts).save(out, "PNG")
+        file_logo_written.append(out)
+
     print("wrote:")
-    for p in [*appx_assets, ICON_DIR / "silverdaw-file.ico"]:
+    for p in [*appx_assets, *file_logo_written, ICON_DIR / "silverdaw-file.ico"]:
         print(f"  {p.relative_to(REPO_ROOT)}")
 
 
