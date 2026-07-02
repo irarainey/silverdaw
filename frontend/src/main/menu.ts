@@ -102,7 +102,7 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
 
     // Help
     case 'help.docs':
-      void shell.openExternal('https://github.com/irarainey/silverdaw')
+      void shell.openExternal('https://docs.silverdaw.com')
       break
     case 'help.reportIssue':
       void shell.openExternal('https://github.com/irarainey/silverdaw/issues/new')
