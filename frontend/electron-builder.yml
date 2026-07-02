@@ -136,12 +136,11 @@ appx:
   publisherDisplayName: Silverdaw
   displayName: Silverdaw
   applicationId: Silverdaw
-  # Tile background. The tile logos in resources/appx/ bake in a matching
-  # opaque white plate (see scripts/Build-InstallerArt.py) so the icon looks
-  # the same on the App Installer surface, Start tiles and the taskbar — the
-  # App Installer composites transparent logos over the system accent colour
-  # (blue by default), which is not what we want.
-  backgroundColor: "#ffffff"
+  # Opaque plate matching the Windows 11 light App Installer dialog surface
+  # (#F3F3F3). A transparent background lets the shell paint the system accent
+  # behind the logo; an opaque plate in the dialog's own colour blends in.
+  # Keep in sync with APPX_TILE_BG in scripts/Build-InstallerArt.py.
+  backgroundColor: "#f3f3f3"
   languages:
     - en-US
   # Desktop Windows 10 and 11. TargetDeviceFamily is `Windows.Desktop`
