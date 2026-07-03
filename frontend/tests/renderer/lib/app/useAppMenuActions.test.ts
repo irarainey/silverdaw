@@ -261,6 +261,21 @@ describe('useAppMenuActions — handleMenuAction', () => {
     expect(h.stores.project.splitClipAt).toHaveBeenCalledWith('c1', 500)
   })
 
+  it('edit.splitAtPlayhead delegates a saved ("clip"-kind) clip to splitClipAt (which surfaces the toast) rather than silently skipping it', () => {
+    // Regression: the handler used to pre-filter clips whose library item was a
+    // saved clip, so Split silently did nothing on a track built from saved clips.
+    // It must now still hand the clip to splitClipAt, which owns the rejection.
+    const h = makeDeps()
+    h.stores.transport.positionMs = 500
+    h.stores.project.selectedTrackId = 't1'
+    h.stores.project.tracks = [{ id: 't1', clipIds: ['c1'] }]
+    h.stores.project.clips = { c1: { id: 'c1', startMs: 0, durationMs: 1000, libraryItemId: 'lib1' } }
+    h.stores.library.byId = { lib1: { id: 'lib1', kind: 'clip' } }
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('edit.splitAtPlayhead')
+    expect(h.stores.project.splitClipAt).toHaveBeenCalledWith('c1', 500)
+  })
+
   it('cropProjectToLastClip with no clips notifies instead of cropping', () => {
     const h = makeDeps()
     const { handleMenuAction } = useAppMenuActions(h.deps)
