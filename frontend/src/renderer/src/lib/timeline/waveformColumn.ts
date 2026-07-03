@@ -54,6 +54,38 @@ export function waveformColumnExcursion(
 }
 
 /**
+ * Linearly interpolate the min/max peak envelope at a fractional bucket index.
+ *
+ * Used when a waveform is zoomed in past its peak resolution (fewer than one
+ * peak per pixel): drawing each pixel column from the nearest single peak would
+ * repeat that peak across many columns, giving a blocky "stair-step" look. Reading
+ * a smoothly interpolated value at each column's fractional position instead makes
+ * the drawn envelope follow a clean line between peaks.
+ *
+ * `peaks` is the interleaved `[min, max, min, max, …]` array and `pairs` its
+ * bucket count. `fidx` is the fractional bucket index; it is clamped into range.
+ */
+export function sampleInterpolatedPeak(
+  peaks: Float32Array,
+  pairs: number,
+  fidx: number
+): { min: number; max: number } {
+  if (pairs <= 0) return { min: 0, max: 0 }
+  const clamped = fidx < 0 ? 0 : fidx > pairs - 1 ? pairs - 1 : fidx
+  const i0 = Math.floor(clamped)
+  const i1 = i0 + 1 <= pairs - 1 ? i0 + 1 : pairs - 1
+  const frac = clamped - i0
+  const lo0 = peaks[i0 * 2] || 0
+  const hi0 = peaks[i0 * 2 + 1] || 0
+  const lo1 = peaks[i1 * 2] || 0
+  const hi1 = peaks[i1 * 2 + 1] || 0
+  return {
+    min: lo0 + (lo1 - lo0) * frac,
+    max: hi0 + (hi1 - hi0) * frac
+  }
+}
+
+/**
  * Half-open pixel-column range `[from, to)` of a clip lane that intersects the
  * horizontal draw band, expressed in the lane's own `0..w` column space.
  *

@@ -19,6 +19,7 @@ import {
 } from '@/lib/timeline/constants'
 import {
   createWaveformRunMerger,
+  sampleInterpolatedPeak,
   waveformColumnDown,
   waveformColumnUp
 } from '@/lib/timeline/waveformColumn'
@@ -199,6 +200,12 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
     const to = Math.min(Math.ceil(g.worldW), Math.ceil(g.scrollPx + g.W + overscan))
     const msPerWorldPx = 1 / g.worldPxPerMs
     const useRate = lanePps > 0
+    // Peaks covered by one screen pixel. Below one, the view is zoomed in past
+    // the peak resolution, so aggregating a single peak per column would repeat
+    // it across pixels (a blocky stair-step). Interpolating the envelope between
+    // peaks instead keeps a short / zoomed-in clip's waveform smooth.
+    const peaksPerPx = useRate ? (lanePps * msPerWorldPx) / 1000 : Number.POSITIVE_INFINITY
+    const interpolate = useRate && peaksPerPx > 0 && peaksPerPx < 1
     const merger = createWaveformRunMerger((sx, ex, yt, yb) => meshBuilder.pushQuad(sx, yt, ex, yb))
 
     for (let px = from; px < to; px++) {
@@ -209,28 +216,40 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
       const loMs = Math.min(edgeA, edgeB)
       const hiMs = Math.max(edgeA, edgeB)
 
-      let startIdx: number
-      let endIdx: number
-      if (useRate) {
-        startIdx = Math.max(0, Math.floor((loMs / 1000) * lanePps))
-        endIdx = Math.min(pairs, Math.max(startIdx + 1, Math.ceil((hiMs / 1000) * lanePps)))
-      } else {
-        const midIdx = Math.floor(((loMs + hiMs) / 2 / sourceTotal) * pairs)
-        startIdx = Math.max(0, midIdx)
-        endIdx = Math.min(pairs, startIdx + 1)
-      }
-      if (startIdx >= pairs) {
-        merger.breakRun(px)
-        continue
-      }
-
       let min = 0
       let max = 0
-      for (let i = startIdx; i < endIdx; i++) {
-        const lo = lanePeaks[i * 2] || 0
-        const hi = lanePeaks[i * 2 + 1] || 0
-        if (lo < min) min = lo
-        if (hi > max) max = hi
+      if (interpolate) {
+        // Sample the envelope at the column centre and interpolate between peaks.
+        const centreMs = (loMs + hiMs) / 2
+        const fidx = (centreMs / 1000) * lanePps
+        if (fidx < -1 || fidx > pairs) {
+          merger.breakRun(px)
+          continue
+        }
+        const sampled = sampleInterpolatedPeak(lanePeaks, pairs, fidx)
+        min = sampled.min
+        max = sampled.max
+      } else {
+        let startIdx: number
+        let endIdx: number
+        if (useRate) {
+          startIdx = Math.max(0, Math.floor((loMs / 1000) * lanePps))
+          endIdx = Math.min(pairs, Math.max(startIdx + 1, Math.ceil((hiMs / 1000) * lanePps)))
+        } else {
+          const midIdx = Math.floor(((loMs + hiMs) / 2 / sourceTotal) * pairs)
+          startIdx = Math.max(0, midIdx)
+          endIdx = Math.min(pairs, startIdx + 1)
+        }
+        if (startIdx >= pairs) {
+          merger.breakRun(px)
+          continue
+        }
+        for (let i = startIdx; i < endIdx; i++) {
+          const lo = lanePeaks[i * 2] || 0
+          const hi = lanePeaks[i * 2 + 1] || 0
+          if (lo < min) min = lo
+          if (hi > max) max = hi
+        }
       }
       const yTop = laneMidY - waveformColumnUp(max, laneHalf, 1)
       const rawBot = laneMidY + waveformColumnDown(min, laneHalf, 1)

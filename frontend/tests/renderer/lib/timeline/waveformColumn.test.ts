@@ -4,7 +4,8 @@ import {
   waveformColumnUp,
   waveformColumnDown,
   visibleColumnRange,
-  createWaveformRunMerger
+  createWaveformRunMerger,
+  sampleInterpolatedPeak
 } from '@/lib/timeline/waveformColumn'
 
 describe('waveformColumnExcursion', () => {
@@ -150,5 +151,41 @@ describe('createWaveformRunMerger', () => {
       [0, 2, 10, 20],
       [2, 3, 12, 18]
     ])
+  })
+})
+
+describe('sampleInterpolatedPeak', () => {
+  // Two buckets: [min,max] = [-0.2, 0.4] then [-0.6, 0.8]. Values are compared
+  // with toBeCloseTo because a Float32Array quantises them.
+  const peaks = new Float32Array([-0.2, 0.4, -0.6, 0.8])
+  const expectClose = (
+    actual: { min: number; max: number },
+    min: number,
+    max: number
+  ): void => {
+    expect(actual.min).toBeCloseTo(min, 5)
+    expect(actual.max).toBeCloseTo(max, 5)
+  }
+
+  it('returns the exact peak at an integer bucket index', () => {
+    expectClose(sampleInterpolatedPeak(peaks, 2, 0), -0.2, 0.4)
+    expectClose(sampleInterpolatedPeak(peaks, 2, 1), -0.6, 0.8)
+  })
+
+  it('linearly interpolates the min and max between adjacent buckets', () => {
+    expectClose(sampleInterpolatedPeak(peaks, 2, 0.5), -0.4, 0.6)
+    expectClose(sampleInterpolatedPeak(peaks, 2, 0.25), -0.3, 0.5)
+  })
+
+  it('clamps a fractional index below zero to the first bucket', () => {
+    expectClose(sampleInterpolatedPeak(peaks, 2, -3), -0.2, 0.4)
+  })
+
+  it('clamps a fractional index past the end to the last bucket', () => {
+    expectClose(sampleInterpolatedPeak(peaks, 2, 5), -0.6, 0.8)
+  })
+
+  it('returns a flat zero column when there are no peaks', () => {
+    expect(sampleInterpolatedPeak(new Float32Array(), 0, 0)).toEqual({ min: 0, max: 0 })
   })
 })
