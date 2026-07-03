@@ -348,6 +348,11 @@ class AudioEngine
 
     void rebuildDevicesSnapshot(bool rescan);
 
+    // Opens the default OUTPUT endpoint only (no capture). The engine never records, and
+    // opening the default input endpoint can stall for tens of seconds on a bad default
+    // mic (e.g. a Bluetooth HFP headset) — the cold-start hang. Returns any JUCE error.
+    juce::String openDefaultOutputOnly();
+
     void onDeviceListChanged();
 
     AudioDevicesSnapshot devicesSnapshot;

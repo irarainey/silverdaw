@@ -39,6 +39,7 @@ import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
 import { onBackendStatus as onEngineBackendStatus } from '@/lib/engineRecovery'
+import type { BackendStatus } from '@shared/ipc-channels'
 import { useAppKeyboardShortcuts } from '@/lib/app/useAppKeyboardShortcuts'
 import { useAppMenuActions } from '@/lib/app/useAppMenuActions'
 import { useMissingFileRelink } from '@/lib/app/useMissingFileRelink'
@@ -99,8 +100,8 @@ onMounted(() => {
   unsubscribeOpenFromPath = window.silverdaw.onOpenProjectFromPath((filePath) => {
     void openProjectByPath(filePath)
   })
-  // Backend supervisor status drives the engine-recovery overlay.
-  unsubscribeBackendStatus = window.silverdaw.onBackendStatus(onEngineBackendStatus)
+  // Backend supervisor status drives startup fast-fail + the engine-recovery overlay.
+  unsubscribeBackendStatus = window.silverdaw.onBackendStatus(handleBackendStatus)
   unregisterShortcuts = registerMenuShortcuts({ devToolsEnabled: appStore.devToolsEnabled })
   window.addEventListener('keydown', onGlobalShortcutKey, { capture: true })
   connectBridge()
@@ -145,22 +146,55 @@ const { onGlobalShortcutKey } = useAppKeyboardShortcuts({
 })
 
 // ─── Initial bridge-connection timeout ────────────────────────────────
-// Surface startup failures instead of leaving StartupScreen waiting forever.
-const BRIDGE_CONNECTION_TIMEOUT_MS = 30_000
+// A last-resort ceiling so StartupScreen never waits forever. Real failures are
+// driven by the backend supervisor's process status (see handleBackendStatus),
+// so this is deliberately generous: a slow first-run audio-device open must not
+// be mistaken for a dead engine.
+const BRIDGE_CONNECTION_TIMEOUT_MS = 60_000
 let bridgeTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Terminal cold-start failure; only meaningful while the initial connect is pending. */
+function failStartupBridge(reason: string): void {
+  if (transport.bridgeReady) return
+  if (bridgeTimer) {
+    clearTimeout(bridgeTimer)
+    bridgeTimer = null
+  }
+  log.warn('app', `startup bridge failed: ${reason}`)
+  // Keep copy user-facing; distinguish socket failure from handshake failure.
+  const message = transport.connected
+    ? 'Silverdaw connected to the audio engine but did not receive a response. Please relaunch Silverdaw.'
+    : 'Silverdaw could not connect to the audio engine. Please relaunch Silverdaw.'
+  transport.setBridgeFailure(message)
+}
 
 function startBridgeConnectionTimer(): void {
   if (bridgeTimer) clearTimeout(bridgeTimer)
   bridgeTimer = setTimeout(() => {
     bridgeTimer = null
-    if (transport.bridgeReady) return
-    log.warn('app', `bridge connection timed out after ${BRIDGE_CONNECTION_TIMEOUT_MS}ms`)
-    // Keep copy user-facing; distinguish socket failure from handshake failure.
-    const message = transport.connected
-      ? 'Silverdaw connected to the audio engine but did not receive a response. Please relaunch Silverdaw.'
-      : 'Silverdaw could not connect to the audio engine. Please relaunch Silverdaw.'
-    transport.setBridgeFailure(message)
+    failStartupBridge(`timed out after ${BRIDGE_CONNECTION_TIMEOUT_MS}ms`)
   }, BRIDGE_CONNECTION_TIMEOUT_MS)
+}
+
+/**
+ * Bridge the supervisor's OS-process status into both startup and mid-session
+ * recovery. During cold start (before the first PROJECT_STATE) a terminal `failed`
+ * means the backend crash-looped and gave up — surface it immediately rather than
+ * waiting out the ceiling; a `restarting` means it is still coming up, so extend the
+ * ceiling instead of tripping it. Mid-session, defer entirely to engine recovery.
+ */
+function handleBackendStatus(status: BackendStatus): void {
+  if (!transport.bridgeReady) {
+    if (status === 'failed') {
+      failStartupBridge('audio engine stopped responding during startup')
+      return
+    }
+    if (status === 'restarting') {
+      // Backend is respawning (still alive); give the slow cold start more runway.
+      startBridgeConnectionTimer()
+    }
+  }
+  onEngineBackendStatus(status)
 }
 
 // Only the initial connect can trip this terminal startup timeout.

@@ -23,6 +23,8 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
                                      const juce::String& preferredDeviceName,
                                      bool* outFellBackToDefault)
 {
+    const double tInitStart = juce::Time::getMillisecondCounterHiRes();
+
     // Windows Media Foundation support comes from JUCE built-in format registration.
     formatManager.registerBasicFormats();
 
@@ -30,7 +32,13 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
     // start.
     readAheadThread.startThread();
 
-    const auto err = deviceManager.initialiseWithDefaultDevices(0, 2);
+    const double tOpenStart = juce::Time::getMillisecondCounterHiRes();
+    const auto err = openDefaultOutputOnly();
+    silverdaw::log::info("audio",
+                         juce::String("default output open took ")
+                             + juce::String(juce::Time::getMillisecondCounterHiRes() - tOpenStart, 1)
+                             + " ms"
+                             + (err.isNotEmpty() ? (juce::String(" (error: ") + err + ")") : juce::String{}));
     if (err.isNotEmpty())
     {
         return err;
@@ -63,7 +71,30 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
     rebuildDevicesSnapshot(/*rescan*/ false);
     devicesSnapshot.fellBackToDefault = didFallBack;
 
+    silverdaw::log::info("audio",
+                         juce::String("audio engine initialise total ")
+                             + juce::String(juce::Time::getMillisecondCounterHiRes() - tInitStart, 1)
+                             + " ms; device='" + devicesSnapshot.currentDeviceName
+                             + "' sr=" + juce::String(devicesSnapshot.currentSampleRate, 0));
     return {};
+}
+
+juce::String AudioEngine::openDefaultOutputOnly()
+{
+    // Request the default output with NO input endpoint: an empty input device plus
+    // useDefaultInputChannels=false stops JUCE opening the default capture client,
+    // which is the tens-of-seconds stall on a problematic default mic.
+    juce::AudioDeviceManager::AudioDeviceSetup outputOnly;
+    outputOnly.inputDeviceName = {};
+    outputOnly.inputChannels.clear();
+    outputOnly.useDefaultInputChannels = false;
+    outputOnly.useDefaultOutputChannels = true;
+    return deviceManager.initialise(/*numInputChannelsNeeded*/ 0,
+                                    /*numOutputChannelsNeeded*/ 2,
+                                    /*savedState*/ nullptr,
+                                    /*selectDefaultDeviceOnFailure*/ true,
+                                    /*preferredDefaultDeviceName*/ {},
+                                    /*preferredSetupOptions*/ &outputOnly);
 }
 
 void AudioEngine::shutdown()
@@ -92,7 +123,7 @@ juce::String AudioEngine::selectOutputDevice(const juce::String& typeName, const
 {
     if (typeName.isEmpty() && deviceName.isEmpty())
     {
-        const auto err = deviceManager.initialiseWithDefaultDevices(0, 2);
+        const auto err = openDefaultOutputOnly();
         rebuildDevicesSnapshot(/*rescan*/ false);
         devicesSnapshot.fellBackToDefault = false;
         return err;
@@ -132,8 +163,10 @@ juce::String AudioEngine::selectOutputDevice(const juce::String& typeName, const
 
         auto setup = deviceManager.getAudioDeviceSetup();
         setup.outputDeviceName = wantDevice;
+        // Output-only: never open a capture endpoint (see openDefaultOutputOnly()).
         setup.inputDeviceName = {};
-        setup.useDefaultInputChannels = true;
+        setup.inputChannels.clear();
+        setup.useDefaultInputChannels = false;
         setup.useDefaultOutputChannels = true;
         return deviceManager.setAudioDeviceSetup(setup, /*treatAsChosenDevice*/ true);
     };
@@ -254,7 +287,7 @@ void AudioEngine::onDeviceListChanged()
     if (deviceManager.getCurrentAudioDevice() == nullptr)
     {
         silverdaw::log::warn("audio", "current output device disappeared; falling back to default");
-        deviceManager.initialiseWithDefaultDevices(0, 2);
+        openDefaultOutputOnly();
         rebuildDevicesSnapshot(/*rescan*/ false);
     }
 
