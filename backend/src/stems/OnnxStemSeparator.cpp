@@ -7,7 +7,6 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -23,6 +22,7 @@
 #endif
 
 #include "Log.h"
+#include "InferenceThreads.h"
 #include "StemShifts.h"
 #include "BsRoformerRhythm.h"
 #include "MelRoformerVocals.h"
@@ -826,10 +826,10 @@ class OnnxStemSeparator : public StemSeparator
 
         sessionCache.clear();
         sessionOptions = Ort::SessionOptions{};
-        // No realtime audio plays during an offline separation, so dedicate every
-        // logical core to inference (never fewer than one).
-        const unsigned int cores = std::thread::hardware_concurrency();
-        sessionOptions.SetIntraOpNumThreads(static_cast<int>(std::max(1u, cores)));
+        // Reserve one logical core for the UI/message thread so the progress bar
+        // keeps repainting during a CPU-only separation (which would otherwise
+        // pin every core and freeze the renderer). See InferenceThreads.h.
+        sessionOptions.SetIntraOpNumThreads(stems::inferenceIntraOpThreads());
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
         if (useGpu)

@@ -11,6 +11,7 @@
 
 - First-use stem separation now shows the model download prompt before the stem picker, so the models are downloaded first and the stems are chosen once they're ready.
 - The backup separation model is now grouped with the quality models in Preferences ▸ Stems, with a note that it is only used as a fallback.
+- The stem separation progress dialog now stays open (showing "Writing files…") until the stems have been placed on the timeline, instead of closing a few seconds before the new clips appear.
 
 ### Fixed
 
@@ -20,6 +21,8 @@
 - The recent projects list showing a project's old name after it was renamed and saved.
 - The Clip Editor waveform looking blocky and pixelated on short or deeply zoomed-in clips; it now draws a smooth envelope.
 - The Split at Playhead menu item and S shortcut silently doing nothing on a saved clip; they now show the same informational "linked clips must be edited in the Clip Editor" message as the right-click menu.
+- The stem separation progress bar appearing frozen (and the interface unresponsive) while separating on the CPU; inference now leaves one processor core free for the interface so the progress bar keeps updating throughout.
+- Stem separation failing with a "Library item not found" error when run on a clip that was itself an already-separated stem (or any clip derived from a source no longer in the library); a clip now separates its own audio rather than the original source, so re-separating a stem works.
 
 ## 1.0.0
 

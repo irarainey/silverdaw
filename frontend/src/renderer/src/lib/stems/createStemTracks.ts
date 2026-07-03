@@ -171,17 +171,3 @@ export async function createTracksFromStems(payload: StemReadyPayload): Promise<
     notifications.pushError(`Could not create stems from ${sourceName}`)
   }
 }
-
-/** Resolve the top-level source a clip or library item ultimately
- *  derives from. Stems nest under this source even when separated from a
- *  library-clip (which itself derives from it). */
-export function resolveSourceItemId(
-  library: ReturnType<typeof useLibraryStore>,
-  libraryItemId: string | undefined
-): string | undefined {
-  if (!libraryItemId) return undefined
-  const item = library.getItem(libraryItemId)
-  if (!item) return undefined
-  if (item.kind === 'source' || item.kind === 'sample') return item.id
-  return item.derivedFrom?.sourceItemId ?? item.id
-}

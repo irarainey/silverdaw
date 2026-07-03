@@ -81,6 +81,17 @@ export function clearStemSeparationState(): void {
   state.value = null
 }
 
+/**
+ * Mark the tracked job as finalising: separation finished on the backend and the
+ * renderer is now reading the stem WAVs and placing them on tracks. Keeps the
+ * progress dialog up (showing "Writing files…" at 100%) so it never vanishes
+ * before the clips actually appear on the timeline. No-op for a stale/absent job.
+ */
+export function markStemSeparationFinalizing(jobId: string): void {
+  if (!state.value || state.value.jobId !== jobId) return
+  state.value = { ...state.value, percent: 100, stage: 'write', detail: undefined }
+}
+
 /** Inspect the active job (e.g. to confirm a ready/failed envelope is current). */
 export function snapshotStemSeparationState(): StemSeparationActiveState | null {
   return state.value

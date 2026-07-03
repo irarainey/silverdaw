@@ -30,6 +30,9 @@ const STEM_LABELS: Record<string, string> = {
 
 const visible = computed(() => state.value !== null)
 const percent = computed(() => Math.round(state.value?.percent ?? 0))
+// Once finalising (reading + placing stems), the backend job is done, so there
+// is nothing left to cancel — the button is disabled for that phase.
+const canCancel = computed(() => state.value?.stage !== 'write')
 // Per-stem verbs for the stages that carry a stem name in `detail`.
 const STEM_STAGE_VERBS: Partial<Record<StemStage, string>> = {
   separate: 'Separating',
@@ -108,7 +111,8 @@ function onCancel(): void {
         <div class="dialog-footer">
           <button
             type="button"
-            class="dialog-btn-cancel"
+            class="dialog-btn-cancel disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="!canCancel"
             @click="onCancel"
           >
             Cancel

@@ -1407,13 +1407,35 @@ session options. Using the GPU is **opt-in** — the `stems.useGpu` preference
 defaults off and is honoured only when a compatible adapter is detected
 (Preferences ▸ Stems). The path is hardened against GPU timeout/TDR recovery.
 
+Inference reserves **one logical core** for the UI/message thread
+(`inferenceIntraOpThreads()` in `stems/InferenceThreads.h` sets ONNX Runtime's
+intra-op thread count to `cores − 1`, never below one). Without this a CPU-only
+separation pins every core and starves the Electron renderer, so the
+separation-progress dialog freezes at the top of each stem's band until the run
+completes; leaving a core free keeps the progress bar repainting throughout. The
+separation is a touch slower but stays visibly responsive, which is the priority
+for a long background task. On the GPU path the compute runs on the adapter, so
+the reserved core costs nothing.
+
+The separation-progress dialog is driven by the reactive `stemSeparationState`
+and stays open through a final **"Writing files…"** phase: on `STEM_READY` the
+renderer marks the job finalising (`markStemSeparationFinalizing`) and only
+clears the state — dismissing the dialog — once the stems have been read,
+imported, and placed on the timeline. This stops the dialog from vanishing
+seconds before the new clips appear during the (main-thread-bound) import.
+
 A **timeline** separation (started from a placed clip) also lands each stem on its
 own new track aligned to the source clip's start; a **library** separation
 (started from a source or sample library item) imports the stems to the library only,
-leaving it to the user to drag them onto the timeline. The **Separate Stems** action
-is hidden on stems because they are already separated. A timeline separation only processes
-the **clip's own time window** of the source (`[inMs, inMs + durationMs)`, sent as
-the `clipId` whose window the backend reads from `ProjectState`), so the stem WAVs
+leaving it to the user to drag them onto the timeline. The audio that is separated
+is always the selected clip's (or library item's) **own** library item — a stem is
+a standalone WAV, so re-separating an already-separated stem separates that stem's
+audio, not the original source (which may no longer be in the library). The
+library panel hides **Separate Stems** on stems (they are already separated), but a
+stem placed on the timeline can still be re-separated from its clip. A timeline
+separation only processes the **clip's own time window** (`[inMs, inMs + durationMs)`
+of its library item, sent as the `clipId` whose window the backend reads from
+`ProjectState`), so the stem WAVs
 are clip-length and drop in already aligned; a library separation has no clip and
 separates the **whole track**. Either way the source is untouched
 (non-destructive) and each stem is added to the library as a top-level **stem**

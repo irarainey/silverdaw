@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <thread>
 #include <vector>
 
 #include <onnxruntime_cxx_api.h>
@@ -12,6 +11,7 @@
 #include <dml_provider_factory.h>
 #endif
 
+#include "InferenceThreads.h"
 #include "Log.h"
 #include "MelRoformerSpectral.h"
 #include "StemSeparator.h"
@@ -39,8 +39,7 @@ struct MelRoformerVocals::Impl
         session.reset();
         sessionPath = {};
         sessionOptions = Ort::SessionOptions{};
-        const unsigned int cores = std::thread::hardware_concurrency();
-        sessionOptions.SetIntraOpNumThreads(static_cast<int>(std::max(1u, cores)));
+        sessionOptions.SetIntraOpNumThreads(stems::inferenceIntraOpThreads());
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         if (useGpu)
         {

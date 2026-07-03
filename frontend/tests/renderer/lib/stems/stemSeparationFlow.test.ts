@@ -23,10 +23,7 @@ const registerStemJob = vi.fn()
 const forgetStemJob = vi.fn()
 vi.mock('@/lib/stems/createStemTracks', () => ({
   registerStemJob: (...args: unknown[]) => registerStemJob(...args),
-  forgetStemJob: (...args: unknown[]) => forgetStemJob(...args),
-  // The real helper walks library-clips up to their source; tests pass the source
-  // id directly, so echo it back.
-  resolveSourceItemId: (_library: unknown, itemId: string | undefined) => itemId
+  forgetStemJob: (...args: unknown[]) => forgetStemJob(...args)
 }))
 
 const pushInfo = vi.fn()
@@ -36,13 +33,31 @@ vi.mock('@/stores/notificationsStore', () => ({
 }))
 vi.mock('@/stores/projectStore', () => ({
   useProjectStore: () => ({
-    clips: { c1: { libraryItemId: 'i1', fileName: 'song.wav', startMs: 4000 } }
+    clips: {
+      c1: { libraryItemId: 'i1', fileName: 'song.wav', startMs: 4000 },
+      // A clip that is itself an already-separated stem (its library item derives
+      // from an original source that may no longer be present).
+      cstem: { libraryItemId: 'stem1', fileName: 'vocals.wav', startMs: 8000, inMs: 0 }
+    }
   })
 }))
 vi.mock('@/stores/libraryStore', () => ({
   useLibraryStore: () => ({
-    byId: { i1: { id: 'i1', fileName: 'song.wav' } },
-    getItem: (id: string) => (id === 'i1' ? { id, fileName: 'song.wav' } : null)
+    byId: {
+      i1: { id: 'i1', fileName: 'song.wav' },
+      stem1: {
+        id: 'stem1',
+        kind: 'stem',
+        fileName: 'vocals.wav',
+        derivedFrom: { sourceItemId: 'gone-source' }
+      }
+    },
+    getItem: (id: string) =>
+      id === 'i1'
+        ? { id, fileName: 'song.wav' }
+        : id === 'stem1'
+          ? { id, kind: 'stem', fileName: 'vocals.wav', derivedFrom: { sourceItemId: 'gone-source' } }
+          : null
   }),
   libraryItemDisplayName: (item: { fileName: string }) => item.fileName
 }))
@@ -246,6 +261,23 @@ describe('stem selection dialog', () => {
     expect(selection?.target.sourceItemId).toBe('i1')
     expect(selection?.target.clipId).toBeUndefined()
     expect(selection?.target.startMs).toBeUndefined()
+  })
+
+  it('separates a stem clip from the stem itself, not its (missing) original source', async () => {
+    await requestStemSeparationForClip('cstem')
+    await confirmStemSelection()
+
+    // The audio source is the clip's own library item (the stem WAV on the
+    // timeline), never the resolved top-level source — which here is gone.
+    expect(sendMock).toHaveBeenCalledWith(
+      'STEM_SEPARATE',
+      expect.objectContaining({ sourceItemId: 'stem1', clipId: 'cstem' })
+    )
+  })
+
+  it('separates a stem library item from itself, not its original source', async () => {
+    await requestStemSeparationForLibraryItem('stem1')
+    expect(useStemSelection().value?.target.sourceItemId).toBe('stem1')
   })
 
   it('dispatches only the ticked stems', async () => {

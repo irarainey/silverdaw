@@ -8,12 +8,26 @@
 import {
   applyStemProgress,
   clearStemSeparationState,
+  markStemSeparationFinalizing,
   snapshotStemSeparationState
 } from '@/lib/stemSeparationState'
 import { createTracksFromStems, createTrackFromStem } from '@/lib/stems/createStemTracks'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
+
+/** Yield to the browser so a pending reactive update paints before the caller
+ *  starts a burst of synchronous work. Resolves after the next frame (falling
+ *  back to a macrotask when no rAF is available, e.g. a backgrounded window). */
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve())
+    } else {
+      setTimeout(resolve, 0)
+    }
+  })
+}
 
 export const stemBridgeHandlers: BridgeInboundHandlers<
   'STEM_PROGRESS' | 'STEM_PARTIAL' | 'STEM_READY' | 'STEM_FAILED'
@@ -30,18 +44,26 @@ export const stemBridgeHandlers: BridgeInboundHandlers<
     void createTrackFromStem(payload)
   },
 
-  STEM_READY: (payload) => {
+  STEM_READY: async (payload) => {
     const tracked = snapshotStemSeparationState()
     if (tracked && tracked.jobId !== payload.jobId) return
-    clearStemSeparationState()
     log.info(
       'stems',
       `ready jobId=${payload.jobId} clipId=${payload.clipId} stems=${payload.stems
         .map((s) => s.stem)
         .join(',')}`
     )
-    // Fire-and-forget: each stem is read, imported, and placed on a new track.
-    void createTracksFromStems(payload)
+    // Keep the progress dialog up in a "Writing files…" state while the stems are
+    // read, imported, and placed on tracks, so it never disappears seconds before
+    // the clips actually land on the timeline. Yield one frame first so that state
+    // paints before the (main-thread-blocking) import/placement work begins.
+    markStemSeparationFinalizing(payload.jobId)
+    await nextPaint()
+    try {
+      await createTracksFromStems(payload)
+    } finally {
+      clearStemSeparationState()
+    }
   },
 
   STEM_FAILED: (payload) => {

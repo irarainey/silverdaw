@@ -154,4 +154,30 @@ Get-ChildItem Cert:\LocalMachine\TrustedPeople |
 - **Want a full local install before the Store release:** the **self-signed
   installer**, if you are comfortable trusting the certificate.
 
+---
+
+## Troubleshooting: Silverdaw won't start
+
+Silverdaw needs its background audio engine to run; if that fails to start you
+may see a *"could not connect to the audio engine"* message. To make this easy to
+diagnose, **every launch** writes a small diagnostics log — and a crash report if
+the engine faults — to a fixed folder, whether or not diagnostic logging is turned
+on in Preferences.
+
+Open this folder (paste the path into File Explorer's address bar):
+
+```text
+%APPDATA%\Silverdaw\diagnostics
+```
+
+It contains:
+
+- `startup.log` — a short record of the last launch (app version, backend spawn).
+- `backend.log` — the engine's own startup log for the last launch.
+- `backend-crash.log` — written **only** if the engine crashed on startup, with
+  the failure details.
+
+These files are overwritten on each launch (they don't grow over time). If you
+report a startup problem, attaching them helps pin down the cause.
+
 [releases]: https://github.com/irarainey/silverdaw/releases

@@ -17,7 +17,7 @@ import {
   snapshotStemSeparationState,
   type StemSeparationTarget
 } from '@/lib/stemSeparationState'
-import { forgetStemJob, registerStemJob, resolveSourceItemId } from '@/lib/stems/createStemTracks'
+import { forgetStemJob, registerStemJob } from '@/lib/stems/createStemTracks'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
@@ -141,7 +141,14 @@ export async function requestStemSeparationForClip(clipId: string): Promise<void
   const library = useLibraryStore()
   const clip = project.clips[clipId]
   if (!clip) return
-  const sourceItemId = resolveSourceItemId(library, clip.libraryItemId)
+  // Separate the audio the clip actually plays — its own library item — not the
+  // original top-level source. A clip's trim window (`inMs`/`durationMs`) is
+  // defined against its own item's file (e.g. a stem is a standalone WAV), so the
+  // backend must read that file to window the clip correctly. Resolving to the
+  // top-level source would read the wrong file (and fail outright when the source
+  // is no longer in the library), which is why separating an already-separated
+  // stem failed. Provenance for the new stems flows from this item too.
+  const sourceItemId = clip.libraryItemId
   if (!sourceItemId) return
   const sourceItem = library.byId[sourceItemId]
   const name = sourceItem ? libraryItemDisplayName(sourceItem) : clip.fileName
@@ -161,12 +168,14 @@ export async function requestStemSeparationForClip(clipId: string): Promise<void
  */
 export async function requestStemSeparationForLibraryItem(itemId: string): Promise<void> {
   const library = useLibraryStore()
-  const sourceItemId = resolveSourceItemId(library, itemId)
-  if (!sourceItemId) return
-  const sourceItem = library.byId[sourceItemId]
+  // Separate the selected item's own audio (a stem/clip is a standalone file),
+  // not a resolved top-level source — the user chose this item, and resolving
+  // away from it would separate the wrong audio (or fail if the original source
+  // is gone).
+  const sourceItem = library.byId[itemId]
   if (!sourceItem) return
   await beginRequest({
-    sourceItemId,
+    sourceItemId: itemId,
     sourceName: stripExtension(libraryItemDisplayName(sourceItem))
   })
 }
