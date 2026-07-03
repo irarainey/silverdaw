@@ -312,8 +312,10 @@ Silverdaw currently supports the core arrangement workflow:
   always reopen marked dirty so the user is steered to File > Save.
 - Recent Projects MRU (up to 10) persisted in `preferences.json`, surfaced as a
   `File > Recent Projects ▸` submenu and as the Start Screen list shown on first
-  launch or after File > New on a fresh install. Both label each entry by its
-  project name (the file name without the `.silverdaw` extension) and keep the
+  launch or after File > New on a fresh install. Each MRU entry stores the
+  project's display name alongside its path; the name is refreshed on every save
+  (so a renamed project shows its new name) and legacy path-only entries fall
+  back to the file name. Both surfaces label an entry by that name and keep the
   full path as the hover hint.
 - Relink a missing source file at the **library item** level — every clip
   referencing that item picks up the new file automatically. The Relink dialog
@@ -1273,8 +1275,10 @@ Mel-Band RoFormer for vocals and a 4-stem BS-RoFormer for drums/bass (see below)
 `htdemucs-ft` ONNX export (a "bag" of four specialist models, one per source, run
 through ONNX Runtime in the backend, `OnnxStemSeparator.cpp`) is the **backup**:
 it is used per stem only when that stem's quality model isn't installed (or the
-user forces the backup via `stems.useBackupModel`), and it is the zero-config
-path fetched on first use when no quality models are present. ONNX Runtime is
+user forces the backup via `stems.useBackupModel`, or a partial selection
+includes `other` without the full four-stem set). On first use the default
+download fetches the two RoFormer quality packs, not htdemucs; the backup is
+fetched on demand only when a run actually needs it. ONNX Runtime is
 fetched and bundled via CMake (`onnxruntime.dll` ships beside the backend); the
 model weights (htdemucs ~1.2 GB; the quality packs ~1 GB together) are **not**
 shipped — the Electron main process (`src/main/stems/`, pinned manifests + a
@@ -1344,12 +1348,14 @@ out of memory. The host pipeline is unit-tested by an identity round-trip, and
 the C++ runner was validated end-to-end against a numpy reference (drums/bass RMS
 matched to four decimals). htdemucs is the backup when the pack is absent.
 
-In **Preferences ▸ Stems** the two packs are presented as one combined
-**Download models** action (~1 GB), each with its own **Locate** button to point
-at an existing on-disk copy; htdemucs appears in a secondary **Backup model**
-section with an **Always use the backup model** override. Each pack/model
-persists its located directory override (`vocalPackDir` / `rhythmPackDir` /
-`stemModelDir`).
+In **Preferences ▸ Stems** the two packs share one combined **Download models**
+action (~1 GB), and the vocal, drums/bass, and htdemucs backup models each appear
+as a compact **Locate…** row (identical style) to point at an existing on-disk
+copy — the backup row carries a note that it is only a fallback. The backup has
+no manual download button (it is fetched on demand when a run needs it); an
+**Always use the backup model** toggle sits below the locator group. Each
+pack/model persists its located directory override (`vocalPackDir` /
+`rhythmPackDir` / `stemModelDir`).
 
 GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
 Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`
@@ -1643,10 +1649,10 @@ sidebar:
   / `BACKSPIN_SETTINGS_SET`) and re-applied live to every clip already carrying
   that effect; they are also re-sent on each backend reconnect.
 - **Stems** — stem-separation model management (a combined **Download models**
-  for the two RoFormer quality packs, with per-model **Locate** for an existing
-  copy, and a secondary **Backup model** section with an **Always use the backup
-  model** toggle), per-stem cleanup options, and the experimental **GPU
-  acceleration** toggle.
+  action for the two RoFormer quality packs, plus a **Locate** row for each of the
+  vocal, drums/bass, and backup models, an **Always use the backup model** toggle
+  below them, per-stem cleanup options, and the experimental **GPU
+  acceleration** toggle).
 - **Developer** — diagnostic logging, log folder and DevTools access.
 
 Persisted fields:
@@ -1696,7 +1702,7 @@ Persisted fields:
   stacks separate left / right lanes for two-channel sources (mono sources and
   rows too short for two lanes still show one lane). Applies to both the
   timeline and the Clip Editor.
-- **Recent Projects** MRU (max 10, head = most recent, case-insensitive dedupe on Windows).
+- **Recent Projects** MRU (max 10, head = most recent, case-insensitive dedupe by path). Each entry is a `{ path, name }` pair; the display name is refreshed on every save (so a renamed project shows its current name), and legacy path-only entries fall back to the file name.
 - **Write diagnostic logs** — enables the cross-layer file logger. When on,
   the next launch writes a per-session timestamped folder containing
   `{main,backend,renderer}.log` with aligned millisecond timestamps. The
@@ -2078,7 +2084,10 @@ timeline). The playhead position is the authoritative `preview.positionMs` (from
 timeline's smooth catch-up. Time-anchored draw loops are clamped to the visible band so their
 cost is O(visible width), independent of zoom — including the volume overlay, whose unity line
 and envelope curve are inverted back through the linear `envX` to the on-screen millisecond
-window.
+window. When the view is zoomed in past the peak resolution (fewer than one peak per
+pixel — common on a short clip), each column's min/max is linearly interpolated between
+adjacent peaks (`sampleInterpolatedPeak`) so the waveform draws a smooth envelope instead
+of blocky repeated columns.
 
 ## Prerequisites
 

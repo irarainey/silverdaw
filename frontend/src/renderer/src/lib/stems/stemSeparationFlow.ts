@@ -1,9 +1,12 @@
-// Renderer-side lifecycle for starting a stem separation: choose stems → ensure
-// the model → dispatch. Two reactive refs drive two small dialogs:
-//   • `selection` — the stem-picker shown first (which of the four stems to
-//     extract). Cancellable; no-op while another separation runs.
-//   • `flow` — the one-time ~1.2 GB model download (first use only): confirm,
-//     stream progress, then dispatch.
+// Renderer-side lifecycle for starting a stem separation. Models come first: if
+// the models a default separation needs aren't installed, the download dialog is
+// shown before the stem picker, and the picker opens once they're downloaded.
+// Two reactive refs drive two small dialogs:
+//   • `flow` — the one-time model download (confirm, stream combined progress).
+//     Its continuation opens the picker (pre-selection) or dispatches (a later
+//     download of an extra model a chosen selection needs).
+//   • `selection` — the stem-picker (which of the four stems to extract).
+//     Cancellable; no-op while another separation runs.
 // Once dispatched, the running job's progress lives in `stemSeparationState`.
 
 import { ref, readonly, type Ref } from 'vue'

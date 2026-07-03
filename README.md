@@ -68,7 +68,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   and drop each onto its own track to remix and recombine — non-destructive, with
   optional GPU acceleration. Each stem keeps the original's tempo, key, and
   artwork. High-quality **RoFormer models** (downloaded once, ~1 GB) do the
-  separation by default, with a built-in backup model that needs no setup. A
+  separation by default, with a backup model downloaded automatically only if
+  it's ever needed. A
   **Fast / Balanced / Best** speed control and optional one-click cleanup let you
   trade speed for polish.
 - **Tempo and pitch.** Clips can automatically match the project tempo and be
@@ -162,8 +163,8 @@ from there:
 - **[huggingface.co/silverdaw](https://huggingface.co/silverdaw)**
 
 By default Silverdaw uses the higher-quality **RoFormer** models (vocals and
-drums/bass, ~1 GB total), with a smaller built-in **backup** model available as a
-fallback. Nothing is uploaded — separation runs entirely on your own machine, and
+drums/bass, ~1 GB total), with a smaller **backup** model downloaded
+automatically only if it's ever needed as a fallback. Nothing is uploaded — separation runs entirely on your own machine, and
 the download is a one-time, on-demand fetch of the model files only. If you would
 rather not download anything, you can point Silverdaw at a copy of the models you
 already have from **Preferences ▸ Stems**.
