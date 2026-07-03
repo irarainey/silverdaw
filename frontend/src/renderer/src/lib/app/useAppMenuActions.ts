@@ -40,7 +40,7 @@ export interface AppMenuActions {
 }
 
 export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
-  const { project, transport, ui, library, notifications, appStore } = deps
+  const { project, transport, ui, notifications, appStore } = deps
 
   function handleMenuAction(action: string): void {
     log.info('menu', `action ${action}`)
@@ -188,12 +188,14 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       if (!selectedTrackId) return
       const track = project.tracks.find((candidate) => candidate.id === selectedTrackId)
       if (!track) return
+      // Find the clip under the playhead on the selected track by position only.
+      // Do NOT pre-filter saved ("clip"-kind) clips here: splitClipAt surfaces the
+      // "Linked clips must be edited in the Clip Editor" message for those, so
+      // skipping them here would make Split silently do nothing with no feedback.
       const splitClip = track.clipIds
         .map((clipId) => project.clips[clipId])
         .find((clip) => {
           if (!clip) return false
-          const libItem = library.byId[clip.libraryItemId]
-          if (libItem?.kind === 'clip') return false
           const effDur = effectiveClipDurationMs(clip)
           return atMs > clip.startMs && atMs < clip.startMs + effDur
         })
