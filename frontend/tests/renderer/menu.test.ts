@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildMenus, type MenuItemDef } from '@/menu'
+import type { RecentProject } from '@shared/types'
 import {
   ZOOM_PRESET_PX_PER_SECOND,
   parseZoomPresetAction,
@@ -45,7 +46,7 @@ describe('View menu — zoom controls', () => {
 })
 
 describe('File menu — Recent Projects submenu', () => {
-  function recentSubmenu(recentProjects: string[]): MenuItemDef[] {
+  function recentSubmenu(recentProjects: RecentProject[]): MenuItemDef[] {
     const menus = buildMenus({ devToolsEnabled: false, recentProjects })
     const file = menus.find((m) => m.label === 'File')
     const recent = file!.items.find((i) => i.label === 'Recent Projects')
@@ -53,18 +54,26 @@ describe('File menu — Recent Projects submenu', () => {
     return recent!.submenu!
   }
 
-  it('labels entries with the project name only — no folder or .silverdaw extension', () => {
+  it('labels entries with the stored project name, with the full path as the hint', () => {
     const sub = recentSubmenu([
-      'C:\\Users\\me\\Music\\Summer Mix\\Summer Mix.silverdaw',
-      '/home/me/projects/Demo/Demo.SILVERDAW'
+      { path: 'C:\\Users\\me\\Music\\Dave\\Dave.silverdaw', name: 'Bert' },
+      { path: '/home/me/projects/Demo/Demo.silverdaw', name: 'Demo' }
     ])
+    // The stored name wins over the file name, so a renamed project shows its
+    // new name even though the file path (Dave) is unchanged.
     expect(sub[0]).toMatchObject({
-      label: 'Summer Mix',
+      label: 'Bert',
       action: 'file.openRecentByIndex:0',
-      hint: 'C:\\Users\\me\\Music\\Summer Mix\\Summer Mix.silverdaw'
+      hint: 'C:\\Users\\me\\Music\\Dave\\Dave.silverdaw'
     })
-    // Extension match is case-insensitive; the full path stays as the hint.
     expect(sub[1]).toMatchObject({ label: 'Demo', action: 'file.openRecentByIndex:1' })
+  })
+
+  it('falls back to the path-derived name when the entry has no stored name', () => {
+    const sub = recentSubmenu([
+      { path: 'C:\\Users\\me\\Music\\Summer Mix\\Summer Mix.silverdaw', name: '' }
+    ])
+    expect(sub[0]).toMatchObject({ label: 'Summer Mix', action: 'file.openRecentByIndex:0' })
   })
 
   it('shows a disabled placeholder when there are no recent projects', () => {

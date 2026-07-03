@@ -11,6 +11,7 @@ import { canonicaliseProjectPath, projectFolderPath } from '../projectPaths'
 import { sweepEmptyArtifactSubdirs } from '../projectFileCleanup'
 import { ensureWritableTargetDir } from '../writableTarget'
 import type { PrefsService } from '../prefsService'
+import type { RecentProject } from '../../shared/types'
 import { logMain } from '../log'
 
 export interface ProjectHandlersContext {
@@ -41,8 +42,18 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
   // Main owns native project dialogs and the Recent Projects MRU.
 
   ipcMain.on(IPC.project.setLastPath, (_evt, value: unknown) => {
-    if (typeof value !== 'string' || value.length === 0) return
-    if (prefs.bumpRecentProject(value)) prefs.flushSaveSync()
+    // Accept the {path,name} form (current) and a bare string (defensive/legacy).
+    let path: string | undefined
+    let name: string | undefined
+    if (typeof value === 'string') {
+      path = value
+    } else if (value && typeof value === 'object') {
+      const candidate = value as { path?: unknown; name?: unknown }
+      if (typeof candidate.path === 'string') path = candidate.path
+      if (typeof candidate.name === 'string') name = candidate.name
+    }
+    if (!path || path.length === 0) return
+    if (prefs.bumpRecentProject(path, name)) prefs.flushSaveSync()
   })
 
   ipcMain.handle(IPC.project.fileExists, async (_evt, value: unknown): Promise<boolean> => {
@@ -199,14 +210,16 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
   ipcMain.handle(IPC.project.consumePendingOpenPath, (): string | null => ctx.consumePendingOpenPath())
 
   // ─── Recent projects (MRU) ─────────────────────────────────────────────
-  ipcMain.handle(IPC.prefs.getRecentProjects, (): string[] => [...prefs.get().recentProjects])
+  ipcMain.handle(IPC.prefs.getRecentProjects, (): RecentProject[] =>
+    prefs.get().recentProjects.map((p) => ({ ...p }))
+  )
 
   ipcMain.on(IPC.prefs.removeRecentProject, (_evt, value: unknown) => {
     if (typeof value !== 'string' || value.length === 0) return
     const key = value.toLowerCase()
     const store = prefs.get()
     const before = store.recentProjects.length
-    store.recentProjects = store.recentProjects.filter((p) => p.toLowerCase() !== key)
+    store.recentProjects = store.recentProjects.filter((p) => p.path.toLowerCase() !== key)
     if (store.recentProjects.length !== before) prefs.flushSaveSync()
   })
 

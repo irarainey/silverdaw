@@ -301,8 +301,8 @@ onBeforeUnmount(() => {
           </div>
           <ul class="rounded border border-zinc-800 bg-zinc-900/50">
             <li
-              v-for="(path, idx) in recents"
-              :key="path"
+              v-for="(recent, idx) in recents"
+              :key="recent.path"
               :class="[
                 'group relative flex items-center gap-3 px-3 py-2 text-sm hover:bg-zinc-800',
                 idx === 0 ? '' : 'border-t border-zinc-800'
@@ -312,19 +312,19 @@ onBeforeUnmount(() => {
                 type="button"
                 data-borderless-button="true"
                 class="flex min-w-0 flex-1 flex-col bg-transparent p-0 pr-7 text-left"
-                :title="path"
-                @click="openRecent(path)"
+                :title="recent.path"
+                @click="openRecent(recent.path)"
               >
-                <span class="truncate text-zinc-100">{{ projectName(path) }}</span>
-                <span class="truncate text-[11px] text-zinc-500">{{ path }}</span>
+                <span class="truncate text-zinc-100">{{ recent.name || projectName(recent.path) }}</span>
+                <span class="truncate text-[11px] text-zinc-500">{{ recent.path }}</span>
               </button>
               <button
                 type="button"
                 data-borderless-button="true"
                 class="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded text-zinc-500 opacity-0 hover:bg-zinc-700 hover:text-red-400 focus:opacity-100 focus:outline-none focus-visible:opacity-100 group-hover:opacity-100"
-                :aria-label="`Remove ${projectName(path)} from recent projects`"
+                :aria-label="`Remove ${recent.name || projectName(recent.path)} from recent projects`"
                 title="Remove from recent projects"
-                @click="removeRecent(path)"
+                @click="removeRecent(recent.path)"
               >
                 <svg
                   viewBox="0 0 16 16"

@@ -13,7 +13,8 @@ import type {
   StemPrefsDto as SharedStemPrefsDto,
   BrakePrefsDto as SharedBrakePrefsDto,
   BackspinPrefsDto as SharedBackspinPrefsDto,
-  LocateStemModelResult as SharedLocateStemModelResult
+  LocateStemModelResult as SharedLocateStemModelResult,
+  RecentProject as SharedRecentProject
 } from '@shared/types'
 import type { BackendStatus } from '@shared/ipc-channels'
 
@@ -67,7 +68,7 @@ declare global {
         node: string
       }>
       openExternal(url: string): void
-      setLastProjectPath(value: string): void
+      setLastProjectPath(path: string, name: string): void
       projectFileExists(path: string): Promise<boolean>
       chooseProjectOpen(): Promise<string | null>
       chooseProjectSaveAs(defaultName: string): Promise<string | null>
@@ -92,7 +93,7 @@ declare global {
       }): void
       chooseDirectory(args: { title?: string; defaultPath?: string }): Promise<string | null>
       // ── Recent projects ───────────────────────────────────────────────
-      getRecentProjects(): Promise<string[]>
+      getRecentProjects(): Promise<SharedRecentProject[]>
       removeRecentProject(filePath: string): void
       clearRecentProjects(): void
       // ── Autosave configuration ────────────────────────────────────────

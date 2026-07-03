@@ -32,7 +32,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     useTransportStore().setBridgeReady(true)
     // Load/Save As reset snapshots update MRU; initial reconnect snapshots do not.
     if (payload.reset === true && payload.filePath) {
-      window.silverdaw.setLastProjectPath(payload.filePath)
+      window.silverdaw.setLastProjectPath(payload.filePath, useProjectStore().projectName)
       void useAppStore().refreshRecentProjects()
     }
     // Seed audio devices as soon as the bridge is ready.
@@ -53,8 +53,9 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     project.notifySaveAck(payload.ok, payload.error)
     if (payload.ok) {
       log.info('bridge', `PROJECT_SAVED path=${payload.filePath}`)
-      // Main persists last project path and updates the MRU.
-      window.silverdaw.setLastProjectPath(payload.filePath)
+      // Main persists last project path and updates the MRU (with the current
+      // project name so a renamed project shows its new name in Recents).
+      window.silverdaw.setLastProjectPath(payload.filePath, project.projectName)
       // Explicit save makes the current autosave bucket redundant.
       if (project.projectId) void window.silverdaw.clearAutosave(project.projectId)
       void useAppStore().refreshRecentProjects()

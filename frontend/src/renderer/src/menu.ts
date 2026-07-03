@@ -6,6 +6,7 @@ import {
   zoomPresetAction
 } from '@/lib/timeline/zoomPresets'
 import { projectNameFromPath } from '@/lib/project/projectPath'
+import type { RecentProject } from '@shared/types'
 
 export interface MenuItemDef {
   /** Visible label, or `null` for a separator. */
@@ -33,7 +34,7 @@ export interface BuildMenusOptions {
   /** Append the developer Debug menu. */
   devToolsEnabled: boolean
   /** Recent Projects MRU, head = most recent. */
-  recentProjects?: string[]
+  recentProjects?: RecentProject[]
   /** Gates File > Export Mixdown until there is audio to render. */
   hasAnyClip?: boolean
 }
@@ -41,15 +42,15 @@ export interface BuildMenusOptions {
 /** Recent-project entries shown in the quick File-menu path. */
 const MAX_RECENT_IN_MENU = 10
 
-function buildRecentProjectsSubmenu(paths: string[]): MenuItemDef[] {
-  if (paths.length === 0) {
+function buildRecentProjectsSubmenu(recents: RecentProject[]): MenuItemDef[] {
+  if (recents.length === 0) {
     return [{ label: 'No recent projects', disabled: true }]
   }
-  const items: MenuItemDef[] = paths.map((path, index) => ({
-    label: projectNameFromPath(path),
+  const items: MenuItemDef[] = recents.map((recent, index) => ({
+    label: recent.name || projectNameFromPath(recent.path),
     // Encode the index because Windows paths collide with action separators.
     action: `file.openRecentByIndex:${index}`,
-    hint: path
+    hint: recent.path
   }))
   items.push(SEP)
   items.push({ label: 'Clear Recent Projects', action: 'file.clearRecentProjects' })

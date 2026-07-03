@@ -8,6 +8,14 @@ export interface OpenedAudioFile {
   data: ArrayBuffer
 }
 
+/** A Recent Projects MRU entry: the `.silverdaw` file path plus the project's
+ *  display name (the project's internal name at its last save), so a renamed
+ *  project shows its current name even though the file path is unchanged. */
+export interface RecentProject {
+  path: string
+  name: string
+}
+
 /** Normalised audio tag metadata; all fields are optional because tags vary by container. */
 export interface AudioMetadata {
   title?: string

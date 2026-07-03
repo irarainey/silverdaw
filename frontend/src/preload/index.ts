@@ -4,6 +4,7 @@ import type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences } 
 import type {
   EnsureStemModelResult,
   LocateStemModelResult,
+  RecentProject,
   StemGpuStatus,
   StemModelDownloadProgress,
   StemModelInfo,
@@ -96,8 +97,8 @@ const api = {
     ipcRenderer.send(IPC.app.openExternal, url)
   },
   // ─── Project file lifecycle ──────────────────────────────────────────────
-  setLastProjectPath: (value: string): void => {
-    ipcRenderer.send(IPC.project.setLastPath, value)
+  setLastProjectPath: (path: string, name: string): void => {
+    ipcRenderer.send(IPC.project.setLastPath, { path, name })
   },
   projectFileExists: (path: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.project.fileExists, path),
@@ -161,7 +162,7 @@ const api = {
     defaultPath?: string
   }): Promise<string | null> => ipcRenderer.invoke(IPC.prefs.chooseDirectory, args),
   // ─── Recent projects ────────────────────────────────────────────────────
-  getRecentProjects: (): Promise<string[]> => ipcRenderer.invoke(IPC.prefs.getRecentProjects),
+  getRecentProjects: (): Promise<RecentProject[]> => ipcRenderer.invoke(IPC.prefs.getRecentProjects),
   removeRecentProject: (filePath: string): void => {
     ipcRenderer.send(IPC.prefs.removeRecentProject, filePath)
   },

@@ -12,6 +12,7 @@ import {
   buildDefaultPrefs,
   clampAutosaveSeconds,
   normaliseDebugPrefs,
+  recentNameFromPath,
   sanitiseRecentList,
   sanitiseStemPrefs,
   sanitiseStemModelDir,
@@ -158,13 +159,29 @@ export class PrefsService {
     }
   }
 
-  bumpRecentProject(filePath: string): boolean {
+  bumpRecentProject(filePath: string, name?: string): boolean {
     if (typeof filePath !== 'string' || filePath.length === 0) return false
     const key = filePath.toLowerCase()
-    const existingIndex = this.prefs.recentProjects.findIndex((p) => p.toLowerCase() === key)
-    if (existingIndex === 0) return false
-    if (existingIndex > 0) this.prefs.recentProjects.splice(existingIndex, 1)
-    this.prefs.recentProjects.unshift(filePath)
+    const trimmedName = typeof name === 'string' ? name.trim() : ''
+    const existingIndex = this.prefs.recentProjects.findIndex((p) => p.path.toLowerCase() === key)
+    // Fall back to the existing entry's name, then the path-derived name, so a
+    // bump without a supplied name never blanks a previously-known name.
+    const resolvedName =
+      trimmedName.length > 0
+        ? trimmedName
+        : existingIndex >= 0
+          ? this.prefs.recentProjects[existingIndex].name
+          : recentNameFromPath(filePath)
+
+    // Already at the front with the same name — nothing to persist.
+    if (
+      existingIndex === 0 &&
+      this.prefs.recentProjects[0].name === resolvedName
+    ) {
+      return false
+    }
+    if (existingIndex >= 0) this.prefs.recentProjects.splice(existingIndex, 1)
+    this.prefs.recentProjects.unshift({ path: filePath, name: resolvedName })
     if (this.prefs.recentProjects.length > MAX_RECENT_PROJECTS) {
       this.prefs.recentProjects.length = MAX_RECENT_PROJECTS
     }

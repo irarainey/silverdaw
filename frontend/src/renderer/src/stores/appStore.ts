@@ -2,6 +2,7 @@
 
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
+import type { RecentProject } from '@shared/types'
 
 interface AppState {
   loggingEnabled: boolean
@@ -9,7 +10,7 @@ interface AppState {
   toastsEnabled: boolean
   autosaveEnabled: boolean
   autosaveIntervalSeconds: number
-  recentProjects: string[]
+  recentProjects: RecentProject[]
   /** Prevents the start screen flashing before autosave recovery resolves. */
   startupFlowComplete: boolean
   /** Session-scoped gate so the start screen appears at most once. */

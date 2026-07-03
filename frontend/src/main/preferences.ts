@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { join, resolve as pathResolve } from 'node:path'
-import type { DebugPreferences, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
+import type { DebugPreferences, RecentProject, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
 import type { StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '../shared/bridge/outbound'
 
 export interface WindowPrefs {
@@ -140,8 +140,8 @@ export interface Preferences {
   brake: BrakePrefs
   backspin: BackspinPrefs
   stems: StemPrefs
-  /** MRU `.silverdaw` paths, newest first, capped and case-insensitive. */
-  recentProjects: string[]
+  /** MRU entries (path + display name), newest first, capped and case-insensitive by path. */
+  recentProjects: RecentProject[]
 }
 
 export const MAX_RECENT_PROJECTS = 10
@@ -242,18 +242,41 @@ export function clampAutosaveSeconds(input: unknown): number {
   return Math.round(value)
 }
 
-export function sanitiseRecentList(input: unknown): string[] {
+/** The user-facing project name derived from a `.silverdaw` file path — the file
+ *  name without the extension. Used as the fallback display name for legacy or
+ *  nameless recent entries. */
+export function recentNameFromPath(path: string): string {
+  const lastSep = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
+  const base = lastSep >= 0 ? path.slice(lastSep + 1) : path
+  return base.replace(/\.silverdaw$/i, '')
+}
+
+export function sanitiseRecentList(input: unknown): RecentProject[] {
   if (!Array.isArray(input)) return []
-  const out: string[] = []
+  const out: RecentProject[] = []
   const seen = new Set<string>()
   for (const value of input) {
-    if (typeof value !== 'string') continue
-    const trimmed = value.trim()
-    if (trimmed.length === 0) continue
-    const key = trimmed.toLowerCase()
+    // Accept both the legacy string-path form and the {path,name} object form.
+    let path: string | undefined
+    let name: string | undefined
+    if (typeof value === 'string') {
+      path = value
+    } else if (value && typeof value === 'object') {
+      const candidate = value as { path?: unknown; name?: unknown }
+      if (typeof candidate.path === 'string') path = candidate.path
+      if (typeof candidate.name === 'string') name = candidate.name
+    }
+    if (path === undefined) continue
+    const trimmedPath = path.trim()
+    if (trimmedPath.length === 0) continue
+    const key = trimmedPath.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
-    out.push(trimmed)
+    const trimmedName = name?.trim()
+    out.push({
+      path: trimmedPath,
+      name: trimmedName && trimmedName.length > 0 ? trimmedName : recentNameFromPath(trimmedPath)
+    })
     if (out.length >= MAX_RECENT_PROJECTS) break
   }
   return out

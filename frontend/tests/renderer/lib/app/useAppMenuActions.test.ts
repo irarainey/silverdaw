@@ -74,7 +74,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     library: { byId: {} as Record<string, unknown> },
     notifications: { pushError: vi.fn(), pushInfo: vi.fn() },
     appStore: {
-      recentProjects: [] as string[],
+      recentProjects: [] as { path: string; name: string }[],
       dismissStartScreen: vi.fn(),
       refreshRecentProjects: vi.fn()
     }
@@ -233,7 +233,10 @@ describe('useAppMenuActions — handleMenuAction', () => {
 
   it('file.openRecentByIndex opens the mirrored MRU path', () => {
     const h = makeDeps()
-    h.stores.appStore.recentProjects = ['C:/a.silverdaw', 'C:/b.silverdaw']
+    h.stores.appStore.recentProjects = [
+      { path: 'C:/a.silverdaw', name: 'A' },
+      { path: 'C:/b.silverdaw', name: 'B' }
+    ]
     const { handleMenuAction } = useAppMenuActions(h.deps)
     handleMenuAction('file.openRecentByIndex:1')
     expect(h.openRecentPath).toHaveBeenCalledWith('C:/b.silverdaw')

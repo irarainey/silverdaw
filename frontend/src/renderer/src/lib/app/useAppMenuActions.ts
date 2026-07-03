@@ -129,8 +129,9 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       const indexStr = action.slice('file.openRecentByIndex:'.length)
       const index = Number.parseInt(indexStr, 10)
       if (!Number.isFinite(index) || index < 0) return
-      const filePath = appStore.recentProjects[index]
-      if (!filePath) return
+      const recent = appStore.recentProjects[index]
+      if (!recent) return
+      const filePath = recent.path
       void (async () => {
         await deps.openRecentPath(filePath)
       })().catch((err) => log.warn('menu', `open recent failed: ${String(err)}`))
