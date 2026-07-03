@@ -148,6 +148,26 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   **defaults to 16-bit** and also offers 24-bit and 32-bit float depending on
   the chosen format (WAV: 16 / 24 / 32-float; FLAC and AIFF: 16 / 24).
 
+## Stem separation models
+
+Silverdaw's stem separation is powered by open, machine-learning models. To keep
+the download small, **no models ship inside the app** — they are fetched only
+when you first use stem separation, downloaded once, and then stored on your
+computer and reused for every future separation.
+
+For full transparency about what Silverdaw downloads and from where: the models
+are hosted on Silverdaw's own Hugging Face account and are downloaded directly
+from there:
+
+- **[huggingface.co/silverdaw](https://huggingface.co/silverdaw)**
+
+By default Silverdaw uses the higher-quality **RoFormer** models (vocals and
+drums/bass, ~1 GB total), with a smaller built-in **backup** model available as a
+fallback. Nothing is uploaded — separation runs entirely on your own machine, and
+the download is a one-time, on-demand fetch of the model files only. If you would
+rather not download anything, you can point Silverdaw at a copy of the models you
+already have from **Preferences ▸ Stems**.
+
 ## Documentation
 
 - **[Installation guide](INSTALL.md)** — how to install Silverdaw (Microsoft

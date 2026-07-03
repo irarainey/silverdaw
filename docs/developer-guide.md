@@ -1279,7 +1279,9 @@ fetched and bundled via CMake (`onnxruntime.dll` ships beside the backend); the
 model weights (htdemucs ~1.2 GB; the quality packs ~1 GB together) are **not**
 shipped — the Electron main process (`src/main/stems/`, pinned manifests + a
 dependency-injected `ModelStore`) downloads them on demand, verifies each file's
-SHA-256 + size, and commits atomically.
+SHA-256 + size, and commits atomically. All model weights are hosted on
+Silverdaw's own Hugging Face account ([huggingface.co/silverdaw](https://huggingface.co/silverdaw))
+and the per-model manifests resolve their download URLs from that namespace.
 
 A fully pack-covered run needs no htdemucs weights on disk at all: the backend
 only validates the htdemucs files for stems it will actually produce with the
