@@ -10,6 +10,7 @@
 - Refined the Clip Editor waveform so short (and deeply zoomed-in) clips draw a smooth envelope instead of a blocky, pixelated one.
 - Grouped the backup separation model with the quality models in Preferences ▸ Stems, with a note that it is only used as a fallback.
 - Added a link to the Silverdaw website in the About dialog.
+- Fixed the Split at Playhead menu item and S shortcut silently doing nothing on a saved clip; they now show the same "edit in the Clip Editor" message as the right-click menu.
 
 ## 1.0.0
 
