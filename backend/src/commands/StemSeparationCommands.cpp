@@ -128,13 +128,13 @@ void handleStemSeparate(const juce::var& payload,
         return;
     }
 
+    // The htdemucs base directory. It is NOT required to exist: a fully
+    // pack-covered run (vocals from the vocal pack, drums/bass from the rhythm
+    // pack, `other` as the residual) uses no htdemucs weights at all, so the
+    // htdemucs folder may be absent. The separator validates exactly the weight
+    // files it actually needs, per stem, and fails with a precise "Missing model
+    // weight" error only when a stem genuinely falls back to the backup.
     const auto modelDir = juce::File(modelDirStr);
-    if (! modelDir.isDirectory())
-    {
-        stem_bridge::broadcastFailed(bridge, jobId, clipId, StemFailureCode::Model,
-                                     "Model directory not found: " + modelDirStr);
-        return;
-    }
 
     const auto rawSourcePath = projectState.getLibraryItemFilePath(sourceItemId);
     if (rawSourcePath.isEmpty())

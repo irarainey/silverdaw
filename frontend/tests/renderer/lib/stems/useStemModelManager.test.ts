@@ -32,24 +32,6 @@ describe('useStemModelManager', () => {
     expect(mgr.installed.value).toBe(false)
   })
 
-  it('download runs ensureStemModel and refreshes afterwards', async () => {
-    stubSilverdaw({
-      getStemModelInfo: vi.fn(async () => ({ directory: 'C:/m', located: false, installed: true }))
-    })
-    const mgr = useStemModelManager()
-    await mgr.download()
-    expect(window.silverdaw.ensureStemModel).toHaveBeenCalledOnce()
-    expect(mgr.busy.value).toBe(false)
-    expect(mgr.installed.value).toBe(true)
-  })
-
-  it('download surfaces an error result', async () => {
-    stubSilverdaw({ ensureStemModel: vi.fn(async () => ({ ok: false, error: 'boom' })) })
-    const mgr = useStemModelManager()
-    await mgr.download()
-    expect(mgr.error.value).toBe('boom')
-  })
-
   it('locate validates a chosen directory and refreshes', async () => {
     const mgr = useStemModelManager()
     await mgr.locate()

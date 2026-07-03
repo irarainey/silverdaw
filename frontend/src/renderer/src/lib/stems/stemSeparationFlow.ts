@@ -80,16 +80,10 @@ function stripExtension(name: string): string {
   return name.replace(/\.[^.]+$/, '')
 }
 
-/** Open the stem picker, unless a separation is already running or pending. The
- *  quality preset is seeded from the persisted preference (see
- *  `loadStemQualityPreference`) so the dialog reopens on the user's last choice. */
-function openSelection(target: StemSeparationTarget): void {
-  const notifications = useNotificationsStore()
-  if (snapshotStemSeparationState() !== null) {
-    notifications.pushInfo('A stem separation is already running.')
-    return
-  }
-  if (flow.value !== null || selection.value !== null) return
+/** Open the stem picker. The quality preset is seeded from the persisted
+ *  preference (see `loadStemQualityPreference`) so it reopens on the user's last
+ *  choice. */
+function openPicker(target: StemSeparationTarget): void {
   selection.value = {
     target,
     selected: { vocals: true, drums: true, bass: true, other: true },
@@ -97,11 +91,49 @@ function openSelection(target: StemSeparationTarget): void {
   }
 }
 
+/** Handle a separation request. Models come FIRST: if the models a default
+ *  separation needs aren't present, the download dialog is shown before the stem
+ *  picker, and the picker opens only once they finish downloading. When the
+ *  models are already installed the picker opens straight away. No-op while a
+ *  separation is running or a dialog is already open. */
+async function beginRequest(target: StemSeparationTarget): Promise<void> {
+  const notifications = useNotificationsStore()
+  if (snapshotStemSeparationState() !== null) {
+    notifications.pushInfo('A stem separation is already running.')
+    return
+  }
+  if (flow.value !== null || selection.value !== null || resolvingGate) return
+
+  resolvingGate = true
+  let missing: Array<{ src: StemModelSource; state: StemModelState }>
+  try {
+    // Gate on the DEFAULT (all-four) selection's models — the picker isn't open
+    // yet, so the exact stems aren't known. Any htdemucs-only extra a partial
+    // `other` selection needs is resolved after the picker, in ensureModelThenDispatch.
+    missing = await resolveMissingModels(ALL_STEMS)
+  } catch (err) {
+    notifications.pushError('Could not check the stem-separation models.')
+    log.error(
+      'stems',
+      `model state check failed: ${err instanceof Error ? err.message : String(err)}`
+    )
+    return
+  } finally {
+    resolvingGate = false
+  }
+
+  if (missing.length > 0) {
+    showDownloadFlow({ kind: 'select', target }, missing)
+    return
+  }
+  openPicker(target)
+}
+
 /**
  * Entry from the clip context menu: separate a timeline clip's source. The
  * resulting stems are placed on new tracks aligned to the clip.
  */
-export function requestStemSeparationForClip(clipId: string): void {
+export async function requestStemSeparationForClip(clipId: string): Promise<void> {
   const project = useProjectStore()
   const library = useLibraryStore()
   const clip = project.clips[clipId]
@@ -110,7 +142,7 @@ export function requestStemSeparationForClip(clipId: string): void {
   if (!sourceItemId) return
   const sourceItem = library.byId[sourceItemId]
   const name = sourceItem ? libraryItemDisplayName(sourceItem) : clip.fileName
-  openSelection({
+  await beginRequest({
     sourceItemId,
     sourceName: stripExtension(name),
     clipId,
@@ -124,13 +156,13 @@ export function requestStemSeparationForClip(clipId: string): void {
  * stems are imported to the library only — adding them to the timeline is a
  * manual step.
  */
-export function requestStemSeparationForLibraryItem(itemId: string): void {
+export async function requestStemSeparationForLibraryItem(itemId: string): Promise<void> {
   const library = useLibraryStore()
   const sourceItemId = resolveSourceItemId(library, itemId)
   if (!sourceItemId) return
   const sourceItem = library.byId[sourceItemId]
   if (!sourceItem) return
-  openSelection({
+  await beginRequest({
     sourceItemId,
     sourceName: stripExtension(libraryItemDisplayName(sourceItem))
   })
@@ -175,11 +207,21 @@ export async function confirmStemSelection(): Promise<void> {
 
 export type StemModelFlowPhase = 'confirm' | 'downloading' | 'error'
 
+// What to do once the models the download dialog is showing finish downloading:
+// open the stem picker (a PRE-selection download, before the user has chosen
+// stems), or dispatch straight away (a POST-selection download of an extra model
+// a chosen selection needs, e.g. the htdemucs backup for a partial `other`).
+type FlowNext =
+  | { readonly kind: 'select'; readonly target: StemSeparationTarget }
+  | {
+      readonly kind: 'dispatch'
+      readonly target: StemSeparationTarget
+      readonly stems: StemName[]
+      readonly quality: StemQuality
+    }
+
 export interface StemModelFlowState {
   phase: StemModelFlowPhase
-  target: StemSeparationTarget
-  stems: readonly StemName[]
-  quality: StemQuality
   receivedBytes: number
   totalBytes: number
   fileName: string
@@ -188,6 +230,11 @@ export interface StemModelFlowState {
 }
 
 const flow: Ref<StemModelFlowState | null> = ref(null)
+// The continuation for the current download (see FlowNext).
+let flowNext: FlowNext | null = null
+// Guards the async model-presence gate in beginRequest against re-entry from a
+// rapid second request before the first has opened a dialog.
+let resolvingGate = false
 
 export function useStemModelFlow(): Readonly<Ref<StemModelFlowState | null>> {
   return readonly(flow)
@@ -271,21 +318,50 @@ let pendingSources: ReadonlyArray<{ readonly src: StemModelSource; readonly tota
 // Cancel hook for the model currently downloading (set during confirmModelDownload).
 let activeCancel: (() => void) | null = null
 
-/** Ensure every model this separation needs is present (prompting a one-time
- *  download of any that are missing), then dispatch. */
+/** Required models for the given selection that are not yet installed, paired
+ *  with their current on-disk state (for the combined size / progress display). */
+async function resolveMissingModels(
+  stems: readonly StemName[]
+): Promise<Array<{ src: StemModelSource; state: StemModelState }>> {
+  const sources = await resolveRequiredSources(stems)
+  const states = await Promise.all(
+    sources.map(async (src) => ({ src, state: await src.getState() }))
+  )
+  return states.filter(({ state }) => !state.installed)
+}
+
+/** Show the download dialog for a set of missing models, remembering what to do
+ *  once they finish downloading (open the picker, or dispatch). */
+function showDownloadFlow(
+  next: FlowNext,
+  missing: ReadonlyArray<{ src: StemModelSource; state: StemModelState }>
+): void {
+  pendingSources = missing.map(({ src, state }) => ({ src, totalBytes: state.totalBytes }))
+  flowNext = next
+  flow.value = {
+    phase: 'confirm',
+    receivedBytes: missing.reduce((sum, { state }) => sum + state.presentBytes, 0),
+    totalBytes: missing.reduce((sum, { state }) => sum + state.totalBytes, 0),
+    fileName: '',
+    fileCount: missing.reduce((sum, { state }) => sum + state.fileCount, 0),
+    error: ''
+  }
+}
+
+/** After the user picks stems: ensure any remaining models the selection needs
+ *  are present (prompting a download), then dispatch. With the pre-selection
+ *  gate the packs are usually already installed, so this typically dispatches
+ *  straight away — it still catches the htdemucs backup a partial `other`
+ *  selection needs. */
 async function ensureModelThenDispatch(
   target: StemSeparationTarget,
   stems: StemName[],
   quality: StemQuality
 ): Promise<void> {
   const notifications = useNotificationsStore()
-  const sources = await resolveRequiredSources(stems)
-
-  let states: Array<{ src: StemModelSource; state: StemModelState }>
+  let missing: Array<{ src: StemModelSource; state: StemModelState }>
   try {
-    states = await Promise.all(
-      sources.map(async (src) => ({ src, state: await src.getState() }))
-    )
+    missing = await resolveMissingModels(stems)
   } catch (err) {
     notifications.pushError('Could not check the stem-separation models.')
     log.error(
@@ -295,33 +371,20 @@ async function ensureModelThenDispatch(
     return
   }
 
-  const missing = states.filter(({ state }) => !state.installed)
   if (missing.length === 0) {
     await dispatchSeparation(target, stems, quality)
     return
   }
-
-  // Prompt a single combined download of the missing models.
-  pendingSources = missing.map(({ src, state }) => ({ src, totalBytes: state.totalBytes }))
-  flow.value = {
-    phase: 'confirm',
-    target,
-    stems,
-    quality,
-    receivedBytes: missing.reduce((sum, { state }) => sum + state.presentBytes, 0),
-    totalBytes: missing.reduce((sum, { state }) => sum + state.totalBytes, 0),
-    fileName: '',
-    fileCount: missing.reduce((sum, { state }) => sum + state.fileCount, 0),
-    error: ''
-  }
+  showDownloadFlow({ kind: 'dispatch', target, stems, quality }, missing)
 }
 
-/** User accepted the first-use download. Fetch each missing model in turn,
- *  streaming a single combined progress bar, then dispatch. */
+/** User accepted the download. Fetch each missing model in turn, streaming a
+ *  single combined progress bar, then run the continuation: open the stem picker
+ *  (pre-selection) or dispatch (post-selection). */
 export async function confirmModelDownload(): Promise<void> {
   const current = flow.value
   if (!current || current.phase !== 'confirm') return
-  const { target, stems, quality } = current
+  const next = flowNext
   const sources = pendingSources
   flow.value = { ...current, phase: 'downloading', error: '' }
 
@@ -362,7 +425,13 @@ export async function confirmModelDownload(): Promise<void> {
       base += totalBytes
     }
     flow.value = null
-    await dispatchSeparation(target, stems, quality)
+    flowNext = null
+    pendingSources = []
+    if (next?.kind === 'dispatch') {
+      await dispatchSeparation(next.target, next.stems, next.quality)
+    } else if (next?.kind === 'select') {
+      openPicker(next.target)
+    }
   } catch (err) {
     if (flow.value) {
       flow.value = {
@@ -381,6 +450,7 @@ export function cancelModelFlow(): void {
   }
   activeCancel = null
   pendingSources = []
+  flowNext = null
   flow.value = null
 }
 

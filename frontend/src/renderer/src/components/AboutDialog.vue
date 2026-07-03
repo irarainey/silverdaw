@@ -123,6 +123,14 @@ function openExternal(url: string): void {
             <button
               type="button"
               class="text-sky-400 underline-offset-2 hover:underline"
+              @click="openExternal('https://www.silverdaw.com')"
+            >
+              Website
+            </button>
+            ·
+            <button
+              type="button"
+              class="text-sky-400 underline-offset-2 hover:underline"
               @click="openExternal('https://github.com/irarainey/silverdaw')"
             >
               Source code

@@ -93,7 +93,10 @@ export function useTimelineContextMenu(
 
   const chooseAudioFile = inputs.chooseAudioFile ?? DEFAULT_CHOOSE_AUDIO_FILE
   const startStemSeparation =
-    inputs.startStemSeparation ?? ((clipId: string): void => requestStemSeparationForClip(clipId))
+    inputs.startStemSeparation ??
+    ((clipId: string): void => {
+      void requestStemSeparationForClip(clipId)
+    })
   const onError =
     inputs.onError ??
     ((message: string, err: unknown): void => {

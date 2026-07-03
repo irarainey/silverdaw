@@ -215,7 +215,7 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     }
     if (command === 'library.separateStems') {
       closeItemContextMenu()
-      requestStemSeparationForLibraryItem(item.id)
+      void requestStemSeparationForLibraryItem(item.id)
       return
     }
     if (command === 'library.saveMusicSample') {

@@ -37,8 +37,7 @@ const STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
   { value: 'strong', label: 'Strong', hint: 'Strongest cleanup' }
 ]
 
-const { gpu, modelInfo, busy, downloadPercent, error, installed, refresh, download, cancelDownload, locate } =
-  useStemModelManager()
+const { gpu, modelInfo, busy, error, installed, refresh, locate } = useStemModelManager()
 
 // Combined "quality models" download state. Both RoFormer packs (vocals +
 // drums/bass) are the primary engine and are needed together for full
@@ -258,7 +257,51 @@ onMounted(refreshQuality)
             Locate…
           </button>
         </div>
+        <div class="flex items-center gap-2 text-[11px]">
+          <span class="w-32 shrink-0 text-zinc-300">Backup model</span>
+          <span
+            class="rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase"
+            :class="installed ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-700/40 text-zinc-400'"
+          >{{ installed ? (modelInfo?.located ? 'Located' : 'Installed') : 'Not installed' }}</span>
+          <button
+            type="button"
+            :disabled="busy"
+            class="ml-auto shrink-0 rounded bg-zinc-700 px-2 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:opacity-40"
+            @click="locate"
+          >
+            Locate…
+          </button>
+        </div>
+        <p class="text-[11px] text-zinc-500">
+          The backup is a lower-quality model used automatically only if a
+          RoFormer model above can't run on your hardware. You don't normally
+          need it — it's fetched on first use if required.
+        </p>
+        <p
+          v-if="error"
+          class="text-[11px] text-red-400"
+        >
+          {{ error }}
+        </p>
       </div>
+
+      <label class="mt-4 flex cursor-pointer items-start gap-3">
+        <input
+          v-model="useBackupModel"
+          type="checkbox"
+          class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+        >
+        <span class="flex-1">
+          <span class="block font-medium text-zinc-200">
+            Always use the backup model
+          </span>
+          <span class="mt-0.5 block text-zinc-500">
+            Forces the lower-quality backup for every stem even when the RoFormer
+            models above are installed (for example, for faster separation or
+            troubleshooting). Off by default.
+          </span>
+        </span>
+      </label>
     </div>
 
     <StemCleanupSection
@@ -300,115 +343,6 @@ onMounted(refreshQuality)
       radio-name="other-enhance-strength"
       :options="STRENGTH_OPTIONS"
     />
-
-    <div>
-      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-        Backup model
-      </h2>
-      <p class="mb-2 text-zinc-500">
-        A built-in backup used automatically for any stem when the models above
-        aren't installed or can't run on your hardware. Lower quality. You don't
-        normally need to download this yourself — it is fetched on first use if
-        needed.
-      </p>
-
-      <label class="mb-3 flex cursor-pointer items-start gap-3">
-        <input
-          v-model="useBackupModel"
-          type="checkbox"
-          class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
-        >
-        <span class="flex-1">
-          <span class="block font-medium text-zinc-200">
-            Always use the backup model
-          </span>
-          <span class="mt-0.5 block text-zinc-500">
-            Forces the backup for every stem even when the models above are
-            installed (for example, for faster separation or troubleshooting).
-            Off by default.
-          </span>
-        </span>
-      </label>
-
-      <p class="mb-1.5 text-zinc-500">
-        If you already have a copy of the backup model, point Silverdaw at the
-        folder instead of downloading it again.
-      </p>
-
-      <div class="mb-2 flex items-center gap-2">
-        <span
-          class="rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase"
-          :class="
-            installed
-              ? 'bg-emerald-500/15 text-emerald-300'
-              : 'bg-amber-500/15 text-amber-300'
-          "
-        >{{ installed ? (modelInfo?.located ? 'Located' : 'Installed') : 'Not downloaded' }}</span>
-      </div>
-
-      <div class="mb-3">
-        <div class="mb-1 font-medium text-zinc-200">
-          Model location
-        </div>
-        <code
-          class="block truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
-          :title="modelInfo?.directory"
-        >{{ modelInfo?.directory || '…' }}</code>
-      </div>
-
-      <div
-        v-if="busy && downloadPercent !== null"
-        class="mb-3"
-      >
-        <div class="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
-          <span>Downloading model…</span>
-          <span>{{ downloadPercent }}%</span>
-        </div>
-        <div class="h-1.5 overflow-hidden rounded bg-zinc-800">
-          <div
-            class="h-full bg-sky-500 transition-[width] duration-200"
-            :style="{ width: `${downloadPercent}%` }"
-          />
-        </div>
-      </div>
-
-      <p
-        v-if="error"
-        class="mb-2 text-[11px] text-red-400"
-      >
-        {{ error }}
-      </p>
-
-      <div class="flex flex-wrap items-center gap-2">
-        <button
-          v-if="busy && downloadPercent !== null"
-          type="button"
-          class="shrink-0 rounded bg-zinc-700 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none"
-          @click="cancelDownload"
-        >
-          Cancel download
-        </button>
-        <template v-else>
-          <button
-            v-if="!installed"
-            type="button"
-            :disabled="busy"
-            class="shrink-0 rounded bg-sky-600 px-3 py-1 text-[11px] font-medium text-white hover:bg-sky-500 focus:ring-2 focus:ring-sky-400 focus:outline-none disabled:opacity-40"
-            @click="download"
-          >
-            Download…
-          </button>
-          <button
-            type="button"
-            :disabled="busy"
-            class="shrink-0 rounded bg-zinc-700 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-600 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:opacity-40"
-            @click="locate"
-          >
-            Locate existing model…
-          </button>
-        </template>
-      </div>
-    </div>
 
     <div>
       <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">

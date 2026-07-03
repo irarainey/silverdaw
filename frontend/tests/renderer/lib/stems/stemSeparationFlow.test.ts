@@ -140,7 +140,7 @@ const FULL_DISPATCH = {
 
 /** Start a clip separation and click Start with all four stems still ticked. */
 async function startClipSeparation(): Promise<void> {
-  requestStemSeparationForClip('c1')
+  await requestStemSeparationForClip('c1')
   await confirmStemSelection()
 }
 
@@ -157,6 +157,33 @@ function packsMissing(vocalTotal: number, rhythmTotal: number): void {
     presentBytes: 0,
     totalBytes: rhythmTotal,
     fileCount: 1
+  })
+}
+
+/** Make the pack ensure() calls stream some progress and, realistically, flip
+ *  that pack's install state to installed (so a later state check passes). */
+function packsInstallOnEnsure(): void {
+  api.ensureVocalPack.mockImplementation(async () => {
+    progressHandler?.({
+      receivedBytes: 800,
+      totalBytes: 800,
+      fileName: 'mel-band-roformer.onnx',
+      fileIndex: 0,
+      fileCount: 2
+    })
+    api.getVocalPackState.mockResolvedValue(INSTALLED_STATE)
+    return { ok: true }
+  })
+  api.ensureRhythmPack.mockImplementation(async () => {
+    progressHandler?.({
+      receivedBytes: 400,
+      totalBytes: 400,
+      fileName: 'bs-roformer-rhythm.onnx',
+      fileIndex: 0,
+      fileCount: 1
+    })
+    api.getRhythmPackState.mockResolvedValue(INSTALLED_STATE)
+    return { ok: true }
   })
 }
 
@@ -193,8 +220,8 @@ afterEach(() => {
 })
 
 describe('stem selection dialog', () => {
-  it('opens with all stems ticked and a stripped source name', () => {
-    requestStemSeparationForClip('c1')
+  it('opens with all stems ticked and a stripped source name', async () => {
+    await requestStemSeparationForClip('c1')
     const selection = useStemSelection().value
     expect(selection?.target).toMatchObject({
       sourceItemId: 'i1',
@@ -206,15 +233,15 @@ describe('stem selection dialog', () => {
     expect(selection?.quality).toBe('balanced')
   })
 
-  it('cancel dismisses without dispatching', () => {
-    requestStemSeparationForClip('c1')
+  it('cancel dismisses without dispatching', async () => {
+    await requestStemSeparationForClip('c1')
     cancelStemSelection()
     expect(useStemSelection().value).toBeNull()
     expect(sendMock).not.toHaveBeenCalled()
   })
 
-  it('a library request omits clip placement fields', () => {
-    requestStemSeparationForLibraryItem('i1')
+  it('a library request omits clip placement fields', async () => {
+    await requestStemSeparationForLibraryItem('i1')
     const selection = useStemSelection().value
     expect(selection?.target.sourceItemId).toBe('i1')
     expect(selection?.target.clipId).toBeUndefined()
@@ -222,7 +249,7 @@ describe('stem selection dialog', () => {
   })
 
   it('dispatches only the ticked stems', async () => {
-    requestStemSeparationForClip('c1')
+    await requestStemSeparationForClip('c1')
     toggleStemSelection('bass')
     toggleStemSelection('other')
     await confirmStemSelection()
@@ -234,7 +261,7 @@ describe('stem selection dialog', () => {
   })
 
   it('dispatches the chosen quality preset', async () => {
-    requestStemSeparationForClip('c1')
+    await requestStemSeparationForClip('c1')
     setStemQuality('best')
     await confirmStemSelection()
 
@@ -244,8 +271,8 @@ describe('stem selection dialog', () => {
     )
   })
 
-  it('persists the chosen quality to preferences', () => {
-    requestStemSeparationForClip('c1')
+  it('persists the chosen quality to preferences', async () => {
+    await requestStemSeparationForClip('c1')
     setStemQuality('fast')
     expect(api.setStemPrefs).toHaveBeenCalledWith({ quality: 'fast' })
   })
@@ -253,7 +280,7 @@ describe('stem selection dialog', () => {
   it('seeds the picker from the persisted quality preference', async () => {
     api.getStemPrefs.mockResolvedValue({ ...PREFS, quality: 'best' })
     await loadStemQualityPreference()
-    requestStemSeparationForClip('c1')
+    await requestStemSeparationForClip('c1')
     expect(useStemSelection().value?.quality).toBe('best')
   })
 
@@ -278,7 +305,7 @@ describe('stem selection dialog', () => {
   })
 
   it('does not start when no stem is ticked', async () => {
-    requestStemSeparationForClip('c1')
+    await requestStemSeparationForClip('c1')
     for (const stem of ALL_STEMS) toggleStemSelection(stem as never)
     await confirmStemSelection()
     expect(sendMock).not.toHaveBeenCalled()
@@ -288,7 +315,15 @@ describe('stem selection dialog', () => {
 })
 
 describe('stemSeparationFlow', () => {
-  it('dispatches immediately when the required models are already installed', async () => {
+  it('opens the picker directly when the required models are installed', async () => {
+    await requestStemSeparationForClip('c1')
+
+    expect(useStemSelection().value).not.toBeNull()
+    expect(useStemModelFlow().value).toBeNull()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('dispatches when the picker is confirmed and models are installed', async () => {
     await startClipSeparation()
 
     expect(useStemModelFlow().value).toBeNull()
@@ -299,47 +334,43 @@ describe('stemSeparationFlow', () => {
     expect(api.ensureStemModel).not.toHaveBeenCalled()
   })
 
-  it('opens the confirm flow when the RoFormer packs are absent', async () => {
+  it('shows the download dialog BEFORE the picker when the packs are absent', async () => {
     packsMissing(800, 400)
 
-    await startClipSeparation()
+    await requestStemSeparationForClip('c1')
 
     const flow = useStemModelFlow().value
     expect(flow?.phase).toBe('confirm')
     expect(flow?.totalBytes).toBe(1200)
+    // The picker has not opened yet, and nothing is dispatched.
+    expect(useStemSelection().value).toBeNull()
     expect(sendMock).not.toHaveBeenCalled()
   })
 
-  it('downloads both RoFormer packs then dispatches on confirm', async () => {
+  it('opens the picker after the pre-selection download completes (no dispatch yet)', async () => {
     packsMissing(800, 400)
-    api.ensureVocalPack.mockImplementation(async () => {
-      progressHandler?.({
-        receivedBytes: 800,
-        totalBytes: 800,
-        fileName: 'mel-band-roformer.onnx',
-        fileIndex: 0,
-        fileCount: 2
-      })
-      return { ok: true }
-    })
-    api.ensureRhythmPack.mockImplementation(async () => {
-      progressHandler?.({
-        receivedBytes: 400,
-        totalBytes: 400,
-        fileName: 'bs-roformer-rhythm.onnx',
-        fileIndex: 0,
-        fileCount: 1
-      })
-      return { ok: true }
-    })
+    packsInstallOnEnsure()
 
-    await startClipSeparation()
+    await requestStemSeparationForClip('c1')
     await confirmModelDownload()
 
     expect(api.ensureVocalPack).toHaveBeenCalled()
     expect(api.ensureRhythmPack).toHaveBeenCalled()
-    expect(api.ensureStemModel).not.toHaveBeenCalled()
     expect(useStemModelFlow().value).toBeNull()
+    // Picker is now open; dispatch waits for the user to confirm stems.
+    expect(useStemSelection().value).not.toBeNull()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('dispatches once stems are confirmed after the pre-selection download', async () => {
+    packsMissing(800, 400)
+    packsInstallOnEnsure()
+
+    await requestStemSeparationForClip('c1')
+    await confirmModelDownload()
+    await confirmStemSelection()
+
+    expect(api.ensureStemModel).not.toHaveBeenCalled()
     expect(sendMock).toHaveBeenCalledWith('STEM_SEPARATE', FULL_DISPATCH)
   })
 
@@ -347,7 +378,7 @@ describe('stemSeparationFlow', () => {
     packsMissing(800, 400)
     api.ensureVocalPack.mockResolvedValue({ ok: false, error: 'integrity check failed' })
 
-    await startClipSeparation()
+    await requestStemSeparationForClip('c1')
     await confirmModelDownload()
 
     const flow = useStemModelFlow().value
@@ -355,6 +386,7 @@ describe('stemSeparationFlow', () => {
     expect(flow?.error).toBe('integrity check failed')
     // The second pack is not attempted once the first fails.
     expect(api.ensureRhythmPack).not.toHaveBeenCalled()
+    expect(useStemSelection().value).toBeNull()
     expect(sendMock).not.toHaveBeenCalled()
   })
 
@@ -368,7 +400,7 @@ describe('stemSeparationFlow', () => {
         })
     )
 
-    await startClipSeparation()
+    await requestStemSeparationForClip('c1')
     const confirming = confirmModelDownload()
     expect(useStemModelFlow().value?.phase).toBe('downloading')
 
@@ -378,15 +410,17 @@ describe('stemSeparationFlow', () => {
 
     resolveEnsure({ ok: false, error: 'download aborted' })
     await confirming
-    // Cancel already nulled the flow; the late error must not resurrect it.
+    // Cancel already nulled the flow; the late error must not resurrect it, and
+    // the picker must not open.
     expect(useStemModelFlow().value).toBeNull()
+    expect(useStemSelection().value).toBeNull()
   })
 
   it('ignores a request while a separation is already running', async () => {
     await startClipSeparation()
     sendMock.mockClear()
 
-    requestStemSeparationForClip('c1')
+    await requestStemSeparationForClip('c1')
     expect(useStemSelection().value).toBeNull()
     expect(pushInfo).toHaveBeenCalledWith('A stem separation is already running.')
     expect(sendMock).not.toHaveBeenCalled()

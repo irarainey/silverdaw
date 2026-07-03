@@ -61,22 +61,22 @@ function onCancel(): void {
             id="stem-model-title"
             class="dialog-title"
           >
-            Stem Separation Model
+            Stem Separation Models
           </h1>
         </div>
 
         <div class="dialog-body flex flex-col gap-3">
           <template v-if="phase === 'confirm'">
             <p class="text-sm text-zinc-300">
-              Separating stems needs a one-time model download
-              ({{ fileCount }} files, {{ totalLabel }}), stored on this computer
-              and reused for every future separation.
+              Separating stems needs a one-time download of the separation
+              models ({{ fileCount }} files, {{ totalLabel }}), stored on this
+              computer and reused for every future separation.
             </p>
           </template>
 
           <template v-else-if="phase === 'downloading'">
             <div class="flex items-baseline justify-between gap-3">
-              <span class="text-zinc-300">Downloading model…</span>
+              <span class="text-zinc-300">Downloading models…</span>
               <span class="font-mono text-xs tabular-nums text-zinc-400">{{ percent }}%</span>
             </div>
             <div
@@ -106,7 +106,7 @@ function onCancel(): void {
 
           <template v-else>
             <p class="text-sm text-red-400">
-              The model download failed: {{ errorText }}
+              The models download failed: {{ errorText }}
             </p>
           </template>
         </div>

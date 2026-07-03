@@ -1,8 +1,9 @@
-// Live (non-transactional) state for the Preferences "Stems" tab: GPU
-// availability, the on-disk model location/status, an inline first-use download
-// with progress, and the "locate an existing copy" flow. Mirrors how the audio
-// tab drives live device actions rather than the dialog's deferred Save model —
-// downloading or locating a ~1.2 GB model has an immediate side effect.
+// Live (non-transactional) state for the backup (htdemucs) model on the
+// Preferences "Stems" tab: GPU availability, the on-disk model location/status,
+// and the "locate an existing copy" flow. Mirrors how the audio tab drives live
+// device actions rather than the dialog's deferred Save model — locating a model
+// has an immediate side effect. The backup is otherwise fetched on demand by the
+// separation flow, so there is no manual download action here.
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { StemGpuStatus, StemModelInfo } from '@shared/types'
@@ -11,12 +12,9 @@ export interface StemModelManager {
   gpu: Ref<StemGpuStatus>
   modelInfo: Ref<StemModelInfo | null>
   busy: Ref<boolean>
-  downloadPercent: Ref<number | null>
   error: Ref<string | null>
   installed: ComputedRef<boolean>
   refresh: () => Promise<void>
-  download: () => Promise<void>
-  cancelDownload: () => void
   locate: () => Promise<void>
 }
 
@@ -24,7 +22,6 @@ export function useStemModelManager(): StemModelManager {
   const gpu = ref<StemGpuStatus>({ available: false, name: null })
   const modelInfo = ref<StemModelInfo | null>(null)
   const busy = ref(false)
-  const downloadPercent = ref<number | null>(null)
   const error = ref<string | null>(null)
 
   const installed = computed(() => modelInfo.value?.installed === true)
@@ -40,32 +37,6 @@ export function useStemModelManager(): StemModelManager {
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err)
     }
-  }
-
-  async function download(): Promise<void> {
-    if (busy.value) return
-    error.value = null
-    busy.value = true
-    downloadPercent.value = 0
-    const off = window.silverdaw.onStemModelDownloadProgress((p) => {
-      downloadPercent.value =
-        p.totalBytes > 0 ? Math.min(100, Math.round((p.receivedBytes / p.totalBytes) * 100)) : 0
-    })
-    try {
-      const result = await window.silverdaw.ensureStemModel()
-      if (!result.ok) error.value = result.error
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err)
-    } finally {
-      off()
-      busy.value = false
-      downloadPercent.value = null
-      await refresh()
-    }
-  }
-
-  function cancelDownload(): void {
-    window.silverdaw.cancelStemModelDownload()
   }
 
   async function locate(): Promise<void> {
@@ -92,12 +63,9 @@ export function useStemModelManager(): StemModelManager {
     gpu,
     modelInfo,
     busy,
-    downloadPercent,
     error,
     installed,
     refresh,
-    download,
-    cancelDownload,
     locate
   }
 }
