@@ -428,6 +428,7 @@ add_library(silverdaw_backend_core STATIC
     src/commands/UndoCommands.cpp
     src/commands/WaveformCommands.cpp
     # core
+    src/core/CrashHandler.cpp
     src/core/Log.cpp
     # dsp
     src/dsp/BpmDetector.cpp

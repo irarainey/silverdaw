@@ -9,7 +9,7 @@ import { app, BrowserWindow, Menu, ipcMain, nativeTheme, dialog } from 'electron
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { extname, isAbsolute, join } from 'node:path'
-import { closeLogs, getSessionDir, initLogs, logMain, type LogLevel } from './log'
+import { closeLogs, getSessionDir, initLogs, logMain, type LogLevel, closeDiagnostics, getDiagnosticsDir, initDiagnostics, logDiag } from './log'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 import { BackendSupervisor } from './backendSupervisor'
 import {
@@ -78,6 +78,10 @@ function buildBackendEnv(): NodeJS.ProcessEnv {
           SILVERDAW_OUTPUT_DEVICE_NAME: audioOutput.deviceName
         }
       : {}),
+    // Always-on diagnostics dir so the backend can write its crash report and an
+    // INFO-level startup log even when the user's verbose logging is off. This is
+    // what makes a failed/crashed launch diagnosable from the logs alone.
+    SILVERDAW_DIAG_DIR: getDiagnosticsDir(),
     // Export only when logging is enabled; empty env disables backend logger init.
     ...(startupLoggingEnabled ? { SILVERDAW_LOG_DIR: getSessionDir() } : {})
   }
@@ -97,7 +101,12 @@ function startBackend(): void {
     // Writable cwd so the backend never inherits the read-only WindowsApps
     // install dir (MSIX); the temp dir is always writable/redirected.
     resolveCwd: () => app.getPath('temp'),
-    log: (level, scope, message) => logMain(level as LogLevel, scope, message),
+    log: (level, scope, message) => {
+      logMain(level as LogLevel, scope, message)
+      // Mirror backend lifecycle (spawn / exit / respawn / failed) to the always-on
+      // diagnostics log so an install that never connects still leaves a trace.
+      logDiag(level as LogLevel, scope, message)
+    },
     sendStatus: sendBackendStatus
   })
   backendSupervisor.start()
@@ -161,6 +170,14 @@ app.whenReady().then(async () => {
   await prefs.load()
   startupLoggingEnabled = prefs.get().debug.loggingEnabled === true
   startupDevToolsEnabled = prefs.get().debug.devToolsEnabled === true
+
+  // Always-on diagnostics (independent of the logging preference): captures the
+  // backend crash report and startup lifecycle so a launch that never connects to
+  // the audio engine is diagnosable even when verbose logging is off.
+  const diagDir = initDiagnostics(join(app.getPath('userData'), 'diagnostics'))
+  if (diagDir) {
+    logDiag('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node} packaged=${app.isPackaged}`)
+  }
 
   // Only opted-in diagnostic sessions write cross-layer logs.
   if (startupLoggingEnabled) {
@@ -294,5 +311,7 @@ app.on('before-quit', () => {
   // Make sure any pending debounced write hits disk before we exit.
   prefs.flushSaveSync()
   logMain('INFO ', 'main', 'before-quit')
+  logDiag('INFO ', 'main', 'before-quit')
   closeLogs()
+  closeDiagnostics()
 })

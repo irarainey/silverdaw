@@ -17,6 +17,8 @@ namespace
 std::mutex g_mutex;
 std::ofstream g_file;
 bool g_initialised = false;
+Level g_minLevel = Level::Debug;
+bool g_startupOnly = false;
 
 const char* levelName(Level level)
 {
@@ -70,16 +72,19 @@ juce::File resolveLogDirectory(const juce::String& override)
 
 } // namespace
 
-void initialise(const juce::String& logDirOverride)
+void initialise(const juce::String& logDirOverride, Level minLevel, bool truncate, bool startupOnly)
 {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_initialised)
     {
         return;
     }
+    g_minLevel = minLevel;
+    g_startupOnly = startupOnly;
     const auto dir = resolveLogDirectory(logDirOverride);
     const auto file = dir.getChildFile("backend.log");
-    g_file.open(file.getFullPathName().toStdString(), std::ios::out | std::ios::app);
+    const auto mode = std::ios::out | (truncate ? std::ios::trunc : std::ios::app);
+    g_file.open(file.getFullPathName().toStdString(), mode);
     if (!g_file.is_open())
     {
         // Logger startup failures can only go to stderr.
@@ -91,6 +96,24 @@ void initialise(const juce::String& logDirOverride)
     g_file << currentIso8601Ms() << " INFO  [log] backend logger initialised; logDir="
            << dir.getFullPathName().toStdString() << '\n';
     g_file.flush();
+}
+
+void markStartupComplete()
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    // Only the always-on diagnostics sink is startup-scoped; the verbose sink keeps
+    // logging the whole session. Closing here stops the diagnostics log from ever
+    // accumulating runtime chatter — it exists solely to catch a failed startup.
+    if (!g_initialised || !g_startupOnly)
+    {
+        return;
+    }
+    g_file << currentIso8601Ms()
+           << " INFO  [log] startup complete; closing always-on diagnostics log "
+              "(enable Preferences > Developer > diagnostic logging for full session logs)\n";
+    g_file.flush();
+    g_file.close();
+    g_initialised = false;
 }
 
 void shutdown()
@@ -109,7 +132,7 @@ void shutdown()
 void write(Level level, const char* tag, const juce::String& message)
 {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (!g_initialised)
+    if (!g_initialised || level < g_minLevel)
     {
         return;
     }

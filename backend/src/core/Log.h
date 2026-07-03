@@ -15,8 +15,19 @@ enum class Level
     Error
 };
 
-// Initialise once near process start; later calls are ignored.
-void initialise(const juce::String& logDirOverride);
+// Initialise once near process start; later calls are ignored. `minLevel` drops
+// anything below it. `truncate` overwrites on open instead of appending.
+// `startupOnly` marks this as the always-on diagnostics sink: it exists purely to
+// catch a backend that can't START, so `markStartupComplete()` closes it the
+// moment the app is up — it must never accumulate ongoing session logs (that is
+// what the opt-in verbose sink, append inside a unique per-session dir, is for).
+void initialise(const juce::String& logDirOverride, Level minLevel = Level::Debug,
+                bool truncate = false, bool startupOnly = false);
+
+// Closes the always-on diagnostics sink once startup succeeds (no-op for the
+// verbose sink). After this, the diagnostics log holds only the startup trace —
+// ending in "startup complete" on success, or cut off at the failing phase.
+void markStartupComplete();
 
 void shutdown();
 

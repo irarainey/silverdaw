@@ -17,6 +17,12 @@ export type LogLevel = 'DEBUG' | 'INFO ' | 'WARN ' | 'ERROR'
 let sessionDir = ''
 let mainStream: WriteStream | null = null
 let rendererStream: WriteStream | null = null
+// Always-on diagnostics stream, independent of the user's logging preference:
+// captures backend spawn/exit and startup milestones so a failed launch on a
+// machine we can't attach to leaves an easy-to-find trace next to the backend's
+// own crash report. See initDiagnostics / logDiag.
+let diagStream: WriteStream | null = null
+let diagnosticsDir = ''
 
 /** Preserve Error stacks and render objects readably instead of `[object Object]`. */
 function formatLogValue(value: unknown): string {
@@ -83,4 +89,43 @@ export function closeLogs(): void {
 /** Absolute path to the current session's log directory, or empty string before init. */
 export function getSessionDir(): string {
   return sessionDir
+}
+
+/**
+ * Open the ALWAYS-ON diagnostics log at `<diagDir>/startup.log` (append). Unlike
+ * `initLogs`, this runs on every launch regardless of the user's diagnostic-logging
+ * preference, so a crashed or failed-to-connect startup is always traceable. The
+ * same `diagDir` is handed to the backend (`SILVERDAW_DIAG_DIR`) for its crash
+ * report. Returns the directory, or empty string if it could not be opened.
+ */
+export function initDiagnostics(diagDir: string): string {
+  try {
+    mkdirSync(diagDir, { recursive: true })
+    diagnosticsDir = diagDir
+    diagStream = createWriteStream(join(diagDir, 'startup.log'), { flags: 'w' })
+    logDiag('INFO ', 'diag', `--- launch ${new Date().toISOString()} ---`)
+    return diagDir
+  } catch {
+    diagStream = null
+    diagnosticsDir = ''
+    return ''
+  }
+}
+
+/** Absolute path to the always-on diagnostics directory, or empty before init. */
+export function getDiagnosticsDir(): string {
+  return diagnosticsDir
+}
+
+/** Append a line to the always-on diagnostics log (no-op before initDiagnostics). */
+export function logDiag(level: LogLevel, tag: string, message: string, ...args: unknown[]): void {
+  if (!diagStream) return
+  const detail = args.length > 0 ? ` ${args.map(formatLogValue).join(' ')}` : ''
+  diagStream.write(`${new Date().toISOString()} ${level} [${tag}] ${message}${detail}\n`)
+}
+
+/** Flush + close the diagnostics stream. Idempotent. */
+export function closeDiagnostics(): void {
+  diagStream?.end()
+  diagStream = null
 }

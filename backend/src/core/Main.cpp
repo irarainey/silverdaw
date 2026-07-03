@@ -2,6 +2,7 @@
 #include "AudioDeviceCommands.h"
 #include "BridgeDispatch.h"
 #include "BridgeServer.h"
+#include "CrashHandler.h"
 #include "DecodedCache.h"
 #include "EditUndoState.h"
 #include "Log.h"
@@ -135,11 +136,33 @@ juce::String resolveBridgeToken(int argc, char* argv[])
 // NOLINTNEXTLINE(modernize-avoid-c-arrays,hicpp-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
 int runBackend(int argc, char* argv[])
 {
-    // File logging is opt-in so normal packaged use writes no backend.log.
+    // Two log sinks, both resolved up front:
+    //  - SILVERDAW_LOG_DIR: opt-in verbose session log (all levels), only set when
+    //    the user enables diagnostic logging in Preferences.
+    //  - SILVERDAW_DIAG_DIR: an ALWAYS-ON diagnostics dir the frontend passes on
+    //    every launch. Used for the crash report and, when verbose logging is off,
+    //    for an INFO-level startup log — so a failed/crashed startup on a machine
+    //    we can't attach to still leaves an easy-to-find trace regardless of the
+    //    user's logging preference.
     const auto logDirOverride = juce::SystemStats::getEnvironmentVariable("SILVERDAW_LOG_DIR", {});
+    const auto diagDir = juce::SystemStats::getEnvironmentVariable("SILVERDAW_DIAG_DIR", {});
+
+    // Install the crash reporter first, so a fault anywhere below is captured.
+    silverdaw::crash::install(diagDir.isNotEmpty() ? diagDir : logDirOverride);
+    silverdaw::crash::setPhase("startup");
+
     if (logDirOverride.isNotEmpty())
     {
         silverdaw::log::initialise(logDirOverride);
+    }
+    else if (diagDir.isNotEmpty())
+    {
+        // Always-on but startup-scoped: INFO+ (no per-frame DEBUG), truncated each
+        // launch, and closed once startup succeeds (see markStartupComplete). It
+        // exists only to diagnose a backend that can't start — ongoing session
+        // logging is the opt-in verbose sink's job.
+        silverdaw::log::initialise(diagDir, silverdaw::log::Level::Info, /*truncate*/ true,
+                                   /*startupOnly*/ true);
     }
 
     const juce::String banner = "Silverdaw Backend v1.0.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
@@ -160,6 +183,7 @@ int runBackend(int argc, char* argv[])
     // Required even for headless JUCE apps.
     const juce::ScopedJuceInitialiser_GUI juceInit;
 
+    silverdaw::crash::setPhase("audio-device-init");
     silverdaw::AudioEngine engine;
     const auto preferredAudioTypeName =
         juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_DEVICE_TYPE", {});
@@ -229,6 +253,7 @@ int runBackend(int argc, char* argv[])
             sendToClient("EDIT_UNDO_STATE", silverdaw::buildEditUndoStateEnvelope(projectState));
         });
 
+    silverdaw::crash::setPhase("bridge-start");
     if (!bridge.start(bridgePort))
     {
         silverdaw::log::error("bridge", "failed to start; exiting");
@@ -259,6 +284,10 @@ int runBackend(int argc, char* argv[])
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
 
+    silverdaw::crash::setPhase("running");
+    // Startup succeeded: close the always-on diagnostics log so it never grows with
+    // runtime logging. A later crash is still captured by the crash reporter.
+    silverdaw::log::markStartupComplete();
     juce::MessageManager::getInstance()->runDispatchLoop();
 
     // Drain worker jobs before captured bridge/cache/engine references destruct.
