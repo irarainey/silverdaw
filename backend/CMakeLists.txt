@@ -577,6 +577,48 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
                 "$<TARGET_FILE_DIR:SilverdawBackend>/DirectML.dll"
             COMMENT "Copying DirectML.dll next to backend executable")
     endif()
+
+    # onnxruntime.dll (Microsoft-built) dynamically links the VC++ runtime
+    # (MSVCP140 / MSVCP140_1 / VCRUNTIME140 / VCRUNTIME140_1). The backend exe
+    # load-time-links onnxruntime.dll, so on a clean machine WITHOUT the VC++
+    # redistributable the loader fails with STATUS_DLL_NOT_FOUND (0xC0000135)
+    # before main() even runs — the backend never starts and never writes its
+    # log. MSIX does not auto-provide the VCLibs framework, so ship the runtime
+    # app-local next to the exe; this fixes both the MSIX package and the
+    # portable zip. The bundling guard + electron-builder extraResources filter
+    # ship whatever lands here, so keep both in sync with this list.
+    if(MSVC)
+        set(_silverdaw_vc_runtime_dlls
+            msvcp140.dll msvcp140_1.dll vcruntime140.dll vcruntime140_1.dll)
+        # Derive the redist dir from the compiler location (VCToolsRedistDir is not
+        # reliably exported into the CMake environment). cl.exe lives at
+        # <VC>/Tools/MSVC/<ver>/bin/Hostx64/x64/cl.exe, so the VC root is 7 levels up;
+        # the runtime DLLs ship under <VC>/Redist/MSVC/<ver>/x64/Microsoft.VC*.CRT.
+        get_filename_component(_silverdaw_vc_root "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        foreach(_i RANGE 1 6)
+            get_filename_component(_silverdaw_vc_root "${_silverdaw_vc_root}" DIRECTORY)
+        endforeach()
+        set(_silverdaw_vc_crt_dir "")
+        file(GLOB _silverdaw_vc_crt_dirs "${_silverdaw_vc_root}/Redist/MSVC/*/x64/Microsoft.VC*.CRT")
+        if(_silverdaw_vc_crt_dirs)
+            list(SORT _silverdaw_vc_crt_dirs)
+            list(GET _silverdaw_vc_crt_dirs -1 _silverdaw_vc_crt_dir)
+        endif()
+        if(_silverdaw_vc_crt_dir STREQUAL "" OR NOT EXISTS "${_silverdaw_vc_crt_dir}/vcruntime140.dll")
+            message(WARNING
+                "VC++ runtime redist not found under ${_silverdaw_vc_root}/Redist; onnxruntime.dll "
+                "may fail to load on machines without the VC++ redistributable installed.")
+        else()
+            message(STATUS "Bundling VC++ runtime from: ${_silverdaw_vc_crt_dir}")
+            foreach(_dll IN LISTS _silverdaw_vc_runtime_dlls)
+                add_custom_command(TARGET SilverdawBackend POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_silverdaw_vc_crt_dir}/${_dll}"
+                        "$<TARGET_FILE_DIR:SilverdawBackend>/${_dll}"
+                    COMMENT "Copying VC++ runtime ${_dll} next to backend executable")
+            endforeach()
+        endif()
+    endif()
 endif()
 
 # ─── LAME MP3 encoder (optional, bundled) ────────────────────────────────
