@@ -50,6 +50,18 @@ export function effectiveDurationMs(nativeDurationMs: number, inputs: ClipWarpIn
   return nativeDurationMs / ratio
 }
 
+/**
+ * Advisory copy shown when auto-warp is intentionally skipped because the
+ * source has a variable tempo — no single stretch ratio can match it, so the
+ * user is pointed at the manual split-and-warp workflow. Shared by the drop
+ * path and the late-analysis path so the wording stays identical.
+ */
+export function variableTempoWarpSkippedMessage(sourceName?: string): string {
+  const name = sourceName?.trim()
+  const subject = name ? `"${name}"` : 'This clip'
+  return `${subject} wasn't auto-warped — a variable tempo was detected. Split it into sections and warp each part manually.`
+}
+
 /** Combined pitch scale: `2^((semitones + cents / 100) / 12)`. */
 export function effectivePitchScale(semitones: number | undefined, cents: number | undefined): number {
   const s = typeof semitones === 'number' ? semitones : 0

@@ -6,8 +6,10 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { useLibraryStore, libraryItemIsSimple } from '@/stores/libraryStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { variableTempoWarpSkippedMessage } from '@/lib/warp'
 import { fileStem } from './projectHelpers'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
@@ -310,6 +312,13 @@ export const clipLibraryActions = {
             'warp',
             `applyDropTimeWarp clip=${clipId} → skip (variableTempo or no BPM, not pending)`
           )
+          // Variable tempo is a deliberate auto-warp exclusion; tell the user why
+          // and how to warp it manually instead of silently doing nothing.
+          if (src.variableTempo === true) {
+            const clip = this.clips[clipId]
+            const name = clip?.name?.trim() || (clip ? fileStem(clip.fileName) : '')
+            useNotificationsStore().pushInfo(variableTempoWarpSkippedMessage(name))
+          }
         }
         return
       }
