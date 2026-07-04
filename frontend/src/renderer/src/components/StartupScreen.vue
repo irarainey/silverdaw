@@ -3,7 +3,6 @@
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
-import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useTransportStore } from '@/stores/transportStore'
 // 256 px renders crisply at 128 px on 2x DPI.
 import logoUrl from '@resources/icons/256x256.png'
@@ -26,7 +25,6 @@ const emit = defineEmits<{
 
 const app = useAppStore()
 const transport = useTransportStore()
-const audioDevices = useAudioDeviceStore()
 
 const MAX_STARTUP_RECENTS = 3
 const recents = computed(() => app.recentProjects.slice(0, MAX_STARTUP_RECENTS))
@@ -39,20 +37,19 @@ function onClose(): void {
   window.silverdaw.closeWindow()
 }
 
-// All startup gates resolved; phase dwell below still controls readiness.
+// All startup gates resolved; phase dwell below still controls readiness. Uses the
+// handshake (not the post-open PROJECT_STATE) so the picker appears while the audio
+// device is still opening. Deliberately NOT gated on the audio-device scan: that scan
+// is background work for Preferences and would otherwise pull the picker back to the
+// spinner when its deferred `scanInProgress` result arrives.
 const allResolved = computed(
-  () =>
-    !bridgeFailed.value &&
-    transport.bridgeReady &&
-    props.startupFlowComplete &&
-    !audioDevices.scanInProgress
+  () => !bridgeFailed.value && transport.handshakeReady && props.startupFlowComplete
 )
 
 const liveStatusText = computed(() => {
   if (bridgeFailed.value) return ''
   if (!transport.connected) return 'Waiting for the audio engine to start…'
-  if (!transport.bridgeReady) return 'Connecting to the audio engine…'
-  if (audioDevices.scanInProgress) return 'Scanning audio devices…'
+  if (!transport.handshakeReady) return 'Connecting to the audio engine…'
   if (!props.startupFlowComplete && !props.recoveryOpen) {
     return 'Checking for recovered projects…'
   }
@@ -96,10 +93,14 @@ watch(
   { immediate: true }
 )
 
-// Ready only after all queued phases have completed their dwell.
-const ready = computed(
+// Ready only after all queued phases have completed their dwell. Latched: once the
+// picker is shown, the startup screen must NEVER revert to the spinner (only a terminal
+// bridge failure, handled separately above, or the screen closing on project load).
+const readyNow = computed(
   () => allResolved.value && phaseQueueLength.value === 0 && !phaseTimerActive.value
 )
+const ready = ref(false)
+watch(readyNow, (now) => { if (now) ready.value = true }, { immediate: true })
 
 function newProject(): void {
   emit('newProject')
@@ -228,7 +229,7 @@ onBeforeUnmount(() => {
       <!-- Locked heights prevent 1-2 px spinner/text wobble between phases. -->
       <div
         v-else-if="!ready"
-        class="flex h-[228px] flex-col items-center justify-between text-zinc-200"
+        class="flex h-57 flex-col items-center justify-between text-zinc-200"
       >
         <img
           :src="logoUrl"
@@ -243,7 +244,7 @@ onBeforeUnmount(() => {
         />
         <p
           id="startup-title"
-          class="m-0 flex h-5 shrink-0 items-center whitespace-nowrap text-[13px] font-medium leading-[20px]"
+          class="m-0 flex h-5 shrink-0 items-center whitespace-nowrap text-[13px] font-medium leading-5"
           aria-live="polite"
         >
           {{ statusText || 'Loading Silverdaw…' }}

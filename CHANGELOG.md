@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.2
+
+### Added
+
+- More detail in the always-on startup diagnostics log — system information, startup timing, and the audio devices the engine found and opened — to make a slow or failed start (and audio-device problems) easier to diagnose.
+
+### Changed
+
+- Faster startup: the main window and project screen now appear almost immediately while the audio engine starts up in the background, instead of waiting for it first.
+- Faster project loading, especially for projects with many clips — their audio files are now prepared together rather than one at a time.
+- Projects with many clips that share the same audio now draw their waveforms faster, by reusing the shared waveform detail instead of rebuilding it for every clip.
+
+### Fixed
+
+- "Unable to connect to audio engine" on some freshly installed machines, caused by a missing Windows runtime component that is now included with the app.
+- A sleep-prone USB output device (such as a USB DAC) not being woken in time on startup, so the first play was silent; the device is now roused before playback begins.
+- The saved output device not being selected on startup when it was slow to appear (for example, a USB device still starting up); the app now picks it up as soon as it's ready and switches to it automatically.
+- The first play being silent right after switching to a sleep-prone output device from the transport bar.
+- Dropping a clip whose source has a variable tempo silently not matching it to the project tempo; the app now shows a brief note explaining why it wasn't tempo-matched.
+
 ## 1.0.1
 
 ### Added

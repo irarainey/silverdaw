@@ -5,7 +5,8 @@ import {
   effectivePitchScale,
   effectiveTempoRatio,
   isWarpActive,
-  isWarpPending
+  isWarpPending,
+  variableTempoWarpSkippedMessage
 } from '@/lib/warp'
 
 describe('warp helpers', () => {
@@ -68,6 +69,20 @@ describe('warp helpers', () => {
 
     it('is false for pinned ratios because no source BPM is needed', () => {
       expect(isWarpPending({ warpEnabled: true, tempoRatio: 1.2 })).toBe(false)
+    })
+  })
+
+  describe('variableTempoWarpSkippedMessage', () => {
+    it('names the source and points at manual warping', () => {
+      const msg = variableTempoWarpSkippedMessage('California Soul')
+      expect(msg).toContain('"California Soul"')
+      expect(msg).toContain('variable tempo')
+      expect(msg).toMatch(/split/i)
+    })
+
+    it('falls back to a generic subject when no name is given', () => {
+      expect(variableTempoWarpSkippedMessage()).toMatch(/^This clip/)
+      expect(variableTempoWarpSkippedMessage('   ')).toMatch(/^This clip/)
     })
   })
 

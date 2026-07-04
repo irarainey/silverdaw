@@ -5,6 +5,7 @@ import {
   isBridgeInboundType,
   isClipAckPayload,
   isEngineErrorPayload,
+  isEngineAudioStatusPayload,
   isLibraryItemAnalysisPayload,
   isPlayheadUpdatePayload,
   isPongPayload,
@@ -80,7 +81,8 @@ const INBOUND_TYPES = {
   PROJECT_REVERB_APPLIED: true,
   PROJECT_DELAY_APPLIED: true,
   PONG: true,
-  ENGINE_ERROR: true
+  ENGINE_ERROR: true,
+  ENGINE_AUDIO_STATUS: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {
@@ -135,6 +137,21 @@ describe('isEngineErrorPayload', () => {
     expect(isEngineErrorPayload({})).toBe(false)
     expect(isEngineErrorPayload({ message: 42 })).toBe(false)
     expect(isEngineErrorPayload({ message: 'ok', context: 7 })).toBe(false)
+  })
+})
+
+describe('isEngineAudioStatusPayload', () => {
+  it('accepts the known states', () => {
+    expect(isEngineAudioStatusPayload({ state: 'starting' })).toBe(true)
+    expect(isEngineAudioStatusPayload({ state: 'ready' })).toBe(true)
+    expect(isEngineAudioStatusPayload({ state: 'failed' })).toBe(true)
+    expect(isEngineAudioStatusPayload({ state: 'no_device' })).toBe(true)
+  })
+
+  it('rejects unknown or missing state', () => {
+    expect(isEngineAudioStatusPayload({})).toBe(false)
+    expect(isEngineAudioStatusPayload({ state: 'nope' })).toBe(false)
+    expect(isEngineAudioStatusPayload({ state: 1 })).toBe(false)
   })
 })
 

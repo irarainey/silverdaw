@@ -11,10 +11,22 @@ interface TransportState {
   connected: boolean
   /** True after socket open and initial `PROJECT_STATE` reconcile. */
   bridgeReady: boolean
+  /**
+   * True after the WebSocket handshake (`READY`) — the backend is reachable. This precedes
+   * `bridgeReady`: the backend now opens the audio device AFTER the bridge is serving, so the
+   * UI can appear on the handshake without waiting for a slow cold-start device open.
+   */
+  handshakeReady: boolean
   /** Terminal startup bridge failure shown by StartupScreen. */
   bridgeFailureMessage: string | null
   /** Mid-session engine recovery phase; cold-start failures use `bridgeFailureMessage`. */
   engineRecovery: 'ok' | 'recovering' | 'restoring' | 'unavailable'
+  /**
+   * Audio-device readiness, from the backend `ENGINE_AUDIO_STATUS` broadcast. The device now
+   * opens on a worker thread after the bridge is serving, so the project/UI can be interactive
+   * while this is still `'starting'`; transport stays gated until `'ready'`.
+   */
+  audioState: 'starting' | 'ready' | 'failed' | 'no_device'
   hasBeenReady: boolean
 }
 
@@ -25,8 +37,10 @@ export const useTransportStore = defineStore('transport', {
     bpm: 100,
     connected: false,
     bridgeReady: false,
+    handshakeReady: false,
     bridgeFailureMessage: null,
     engineRecovery: 'ok',
+    audioState: 'starting',
     hasBeenReady: false
   }),
 
@@ -51,11 +65,29 @@ export const useTransportStore = defineStore('transport', {
       if (!connected) {
         this.isPlaying = false
         this.bridgeReady = false
+        this.handshakeReady = false
+        // A fresh connection re-runs the audio-open handshake.
+        this.audioState = 'starting'
       }
+    },
+    /** Audio-device readiness from the backend `ENGINE_AUDIO_STATUS` broadcast. */
+    setAudioState(state: TransportState['audioState']): void {
+      if (this.audioState !== state) {
+        log.info('transport', `audioState -> ${state}`)
+      }
+      this.audioState = state
+    },
+    /** WebSocket handshake (`READY`) received — backend reachable, before PROJECT_STATE. */
+    setHandshakeReady(ready: boolean): void {
+      this.handshakeReady = ready
     },
     setBridgeReady(ready: boolean): void {
       this.bridgeReady = ready
-      if (ready) this.hasBeenReady = true
+      if (ready) {
+        this.hasBeenReady = true
+        // PROJECT_STATE implies the handshake already completed.
+        this.handshakeReady = true
+      }
     },
     setBridgeFailure(message: string | null): void {
       this.bridgeFailureMessage = message

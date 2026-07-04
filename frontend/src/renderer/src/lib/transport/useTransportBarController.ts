@@ -128,15 +128,19 @@ export function useTransportBarController() {
     project.tracks.reduce((count, track) => count + track.clipIds.length, 0)
   )
 
-  // Disable starting playback from project end; Pause remains reachable.
+  // Disable starting playback from project end; Pause remains reachable. Also disabled while
+  // the audio device is still opening on the backend worker thread (transport isn't safe yet).
+  const audioReady = computed(() => transport.audioState === 'ready')
   const playDisabled = computed(() => {
     if (transport.isPlaying) return false
+    if (!audioReady.value) return true
     const end = project.durationMs
     return end > 0 && transport.positionMs >= end
   })
 
   const playButtonTitle = computed(() => {
     if (transport.isPlaying) return 'Pause'
+    if (!audioReady.value) return 'Starting audio engine…'
     if (playDisabled.value) return 'Playhead at end of project — skip back to play'
     return 'Play'
   })
@@ -271,6 +275,7 @@ export function useTransportBarController() {
     lengthEditable,
     timingEditable,
     projectBpmPending,
+    audioReady,
     playDisabled,
     playButtonTitle,
     skipBackTitle,

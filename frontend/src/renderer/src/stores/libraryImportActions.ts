@@ -4,6 +4,7 @@
 import { useProjectStore } from '@/stores/projectStore'
 import type { Clip } from '@/stores/projectStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { variableTempoWarpSkippedMessage } from '@/lib/warp'
 import { send as sendBridge } from '@/lib/bridgeService'
 import type { LibraryState } from './libraryTypes'
 import { libraryItemDisplayName } from './libraryItemHelpers'
@@ -57,11 +58,21 @@ export const importActions = {
       const entry = this.imports.find((e) => e.libraryItemId === itemId)
       if (entry && entry.stage !== 'done' && entry.stage !== 'failed') {
         const project = useProjectStore()
-        const hasPendingAutoWarpClip = Object.values(project.clips).some(
+        const pendingAutoWarpClips = Object.values(project.clips).filter(
           (clip: Clip) => clip.libraryItemId === itemId && clip.pendingAutoWarp === true
         )
         entry.stage = 'detectingBeats'
-        if (hasPendingAutoWarpClip) {
+        if (pendingAutoWarpClips.length > 0 && variableTempo) {
+          // A variable tempo can't be matched with a single stretch ratio, so the
+          // queued auto-warp is abandoned. Clear the pending flag on both ends so
+          // the clip doesn't sit waiting to warp, and point the user at manual
+          // warping instead of silently dropping the request.
+          for (const clip of pendingAutoWarpClips) {
+            project.setClipWarp(clip.id, { pendingAutoWarp: false })
+          }
+          useNotificationsStore().pushInfo(variableTempoWarpSkippedMessage(libraryItemDisplayName(item)))
+          setTimeout(() => this.finishImport(entry.id, 'done'), 600)
+        } else if (pendingAutoWarpClips.length > 0) {
           setTimeout(() => {
             if (entry.stage === 'detectingBeats') this.markItemWarping(itemId)
           }, 300)

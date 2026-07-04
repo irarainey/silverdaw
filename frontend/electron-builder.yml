@@ -70,6 +70,14 @@ extraResources:
       # returns a friendly "encoder not bundled" error at runtime and the
       # other formats (WAV/FLAC) keep working.
       - lame.exe
+      # onnxruntime.dll (Microsoft-built) dynamically links the VC++ runtime, which
+      # a clean machine may lack and MSIX does not auto-provide. The backend copies
+      # these app-local next to SilverdawBackend.exe (see backend/CMakeLists.txt) so
+      # the loader resolves them before main(); ship them inside the package too.
+      - msvcp140.dll
+      - msvcp140_1.dll
+      - vcruntime140.dll
+      - vcruntime140_1.dll
   # Ship the AGPL text + third-party notices inside the install so users have
   # them locally (satisfies AGPL §4 / MIT / BSD attribution obligations).
   - from: ../LICENSE

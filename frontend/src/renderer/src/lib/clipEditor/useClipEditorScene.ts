@@ -17,6 +17,7 @@ import type {
   Text,
   Texture
 } from 'pixi.js'
+import { loadPixi } from '@/lib/timeline/pixiLoader'
 import { log } from '@/lib/log'
 
 /** Waveform-area background (zinc-950-ish); the ruler band paints over the top. */
@@ -68,19 +69,8 @@ export function useClipEditorScene(opts: ClipEditorSceneOptions): ClipEditorScen
   const whiteTexture = shallowRef<Texture | null>(null)
 
   let app: Application | null = null
-  let pixiNs: typeof import('pixi.js') | null = null
   let resizeObserver: ResizeObserver | null = null
   let building = false
-
-  async function loadPixi(): Promise<typeof import('pixi.js')> {
-    if (!pixiNs) {
-      // Lazy-load PixiJS and apply the CSP-safe shader patch before WebGL init.
-      // @ts-expect-error -- pixi.js/unsafe-eval has no published .d.ts; side-effect-only.
-      await import('pixi.js/unsafe-eval')
-      pixiNs = await import('pixi.js')
-    }
-    return pixiNs
-  }
 
   function getCanvas(): HTMLCanvasElement | null {
     return app?.canvas ?? null

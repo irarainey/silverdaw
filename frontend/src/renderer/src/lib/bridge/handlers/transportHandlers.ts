@@ -7,10 +7,18 @@ import { log } from '@/lib/log'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
 
 export const transportBridgeHandlers: BridgeInboundHandlers<
-  'READY' | 'PLAYHEAD_UPDATE' | 'ENGINE_ERROR'
+  'READY' | 'PLAYHEAD_UPDATE' | 'ENGINE_ERROR' | 'ENGINE_AUDIO_STATUS'
 > = {
   READY: () => {
-    // Handshake ack only; PROJECT_STATE carries the authoritative init snapshot.
+    // Handshake ack: the backend is reachable. This lets the UI appear before the audio
+    // device finishes opening; PROJECT_STATE carries the authoritative init snapshot.
+    useTransportStore().setHandshakeReady(true)
+  },
+
+  ENGINE_AUDIO_STATUS: (payload) => {
+    // Audio device open progress (opens on a backend worker thread). Transport controls stay
+    // gated until 'ready'; the project/timeline can render before then.
+    useTransportStore().setAudioState(payload.state)
   },
 
   PLAYHEAD_UPDATE: (payload) => {

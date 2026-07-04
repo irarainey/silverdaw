@@ -3,6 +3,7 @@
 import { onBeforeUnmount, onMounted, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics, Mesh, MeshGeometry, Text, Texture } from 'pixi.js'
 import { BG } from './constants'
+import { loadPixi } from './pixiLoader'
 import { log } from '@/lib/log'
 
 export interface PixiApp {
@@ -55,22 +56,11 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
   const whiteTexture = shallowRef<Texture | null>(null)
 
   let resizeObserver: ResizeObserver | null = null
-  let pixiNs: typeof import('pixi.js') | null = null
   let rebuildTimer: ReturnType<typeof setTimeout> | null = null
   let rebuildAttempts = 0
   let destroyed = false
   // Cap the back-off retries so a permanently broken GPU can't loop forever.
   const MAX_REBUILD_ATTEMPTS = 8
-
-  async function loadPixi(): Promise<typeof import('pixi.js')> {
-    if (!pixiNs) {
-      // Lazy-load PixiJS and apply the CSP-safe shader patch before WebGL init.
-      // @ts-expect-error -- pixi.js/unsafe-eval has no published .d.ts; it's side-effect-only.
-      await import('pixi.js/unsafe-eval')
-      pixiNs = await import('pixi.js')
-    }
-    return pixiNs
-  }
 
   // A Windows GPU reset (TDR) — which htdemucs DirectML stem separation can
   // trigger — loses the WebGL context backing this canvas, blanking the timeline.
@@ -158,6 +148,7 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
 
   async function buildApp(): Promise<boolean> {
     if (!opts.host.value) return false
+    const tPixi0 = performance.now()
     try {
       const pixi = await loadPixi()
       GraphicsCtor.value = pixi.Graphics
@@ -189,6 +180,7 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
       }
 
       app.value = instance
+      log.info('perf', `pixi+webgl ready in ${Math.round(performance.now() - tPixi0)}ms`)
       opts.host.value.appendChild(instance.canvas)
       instance.canvas.style.display = 'block'
       instance.canvas.addEventListener('webglcontextlost', handleContextLost)

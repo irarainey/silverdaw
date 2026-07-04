@@ -52,10 +52,17 @@ export async function isPortFree(port: number): Promise<boolean> {
 }
 
 export async function findFreeBridgePort(start: number, count: number): Promise<number | null> {
+  // Probe candidates concurrently (not sequentially) so a busy low port can't add
+  // serial latency to startup; still return the lowest free candidate for determinism.
+  const candidates: number[] = []
   for (let i = 0; i < count; i++) {
     const candidate = start + i
     if (candidate > MAX_BRIDGE_PORT) break
-    if (await isPortFree(candidate)) return candidate
+    candidates.push(candidate)
+  }
+  const free = await Promise.all(candidates.map((port) => isPortFree(port)))
+  for (let i = 0; i < candidates.length; i++) {
+    if (free[i]) return candidates[i]!
   }
   return null
 }

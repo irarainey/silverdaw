@@ -6,7 +6,7 @@ import { app, BrowserWindow } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { IPC } from '../shared/ipc-channels'
-import { logMain } from './log'
+import { logMain, logDiag } from './log'
 import type { PrefsService } from './prefsService'
 
 // Kept in sync with the renderer Tailwind palette (zinc-900).
@@ -120,6 +120,7 @@ export function createWindow(ctx: CreateWindowContext): BrowserWindow {
 
   // Avoid showing a blank window before the first renderer paint.
   win.once('ready-to-show', () => {
+    logDiag('INFO ', 'perf', `main ready-to-show @ ${Math.round(process.uptime() * 1000)}ms`)
     win.show()
   })
 

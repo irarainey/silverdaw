@@ -401,6 +401,56 @@ describe('libraryStore', () => {
     expect(library.imports).toHaveLength(0)
   })
 
+  it('warns and clears the pending auto-warp when late analysis finds a variable tempo', async () => {
+    const { useNotificationsStore } = await import('@/stores/notificationsStore')
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const notifications = useNotificationsStore()
+    const itemId = library.addItem({
+      filePath: 'C:\\audio\\funk.wav',
+      fileName: 'funk.wav',
+      name: 'California Soul',
+      durationMs: 8_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array(),
+      fromSnapshot: true
+    })
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: itemId!,
+        filePath: 'C:\\audio\\funk.wav',
+        fileName: 'funk.wav',
+        durationMs: 8_000,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+    // Drop-time marked the clip pending because the source BPM wasn't known yet.
+    project.setClipWarp(clipId!, { pendingAutoWarp: true }, { localOnly: true })
+    const importId = library.beginImport('funk.wav')
+    library.markImportAnalyzing(importId, itemId!)
+    sendMock.mockClear()
+
+    library.setItemAnalysis(itemId!, 94.05, 0.7, [0.7, 1.34], true)
+
+    expect(project.clips[clipId!]?.pendingAutoWarp).toBeUndefined()
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_SET_WARP',
+      expect.objectContaining({ clipId, pendingAutoWarp: false })
+    )
+    expect(notifications.items).toHaveLength(1)
+    expect(notifications.items[0]?.message).toContain('"California Soul"')
+    expect(notifications.items[0]?.message).toContain('variable tempo')
+
+    vi.advanceTimersByTime(600)
+    expect(library.imports[0]?.stage).toBe('done')
+  })
+
   it('refuses to remove in-use items and removes unused items with cleanup', () => {
     const library = useLibraryStore()
     const project = useProjectStore()
@@ -1406,6 +1456,27 @@ describe('libraryStore', () => {
     expect(library.channelPeaksByItemId[id]?.lod).toBe(firstLod)
     // A different rate forces a rebuild.
     library.setItemChannelPeaks(id, [left, right], 400)
+    expect(library.channelPeaksByItemId[id]?.lod).not.toBe(firstLod)
+  })
+
+  it('dedupes LOD builds for freshly-parsed arrays of the same shape (multi-clip load)', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\shared.wav',
+      fileName: 'shared.wav',
+      durationMs: 1_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    // Each clip of the same source delivers freshly-parsed (non-reference-equal) arrays; a
+    // same-shape entry must reuse the existing LOD rather than rebuild it per clip.
+    library.setItemChannelPeaks(id, [new Float32Array([0, 1, 0.5, 0.8]), new Float32Array([0, 1, 0.5, 0.8])], 200)
+    const firstLod = library.channelPeaksByItemId[id]?.lod
+    library.setItemChannelPeaks(id, [new Float32Array([0, 1, 0.5, 0.8]), new Float32Array([0, 1, 0.5, 0.8])], 200)
+    expect(library.channelPeaksByItemId[id]?.lod).toBe(firstLod)
+    // A different per-channel length is a genuinely different source, so it rebuilds.
+    library.setItemChannelPeaks(id, [new Float32Array([0, 1]), new Float32Array([0, 1])], 200)
     expect(library.channelPeaksByItemId[id]?.lod).not.toBe(firstLod)
   })
 
