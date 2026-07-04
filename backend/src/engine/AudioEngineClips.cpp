@@ -14,21 +14,25 @@ double AudioEngine::trackSeekSecondsFor(const Track& track, juce::int64 masterSa
     return sr > 0.0 ? static_cast<double>(compensated) / sr : 0.0;
 }
 
+std::unique_ptr<juce::AudioFormatReader> AudioEngine::createReaderForClip(const juce::File& filePath)
+{
+    if (!filePath.existsAsFile()) return nullptr;
+    auto* reader = formatManager.createReaderFor(filePath);
+    if (reader == nullptr)
+    {
+        // Windows Media Foundation support comes from JUCE built-in format registration.
+        if (auto stream = filePath.createInputStream())
+        {
+            reader = formatManager.createReaderFor(std::move(stream));
+        }
+    }
+    return std::unique_ptr<juce::AudioFormatReader>(reader);
+}
+
 bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipId, const juce::File& filePath,
                           double initialOffsetMs, double inMs, double clipDurationMs, float initialGain,
                           juce::String* outError)
 {
-    silverdaw::log::info("engine", "addClip trackId=" + trackId + " id=" + clipId +
-                                        " offsetMs=" + juce::String(initialOffsetMs) +
-                                        " inMs=" + juce::String(inMs) + " durMs=" + juce::String(clipDurationMs) +
-                                        " path=" + filePath.getFileName());
-    if (trackId.isEmpty())
-    {
-        const auto msg = juce::String("addClip requires non-empty trackId");
-        silverdaw::log::warn("addClip", msg);
-        if (outError != nullptr) *outError = msg;
-        return false;
-    }
     if (!filePath.existsAsFile())
     {
         const auto msg = "file does not exist: " + filePath.getFullPathName();
@@ -40,15 +44,7 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
         return false;
     }
 
-    auto* reader = formatManager.createReaderFor(filePath);
-    if (reader == nullptr)
-    {
-        // Windows Media Foundation support comes from JUCE built-in format registration.
-        if (auto stream = filePath.createInputStream())
-        {
-            reader = formatManager.createReaderFor(std::move(stream));
-        }
-    }
+    auto reader = createReaderForClip(filePath);
     if (reader == nullptr)
     {
         juce::StringArray formatNames;
@@ -68,11 +64,39 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
         return false;
     }
 
+    return addClip(trackId, clipId, std::move(reader), filePath, initialOffsetMs, inMs, clipDurationMs,
+                   initialGain, outError);
+}
+
+bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipId,
+                          std::unique_ptr<juce::AudioFormatReader> reader, const juce::File& filePath,
+                          double initialOffsetMs, double inMs, double clipDurationMs, float initialGain,
+                          juce::String* outError)
+{
+    silverdaw::log::info("engine", "addClip trackId=" + trackId + " id=" + clipId +
+                                        " offsetMs=" + juce::String(initialOffsetMs) +
+                                        " inMs=" + juce::String(inMs) + " durMs=" + juce::String(clipDurationMs) +
+                                        " path=" + filePath.getFileName());
+    if (trackId.isEmpty())
+    {
+        const auto msg = juce::String("addClip requires non-empty trackId");
+        silverdaw::log::warn("addClip", msg);
+        if (outError != nullptr) *outError = msg;
+        return false;
+    }
+    if (reader == nullptr)
+    {
+        const auto msg = "could not read audio file: " + filePath.getFullPathName();
+        silverdaw::log::warn("addClip", msg);
+        if (outError != nullptr) *outError = msg;
+        return false;
+    }
+
     auto track = std::make_unique<Track>();
     track->sampleRate = reader->sampleRate;
     track->numChannels = static_cast<int>(reader->numChannels);
 
-    track->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
+    track->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
 
     // Deep read-ahead priming avoids JUCE BufferingAudioSource dropping cold samples at play
     // start.

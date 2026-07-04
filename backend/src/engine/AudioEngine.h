@@ -66,6 +66,20 @@ class AudioEngine
                  double inMs = 0.0, double clipDurationMs = 0.0, float initialGain = 1.0F,
                  juce::String* outError = nullptr);
 
+    // Overload that consumes a reader opened ahead of time (e.g. in parallel across many clips
+    // during project load) so the serial attach path never pays per-clip file-open I/O. Ownership
+    // of the reader transfers in. A null reader is treated as an open failure.
+    bool addClip(const juce::String& trackId, const juce::String& clipId,
+                 std::unique_ptr<juce::AudioFormatReader> reader, const juce::File& filePath,
+                 double initialOffsetMs = 0.0, double inMs = 0.0, double clipDurationMs = 0.0,
+                 float initialGain = 1.0F, juce::String* outError = nullptr);
+
+    // Open an audio reader for a clip source (WAV/compressed), with the same MediaFoundation
+    // stream fallback as addClip. Thread-safe against the shared format manager, so callers may
+    // run this concurrently on a worker pool to overlap the (I/O-bound) opens. Returns null if the
+    // file cannot be read.
+    std::unique_ptr<juce::AudioFormatReader> createReaderForClip(const juce::File& filePath);
+
     bool removeClip(const juce::String& clipId);
 
     bool setClipGain(const juce::String& clipId, float gain);

@@ -9,7 +9,10 @@
 #include "SharedFx.h"
 
 #include <algorithm>
+#include <atomic>
 #include <optional>
+#include <unordered_map>
+#include <vector>
 
 namespace silverdaw
 {
@@ -123,6 +126,73 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
     const auto& root = projectState.getTree();
     int rebuilt = 0;
     int failed = 0;
+
+    // Open every clip's audio reader up front, in parallel, BEFORE the serial attach loop below.
+    // Per-clip opens (file header reads) are I/O-bound and, done one-at-a-time on the message
+    // thread, dominate cold-load latency — especially for cloud-synced project directories.
+    // Overlapping them across a few workers cuts that cost; the actual audio-graph mutation still
+    // happens serially on the message thread in the loop below, so real-time safety is unchanged.
+    struct PreopenedReader
+    {
+        juce::String engineFilePath;
+        std::unique_ptr<juce::AudioFormatReader> reader;
+    };
+    std::unordered_map<juce::String, PreopenedReader> preopened;
+    {
+        std::vector<juce::String> orderedClipIds;
+        for (int t = 0; t < root.getNumChildren(); ++t)
+        {
+            const auto track = root.getChild(t);
+            if (!track.hasType(juce::Identifier{"TRACK"})) continue;
+            for (int c = 0; c < track.getNumChildren(); ++c)
+            {
+                const auto clip = track.getChild(c);
+                if (!clip.hasType(juce::Identifier{"CLIP"})) continue;
+                const juce::String clipId = clip.getProperty("id").toString();
+                const juce::String libraryItemId = clip.getProperty("libraryItemId", {}).toString();
+                const juce::String filePath = projectState.getLibraryItemFilePath(libraryItemId);
+                if (clipId.isEmpty() || libraryItemId.isEmpty() || filePath.isEmpty()) continue;
+                // Resolve the playback path (decoded WAV preferred) on the message thread — it can
+                // touch projectState — before the workers, which only read files, start.
+                const juce::String engineFilePath =
+                    silverdaw::resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+                if (preopened.emplace(clipId, PreopenedReader{engineFilePath, nullptr}).second)
+                    orderedClipIds.push_back(clipId);
+            }
+        }
+        if (!orderedClipIds.empty())
+        {
+            // Open on the PERSISTENT peak worker pool (not transient threads): a Media Foundation
+            // reader for a compressed source holds COM objects tied to its creating thread, so the
+            // opener thread must outlive the reader — exactly why the shipped AUDIO_FILE_PROBE path
+            // uses this pool too. ensureDecodedCache is deferred to the attach loop below so its
+            // decode jobs never contend with these opens.
+            const double tOpen0 = juce::Time::getMillisecondCounterHiRes();
+            std::atomic<int> remaining{static_cast<int>(orderedClipIds.size())};
+            juce::WaitableEvent allOpened;
+            for (const auto& clipId : orderedClipIds)
+            {
+                peakPool.addJob(
+                    [&engine, &preopened, &remaining, &allOpened, clipId]
+                    {
+                        // Keys are pre-inserted, so find() never mutates the map and each job
+                        // writes a distinct element — safe without a lock.
+                        const auto it = preopened.find(clipId);
+                        it->second.reader =
+                            engine.createReaderForClip(juce::File(it->second.engineFilePath));
+                        if (remaining.fetch_sub(1, std::memory_order_acq_rel) == 1)
+                            allOpened.signal();
+                    });
+            }
+            allOpened.wait();
+            silverdaw::log::info("project",
+                                 "pre-opened " + juce::String(static_cast<int>(orderedClipIds.size())) +
+                                     " clip reader(s) in " +
+                                     juce::String(juce::Time::getMillisecondCounterHiRes() - tOpen0, 1) +
+                                     " ms");
+        }
+    }
+
     for (int t = 0; t < root.getNumChildren(); ++t)
     {
         const auto track = root.getChild(t);
@@ -187,9 +257,13 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                                                     " (no resolvable source)");
                 continue;
             }
-            // Match clip ingest: prefer decoded WAVs over compressed engine sources.
+            // Reader + resolved path came from the parallel pre-open above; fall back to a
+            // synchronous resolve/open only if this clip somehow wasn't pre-opened.
+            const auto preIt = preopened.find(clipId);
             const juce::String engineFilePath =
-                silverdaw::resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+                preIt != preopened.end()
+                    ? preIt->second.engineFilePath
+                    : silverdaw::resolveEnginePlaybackPath(filePath, projectState, decodedCache);
             if (engineFilePath == filePath)
             {
                 silverdaw::ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
@@ -198,7 +272,14 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             // Use effective gain so mute/solo state is audible immediately after load.
             const auto trackId = track.getProperty("id").toString();
             const auto effectiveGain = projectState.getEffectiveTrackGain(trackId);
-            if (engine.addClip(trackId, clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, effectiveGain, &err))
+            const bool added =
+                (preIt != preopened.end() && preIt->second.reader != nullptr)
+                    ? engine.addClip(trackId, clipId, std::move(preIt->second.reader),
+                                     juce::File(engineFilePath), offsetMs, inMs, durationMs, effectiveGain,
+                                     &err)
+                    : engine.addClip(trackId, clipId, juce::File(engineFilePath), offsetMs, inMs,
+                                     durationMs, effectiveGain, &err);
+            if (added)
             {
                 ++rebuilt;
                 // Replay persisted warp so loaded clips match their saved tempo/pitch.

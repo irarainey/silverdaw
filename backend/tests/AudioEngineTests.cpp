@@ -130,6 +130,34 @@ void testAudioEngineSetPreviewWarpUnderRapidCalls()
             "reader thread should have observed at least one engine state read");
 }
 
+void testAudioEngineAddClipConsumesPreOpenedReader()
+{
+    const auto dir = makeTempDir("preopen-reader");
+    silverdaw::AudioEngine engine;
+    engine.initialise({}, {}, nullptr); // registers WAV/etc. formats for the reader
+
+    const auto wav = writeTestWav(dir, "pre.wav", 1.0);
+
+    // createReaderForClip opens the file the same way addClip(File) would; project load calls it
+    // in parallel across clips and hands the readers to the reader-accepting addClip overload.
+    auto reader = engine.createReaderForClip(wav);
+    require(reader != nullptr, "createReaderForClip should open a valid WAV");
+
+    require(engine.addClip("t1", "cpre", std::move(reader), wav, 0.0),
+            "addClip should build the chain from a pre-opened reader");
+    require(engine.removeClip("cpre"),
+            "the pre-opened clip should be attached (and thus removable)");
+
+    // A missing file yields a null reader; the reader-accepting overload must fail cleanly.
+    auto missing = engine.createReaderForClip(dir.getChildFile("does-not-exist.wav"));
+    require(missing == nullptr, "createReaderForClip returns null for a missing file");
+    juce::String err;
+    require(!engine.addClip("t1", "cnull", nullptr, dir.getChildFile("does-not-exist.wav"), 0.0, 0.0,
+                            0.0, 1.0F, &err),
+            "addClip with a null reader must fail rather than attach a silent clip");
+    require(err.isNotEmpty(), "a null-reader addClip failure should report an error");
+}
+
 void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
 {
     const auto dir = makeTempDir("prime-tracks");
@@ -942,6 +970,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
+    tests.push_back({"AudioEngine addClip consumes a pre-opened reader (and fails cleanly on null)", testAudioEngineAddClipConsumesPreOpenedReader});
     tests.push_back({"OutputKeepAlive floor is post-gain and transport-gated", testOutputKeepAliveFloorIsPostGainAndGated});
     tests.push_back({"OutputKeepAlive wake burst rouses a cold device then settles", testOutputKeepAliveWakeBurstRousesColdDeviceThenSettles});
     tests.push_back({"MasterClockSource publishes audio-thread timing for off-thread logging", testMasterClockPublishesAudioPerfOffThread});
