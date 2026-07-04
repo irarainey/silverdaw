@@ -91,12 +91,14 @@ function makeWheel(opts: {
   deltaX?: number
   deltaY?: number
   shiftKey?: boolean
+  ctrlKey?: boolean
   clientX?: number
 }): WheelEvent {
   return {
     deltaX: opts.deltaX ?? 0,
     deltaY: opts.deltaY ?? 0,
     shiftKey: opts.shiftKey ?? false,
+    ctrlKey: opts.ctrlKey ?? false,
     clientX: opts.clientX ?? 0,
     preventDefault: vi.fn()
   } as unknown as WheelEvent
@@ -198,16 +200,28 @@ describe('useClipEditorCanvasInteraction — wheel', () => {
     expect(h.setZoomAnchored).not.toHaveBeenCalled()
   })
 
-  it('plain wheel zooms anchored at the pointer', () => {
+  it('Ctrl+wheel zooms anchored at the pointer (matches the main timeline)', () => {
     h.state.visibleInMs = 0
     h.state.visibleDurationMs = 1000
     h.state.zoom = 2
     const rect = { left: 0, width: 100, height: 50 } as DOMRect
     const fakeCanvas = { getBoundingClientRect: () => rect } as unknown as HTMLCanvasElement
     const api = makeWheelHarness(h, fakeCanvas)
-    api.onCanvasWheel(makeWheel({ deltaY: -100, clientX: 50 }))
+    api.onCanvasWheel(makeWheel({ deltaY: -100, clientX: 50, ctrlKey: true }))
     // zoom in factor 1.2 → 2.4; pointerMs = 0 + 0.5*1000 = 500
     expect(h.setZoomAnchored).toHaveBeenCalledWith(2.4, 500)
+  })
+
+  it('plain wheel (no Ctrl) does not zoom or pan', () => {
+    h.state.visibleInMs = 0
+    h.state.visibleDurationMs = 1000
+    h.scrollMs.value = 200
+    const rect = { left: 0, width: 100, height: 50 } as DOMRect
+    const fakeCanvas = { getBoundingClientRect: () => rect } as unknown as HTMLCanvasElement
+    const api = makeWheelHarness(h, fakeCanvas)
+    api.onCanvasWheel(makeWheel({ deltaY: -100, clientX: 50 }))
+    expect(h.setZoomAnchored).not.toHaveBeenCalled()
+    expect(h.scrollMs.value).toBe(200)
   })
 })
 

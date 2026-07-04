@@ -11,6 +11,7 @@
 - Faster startup: the main window and project screen now appear almost immediately while the audio engine starts up in the background, instead of waiting for it first.
 - Faster project loading, especially for projects with many clips — their audio files are now prepared together rather than one at a time.
 - Projects with many clips that share the same audio now draw their waveforms faster, by reusing the shared waveform detail instead of rebuilding it for every clip.
+- In the Clip Editor, the waveform zoom is now controlled with Ctrl + mouse wheel (anchored under the pointer), matching the main timeline; a plain mouse wheel no longer zooms.
 
 ### Fixed
 

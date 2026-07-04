@@ -380,18 +380,27 @@ export function useClipEditorCanvasInteraction(
     const vIn = deps.visibleInMs()
     const vDur = deps.visibleDurationMs()
     if (vDur <= 0) return
-    // Shift or horizontal wheel pans; vertical wheel zooms at cursor.
-    const pan = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)
     e.preventDefault()
-    if (pan) {
-      const dx = (e.shiftKey ? e.deltaY : e.deltaX) || e.deltaY
-      const msPerPx = vDur / rect.width
-      const next = scrollMs.value + dx * msPerPx
-      scrollMs.value = Math.max(0, Math.min(deps.maxScrollMs(), next))
-    } else {
+
+    // Match the main timeline: Ctrl-wheel zooms (anchored under the pointer); horizontal or
+    // Shift-wheel pans. The clip editor has no vertical track stack, so a plain vertical wheel
+    // (no Ctrl) does nothing rather than zooming.
+    if (e.ctrlKey) {
       const pointerMs = vIn + ((e.clientX - rect.left) / rect.width) * vDur
       const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2
       deps.setZoomAnchored(deps.zoom() * factor, pointerMs)
+      return
+    }
+
+    const absX = Math.abs(e.deltaX)
+    const absY = Math.abs(e.deltaY)
+    const wantsPan = absX > absY || (e.shiftKey && absY > 0)
+    if (wantsPan) {
+      const dx = absX > 0 ? e.deltaX : e.deltaY
+      if (dx === 0) return
+      const msPerPx = vDur / rect.width
+      const next = scrollMs.value + dx * msPerPx
+      scrollMs.value = Math.max(0, Math.min(deps.maxScrollMs(), next))
     }
   }
 
