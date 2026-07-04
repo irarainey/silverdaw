@@ -18,16 +18,13 @@ instrument.
 
 ## Installation
 
-Silverdaw runs on Windows 10 (1809+) or Windows 11 (64-bit). There are three
+Silverdaw runs on Windows 10 (1809+) or Windows 11 (64-bit). There are two
 ways to install it — see the **[installation guide](INSTALL.md)** for full
 steps and the pros and cons of each:
 
 - **Microsoft Store** *(coming soon — recommended)* — one-click install, no
   setup, automatic updates.
-- **Portable download** — a zip you unzip and run; no installation or
-  certificate.
-- **Self-signed installer** — the signed package plus a PowerShell helper, for a
-  full local install before the Store release.
+- **Portable download** — a zip you unzip and run; no installation.
 
 ## Goals and focus
 
