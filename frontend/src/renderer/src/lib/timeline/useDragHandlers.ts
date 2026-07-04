@@ -367,6 +367,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (ms === null) return
 
     isDraggingPlayhead.value = true
+    hoverCursor.value = 'grabbing'
     window.addEventListener('pointermove', onPlayheadPointerMove)
     window.addEventListener('pointerup', onPlayheadPointerUp)
     window.addEventListener('pointercancel', onPlayheadPointerUp)
@@ -386,6 +387,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   function onPlayheadPointerUp(_e: PointerEvent): void {
     if (!isDraggingPlayhead.value) return
     isDraggingPlayhead.value = false
+    hoverCursor.value = 'default'
     window.removeEventListener('pointermove', onPlayheadPointerMove)
     window.removeEventListener('pointerup', onPlayheadPointerUp)
     window.removeEventListener('pointercancel', onPlayheadPointerUp)
@@ -638,8 +640,19 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   }
 
   function onHostPointerLeave(): void {
-    if (hoverCursor.value !== 'default') hoverCursor.value = 'default'
     ui.automationHoverTip = null
+    // Keep the active-drag cursor (e.g. the playhead grab hand): the pointer can cross the host
+    // boundary as the timeline auto-scrolls, but the drag continues on window listeners, so the
+    // cursor must not snap back to the arrow mid-drag.
+    if (
+      draggedClipId !== null ||
+      trimClipId !== null ||
+      draggedMarkerId !== null ||
+      isDraggingPlayhead.value
+    ) {
+      return
+    }
+    if (hoverCursor.value !== 'default') hoverCursor.value = 'default'
   }
 
   // Watch the host ref because template refs may be populated asynchronously.

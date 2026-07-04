@@ -19,6 +19,8 @@
 - The saved output device not being selected on startup when it was slow to appear (for example, a USB device still starting up); the app now picks it up as soon as it's ready and switches to it automatically.
 - The first play being silent right after switching to a sleep-prone output device from the transport bar.
 - Dropping a clip whose source has a variable tempo silently not matching it to the project tempo; the app now shows a brief note explaining why it wasn't tempo-matched.
+- Dragging the playhead to the left not scrolling the timeline (only dragging right did); it now follows the playhead in both directions.
+- The cursor not showing a grabbing hand while dragging the playhead, and flickering back to the arrow when the timeline started scrolling mid-drag; it now stays a hand throughout the drag.
 
 ## 1.0.1
 

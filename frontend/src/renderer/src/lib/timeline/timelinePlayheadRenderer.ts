@@ -136,18 +136,20 @@ export function createTimelinePlayheadRenderer(deps: TimelinePlayheadRendererDep
     if (shouldFollow) {
       const viewportCentre = headerWidth() + (width - headerWidth()) / 2
       const desired = Math.max(0, absX - viewportCentre)
+      // Playback follow eases forward only: playback never runs backwards, and we don't want
+      // backward scroll jitter. But while the user is actively dragging the playhead, follow in
+      // BOTH directions so dragging left scrolls the timeline back with it, not just dragging right.
+      const gap = desired - scrollX.value
+      const allowBackward = isDraggingPlayhead.value
       let nextScroll: number | null = null
-      if (desired > scrollX.value) {
-        const gap = desired - scrollX.value
-        if (gap > 0.5) {
-          // Mix playback-relative and gap-proportional catch-up; cap prevents overshoot.
-          const audioPxPerSec = pxPerSecond.value
-          const approachPxPerSec = audioPxPerSec * 3
-          const proportionalPxPerSec = gap * 5
-          const ratePxPerSec = Math.max(approachPxPerSec, proportionalPxPerSec)
-          const step = Math.min(gap, ratePxPerSec * dtSec)
-          if (step > 0) nextScroll = scrollX.value + step
-        }
+      if (gap > 0.5 || (allowBackward && gap < -0.5)) {
+        // Mix playback-relative and gap-proportional catch-up; cap prevents overshoot.
+        const audioPxPerSec = pxPerSecond.value
+        const approachPxPerSec = audioPxPerSec * 3
+        const proportionalPxPerSec = Math.abs(gap) * 5
+        const ratePxPerSec = Math.max(approachPxPerSec, proportionalPxPerSec)
+        const magnitude = Math.min(Math.abs(gap), ratePxPerSec * dtSec)
+        if (magnitude > 0) nextScroll = scrollX.value + (gap > 0 ? magnitude : -magnitude)
       }
 
       if (nextScroll !== null) {
