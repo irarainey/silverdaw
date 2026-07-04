@@ -5,7 +5,7 @@ Windows 11, 64-bit). There are two ways to install it. The **Microsoft Store**
 is the easiest and recommended option once it is available.
 
 | Option | Best for | Effort | Updates | Windows integration\* |
-| ------ | -------- | ------ | ------------ | ------- | --------------------- |
+| ------ | -------- | ------ | ------------ | --------------------- |
 | **Microsoft Store** *(coming soon)* | Everyone | One click | Automatic | Full |
 | **Portable download** (zip) | Trying it quickly, no install | Unzip & run | Manual | None
 
