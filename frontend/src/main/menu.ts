@@ -105,7 +105,7 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
       void shell.openExternal('https://docs.silverdaw.com')
       break
     case 'help.reportIssue':
-      void shell.openExternal('https://github.com/irarainey/silverdaw/issues/new')
+      void shell.openExternal('https://silverdaw.featurebase.app')
       break
     case 'help.about':
       wc.send(IPC.menu.action, action)

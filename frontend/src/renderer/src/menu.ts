@@ -130,7 +130,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
       label: 'Help',
       items: [
         { label: 'Documentation', action: 'help.docs' },
-        { label: 'Report an Issue', action: 'help.reportIssue' },
+        { label: 'Give Feedback', action: 'help.reportIssue' },
         SEP,
         { label: 'About Silverdaw', action: 'help.about' }
       ]
