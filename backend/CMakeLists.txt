@@ -559,6 +559,18 @@ target_sources(SilverdawBackend PRIVATE
 target_link_libraries(SilverdawBackend PRIVATE
     silverdaw_backend_core)
 
+# Delay-load onnxruntime.dll so the large ML runtime (and its transitive VC++ runtime
+# dependency chain) is NOT mapped into the process at startup — the Windows loader binds
+# it lazily on first use (stem separation only), not before main(). This shortens cold
+# launch (less to page in / AV-scan at process start) with no runtime downside: the DLL
+# still ships app-local next to the exe (copied below), so the delayed load resolves the
+# first time a stem-separation session is created. Requires delayimp.lib. Stems are never
+# constructed at static-init time, so nothing forces the DLL to load early.
+if(SILVERDAW_ENABLE_STEM_SEPARATION AND MSVC)
+    target_link_options(SilverdawBackend PRIVATE "/DELAYLOAD:onnxruntime.dll")
+    target_link_libraries(SilverdawBackend PRIVATE delayimp)
+endif()
+
 # ─── ONNX Runtime DLL (bundled, MIT) ─────────────────────────────────────
 # ONNX Runtime is a shared library. Copy onnxruntime.dll next to the backend
 # executable so it resolves at runtime, and so the electron-builder

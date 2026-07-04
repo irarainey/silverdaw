@@ -48,11 +48,23 @@ juce::String AudioEngine::openAudioDevice(const juce::String& preferredTypeName,
                                           const juce::String& preferredDeviceName,
                                           bool* outFellBackToDefault)
 {
+    bool fellBack = false;
+    const auto err = openAudioDeviceBlocking(preferredTypeName, preferredDeviceName, fellBack);
+    if (outFellBackToDefault != nullptr) *outFellBackToDefault = fellBack;
+    if (err.isNotEmpty()) return err;
+    finaliseAudioDevice(fellBack);
+    return {};
+}
+
+juce::String AudioEngine::openAudioDeviceBlocking(const juce::String& preferredTypeName,
+                                                  const juce::String& preferredDeviceName,
+                                                  bool& outFellBack)
+{
     const double tOpenStart = juce::Time::getMillisecondCounterHiRes();
 
     // Single blocking open: a pinned device is opened DIRECTLY (avoids the
     // open-default-then-switch double open); otherwise the system default.
-    bool didFallBack = false;
+    outFellBack = false;
     juce::String err;
     if (preferredTypeName.isNotEmpty() && preferredDeviceName.isNotEmpty())
     {
@@ -63,7 +75,7 @@ juce::String AudioEngine::openAudioDevice(const juce::String& preferredTypeName,
                                  juce::String("preferred device '") + preferredDeviceName + "' ("
                                      + preferredTypeName + ") not available: " + err
                                      + "; using system default");
-            didFallBack = true;
+            outFellBack = true;
             err = openDefaultOutputOnly();
         }
     }
@@ -76,19 +88,17 @@ juce::String AudioEngine::openAudioDevice(const juce::String& preferredTypeName,
                              + juce::String(juce::Time::getMillisecondCounterHiRes() - tOpenStart, 1)
                              + " ms"
                              + (err.isNotEmpty() ? (juce::String(" (error: ") + err + ")") : juce::String{}));
-    if (err.isNotEmpty())
-    {
-        if (outFellBackToDefault != nullptr) *outFellBackToDefault = didFallBack;
-        return err;
-    }
+    return err;
+}
 
+void AudioEngine::finaliseAudioDevice(bool fellBack)
+{
     deviceManager.addAudioCallback(&sourcePlayer);
     deviceManager.addChangeListener(&deviceChangeListener);
 
     // Avoid full device scans on startup; ASIO probing can block for hundreds of ms.
     rebuildDevicesSnapshot(/*rescan*/ false);
-    devicesSnapshot.fellBackToDefault = didFallBack;
-    if (outFellBackToDefault != nullptr) *outFellBackToDefault = didFallBack;
+    devicesSnapshot.fellBackToDefault = fellBack;
 
     // Full device inventory + chosen-endpoint report so a field log shows exactly what the
     // engine saw and opened, without needing a repro.
@@ -107,8 +117,10 @@ juce::String AudioEngine::openAudioDevice(const juce::String& preferredTypeName,
                              + "' sr=" + juce::String(devicesSnapshot.currentSampleRate, 0)
                              + " buffer=" + juce::String(devicesSnapshot.currentBufferSize)
                              + " outLatencyMs=" + juce::String(devicesSnapshot.outputLatencyMs, 1)
-                             + (didFallBack ? " (fell back to default)" : ""));
-    return {};
+                             + (fellBack ? " (fell back to default)" : ""));
+
+    // Publish readiness last so any thread that observes it sees the finalised device state.
+    audioReady.store(true, std::memory_order_release);
 }
 
 juce::String AudioEngine::openDefaultOutputOnly()

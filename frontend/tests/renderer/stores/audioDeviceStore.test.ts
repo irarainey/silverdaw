@@ -140,4 +140,35 @@ describe('audioDeviceStore per-device keep-awake toggle', () => {
     expect(store.keepAwakeByDevice).toEqual({})
     expect(sendBridge).toHaveBeenCalledWith('AUDIO_KEEP_AWAKE_SET', { enabled: false })
   })
+
+  it('selectDevice pushes the target keep-awake BEFORE the select so the stream never starts silent', () => {
+    const store = useAudioDeviceStore()
+    store.keepAwakeByDevice = { 'USB DAC': true }
+    vi.mocked(sendBridge).mockClear()
+
+    store.selectDevice('Windows Audio', 'USB DAC')
+
+    const calls = vi.mocked(sendBridge).mock.calls
+    const keepAwakeIndex = calls.findIndex((c) => c[0] === 'AUDIO_KEEP_AWAKE_SET')
+    const selectIndex = calls.findIndex((c) => c[0] === 'AUDIO_DEVICE_SELECT')
+    expect(keepAwakeIndex).toBeGreaterThanOrEqual(0)
+    expect(selectIndex).toBeGreaterThan(keepAwakeIndex)
+    expect(sendBridge).toHaveBeenNthCalledWith(keepAwakeIndex + 1, 'AUDIO_KEEP_AWAKE_SET', {
+      enabled: true
+    })
+  })
+
+  it('selectDevice pushes keep-awake off for a target device that has no toggle', () => {
+    const store = useAudioDeviceStore()
+    store.keepAwakeByDevice = { 'USB DAC': true }
+    vi.mocked(sendBridge).mockClear()
+
+    store.selectDevice('Windows Audio', 'Speakers (Realtek)')
+
+    expect(sendBridge).toHaveBeenNthCalledWith(1, 'AUDIO_KEEP_AWAKE_SET', { enabled: false })
+    expect(sendBridge).toHaveBeenNthCalledWith(2, 'AUDIO_DEVICE_SELECT', {
+      typeName: 'Windows Audio',
+      deviceName: 'Speakers (Realtek)'
+    })
+  })
 })

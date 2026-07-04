@@ -45,9 +45,10 @@ class OutputKeepAlive
     }
     bool isDeviceActive() const noexcept { return deviceActive.load(std::memory_order_acquire); }
 
-    // Keep-awake policy gate, driven by output-device classification. Only sleep-prone (USB)
-    // endpoints get the dither; everything else stays true digital silence and plays instantly.
-    // Defaults to true so a USB DAC is covered before classification has run.
+    // Keep-awake policy gate. An explicit per-device user choice (default off): only devices the
+    // user has opted in get the dither + wake burst; everything else stays true digital silence
+    // and plays instantly. The launcher enables it before the preferred device opens (via env) so
+    // a cold DAC wakes at stream start; the renderer re-pushes the open device's setting on connect.
     void setKeepAwakeEnabled(bool enabled) noexcept
     {
         keepAwakeEnabled.store(enabled, std::memory_order_release);

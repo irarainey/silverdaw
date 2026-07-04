@@ -89,7 +89,12 @@ export class BackendSupervisor {
     let child: ChildProcess
     try {
       child = spawn(exePath, ['--port', String(port)], {
-        stdio: 'inherit',
+        // Capture (not inherit) the backend's stdout/stderr so its banner and any
+        // early errors are mirrored into the always-on diagnostics log. In a packaged
+        // GUI app the inherited console is null, and under MSIX the backend's own
+        // backend.log can land in a different (redirected) dir than the main process's
+        // startup.log — piping here keeps backend startup visible in one place.
+        stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
         cwd: this.deps.resolveCwd?.(),
         env: this.deps.buildEnv()
@@ -105,6 +110,7 @@ export class BackendSupervisor {
     }
 
     this.process = child
+    this.pipeChildOutput(child, generation)
 
     // A stable run resets old crash history.
     this.armStabilityTimer(generation)
@@ -126,6 +132,33 @@ export class BackendSupervisor {
       if (generation !== this.generation) return
       this.deps.log('ERROR', 'backend', `process error (generation ${generation}): ${err.message}`)
     })
+  }
+
+  /** Line-buffer the backend's stdout/stderr into the diagnostics log (one line per entry). */
+  private pipeChildOutput(child: ChildProcess, generation: number): void {
+    const forward = (
+      stream: NodeJS.ReadableStream | null,
+      level: string,
+      tag: string
+    ): void => {
+      if (!stream) return
+      stream.setEncoding('utf8')
+      let buffer = ''
+      stream.on('data', (chunk: string) => {
+        buffer += chunk
+        for (let nl = buffer.indexOf('\n'); nl >= 0; nl = buffer.indexOf('\n')) {
+          const line = buffer.slice(0, nl).replace(/\r$/, '')
+          buffer = buffer.slice(nl + 1)
+          if (line.length > 0 && generation === this.generation) this.deps.log(level, tag, line)
+        }
+      })
+      stream.on('end', () => {
+        const line = buffer.trim()
+        if (line.length > 0 && generation === this.generation) this.deps.log(level, tag, line)
+      })
+    }
+    forward(child.stdout, 'INFO ', 'backend-out')
+    forward(child.stderr, 'WARN ', 'backend-err')
   }
 
   private scheduleRespawn(): void {

@@ -36,6 +36,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { startAutosaveManager, stopAutosaveManager } from '@/lib/autosave'
 import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
+import { warmPixi } from '@/lib/timeline/pixiLoader'
 import { log } from '@/lib/log'
 import { registerMenuShortcuts } from '@/lib/menuShortcuts'
 import { onBackendStatus as onEngineBackendStatus } from '@/lib/engineRecovery'
@@ -95,6 +96,7 @@ const stopBusyCursorWatcher = watch(
 
 onMounted(() => {
   log.info('app', 'mounted')
+  log.info('perf', `renderer onMounted @ ${Math.round(performance.now())}ms`)
   unsubscribeMenu = window.silverdaw.onMenuAction(handleMenuAction)
   // Warm-launch file hand-offs arrive from the single-instance lock.
   unsubscribeOpenFromPath = window.silverdaw.onOpenProjectFromPath((filePath) => {
@@ -113,6 +115,9 @@ onMounted(() => {
   // Start autosave; it stays idle until the project is dirty.
   const pinia = getActivePinia()
   if (pinia) startAutosaveManager(pinia)
+  // A2: warm the large Pixi/WebGL chunk in the background now (after first paint, while the
+  // startup screen is shown) so the first timeline/clip-editor draw doesn't pay the import cost.
+  warmPixi()
 })
 
 // ─── Global keyboard shortcuts ────────────────────────────────────────────

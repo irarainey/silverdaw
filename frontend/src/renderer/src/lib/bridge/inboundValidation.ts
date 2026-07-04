@@ -57,6 +57,7 @@ import {
   isProjectDelayAppliedPayload,
   isTrackRemovedPayload,
   isWaveformReadyPayload,
+  isEngineAudioStatusPayload,
   type BridgeInboundMessage,
   type BridgeInboundType
 } from '@shared/bridge-protocol'
@@ -184,6 +185,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isPongPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'ENGINE_ERROR':
       return isEngineErrorPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'ENGINE_AUDIO_STATUS':
+      return isEngineAudioStatusPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

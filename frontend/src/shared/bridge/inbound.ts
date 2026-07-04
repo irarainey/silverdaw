@@ -36,6 +36,15 @@ export const EngineErrorPayloadSchema = z.object({
 })
 export type EngineErrorPayload = z.infer<typeof EngineErrorPayloadSchema>
 
+/** Audio-engine readiness, broadcast as the device opens on the backend worker thread. */
+export const EngineAudioStatusPayloadSchema = z.object({
+  state: z.enum(['starting', 'ready', 'failed', 'no_device'])
+})
+export type EngineAudioStatusPayload = z.infer<typeof EngineAudioStatusPayloadSchema>
+export function isEngineAudioStatusPayload(value: unknown): value is EngineAudioStatusPayload {
+  return EngineAudioStatusPayloadSchema.safeParse(value).success
+}
+
 export const ClipAckPayloadSchema = z.object({
   trackId: z.string(),
   clipId: z.string(),
@@ -775,6 +784,7 @@ export interface BridgeInboundMap {
   TRACK_LEVELS: TrackLevelsPayload
   PONG: PongPayload
   ENGINE_ERROR: EngineErrorPayload
+  ENGINE_AUDIO_STATUS: EngineAudioStatusPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -835,7 +845,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'MASTER_LEVEL',
   'TRACK_LEVELS',
   'PONG',
-  'ENGINE_ERROR'
+  'ENGINE_ERROR',
+  'ENGINE_AUDIO_STATUS'
 ])
 
 /** Narrow an unknown string to the inbound type union. */

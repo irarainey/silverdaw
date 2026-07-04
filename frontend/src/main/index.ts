@@ -66,18 +66,28 @@ function resolveBackendExePath(): string {
 }
 
 function buildBackendEnv(): NodeJS.ProcessEnv {
-  const audioOutput = prefs.get().audioOutput
+  const { audioOutput, keepAwakeByDevice } = prefs.get()
+  const hasPreferredDevice = Boolean(audioOutput.typeName && audioOutput.deviceName)
+  // The device is opened during backend startup, before the renderer can push the per-device
+  // keep-awake toggle. Pass the preferred device's persisted setting at spawn so keep-alive
+  // energy flows from the very first audio block — a cold sleep-prone DAC otherwise latches
+  // muted on the initial silence and only wakes on the first play (an audible click).
+  const preferredDeviceKeepAwake =
+    hasPreferredDevice && keepAwakeByDevice[audioOutput.deviceName as string] === true
   return {
     ...process.env,
     // Keep AUTH token out of argv; the backend reads it from env.
     SILVERDAW_BRIDGE_TOKEN: bridgeToken,
     // Backend may fall back if the saved device is unavailable.
-    ...(audioOutput.typeName && audioOutput.deviceName
+    ...(hasPreferredDevice
       ? {
-          SILVERDAW_OUTPUT_DEVICE_TYPE: audioOutput.typeName,
-          SILVERDAW_OUTPUT_DEVICE_NAME: audioOutput.deviceName
+          SILVERDAW_OUTPUT_DEVICE_TYPE: audioOutput.typeName as string,
+          SILVERDAW_OUTPUT_DEVICE_NAME: audioOutput.deviceName as string
         }
       : {}),
+    // Enable keep-awake before the device opens so the wake burst + holding dither rouse a
+    // cold DAC at stream start. The renderer still re-pushes the effective state on connect.
+    ...(preferredDeviceKeepAwake ? { SILVERDAW_OUTPUT_KEEP_AWAKE: '1' } : {}),
     // Always-on diagnostics dir so the backend can write its crash report and an
     // INFO-level startup log even when the user's verbose logging is off. This is
     // what makes a failed/crashed launch diagnosable from the logs alone.
@@ -94,6 +104,14 @@ function sendBackendStatus(status: BackendStatus): void {
 }
 
 function startBackend(): void {
+  // Record exactly what the backend is handed, so a missing backend.log (e.g. under
+  // MSIX redirection) is diagnosable from startup.log alone.
+  logDiag(
+    'INFO ',
+    'backend',
+    `env exe=${resolveBackendExePath()} diagDir=${getDiagnosticsDir() || '(none)'} ` +
+      `logDir=${startupLoggingEnabled ? getSessionDir() : '(off)'} cwd=${app.getPath('temp')}`
+  )
   backendSupervisor = new BackendSupervisor({
     resolveExePath: resolveBackendExePath,
     buildEnv: buildBackendEnv,
@@ -166,18 +184,30 @@ app.whenReady().then(async () => {
     app.setAppUserModelId('com.silverdaw.app')
   }
 
-  // Preferences must load before startup-only logger and DevTools decisions.
-  await prefs.load()
-  startupLoggingEnabled = prefs.get().debug.loggingEnabled === true
-  startupDevToolsEnabled = prefs.get().debug.devToolsEnabled === true
-
-  // Always-on diagnostics (independent of the logging preference): captures the
-  // backend crash report and startup lifecycle so a launch that never connects to
-  // the audio engine is diagnosable even when verbose logging is off.
+  // Always-on diagnostics FIRST (independent of the logging preference): captures the
+  // backend crash report and startup lifecycle so a launch that never connects to the
+  // audio engine is diagnosable even when verbose logging is off. Opened before prefs so
+  // the phase-timing markers below are captured from the earliest phase.
   const diagDir = initDiagnostics(join(app.getPath('userData'), 'diagnostics'))
   if (diagDir) {
     logDiag('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node} packaged=${app.isPackaged}`)
   }
+  // Always-on startup phase timing (ms since process start) so cold/warm launch cost is
+  // attributable from the diagnostics log alone.
+  const mark = (phase: string): void =>
+    logDiag('INFO ', 'perf', `main ${phase} @ ${Math.round(process.uptime() * 1000)}ms`)
+
+  // Probe for a free bridge port in PARALLEL with loading preferences — neither depends on
+  // the other, so overlapping them lets the backend spawn sooner.
+  const portPromise: Promise<number | null> = bridgePortEnvOverridden
+    ? Promise.resolve(bridgePort)
+    : findFreeBridgePort(DEFAULT_BRIDGE_PORT, 20)
+
+  // Preferences must load before startup-only logger and DevTools decisions.
+  await prefs.load()
+  mark('prefs-loaded')
+  startupLoggingEnabled = prefs.get().debug.loggingEnabled === true
+  startupDevToolsEnabled = prefs.get().debug.devToolsEnabled === true
 
   // Only opted-in diagnostic sessions write cross-layer logs.
   if (startupLoggingEnabled) {
@@ -260,9 +290,9 @@ app.whenReady().then(async () => {
 
   registerStemHandlers({ getMainWindow: () => mainWindow, prefs })
 
-  // Honour explicit dev port; otherwise probe past leftover processes.
+  // Resolve the port probed in parallel with prefs/logging above.
+  const free = await portPromise
   if (!bridgePortEnvOverridden) {
-    const free = await findFreeBridgePort(DEFAULT_BRIDGE_PORT, 20)
     if (free === null) {
       const msg =
         `Could not find a free TCP port for the audio engine in the range ` +
@@ -278,11 +308,16 @@ app.whenReady().then(async () => {
     }
     bridgePort = free
   }
+  mark('port-resolved')
 
-  // Defer backend spawn until after initial window creation to protect first paint.
+  // Spawn the backend BEFORE creating the window so its (potentially slow) audio-device
+  // open overlaps window creation and renderer boot instead of running after them.
   hardenDefaultSession()
+  startBackend()
+  mark('backend-spawned')
+
   mainWindow = createWindow(buildCreateWindowContext())
-  setImmediate(startBackend)
+  mark('window-created')
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

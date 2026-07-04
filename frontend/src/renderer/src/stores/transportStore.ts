@@ -21,6 +21,12 @@ interface TransportState {
   bridgeFailureMessage: string | null
   /** Mid-session engine recovery phase; cold-start failures use `bridgeFailureMessage`. */
   engineRecovery: 'ok' | 'recovering' | 'restoring' | 'unavailable'
+  /**
+   * Audio-device readiness, from the backend `ENGINE_AUDIO_STATUS` broadcast. The device now
+   * opens on a worker thread after the bridge is serving, so the project/UI can be interactive
+   * while this is still `'starting'`; transport stays gated until `'ready'`.
+   */
+  audioState: 'starting' | 'ready' | 'failed' | 'no_device'
   hasBeenReady: boolean
 }
 
@@ -34,6 +40,7 @@ export const useTransportStore = defineStore('transport', {
     handshakeReady: false,
     bridgeFailureMessage: null,
     engineRecovery: 'ok',
+    audioState: 'starting',
     hasBeenReady: false
   }),
 
@@ -59,7 +66,16 @@ export const useTransportStore = defineStore('transport', {
         this.isPlaying = false
         this.bridgeReady = false
         this.handshakeReady = false
+        // A fresh connection re-runs the audio-open handshake.
+        this.audioState = 'starting'
       }
+    },
+    /** Audio-device readiness from the backend `ENGINE_AUDIO_STATUS` broadcast. */
+    setAudioState(state: TransportState['audioState']): void {
+      if (this.audioState !== state) {
+        log.info('transport', `audioState -> ${state}`)
+      }
+      this.audioState = state
     },
     /** WebSocket handshake (`READY`) received — backend reachable, before PROJECT_STATE. */
     setHandshakeReady(ready: boolean): void {

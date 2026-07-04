@@ -229,7 +229,7 @@ onBeforeUnmount(() => {
       <!-- Locked heights prevent 1-2 px spinner/text wobble between phases. -->
       <div
         v-else-if="!ready"
-        class="flex h-[228px] flex-col items-center justify-between text-zinc-200"
+        class="flex h-57 flex-col items-center justify-between text-zinc-200"
       >
         <img
           :src="logoUrl"
@@ -244,7 +244,7 @@ onBeforeUnmount(() => {
         />
         <p
           id="startup-title"
-          class="m-0 flex h-5 shrink-0 items-center whitespace-nowrap text-[13px] font-medium leading-[20px]"
+          class="m-0 flex h-5 shrink-0 items-center whitespace-nowrap text-[13px] font-medium leading-5"
           aria-live="polite"
         >
           {{ statusText || 'Loading Silverdaw…' }}

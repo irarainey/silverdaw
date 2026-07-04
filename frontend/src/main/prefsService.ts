@@ -60,7 +60,9 @@ export class PrefsService {
       // Treat an empty prefs file as first-run state.
       if (raw.trim().length === 0) {
         this.seedSessionPaths()
-        await this.ensureProjectDirExists()
+        // Fire-and-forget: the default project dir is only needed later by save/open dialogs
+        // (which are best-effort and fall back), so it must not gate window creation.
+        void this.ensureProjectDirExists()
         return
       }
       const parsed = JSON.parse(raw) as Partial<Preferences>
@@ -119,7 +121,9 @@ export class PrefsService {
       }
     }
     this.seedSessionPaths()
-    await this.ensureProjectDirExists()
+    // Fire-and-forget: creating the default project dir is best-effort and only needed by
+    // later save/open dialogs, so it stays off the window-creation critical path.
+    void this.ensureProjectDirExists()
   }
 
   private seedSessionPaths(): void {

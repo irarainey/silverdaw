@@ -31,11 +31,8 @@ function installGlobalErrorLogging(): void {
 // calls would slip through as no-ops on disabled sessions but still
 // hit the IPC layer on enabled ones).
 async function bootstrap(): Promise<void> {
-  // Wire the static splash's close button (declared in `index.html`) to
-  // the same quit path as the title-bar ×. It only needs to work during
-  // the brief window before `app.mount()` swaps the splash markup out for
-  // the Vue tree, but the hydrate() await below can keep the static
-  // splash on screen long enough that a user may want to bail early.
+  // Wire the static splash's close button (declared in `index.html`) to the same quit
+  // path as the title-bar ×, so a user can bail out during the brief pre-mount window.
   document
     .getElementById('splash-close')
     ?.addEventListener('click', () => window.silverdaw.closeWindow())
@@ -44,14 +41,21 @@ async function bootstrap(): Promise<void> {
   const pinia = createPinia()
   app.use(pinia)
 
-  // Pinia must be installed before any `useStore()` call resolves;
-  // `useAppStore()` only works after `app.use(pinia)` above.
-  const appStore = useAppStore()
-  await appStore.hydrate()
-  setLogEnabled(appStore.loggingEnabled)
+  // Capture uncaught errors from the first frame onward.
   installGlobalErrorLogging()
 
+  // Mount IMMEDIATELY behind the static splash — do NOT block first paint on the startup
+  // preference/recents IPC. The appStore hydrates AFTER mount and the shell reconciles
+  // reactively: the title-bar menu (Debug entries), recent-projects list, and the renderer
+  // logger all update the moment hydrate() resolves. This removes the batched 4-IPC call
+  // from the mount critical path.
+  const appStore = useAppStore()
   app.mount('#app')
+
+  void appStore.hydrate().then(() => {
+    setLogEnabled(appStore.loggingEnabled)
+    log.info('perf', `renderer hydrate reconciled @ ${Math.round(performance.now())}ms`)
+  })
 }
 
 void bootstrap()

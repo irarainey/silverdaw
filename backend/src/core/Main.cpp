@@ -215,12 +215,22 @@ int runBackend(int argc, char* argv[])
         juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_DEVICE_TYPE", {});
     const auto preferredAudioDeviceName =
         juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_DEVICE_NAME", {});
+    // Persisted per-device keep-awake for the preferred output, resolved by the launcher. Enable it
+    // BEFORE the device opens so the keep-alive dither + wake burst run from the first audio block
+    // and rouse a cold sleep-prone DAC at stream start (the renderer re-pushes it on connect).
+    const bool preferredKeepAwake =
+        juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_KEEP_AWAKE", {}) == "1";
+    if (preferredKeepAwake)
+    {
+        engine.setKeepAwakeEnabled(true);
+    }
     silverdaw::log::info("audio",
                          "preferred output: type='" + preferredAudioTypeName + "' name='"
                              + preferredAudioDeviceName + "'"
                              + (preferredAudioTypeName.isEmpty() && preferredAudioDeviceName.isEmpty()
                                     ? " (system default)"
-                                    : ""));
+                                    : "")
+                             + (preferredKeepAwake ? " [keep-awake]" : ""));
 
     silverdaw::ProjectState projectState;
     silverdaw::ProjectSession session;
@@ -272,12 +282,17 @@ int runBackend(int argc, char* argv[])
                 self.broadcast("ENGINE_ERROR", juce::var(p));
             }
         },
-        [&projectState, &session](const silverdaw::BridgeServer::SendToClient& sendToClient)
+        [&projectState, &session, &engine](const silverdaw::BridgeServer::SendToClient& sendToClient)
         {
             // Target only the new client; existing clients already have their snapshots.
             sendToClient("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, false));
             // Seed menu state before first paint.
             sendToClient("EDIT_UNDO_STATE", silverdaw::buildEditUndoStateEnvelope(projectState));
+            // Tell the new client whether audio is ready yet, so it can gate the transport UI
+            // (the device may still be opening on the worker thread).
+            auto* status = new juce::DynamicObject();
+            status->setProperty("state", engine.isAudioReady() ? "ready" : "starting");
+            sendToClient("ENGINE_AUDIO_STATUS", juce::var(status));
         });
 
     silverdaw::crash::setPhase("bridge-start");
@@ -305,12 +320,14 @@ int runBackend(int argc, char* argv[])
                                       /*dedupe*/ true);
         });
 
-    // Open the audio device now that the bridge is serving. The renderer has already
-    // connected and received READY on the I/O thread, so this (potentially slow cold-start)
-    // open no longer blocks the UI from appearing. It runs on the message thread before the
-    // dispatch loop, so PROJECT_STATE — which flips the renderer's bridgeReady — is delivered
-    // immediately after the device is ready. A failed open is non-fatal (logged); the engine
-    // stays alive and the app remains usable without audio output.
+    // Open the audio device synchronously on the message thread. NOTE: an earlier
+    // worker-thread open (C3) destabilised output devices — activating the WASAPI/COM device
+    // on a transient MTA worker that then exited invalidated the device's COM objects, so the
+    // endpoint dropped ~1s after opening (no audio, thrashing reopen). Opening on the message
+    // thread keeps the device stable. This blocks the message thread for the open duration, so
+    // PROJECT_STATE follows the open; the picker still appears immediately because READY is
+    // sent on the I/O thread the moment the bridge starts listening. A failed open is
+    // non-fatal (logged); the engine stays alive and the app remains usable without output.
     silverdaw::crash::setPhase("audio-device-init");
     if (const auto err = engine.openAudioDevice(preferredAudioTypeName, preferredAudioDeviceName);
         err.isNotEmpty())
@@ -319,6 +336,11 @@ int runBackend(int argc, char* argv[])
     }
     silverdaw::broadcastAudioDevicesList(
         bridge, silverdaw::buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()), /*dedupe*/ false);
+    {
+        auto* status = new juce::DynamicObject();
+        status->setProperty("state", engine.isAudioReady() ? "ready" : "no_device");
+        bridge.broadcast("ENGINE_AUDIO_STATUS", juce::var(status));
+    }
 
     silverdaw::PlayheadEmitter emitter(engine, bridge);
     emitter.startTimerHz(kPlayheadUpdateHz);

@@ -159,6 +159,13 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       this.pendingSelection = { typeName, deviceName }
       this.pendingPersistUserPreference = opts?.persistUserPreference ?? true
       this.lastError = null
+      // Enable keep-awake for the TARGET device BEFORE the switch so the backend's gate is open
+      // from the new device's very first audio block. Pushing it reactively (after the device
+      // changes) lets the stream start with true silence, which lets a cold sleep-prone DAC latch
+      // its amp muted — a later wake burst can't reliably rouse it, so the first play is silent.
+      // Both commands are message-thread-serialised in the backend, so this ordering holds.
+      const targetKeepAwake = !!(deviceName && this.keepAwakeByDevice[deviceName])
+      sendBridge('AUDIO_KEEP_AWAKE_SET', { enabled: targetKeepAwake })
       const sent = sendBridge('AUDIO_DEVICE_SELECT', { typeName, deviceName })
       if (!sent) {
         this.pendingSelection = null
@@ -181,6 +188,12 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
       }, RESCAN_SAFETY_MS)
       const sent = sendBridge('AUDIO_DEVICES_REQUEST', { refresh: true })
       if (!sent) this.finishRescan()
+    },
+
+    /** Silent (no-spinner) forced rescan used by startup reconciliation to hunt for a saved
+     *  device that is slow to enumerate (e.g. a USB DAC that appears a few seconds after launch). */
+    probeForDevices(): void {
+      sendBridge('AUDIO_DEVICES_REQUEST', { refresh: true })
     },
 
     /** Clear the rescan spinner + timers. */

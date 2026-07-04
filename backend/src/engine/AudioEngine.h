@@ -55,6 +55,10 @@ class AudioEngine
                                  const juce::String& preferredDeviceName = {},
                                  bool* outFellBackToDefault = nullptr);
 
+    // True once the audio device is open and the engine is safe to play through. Reads are
+    // valid from any thread (e.g. the bridge I/O thread and message-thread command handlers).
+    bool isAudioReady() const noexcept { return audioReady.load(std::memory_order_acquire); }
+
     void shutdown();
 
     bool addClip(const juce::String& trackId, const juce::String& clipId,
@@ -350,6 +354,10 @@ class AudioEngine
     juce::AudioSourcePlayer sourcePlayer;
     BusGraph busGraph;
 
+    // Set true (on the message thread) once the device is open and finalised; read from any
+    // thread. Signals audio readiness to the bridge (ENGINE_AUDIO_STATUS).
+    std::atomic<bool> audioReady{false};
+
     // Per-track automation snapshots owned here (message thread). `current` holds
     // the live snapshot per track; `retired` holds superseded ones until a stop
     // reclaims them, so the audio thread never frees. See setTrackAutomation.
@@ -362,6 +370,16 @@ class AudioEngine
     // opening the default input endpoint can stall for tens of seconds on a bad default
     // mic (e.g. a Bluetooth HFP headset) — the cold-start hang. Returns any JUCE error.
     juce::String openDefaultOutputOnly();
+
+    // The blocking half of openAudioDevice(): opens the pinned/default output device and
+    // logs the elapsed time. Safe to run off the message thread. Returns any JUCE error.
+    juce::String openAudioDeviceBlocking(const juce::String& preferredTypeName,
+                                         const juce::String& preferredDeviceName,
+                                         bool& outFellBack);
+
+    // The message-thread half of openAudioDevice(): attaches the audio callback + device
+    // change listener, rebuilds the device snapshot, logs the inventory, and flips audioReady.
+    void finaliseAudioDevice(bool fellBack);
 
     void onDeviceListChanged();
 
