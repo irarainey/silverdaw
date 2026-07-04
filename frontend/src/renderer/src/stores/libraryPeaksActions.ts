@@ -12,6 +12,16 @@ export const peaksActions = {
     setItemPeaks(itemId: string, peaks: Float32Array, sampleRate: number, peaksPerSecond?: number): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
+      // Clips of the same source all deliver that item's identical peaks; once we hold an
+      // equivalent set (same length + peaks-per-second) skip the redundant re-store + LOD rebuild.
+      if (
+        item.peaks &&
+        item.peaks.length === peaks.length &&
+        item.peaksPerSecond &&
+        (peaksPerSecond === undefined || peaksPerSecond === item.peaksPerSecond)
+      ) {
+        return
+      }
       item.peaks = peaks
       if (typeof peaksPerSecond === 'number' && peaksPerSecond > 0) item.peaksPerSecond = peaksPerSecond
       if (sampleRate > 0) item.sampleRate = sampleRate
@@ -39,13 +49,17 @@ export const peaksActions = {
         delete this.channelPeaksByItemId[itemId]
         return
       }
-      // Avoid rebuilding identical shared LOD pyramids for every clip waveform event.
+      // Avoid rebuilding identical shared LOD pyramids for every clip waveform event. Clips that
+      // share a source all deliver that item's full peaks (freshly parsed each time, so the arrays
+      // are never reference-equal), so dedupe on shape: same channel count + per-channel length +
+      // peaks-per-second means the same source peaks and an already-built LOD to reuse. On a
+      // multi-clip load this collapses dozens of redundant pyramid builds down to one per source.
       const existing = this.channelPeaksByItemId[itemId]
       if (
         existing &&
         existing.peaksPerSecond === peaksPerSecond &&
         existing.channels.length === channels.length &&
-        existing.channels.every((ch, i) => ch === channels[i])
+        existing.channels.every((ch, i) => ch.length === channels[i]?.length)
       ) {
         return
       }

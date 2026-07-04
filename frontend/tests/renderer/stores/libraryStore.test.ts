@@ -1459,6 +1459,27 @@ describe('libraryStore', () => {
     expect(library.channelPeaksByItemId[id]?.lod).not.toBe(firstLod)
   })
 
+  it('dedupes LOD builds for freshly-parsed arrays of the same shape (multi-clip load)', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\shared.wav',
+      fileName: 'shared.wav',
+      durationMs: 1_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    // Each clip of the same source delivers freshly-parsed (non-reference-equal) arrays; a
+    // same-shape entry must reuse the existing LOD rather than rebuild it per clip.
+    library.setItemChannelPeaks(id, [new Float32Array([0, 1, 0.5, 0.8]), new Float32Array([0, 1, 0.5, 0.8])], 200)
+    const firstLod = library.channelPeaksByItemId[id]?.lod
+    library.setItemChannelPeaks(id, [new Float32Array([0, 1, 0.5, 0.8]), new Float32Array([0, 1, 0.5, 0.8])], 200)
+    expect(library.channelPeaksByItemId[id]?.lod).toBe(firstLod)
+    // A different per-channel length is a genuinely different source, so it rebuilds.
+    library.setItemChannelPeaks(id, [new Float32Array([0, 1]), new Float32Array([0, 1])], 200)
+    expect(library.channelPeaksByItemId[id]?.lod).not.toBe(firstLod)
+  })
+
   it('clears per-channel and hi-res peaks when the library is cleared', () => {
     const library = useLibraryStore()
     const id = library.addItem({
