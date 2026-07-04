@@ -39,11 +39,13 @@ function onClose(): void {
   window.silverdaw.closeWindow()
 }
 
-// All startup gates resolved; phase dwell below still controls readiness.
+// All startup gates resolved; phase dwell below still controls readiness. Uses the
+// handshake (not the post-open PROJECT_STATE) so the picker appears while the audio
+// device is still opening.
 const allResolved = computed(
   () =>
     !bridgeFailed.value &&
-    transport.bridgeReady &&
+    transport.handshakeReady &&
     props.startupFlowComplete &&
     !audioDevices.scanInProgress
 )
@@ -51,7 +53,7 @@ const allResolved = computed(
 const liveStatusText = computed(() => {
   if (bridgeFailed.value) return ''
   if (!transport.connected) return 'Waiting for the audio engine to start…'
-  if (!transport.bridgeReady) return 'Connecting to the audio engine…'
+  if (!transport.handshakeReady) return 'Connecting to the audio engine…'
   if (audioDevices.scanInProgress) return 'Scanning audio devices…'
   if (!props.startupFlowComplete && !props.recoveryOpen) {
     return 'Checking for recovered projects…'

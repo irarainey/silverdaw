@@ -197,9 +197,11 @@ function handleBackendStatus(status: BackendStatus): void {
   onEngineBackendStatus(status)
 }
 
-// Only the initial connect can trip this terminal startup timeout.
+// Handshake (READY) — not the post-open PROJECT_STATE — drives startup so the UI appears
+// while the audio device is still opening. Also the point past which the connect timeout
+// must not fire: the backend is proven reachable.
 const stopBridgeTimerWatcher = watch(
-  () => transport.bridgeReady,
+  () => transport.handshakeReady,
   (ready) => {
     if (ready && bridgeTimer) {
       clearTimeout(bridgeTimer)
@@ -207,7 +209,8 @@ const stopBridgeTimerWatcher = watch(
     }
     if (!ready) return
     // ── Startup coordinator ────────────────────────────────────────────
-    // Park cold-launch paths until recovery has finished.
+    // Recovery data is main-process IPC (no backend needed), so it resolves on the
+    // handshake — the picker no longer waits for the audio device to finish opening.
     void window.silverdaw.consumePendingOpenPath().then((filePath) => {
       if (filePath) pendingOpenAfterRecovery = filePath
       runStartupRecoveryFlow()
@@ -232,10 +235,27 @@ function finishStartupFlow(): void {
   const parked = pendingOpenAfterRecovery
   pendingOpenAfterRecovery = null
   if (parked) {
-    // Let PROJECT_STATE hide StartupScreen once the project path lands.
-    void openProjectByPath(parked)
+    // Opening a project needs the engine ready to load it (PROJECT_STATE path), which can
+    // lag the handshake while the audio device opens — defer until bridgeReady.
+    openProjectWhenBridgeReady(parked)
   }
   appStore.markStartupFlowComplete()
+}
+
+/** Open a cold-launch path now if the engine is ready, else once it becomes ready. */
+function openProjectWhenBridgeReady(filePath: string): void {
+  if (transport.bridgeReady) {
+    void openProjectByPath(filePath)
+    return
+  }
+  const stop = watch(
+    () => transport.bridgeReady,
+    (ready) => {
+      if (!ready) return
+      stop()
+      void openProjectByPath(filePath)
+    }
+  )
 }
 
 function onRecoveryRestored(): void {

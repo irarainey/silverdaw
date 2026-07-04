@@ -23,8 +23,14 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
                                      const juce::String& preferredDeviceName,
                                      bool* outFellBackToDefault)
 {
-    const double tInitStart = juce::Time::getMillisecondCounterHiRes();
+    initialiseGraph();
+    return openAudioDevice(preferredTypeName, preferredDeviceName, outFellBackToDefault);
+}
 
+void AudioEngine::initialiseGraph()
+{
+    // Fast, device-independent setup so the bridge can come up and accept project/graph
+    // commands before the (potentially slow) audio device is opened.
     // Windows Media Foundation support comes from JUCE built-in format registration.
     formatManager.registerBasicFormats();
 
@@ -32,50 +38,76 @@ juce::String AudioEngine::initialise(const juce::String& preferredTypeName,
     // start.
     readAheadThread.startThread();
 
+    // Apply master gain before metering; inject keep-alive after gain so the endpoint floor is
+    // volume-independent. Wiring the source graph needs no open device.
+    topMixer.addInputSource(&master, false);
+    sourcePlayer.setSource(&masterMeter);
+}
+
+juce::String AudioEngine::openAudioDevice(const juce::String& preferredTypeName,
+                                          const juce::String& preferredDeviceName,
+                                          bool* outFellBackToDefault)
+{
     const double tOpenStart = juce::Time::getMillisecondCounterHiRes();
-    const auto err = openDefaultOutputOnly();
+
+    // Single blocking open: a pinned device is opened DIRECTLY (avoids the
+    // open-default-then-switch double open); otherwise the system default.
+    bool didFallBack = false;
+    juce::String err;
+    if (preferredTypeName.isNotEmpty() && preferredDeviceName.isNotEmpty())
+    {
+        err = selectOutputDevice(preferredTypeName, preferredDeviceName);
+        if (err.isNotEmpty())
+        {
+            silverdaw::log::warn("audio",
+                                 juce::String("preferred device '") + preferredDeviceName + "' ("
+                                     + preferredTypeName + ") not available: " + err
+                                     + "; using system default");
+            didFallBack = true;
+            err = openDefaultOutputOnly();
+        }
+    }
+    else
+    {
+        err = openDefaultOutputOnly();
+    }
     silverdaw::log::info("audio",
-                         juce::String("default output open took ")
+                         juce::String("audio device open took ")
                              + juce::String(juce::Time::getMillisecondCounterHiRes() - tOpenStart, 1)
                              + " ms"
                              + (err.isNotEmpty() ? (juce::String(" (error: ") + err + ")") : juce::String{}));
     if (err.isNotEmpty())
     {
+        if (outFellBackToDefault != nullptr) *outFellBackToDefault = didFallBack;
         return err;
     }
 
-    // Apply master gain before metering; inject keep-alive after gain so the endpoint floor is
-    // volume-independent.
-    topMixer.addInputSource(&master, false);
-    sourcePlayer.setSource(&masterMeter);
     deviceManager.addAudioCallback(&sourcePlayer);
-
-    bool didFallBack = false;
-    if (preferredTypeName.isNotEmpty() && preferredDeviceName.isNotEmpty())
-    {
-        const auto switchErr = selectOutputDevice(preferredTypeName, preferredDeviceName);
-        if (switchErr.isNotEmpty())
-        {
-            silverdaw::log::warn("audio",
-                                 juce::String("preferred device '") + preferredDeviceName +
-                                     "' (" + preferredTypeName + ") not available: " + switchErr +
-                                     "; using system default");
-            didFallBack = true;
-        }
-    }
-    if (outFellBackToDefault) *outFellBackToDefault = didFallBack;
-
     deviceManager.addChangeListener(&deviceChangeListener);
 
     // Avoid full device scans on startup; ASIO probing can block for hundreds of ms.
     rebuildDevicesSnapshot(/*rescan*/ false);
     devicesSnapshot.fellBackToDefault = didFallBack;
+    if (outFellBackToDefault != nullptr) *outFellBackToDefault = didFallBack;
 
+    // Full device inventory + chosen-endpoint report so a field log shows exactly what the
+    // engine saw and opened, without needing a repro.
+    for (const auto& t : devicesSnapshot.types)
+    {
+        silverdaw::log::info("audio",
+                             "device type '" + t.typeName + "': "
+                                 + juce::String(t.deviceNames.size()) + " output device(s)"
+                                 + (t.deviceNames.isEmpty()
+                                        ? juce::String{}
+                                        : (" [" + t.deviceNames.joinIntoString(", ") + "]")));
+    }
     silverdaw::log::info("audio",
-                         juce::String("audio engine initialise total ")
-                             + juce::String(juce::Time::getMillisecondCounterHiRes() - tInitStart, 1)
-                             + " ms; device='" + devicesSnapshot.currentDeviceName
-                             + "' sr=" + juce::String(devicesSnapshot.currentSampleRate, 0));
+                         "open endpoint: type='" + devicesSnapshot.currentTypeName + "' name='"
+                             + devicesSnapshot.currentDeviceName
+                             + "' sr=" + juce::String(devicesSnapshot.currentSampleRate, 0)
+                             + " buffer=" + juce::String(devicesSnapshot.currentBufferSize)
+                             + " outLatencyMs=" + juce::String(devicesSnapshot.outputLatencyMs, 1)
+                             + (didFallBack ? " (fell back to default)" : ""));
     return {};
 }
 

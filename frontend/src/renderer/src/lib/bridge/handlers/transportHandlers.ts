@@ -10,7 +10,9 @@ export const transportBridgeHandlers: BridgeInboundHandlers<
   'READY' | 'PLAYHEAD_UPDATE' | 'ENGINE_ERROR'
 > = {
   READY: () => {
-    // Handshake ack only; PROJECT_STATE carries the authoritative init snapshot.
+    // Handshake ack: the backend is reachable. This lets the UI appear before the audio
+    // device finishes opening; PROJECT_STATE carries the authoritative init snapshot.
+    useTransportStore().setHandshakeReady(true)
   },
 
   PLAYHEAD_UPDATE: (payload) => {

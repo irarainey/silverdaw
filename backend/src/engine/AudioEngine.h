@@ -45,6 +45,16 @@ class AudioEngine
                             const juce::String& preferredDeviceName = {},
                             bool* outFellBackToDefault = nullptr);
 
+    // Fast, device-independent graph setup (formats, read-ahead, source wiring). Lets the
+    // bridge start and accept project/graph commands before the (possibly slow) device open.
+    void initialiseGraph();
+
+    // Blocking device open + audio-callback/listener attach + snapshot. Split from
+    // initialiseGraph so the caller can open the device after the bridge is already serving.
+    juce::String openAudioDevice(const juce::String& preferredTypeName = {},
+                                 const juce::String& preferredDeviceName = {},
+                                 bool* outFellBackToDefault = nullptr);
+
     void shutdown();
 
     bool addClip(const juce::String& trackId, const juce::String& clipId,
