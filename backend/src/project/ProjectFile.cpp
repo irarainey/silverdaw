@@ -164,7 +164,8 @@ juce::Result save(const juce::File& file, const ProjectState& project)
 }
 
 juce::Result saveViewState(const juce::File& file, double viewScrollX, double viewPxPerSecond,
-                           double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen)
+                           double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen,
+                           bool metronomeEnabled)
 {
     if (!file.existsAsFile())
     {
@@ -197,6 +198,13 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
     projectObj->setProperty("playheadMs", juce::jmax(0.0, playheadMs));
     projectObj->setProperty("viewSelectedTrack", selectedTrackId);
     projectObj->setProperty("viewFxPanelOpen", fxPanelOpen);
+    // Persist the monitoring metronome toggle alongside view state (it's silent — never dirty —
+    // so this targeted write is what keeps it consistent across open/close). Default-off omits the
+    // field to match the project round-trip convention.
+    if (metronomeEnabled)
+        projectObj->setProperty("metronomeEnabled", true);
+    else if (projectObj->hasProperty("metronomeEnabled"))
+        projectObj->removeProperty("metronomeEnabled");
     rootObj->setProperty(kProjectKey, projectVar);
 
     return writeProjectJsonAtomically(file, rootVar);

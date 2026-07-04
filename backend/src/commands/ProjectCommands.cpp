@@ -227,7 +227,8 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
 
     const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), scrollX,
                                                               projectState.getViewPxPerSecond(), playheadMs,
-                                                              selectedTrackId, fxPanelOpen);
+                                                              selectedTrackId, fxPanelOpen,
+                                                              projectState.getMetronomeEnabled());
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())
     {

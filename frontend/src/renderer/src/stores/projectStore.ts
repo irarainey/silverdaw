@@ -304,12 +304,18 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_MIXDOWN_START_BAR', { mixdownStartBar: next })
     },
 
-    /** Toggle the monitoring metronome click. Persisted silently with the project (no undo,
-     *  no dirty) — the backend generates the click in time with the project BPM. */
+    /** Toggle the monitoring metronome click. A per-project setting persisted silently (no undo,
+     *  no dirty) — the backend generates the click in time with the project BPM. On a clean, saved
+     *  project the toggle is flushed to the project file immediately (via the targeted view-state
+     *  write) so it survives closing the project; on a dirty project it rides along with the user's
+     *  next save. */
     setMetronomeEnabled(enabled: boolean): void {
       if (enabled === this.metronomeEnabled) return
       this.metronomeEnabled = enabled
       sendBridge('PROJECT_SET_METRONOME', { enabled })
+      if (!this.isDirty && this.currentFilePath) {
+        void this.saveViewStateAndWait()
+      }
     },
 
     applyProjectStateSnapshot(snapshot: ProjectStatePayload): void {
