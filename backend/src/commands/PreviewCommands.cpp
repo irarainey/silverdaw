@@ -196,4 +196,18 @@ void handlePreviewSetBackspin(const juce::var& payload, AudioEngine& engine, Pro
                               engine.getBackspinDefaultSpeed(), engine.getBackspinDefaultCurve());
 }
 
+void handlePreviewSetMetronome(const juce::var& payload, AudioEngine& engine, ProjectState& projectState)
+{
+    const bool enabled = static_cast<bool>(payload.getProperty("enabled", false));
+    // bpm/anchor drive the click grid but are transient (they come from the clip's source item);
+    // only the enabled flag persists with the project (silently, like the main metronome).
+    const double bpm = static_cast<double>(payload.getProperty("bpm", 0.0));
+    const double anchorSec = static_cast<double>(payload.getProperty("beatAnchorSec", 0.0));
+    silverdaw::log::info("bridge", juce::String("recv PREVIEW_SET_METRONOME enabled=") +
+                                       (enabled ? "1" : "0") + " bpm=" + juce::String(bpm, 2));
+    engine.setPreviewMetronomeGrid(bpm, anchorSec);
+    engine.setPreviewMetronomeEnabled(enabled);
+    projectState.setClipEditorMetronomeEnabled(enabled);
+}
+
 } // namespace silverdaw

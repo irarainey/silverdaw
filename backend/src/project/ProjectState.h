@@ -388,6 +388,11 @@ class ProjectState : public juce::ValueTree::Listener
     bool getMetronomeEnabled() const;
     void setMetronomeEnabled(bool enabled);
 
+    // Clip Editor metronome enabled flag. Independent of the main metronome; persisted the same
+    // way — SILENTLY (never dirty, never undoable, mirrored into the clean snapshot).
+    bool getClipEditorMetronomeEnabled() const;
+    void setClipEditorMetronomeEnabled(bool enabled);
+
     // Library items persist imported sources; rich metadata is re-read by the renderer.
 
     /** Add (or update the file path of) a library item. Marks dirty. */
@@ -605,6 +610,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kBarCounterStart;
     static const juce::Identifier kMixdownStartBar;
     static const juce::Identifier kMetronomeEnabled;
+    static const juce::Identifier kClipEditorMetronomeEnabled;
     static const juce::Identifier kLibrary;
     static const juce::Identifier kLibraryItem;
     static const juce::Identifier kMarkers;

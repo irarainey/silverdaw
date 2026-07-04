@@ -165,7 +165,7 @@ juce::Result save(const juce::File& file, const ProjectState& project)
 
 juce::Result saveViewState(const juce::File& file, double viewScrollX, double viewPxPerSecond,
                            double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen,
-                           bool metronomeEnabled)
+                           bool metronomeEnabled, bool clipEditorMetronomeEnabled)
 {
     if (!file.existsAsFile())
     {
@@ -205,6 +205,10 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
         projectObj->setProperty("metronomeEnabled", true);
     else if (projectObj->hasProperty("metronomeEnabled"))
         projectObj->removeProperty("metronomeEnabled");
+    if (clipEditorMetronomeEnabled)
+        projectObj->setProperty("clipEditorMetronomeEnabled", true);
+    else if (projectObj->hasProperty("clipEditorMetronomeEnabled"))
+        projectObj->removeProperty("clipEditorMetronomeEnabled");
     rootObj->setProperty(kProjectKey, projectVar);
 
     return writeProjectJsonAtomically(file, rootVar);

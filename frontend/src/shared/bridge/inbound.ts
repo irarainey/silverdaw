@@ -394,6 +394,8 @@ export const ProjectStatePayloadSchema = z.object({
   mixdownStartBar: z.number().optional(),
   /** Monitoring metronome click toggle; absent/false means off (the default). */
   metronomeEnabled: z.boolean().optional(),
+  /** Clip Editor metronome toggle; independent of the main metronome. Absent/false = off. */
+  clipEditorMetronomeEnabled: z.boolean().optional(),
   // Project-shared FX bus parameters, stored flat on PROJECT.
   reverbSize: z.number().min(0).max(1).optional(),
   reverbDecay: z.number().min(0).max(1).optional(),

@@ -316,6 +316,10 @@ bool dispatchPreview(const DispatchContext& ctx)
     {
         silverdaw::handlePreviewSetReversed(payload, engine);
     }
+    else if (type == "PREVIEW_SET_METRONOME")
+    {
+        silverdaw::handlePreviewSetMetronome(payload, engine, projectState);
+    }
     else if (type == "PREVIEW_SET_BRAKE")
     {
         silverdaw::handlePreviewSetBrake(payload, engine, projectState);

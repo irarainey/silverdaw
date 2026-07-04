@@ -6,6 +6,7 @@ defineProps<{
   isPlaying: boolean
   isLoaded: boolean
   loopEnabled: boolean
+  metronomeEnabled: boolean
 }>()
 
 defineEmits<{
@@ -13,6 +14,7 @@ defineEmits<{
   (e: 'toggle-play'): void
   (e: 'skip-to-end'): void
   (e: 'toggle-loop'): void
+  (e: 'toggle-metronome'): void
 }>()
 </script>
 
@@ -84,6 +86,33 @@ defineEmits<{
         fill="currentColor"
         class="h-5 w-5"
       ><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>
+    </button>
+    <button
+      type="button"
+      data-borderless-button="true"
+      role="switch"
+      :aria-checked="metronomeEnabled"
+      aria-label="Clip metronome click"
+      class="ml-1 rounded p-2 hover:bg-zinc-800"
+      :class="metronomeEnabled ? 'bg-blue-600 text-white hover:bg-blue-500' : 'text-zinc-300 hover:text-zinc-100'"
+      :title="metronomeEnabled ? 'Clip metronome on — click plays in time with the clip\'s tempo. Click to turn off.' : 'Clip metronome off — click plays an audible tick in time with the clip\'s tempo. Click to turn on.'"
+      @click="$emit('toggle-metronome')"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="h-5 w-5"
+        aria-hidden="true"
+      >
+        <path d="M8 3h8l3 18H5L8 3z" />
+        <path d="M9 9l7-4" />
+        <path d="M7 16h10" />
+      </svg>
     </button>
   </div>
 </template>

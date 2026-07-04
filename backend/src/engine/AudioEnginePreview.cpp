@@ -69,7 +69,14 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
                                        &readAheadThread, preview.sampleRate);
     preview.transportSource->setPosition(0.0);
 
-    topMixer.addInputSource(preview.transportSource.get(), false);
+    // Mix the Clip Editor metronome through a wrapper (added in place of the bare transport) so its
+    // lifetime is managed by the mixer's add/remove locking. Re-apply the persisted enabled state
+    // and grid so toggling the click survives preview reloads.
+    previewMetronomeSource = std::make_unique<PreviewMetronomeSource>(*preview.transportSource);
+    previewMetronomeSource->setEnabled(previewMetronomeEnabled);
+    previewMetronomeSource->setGrid(previewMetronomeBpm, previewMetronomeAnchorSec);
+    updatePreviewMetronomeMapping();
+    topMixer.addInputSource(previewMetronomeSource.get(), false);
     preview.sourceFile = filePath;
     previewGeneration.fetch_add(1, std::memory_order_acq_rel);
     silverdaw::log::info("preview", "loaded " + filePath.getFullPathName().toStdString()
@@ -82,7 +89,14 @@ void AudioEngine::unloadPreview()
 {
     if (preview.transportSource == nullptr) return;
     preview.transportSource->stop();
-    topMixer.removeInputSource(preview.transportSource.get());
+    // Remove the metronome wrapper (the actual mixer input) before tearing down the transport it
+    // wraps. removeInputSource synchronises against the audio callback, so no in-flight render can
+    // touch the transport afterwards.
+    if (previewMetronomeSource != nullptr)
+    {
+        topMixer.removeInputSource(previewMetronomeSource.get());
+        previewMetronomeSource.reset();
+    }
     preview.transportSource->setSource(nullptr);
     preview.transportSource.reset();
     if (preview.offsetSource != nullptr)
@@ -131,6 +145,7 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
     {
         preview.offsetSource->setWarpProcessor(nullptr);
         if (preview.warp != nullptr) preview.retiredWarps.push_back(std::move(preview.warp));
+        updatePreviewMetronomeMapping();
         return true;
     }
     const juce::String requestedMode = mode.has_value() ? *mode : preview.warpMode;
@@ -148,6 +163,7 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
         preview.offsetSource->setWarpProcessor(preview.warp.get());
         if (oldWarp != nullptr) preview.retiredWarps.push_back(std::move(oldWarp));
         preview.offsetSource->requestWarpReseek();
+        updatePreviewMetronomeMapping();
         return true;
     }
     if (auto* w = preview.warp.get())
@@ -160,6 +176,7 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
             w->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
         }
     }
+    updatePreviewMetronomeMapping();
     return true;
 }
 
@@ -378,5 +395,34 @@ bool AudioEngine::isPreviewLoaded() const
 juce::int64 AudioEngine::getPreviewGeneration() const
 {
     return previewGeneration.load(std::memory_order_acquire);
+}
+
+void AudioEngine::updatePreviewMetronomeMapping()
+{
+    if (previewMetronomeSource == nullptr) return;
+    const double ratio = preview.warp != nullptr && preview.warp->isActive()
+                             ? preview.warp->getTempoRatio()
+                             : 1.0;
+    previewMetronomeSource->setClipMapping(preview.inMs, ratio);
+}
+
+void AudioEngine::setPreviewMetronomeEnabled(bool enabled)
+{
+    // A monitoring aid: persisted silently per project (never dirty), applied to the live preview
+    // voice when one is loaded and re-applied on the next preview load otherwise.
+    previewMetronomeEnabled = enabled;
+    if (previewMetronomeSource != nullptr) previewMetronomeSource->setEnabled(enabled);
+    silverdaw::log::info("preview", juce::String("clip-editor metronome ") + (enabled ? "on" : "off"));
+}
+
+void AudioEngine::setPreviewMetronomeGrid(double bpm, double beatAnchorSec)
+{
+    previewMetronomeBpm = bpm;
+    previewMetronomeAnchorSec = beatAnchorSec;
+    if (previewMetronomeSource != nullptr)
+    {
+        previewMetronomeSource->setGrid(bpm, beatAnchorSec);
+        updatePreviewMetronomeMapping();
+    }
 }
 } // namespace silverdaw

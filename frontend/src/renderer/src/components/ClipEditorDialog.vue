@@ -28,6 +28,8 @@ const {
   onTogglePlay,
   onSkipToEnd,
   onToggleLoop,
+  clipMetronomeEnabled,
+  onToggleClipMetronome,
   volumeEditActive,
   onCanvasMouseDown,
   onCanvasContextMenu,
@@ -136,10 +138,12 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
             :is-playing="preview.isPlaying"
             :is-loaded="preview.isLoaded"
             :loop-enabled="loopEnabled"
+            :metronome-enabled="clipMetronomeEnabled"
             @skip-to-start="onSkipToStart"
             @toggle-play="onTogglePlay"
             @skip-to-end="onSkipToEnd"
             @toggle-loop="onToggleLoop"
+            @toggle-metronome="onToggleClipMetronome"
           />
           <div class="justify-self-end" />
         </header>

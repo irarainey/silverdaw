@@ -535,6 +535,7 @@ export interface BridgeOutboundMap {
   PREVIEW_SET_WARP: PreviewSetWarpPayload
   PREVIEW_SET_ENVELOPE: PreviewSetEnvelopePayload
   PREVIEW_SET_REVERSED: PreviewSetReversedPayload
+  PREVIEW_SET_METRONOME: PreviewSetMetronomePayload
   PREVIEW_SET_BRAKE: PreviewSetBrakePayload
   PREVIEW_SET_BACKSPIN: PreviewSetBackspinPayload
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
@@ -902,6 +903,17 @@ export interface PreviewSetReversedPayload {
   reversed: boolean
 }
 
+/**
+ * Toggle the Clip Editor metronome and set the beat grid it clicks on (the clip's own BPM + phase
+ * anchor). Independent of the main-timeline metronome. The enabled flag is persisted SILENTLY with
+ * the project (never dirty, not undoable); the grid values are transient. No ack.
+ */
+export interface PreviewSetMetronomePayload {
+  enabled: boolean
+  bpm: number
+  beatAnchorSec: number
+}
+
 /** Apply a turntable brake to the preview voice; `on` toggles it. No ack. */
 export interface PreviewSetBrakePayload {
   on: boolean
@@ -1070,6 +1082,7 @@ export const bridgeOutboundPayloadKinds: {
   PREVIEW_SET_WARP: 'payload',
   PREVIEW_SET_ENVELOPE: 'payload',
   PREVIEW_SET_REVERSED: 'payload',
+  PREVIEW_SET_METRONOME: 'payload',
   PREVIEW_SET_BRAKE: 'payload',
   PREVIEW_SET_BACKSPIN: 'payload',
   AUDIO_DEVICES_REQUEST: 'payload',

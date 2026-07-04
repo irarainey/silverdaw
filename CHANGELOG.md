@@ -5,6 +5,7 @@
 ### Added
 
 - More detail in the always-on startup diagnostics log — system information, startup timing, and the audio devices the engine found and opened — to make a slow or failed start (and audio-device problems) easier to diagnose.
+- A metronome in the Clip Editor that clicks in time with the clip's own tempo while auditioning, with its own on/off button — independent of the main metronome and saved silently with the project.
 
 ### Changed
 

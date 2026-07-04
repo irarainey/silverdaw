@@ -277,6 +277,9 @@ export interface ProjectState {
   /** Monitoring metronome click toggle. Default off. Persisted silently with the project
    *  (no undo, no dirty); a backend-audio-only feature, so the renderer just mirrors + sends it. */
   metronomeEnabled: boolean
+  /** Clip Editor metronome toggle. Independent of the main metronome; same silent per-project
+   *  persistence. Applied to the preview voice when the Clip Editor is auditioning a clip. */
+  clipEditorMetronomeEnabled: boolean
   /** Project-shared Reverb; persisted. Defaults all-zero (inaudible). */
   projectReverb: ProjectReverbState
   /** Project-shared tempo-locked Delay. Defaults 1/8-note, zero feedback/tone/mix (inaudible). */
