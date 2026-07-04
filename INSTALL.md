@@ -18,13 +18,12 @@ clean uninstall.
 ## 1. Microsoft Store — recommended *(coming soon)*
 
 Once published, Silverdaw will install in one click from the Microsoft Store.
-Microsoft signs and distributes the package, so there are no certificates to
-manage and no security prompts, and updates arrive automatically.
+Microsoft signs and distributes the package, so there are no security prompts, and updates arrive automatically.
 
 **Pros**
 
 - Easiest install — one click, no setup.
-- No certificates and no security warnings.
+- No security warnings.
 - Automatic updates.
 - Clean install and uninstall managed by Windows.
 - Full Windows integration (Start menu + file association).
@@ -44,13 +43,13 @@ to any folder you can write to, and run `Silverdaw.exe`. Nothing is installed.
 
 **Pros**
 
-- No installation, no administrator rights, no certificate.
+- No installation, no administrator rights.
 - Runs from anywhere — a normal folder, an external drive, etc.
 - Trivial to remove: just delete the extracted folder.
 
 **Cons**
 
-- The first launch may show a Windows SmartScreen prompt
+- The first launch will likely show a Windows SmartScreen prompt
   (*"Windows protected your PC"* → **More info** → **Run anyway**) because the
   file was downloaded from the internet.
 - No Start-menu entry, no `.silverdaw` file association, and no
