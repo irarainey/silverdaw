@@ -207,7 +207,7 @@ export function buildDefaultPrefs(): Preferences {
       seedProjectTempoFromFirstClip: true,
       cleanupProjectFiles: false,
       defaultProjectSampleRate: 44100,
-      skipButtonTarget: 'timelineEnds',
+      skipButtonTarget: 'markers',
       waveformDisplayMode: 'summary',
       libraryPanelCollapsed: false
     },

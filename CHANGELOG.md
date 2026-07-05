@@ -6,6 +6,8 @@
 
 ### Changed
 
+- The transport's previous / next buttons now step through timeline markers by default (instead of jumping to the project start / end); you can switch back in Preferences ▸ Timeline.
+
 ### Fixed
 
 ## 1.0.2

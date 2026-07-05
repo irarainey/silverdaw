@@ -72,12 +72,12 @@ const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { req
             v-model="skipButtonTarget"
             type="radio"
             name="skip-button-target"
-            value="timelineEnds"
+            value="markers"
             class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">Timeline ends</span>
-            <span class="text-zinc-500"> — Jump to project start / end</span>
+            <span class="font-medium text-zinc-200">Markers</span>
+            <span class="text-zinc-500"> — Step through timeline markers</span>
           </span>
         </label>
         <label
@@ -87,12 +87,12 @@ const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { req
             v-model="skipButtonTarget"
             type="radio"
             name="skip-button-target"
-            value="markers"
+            value="timelineEnds"
             class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">Markers</span>
-            <span class="text-zinc-500"> — Step through timeline markers</span>
+            <span class="font-medium text-zinc-200">Timeline ends</span>
+            <span class="text-zinc-500"> — Jump to project start / end</span>
           </span>
         </label>
       </div>
