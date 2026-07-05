@@ -262,9 +262,6 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
 
   // --- Beat grid (world layer) ------------------------------------------------
   function drawBeatGrid(layer: Container, src: LibraryItem, g: SceneGeometry): void {
-    // Beat markers exist to align/edit a clip's grid; in the read-only source preview
-    // (no effects rack) they serve no purpose, so they are hidden there.
-    if (!deps.editsExistingClip()) return
     const sourceBpm = src.bpm
     const anchorSec = src.beatAnchorSec ?? src.beats?.[0]
     if (!sourceBpm || sourceBpm <= 0 || anchorSec === undefined) return
