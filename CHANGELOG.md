@@ -9,7 +9,7 @@
 
 ### Changed
 
-- Faster startup: the app appears immediately while the audio engine starts in the background.
+- Faster startup, especially the first launch after installing: the window appears immediately while the audio engine starts in the background.
 - Faster project loading for projects with many clips.
 - Faster waveform drawing for clips that share the same audio.
 - Clip Editor waveform zoom now uses Ctrl + mouse wheel, matching the main timeline.
