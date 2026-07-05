@@ -10,6 +10,7 @@
 ### Changed
 
 - Sliders now snap to their centre when dragged near it, and reset on double-click.
+- Pitch semitone and cent values can be double-clicked to type an exact amount.
 - Clip Editor waveform zoom now uses Ctrl + mouse wheel, matching the main timeline.
 - Faster project loading for projects with many clips.
 - Faster waveform drawing for clips that share the same audio.

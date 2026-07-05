@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useClipWarpDialogController, type ClipWarpDialogProps } from '@/lib/clipEditor/useClipWarpDialogController'
+import { useInlineNumberEdit } from '@/lib/useInlineNumberEdit'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = withDefaults(defineProps<ClipWarpDialogProps>(), { clipId: null, itemId: null, panel: 'tempo' })
@@ -35,6 +36,34 @@ const {
   cancel,
   onKeydown
 } = useClipWarpDialogController(props, emit, dialogEl)
+
+// Double-click the readouts to type an exact value; Enter commits, Escape cancels.
+const {
+  editing: semitonesEditing,
+  text: semitonesText,
+  inputRef: semitonesInputRef,
+  begin: beginSemitonesEdit,
+  commit: commitSemitonesEdit,
+  onKeydown: onSemitonesKeydown
+} = useInlineNumberEdit({
+  get: () => draftSemitones.value,
+  set: (v) => { draftSemitones.value = v },
+  min: -12,
+  max: 12
+})
+const {
+  editing: centsEditing,
+  text: centsText,
+  inputRef: centsInputRef,
+  begin: beginCentsEdit,
+  commit: commitCentsEdit,
+  onKeydown: onCentsKeydown
+} = useInlineNumberEdit({
+  get: () => draftCents.value,
+  set: (v) => { draftCents.value = v },
+  min: -100,
+  max: 100
+})
 </script>
 
 <template>
@@ -205,7 +234,25 @@ const {
                 step="1"
                 class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
               >
-              <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
+              <input
+                v-if="semitonesEditing"
+                ref="semitonesInputRef"
+                v-model="semitonesText"
+                type="text"
+                inputmode="numeric"
+                spellcheck="false"
+                autocomplete="off"
+                aria-label="Semitones"
+                class="w-10 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[11px] tabular-nums text-zinc-100 outline-none focus:border-sky-500"
+                @keydown="onSemitonesKeydown"
+                @blur="commitSemitonesEdit"
+              >
+              <span
+                v-else
+                class="w-10 cursor-text text-right font-mono text-[11px] tabular-nums text-zinc-200"
+                title="Double-click to type a value"
+                @dblclick="beginSemitonesEdit"
+              >
                 {{ draftSemitones > 0 ? '+' : '' }}{{ draftSemitones }}
               </span>
             </label>
@@ -220,7 +267,25 @@ const {
                 step="1"
                 class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
               >
-              <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
+              <input
+                v-if="centsEditing"
+                ref="centsInputRef"
+                v-model="centsText"
+                type="text"
+                inputmode="numeric"
+                spellcheck="false"
+                autocomplete="off"
+                aria-label="Cents"
+                class="w-10 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[11px] tabular-nums text-zinc-100 outline-none focus:border-sky-500"
+                @keydown="onCentsKeydown"
+                @blur="commitCentsEdit"
+              >
+              <span
+                v-else
+                class="w-10 cursor-text text-right font-mono text-[11px] tabular-nums text-zinc-200"
+                title="Double-click to type a value"
+                @dblclick="beginCentsEdit"
+              >
                 {{ draftCents > 0 ? '+' : '' }}{{ draftCents }}
               </span>
             </label>
