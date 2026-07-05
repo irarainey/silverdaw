@@ -198,6 +198,7 @@ const {
               <span class="w-16 text-zinc-400">Semitones</span>
               <input
                 v-model.number="draftSemitones"
+                v-slider-detent="{ value: 0, reset: true }"
                 type="range"
                 min="-12"
                 max="12"
@@ -212,6 +213,7 @@ const {
               <span class="w-16 text-zinc-400">Cents</span>
               <input
                 v-model.number="draftCents"
+                v-slider-detent="{ value: 0, reset: true }"
                 type="range"
                 min="-100"
                 max="100"

@@ -4,15 +4,16 @@
 
 ### Added
 
-- More detailed startup diagnostics log to help diagnose slow or failed starts.
 - A Clip Editor metronome that clicks to the clip's tempo, saved with the project.
+- Detailed startup diagnostics log to help diagnose slow or failed starts.
 
 ### Changed
 
-- Faster startup, especially the first launch after installing: the window appears immediately while the audio engine starts in the background.
+- Sliders now snap to their centre when dragged near it, and reset on double-click.
+- Clip Editor waveform zoom now uses Ctrl + mouse wheel, matching the main timeline.
 - Faster project loading for projects with many clips.
 - Faster waveform drawing for clips that share the same audio.
-- Clip Editor waveform zoom now uses Ctrl + mouse wheel, matching the main timeline.
+- Faster startup, especially the first launch: the window appears immediately while the audio engine starts in the background.
 
 ### Fixed
 

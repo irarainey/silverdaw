@@ -492,6 +492,7 @@ function isTrackFxShowing(trackId: string): boolean {
                 <path d="M8 7l-4 5 4 5M16 7l4 5-4 5" />
               </svg>
               <input
+                v-slider-detent="0"
                 type="range"
                 min="-1"
                 max="1"
