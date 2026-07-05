@@ -120,10 +120,14 @@ const setTempoMode = props.draft.setTempoMode
         >
         <span class="text-[10px] text-zinc-500">BPM</span>
       </label>
-      <label class="flex items-center gap-2">
+      <label
+        class="flex items-center gap-2"
+        :class="sourceBpm ? 'opacity-50' : ''"
+      >
         <input
           type="radio"
           :checked="draftTempoMode === 'stretch'"
+          :disabled="!!sourceBpm"
           @change="setTempoMode('stretch')"
         >
         <span class="text-zinc-200">Stretch</span>

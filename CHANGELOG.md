@@ -13,7 +13,7 @@
 - Sliders now snap to their centre when dragged near it, and reset on double-click.
 - Pitch semitone and cent values can be double-clicked to type an exact amount.
 - Clip Editor Beat grid panel reorganised into clear Tempo and Position sections, with the tempo set by typing (Enter to apply) and an Original/Restore affordance; it now sits next to the Warp panel.
-- Clip Editor Warp panel now labels its tempo as "Playback", drops the duplicate source BPM, and adds a Stretch % option so non-beat material (like vocals) can be fitted even without a detected tempo.
+- Clip Editor and right-click Warp now label tempo as "Playback", drop the duplicate source BPM, and add a Stretch % option so non-beat material (like vocals) can be fitted even without a detected tempo.
 - Clip Editor waveform zoom now uses Ctrl + mouse wheel, matching the main timeline.
 - Faster project loading for projects with many clips.
 - Faster waveform drawing for clips that share the same audio.

@@ -5,17 +5,17 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { LibraryItem } from '@/stores/libraryStore'
 import type { Clip } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
-import { effectiveTempoRatio, WARP_BYPASS_EPSILON } from '@/lib/warp'
+import {
+  computeEffectiveRatio,
+  deriveTempoModeFromClip,
+  manualTempoRatio,
+  type ClipTempoMode
+} from '@/lib/clipEditor/tempoMode'
+import { WARP_BYPASS_EPSILON } from '@/lib/warp'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
-/** How the clip's playback tempo is chosen. */
-export type ClipTempoMode = 'follow' | 'pin' | 'stretch'
-
-/** Lower/upper bounds shared by the pinned BPM and the stretch ratio. */
-const MIN_TEMPO_RATIO = 0.25
-const MAX_TEMPO_RATIO = 4
-const MIN_STRETCH_PERCENT = MIN_TEMPO_RATIO * 100
-const MAX_STRETCH_PERCENT = MAX_TEMPO_RATIO * 100
+// Re-exported so existing importers (save, dirty-state) keep a single import site.
+export { deriveTempoModeFromClip, clampNumber, type ClipTempoMode } from '@/lib/clipEditor/tempoMode'
 
 /** True when pitch shift requires the processor even without tempo warp. */
 export function pitchNeedsProcessor(
@@ -35,44 +35,6 @@ export function currentHasTempoWarp(current: {
   const pitchOnlyProcessor =
     pitchNeedsProcessor(current.semitones, current.cents) && current.tempoRatio === 1
   return current.warpEnabled === true && !pitchOnlyProcessor
-}
-
-function clampNumber(v: number, lo: number, hi: number): number {
-  if (!Number.isFinite(v)) return 0
-  return Math.max(lo, Math.min(hi, v))
-}
-
-export interface DerivedTempoMode {
-  mode: ClipTempoMode
-  pinnedBpm: number
-  stretchPercent: number
-}
-
-/**
- * Map a clip's persisted warp fields onto the editor's tempo-mode UI state.
- * An absent/neutral `tempoRatio` is "follow project"; an explicit ratio is a
- * manual warp shown as a pinned BPM when the source tempo is known (so beat
- * clips read in BPM) or as a stretch percentage otherwise (e.g. spoken word).
- * Shared by the draft's `initialise` and the dirty-state comparison.
- */
-export function deriveTempoModeFromClip(
-  current: { tempoRatio?: number },
-  sourceBpm: number | undefined,
-  projectBpm: number
-): DerivedTempoMode {
-  const ratio =
-    typeof current.tempoRatio === 'number' && current.tempoRatio > 0 && current.tempoRatio !== 1
-      ? current.tempoRatio
-      : undefined
-  const defaultBpm = Math.round(projectBpm * 100) / 100
-  if (ratio === undefined) {
-    return { mode: 'follow', pinnedBpm: defaultBpm, stretchPercent: 100 }
-  }
-  const stretchPercent = Math.round(ratio * 100 * 100) / 100
-  if (typeof sourceBpm === 'number' && sourceBpm > 0) {
-    return { mode: 'pin', pinnedBpm: Math.round(sourceBpm * ratio * 100) / 100, stretchPercent }
-  }
-  return { mode: 'stretch', pinnedBpm: defaultBpm, stretchPercent }
 }
 
 export interface ClipEditorWarpDraft {
@@ -131,30 +93,23 @@ export function useClipEditorWarpDraft(
   }
 
   function resolveManualRatio(): number | undefined {
-    if (draftTempoMode.value === 'stretch') {
-      const pct = clampNumber(draftStretchPercent.value, MIN_STRETCH_PERCENT, MAX_STRETCH_PERCENT)
-      return pct / 100
-    }
-    if (draftTempoMode.value === 'pin') {
-      const src = sourceBpmRef.value
-      if (typeof src !== 'number' || src <= 0) return undefined
-      const bpm = clampNumber(draftPinnedBpm.value, 20, 300)
-      return Math.max(MIN_TEMPO_RATIO, Math.min(MAX_TEMPO_RATIO, bpm / src))
-    }
-    return undefined
+    return manualTempoRatio(draftTempoMode.value, {
+      pinnedBpm: draftPinnedBpm.value,
+      stretchPercent: draftStretchPercent.value,
+      sourceBpm: sourceBpmRef.value
+    })
   }
 
-  const draftEffectiveRatio = computed(() => {
-    if (!draftTempoEnabled.value) return 1
-    if (draftTempoMode.value === 'stretch') {
-      return resolveManualRatio() ?? 1
-    }
-    return effectiveTempoRatio({
-      tempoRatio: draftTempoMode.value === 'pin' ? resolveManualRatio() : undefined,
+  const draftEffectiveRatio = computed(() =>
+    computeEffectiveRatio({
+      enabled: draftTempoEnabled.value,
+      mode: draftTempoMode.value,
+      pinnedBpm: draftPinnedBpm.value,
+      stretchPercent: draftStretchPercent.value,
       sourceBpm: sourceBpmRef.value,
       projectBpm: transport.bpm
     })
-  })
+  )
 
   const draftEffectiveBpm = computed(() => {
     const src = sourceBpmRef.value
@@ -197,8 +152,11 @@ export function useClipEditorWarpDraft(
   }
 
   function setTempoMode(mode: ClipTempoMode): void {
-    // Follow and pin are BPM-relative and need a source tempo; stretch always works.
-    if ((mode === 'follow' || mode === 'pin') && !hasSourceBpm()) return
+    // Modes must match source availability: follow/pin are BPM-relative and need
+    // a source tempo; stretch is the free-ratio fallback for material without one.
+    const source = hasSourceBpm()
+    if ((mode === 'follow' || mode === 'pin') && !source) return
+    if (mode === 'stretch' && source) return
     draftTempoMode.value = mode
     if (mode === 'pin' && (!Number.isFinite(draftPinnedBpm.value) || draftPinnedBpm.value <= 0)) {
       draftPinnedBpm.value = Math.round(transport.bpm * 100) / 100
@@ -232,6 +190,3 @@ export function useClipEditorWarpDraft(
     applyKeyPreset
   }
 }
-
-// Shared clamp rule for preview-bound draft values.
-export { clampNumber }

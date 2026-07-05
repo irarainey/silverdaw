@@ -138,7 +138,7 @@ describe('useClipEditorWarpDraft', () => {
     expect(draft.previewTempoRatio()).toBeCloseTo(2, 3)
   })
 
-  it('setTempoMode switches modes; follow/pin need a source BPM, stretch always works', () => {
+  it('setTempoMode allows follow/pin with a source BPM and blocks stretch', () => {
     const sourceBpm = computed<number | undefined>(() => 100)
     const draft = useClipEditorWarpDraft(sourceBpm)
     useTransportStore().setBpm(120)
@@ -148,8 +148,9 @@ describe('useClipEditorWarpDraft', () => {
     expect(draft.draftPinnedBpm.value).toBeCloseTo(120, 2)
     draft.setTempoMode('follow')
     expect(draft.draftTempoMode.value).toBe('follow')
+    // Stretch is the no-source fallback; with a source BPM present it's blocked.
     draft.setTempoMode('stretch')
-    expect(draft.draftTempoMode.value).toBe('stretch')
+    expect(draft.draftTempoMode.value).toBe('follow')
   })
 
   it('stretch mode warps without a source BPM (e.g. spoken word)', () => {

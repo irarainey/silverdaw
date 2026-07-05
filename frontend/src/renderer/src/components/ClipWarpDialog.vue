@@ -19,15 +19,15 @@ const {
   clipTitle,
   draftEnabled,
   draftMode,
+  draftTempoMode,
   draftPinnedBpm,
+  draftStretchPercent,
   draftSemitones,
   draftCents,
   sourceKey,
   keyPresets,
   currentPitchKey,
-  tempoFollowsProject,
-  followProjectBpm,
-  pinTempo,
+  setTempoMode,
   applyKeyPreset,
   effectiveRatio,
   effectiveBpm,
@@ -175,28 +175,36 @@ const {
           <fieldset
             v-if="panel === 'tempo'"
             class="flex flex-col gap-1"
-            :disabled="!draftEnabled || !sourceBpm"
-            :class="!draftEnabled || !sourceBpm ? 'opacity-50' : ''"
+            :disabled="!draftEnabled"
+            :class="!draftEnabled ? 'opacity-50' : ''"
           >
             <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
-              Tempo
+              Playback tempo
             </legend>
-            <label class="flex items-center gap-2">
+            <label
+              class="flex items-center gap-2"
+              :class="!sourceBpm ? 'opacity-50' : ''"
+            >
               <input
                 type="radio"
-                :checked="tempoFollowsProject"
-                @change="followProjectBpm()"
+                :checked="draftTempoMode === 'follow'"
+                :disabled="!sourceBpm"
+                @change="setTempoMode('follow')"
               >
               <span class="text-zinc-200">Follow project BPM</span>
               <span class="ml-auto text-[10px] text-zinc-500">
                 ({{ projectBpm.toFixed(2) }})
               </span>
             </label>
-            <label class="flex items-center gap-2">
+            <label
+              class="flex items-center gap-2"
+              :class="!sourceBpm ? 'opacity-50' : ''"
+            >
               <input
                 type="radio"
-                :checked="!tempoFollowsProject"
-                @change="pinTempo()"
+                :checked="draftTempoMode === 'pin'"
+                :disabled="!sourceBpm"
+                @change="setTempoMode('pin')"
               >
               <span class="text-zinc-200">Pin to</span>
               <input
@@ -205,17 +213,39 @@ const {
                 min="20"
                 max="300"
                 step="0.01"
-                :disabled="tempoFollowsProject"
-                class="w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+                :disabled="draftTempoMode !== 'pin'"
+                class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
               >
               <span class="text-[10px] text-zinc-500">BPM</span>
             </label>
-            <div
-              v-if="!sourceBpm"
-              class="mt-1 text-[10px] text-amber-400"
+            <label
+              class="flex items-center gap-2"
+              :class="sourceBpm ? 'opacity-50' : ''"
             >
-              Source BPM not detected yet — pinning unavailable until analysis completes.
-            </div>
+              <input
+                type="radio"
+                :checked="draftTempoMode === 'stretch'"
+                :disabled="!!sourceBpm"
+                @change="setTempoMode('stretch')"
+              >
+              <span class="text-zinc-200">Stretch</span>
+              <input
+                v-model.number="draftStretchPercent"
+                type="number"
+                min="25"
+                max="400"
+                step="1"
+                :disabled="draftTempoMode !== 'stretch'"
+                class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+              >
+              <span class="text-[10px] text-zinc-500">%</span>
+            </label>
+            <p
+              v-if="!sourceBpm"
+              class="mt-1 text-[10px] text-zinc-500"
+            >
+              No source tempo — use Stretch to fit non-beat material like vocals.
+            </p>
           </fieldset>
 
           <!-- Pitch shift -->
@@ -392,5 +422,16 @@ input[type='range']::-moz-range-track {
   height: 3px;
   border-radius: 9999px;
   background: #3f3f46;
+}
+
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.no-spinner {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 </style>
