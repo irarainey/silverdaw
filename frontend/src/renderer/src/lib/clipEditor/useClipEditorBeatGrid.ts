@@ -7,7 +7,7 @@
 // just drives those two values through the library store. Sliding updates the
 // anchor locally for a live redraw, then persists once on pointer release.
 
-import { ref, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 
 export interface ClipEditorBeatGridDeps {
@@ -20,10 +20,17 @@ export interface ClipEditorBeatGrid {
   alignActive: Ref<boolean>
   /** Two-way bound BPM the user types before applying. */
   manualBpmInput: Ref<number | null>
+  /**
+   * The source tempo captured when the editor opened, so the user can see what
+   * they started from and revert to it. Null until a valid BPM is first observed.
+   */
+  originalBpm: Ref<number | null>
   /** Whether the source currently has a tempo grid to align. */
   hasGrid: () => boolean
   /** Whether `manualBpmInput` is a valid, applicable BPM. */
   canApply: () => boolean
+  /** Whether the current BPM differs from the captured original (restore is possible). */
+  canRestore: () => boolean
   /**
    * Whether the user has changed the source grid (set a manual BPM or slid the
    * anchor) during this editor session. Drives the Clip Editor's dirty / Save
@@ -34,6 +41,8 @@ export interface ClipEditorBeatGrid {
   toggleAlign: () => void
   /** Apply the typed BPM, keeping the current phase anchor. */
   applyManualBpm: () => void
+  /** Restore the source tempo to the value captured when the editor opened. */
+  restoreOriginalBpm: () => void
   /** Halve / double the source BPM (octave fix), keeping the phase anchor. */
   halveBpm: () => void
   doubleBpm: () => void
@@ -58,10 +67,23 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   const library = useLibraryStore()
   const alignActive = ref(false)
   const manualBpmInput = ref<number | null>(null)
+  // The tempo the source had when the editor opened. Snapshotted once so the user
+  // can always see the value they started from and restore it after an override.
+  const originalBpm = ref<number | null>(null)
   // Set once the user pins a BPM or slides the grid; the source change is
   // persisted immediately, but the Clip Editor still needs a dirty signal so
   // Save enables and gives the edit explicit closure.
   const gridEdited = ref(false)
+
+  watch(
+    () => deps.sourceItem()?.bpm,
+    (bpm) => {
+      if (originalBpm.value === null && typeof bpm === 'number' && bpm > 0) {
+        originalBpm.value = bpm
+      }
+    },
+    { immediate: true }
+  )
 
   function hasGrid(): boolean {
     const item = deps.sourceItem()
@@ -71,6 +93,12 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   function canApply(): boolean {
     const bpm = manualBpmInput.value
     return !!deps.sourceItem() && typeof bpm === 'number' && bpm >= MIN_BPM && bpm <= MAX_BPM
+  }
+
+  function canRestore(): boolean {
+    const item = deps.sourceItem()
+    const orig = originalBpm.value
+    return !!item && typeof item.bpm === 'number' && orig !== null && Math.abs(item.bpm - orig) > 1e-6
   }
 
   function hasGridChanged(): boolean {
@@ -90,6 +118,15 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const bpm = manualBpmInput.value
     if (!item || typeof bpm !== 'number' || bpm < MIN_BPM || bpm > MAX_BPM) return
     library.setItemManualTempo(item.id, bpm, currentAnchorSec(item))
+    gridEdited.value = true
+  }
+
+  function restoreOriginalBpm(): void {
+    const item = deps.sourceItem()
+    const orig = originalBpm.value
+    if (!item || orig === null || orig < MIN_BPM || orig > MAX_BPM) return
+    library.setItemManualTempo(item.id, orig, currentAnchorSec(item))
+    manualBpmInput.value = Math.round(orig * 100) / 100
     gridEdited.value = true
   }
 
@@ -143,11 +180,14 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   return {
     alignActive,
     manualBpmInput,
+    originalBpm,
     hasGrid,
     canApply,
+    canRestore,
     hasGridChanged,
     toggleAlign,
     applyManualBpm,
+    restoreOriginalBpm,
     halveBpm,
     doubleBpm,
     nudgeAnchorMs,

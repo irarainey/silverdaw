@@ -38,25 +38,15 @@ const pinTempo = props.draft.pinTempo
       <span class="font-medium">Enable Warp</span>
     </label>
 
-    <div class="grid grid-cols-2 gap-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-zinc-400">
-      <div>
-        <div class="text-[10px] uppercase tracking-wider text-zinc-500">
-          Source BPM
-        </div>
-        <div class="font-mono text-zinc-200">
-          {{ sourceBpm ? sourceBpm.toFixed(2) : '—' }}
-        </div>
+    <div class="rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-zinc-400">
+      <div class="text-[10px] uppercase tracking-wider text-zinc-500">
+        Playback BPM
       </div>
-      <div>
-        <div class="text-[10px] uppercase tracking-wider text-zinc-500">
-          Effective BPM
-        </div>
-        <div class="font-mono text-zinc-200">
-          {{ draftEffectiveBpm !== null ? draftEffectiveBpm.toFixed(2) : '—' }}
-          <span class="ml-1 text-[10px] text-zinc-500">
-            ({{ draftEffectiveRatio.toFixed(2) }}×)
-          </span>
-        </div>
+      <div class="font-mono text-zinc-200">
+        {{ draftEffectiveBpm !== null ? draftEffectiveBpm.toFixed(2) : '—' }}
+        <span class="ml-1 text-[10px] text-zinc-500">
+          ({{ draftEffectiveRatio.toFixed(2) }}×)
+        </span>
       </div>
     </div>
 
@@ -91,7 +81,7 @@ const pinTempo = props.draft.pinTempo
       :class="!draftTempoEnabled || !sourceBpm ? 'opacity-50' : ''"
     >
       <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
-        Tempo
+        Playback tempo
       </legend>
       <label class="flex items-center gap-2">
         <input

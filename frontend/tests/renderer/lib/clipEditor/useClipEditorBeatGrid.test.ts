@@ -175,4 +175,37 @@ describe('useClipEditorBeatGrid', () => {
       beatAnchorSec: 0.75
     })
   })
+
+  it('captures the tempo at open as the original and restores it', () => {
+    const item = addSource(120, 0.4)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    expect(grid.originalBpm.value).toBe(120)
+    // Nothing to restore while the current tempo still matches the original.
+    expect(grid.canRestore()).toBe(false)
+
+    grid.manualBpmInput.value = 96
+    grid.applyManualBpm()
+    expect(item.bpm).toBe(96)
+    expect(grid.canRestore()).toBe(true)
+
+    sendMock.mockClear()
+    grid.restoreOriginalBpm()
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+      itemId: item.id,
+      bpm: 120,
+      beatAnchorSec: 0.4
+    })
+    expect(grid.manualBpmInput.value).toBe(120)
+    expect(grid.canRestore()).toBe(false)
+  })
+
+  it('has no original to restore when the source opened without a tempo', () => {
+    const item = addSource()
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    expect(grid.originalBpm.value).toBeNull()
+    expect(grid.canRestore()).toBe(false)
+    sendMock.mockClear()
+    grid.restoreOriginalBpm()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
 })

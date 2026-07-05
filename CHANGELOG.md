@@ -9,8 +9,11 @@
 
 ### Changed
 
+- Feedback is now submitted through Featurebase.
 - Sliders now snap to their centre when dragged near it, and reset on double-click.
 - Pitch semitone and cent values can be double-clicked to type an exact amount.
+- Clip Editor manual BPM field no longer shows number spinners, and shows the original tempo with a Restore button once changed.
+- Clip Editor Warp panel now labels its tempo as "Playback" and no longer duplicates the source BPM shown by the Beat grid.
 - Clip Editor waveform zoom now uses Ctrl + mouse wheel, matching the main timeline.
 - Faster project loading for projects with many clips.
 - Faster waveform drawing for clips that share the same audio.
