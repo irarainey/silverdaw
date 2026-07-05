@@ -300,7 +300,7 @@ mirrors how JUCE, IXWebSocket and Rubber Band are already obtained.
 
 **Packaging (implemented):** A CMake `POST_BUILD` step copies `onnxruntime.dll`
 (and, for the DirectML build, `DirectML.dll`) next to `SilverdawBackend.exe`, and
-`frontend/electron-builder.yml` ships them as `extraResource`, so the installer
+`frontend/electron-builder.yml` ships them as `extraResources`, so the installer
 carries everything required to run — ONNX Runtime and DirectML are MIT-licensed,
 which permits redistribution alongside the app. The ~1.2 GB model weights are kept
 out of the installer and downloaded on first use.

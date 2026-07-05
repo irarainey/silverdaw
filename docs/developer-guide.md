@@ -1222,10 +1222,14 @@ item reads as verified music. In the Clip Editor a **slide-the-grid** drag gestu
 shifts `beatAnchorSec` live (local-only preview, committed on release) to correct
 the downbeat phase; the markers track the drag in real time and the commit marks
 the Clip Editor dirty so its **Save** button stays available to confirm and close.
-Alongside the drag, a beat-grid panel offers explicit corrections: **÷2 / ×2**
+Alongside the drag, the beat-grid panel is split into a **Tempo** section — a BPM
+field you type and commit with Enter or by clicking away (no separate Apply
+button), **÷2 / ×2**
 octave buttons that halve or double the source BPM while holding the phase anchor,
-**±5 ms** fine-nudge buttons, and a **half-beat** shift for when the grid has
-locked onto the off-beat. Each commits through the same
+and, once the tempo has changed, the **Original** value with a **Restore** button —
+and a **Position** section with the slide-to-align toggle, **±5 ms** fine-nudge
+buttons, and a **half-beat** shift for when the grid has locked onto the off-beat.
+Each commits through the same
 `LIBRARY_ITEM_SET_MANUAL_TEMPO` path.
 Manual values survive save / load because `ensureBpmDetection`
 is idempotent and skips a source that already has a BPM.
@@ -1568,7 +1572,11 @@ re-warp on drop.
 the right-click menu) to edit it inline. Saved clips inherit a sensible default name
 based on their source and offset; renaming is the same flow.
 
-Double-click a tile to open the **Clip Editor** (see below). To view the read-only
+Double-click a tile to **preview** it — source, stem, and sample items open a
+read-only preview of the original file (warp, pitch, and effects are edited per
+clip on the timeline, not on the source), while saved **clip** items open the
+editable **Clip Editor** (see below). In the preview you can still select a
+section and **Save Selection to Library** as a reusable clip. To view the read-only
 information dialog instead — file details, technical audio details, detected
 BPM/beat/key metadata (the BPM shown in the same pill style as the tile, with a
 leading `~` for a variable tempo), tag metadata, cover art, the item **type**
@@ -1589,8 +1597,10 @@ first and continues playing from the underlying source).
 
 **Clip Editor** — the same dialog opens from four entry surfaces:
 
-- Double-click a **library tile**, or pick **Open in editor** from its
-  right-click menu, to edit the source / saved clip item.
+- Double-click a **library tile**, or pick **Preview** / **Open in editor** from
+  its right-click menu: source, stem, and sample items open a **read-only
+  preview** (select a section there to **Save Selection to Library**), while a
+  saved **clip** item opens the editable editor.
 - Double-click a **timeline clip body** (anywhere other than the title strip,
   which still inline-renames), or pick **Open in editor** from the clip's
   right-click menu, to edit that timeline clip — its window, warp and pitch.
@@ -1674,10 +1684,12 @@ Within the dialog:
   up at clip-level zoom.
 - **Warp + Pitch inspector** (existing-clip targets only): a right-hand panel
   exposes draft controls for **Enable Warp**, warp **Mode** (rhythmic / tonal
-  / complex), tempo (**Follow project BPM** or **Pin to** a specific BPM),
-  pitch **Semitones** / **Cents** range sliders, and **Key presets** computed
-  from the source's detected key. Source BPM, effective BPM + ratio and the
-  current pitched key are shown alongside the controls. Slider movement
+  / complex), **Playback tempo** (**Follow project BPM**, **Pin to** a specific
+  BPM, or a free **Stretch %** for material with no source tempo, e.g. spoken
+  word), pitch **Semitones** / **Cents** range sliders, and **Key presets**
+  computed from the source's detected key. The resulting **Playback BPM** +
+  ratio and the current pitched key are shown alongside the controls (the source
+  BPM lives in the sibling Beat grid panel, not duplicated here). Slider movement
   updates the preview voice **live** — Rubber Band's
   `setTimeRatio` / `setPitchScale` are applied as atomic parameter changes
   with no reseek or history flush, so the audio stays continuous through
@@ -1976,7 +1988,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |
-| Double-click a **library tile** (off the name) | Open the **Clip Editor** for that library item. Use **Show information** from the right-click menu for the read-only info dialog. |
+| Double-click a **library tile** (off the name) | **Preview** source / stem / sample items (read-only; select a section to Save Selection to Library), or open the editable **Clip Editor** for a saved **clip** item. Use **Show information** from the right-click menu for the read-only info dialog. |
 | Right-click a **library tile** | Open the library tile context menu with **Show information**, **Rename**, **Reanalyse file** (source, stem, and sample items only), **Auto-classify** / **Treat as Music** / **Treat as Simple** (source, stem, and sample items only), **Update Image…** (source, stem, and sample tiles — pick a new cover image, copied into the project as a per-item override), **Remove Image** / **Restore Image** (source, stem, and sample tiles — hides or restores the tile's cover art without deleting the shared image file), **Save as Sample (Music)** / **Save as Sample (Simple)** (clip items only), and **Remove**. Removal is gated only for sources that are still in use by a timeline clip; saved clip removal silently unlinks dependent clips. |
 
 ### Clip Editor

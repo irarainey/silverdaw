@@ -85,17 +85,19 @@ on in Preferences.
 Open this folder (paste the path into File Explorer's address bar):
 
 ```text
-%APPDATA%\Silverdaw\diagnostics
+%APPDATA%\silverdaw\diagnostics
 ```
 
 It contains:
 
 - `startup.log` — a short record of the last launch (app version, backend spawn).
 - `backend.log` — the engine's own startup log for the last launch.
-- `backend-crash.log` — written **only** if the engine crashed on startup, with
-  the failure details.
+- `backend-crash-<timestamp>.log` — written **only** if the engine crashed on
+  startup, with the failure details. It's timestamped, so a crash report isn't
+  overwritten by the next launch.
 
-These files are overwritten on each launch (they don't grow over time). If you
+`startup.log` and `backend.log` are overwritten on each launch (they don't grow
+over time). If you
 report a startup problem, attaching them helps pin down the cause.
 
 [releases]: https://github.com/irarainey/silverdaw/releases
