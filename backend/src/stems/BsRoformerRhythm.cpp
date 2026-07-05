@@ -14,6 +14,7 @@
 #include "BsRoformerSpectral.h"
 #include "InferenceThreads.h"
 #include "Log.h"
+#include "StemRunCancellation.h"
 #include "StemSeparator.h"
 
 namespace silverdaw
@@ -43,7 +44,8 @@ struct BsRoformerRhythm::Impl
         session.reset();
         sessionPath = {};
         sessionOptions = Ort::SessionOptions{};
-        sessionOptions.SetIntraOpNumThreads(stems::inferenceIntraOpThreads());
+        const int intraOpThreads = stems::inferenceIntraOpThreads();
+        sessionOptions.SetIntraOpNumThreads(intraOpThreads);
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         if (useGpu)
         {
@@ -60,7 +62,8 @@ struct BsRoformerRhythm::Impl
         }
         else
         {
-            silverdaw::log::info("stems", "Rhythm RoFormer execution provider: CPU");
+            silverdaw::log::info("stems", "Rhythm RoFormer execution provider: CPU ("
+                                              + juce::String(intraOpThreads) + " intra-op threads)");
         }
         epUsesGpu = useGpu;
         epConfigured = true;
@@ -187,8 +190,10 @@ struct BsRoformerRhythm::Impl
                                                 outShape.data(), outShape.size())};
             const char* inNames[] = {inRealName.get(), inImagName.get()};
             const char* outNames[] = {outRealName.get(), outImagName.get()};
-            sess.Run(Ort::RunOptions{nullptr}, inNames, inputs.data(), inputs.size(), outNames,
-                     outputs.data(), outputs.size());
+            stems::runCancellable(shouldCancel, [&](Ort::RunOptions& runOptions) {
+                sess.Run(runOptions, inNames, inputs.data(), inputs.size(), outNames,
+                         outputs.data(), outputs.size());
+            });
 
             // Reconstruct drums + bass from their output-tensor slices.
             spectral.synthesizeStem(outReal.data() + static_cast<size_t>(kDrumsIndex) * Spec::kSpecFloats,

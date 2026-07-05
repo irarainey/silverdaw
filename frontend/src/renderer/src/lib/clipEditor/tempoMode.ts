@@ -35,10 +35,10 @@ export interface DerivedTempoMode {
 
 /**
  * Map a clip's persisted warp fields onto the editor's tempo-mode UI state.
- * An absent/neutral `tempoRatio` is "follow project"; an explicit ratio is a
- * manual warp shown as a pinned BPM when the source tempo is known (so beat
- * clips read in BPM) or as a stretch percentage otherwise (e.g. spoken word).
- * Shared by the draft's `initialise` and the dirty-state comparison.
+ * With a known source tempo an absent/neutral `tempoRatio` is "follow project"
+ * and an explicit ratio is a pinned BPM; WITHOUT a source tempo (spoken word,
+ * samples) there is nothing to follow or pin to, so it is always a free stretch
+ * percentage. Shared by the draft's `initialise` and the dirty-state comparison.
  */
 export function deriveTempoModeFromClip(
   current: { tempoRatio?: number },
@@ -50,11 +50,17 @@ export function deriveTempoModeFromClip(
       ? current.tempoRatio
       : undefined
   const defaultBpm = Math.round(projectBpm * 100) / 100
+  const hasSource = typeof sourceBpm === 'number' && sourceBpm > 0
   if (ratio === undefined) {
-    return { mode: 'follow', pinnedBpm: defaultBpm, stretchPercent: 100 }
+    // With a source tempo an unset ratio means "follow the project"; without one
+    // there is nothing to follow, so free-stretch material (spoken word, samples)
+    // sits at Stretch 100 % rather than a degenerate, un-selectable Follow.
+    return hasSource
+      ? { mode: 'follow', pinnedBpm: defaultBpm, stretchPercent: 100 }
+      : { mode: 'stretch', pinnedBpm: defaultBpm, stretchPercent: 100 }
   }
   const stretchPercent = Math.round(ratio * 100 * 100) / 100
-  if (typeof sourceBpm === 'number' && sourceBpm > 0) {
+  if (hasSource) {
     return { mode: 'pin', pinnedBpm: Math.round(sourceBpm * ratio * 100) / 100, stretchPercent }
   }
   return { mode: 'stretch', pinnedBpm: defaultBpm, stretchPercent }

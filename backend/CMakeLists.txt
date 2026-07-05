@@ -529,6 +529,7 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
     # The real ONNX inference is only compiled when stem separation is enabled;
     # the factory falls back to a stub otherwise.
     target_sources(silverdaw_backend_core PRIVATE
+        src/stems/InferenceThreads.cpp
         src/stems/OnnxStemSeparator.cpp
         src/stems/MelRoformerVocals.cpp
         src/stems/BsRoformerRhythm.cpp)

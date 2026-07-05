@@ -538,7 +538,7 @@ certification VM). Two always-on mechanisms guarantee a diagnosable artifact,
 **independent of the Preferences ▸ Developer diagnostic-logging toggle**:
 
 - **Diagnostics directory.** Electron main always creates a diagnostics
-  directory on launch (packaged installs: `%USERPROFILE%\Silverdaw\diagnostics`,
+  directory on launch (packaged installs: `%USERPROFILE%\Silverdaw\Diagnostics`,
   a discoverable non-virtualised location — under MSIX a `userData`/`%APPDATA%`
   path is silently redirected into a hidden package container; dev builds:
   `<userData>/diagnostics`) and passes it to the backend as `SILVERDAW_DIAG_DIR`
@@ -1414,18 +1414,41 @@ GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
 Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`
 shipped alongside); the renderer threads a `useGpu` flag through to the backend
 session options. Using the GPU is **opt-in** — the `stems.useGpu` preference
-defaults off and is honoured only when a compatible adapter is detected
-(Preferences ▸ Stems). The path is hardened against GPU timeout/TDR recovery.
+defaults off. The Preferences ▸ Stems toggle is enabled unless a GPU probe
+positively reports software-only rendering (`detectGpuFromInfo`): DirectML runs
+on any Direct3D-12 adapter, so an integrated GPU that Chromium's probe reports as
+inactive or without a vendorId must still be offered. The path is hardened
+against recoverable GPU faults — both a timeout/TDR device reset **and** running
+out of (often shared, integrated-GPU) memory transparently retry the whole job on
+the CPU (`isRecoverableGpuFault` in `OnnxStemSeparator.cpp`) so the user still
+gets their stems. On memory-constrained integrated GPUs the fixed-shape RoFormer
+models may simply not fit, in which case the run falls back to the CPU; GPU
+acceleration is therefore treated as a best-effort, dedicated-GPU-oriented
+option rather than a guaranteed speed-up.
 
-Inference reserves **one logical core** for the UI/message thread
-(`inferenceIntraOpThreads()` in `stems/InferenceThreads.h` sets ONNX Runtime's
-intra-op thread count to `cores − 1`, never below one). Without this a CPU-only
-separation pins every core and starves the Electron renderer, so the
-separation-progress dialog freezes at the top of each stem's band until the run
-completes; leaving a core free keeps the progress bar repainting throughout. The
-separation is a touch slower but stays visibly responsive, which is the priority
-for a long background task. On the GPU path the compute runs on the adapter, so
-the reserved core costs nothing.
+Inference runs on **one thread per physical core**, bounded by the historical
+`logical − 2` default (`inferenceIntraOpThreads()` in `stems/InferenceThreads.cpp`
+counts physical cores via `GetLogicalProcessorInformationEx` + `EfficiencyClass`
+and returns `min(physicalCores, logical − 2)`, falling back to `logical − 2`
+when detection is unavailable). The transformer models synchronise at every op
+boundary, so oversubscribing a hyperthreaded CPU — running two threads per core
+that fight over the same execution units — is markedly **slower** than one
+thread per physical core: the fix drops the hyperthread siblings on HT CPUs
+(e.g. 20 logical / 14 physical → 14 threads) while keeping every physical core
+(P **and** E) on non-hyperthreaded hybrid CPUs, where the E-cores add real
+throughput with no sibling contention. Reserving the two logical processors of
+the `logical − 2` bound leaves headroom for the backend's websocket-send and
+message threads, so the progress bar keeps flowing. On the GPU path the compute
+runs on the adapter instead.
+
+Cancellation aborts the **in-flight** ONNX run rather than waiting for the
+current chunk (which can take tens of seconds on a slow CPU) to finish. Each
+`Session::Run` is wrapped by `runCancellable()` (`stems/StemRunCancellation.h`),
+which spins a lightweight watcher thread that calls `Ort::RunOptions::SetTerminate()`
+the moment the cancel flag is set; ONNX Runtime then unwinds at the next op
+boundary and the resulting `Ort::Exception` is translated to a normal
+`StemFailureCode::Cancelled`. So `STEM_SEPARATE_CANCEL` lands in well under a
+second instead of up to a whole chunk later.
 
 The separation-progress dialog is driven by the reactive `stemSeparationState`
 and stays open through a final **"Writing files…"** phase: on `STEM_READY` the
@@ -1691,8 +1714,10 @@ Within the dialog:
 - **Warp + Pitch inspector** (existing-clip targets only): a right-hand panel
   exposes draft controls for **Enable Warp**, warp **Mode** (rhythmic / tonal
   / complex), **Playback tempo** (**Follow project BPM**, **Pin to** a specific
-  BPM, or a free **Stretch %** for material with no source tempo, e.g. spoken
-  word), pitch **Semitones** / **Cents** range sliders, and **Key presets**
+  BPM, or a free **Stretch %** for material with no source tempo — e.g. spoken
+  word, and **samples**, which are committed free-form audio that expose no
+  source tempo to the warp controls so they offer Stretch only), pitch
+  **Semitones** / **Cents** range sliders, and **Key presets**
   computed from the source's detected key. The resulting **Playback BPM** +
   ratio and the current pitched key are shown alongside the controls (the source
   BPM lives in the sibling Beat grid panel, not duplicated here). Slider movement
@@ -1763,10 +1788,12 @@ Persisted fields:
   bottom-right. Off silences them; the underlying events still go to the log when
   diagnostic logging is enabled.
 - **Default project folder** — used as the starting directory for File → Save / Save As /
-  Open. Defaults to `<home>/Music/Silverdaw/`, which is created on first launch.
+  Open. Defaults to `%USERPROFILE%\Silverdaw\Projects` (alongside `Logs`, `Diagnostics`,
+  and `Models`), which is created on first launch.
 - **Default clip folder** — starting directory for Add Track from File / library Import.
-  Defaults to `<home>/Music/`. After every successful open it remembers the folder you
-  browsed to **for the rest of the session**; on next launch it resets to this default.
+  Defaults to the user's Music library (`<home>/Music/`). After every successful open it
+  remembers the folder you browsed to **for the rest of the session**; on next launch it
+  resets to this default.
 - **Autosave** — enable / disable plus tick interval (clamped 5..600 s, default 30 s).
 - **Audio output device** — persisted `{ typeName, deviceName }` pair. The
   Preferences ▸ Audio list shows **real named devices only** (pseudo-endpoints like
@@ -1797,12 +1824,12 @@ Persisted fields:
   logger (all levels, whole session). When on, the next launch writes a
   per-session timestamped folder containing `{main,backend,renderer}.log` with
   aligned millisecond timestamps. The **Log folder** field lets the user choose
-  the parent folder; by default this is a discoverable `Silverdaw\logs` folder in
+  the parent folder; by default this is a discoverable `Silverdaw\Logs` folder in
   the user's home folder (packaged installs — a `userData`/`%APPDATA%` path is
   redirected into a hidden MSIX container; dev builds use the repo `debug`
   folder), and blank entries are normalised back to that default. This is
   separate from the always-on **startup diagnostics**
-  (packaged: `%USERPROFILE%\Silverdaw\diagnostics`, see *Engine resilience and
+  (packaged: `%USERPROFILE%\Silverdaw\Diagnostics`, see *Engine resilience and
   recovery ▸ Startup diagnostics*), which are written on every launch regardless
   of this toggle but only cover startup.
 - **Show Developer Tools** — gates the visibility of the **Debug** menu and
@@ -1815,7 +1842,12 @@ Persisted fields:
 - **Located model directories** — optional override paths to existing on-disk
   copies of each separation model: `paths.stemModelDir` (htdemucs backup),
   `paths.vocalPackDir` and `paths.rhythmPackDir` (the RoFormer packs). Empty =
-  use the app-managed download location.
+  use the app-managed download location: a discoverable `Silverdaw\Models`
+  folder in the user's home folder for packaged installs (one subfolder per
+  model id; a userData/%APPDATA% path would be redirected into a hidden MSIX
+  container), `<userData>/models` for dev builds. Existing downloads are
+  best-effort migrated from the legacy `<userData>/models` location on first run
+  after the default moved.
 
 QoL settings take effect on **Save**; developer settings require a restart and
 the dialog surfaces that explicitly.
@@ -1999,7 +2031,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step, and compound ops (split / duplicate / paste) fold into a single undo step. |
 | `Ctrl + L` | Toggle the **lock** flag on the selected clip. Locked clips refuse drag-move, edge-trim and Split-at-playhead, and show a padlock badge in their title strip. Per-clip — linked saved clip siblings stay independently lockable. |
-| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Cut** / **Copy** / **Paste** (Cut and Copy act on the right-clicked clip — selecting it and its track first; Paste needs a clip on the clipboard and lands on this clip's track at the playhead, mirroring the Edit-menu / Ctrl+X·C·V behaviour), **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), **Chop to Grid** (a submenu — whole bar / 1/2 bar / 1/4 / 1/8 / 1/16 — that slices the whole clip onto the beat grid in one undo step; shown only for an unlocked, unlinked clip with a known tempo), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked saved clip sibling), **Brake** / **Backspin** (checkmarked toggles for the turntable record-stop / reverse-rewind tail effects, also propagated across linked siblings — Reverse, Brake and Backspin form a mutually-exclusive group, so each entry stays visible but is **disabled** while any other in the group is set), **Save Clip to Library**, **Save as Sample…** (opens the **Save as Sample** dialog with **Music** and **Simple** choices), **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
+| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Cut** / **Copy** / **Paste** (Cut and Copy act on the right-clicked clip — selecting it and its track first; Paste needs a clip on the clipboard and lands on this clip's track at the playhead, mirroring the Edit-menu / Ctrl+X·C·V behaviour), **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), **Chop to Grid** (a submenu — whole bar / 1/2 bar / 1/4 / 1/8 / 1/16 — that slices the whole clip onto the beat grid in one undo step; shown only for an unlocked, unlinked clip with a known tempo), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked saved clip sibling), **Brake** / **Backspin** (checkmarked toggles for the turntable record-stop / reverse-rewind tail effects, also propagated across linked siblings — Reverse, Brake and Backspin form a mutually-exclusive group, so each entry stays visible but is **disabled** while any other in the group is set), **Save Clip to Library**, **Save as Sample…** (opens the **Save as Sample** dialog with **Music** and **Simple** choices), **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved clip and routes the save through `library.updateLibraryClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
 | Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |

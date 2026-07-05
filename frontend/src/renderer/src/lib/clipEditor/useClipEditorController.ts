@@ -65,8 +65,16 @@ export function useClipEditorController(
     sourceKey
   } = useClipEditorTarget(itemRef, clipIdRef)
 
+  // Source BPM as seen by the WARP/tempo controls only. Samples are committed,
+  // free-form audio: they expose no source tempo to warp, so the tempo control
+  // offers only free Stretch % (Follow/Pin need a source BPM). The beat grid still
+  // uses the item's real BPM (via `sourceItem`), so beat markers are unaffected.
+  const warpSourceBpm = computed(() =>
+    editorItem.value?.kind === 'sample' ? undefined : sourceBpm.value
+  )
+
   // Draft warp + pitch state reseeded on each target switch.
-  const warpDraft = useClipEditorWarpDraft(sourceBpm)
+  const warpDraft = useClipEditorWarpDraft(warpSourceBpm)
   // Manual-tempo fallback: pin a BPM + slide the grid to align it.
   const beatGrid = useClipEditorBeatGrid({ sourceItem: () => sourceItem.value })
   const {
@@ -148,7 +156,7 @@ export function useClipEditorController(
     return isWarpActive({
       warpEnabled: entry.warpEnabled,
       tempoRatio: entry.tempoRatio,
-      sourceBpm: sourceBpm.value,
+      sourceBpm: warpSourceBpm.value,
       projectBpm: transport.bpm
     })
   })
@@ -293,7 +301,7 @@ export function useClipEditorController(
     hasReverseChanged: () => hasReverseChanged.value,
     hasDjEffectChanged: () => hasDjEffectChanged.value,
     hasGridChanged: () => beatGrid.hasGridChanged(),
-    sourceBpm: () => sourceBpm.value,
+    sourceBpm: () => warpSourceBpm.value,
     projectBpm: () => transport.bpm
   })
 
@@ -796,7 +804,7 @@ export function useClipEditorController(
     editsLibraryClipLibrary: () => editsLibraryClipLibrary.value,
     editsTimelineClip: () => editsTimelineClip.value,
     hasWarpPitchChanged: () => hasWarpPitchChanged.value,
-    sourceBpm: () => sourceBpm.value,
+    sourceBpm: () => warpSourceBpm.value,
     projectBpm: () => transport.bpm,
     canApplyCrop: () => canApplyCrop.value,
     selectionInMs: () => selectionInMs.value,
@@ -897,6 +905,7 @@ export function useClipEditorController(
     resetZoom,
     zoomIn,
     sourceBpm,
+    warpSourceBpm,
     sourceKey,
     sourceItem,
     editorItem,

@@ -50,6 +50,14 @@ function isSoftwareRenderer(text: string): boolean {
  * Classify a GPU-info object (the shape returned by `app.getGPUInfo`) into a
  * stem-preference availability status. Defensive against unknown / partial
  * shapes so a future Electron change cannot throw on the main thread.
+ *
+ * The backend's GPU path is DirectML, which runs on ANY Direct3D-12 adapter —
+ * including integrated GPUs that Chromium's lightweight `'basic'` probe reports
+ * as inactive or without a vendorId. So the policy is deliberately permissive:
+ * enable the (opt-in, off-by-default, CPU-fallback) option UNLESS we positively
+ * detect software-only rendering. A false "available" merely lets the backend
+ * try and fall back to CPU; a false "unavailable" wrongly hides GPU on a capable
+ * machine (the failure mode this replaces).
  */
 export function detectGpuFromInfo(info: unknown): StemGpuStatus {
   if (!info || typeof info !== 'object') return { available: false, name: null }
@@ -58,24 +66,28 @@ export function detectGpuFromInfo(info: unknown): StemGpuStatus {
   const glRenderer = readString(raw.auxAttributes, 'glRenderer')
   const glVendor = readString(raw.auxAttributes, 'glVendor')
 
-  // A named, non-software GL renderer is the strongest positive signal.
-  if (glRenderer && !isSoftwareRenderer(glRenderer) && !(glVendor && isSoftwareRenderer(glVendor))) {
-    return { available: true, name: glRenderer }
-  }
+  // Positive software-renderer signal (SwiftShader, Basic Render Driver, …) —
+  // there is no real GPU to accelerate on, so keep the option disabled.
+  if (glRenderer && isSoftwareRenderer(glRenderer)) return { available: false, name: null }
+  if (glVendor && isSoftwareRenderer(glVendor)) return { available: false, name: null }
 
-  // Fall back to the device list: a real GPU has an active device whose vendor
-  // is not a known software adapter.
+  // Software-adapter-only device list (e.g. only the Microsoft Basic Render
+  // Driver) is the other positive "no GPU" signal. A device with an unknown /
+  // absent vendorId is treated as inconclusive, not software.
   const devices = Array.isArray(raw.gpuDevice) ? raw.gpuDevice : []
-  const hardware = devices.some(
-    (d) =>
-      typeof d.vendorId === 'number' &&
-      !SOFTWARE_VENDOR_IDS.has(d.vendorId) &&
-      // Treat an unspecified `active` flag as active to avoid false negatives.
-      d.active !== false
+  const anyKnownSoftware = devices.some(
+    (d) => typeof d.vendorId === 'number' && SOFTWARE_VENDOR_IDS.has(d.vendorId)
   )
-  if (hardware) {
-    return { available: true, name: glRenderer && !isSoftwareRenderer(glRenderer) ? glRenderer : null }
+  const anyRealHardware = devices.some(
+    (d) => typeof d.vendorId === 'number' && !SOFTWARE_VENDOR_IDS.has(d.vendorId)
+  )
+  if (devices.length > 0 && anyKnownSoftware && !anyRealHardware) {
+    return { available: false, name: null }
   }
 
-  return { available: false, name: null }
+  // A real hardware GPU is present, or detection is inconclusive (an iGPU
+  // reported inactive / without a vendorId, or no device list at all). DirectML
+  // can use it; enable the option and surface a friendly name when we have one.
+  const name = glRenderer && !isSoftwareRenderer(glRenderer) ? glRenderer : null
+  return { available: true, name }
 }

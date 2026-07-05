@@ -6,10 +6,17 @@ import {
 } from '@/lib/clipEditor/tempoMode'
 
 describe('deriveTempoModeFromClip', () => {
-  it('treats an absent or neutral tempoRatio as follow', () => {
+  it('treats an absent or neutral tempoRatio as follow when a source tempo exists', () => {
     expect(deriveTempoModeFromClip({}, 120, 128).mode).toBe('follow')
     expect(deriveTempoModeFromClip({ tempoRatio: 1 }, 120, 128).mode).toBe('follow')
     expect(deriveTempoModeFromClip({ tempoRatio: 0 }, 120, 128).mode).toBe('follow')
+  })
+
+  it('defaults to stretch (not follow) when there is no source tempo', () => {
+    const d = deriveTempoModeFromClip({}, undefined, 128)
+    expect(d.mode).toBe('stretch')
+    expect(d.stretchPercent).toBe(100)
+    expect(deriveTempoModeFromClip({ tempoRatio: 1 }, undefined, 128).mode).toBe('stretch')
   })
 
   it('shows an explicit ratio as a pinned BPM when the source tempo is known', () => {

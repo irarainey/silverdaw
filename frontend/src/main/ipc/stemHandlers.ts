@@ -8,7 +8,9 @@
 
 import { app, ipcMain, type BrowserWindow } from 'electron'
 import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs'
 import { IPC } from '../../shared/ipc-channels'
+import { logMain } from '../log'
 import type {
   EnsureStemModelResult,
   LocateStemModelResult,
@@ -21,7 +23,7 @@ import { MEL_BAND_ROFORMER_MANIFEST, ROFORMER_CORE_FILENAME } from '../stems/mel
 import { BS_ROFORMER_RHYTHM_MANIFEST, RHYTHM_CORE_FILENAME } from '../stems/bsRoformerRhythmModel'
 import { ModelStore, ModelDownloadError } from '../stems/modelStore'
 import { detectGpuFromInfo } from '../stems/gpuDetect'
-import { sanitiseStemModelDir } from '../preferences'
+import { sanitiseStemModelDir, getManagedModelsRoot } from '../preferences'
 import type { PrefsService } from '../prefsService'
 import { registerStemsWriteRoot, registerSamplesWriteRoot, registerProjectMediaRoots } from '../audioPaths'
 
@@ -30,9 +32,40 @@ export interface StemHandlersContext {
   prefs: PrefsService
 }
 
+// One-time, best-effort move of app-managed model downloads from the legacy
+// userData/models location to the current managed root. Only relevant to
+// packaged builds (dev keeps models under userData, so the roots match and this
+// no-ops). Per-manifest subfolders are moved individually and skipped when the
+// destination already exists; any failure is swallowed so a migration hiccup
+// never blocks stem handler registration (the model simply re-downloads).
+function migrateLegacyManagedModels(): void {
+  const legacyRoot = join(app.getPath('userData'), 'models')
+  const newRoot = getManagedModelsRoot()
+  if (legacyRoot === newRoot || !existsSync(legacyRoot)) return
+  try {
+    mkdirSync(newRoot, { recursive: true })
+    for (const entry of readdirSync(legacyRoot)) {
+      const to = join(newRoot, entry)
+      if (existsSync(to)) continue
+      try {
+        renameSync(join(legacyRoot, entry), to)
+      } catch {
+        // Cross-volume or locked file: leave the legacy copy; model re-downloads.
+      }
+    }
+  } catch {
+    // Never block registration on migration.
+  }
+}
+
 export function registerStemHandlers(ctx: StemHandlersContext): void {
   const { prefs } = ctx
-  const managedModelDir = join(app.getPath('userData'), 'models', HTDEMUCS_FT_MANIFEST.id)
+  // App-managed download root (one subfolder per model manifest id). Best-effort
+  // migrated once from the legacy userData/models location so existing downloads
+  // aren't lost when the default moves to the discoverable Silverdaw folder.
+  migrateLegacyManagedModels()
+  const modelsRoot = getManagedModelsRoot()
+  const managedModelDir = join(modelsRoot, HTDEMUCS_FT_MANIFEST.id)
   // Unsaved projects write separated stems into a temporary workspace; trust it
   // for renderer reads and sidecar writes until the project is saved (at which
   // point the backend migrates them beside the project file). Saved-project stems
@@ -88,7 +121,14 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
       // "is there a real GPU?" without touching the GL path. The trade-off is we
       // lose the friendly adapter name (the UI falls back to "compatible adapter").
       const info = await app.getGPUInfo('basic')
-      return detectGpuFromInfo(info)
+      const status = detectGpuFromInfo(info)
+      const devices = (info as { gpuDevice?: unknown }).gpuDevice
+      logMain(
+        'INFO ',
+        'stems',
+        `GPU probe: available=${status.available} name=${status.name ?? '-'} devices=${JSON.stringify(devices ?? [])}`
+      )
+      return status
     } catch {
       return { available: false, name: null }
     }
@@ -148,7 +188,7 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   })
 
   // ─── Optional Mel-Band RoFormer "Vocal Quality Pack" ────────────────────────
-  const vocalPackManagedDir = join(app.getPath('userData'), 'models', MEL_BAND_ROFORMER_MANIFEST.id)
+  const vocalPackManagedDir = join(modelsRoot, MEL_BAND_ROFORMER_MANIFEST.id)
   // A located override directory (a user-supplied / manually-placed copy) wins;
   // otherwise the app-managed download location is used. Resolved per call.
   const effectiveVocalPackDir = (): string =>
@@ -228,7 +268,7 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   })
 
   // ─── Optional 4-stem BS-RoFormer "Rhythm Quality Pack" ──────────────────────
-  const rhythmPackManagedDir = join(app.getPath('userData'), 'models', BS_ROFORMER_RHYTHM_MANIFEST.id)
+  const rhythmPackManagedDir = join(modelsRoot, BS_ROFORMER_RHYTHM_MANIFEST.id)
   const effectiveRhythmPackDir = (): string =>
     sanitiseStemModelDir(prefs.get().paths.rhythmPackDir) ?? rhythmPackManagedDir
   const rhythmPackStoreFor = (dir: string): ModelStore =>

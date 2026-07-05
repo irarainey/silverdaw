@@ -39,8 +39,22 @@ describe('detectGpuFromInfo', () => {
     expect(detectGpuFromInfo(info)).toEqual({ available: false, name: null })
   })
 
-  it('ignores an inactive hardware device', () => {
+  it('still enables an inactive hardware device (DirectML can use any DX12 adapter)', () => {
     const info = { gpuDevice: [{ active: false, vendorId: 0x10de }] }
-    expect(detectGpuFromInfo(info)).toEqual({ available: false, name: null })
+    expect(detectGpuFromInfo(info)).toEqual({ available: true, name: null })
+  })
+
+  it('enables when the device list is empty or vendorId is unknown (inconclusive)', () => {
+    expect(detectGpuFromInfo({ gpuDevice: [] })).toEqual({ available: true, name: null })
+    expect(detectGpuFromInfo({ gpuDevice: [{ active: true }] })).toEqual({
+      available: true,
+      name: null
+    })
+    expect(detectGpuFromInfo({})).toEqual({ available: true, name: null })
+  })
+
+  it('keeps a real adapter available even alongside a software adapter', () => {
+    const info = { gpuDevice: [{ active: false, vendorId: 0x1414 }, { active: true, vendorId: 0x8086 }] }
+    expect(detectGpuFromInfo(info)).toEqual({ available: true, name: null })
   })
 })

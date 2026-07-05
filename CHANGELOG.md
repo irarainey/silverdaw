@@ -22,10 +22,18 @@
 - Faster startup, especially the first launch: the window appears immediately while the audio engine starts in the background.
 - New preference (on by default) to set the project tempo from the first clip added to a new project; turn it off to keep the project tempo fixed.
 - The stem separation Cancel button now shows a spinning "Cancelling…" state the moment it's clicked, so it's clear the request registered while the engine unwinds.
+- Much faster, more reliable stem separation on hybrid CPUs: inference now uses one thread per physical core (skipping the hyperthread siblings that were slowing it down) instead of oversubscribing every logical processor.
+- Cancelling a stem separation now stops almost immediately instead of waiting for the current chunk to finish.
+- The stem separation progress bar now advances in proportion to the work actually happening and at the real observed pace, so it no longer looks stuck on drums or stalls partway on slower machines. The drums+bass rhythm pass is labelled "Drums & Bass", and the per-stem cleanup passes now carry their own progress, so bass and the residual "other" stem no longer appear to make no progress while they're being processed.
 
 ### Fixed
 
+- GPU acceleration for stem separation is no longer wrongly greyed out on machines with a capable GPU (such as Intel Arc integrated graphics); it now enables whenever a usable adapter is present.
+- GPU stem separation now automatically falls back to the CPU (rather than failing) when the GPU runs out of memory — common on integrated GPUs that share system memory.
+- The Warp/Clip Editor now offers the Stretch % control for samples (committed, free-form audio), which previously left it greyed out; the standalone Warp dialog and the Clip Editor also now agree on when Stretch is available.
 - Diagnostic and startup logs now default to a discoverable `Silverdaw` folder in your user folder, instead of a hidden location the installed app couldn't write to as shown.
+- Downloaded stem-separation models now live in a discoverable `Silverdaw\Models` folder in your user folder (existing downloads are moved there automatically); you can still point Silverdaw at models elsewhere.
+- New projects now default to a `Silverdaw\Projects` folder in your user folder, keeping projects, models, logs, and diagnostics together in one easy-to-find place.
 - Trimming the view to the selection did nothing when previewing a library item.
 - Clip Editor pitch sliders showing a browser focus outline, and the Warp tempo fields showing number spinners.
 - "Unable to connect to audio engine" on some freshly installed machines.
@@ -33,7 +41,6 @@
 - The saved output device not being selected when slow to appear on startup.
 - Silence on the first play right after switching output device from the transport bar.
 - Clips with a variable-tempo source silently not being tempo-matched; a brief note now explains why.
-- Stem separation progress bar freezing mid-stem and a slow Cancel button.
 - Dragging the playhead left not scrolling the timeline.
 - The cursor not staying a grabbing hand while dragging the playhead.
 - The metronome on/off state not being remembered between sessions.

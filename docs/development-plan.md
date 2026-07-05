@@ -271,7 +271,8 @@ actually produce with the backup.
 `SilverdawBackend.exe` are `onnxruntime.dll` and — for the default DirectML
 build — `DirectML.dll`. The model **weights are not shipped**: htdemucs and both
 RoFormer packs are downloaded on demand (or located from an existing copy) into
-app-data / user-selected directories. GPU acceleration via the DirectML
+a discoverable `Silverdaw\Models` folder in the user's home folder (packaged
+installs) or `<userData>/models` (dev builds), or a user-selected directory. GPU acceleration via the DirectML
 execution provider on Windows is **implemented**: the bundled ONNX Runtime is a
 DirectML build (a CPU+GPU superset — a single `onnxruntime.dll` serves both EPs),
 and the renderer threads a `useGpu` flag through to the backend's session options
@@ -321,9 +322,13 @@ resolved model directories.
 **Target UX:** Separation runs on a background thread and never touches the audio
 callback. Progress is emitted as `STEM_PROGRESS` events and shown in a
 non-blocking progress dialog; the audio engine keeps playing during separation.
-ONNX inference reserves one logical core for the UI/message thread, so the
-progress bar keeps repainting even when separating on the CPU (which would
-otherwise pin every core and freeze the renderer). The dialog stays open through
+ONNX inference runs on one thread per physical core (bounded by `logical − 2`),
+dropping the hyperthread siblings that slow hybrid CPUs down rather than
+oversubscribing every logical processor — and it leaves headroom so the progress
+bar keeps repainting. Cancel terminates the in-flight ONNX run immediately, and
+the progress bar is weighted by each stem's real compute cost and creeps at the
+observed pace, so it never looks stuck or stalls partway on slow machines. The
+dialog stays open through
 a final "Writing files…" phase until the stems have been placed, so it never
 vanishes before the new clips appear.
 Stems appear **incrementally**: the backend emits a `STEM_PARTIAL` envelope the
@@ -430,7 +435,11 @@ host runs the STFT (n_fft 2048 / hop 441) and a per-stem iSTFT with preset-drive
 chunk overlap. It is exported at an 8 s window (T=801) — the largest that stays
 within a modest GPU's VRAM (11 s OOMs DirectML on integrated GPUs because the
 graph uses unfused attention) — and the runner transparently **retries on the CPU
-provider** if DirectML runs out of memory. The host pipeline is unit-tested by an
+provider** on any recoverable DirectML fault (out-of-memory *or* a device-reset /
+TDR). GPU use is opt-in and best-effort: the Preferences toggle is enabled unless
+the adapter probe positively reports software-only rendering, and because the
+fixed-shape models may simply not fit a shared-memory integrated GPU, a run that
+can't fit falls back to the CPU rather than failing. The host pipeline is unit-tested by an
 identity round-trip, and the full C++ runner was validated end-to-end against a
 numpy reference on Silverdaw's own ONNX Runtime (drums/bass RMS matched to four
 decimals on both CPU and DirectML).
@@ -1633,7 +1642,7 @@ library, transport, UI layout and per-clip edits — from a single
 - [x] `PROJECT_NEW`, `PROJECT_SAVE`, `PROJECT_SAVE_AS`, `PROJECT_LOAD`
   envelopes; acks `PROJECT_SAVED`, `PROJECT_LOAD_FAILED`
 - [x] OS open / save-as dialogs in Electron main; `*.silverdaw` filter;
-  default project folder preference (`<home>/Music/Silverdaw/`)
+  default project folder preference (`%USERPROFILE%\Silverdaw\Projects`)
 - [x] Path tracking on the backend (`ProjectSession::currentPath`)
   drives title bar + "Save" vs "Save As" behaviour
 
@@ -2254,7 +2263,7 @@ robustness without changing the core editing model.
   custom `SilverdawBackendTests` harness); frontend `pnpm install`,
   `pnpm typecheck`, `pnpm lint`, `pnpm test`; Playwright smoke on Windows.
   Cache the JUCE / IXWebSocket FetchContent dirs and pnpm store.
-- **Logging:** the cross-layer `debug/<session>/{main,backend,renderer}.log` infrastructure stays in dev builds and is conditionally enabled in release via a flag. Separately, an **always-on** startup diagnostics log (and a backend crash report) is written to a discoverable diagnostics folder (packaged installs: `%USERPROFILE%\Silverdaw\diagnostics`; dev builds: `<userData>/diagnostics`) on every launch, independent of that flag, so a failure to start is diagnosable from the logs alone (see Developer Guide → Startup diagnostics). Renderer code routes through `frontend/src/renderer/src/lib/log.ts` (enforced by an ESLint `no-console` rule scoped to `src/renderer/**`); the backend routes through `silverdaw::log` rather than raw `std::cerr` / `std::cout`.
+- **Logging:** the cross-layer `debug/<session>/{main,backend,renderer}.log` infrastructure stays in dev builds and is conditionally enabled in release via a flag. Separately, an **always-on** startup diagnostics log (and a backend crash report) is written to a discoverable diagnostics folder (packaged installs: `%USERPROFILE%\Silverdaw\Diagnostics`; dev builds: `<userData>/diagnostics`) on every launch, independent of that flag, so a failure to start is diagnosable from the logs alone (see Developer Guide → Startup diagnostics). Renderer code routes through `frontend/src/renderer/src/lib/log.ts` (enforced by an ESLint `no-console` rule scoped to `src/renderer/**`); the backend routes through `silverdaw::log` rather than raw `std::cerr` / `std::cout`.
 - **Documentation:** the bridge protocol catalogue, ValueTree schema, and project file format live in `README.md` and the shared `bridge-protocol.ts` (the schema source of truth), updated as each phase adds envelopes.
 
 ---
@@ -2290,7 +2299,7 @@ robustness without changing the core editing model.
 - **BS-RoFormer** — optional MIT-licensed 4-stem model (ZFTurbo MUSDB18-HQ) for the "Rhythm Quality Pack" (drums/bass), self-exported and downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
 - **ONNX Runtime (DirectML)** — MIT; runs both stem models on CPU or any DX12 GPU
 - **JUCE is backend only** — no JUCE UI components used; all rendering is Electron + PixiJS
-- **Cross-layer logging** — every session writes `debug/<stamp>/{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (dev builds; flag-gated in release). An always-on startup diagnostics log + backend crash report is also written to a discoverable diagnostics folder (packaged: `%USERPROFILE%\Silverdaw\diagnostics`; dev: `<userData>/diagnostics`) on every launch regardless of that flag, so a failed startup can still be diagnosed.
+- **Cross-layer logging** — every session writes `debug/<stamp>/{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (dev builds; flag-gated in release). An always-on startup diagnostics log + backend crash report is also written to a discoverable diagnostics folder (packaged: `%USERPROFILE%\Silverdaw\Diagnostics`; dev: `<userData>/diagnostics`) on every launch regardless of that flag, so a failed startup can still be diagnosed.
 - **Multiple clients on the bridge** — the WebSocket bridge supports multiple authenticated clients. A future Fine-Clip Editor window can use that capability as a second BrowserWindow talking to the same backend.
 
 ## 11. Open Decisions
