@@ -99,6 +99,7 @@ onBeforeUnmount(gesture.endGesture)
         :min="-15"
         :max="15"
         :step="0.5"
+        :detent="0"
         :assistive-label="band.label + ' gain in decibels'"
         title="Double-click to reset to 0 dB"
         automatable

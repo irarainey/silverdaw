@@ -143,6 +143,30 @@ describe('projectStore', () => {
     expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_METRONOME', { enabled: false })
   })
 
+  it('toggles the clip-editor metronome independently, sending the clip beat grid', () => {
+    const project = useProjectStore()
+    sendMock.mockReturnValue(true)
+
+    project.setClipEditorMetronomeEnabled(true, 120, 0.25)
+    expect(project.clipEditorMetronomeEnabled).toBe(true)
+    // Independent of the main metronome.
+    expect(project.metronomeEnabled).toBe(false)
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_SET_METRONOME', {
+      enabled: true,
+      bpm: 120,
+      beatAnchorSec: 0.25
+    })
+
+    // Re-sending the grid keeps the current enabled state and does not touch the main metronome.
+    sendMock.mockClear()
+    project.pushClipEditorMetronomeGrid(140, 0.5)
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_SET_METRONOME', {
+      enabled: true,
+      bpm: 140,
+      beatAnchorSec: 0.5
+    })
+  })
+
   it('adds tracks and local clips while notifying the bridge about tracks', () => {
     const project = useProjectStore()
 

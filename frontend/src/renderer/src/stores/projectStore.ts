@@ -100,6 +100,7 @@ export const useProjectStore = defineStore('project', {
     barCounterStart: 1,
     mixdownStartBar: 1,
     metronomeEnabled: false,
+    clipEditorMetronomeEnabled: false,
     projectReverb: { size: 0, decay: 0, tone: 0, mix: 0 },
     projectDelay: { noteValue: '1/8', feedback: 0, tone: 0, mix: 0 }
   }),
@@ -304,12 +305,39 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_MIXDOWN_START_BAR', { mixdownStartBar: next })
     },
 
-    /** Toggle the monitoring metronome click. Persisted silently with the project (no undo,
-     *  no dirty) — the backend generates the click in time with the project BPM. */
+    /** Toggle the monitoring metronome click. A per-project setting persisted silently (no undo,
+     *  no dirty) — the backend generates the click in time with the project BPM. On a clean, saved
+     *  project the toggle is flushed to the project file immediately (via the targeted view-state
+     *  write) so it survives closing the project; on a dirty project it rides along with the user's
+     *  next save. */
     setMetronomeEnabled(enabled: boolean): void {
       if (enabled === this.metronomeEnabled) return
       this.metronomeEnabled = enabled
       sendBridge('PROJECT_SET_METRONOME', { enabled })
+      if (!this.isDirty && this.currentFilePath) {
+        void this.saveViewStateAndWait()
+      }
+    },
+
+    /** Toggle the Clip Editor metronome. Independent of the main metronome, persisted with the
+     *  same silent per-project mechanism. `bpm`/`beatAnchorSec` are the clip's own beat grid the
+     *  click aligns to (supplied by the Clip Editor); only the enabled flag persists. */
+    setClipEditorMetronomeEnabled(enabled: boolean, bpm: number, beatAnchorSec: number): void {
+      this.clipEditorMetronomeEnabled = enabled
+      sendBridge('PREVIEW_SET_METRONOME', { enabled, bpm, beatAnchorSec })
+      if (!this.isDirty && this.currentFilePath) {
+        void this.saveViewStateAndWait()
+      }
+    },
+
+    /** Re-send the current enabled state with a fresh beat grid (on preview load or when the
+     *  clip's BPM/anchor changes). Transient — does not persist. */
+    pushClipEditorMetronomeGrid(bpm: number, beatAnchorSec: number): void {
+      sendBridge('PREVIEW_SET_METRONOME', {
+        enabled: this.clipEditorMetronomeEnabled,
+        bpm,
+        beatAnchorSec
+      })
     },
 
     applyProjectStateSnapshot(snapshot: ProjectStatePayload): void {

@@ -23,6 +23,8 @@ defineProps<{
   assistiveLabel: string
   /** Optional native tooltip (e.g. the double-click-to-reset hint). */
   title?: string
+  /** Centre-detent value for bipolar controls (e.g. 0 for a ±dB band); omit for unipolar. */
+  detent?: number
   /** When true, show a small "A" button that re-emits `automate`. */
   automatable?: boolean
   /** When true, a curve owns this value: dim the slider and flag it automated. */
@@ -67,6 +69,7 @@ function num(target: EventTarget | null): number {
       </span>
     </span>
     <input
+      v-slider-detent="detent"
       class="fx-range-input w-full"
       :class="{ 'fx-range-input--disabled opacity-70': automated }"
       type="range"

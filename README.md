@@ -169,7 +169,7 @@ already have from **Preferences ▸ Stems**.
 ## Documentation
 
 - **[Installation guide](INSTALL.md)** — how to install Silverdaw (Microsoft
-  Store, portable zip, or self-signed installer) with the pros and cons of each.
+  Store or portable zip) with the pros and cons of each.
 - **[Developer Guide](docs/developer-guide.md)** — architecture, internals,
   build and run instructions, and contributor workflows.
 

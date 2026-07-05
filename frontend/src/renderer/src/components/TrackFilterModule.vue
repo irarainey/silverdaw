@@ -88,6 +88,7 @@ onBeforeUnmount(gesture.endGesture)
         :min="-1"
         :max="1"
         :step="0.01"
+        :detent="0"
         assistive-label="Filter sweep, low-pass left to high-pass right"
         title="Double-click to recentre (off)"
         automatable

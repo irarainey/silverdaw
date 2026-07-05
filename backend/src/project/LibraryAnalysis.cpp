@@ -50,6 +50,14 @@ std::unique_ptr<juce::DynamicObject> buildClipWarpAppliedPayload(ProjectState& p
 void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectState, BridgeServer& bridge)
 {
     silverdaw::log::info("bpmjob", "seed check for itemId=" + itemId);
+    // App preference (default on): when off, the first clip must not establish
+    // the project tempo. The renderer keeps this in sync on connect / change.
+    if (!projectState.seedProjectTempoFromFirstClip())
+    {
+        silverdaw::log::info("bpmjob",
+                             "seed skipped for itemId=" + itemId + " (seed-from-first-clip preference off)");
+        return;
+    }
     const auto& tree = projectState.getTree();
     // Seeding only makes sense once the analysed item has a stored BPM.
     const auto library = tree.getChildWithName(juce::Identifier{"LIBRARY"});

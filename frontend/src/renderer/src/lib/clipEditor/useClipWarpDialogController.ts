@@ -1,7 +1,8 @@
 // Per-clip warp/pitch settings dialog, opened from the timeline clip context
-// menu. Controls: enable toggle, mode (rhythmic/tonal/complex), and tempo
-// (follow project BPM or pin to a value). Edits are held locally until Save;
-// Cancel/Escape/backdrop discard the draft like the app's other modal editors.
+// menu. Controls: enable toggle, mode (rhythmic/tonal/complex), and playback
+// tempo (follow project BPM, pin to a BPM, or free stretch %). Edits are held
+// locally until Save; Cancel/Escape/backdrop discard the draft like the app's
+// other modal editors. Mirrors the Clip Editor's Warp panel model.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -10,7 +11,13 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { keyPresetsFor, shiftedKey } from '@/lib/pitchKey'
-import { effectiveTempoRatio } from '@/lib/warp'
+import {
+  clampNumber,
+  computeEffectiveRatio,
+  deriveTempoModeFromClip,
+  manualTempoRatio,
+  type ClipTempoMode
+} from '@/lib/clipEditor/tempoMode'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 export type ClipWarpDialogProps = {
@@ -56,8 +63,9 @@ export function useClipWarpDialogController(
 
   const draftEnabled = ref(false)
   const draftMode = ref<ClipWarpMode>('rhythmic')
-  const draftTempoPinned = ref(false)
+  const draftTempoMode = ref<ClipTempoMode>('follow')
   const draftPinnedBpm = ref(120)
+  const draftStretchPercent = ref(100)
   const draftSemitones = ref(0)
   const draftCents = ref(0)
 
@@ -73,28 +81,19 @@ export function useClipWarpDialogController(
   const keyPresets = computed(() => keyPresetsFor(sourceKey.value))
   const currentPitchKey = computed(() => shiftedKey(sourceKey.value, draftSemitones.value, draftCents.value))
 
-  // Tempo source: either "follow project BPM" (no `tempoRatio` on the
-  // clip) or "pin to a specific source BPM" (`tempoRatio` is set).
-  const tempoFollowsProject = computed(() => !draftTempoPinned.value)
-
-  /** When pinned, the BPM the clip plays AT — derived from `tempoRatio`
-   *  and the source BPM via `pinnedBpm = sourceBpm * tempoRatio`. We
-   *  surface BPM rather than ratio in the UI because the user thinks
-   *  in tempos, not in stretch factors. */
-  function followProjectBpm(): void {
-    draftTempoPinned.value = false
-  }
-
-  function pinTempo(): void {
+  function setTempoMode(mode: ClipTempoMode): void {
+    // Modes must match source availability: follow/pin are BPM-relative and need
+    // a source tempo; stretch is the free-ratio fallback for material without one.
     const src = sourceBpm.value
-    const proj = projectBpm.value
-    if (typeof src !== 'number' || src <= 0 || typeof proj !== 'number' || proj <= 0) return
-    // Pin at the current effective ratio (which is `projectBpm/sourceBpm`
-    // if not already pinned) so flipping the toggle on doesn't audibly
-    // change anything until the user moves the slider.
-    draftTempoPinned.value = true
-    if (!Number.isFinite(draftPinnedBpm.value) || draftPinnedBpm.value <= 0) {
-      draftPinnedBpm.value = Math.round(proj * 100) / 100
+    const hasSource = typeof src === 'number' && src > 0
+    if ((mode === 'follow' || mode === 'pin') && !hasSource) return
+    if (mode === 'stretch' && hasSource) return
+    draftTempoMode.value = mode
+    if (mode === 'pin' && (!Number.isFinite(draftPinnedBpm.value) || draftPinnedBpm.value <= 0)) {
+      draftPinnedBpm.value = Math.round((projectBpm.value ?? 120) * 100) / 100
+    }
+    if (mode === 'stretch' && (!Number.isFinite(draftStretchPercent.value) || draftStretchPercent.value <= 0)) {
+      draftStretchPercent.value = 100
     }
   }
 
@@ -107,9 +106,21 @@ export function useClipWarpDialogController(
     draftCents.value = 0
   }
 
+  /** Explicit tempo ratio for a manual (pin/stretch) mode; undefined for follow or an unresolvable pin. */
+  function resolveManualRatio(): number | undefined {
+    return manualTempoRatio(draftTempoMode.value, {
+      pinnedBpm: draftPinnedBpm.value,
+      stretchPercent: draftStretchPercent.value,
+      sourceBpm: sourceBpm.value
+    })
+  }
+
   const effectiveRatio = computed(() =>
-    effectiveTempoRatio({
-      tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : undefined,
+    computeEffectiveRatio({
+      enabled: draftEnabled.value,
+      mode: draftTempoMode.value,
+      pinnedBpm: draftPinnedBpm.value,
+      stretchPercent: draftStretchPercent.value,
       sourceBpm: sourceBpm.value,
       projectBpm: projectBpm.value
     })
@@ -121,29 +132,14 @@ export function useClipWarpDialogController(
     return Math.round(src * effectiveRatio.value * 100) / 100
   })
 
-  function clampNumber(v: number, lo: number, hi: number): number {
-    if (!Number.isFinite(v)) return 0
-    return Math.max(lo, Math.min(hi, v))
-  }
-
-  function tempoRatioFromPinnedBpm(): number | undefined {
-    const src = sourceBpm.value
-    if (typeof src !== 'number' || src <= 0) return undefined
-    const bpm = clampNumber(draftPinnedBpm.value, 20, 300)
-    return Math.max(0.25, Math.min(4, bpm / src))
-  }
-
   function initialiseDraft(): void {
     const c = clip.value ?? libItem.value
     draftEnabled.value = c?.warpEnabled === true
     draftMode.value = c?.warpMode ?? 'rhythmic'
-    draftTempoPinned.value = typeof c?.tempoRatio === 'number' && c.tempoRatio > 0
-    const src = sourceBpm.value
-    if (draftTempoPinned.value && typeof src === 'number' && src > 0 && typeof c?.tempoRatio === 'number') {
-      draftPinnedBpm.value = Math.round(src * c.tempoRatio * 100) / 100
-    } else {
-      draftPinnedBpm.value = Math.round((projectBpm.value ?? 120) * 100) / 100
-    }
+    const derived = deriveTempoModeFromClip(c ?? {}, sourceBpm.value, projectBpm.value ?? 120)
+    draftTempoMode.value = derived.mode
+    draftPinnedBpm.value = derived.pinnedBpm
+    draftStretchPercent.value = derived.stretchPercent
     draftSemitones.value = c?.semitones ?? 0
     draftCents.value = c?.cents ?? 0
   }
@@ -153,7 +149,7 @@ export function useClipWarpDialogController(
       const patch = {
         warpEnabled: draftEnabled.value,
         warpMode: draftMode.value,
-        tempoRatio: draftTempoPinned.value ? tempoRatioFromPinnedBpm() : null
+        tempoRatio: draftTempoMode.value === 'follow' ? null : resolveManualRatio() ?? null
       }
       if (isLinkedTarget.value && libItem.value) {
         // Library item (either opened directly OR opened via a linked
@@ -231,15 +227,15 @@ export function useClipWarpDialogController(
     clipTitle,
     draftEnabled,
     draftMode,
+    draftTempoMode,
     draftPinnedBpm,
+    draftStretchPercent,
     draftSemitones,
     draftCents,
     sourceKey,
     keyPresets,
     currentPitchKey,
-    tempoFollowsProject,
-    followProjectBpm,
-    pinTempo,
+    setTempoMode,
     applyKeyPreset,
     effectiveRatio,
     effectiveBpm,

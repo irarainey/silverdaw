@@ -59,4 +59,12 @@ Your goals:
 Your operating principle:
 **“Document exactly what exists, nothing more.”**
 
+## CHANGELOG entries
+
+- Keep every entry to a **single short, high-level sentence** describing the
+  user-facing change — not the cause, mechanism, or implementation.
+- No trailing explanations, parentheticals, em-dash clauses, or "because…"
+  detail. If a reader needs the why, it belongs in code comments or `docs/`.
+- One bullet per change, grouped under `Added` / `Changed` / `Fixed`.
+
 Use these rules for all future documentation tasks in this workspace.

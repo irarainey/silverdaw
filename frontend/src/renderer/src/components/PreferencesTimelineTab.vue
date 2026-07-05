@@ -3,6 +3,7 @@ import type { SkipButtonTarget } from '@/stores/uiStore'
 
 const followPlayback = defineModel<boolean>('followPlayback', { required: true })
 const matchProjectTempoOnDrop = defineModel<boolean>('matchProjectTempoOnDrop', { required: true })
+const seedProjectTempoFromFirstClip = defineModel<boolean>('seedProjectTempoFromFirstClip', { required: true })
 const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { required: true })
 </script>
 
@@ -21,6 +22,22 @@ const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { req
           centred in the viewport. Turn off if you want the view to
           stay still while playing. Can also be toggled from the
           transport bar.
+        </span>
+      </span>
+    </label>
+    <label class="mt-3 flex cursor-pointer items-start gap-3">
+      <input
+        v-model="seedProjectTempoFromFirstClip"
+        type="checkbox"
+        class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+      >
+      <span class="flex-1">
+        <span class="block font-medium text-zinc-200">Set project tempo from first clip</span>
+        <span class="mt-0.5 block text-zinc-500">
+          When you drop the first clip onto a new project, adopt its
+          detected tempo as the project BPM. Turn off to keep the
+          project at its current tempo; you can always set the BPM
+          yourself from the transport bar.
         </span>
       </span>
     </label>

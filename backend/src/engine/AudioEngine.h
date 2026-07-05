@@ -14,6 +14,7 @@
 #include "MeteringSource.h"
 #include "Metronome.h"
 #include "OffsetSource.h"
+#include "PreviewMetronomeSource.h"
 
 #include <atomic>
 #include <cstdint>
@@ -233,6 +234,11 @@ class AudioEngine
 
     bool setPreviewReversed(bool reversed);
 
+    // Clip Editor metronome: clicks on the clip's own beat grid (source BPM + phase anchor) during
+    // preview playback, independent of the main-timeline metronome.
+    void setPreviewMetronomeEnabled(bool enabled);
+    void setPreviewMetronomeGrid(double bpm, double beatAnchorSec);
+
     /** Apply a turntable brake to the clip-editor preview (record-stop at clip end). */
     bool setPreviewBrake(double brakeSeconds,
                          double curvePower = BrakeSnapshot::kDefaultCurvePower);
@@ -335,6 +341,10 @@ class AudioEngine
     // the first played block. JUCE's BufferingAudioSource won't invalidate an already-cached region
     // in place, so re-setting the source is the only reliable flush when the transport is stopped.
     void rebuildPreviewReadAhead();
+
+    // Push the preview's current in-point + warp ratio to the metronome wrapper so its clicks track
+    // the clip's beat grid through any time-warp.
+    void updatePreviewMetronomeMapping();
 
     void flushAllDirtyRebuildsSync();
 
@@ -452,6 +462,13 @@ class AudioEngine
         juce::File sourceFile;
     };
     Preview preview;
+    // Wraps the preview transport to mix the Clip Editor metronome click; added to topMixer in
+    // place of the bare transport while a preview is loaded. Its enabled state persists across
+    // reloads so toggling the click doesn't require a live preview.
+    std::unique_ptr<PreviewMetronomeSource> previewMetronomeSource;
+    bool previewMetronomeEnabled = false;
+    double previewMetronomeBpm = 0.0;
+    double previewMetronomeAnchorSec = 0.0;
     std::atomic<juce::int64> previewGeneration{0};
 };
 

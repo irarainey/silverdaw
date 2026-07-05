@@ -59,6 +59,9 @@ export interface UiPreferences {
   /** Auto-warp library drops to project BPM when source BPM is usable. */
   matchProjectTempoOnDrop: boolean
 
+  /** Adopt the first dropped clip's detected tempo as the project BPM on a new project. */
+  seedProjectTempoFromFirstClip: boolean
+
   /** Delete a removed library item's generated project files (stems/samples WAVs
    *  and orphaned cover/tag media) instead of only unlinking it. */
   cleanupProjectFiles: boolean

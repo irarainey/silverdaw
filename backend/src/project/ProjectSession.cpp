@@ -91,6 +91,8 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     }
     // Omit the default-off metronome so legacy projects round-trip byte-clean.
     if (projectState.getMetronomeEnabled()) obj->setProperty("metronomeEnabled", true);
+    if (projectState.getClipEditorMetronomeEnabled())
+        obj->setProperty("clipEditorMetronomeEnabled", true);
     // Emit only non-default shared FX so legacy projects stay byte-clean.
     {
         const auto emitUnit = [obj](const char* key, float v) {

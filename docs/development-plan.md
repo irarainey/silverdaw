@@ -300,7 +300,7 @@ mirrors how JUCE, IXWebSocket and Rubber Band are already obtained.
 
 **Packaging (implemented):** A CMake `POST_BUILD` step copies `onnxruntime.dll`
 (and, for the DirectML build, `DirectML.dll`) next to `SilverdawBackend.exe`, and
-`frontend/electron-builder.yml` ships them as `extraResource`, so the installer
+`frontend/electron-builder.yml` ships them as `extraResources`, so the installer
 carries everything required to run — ONNX Runtime and DirectML are MIT-licensed,
 which permits redistribution alongside the app. The ~1.2 GB model weights are kept
 out of the installer and downloaded on first use.
@@ -1712,7 +1712,7 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Rubber Band integration: per-clip real-time warp engine with rhythmic / tonal / complex modes and independent pitch controls
 - [x] BTrack integration: BPM **and beat-position** detection on import (vendored at `backend/third_party/btrack/` with two MSVC-compatibility patches; runs on the existing peaks worker pool; reported BPM is derived from the median beat-interval for tight self-consistency, and a `variableTempo` flag is set when the per-beat tempo samples spread > 5 %)
 - [x] Renderer key detection on import: Web Audio decode + chroma profile + major/minor templates; stored as `LIBRARY > ITEM.key` and shown on library tiles / info dialog with key-coloured badges
-- [x] First-clip BPM seeds project BPM on an otherwise-empty project (no other clips on tracks and no other analysed library items — runs even for variable-tempo sources, with the user free to override later in the Transport bar)
+- [x] First-clip BPM seeds project BPM on an otherwise-empty project (no other clips on tracks and no other analysed library items — runs even for variable-tempo sources, with the user free to override later in the Transport bar); gated by the app-level **Set project tempo from first clip** preference (default on, `ui.seedProjectTempoFromFirstClip`) so it can be turned off to keep the project tempo fixed
 - [x] Library tile shows detected key and BPM next to the duration with an amber `~ BPM` badge for variable-tempo sources; round-trips through `LIBRARY > ITEM[key, bpm, beats, beatAnchorSec, variableTempo, playbackFilePath]` on save/load
 - [x] Beat markers drawn on the clip waveform — synthesised on a source-global beat grid (`beats[0] + N × 60/sourceBPM`) so split / duplicate / trim sub-clips stay in lockstep
 - [x] Drag-snap on a clip uses the same source-global beat grid: the first source beat inside the clip snaps to the nearest project sub-beat (Alt to bypass for ms-precise drag)
@@ -2254,7 +2254,7 @@ robustness without changing the core editing model.
   custom `SilverdawBackendTests` harness); frontend `pnpm install`,
   `pnpm typecheck`, `pnpm lint`, `pnpm test`; Playwright smoke on Windows.
   Cache the JUCE / IXWebSocket FetchContent dirs and pnpm store.
-- **Logging:** the cross-layer `debug/<session>/{main,backend,renderer}.log` infrastructure stays in dev builds and is conditionally enabled in release via a flag. Separately, an **always-on** startup diagnostics log (and a backend crash report) is written to `<userData>/diagnostics` on every launch, independent of that flag, so a failure to start is diagnosable from the logs alone (see Developer Guide → Startup diagnostics). Renderer code routes through `frontend/src/renderer/src/lib/log.ts` (enforced by an ESLint `no-console` rule scoped to `src/renderer/**`); the backend routes through `silverdaw::log` rather than raw `std::cerr` / `std::cout`.
+- **Logging:** the cross-layer `debug/<session>/{main,backend,renderer}.log` infrastructure stays in dev builds and is conditionally enabled in release via a flag. Separately, an **always-on** startup diagnostics log (and a backend crash report) is written to a discoverable diagnostics folder (packaged installs: `%USERPROFILE%\Silverdaw\diagnostics`; dev builds: `<userData>/diagnostics`) on every launch, independent of that flag, so a failure to start is diagnosable from the logs alone (see Developer Guide → Startup diagnostics). Renderer code routes through `frontend/src/renderer/src/lib/log.ts` (enforced by an ESLint `no-console` rule scoped to `src/renderer/**`); the backend routes through `silverdaw::log` rather than raw `std::cerr` / `std::cout`.
 - **Documentation:** the bridge protocol catalogue, ValueTree schema, and project file format live in `README.md` and the shared `bridge-protocol.ts` (the schema source of truth), updated as each phase adds envelopes.
 
 ---
@@ -2290,7 +2290,7 @@ robustness without changing the core editing model.
 - **BS-RoFormer** — optional MIT-licensed 4-stem model (ZFTurbo MUSDB18-HQ) for the "Rhythm Quality Pack" (drums/bass), self-exported and downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
 - **ONNX Runtime (DirectML)** — MIT; runs both stem models on CPU or any DX12 GPU
 - **JUCE is backend only** — no JUCE UI components used; all rendering is Electron + PixiJS
-- **Cross-layer logging** — every session writes `debug/<stamp>/{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (dev builds; flag-gated in release). An always-on startup diagnostics log + backend crash report is also written to `<userData>/diagnostics` on every launch regardless of that flag, so a failed startup can still be diagnosed.
+- **Cross-layer logging** — every session writes `debug/<stamp>/{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (dev builds; flag-gated in release). An always-on startup diagnostics log + backend crash report is also written to a discoverable diagnostics folder (packaged: `%USERPROFILE%\Silverdaw\diagnostics`; dev: `<userData>/diagnostics`) on every launch regardless of that flag, so a failed startup can still be diagnosed.
 - **Multiple clients on the bridge** — the WebSocket bridge supports multiple authenticated clients. A future Fine-Clip Editor window can use that capability as a second BrowserWindow talking to the same backend.
 
 ## 11. Open Decisions

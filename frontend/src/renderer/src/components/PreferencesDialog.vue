@@ -35,6 +35,7 @@ const {
   followPlayback,
   showLibraryTileImages,
   matchProjectTempoOnDrop,
+  seedProjectTempoFromFirstClip,
   cleanupProjectFiles,
   skipButtonTarget,
   waveformDisplayMode,
@@ -189,6 +190,7 @@ function onSave(): void {
               v-else-if="activeTab === 'timeline'"
               v-model:follow-playback="followPlayback"
               v-model:match-project-tempo-on-drop="matchProjectTempoOnDrop"
+              v-model:seed-project-tempo-from-first-clip="seedProjectTempoFromFirstClip"
               v-model:skip-button-target="skipButtonTarget"
             />
             <PreferencesEffectsTab

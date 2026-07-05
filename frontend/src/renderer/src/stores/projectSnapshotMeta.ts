@@ -126,6 +126,7 @@ export function applyProjectSettings(target: SnapshotTarget, snapshot: ProjectSt
       : 1
   // Absent/false means off; the backend omits the default-off metronome.
   target.metronomeEnabled = snapshot.metronomeEnabled === true
+  target.clipEditorMetronomeEnabled = snapshot.clipEditorMetronomeEnabled === true
 }
 
 /** Mutate project FX (reverb/delay) objects in place so refreshes do not end drags. */

@@ -23,4 +23,7 @@ void handleProjectSetBarCounterStart(const juce::var& payload, ProjectState& pro
 void handleProjectSetMixdownStartBar(const juce::var& payload, ProjectState& projectState);
 void handleProjectSetMetronome(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
 
+// App-level preference (default on): whether the first clip seeds the project tempo.
+void handleSetSeedProjectTempoPref(const juce::var& payload, ProjectState& projectState);
+
 } // namespace silverdaw

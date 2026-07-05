@@ -101,7 +101,7 @@ void testProjectFileSaveLoadAndViewState()
     requireEqual(loaded.getViewSelectedTrack(), "t1", "selected track should persist through save/load");
     require(loaded.getViewFxPanelOpen(), "fx-panel-open flag should persist through save/load");
 
-    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, -10.0, 240.0, 99.0, "t1", true);
+    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, -10.0, 240.0, 99.0, "t1", true, true, true);
     require(viewStateResult.wasOk(), "saveViewState should update existing project file");
     silverdaw::ProjectState reloaded;
     require(silverdaw::ProjectFile::load(file, reloaded).ok, "reloading after view-state save should work");
@@ -110,6 +110,18 @@ void testProjectFileSaveLoadAndViewState()
     requireNear(reloaded.getPlayheadMs(), 99.0, 0.0001, "saveViewState should update playhead");
     requireEqual(reloaded.getViewSelectedTrack(), "t1", "saveViewState should persist selected track");
     require(reloaded.getViewFxPanelOpen(), "saveViewState should persist fx-panel-open flag");
+    require(reloaded.getMetronomeEnabled(), "saveViewState should persist the metronome toggle (on)");
+    require(reloaded.getClipEditorMetronomeEnabled(),
+            "saveViewState should persist the clip-editor metronome toggle (on)");
+
+    // Turning the metronomes off via the targeted view-state write must round-trip as off.
+    const auto viewStateOff = silverdaw::ProjectFile::saveViewState(file, 0.0, 240.0, 99.0, "t1", true, false, false);
+    require(viewStateOff.wasOk(), "saveViewState (metronome off) should update the project file");
+    silverdaw::ProjectState reloadedOff;
+    require(silverdaw::ProjectFile::load(file, reloadedOff).ok, "reloading after metronome-off save should work");
+    require(! reloadedOff.getMetronomeEnabled(), "saveViewState should persist the metronome toggle (off)");
+    require(! reloadedOff.getClipEditorMetronomeEnabled(),
+            "saveViewState should persist the clip-editor metronome toggle (off)");
 
     const auto missing = dir.getChildFile("missing.silverdaw");
     silverdaw::ProjectState untouched;

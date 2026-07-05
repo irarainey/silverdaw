@@ -18,6 +18,8 @@ export interface UiPrefs {
   showLibraryTileImages: boolean
   /** Auto-warp library drops to project BPM when source BPM is usable. */
   matchProjectTempoOnDrop: boolean
+  /** Seed the project tempo from the first clip dropped on a new project. */
+  seedProjectTempoFromFirstClip: boolean
   /** Delete a removed library item's generated project files (stems/samples WAVs
    *  and orphaned cover/tag media). Off by default — removal only unlinks. */
   cleanupProjectFiles: boolean
@@ -151,12 +153,23 @@ export const AUTOSAVE_DEFAULT_SECONDS = 30
 
 // `app.getPath` is only safe after `app.whenReady`, so defaults are lazy.
 export function getDefaultDebugLogDirectory(): string {
-  // Packaged installs run from a read-only WindowsApps (MSIX) directory, so the
-  // default log location must be a per-user writable path (userData). Dev builds
-  // keep logs in the repo tree for convenience.
+  // Packaged installs run under MSIX: writes to %APPDATA% (userData) are
+  // silently redirected into the package's hidden LocalCache container, so a
+  // userData path is shown but never findable. The app has runFullTrust, so the
+  // user-profile root is real, unvirtualised, and easy to navigate to — default
+  // logs to a Silverdaw folder there. Dev builds keep logs in the repo tree.
   return app.isPackaged
-    ? join(app.getPath('userData'), 'debug')
+    ? join(app.getPath('home'), 'Silverdaw', 'logs')
     : join(pathResolve(__dirname, '..', '..', '..'), 'debug')
+}
+
+// Always-on startup diagnostics location. Shares the discoverable user-profile
+// Silverdaw folder for packaged installs (see getDefaultDebugLogDirectory for
+// the MSIX redirection rationale); dev builds keep them under userData.
+export function getDiagnosticsDirectory(): string {
+  return app.isPackaged
+    ? join(app.getPath('home'), 'Silverdaw', 'diagnostics')
+    : join(app.getPath('userData'), 'diagnostics')
 }
 
 export function buildDefaultPrefs(): Preferences {
@@ -178,6 +191,7 @@ export function buildDefaultPrefs(): Preferences {
       followPlayback: true,
       showLibraryTileImages: true,
       matchProjectTempoOnDrop: true,
+      seedProjectTempoFromFirstClip: true,
       cleanupProjectFiles: false,
       defaultProjectSampleRate: 44100,
       skipButtonTarget: 'timelineEnds',
@@ -400,6 +414,7 @@ export function sanitiseUiPrefs(partial: unknown, base: UiPrefs): UiPrefs {
     followPlayback: boolOr(p.followPlayback, base.followPlayback),
     showLibraryTileImages: boolOr(p.showLibraryTileImages, base.showLibraryTileImages),
     matchProjectTempoOnDrop: boolOr(p.matchProjectTempoOnDrop, base.matchProjectTempoOnDrop),
+    seedProjectTempoFromFirstClip: boolOr(p.seedProjectTempoFromFirstClip, base.seedProjectTempoFromFirstClip),
     cleanupProjectFiles: boolOr(p.cleanupProjectFiles, base.cleanupProjectFiles),
     defaultProjectSampleRate:
       typeof p.defaultProjectSampleRate === 'number' &&

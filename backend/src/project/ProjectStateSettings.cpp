@@ -256,4 +256,26 @@ void ProjectState::setMetronomeEnabled(bool enabled)
     }
 }
 
+bool ProjectState::getClipEditorMetronomeEnabled() const
+{
+    return static_cast<bool>(root.getProperty(kClipEditorMetronomeEnabled, false));
+}
+
+void ProjectState::setClipEditorMetronomeEnabled(bool enabled)
+{
+    // Independent of the main metronome, same silent semantics (never dirty, never undoable;
+    // default-off stored as absent).
+    const SuppressDirtyScope suppress(*this);
+    if (! enabled)
+    {
+        root.removeProperty(kClipEditorMetronomeEnabled, nullptr);
+        if (cleanSnapshot.isValid()) cleanSnapshot.removeProperty(kClipEditorMetronomeEnabled, nullptr);
+    }
+    else
+    {
+        root.setProperty(kClipEditorMetronomeEnabled, true, nullptr);
+        if (cleanSnapshot.isValid()) cleanSnapshot.setProperty(kClipEditorMetronomeEnabled, true, nullptr);
+    }
+}
+
 } // namespace silverdaw

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useClipWarpDialogController, type ClipWarpDialogProps } from '@/lib/clipEditor/useClipWarpDialogController'
+import { useInlineNumberEdit } from '@/lib/useInlineNumberEdit'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = withDefaults(defineProps<ClipWarpDialogProps>(), { clipId: null, itemId: null, panel: 'tempo' })
@@ -18,15 +19,15 @@ const {
   clipTitle,
   draftEnabled,
   draftMode,
+  draftTempoMode,
   draftPinnedBpm,
+  draftStretchPercent,
   draftSemitones,
   draftCents,
   sourceKey,
   keyPresets,
   currentPitchKey,
-  tempoFollowsProject,
-  followProjectBpm,
-  pinTempo,
+  setTempoMode,
   applyKeyPreset,
   effectiveRatio,
   effectiveBpm,
@@ -35,6 +36,34 @@ const {
   cancel,
   onKeydown
 } = useClipWarpDialogController(props, emit, dialogEl)
+
+// Double-click the readouts to type an exact value; Enter commits, Escape cancels.
+const {
+  editing: semitonesEditing,
+  text: semitonesText,
+  inputRef: semitonesInputRef,
+  begin: beginSemitonesEdit,
+  commit: commitSemitonesEdit,
+  onKeydown: onSemitonesKeydown
+} = useInlineNumberEdit({
+  get: () => draftSemitones.value,
+  set: (v) => { draftSemitones.value = v },
+  min: -12,
+  max: 12
+})
+const {
+  editing: centsEditing,
+  text: centsText,
+  inputRef: centsInputRef,
+  begin: beginCentsEdit,
+  commit: commitCentsEdit,
+  onKeydown: onCentsKeydown
+} = useInlineNumberEdit({
+  get: () => draftCents.value,
+  set: (v) => { draftCents.value = v },
+  min: -100,
+  max: 100
+})
 </script>
 
 <template>
@@ -146,28 +175,36 @@ const {
           <fieldset
             v-if="panel === 'tempo'"
             class="flex flex-col gap-1"
-            :disabled="!draftEnabled || !sourceBpm"
-            :class="!draftEnabled || !sourceBpm ? 'opacity-50' : ''"
+            :disabled="!draftEnabled"
+            :class="!draftEnabled ? 'opacity-50' : ''"
           >
             <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
-              Tempo
+              Playback tempo
             </legend>
-            <label class="flex items-center gap-2">
+            <label
+              class="flex items-center gap-2"
+              :class="!sourceBpm ? 'opacity-50' : ''"
+            >
               <input
                 type="radio"
-                :checked="tempoFollowsProject"
-                @change="followProjectBpm()"
+                :checked="draftTempoMode === 'follow'"
+                :disabled="!sourceBpm"
+                @change="setTempoMode('follow')"
               >
               <span class="text-zinc-200">Follow project BPM</span>
               <span class="ml-auto text-[10px] text-zinc-500">
                 ({{ projectBpm.toFixed(2) }})
               </span>
             </label>
-            <label class="flex items-center gap-2">
+            <label
+              class="flex items-center gap-2"
+              :class="!sourceBpm ? 'opacity-50' : ''"
+            >
               <input
                 type="radio"
-                :checked="!tempoFollowsProject"
-                @change="pinTempo()"
+                :checked="draftTempoMode === 'pin'"
+                :disabled="!sourceBpm"
+                @change="setTempoMode('pin')"
               >
               <span class="text-zinc-200">Pin to</span>
               <input
@@ -176,17 +213,39 @@ const {
                 min="20"
                 max="300"
                 step="0.01"
-                :disabled="tempoFollowsProject"
-                class="w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+                :disabled="draftTempoMode !== 'pin'"
+                class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
               >
               <span class="text-[10px] text-zinc-500">BPM</span>
             </label>
-            <div
-              v-if="!sourceBpm"
-              class="mt-1 text-[10px] text-amber-400"
+            <label
+              class="flex items-center gap-2"
+              :class="sourceBpm ? 'opacity-50' : ''"
             >
-              Source BPM not detected yet — pinning unavailable until analysis completes.
-            </div>
+              <input
+                type="radio"
+                :checked="draftTempoMode === 'stretch'"
+                :disabled="!!sourceBpm"
+                @change="setTempoMode('stretch')"
+              >
+              <span class="text-zinc-200">Stretch</span>
+              <input
+                v-model.number="draftStretchPercent"
+                type="number"
+                min="25"
+                max="400"
+                step="1"
+                :disabled="draftTempoMode !== 'stretch'"
+                class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+              >
+              <span class="text-[10px] text-zinc-500">%</span>
+            </label>
+            <p
+              v-if="!sourceBpm"
+              class="mt-1 text-[10px] text-zinc-500"
+            >
+              No source tempo — use Stretch to fit non-beat material like vocals.
+            </p>
           </fieldset>
 
           <!-- Pitch shift -->
@@ -198,13 +257,32 @@ const {
               <span class="w-16 text-zinc-400">Semitones</span>
               <input
                 v-model.number="draftSemitones"
+                v-slider-detent="{ value: 0, reset: true }"
                 type="range"
                 min="-12"
                 max="12"
                 step="1"
-                class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
+                class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700 outline-none focus:outline-none focus-visible:outline-none"
               >
-              <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
+              <input
+                v-if="semitonesEditing"
+                ref="semitonesInputRef"
+                v-model="semitonesText"
+                type="text"
+                inputmode="numeric"
+                spellcheck="false"
+                autocomplete="off"
+                aria-label="Semitones"
+                class="w-10 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[11px] tabular-nums text-zinc-100 outline-none focus:border-sky-500"
+                @keydown="onSemitonesKeydown"
+                @blur="commitSemitonesEdit"
+              >
+              <span
+                v-else
+                class="w-10 cursor-text text-right font-mono text-[11px] tabular-nums text-zinc-200"
+                title="Double-click to type a value"
+                @dblclick="beginSemitonesEdit"
+              >
                 {{ draftSemitones > 0 ? '+' : '' }}{{ draftSemitones }}
               </span>
             </label>
@@ -212,13 +290,32 @@ const {
               <span class="w-16 text-zinc-400">Cents</span>
               <input
                 v-model.number="draftCents"
+                v-slider-detent="{ value: 0, reset: true }"
                 type="range"
                 min="-100"
                 max="100"
                 step="1"
-                class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
+                class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700 outline-none focus:outline-none focus-visible:outline-none"
               >
-              <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
+              <input
+                v-if="centsEditing"
+                ref="centsInputRef"
+                v-model="centsText"
+                type="text"
+                inputmode="numeric"
+                spellcheck="false"
+                autocomplete="off"
+                aria-label="Cents"
+                class="w-10 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[11px] tabular-nums text-zinc-100 outline-none focus:border-sky-500"
+                @keydown="onCentsKeydown"
+                @blur="commitCentsEdit"
+              >
+              <span
+                v-else
+                class="w-10 cursor-text text-right font-mono text-[11px] tabular-nums text-zinc-200"
+                title="Double-click to type a value"
+                @dblclick="beginCentsEdit"
+              >
                 {{ draftCents > 0 ? '+' : '' }}{{ draftCents }}
               </span>
             </label>
@@ -325,5 +422,16 @@ input[type='range']::-moz-range-track {
   height: 3px;
   border-radius: 9999px;
   background: #3f3f46;
+}
+
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.no-spinner {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 </style>

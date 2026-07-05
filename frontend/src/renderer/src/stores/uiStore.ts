@@ -1,6 +1,7 @@
 // UI/layout preferences persisted via main-process `preferences.json`.
 
 import { defineStore } from 'pinia'
+import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import type { SkipButtonTarget, WaveformDisplayMode } from '@shared/types'
 import type { AutomationParamId } from '@shared/bridge-protocol'
@@ -25,6 +26,8 @@ interface UiState {
   followPlayback: boolean
   showLibraryTileImages: boolean
   matchProjectTempoOnDrop: boolean
+  /** App preference (default on): dropping the first clip on a new project seeds the project tempo. */
+  seedProjectTempoFromFirstClip: boolean
   /** Delete a removed library item's generated project files instead of only unlinking it. */
   cleanupProjectFiles: boolean
   /** Application default for new projects; existing projects keep their stored rate. */
@@ -64,6 +67,7 @@ const DEFAULTS = {
   followPlayback: true,
   showLibraryTileImages: true,
   matchProjectTempoOnDrop: true,
+  seedProjectTempoFromFirstClip: true,
   cleanupProjectFiles: false,
   defaultProjectSampleRate: 44100,
   skipButtonTarget: 'timelineEnds',
@@ -102,6 +106,7 @@ let pendingPush: {
   followPlayback?: boolean
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
+  seedProjectTempoFromFirstClip?: boolean
   cleanupProjectFiles?: boolean
   skipButtonTarget?: SkipButtonTarget
   waveformDisplayMode?: WaveformDisplayMode
@@ -114,6 +119,7 @@ interface UiPushPayload {
   followPlayback?: boolean
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
+  seedProjectTempoFromFirstClip?: boolean
   cleanupProjectFiles?: boolean
   defaultProjectSampleRate?: number
   skipButtonTarget?: SkipButtonTarget
@@ -140,6 +146,7 @@ export const useUiStore = defineStore('ui', {
     followPlayback: DEFAULTS.followPlayback,
     showLibraryTileImages: DEFAULTS.showLibraryTileImages,
     matchProjectTempoOnDrop: DEFAULTS.matchProjectTempoOnDrop,
+    seedProjectTempoFromFirstClip: DEFAULTS.seedProjectTempoFromFirstClip,
     cleanupProjectFiles: DEFAULTS.cleanupProjectFiles,
     defaultProjectSampleRate: DEFAULTS.defaultProjectSampleRate,
     skipButtonTarget: DEFAULTS.skipButtonTarget,
@@ -175,6 +182,10 @@ export const useUiStore = defineStore('ui', {
           typeof saved.matchProjectTempoOnDrop === 'boolean'
             ? saved.matchProjectTempoOnDrop
             : DEFAULTS.matchProjectTempoOnDrop
+        this.seedProjectTempoFromFirstClip =
+          typeof saved.seedProjectTempoFromFirstClip === 'boolean'
+            ? saved.seedProjectTempoFromFirstClip
+            : DEFAULTS.seedProjectTempoFromFirstClip
         this.cleanupProjectFiles =
           typeof saved.cleanupProjectFiles === 'boolean'
             ? saved.cleanupProjectFiles
@@ -196,6 +207,9 @@ export const useUiStore = defineStore('ui', {
         log.warn('ui', `hydrate failed, using defaults: ${String(err)}`)
       } finally {
         this.hydrated = true
+        // If the bridge is already connected, push the just-loaded preference so the
+        // backend has the persisted value (the READY handler covers the other ordering).
+        this.syncSeedTempoPrefToBackend()
       }
     },
 
@@ -239,6 +253,20 @@ export const useUiStore = defineStore('ui', {
       if (this.matchProjectTempoOnDrop === value) return
       this.matchProjectTempoOnDrop = value
       if (this.hydrated) schedulePush({ matchProjectTempoOnDrop: value })
+    },
+
+    setSeedProjectTempoFromFirstClip(value: boolean): void {
+      if (this.seedProjectTempoFromFirstClip === value) return
+      this.seedProjectTempoFromFirstClip = value
+      if (this.hydrated) {
+        schedulePush({ seedProjectTempoFromFirstClip: value })
+        this.syncSeedTempoPrefToBackend()
+      }
+    },
+
+    /** Push the first-clip tempo-seed preference to the backend (on change and on every reconnect). */
+    syncSeedTempoPrefToBackend(): void {
+      sendBridge('PROJECT_SET_SEED_TEMPO_PREF', { enabled: this.seedProjectTempoFromFirstClip })
     },
 
     setCleanupProjectFiles(value: boolean): void {

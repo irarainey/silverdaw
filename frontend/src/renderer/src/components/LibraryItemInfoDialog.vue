@@ -142,6 +142,11 @@ const {
                 kind="sample"
                 show-label
               />
+              <LibraryTypeBadge
+                v-else-if="item?.kind === 'source'"
+                kind="source"
+                show-label
+              />
             </div>
 
             <dl class="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">

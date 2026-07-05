@@ -101,7 +101,9 @@ describe('createTracksFromStems (timeline target)', () => {
     expect(addTrack).toHaveBeenCalledTimes(2)
     expect(setTrackName).toHaveBeenNthCalledWith(1, 'track-new', 'Vocals — Song')
     expect(setTrackName).toHaveBeenNthCalledWith(2, 'track-new', 'Drums — Song')
-    expect(addClipFromLibrary).toHaveBeenCalledWith('track-new', { id: 'item-1' }, 4000)
+    expect(addClipFromLibrary).toHaveBeenCalledWith('track-new', { id: 'item-1' }, 4000, {
+      suppressWarpSkipNotice: true
+    })
     expect(pushInfo).toHaveBeenCalledWith('Added 2 stem tracks from Song')
   })
 

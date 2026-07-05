@@ -6,6 +6,7 @@
 import { computed } from 'vue'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { keyPresetsFor, shiftedKey } from '@/lib/pitchKey'
+import { useInlineNumberEdit } from '@/lib/useInlineNumberEdit'
 import type { ClipEditorWarpDraft } from '@/lib/clipEditor/useClipEditorWarpDraft'
 
 const props = defineProps<{
@@ -18,6 +19,34 @@ const props = defineProps<{
 const draftSemitones = props.draft.draftSemitones
 const draftCents = props.draft.draftCents
 const applyKeyPreset = props.draft.applyKeyPreset
+
+// Double-click the readouts to type an exact value; Enter commits, Escape cancels.
+const {
+  editing: semitonesEditing,
+  text: semitonesText,
+  inputRef: semitonesInputRef,
+  begin: beginSemitonesEdit,
+  commit: commitSemitonesEdit,
+  onKeydown: onSemitonesKeydown
+} = useInlineNumberEdit({
+  get: () => draftSemitones.value,
+  set: (v) => { draftSemitones.value = v },
+  min: -12,
+  max: 12
+})
+const {
+  editing: centsEditing,
+  text: centsText,
+  inputRef: centsInputRef,
+  begin: beginCentsEdit,
+  commit: commitCentsEdit,
+  onKeydown: onCentsKeydown
+} = useInlineNumberEdit({
+  get: () => draftCents.value,
+  set: (v) => { draftCents.value = v },
+  min: -100,
+  max: 100
+})
 
 const keyPresets = computed(() => keyPresetsFor(props.sourceKey))
 const currentPitchKey = computed(() =>
@@ -32,13 +61,32 @@ const currentPitchKey = computed(() =>
         <span class="w-16 text-zinc-400">Semitones</span>
         <input
           v-model.number="draftSemitones"
+          v-slider-detent="{ value: 0, reset: true }"
           type="range"
           min="-12"
           max="12"
           step="1"
           class="pitch-range-input h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
         >
-        <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
+        <input
+          v-if="semitonesEditing"
+          ref="semitonesInputRef"
+          v-model="semitonesText"
+          type="text"
+          inputmode="numeric"
+          spellcheck="false"
+          autocomplete="off"
+          aria-label="Semitones"
+          class="w-10 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[11px] tabular-nums text-zinc-100 outline-none focus:border-sky-500"
+          @keydown="onSemitonesKeydown"
+          @blur="commitSemitonesEdit"
+        >
+        <span
+          v-else
+          class="w-10 cursor-text text-right font-mono text-[11px] tabular-nums text-zinc-200"
+          title="Double-click to type a value"
+          @dblclick="beginSemitonesEdit"
+        >
           {{ draftSemitones > 0 ? '+' : '' }}{{ draftSemitones }}
         </span>
       </label>
@@ -46,13 +94,32 @@ const currentPitchKey = computed(() =>
         <span class="w-16 text-zinc-400">Cents</span>
         <input
           v-model.number="draftCents"
+          v-slider-detent="{ value: 0, reset: true }"
           type="range"
           min="-100"
           max="100"
           step="1"
           class="pitch-range-input h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
         >
-        <span class="w-10 text-right font-mono text-[11px] tabular-nums text-zinc-200">
+        <input
+          v-if="centsEditing"
+          ref="centsInputRef"
+          v-model="centsText"
+          type="text"
+          inputmode="numeric"
+          spellcheck="false"
+          autocomplete="off"
+          aria-label="Cents"
+          class="w-10 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[11px] tabular-nums text-zinc-100 outline-none focus:border-sky-500"
+          @keydown="onCentsKeydown"
+          @blur="commitCentsEdit"
+        >
+        <span
+          v-else
+          class="w-10 cursor-text text-right font-mono text-[11px] tabular-nums text-zinc-200"
+          title="Double-click to type a value"
+          @dblclick="beginCentsEdit"
+        >
           {{ draftCents > 0 ? '+' : '' }}{{ draftCents }}
         </span>
       </label>
@@ -104,6 +171,16 @@ const currentPitchKey = computed(() =>
 </template>
 
 <style scoped>
+.pitch-range-input {
+  outline: none;
+}
+
+.pitch-range-input:focus,
+.pitch-range-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .pitch-range-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;

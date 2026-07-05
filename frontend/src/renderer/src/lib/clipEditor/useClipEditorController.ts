@@ -72,13 +72,14 @@ export function useClipEditorController(
   const {
     draftTempoEnabled,
     draftMode,
-    draftTempoPinned,
+    draftTempoMode,
     draftPinnedBpm,
+    draftStretchPercent,
     draftSemitones,
     draftCents,
     draftTempoWarpActive,
     draftProcessorEnabled,
-    tempoRatioFromPinnedBpm,
+    resolveManualRatio,
     previewTempoRatio,
     initialise: initialiseWarpDraft
   } = warpDraft
@@ -283,8 +284,9 @@ export function useClipEditorController(
     cropViewDurationMs: () => cropViewDurationMs.value,
     draftTempoEnabled: () => draftTempoEnabled.value,
     draftMode: () => draftMode.value,
-    draftTempoPinned: () => draftTempoPinned.value,
+    draftTempoMode: () => draftTempoMode.value,
     draftPinnedBpm: () => draftPinnedBpm.value,
+    draftStretchPercent: () => draftStretchPercent.value,
     draftSemitones: () => draftSemitones.value,
     draftCents: () => draftCents.value,
     hasVolumeShapeChanged: () => hasVolumeShapeChanged.value,
@@ -408,7 +410,7 @@ export function useClipEditorController(
   )
 
   watch(
-    [draftTempoEnabled, draftMode, draftTempoPinned, draftPinnedBpm, draftSemitones, draftCents],
+    [draftTempoEnabled, draftMode, draftTempoMode, draftPinnedBpm, draftStretchPercent, draftSemitones, draftCents],
     () => {
       scheduleDraftPreviewWarp()
     }
@@ -755,6 +757,32 @@ export function useClipEditorController(
       redraw: () => drawWaveform(),
       reloadPreview: () => loadPreviewForView()
     })
+  // ─── Clip Editor metronome ────────────────────────────────────────────────
+  // Clicks on the clip's own beat grid (source BPM + phase anchor) during preview playback,
+  // independent of the main-timeline metronome. Its enabled flag persists silently with the
+  // project; the grid values are re-sent whenever the clip's tempo/anchor changes or the preview
+  // (re)loads so the backend always clicks on the visible beats.
+  const clipMetronomeEnabled = computed(() => project.clipEditorMetronomeEnabled)
+  const currentGridBpm = (): number => sourceItem.value?.bpm ?? 0
+  const currentGridAnchorSec = (): number =>
+    sourceItem.value?.beatAnchorSec ?? sourceItem.value?.beats?.[0] ?? 0
+
+  function onToggleClipMetronome(): void {
+    project.setClipEditorMetronomeEnabled(
+      !project.clipEditorMetronomeEnabled,
+      currentGridBpm(),
+      currentGridAnchorSec()
+    )
+  }
+
+  // Keep the backend's click grid in sync with the clip's live tempo/anchor (and push once on
+  // open so the backend has the grid + persisted enabled state before the first preview play).
+  watch(
+    [() => sourceItem.value?.bpm, () => sourceItem.value?.beatAnchorSec, () => sourceItem.value?.beats?.[0]],
+    () => project.pushClipEditorMetronomeGrid(currentGridBpm(), currentGridAnchorSec()),
+    { immediate: true }
+  )
+
   const { onSaveChanges, onSaveAsNew } = useClipEditorSave({
     project,
     library,
@@ -779,8 +807,8 @@ export function useClipEditorController(
     draftCents: () => draftCents.value,
     draftTempoEnabled: () => draftTempoEnabled.value,
     draftMode: () => draftMode.value,
-    draftTempoPinned: () => draftTempoPinned.value,
-    tempoRatioFromPinnedBpm: () => tempoRatioFromPinnedBpm(),
+    draftTempoMode: () => draftTempoMode.value,
+    resolveManualRatio: () => resolveManualRatio(),
     volumeShapeCommittedPoints: () => volumeShapeCommittedPoints(),
     reverseCommitted: () => reverseDraft.committed(),
     brakeCommitted: () => djEffectDraft.committedBrake(),
@@ -821,6 +849,8 @@ export function useClipEditorController(
     onTogglePlay,
     onSkipToEnd,
     onToggleLoop,
+    clipMetronomeEnabled,
+    onToggleClipMetronome,
     volumeEditActive,
     canResetVolumeShape,
     onResetVolumeShape,

@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import './assets/style.css'
 import { useAppStore } from './stores/appStore'
+import { vSliderDetent } from './directives/vSliderDetent'
 import { log, setLogEnabled } from './lib/log'
 
 // Surface otherwise-invisible failures. Exceptions thrown inside rAF callbacks
@@ -40,6 +41,9 @@ async function bootstrap(): Promise<void> {
   const app = createApp(App)
   const pinia = createPinia()
   app.use(pinia)
+
+  // Global centre-detent + double-click-reset behaviour for range sliders.
+  app.directive('slider-detent', vSliderDetent)
 
   // Capture uncaught errors from the first frame onward.
   installGlobalErrorLogging()

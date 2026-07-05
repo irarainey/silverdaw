@@ -203,34 +203,24 @@ int runBackend(int argc, char* argv[])
                              + " cwd=" + juce::File::getCurrentWorkingDirectory().getFullPathName());
 
     // Required even for headless JUCE apps.
-    const juce::ScopedJuceInitialiser_GUI juceInit;
-
-    // Fast, device-independent graph setup so the bridge can start and the UI can appear
-    // before the (possibly slow) audio device open. The device is opened AFTER the bridge is
-    // serving (see below), so a slow cold-start endpoint no longer blocks connectivity.
-    silverdaw::crash::setPhase("audio-graph-init");
-    silverdaw::AudioEngine engine;
-    engine.initialiseGraph();
-    const auto preferredAudioTypeName =
-        juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_DEVICE_TYPE", {});
-    const auto preferredAudioDeviceName =
-        juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_DEVICE_NAME", {});
-    // Persisted per-device keep-awake for the preferred output, resolved by the launcher. Enable it
-    // BEFORE the device opens so the keep-alive dither + wake burst run from the first audio block
-    // and rouse a cold sleep-prone DAC at stream start (the renderer re-pushes it on connect).
-    const bool preferredKeepAwake =
-        juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_KEEP_AWAKE", {}) == "1";
-    if (preferredKeepAwake)
+    const double tStartupBegin = juce::Time::getMillisecondCounterHiRes();
+    const auto elapsedSinceStart = [tStartupBegin]() -> juce::String
     {
-        engine.setKeepAwakeEnabled(true);
-    }
-    silverdaw::log::info("audio",
-                         "preferred output: type='" + preferredAudioTypeName + "' name='"
-                             + preferredAudioDeviceName + "'"
-                             + (preferredAudioTypeName.isEmpty() && preferredAudioDeviceName.isEmpty()
-                                    ? " (system default)"
-                                    : "")
-                             + (preferredKeepAwake ? " [keep-awake]" : ""));
+        return juce::String(juce::roundToInt(juce::Time::getMillisecondCounterHiRes() - tStartupBegin)) + " ms";
+    };
+    const juce::ScopedJuceInitialiser_GUI juceInit;
+    silverdaw::log::info("perf", "juce-gui-init done @ " + elapsedSinceStart());
+
+    // Construct the engine and its bridge dependencies (all cheap, device-independent) so the
+    // bridge can start listening BEFORE the potentially slow, cold-paged graph/format setup and
+    // audio-device open. On a first cold launch of the packaged app those steps stall for seconds
+    // while Windows pages in and virus-scans freshly-installed binaries; starting the bridge first
+    // lets the renderer connect and paint immediately instead of waiting behind that stall. Engine
+    // mutations arrive via callAsync and are not dispatched until runDispatchLoop() below, which
+    // runs after initialiseGraph()/openAudioDevice() complete, so this ordering is race-free.
+    silverdaw::crash::setPhase("audio-engine-construct");
+    silverdaw::AudioEngine engine;
+    silverdaw::log::info("perf", "engine-constructed @ " + elapsedSinceStart());
 
     silverdaw::ProjectState projectState;
     silverdaw::ProjectSession session;
@@ -301,6 +291,34 @@ int runBackend(int argc, char* argv[])
         silverdaw::log::error("bridge", "failed to start; exiting");
         return 1;
     }
+    silverdaw::log::info("perf", "bridge-listening @ " + elapsedSinceStart());
+
+    // Device-independent graph setup now that the bridge is already serving. This registers audio
+    // formats and wires the source graph; it needs no open device.
+    silverdaw::crash::setPhase("audio-graph-init");
+    engine.initialiseGraph();
+    silverdaw::log::info("perf", "graph-initialised @ " + elapsedSinceStart());
+
+    const auto preferredAudioTypeName =
+        juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_DEVICE_TYPE", {});
+    const auto preferredAudioDeviceName =
+        juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_DEVICE_NAME", {});
+    // Persisted per-device keep-awake for the preferred output, resolved by the launcher. Enable it
+    // BEFORE the device opens so the keep-alive dither + wake burst run from the first audio block
+    // and rouse a cold sleep-prone DAC at stream start (the renderer re-pushes it on connect).
+    const bool preferredKeepAwake =
+        juce::SystemStats::getEnvironmentVariable("SILVERDAW_OUTPUT_KEEP_AWAKE", {}) == "1";
+    if (preferredKeepAwake)
+    {
+        engine.setKeepAwakeEnabled(true);
+    }
+    silverdaw::log::info("audio",
+                         "preferred output: type='" + preferredAudioTypeName + "' name='"
+                             + preferredAudioDeviceName + "'"
+                             + (preferredAudioTypeName.isEmpty() && preferredAudioDeviceName.isEmpty()
+                                    ? " (system default)"
+                                    : "")
+                             + (preferredKeepAwake ? " [keep-awake]" : ""));
 
     // Dirty broadcasts mirror message-thread ValueTree mutations to renderer chrome.
     projectState.setDirtyChangedCallback(
@@ -349,6 +367,7 @@ int runBackend(int argc, char* argv[])
     std::signal(SIGTERM, onSignal);
 
     silverdaw::crash::setPhase("running");
+    silverdaw::log::info("perf", "startup complete @ " + elapsedSinceStart());
     // Startup succeeded: close the always-on diagnostics log so it never grows with
     // runtime logging. A later crash is still captured by the crash reporter.
     silverdaw::log::markStartupComplete();

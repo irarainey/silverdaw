@@ -7,6 +7,7 @@ import { useAppStore } from '@/stores/appStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
+import { useUiStore } from '@/stores/uiStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import * as engineRecovery from '@/lib/engineRecovery'
 import { log } from '@/lib/log'
@@ -42,6 +43,8 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     // The backend also resets to its built-in brake defaults on connect; re-apply the saved settings.
     void useBrakeSettingsStore().applyBrakeSettingsOnReady()
     void useBackspinSettingsStore().applyBackspinSettingsOnReady()
+    // The backend defaults the first-clip tempo-seed preference to on each connect; re-apply the saved value.
+    useUiStore().syncSeedTempoPrefToBackend()
     // Recovery distinguishes empty reconnect snapshots from restored resets.
     engineRecovery.onProjectStateApplied(payload)
   },

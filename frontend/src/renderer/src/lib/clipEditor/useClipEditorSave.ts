@@ -4,7 +4,7 @@
 // library items remain untouched. This module owns the reconstruction of the
 // persisted warp patch, the target trim window, the overlap-conflict check, and
 // the two save entry points (Save changes / Save as new).
-import { clampNumber, pitchNeedsProcessor } from '@/lib/clipEditor/useClipEditorWarpDraft'
+import { clampNumber, pitchNeedsProcessor, type ClipTempoMode } from '@/lib/clipEditor/useClipEditorWarpDraft'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveDurationMs } from '@/lib/warp'
 import { effectiveClipDurationMs, type Clip } from '@/stores/projectStore'
@@ -52,8 +52,8 @@ export interface ClipEditorSaveDeps {
   draftCents: () => number
   draftTempoEnabled: () => boolean
   draftMode: () => ClipWarpMode
-  draftTempoPinned: () => boolean
-  tempoRatioFromPinnedBpm: () => number | undefined
+  draftTempoMode: () => ClipTempoMode
+  resolveManualRatio: () => number | undefined
 
   volumeShapeCommittedPoints: () => ClipEnvelopePoint[]
   reverseCommitted: () => boolean
@@ -71,11 +71,11 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
     const nextSemitones = clampNumber(deps.draftSemitones(), -12, 12)
     const nextCents = clampNumber(deps.draftCents(), -100, 100)
     const pitchActive = pitchNeedsProcessor(nextSemitones, nextCents)
-    // When the tempo is pinned but the source BPM is unknown, the draft can't
-    // re-derive a ratio from the pinned BPM (`tempoRatioFromPinnedBpm` returns
-    // undefined). Fall back to the clip's existing pinned ratio so reconstructing
-    // this patch on save preserves the warp instead of clearing it to null —
-    // otherwise a volume- or trim-only save would silently drop the warp.
+    // A manual pin needs the source BPM to re-derive its ratio; when that's
+    // unknown (`resolveManualRatio` returns undefined) fall back to the clip's
+    // existing explicit ratio so reconstructing this patch on save preserves the
+    // warp instead of clearing it to null — otherwise a volume- or trim-only save
+    // would silently drop the warp.
     const current = deps.timelineClip() ?? deps.editorItem()
     const existingPinnedRatio =
       typeof current?.tempoRatio === 'number' && current.tempoRatio > 0 && current.tempoRatio !== 1
@@ -86,7 +86,7 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
       warpEnabled: tempoEnabled || pitchActive,
       warpMode: deps.draftMode(),
       tempoRatio: tempoEnabled
-        ? (deps.draftTempoPinned() ? deps.tempoRatioFromPinnedBpm() ?? existingPinnedRatio : null)
+        ? (deps.draftTempoMode() === 'follow' ? null : deps.resolveManualRatio() ?? existingPinnedRatio)
         : (pitchActive ? 1 : null),
       semitones: nextSemitones,
       cents: nextCents

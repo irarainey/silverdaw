@@ -28,6 +28,8 @@ const {
   onTogglePlay,
   onSkipToEnd,
   onToggleLoop,
+  clipMetronomeEnabled,
+  onToggleClipMetronome,
   volumeEditActive,
   onCanvasMouseDown,
   onCanvasContextMenu,
@@ -108,7 +110,8 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="dialog-card h-[min(980px,96vh)] w-[min(1440px,98vw)]"
+        class="dialog-card w-[min(1440px,98vw)]"
+        :class="editsExistingClip ? 'h-[min(980px,96vh)]' : 'h-[min(620px,90vh)]'"
         @keydown="onKeydown"
       >
         <header class="grid grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-zinc-800 px-6 py-3">
@@ -127,6 +130,13 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
               >
                 WARP
               </span>
+              <span
+                v-if="!editsExistingClip"
+                class="shrink-0 rounded border border-zinc-600 bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-wide text-zinc-300"
+                title="Previewing the original file — warp, pitch, and effects are edited per clip on the timeline"
+              >
+                Preview
+              </span>
             </div>
             <p class="mt-0.5 truncate text-xs text-zinc-500">
               {{ sourceItem.fileName }}
@@ -136,10 +146,13 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
             :is-playing="preview.isPlaying"
             :is-loaded="preview.isLoaded"
             :loop-enabled="loopEnabled"
+            :metronome-enabled="clipMetronomeEnabled"
+            :show-metronome="editsExistingClip"
             @skip-to-start="onSkipToStart"
             @toggle-play="onTogglePlay"
             @skip-to-end="onSkipToEnd"
             @toggle-loop="onToggleLoop"
+            @toggle-metronome="onToggleClipMetronome"
           />
           <div class="justify-self-end" />
         </header>
@@ -229,6 +242,13 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 />
               </ClipEffectModule>
               <ClipEffectModule
+                title="Beat grid"
+                :cols="1"
+                :rows="2"
+              >
+                <ClipEditorBeatGridPanel :grid="beatGrid" />
+              </ClipEffectModule>
+              <ClipEffectModule
                 title="Pitch"
                 :cols="1"
                 :rows="2"
@@ -236,16 +256,6 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 <ClipEditorPitchPanel
                   :draft="warpDraft"
                   :source-key="sourceKey"
-                />
-              </ClipEffectModule>
-              <ClipEffectModule
-                title="Beat grid"
-                :cols="1"
-                :rows="2"
-              >
-                <ClipEditorBeatGridPanel
-                  :grid="beatGrid"
-                  :source-bpm="sourceBpm"
                 />
               </ClipEffectModule>
               <ClipEffectModule
@@ -264,6 +274,14 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 />
               </ClipEffectModule>
             </div>
+          </div>
+          <div
+            v-else
+            class="rounded border border-zinc-800 bg-zinc-950/40 px-4 py-3 text-xs leading-relaxed text-zinc-400"
+          >
+            <span class="font-medium text-zinc-200">Drag across the waveform to select a section</span>,
+            then <span class="text-zinc-300">Save Selection to Library</span> to make a clip you can warp,
+            pitch-shift, and add effects to. Warp, pitch, and effects are set per clip — not on this original file.
           </div>
         </div>
 

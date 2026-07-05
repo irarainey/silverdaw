@@ -7,7 +7,7 @@ import { computed, type ComputedRef } from 'vue'
 import type { Clip } from '@/stores/projectStore'
 import type { LibraryItem } from '@/stores/libraryStore'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
-import { currentHasTempoWarp } from '@/lib/clipEditor/useClipEditorWarpDraft'
+import { currentHasTempoWarp, deriveTempoModeFromClip, type ClipTempoMode } from '@/lib/clipEditor/useClipEditorWarpDraft'
 
 export interface ClipEditorDirtyStateDeps {
   editsExistingClip: () => boolean
@@ -22,8 +22,9 @@ export interface ClipEditorDirtyStateDeps {
   cropViewDurationMs: () => number
   draftTempoEnabled: () => boolean
   draftMode: () => ClipWarpMode
-  draftTempoPinned: () => boolean
+  draftTempoMode: () => ClipTempoMode
   draftPinnedBpm: () => number
+  draftStretchPercent: () => number
   draftSemitones: () => number
   draftCents: () => number
   hasVolumeShapeChanged: () => boolean
@@ -62,21 +63,25 @@ export function useClipEditorDirtyState(
     const current = deps.timelineClip() ?? deps.editorItem()
     if (!current || !deps.editsExistingClip()) return false
     const currentTempoEnabled = currentHasTempoWarp(current)
-    const currentTempoPinned =
-      typeof current.tempoRatio === 'number' && current.tempoRatio > 0 && current.tempoRatio !== 1
-    const sourceBpm = deps.sourceBpm()
-    const currentPinnedBpm =
-      currentTempoPinned && typeof sourceBpm === 'number' && sourceBpm > 0 && typeof current.tempoRatio === 'number'
-        ? Math.round(sourceBpm * current.tempoRatio * 100) / 100
-        : Math.round(deps.projectBpm() * 100) / 100
-    return (
-      deps.draftTempoEnabled() !== currentTempoEnabled ||
-      deps.draftMode() !== (current.warpMode ?? 'rhythmic') ||
-      deps.draftTempoPinned() !== currentTempoPinned ||
-      Math.abs(deps.draftPinnedBpm() - currentPinnedBpm) > 0.005 ||
-      deps.draftSemitones() !== (current.semitones ?? 0) ||
-      deps.draftCents() !== (current.cents ?? 0)
-    )
+    if (deps.draftTempoEnabled() !== currentTempoEnabled) return true
+    if (deps.draftMode() !== (current.warpMode ?? 'rhythmic')) return true
+    if (deps.draftSemitones() !== (current.semitones ?? 0)) return true
+    if (deps.draftCents() !== (current.cents ?? 0)) return true
+    // Compare tempo-mode details only while warp is enabled.
+    if (deps.draftTempoEnabled()) {
+      const derived = deriveTempoModeFromClip(current, deps.sourceBpm(), deps.projectBpm())
+      if (deps.draftTempoMode() !== derived.mode) return true
+      if (deps.draftTempoMode() === 'pin' && Math.abs(deps.draftPinnedBpm() - derived.pinnedBpm) > 0.005) {
+        return true
+      }
+      if (
+        deps.draftTempoMode() === 'stretch' &&
+        Math.abs(deps.draftStretchPercent() - derived.stretchPercent) > 0.005
+      ) {
+        return true
+      }
+    }
+    return false
   })
 
   const canSaveChanges = computed(() => {

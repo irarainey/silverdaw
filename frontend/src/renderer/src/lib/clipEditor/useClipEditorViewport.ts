@@ -94,12 +94,12 @@ export function useClipEditorViewport(inputs: UseClipEditorViewportInputs): Clip
 
   const viewInMs = computed(() => {
     if (!editorItem.value) return 0
-    if (editsExistingClip.value && !viewExpanded.value) return cropViewInMs.value
+    if (!viewExpanded.value) return cropViewInMs.value
     return 0
   })
   const viewDurationMs = computed(() => {
     if (!editorItem.value) return 0
-    if (editsExistingClip.value && !viewExpanded.value) {
+    if (!viewExpanded.value) {
       return cropViewDurationMs.value
     }
     return sourceDurationMs.value
@@ -110,12 +110,10 @@ export function useClipEditorViewport(inputs: UseClipEditorViewportInputs): Clip
     if (!editorItem.value) return 0
     // Timeline px/s so a clip opens at the same scale the user sees on the track.
     const timelinePxPerMs = Math.max(0.001, (uiZoomPxPerSecond.value || 100) / 1000)
-    if (!editsExistingClip.value) {
-      return timelinePxPerMs
-    }
-    // Saved clips fit the cropped range to the canvas, but never zoom out past the
-    // timeline scale: a short clip fills the width, while a long clip opens at
-    // track-view scale and scrolls instead of being shrunk to fit.
+    // Fit the current (cropped) range to the canvas, but never zoom out past the
+    // timeline scale: a short range fills the width, while a long range opens at
+    // track-view scale and scrolls instead of being shrunk to fit. Applies to both
+    // editable clips and the source preview so Trim narrows the view identically.
     const w = canvasCssWidth.value
     const dur = viewDurationMs.value
     const fitPxPerMs = w > 0 && dur > 0 ? w / dur : 0

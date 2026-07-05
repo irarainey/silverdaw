@@ -518,6 +518,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_BAR_COUNTER_START: ProjectSetBarCounterStartPayload
   PROJECT_SET_MIXDOWN_START_BAR: ProjectSetMixdownStartBarPayload
   PROJECT_SET_METRONOME: ProjectSetMetronomePayload
+  PROJECT_SET_SEED_TEMPO_PREF: ProjectSetSeedTempoPrefPayload
   AUDIO_FILE_PROBE: AudioFileProbePayload
   MIXDOWN_START: MixdownStartPayload
   MIXDOWN_CANCEL: undefined
@@ -535,6 +536,7 @@ export interface BridgeOutboundMap {
   PREVIEW_SET_WARP: PreviewSetWarpPayload
   PREVIEW_SET_ENVELOPE: PreviewSetEnvelopePayload
   PREVIEW_SET_REVERSED: PreviewSetReversedPayload
+  PREVIEW_SET_METRONOME: PreviewSetMetronomePayload
   PREVIEW_SET_BRAKE: PreviewSetBrakePayload
   PREVIEW_SET_BACKSPIN: PreviewSetBackspinPayload
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
@@ -687,6 +689,15 @@ export interface ProjectSetMixdownStartBarPayload {
  * project dirty and is not undoable.
  */
 export interface ProjectSetMetronomePayload {
+  enabled: boolean
+}
+
+/**
+ * App-level preference (default on): whether dropping the first clip on a new
+ * project seeds the project tempo from that clip. Runtime-only on the backend;
+ * re-sent on every (re)connect and whenever the preference changes.
+ */
+export interface ProjectSetSeedTempoPrefPayload {
   enabled: boolean
 }
 
@@ -902,6 +913,17 @@ export interface PreviewSetReversedPayload {
   reversed: boolean
 }
 
+/**
+ * Toggle the Clip Editor metronome and set the beat grid it clicks on (the clip's own BPM + phase
+ * anchor). Independent of the main-timeline metronome. The enabled flag is persisted SILENTLY with
+ * the project (never dirty, not undoable); the grid values are transient. No ack.
+ */
+export interface PreviewSetMetronomePayload {
+  enabled: boolean
+  bpm: number
+  beatAnchorSec: number
+}
+
 /** Apply a turntable brake to the preview voice; `on` toggles it. No ack. */
 export interface PreviewSetBrakePayload {
   on: boolean
@@ -1053,6 +1075,7 @@ export const bridgeOutboundPayloadKinds: {
   PROJECT_SET_BAR_COUNTER_START: 'payload',
   PROJECT_SET_MIXDOWN_START_BAR: 'payload',
   PROJECT_SET_METRONOME: 'payload',
+  PROJECT_SET_SEED_TEMPO_PREF: 'payload',
   AUDIO_FILE_PROBE: 'payload',
   MIXDOWN_START: 'payload',
   MIXDOWN_CANCEL: 'none',
@@ -1070,6 +1093,7 @@ export const bridgeOutboundPayloadKinds: {
   PREVIEW_SET_WARP: 'payload',
   PREVIEW_SET_ENVELOPE: 'payload',
   PREVIEW_SET_REVERSED: 'payload',
+  PREVIEW_SET_METRONOME: 'payload',
   PREVIEW_SET_BRAKE: 'payload',
   PREVIEW_SET_BACKSPIN: 'payload',
   AUDIO_DEVICES_REQUEST: 'payload',

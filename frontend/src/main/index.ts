@@ -18,7 +18,7 @@ import {
   isBridgePortEnvOverridden,
   resolveBridgePort
 } from './bridgePort'
-import { getDefaultDebugLogDirectory } from './preferences'
+import { getDefaultDebugLogDirectory, getDiagnosticsDirectory } from './preferences'
 import { PrefsService } from './prefsService'
 import { createWindow } from './window'
 import { applyChromiumSecuritySwitches, hardenDefaultSession } from './sessionSecurity'
@@ -130,6 +130,22 @@ function startBackend(): void {
   backendSupervisor.start()
 }
 
+// Spawn the backend once the window has painted and shown, yielding a frame first so the
+// blocking spawn() on a cold launch cannot delay first paint. Falls back to a short timer in
+// case the window never emits `show` (e.g. an offscreen/headless edge case), so the backend is
+// always launched exactly once.
+function spawnBackendAfterWindowShown(win: BrowserWindow): void {
+  let launched = false
+  const launch = (): void => {
+    if (launched) return
+    launched = true
+    startBackend()
+    logDiag('INFO ', 'perf', `main backend-spawned @ ${Math.round(process.uptime() * 1000)}ms`)
+  }
+  win.once('show', () => setImmediate(launch))
+  setTimeout(launch, 2000)
+}
+
 // ─── .silverdaw file association + single-instance lock ────────────────────
 // Accept only absolute `.silverdaw` argv paths; warm launches forward to the existing instance.
 
@@ -188,7 +204,7 @@ app.whenReady().then(async () => {
   // backend crash report and startup lifecycle so a launch that never connects to the
   // audio engine is diagnosable even when verbose logging is off. Opened before prefs so
   // the phase-timing markers below are captured from the earliest phase.
-  const diagDir = initDiagnostics(join(app.getPath('userData'), 'diagnostics'))
+  const diagDir = initDiagnostics(getDiagnosticsDirectory())
   if (diagDir) {
     logDiag('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node} packaged=${app.isPackaged}`)
   }
@@ -310,14 +326,18 @@ app.whenReady().then(async () => {
   }
   mark('port-resolved')
 
-  // Spawn the backend BEFORE creating the window so its (potentially slow) audio-device
-  // open overlaps window creation and renderer boot instead of running after them.
+  // Create the window FIRST, then spawn the backend once the window has painted and shown.
+  // On a cold first launch after install, Node's spawn() blocks the main thread for several
+  // seconds while Windows pages in and virus-scans the freshly-installed backend executable;
+  // spawning before the window is shown would stall first paint behind that block. The renderer
+  // retries the bridge connection until the backend is up, so deferring the spawn delays only
+  // audio readiness, not the UI.
   hardenDefaultSession()
-  startBackend()
-  mark('backend-spawned')
 
   mainWindow = createWindow(buildCreateWindowContext())
   mark('window-created')
+
+  spawnBackendAfterWindowShown(mainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

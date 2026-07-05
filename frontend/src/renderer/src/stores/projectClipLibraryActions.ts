@@ -125,7 +125,8 @@ export const clipLibraryActions = {
         /** 'simple'-classified items never auto-warp on drop. */
         audioType?: 'simple' | 'music'
       },
-      startMs: number
+      startMs: number,
+      opts?: { suppressWarpSkipNotice?: boolean }
     ): string | null {
       const track = this.tracks.find((t) => t.id === trackId)
       if (!track) return null
@@ -203,7 +204,7 @@ export const clipLibraryActions = {
         }
 
         // Drop-time warp copies saved defaults or marks eligible audio for auto-warp.
-        this.applyDropTimeWarp(clipId, libraryItem)
+        this.applyDropTimeWarp(clipId, libraryItem, opts)
 
         // Inherit the saved clip's shared volume envelope from an existing instance
         // so every linked placement carries the same shape.
@@ -241,7 +242,8 @@ export const clipLibraryActions = {
         semitones?: number
         cents?: number
         derivedFrom?: LibraryItem['derivedFrom']
-      }
+      },
+      opts?: { suppressWarpSkipNotice?: boolean }
     ): void {
       log.info(
         'warp',
@@ -313,8 +315,10 @@ export const clipLibraryActions = {
             `applyDropTimeWarp clip=${clipId} → skip (variableTempo or no BPM, not pending)`
           )
           // Variable tempo is a deliberate auto-warp exclusion; tell the user why
-          // and how to warp it manually instead of silently doing nothing.
-          if (src.variableTempo === true) {
+          // and how to warp it manually instead of silently doing nothing. Suppressed
+          // for auto-added stems (they inherit the source's variable tempo and are placed
+          // programmatically, not dropped) — the notice is only useful for a manual drop.
+          if (src.variableTempo === true && !opts?.suppressWarpSkipNotice) {
             const clip = this.clips[clipId]
             const name = clip?.name?.trim() || (clip ? fileStem(clip.fileName) : '')
             useNotificationsStore().pushInfo(variableTempoWarpSkippedMessage(name))
