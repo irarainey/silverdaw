@@ -4,7 +4,7 @@
 // dismisses when a terminal envelope (READY/FAILED/cancel) clears the state.
 // Modal with backdrop so the timeline can't be edited mid-separation.
 
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useStemSeparationState, type StemStage } from '@/lib/stemSeparationState'
 import { useSmoothProgress } from '@/lib/stems/useSmoothProgress'
 import { send as sendBridge } from '@/lib/bridgeService'
@@ -61,10 +61,23 @@ const stageLabel = computed(() => {
 })
 const sourceName = computed(() => state.value?.target.sourceName ?? '')
 
+// Cancellation can take a moment to unwind on the backend, so give the click
+// immediate feedback: the button flips to a spinning "Cancelling…" affordance
+// until the terminal envelope clears the dialog. Reset whenever a new job
+// starts (the dialog persists between separations).
+const cancelling = ref(false)
+watch(
+  () => state.value?.jobId,
+  () => {
+    cancelling.value = false
+  }
+)
+
 function onCancel(): void {
   const jobId = state.value?.jobId
-  if (!jobId) return
+  if (!jobId || cancelling.value) return
   log.info('stems', 'cancel button clicked')
+  cancelling.value = true
   sendBridge('STEM_SEPARATE_CANCEL', { jobId })
 }
 </script>
@@ -119,11 +132,38 @@ function onCancel(): void {
         <div class="dialog-footer">
           <button
             type="button"
-            class="dialog-btn-cancel disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="!canCancel"
+            class="dialog-btn-cancel inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed"
+            :class="
+              cancelling
+                ? 'border-amber-600 bg-amber-900/40 text-amber-200 hover:bg-amber-900/40'
+                : !canCancel
+                  ? 'opacity-50'
+                  : ''
+            "
+            :disabled="!canCancel || cancelling"
             @click="onCancel"
           >
-            Cancel
+            <svg
+              v-if="cancelling"
+              class="h-3 w-3 animate-spin text-amber-200"
+              viewBox="0 0 24 24"
+              fill="none"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              />
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+              />
+            </svg>
+            {{ cancelling ? 'Cancelling…' : 'Cancel' }}
           </button>
         </div>
       </div>
