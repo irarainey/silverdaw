@@ -24,6 +24,7 @@
 
 ### Fixed
 
+- Diagnostic and startup logs now default to a discoverable `Silverdaw` folder in your user folder, instead of a hidden location the installed app couldn't write to as shown.
 - Trimming the view to the selection did nothing when previewing a library item.
 - Clip Editor pitch sliders showing a browser focus outline, and the Warp tempo fields showing number spinners.
 - "Unable to connect to audio engine" on some freshly installed machines.

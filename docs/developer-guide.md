@@ -537,9 +537,12 @@ especially on a machine we can't attach to (a clean install, a Store
 certification VM). Two always-on mechanisms guarantee a diagnosable artifact,
 **independent of the Preferences ▸ Developer diagnostic-logging toggle**:
 
-- **Diagnostics directory.** Electron main always creates
-  `<userData>/diagnostics/` (`%APPDATA%\Silverdaw\diagnostics`) on launch and
-  passes it to the backend as `SILVERDAW_DIAG_DIR` on every spawn — distinct from
+- **Diagnostics directory.** Electron main always creates a diagnostics
+  directory on launch (packaged installs: `%USERPROFILE%\Silverdaw\diagnostics`,
+  a discoverable non-virtualised location — under MSIX a `userData`/`%APPDATA%`
+  path is silently redirected into a hidden package container; dev builds:
+  `<userData>/diagnostics`) and passes it to the backend as `SILVERDAW_DIAG_DIR`
+  on every spawn — distinct from
   the opt-in verbose sink (`SILVERDAW_LOG_DIR`, only set when logging is enabled).
   Main writes `startup.log` there (truncated each launch): the launch banner and
   the backend lifecycle it observes (spawn path/port, exit code/signal, respawns,
@@ -560,7 +563,7 @@ certification VM). Two always-on mechanisms guarantee a diagnosable artifact,
   is the verbose sink's job). A later runtime crash is still captured by the
   crash reporter.
 
-The net result: on any failed launch, `<userData>/diagnostics/` holds a small,
+The net result: on any failed launch, the diagnostics directory holds a small,
 current-launch-only picture — `startup.log` (did it spawn / what exit code),
 `backend.log` (how far startup got), and `backend-crash.log` (the faulting
 module, if it crashed) — enough to pinpoint a failure-to-start without a debugger
@@ -1794,12 +1797,14 @@ Persisted fields:
   logger (all levels, whole session). When on, the next launch writes a
   per-session timestamped folder containing `{main,backend,renderer}.log` with
   aligned millisecond timestamps. The **Log folder** field lets the user choose
-  the parent folder; by default this is the `debug` folder beside the
-  application, and blank entries are normalised back to that default. This is
+  the parent folder; by default this is a discoverable `Silverdaw\logs` folder in
+  the user's home folder (packaged installs — a `userData`/`%APPDATA%` path is
+  redirected into a hidden MSIX container; dev builds use the repo `debug`
+  folder), and blank entries are normalised back to that default. This is
   separate from the always-on **startup diagnostics**
-  (`<userData>/diagnostics/`, see *Engine resilience and recovery ▸ Startup
-  diagnostics*), which are written on every launch regardless of this toggle but
-  only cover startup.
+  (packaged: `%USERPROFILE%\Silverdaw\diagnostics`, see *Engine resilience and
+  recovery ▸ Startup diagnostics*), which are written on every launch regardless
+  of this toggle but only cover startup.
 - **Show Developer Tools** — gates the visibility of the **Debug** menu and
   DevTools shortcuts independently of file logging.
 - **Stem-separation settings** — `stems.useGpu` (GPU acceleration, default off),

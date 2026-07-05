@@ -85,7 +85,7 @@ on in Preferences.
 Open this folder (paste the path into File Explorer's address bar):
 
 ```text
-%APPDATA%\silverdaw\diagnostics
+%USERPROFILE%\Silverdaw\diagnostics
 ```
 
 It contains:

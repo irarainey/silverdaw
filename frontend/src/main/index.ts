@@ -18,7 +18,7 @@ import {
   isBridgePortEnvOverridden,
   resolveBridgePort
 } from './bridgePort'
-import { getDefaultDebugLogDirectory } from './preferences'
+import { getDefaultDebugLogDirectory, getDiagnosticsDirectory } from './preferences'
 import { PrefsService } from './prefsService'
 import { createWindow } from './window'
 import { applyChromiumSecuritySwitches, hardenDefaultSession } from './sessionSecurity'
@@ -204,7 +204,7 @@ app.whenReady().then(async () => {
   // backend crash report and startup lifecycle so a launch that never connects to the
   // audio engine is diagnosable even when verbose logging is off. Opened before prefs so
   // the phase-timing markers below are captured from the earliest phase.
-  const diagDir = initDiagnostics(join(app.getPath('userData'), 'diagnostics'))
+  const diagDir = initDiagnostics(getDiagnosticsDirectory())
   if (diagDir) {
     logDiag('INFO ', 'main', `electron=${process.versions.electron} node=${process.versions.node} packaged=${app.isPackaged}`)
   }

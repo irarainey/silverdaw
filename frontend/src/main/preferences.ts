@@ -153,12 +153,23 @@ export const AUTOSAVE_DEFAULT_SECONDS = 30
 
 // `app.getPath` is only safe after `app.whenReady`, so defaults are lazy.
 export function getDefaultDebugLogDirectory(): string {
-  // Packaged installs run from a read-only WindowsApps (MSIX) directory, so the
-  // default log location must be a per-user writable path (userData). Dev builds
-  // keep logs in the repo tree for convenience.
+  // Packaged installs run under MSIX: writes to %APPDATA% (userData) are
+  // silently redirected into the package's hidden LocalCache container, so a
+  // userData path is shown but never findable. The app has runFullTrust, so the
+  // user-profile root is real, unvirtualised, and easy to navigate to — default
+  // logs to a Silverdaw folder there. Dev builds keep logs in the repo tree.
   return app.isPackaged
-    ? join(app.getPath('userData'), 'debug')
+    ? join(app.getPath('home'), 'Silverdaw', 'logs')
     : join(pathResolve(__dirname, '..', '..', '..'), 'debug')
+}
+
+// Always-on startup diagnostics location. Shares the discoverable user-profile
+// Silverdaw folder for packaged installs (see getDefaultDebugLogDirectory for
+// the MSIX redirection rationale); dev builds keep them under userData.
+export function getDiagnosticsDirectory(): string {
+  return app.isPackaged
+    ? join(app.getPath('home'), 'Silverdaw', 'diagnostics')
+    : join(app.getPath('userData'), 'diagnostics')
 }
 
 export function buildDefaultPrefs(): Preferences {
