@@ -26,7 +26,10 @@ const STEM_LABELS: Record<string, string> = {
   vocals: 'Vocals',
   drums: 'Drums',
   bass: 'Bass',
-  other: 'Other'
+  other: 'Other',
+  // The rhythm quality pack separates drums and bass in a single pass; the
+  // backend labels that phase with this combined key (no per-stem counter).
+  'drums+bass': 'Drums & Bass'
 }
 
 const visible = computed(() => state.value !== null)

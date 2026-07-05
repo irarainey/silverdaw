@@ -24,7 +24,7 @@
 - The stem separation Cancel button now shows a spinning "Cancelling…" state the moment it's clicked, so it's clear the request registered while the engine unwinds.
 - Much faster, more reliable stem separation on hybrid CPUs: inference now uses one thread per physical core (skipping the hyperthread siblings that were slowing it down) instead of oversubscribing every logical processor.
 - Cancelling a stem separation now stops almost immediately instead of waiting for the current chunk to finish.
-- The stem separation progress bar now advances in proportion to the work actually happening and at the real observed pace, so it no longer looks stuck on drums or stalls partway on slower machines.
+- The stem separation progress bar now advances in proportion to the work actually happening and at the real observed pace, so it no longer looks stuck on drums or stalls partway on slower machines. The drums+bass rhythm pass is labelled "Drums & Bass", and the per-stem cleanup passes now carry their own progress, so bass and the residual "other" stem no longer appear to make no progress while they're being processed.
 
 ### Fixed
 

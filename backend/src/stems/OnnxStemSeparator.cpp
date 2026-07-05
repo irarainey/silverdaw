@@ -54,11 +54,13 @@ constexpr double kMaxOverlap = 0.95;
 constexpr double kPreparePercent = 2.0;
 constexpr double kSeparatePercent = 98.0;
 
-// When a stem has post-separation cleanup enabled, the tail of that stem's
-// progress band is reserved for the cleanup pass so the bar (and the "Cleaning
-// up …" message) keep moving instead of freezing at the top of the separation
-// band while the enhancer/denoiser runs.
-constexpr double kCleanupFraction = 0.15;
+// Progress-cost of a post-separation cleanup pass (denoise/enhance), relative to
+// one specialist model run (= 1.0). Cleanup is far cheaper than inference, but
+// NOT free — and crucially its cost is independent of whether the stem's
+// separation was a full model run or cache-served. Weighting it separately gives
+// a cache-served bass or residual `other` a visible progress band while ITS
+// cleanup runs, instead of sharing the stem's near-zero separation band.
+constexpr double kCleanupWeight = 0.15;
 
 // Output filenames + STEM_READY stem vocabulary. Order here is independent of the
 // model's internal source order (handled by sourceIndexForStem below).
@@ -411,51 +413,69 @@ class OnnxStemSeparator : public StemSeparator
         juce::AudioBuffer<float> vocalForRemoval;
         bool vocalForRemovalReady = false;
 
-        // Progress bands weighted by each stem's real compute cost. One model run
-        // per selected specialist normally costs ~1 unit; but the rhythm pack
-        // produces drums AND bass from a SINGLE run (billed to whichever of the two
-        // is processed first), so the second is cache-served for ~nothing, and the
-        // residual `other` is a cheap subtraction. Weighting by these costs keeps
-        // the bar advancing in proportion to the work actually happening instead of
-        // stalling in an equal-sized band during the long rhythm run.
-        std::array<double, kStemNames.size()> stemCost{};
+        // Whether a given stem has its optional post-separation cleanup enabled.
+        const auto cleanupEnabledFor = [&request](const juce::String& st) -> bool
+        {
+            if (st == "vocals") return request.vocalEnhance.enabled;
+            if (st == "drums") return request.drumEnhance.enabled;
+            if (st == "bass") return request.bassEnhance.enabled;
+            if (st == "other") return request.otherEnhance.enabled;
+            return false;
+        };
+
+        // Progress bands weighted by each stem's real compute cost, so the bar
+        // advances in proportion to the work actually happening. A specialist model
+        // run costs ~1 unit; the rhythm pack yields drums AND bass from a SINGLE run
+        // (billed to whichever is processed first) so the second is cache-served for
+        // ~nothing, and the residual `other` is a cheap subtraction. Each enabled
+        // cleanup adds its own fixed cost, INDEPENDENT of the separation cost — so a
+        // cache-served bass or a residual `other` still gets a visible band while
+        // ITS cleanup runs (they previously shared a near-zero band and the bar
+        // looked stuck while cleanup churned).
+        std::array<double, kStemNames.size()> sepWeight{};
+        std::array<double, kStemNames.size()> cleanupWeight{};
         for (size_t s = 0; s < kStemNames.size(); ++s)
         {
-            if (! isSelected(kStemNames[s])) { stemCost[s] = 0.0; continue; }
+            if (! isSelected(kStemNames[s])) continue;
             const juce::String st(kStemNames[s]);
-            double cost = 1.0; // a specialist model run
+            double sep = 1.0; // a specialist model run
             if (st == "vocals")
-                cost = haveVocalPack ? 1.0 : static_cast<double>(std::max(1, request.shifts));
+                sep = haveVocalPack ? 1.0 : static_cast<double>(std::max(1, request.shifts));
             else if ((st == "drums" || st == "bass") && useRhythmPack)
             {
                 const bool carriesRhythmRun = (st == "drums") || ! isSelected("drums");
                 if (carriesRhythmRun)
                 {
-                    cost = 1.0; // the single drums+bass rhythm run
+                    sep = 1.0; // the single drums+bass rhythm run
                     if (removeVocalsBeforeRhythm && ! isSelected("vocals"))
-                        cost += 1.0; // plus an internal vocal pass purely for de-bleeding
+                        sep += 1.0; // plus an internal vocal pass purely for de-bleeding
                 }
                 else
-                    cost = 0.02; // served from the rhythm cache — effectively instant
+                    sep = 0.02; // served from the rhythm cache — effectively instant
             }
             else if (st == "other" && mixtureConsistency)
-                cost = 0.02; // residual synthesis — a quick subtraction, no model run
-            stemCost[s] = cost;
+                sep = 0.05; // residual synthesis — a quick subtraction, no model run
+            sepWeight[s] = sep;
+            cleanupWeight[s] = cleanupEnabledFor(st) ? kCleanupWeight : 0.0;
         }
-        double totalStemCost = 0.0;
-        for (const double c : stemCost) totalStemCost += c;
-        if (totalStemCost <= 0.0) totalStemCost = 1.0;
+        double totalWeight = 0.0;
+        for (size_t s = 0; s < kStemNames.size(); ++s) totalWeight += sepWeight[s] + cleanupWeight[s];
+        if (totalWeight <= 0.0) totalWeight = 1.0;
 
         const double separateSpan = kSeparatePercent - kPreparePercent;
         std::array<double, kStemNames.size()> stemBandBase{};
         std::array<double, kStemNames.size()> stemBandSpan{};
+        std::array<double, kStemNames.size()> stemCleanupSpan{};
         {
             double acc = 0.0;
             for (size_t s = 0; s < kStemNames.size(); ++s)
             {
-                stemBandBase[s] = kPreparePercent + separateSpan * (acc / totalStemCost);
-                stemBandSpan[s] = separateSpan * (stemCost[s] / totalStemCost);
-                acc += stemCost[s];
+                const double w = sepWeight[s] + cleanupWeight[s];
+                stemBandBase[s] = kPreparePercent + separateSpan * (acc / totalWeight);
+                stemBandSpan[s] = separateSpan * (w / totalWeight);
+                // The cleanup pass owns its cost-proportional tail of the band.
+                stemCleanupSpan[s] = w > 0.0 ? stemBandSpan[s] * (cleanupWeight[s] / w) : 0.0;
+                acc += w;
             }
         }
 
@@ -472,16 +492,6 @@ class OnnxStemSeparator : public StemSeparator
             return raw;
         };
 
-        // Whether a given stem has its optional post-separation cleanup enabled.
-        const auto cleanupEnabledFor = [&request](const juce::String& st) -> bool
-        {
-            if (st == "vocals") return request.vocalEnhance.enabled;
-            if (st == "drums") return request.drumEnhance.enabled;
-            if (st == "bass") return request.bassEnhance.enabled;
-            if (st == "other") return request.otherEnhance.enabled;
-            return false;
-        };
-
         for (size_t s = 0; s < kStemNames.size(); ++s)
         {
             const auto* stem = kStemNames[s];
@@ -491,10 +501,10 @@ class OnnxStemSeparator : public StemSeparator
             const double stemSpan = stemBandSpan[s];
             onProgress("separate", stemBase, stem);
 
-            // Reserve the tail of this stem's band for its cleanup pass (if any),
-            // so the bar keeps advancing while the enhancer/denoiser runs.
-            const bool cleanupEnabled = cleanupEnabledFor(juce::String(stem));
-            const double cleanupSpan = cleanupEnabled ? stemSpan * kCleanupFraction : 0.0;
+            // The cleanup pass (if any) owns the cost-proportional tail of this
+            // stem's band, so the bar keeps advancing while the enhancer/denoiser
+            // runs — even for a cache-served stem whose separation was instant.
+            const double cleanupSpan = stemCleanupSpan[s];
             const double sepSpan = stemSpan - cleanupSpan;
             const double cleanupBase = stemBase + sepSpan;
 
@@ -594,9 +604,15 @@ class OnnxStemSeparator : public StemSeparator
                             silverdaw::log::info("stems", "drums/bass via BS-RoFormer rhythm pack");
                         }
 
+                        // The rhythm run produces drums AND bass in one pass; label
+                        // its progress for both so the long phase reads as drums+bass
+                        // work rather than appearing to skip bass (bass separation is
+                        // then cache-served instantly on its own iteration).
+                        const char* rhythmDetail =
+                            (isSelected("drums") && isSelected("bass")) ? "drums+bass" : stem;
                         rhythmStems = roformerRhythm.separate(
                             request.rhythmModelFile, rhythmInput, request.useGpu, overlap,
-                            [&](double f) { onProgress("separate", rhythmBase + rhythmSpan * f, stem); },
+                            [&](double f) { onProgress("separate", rhythmBase + rhythmSpan * f, rhythmDetail); },
                             shouldCancel);
                         rhythmDone = true;
                     }
