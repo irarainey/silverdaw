@@ -830,6 +830,14 @@ class OnnxStemSeparator : public StemSeparator
         // keeps repainting during a CPU-only separation (which would otherwise
         // pin every core and freeze the renderer). See InferenceThreads.h.
         sessionOptions.SetIntraOpNumThreads(stems::inferenceIntraOpThreads());
+        // Idle intra-op threads SLEEP instead of spin-waiting. By default the ORT thread pool
+        // busy-waits on every intra-op thread (near-100% CPU even between ops), which pins the
+        // reserved core too and starves THIS backend's own websocket-send and message threads.
+        // That stalled STEM_PROGRESS delivery (the bar "sat" mid-stem, then jumped at the stem
+        // boundary where inference briefly idled) and delayed STEM_SEPARATE_CANCEL until a segment
+        // finished. Disabling spinning keeps progress flowing and cancellation responsive, at a
+        // negligible throughput cost for these long, chunked jobs.
+        sessionOptions.AddConfigEntry("session.intra_op.allow_spinning", "0");
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
         if (useGpu)

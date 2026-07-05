@@ -6,6 +6,7 @@
 
 import { computed } from 'vue'
 import { useStemSeparationState, type StemStage } from '@/lib/stemSeparationState'
+import { useSmoothProgress } from '@/lib/stems/useSmoothProgress'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 
@@ -29,7 +30,14 @@ const STEM_LABELS: Record<string, string> = {
 }
 
 const visible = computed(() => state.value !== null)
-const percent = computed(() => Math.round(state.value?.percent ?? 0))
+// The backend delivers progress in bursts (websocket flushes stall during sustained inference),
+// so drive the bar through a smoothing layer that keeps it moving and snaps to each real value.
+const { displayPercent } = useSmoothProgress({
+  target: () => state.value?.percent ?? 0,
+  active: () => state.value !== null,
+  done: () => state.value?.stage === 'write'
+})
+const percent = computed(() => Math.round(displayPercent.value))
 // Once finalising (reading + placing stems), the backend job is done, so there
 // is nothing left to cancel — the button is disabled for that phase.
 const canCancel = computed(() => state.value?.stage !== 'write')

@@ -121,7 +121,9 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
       runInUndoGroup(`Add ${label} stem`, () => {
         const trackId = project.addTrack()
         project.setTrackName(trackId, `${label} ${STEM_NAME_SEPARATOR} ${target.sourceName}`)
-        project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), target.startMs ?? 0)
+        project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), target.startMs ?? 0, {
+          suppressWarpSkipNotice: true
+        })
       })
     }
     return true

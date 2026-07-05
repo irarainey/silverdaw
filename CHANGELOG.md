@@ -4,26 +4,27 @@
 
 ### Added
 
-- More detail in the always-on startup diagnostics log — system information, startup timing, and the audio devices the engine found and opened — to make a slow or failed start (and audio-device problems) easier to diagnose.
-- A metronome in the Clip Editor that clicks in time with the clip's own tempo while auditioning, with its own on/off button — independent of the main metronome and saved silently with the project.
+- More detailed startup diagnostics log to help diagnose slow or failed starts.
+- A Clip Editor metronome that clicks to the clip's tempo, saved with the project.
 
 ### Changed
 
-- Faster startup: the main window and project screen now appear almost immediately while the audio engine starts up in the background, instead of waiting for it first.
-- Faster project loading, especially for projects with many clips — their audio files are now prepared together rather than one at a time.
-- Projects with many clips that share the same audio now draw their waveforms faster, by reusing the shared waveform detail instead of rebuilding it for every clip.
-- In the Clip Editor, the waveform zoom is now controlled with Ctrl + mouse wheel (anchored under the pointer), matching the main timeline; a plain mouse wheel no longer zooms.
+- Faster startup: the app appears immediately while the audio engine starts in the background.
+- Faster project loading for projects with many clips.
+- Faster waveform drawing for clips that share the same audio.
+- Clip Editor waveform zoom now uses Ctrl + mouse wheel, matching the main timeline.
 
 ### Fixed
 
-- "Unable to connect to audio engine" on some freshly installed machines, caused by a missing Windows runtime component that is now included with the app.
-- A sleep-prone USB output device (such as a USB DAC) not being woken in time on startup, so the first play was silent; the device is now roused before playback begins.
-- The saved output device not being selected on startup when it was slow to appear (for example, a USB device still starting up); the app now picks it up as soon as it's ready and switches to it automatically.
-- The first play being silent right after switching to a sleep-prone output device from the transport bar.
-- Dropping a clip whose source has a variable tempo silently not matching it to the project tempo; the app now shows a brief note explaining why it wasn't tempo-matched.
-- Dragging the playhead to the left not scrolling the timeline (only dragging right did); it now follows the playhead in both directions.
-- The cursor not showing a grabbing hand while dragging the playhead, and flickering back to the arrow when the timeline started scrolling mid-drag; it now stays a hand throughout the drag.
-- The metronome on/off setting sometimes not being remembered after closing and reopening a project; the toggle is now saved with the project reliably (and silently, without marking the project as changed).
+- "Unable to connect to audio engine" on some freshly installed machines.
+- Sleep-prone USB output devices staying silent on the first play.
+- The saved output device not being selected when slow to appear on startup.
+- Silence on the first play right after switching output device from the transport bar.
+- Clips with a variable-tempo source silently not being tempo-matched; a brief note now explains why.
+- Stem separation progress bar freezing mid-stem and a slow Cancel button.
+- Dragging the playhead left not scrolling the timeline.
+- The cursor not staying a grabbing hand while dragging the playhead.
+- The metronome on/off state not being remembered between sessions.
 
 ## 1.0.1
 
