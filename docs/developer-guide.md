@@ -1414,8 +1414,17 @@ GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
 Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`
 shipped alongside); the renderer threads a `useGpu` flag through to the backend
 session options. Using the GPU is **opt-in** — the `stems.useGpu` preference
-defaults off and is honoured only when a compatible adapter is detected
-(Preferences ▸ Stems). The path is hardened against GPU timeout/TDR recovery.
+defaults off. The Preferences ▸ Stems toggle is enabled unless a GPU probe
+positively reports software-only rendering (`detectGpuFromInfo`): DirectML runs
+on any Direct3D-12 adapter, so an integrated GPU that Chromium's probe reports as
+inactive or without a vendorId must still be offered. The path is hardened
+against recoverable GPU faults — both a timeout/TDR device reset **and** running
+out of (often shared, integrated-GPU) memory transparently retry the whole job on
+the CPU (`isRecoverableGpuFault` in `OnnxStemSeparator.cpp`) so the user still
+gets their stems. On memory-constrained integrated GPUs the fixed-shape RoFormer
+models may simply not fit, in which case the run falls back to the CPU; GPU
+acceleration is therefore treated as a best-effort, dedicated-GPU-oriented
+option rather than a guaranteed speed-up.
 
 Inference runs on a **small pool of physical performance cores**
 (`inferenceIntraOpThreads()` in `stems/InferenceThreads.cpp` detects P-cores via

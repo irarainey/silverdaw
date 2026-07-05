@@ -75,7 +75,7 @@ const {
   zoomOut,
   resetZoom,
   zoomIn,
-  sourceBpm,
+  warpSourceBpm,
   sourceKey,
   sourceItem,
   editorItem,
@@ -237,7 +237,7 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
               >
                 <ClipEditorWarpPanel
                   :draft="warpDraft"
-                  :source-bpm="sourceBpm"
+                  :source-bpm="warpSourceBpm"
                   :project-bpm="transport.bpm"
                 />
               </ClipEffectModule>

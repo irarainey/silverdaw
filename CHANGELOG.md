@@ -30,6 +30,7 @@
 
 - GPU acceleration for stem separation is no longer wrongly greyed out on machines with a capable GPU (such as Intel Arc integrated graphics); it now enables whenever a usable adapter is present.
 - GPU stem separation now automatically falls back to the CPU (rather than failing) when the GPU runs out of memory — common on integrated GPUs that share system memory.
+- The Warp/Clip Editor now offers the Stretch % control for samples (committed, free-form audio), which previously left it greyed out; the standalone Warp dialog and the Clip Editor also now agree on when Stretch is available.
 - Diagnostic and startup logs now default to a discoverable `Silverdaw` folder in your user folder, instead of a hidden location the installed app couldn't write to as shown.
 - Downloaded stem-separation models now live in a discoverable `Silverdaw\Models` folder in your user folder (existing downloads are moved there automatically); you can still point Silverdaw at models elsewhere.
 - New projects now default to a `Silverdaw\Projects` folder in your user folder, keeping projects, models, logs, and diagnostics together in one easy-to-find place.
