@@ -1426,18 +1426,20 @@ models may simply not fit, in which case the run falls back to the CPU; GPU
 acceleration is therefore treated as a best-effort, dedicated-GPU-oriented
 option rather than a guaranteed speed-up.
 
-Inference runs on a **small pool of physical performance cores**
-(`inferenceIntraOpThreads()` in `stems/InferenceThreads.cpp` detects P-cores via
-`GetLogicalProcessorInformationEx` + `EfficiencyClass` and caps ONNX Runtime's
-intra-op thread count to that count, at most 8; it falls back to
-`min(logical / 2, 8)` when detection is unavailable). This is a deliberate
-speed win, not just a responsiveness one: on Intel hybrid CPUs the transformer
-models synchronise at every op boundary, so spreading work across the slower
-E-cores and hyperthread siblings makes each op wait on its slowest thread — a
-tight P-core pool is markedly **faster** than using every logical core. It also
-leaves the E-cores and HT siblings free for the backend's websocket-send and
-message threads, so the progress bar keeps flowing without any explicit core
-reservation. On the GPU path the compute runs on the adapter instead.
+Inference runs on **one thread per physical core**, bounded by the historical
+`logical − 2` default (`inferenceIntraOpThreads()` in `stems/InferenceThreads.cpp`
+counts physical cores via `GetLogicalProcessorInformationEx` + `EfficiencyClass`
+and returns `min(physicalCores, logical − 2)`, falling back to `logical − 2`
+when detection is unavailable). The transformer models synchronise at every op
+boundary, so oversubscribing a hyperthreaded CPU — running two threads per core
+that fight over the same execution units — is markedly **slower** than one
+thread per physical core: the fix drops the hyperthread siblings on HT CPUs
+(e.g. 20 logical / 14 physical → 14 threads) while keeping every physical core
+(P **and** E) on non-hyperthreaded hybrid CPUs, where the E-cores add real
+throughput with no sibling contention. Reserving the two logical processors of
+the `logical − 2` bound leaves headroom for the backend's websocket-send and
+message threads, so the progress bar keeps flowing. On the GPU path the compute
+runs on the adapter instead.
 
 Cancellation aborts the **in-flight** ONNX run rather than waiting for the
 current chunk (which can take tens of seconds on a slow CPU) to finish. Each
@@ -1712,8 +1714,10 @@ Within the dialog:
 - **Warp + Pitch inspector** (existing-clip targets only): a right-hand panel
   exposes draft controls for **Enable Warp**, warp **Mode** (rhythmic / tonal
   / complex), **Playback tempo** (**Follow project BPM**, **Pin to** a specific
-  BPM, or a free **Stretch %** for material with no source tempo, e.g. spoken
-  word), pitch **Semitones** / **Cents** range sliders, and **Key presets**
+  BPM, or a free **Stretch %** for material with no source tempo — e.g. spoken
+  word, and **samples**, which are committed free-form audio that expose no
+  source tempo to the warp controls so they offer Stretch only), pitch
+  **Semitones** / **Cents** range sliders, and **Key presets**
   computed from the source's detected key. The resulting **Playback BPM** +
   ratio and the current pitched key are shown alongside the controls (the source
   BPM lives in the sibling Beat grid panel, not duplicated here). Slider movement
@@ -2027,7 +2031,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step, and compound ops (split / duplicate / paste) fold into a single undo step. |
 | `Ctrl + L` | Toggle the **lock** flag on the selected clip. Locked clips refuse drag-move, edge-trim and Split-at-playhead, and show a padlock badge in their title strip. Per-clip — linked saved clip siblings stay independently lockable. |
-| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Cut** / **Copy** / **Paste** (Cut and Copy act on the right-clicked clip — selecting it and its track first; Paste needs a clip on the clipboard and lands on this clip's track at the playhead, mirroring the Edit-menu / Ctrl+X·C·V behaviour), **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), **Chop to Grid** (a submenu — whole bar / 1/2 bar / 1/4 / 1/8 / 1/16 — that slices the whole clip onto the beat grid in one undo step; shown only for an unlocked, unlinked clip with a known tempo), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked saved clip sibling), **Brake** / **Backspin** (checkmarked toggles for the turntable record-stop / reverse-rewind tail effects, also propagated across linked siblings — Reverse, Brake and Backspin form a mutually-exclusive group, so each entry stays visible but is **disabled** while any other in the group is set), **Save Clip to Library**, **Save as Sample…** (opens the **Save as Sample** dialog with **Music** and **Simple** choices), **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved clip and routes the save through `library.updateSavedClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
+| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Cut** / **Copy** / **Paste** (Cut and Copy act on the right-clicked clip — selecting it and its track first; Paste needs a clip on the clipboard and lands on this clip's track at the playhead, mirroring the Edit-menu / Ctrl+X·C·V behaviour), **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), **Chop to Grid** (a submenu — whole bar / 1/2 bar / 1/4 / 1/8 / 1/16 — that slices the whole clip onto the beat grid in one undo step; shown only for an unlocked, unlinked clip with a known tempo), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked saved clip sibling), **Brake** / **Backspin** (checkmarked toggles for the turntable record-stop / reverse-rewind tail effects, also propagated across linked siblings — Reverse, Brake and Backspin form a mutually-exclusive group, so each entry stays visible but is **disabled** while any other in the group is set), **Save Clip to Library**, **Save as Sample…** (opens the **Save as Sample** dialog with **Music** and **Simple** choices), **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved clip and routes the save through `library.updateLibraryClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
 | Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |

@@ -41,7 +41,6 @@
 - The saved output device not being selected when slow to appear on startup.
 - Silence on the first play right after switching output device from the transport bar.
 - Clips with a variable-tempo source silently not being tempo-matched; a brief note now explains why.
-- Stem separation progress bar freezing mid-stem and a slow Cancel button.
 - Dragging the playhead left not scrolling the timeline.
 - The cursor not staying a grabbing hand while dragging the playhead.
 - The metronome on/off state not being remembered between sessions.
