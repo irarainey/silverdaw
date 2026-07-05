@@ -342,6 +342,12 @@ class ProjectState : public juce::ValueTree::Listener
     /** Record whether the project tempo has been auto-seeded. Does NOT mark dirty. */
     void setBpmSeeded(bool seeded);
 
+    /** App-level preference (default on): whether the first clip on a track seeds
+     *  the project tempo. Runtime-only (not persisted with the project) — the
+     *  renderer re-pushes it on every bridge (re)connect and when it changes. */
+    bool seedProjectTempoFromFirstClip() const { return seedProjectTempoFromFirstClip_; }
+    void setSeedProjectTempoFromFirstClip(bool enabled) { seedProjectTempoFromFirstClip_ = enabled; }
+
     double getProjectLengthMs() const;
 
     /** Update the persisted project length. Marks dirty. */
@@ -553,6 +559,9 @@ class ProjectState : public juce::ValueTree::Listener
     juce::ValueTree cleanSnapshot;
     juce::UndoManager undoManager;
     bool dirty{false};
+    // App-level preference (default on): whether the first clip seeds project tempo.
+    // Runtime-only; re-pushed by the renderer on connect and on change.
+    bool seedProjectTempoFromFirstClip_{true};
     // Counter, not bool, so nested dirty-suppression scopes cannot unsuppress an outer scope.
     int suppressDirtyDepth{0};
     DirtyChangedCallback onDirtyChanged;

@@ -38,6 +38,7 @@ export interface PreferencesForm {
   followPlayback: Ref<boolean>
   showLibraryTileImages: Ref<boolean>
   matchProjectTempoOnDrop: Ref<boolean>
+  seedProjectTempoFromFirstClip: Ref<boolean>
   cleanupProjectFiles: Ref<boolean>
   skipButtonTarget: Ref<SkipButtonTarget>
   waveformDisplayMode: Ref<WaveformDisplayMode>
@@ -157,6 +158,7 @@ export function usePreferencesForm(): PreferencesForm {
   const followPlayback = ref(true)
   const showLibraryTileImages = ref(true)
   const matchProjectTempoOnDrop = ref(true)
+  const seedProjectTempoFromFirstClip = ref(true)
   const cleanupProjectFiles = ref(false)
   const skipButtonTarget = ref<SkipButtonTarget>('timelineEnds')
   const waveformDisplayMode = ref<WaveformDisplayMode>('summary')
@@ -184,6 +186,7 @@ export function usePreferencesForm(): PreferencesForm {
   const initialFollow = ref(true)
   const initialShowLibraryTileImages = ref(true)
   const initialMatchProjectTempoOnDrop = ref(true)
+  const initialSeedProjectTempoFromFirstClip = ref(true)
   const initialCleanupProjectFiles = ref(false)
   const initialSkipButtonTarget = ref<SkipButtonTarget>('timelineEnds')
   const initialWaveformDisplayMode = ref<WaveformDisplayMode>('summary')
@@ -212,6 +215,7 @@ export function usePreferencesForm(): PreferencesForm {
       followPlayback.value !== initialFollow.value ||
       showLibraryTileImages.value !== initialShowLibraryTileImages.value ||
       matchProjectTempoOnDrop.value !== initialMatchProjectTempoOnDrop.value ||
+      seedProjectTempoFromFirstClip.value !== initialSeedProjectTempoFromFirstClip.value ||
       cleanupProjectFiles.value !== initialCleanupProjectFiles.value ||
       skipButtonTarget.value !== initialSkipButtonTarget.value ||
       waveformDisplayMode.value !== initialWaveformDisplayMode.value ||
@@ -310,6 +314,7 @@ export function usePreferencesForm(): PreferencesForm {
     followPlayback.value = ui.followPlayback
     showLibraryTileImages.value = ui.showLibraryTileImages
     matchProjectTempoOnDrop.value = ui.matchProjectTempoOnDrop
+    seedProjectTempoFromFirstClip.value = ui.seedProjectTempoFromFirstClip
     cleanupProjectFiles.value = ui.cleanupProjectFiles
     skipButtonTarget.value = ui.skipButtonTarget
     waveformDisplayMode.value = ui.waveformDisplayMode
@@ -321,6 +326,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialFollow.value = followPlayback.value
     initialShowLibraryTileImages.value = showLibraryTileImages.value
     initialMatchProjectTempoOnDrop.value = matchProjectTempoOnDrop.value
+    initialSeedProjectTempoFromFirstClip.value = seedProjectTempoFromFirstClip.value
     initialCleanupProjectFiles.value = cleanupProjectFiles.value
     initialSkipButtonTarget.value = skipButtonTarget.value
     initialWaveformDisplayMode.value = waveformDisplayMode.value
@@ -414,6 +420,9 @@ export function usePreferencesForm(): PreferencesForm {
     }
     if (matchProjectTempoOnDrop.value !== initialMatchProjectTempoOnDrop.value) {
       ui.setMatchProjectTempoOnDrop(matchProjectTempoOnDrop.value)
+    }
+    if (seedProjectTempoFromFirstClip.value !== initialSeedProjectTempoFromFirstClip.value) {
+      ui.setSeedProjectTempoFromFirstClip(seedProjectTempoFromFirstClip.value)
     }
     if (cleanupProjectFiles.value !== initialCleanupProjectFiles.value) {
       ui.setCleanupProjectFiles(cleanupProjectFiles.value)
@@ -533,6 +542,7 @@ export function usePreferencesForm(): PreferencesForm {
     followPlayback,
     showLibraryTileImages,
     matchProjectTempoOnDrop,
+    seedProjectTempoFromFirstClip,
     cleanupProjectFiles,
     skipButtonTarget,
     waveformDisplayMode,

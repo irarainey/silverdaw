@@ -188,4 +188,16 @@ void handleProjectSetMetronome(const juce::var& payload, silverdaw::AudioEngine&
     engine.setMetronomeEnabled(*enabledOpt);
 }
 
+void handleSetSeedProjectTempoPref(const juce::var& payload, silverdaw::ProjectState& projectState)
+{
+    // App-level preference (default on), re-pushed by the renderer on connect and
+    // on change. Runtime-only: gates whether the first clip seeds the project tempo.
+    const auto enabledOpt = readOptionalBool(payload, "enabled");
+    if (! enabledOpt.has_value()) return;
+    projectState.setSeedProjectTempoFromFirstClip(*enabledOpt);
+    silverdaw::log::info("bpmjob",
+                         juce::String("seed-from-first-clip preference set to ")
+                             + (*enabledOpt ? "on" : "off"));
+}
+
 } // namespace silverdaw

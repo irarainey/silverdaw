@@ -153,6 +153,7 @@ export function useTransportBarController() {
   )
 
   const projectBpmPending = computed(() => {
+    if (!ui.seedProjectTempoFromFirstClip) return false
     if (!timingEditable.value || projectClipCount.value === 0) return false
     const projectHasAnalysedItem = library.items.some((item) => typeof item.bpm === 'number' && item.bpm > 0)
     if (projectHasAnalysedItem) return false

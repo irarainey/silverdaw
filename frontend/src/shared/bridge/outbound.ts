@@ -518,6 +518,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_BAR_COUNTER_START: ProjectSetBarCounterStartPayload
   PROJECT_SET_MIXDOWN_START_BAR: ProjectSetMixdownStartBarPayload
   PROJECT_SET_METRONOME: ProjectSetMetronomePayload
+  PROJECT_SET_SEED_TEMPO_PREF: ProjectSetSeedTempoPrefPayload
   AUDIO_FILE_PROBE: AudioFileProbePayload
   MIXDOWN_START: MixdownStartPayload
   MIXDOWN_CANCEL: undefined
@@ -688,6 +689,15 @@ export interface ProjectSetMixdownStartBarPayload {
  * project dirty and is not undoable.
  */
 export interface ProjectSetMetronomePayload {
+  enabled: boolean
+}
+
+/**
+ * App-level preference (default on): whether dropping the first clip on a new
+ * project seeds the project tempo from that clip. Runtime-only on the backend;
+ * re-sent on every (re)connect and whenever the preference changes.
+ */
+export interface ProjectSetSeedTempoPrefPayload {
   enabled: boolean
 }
 
@@ -1065,6 +1075,7 @@ export const bridgeOutboundPayloadKinds: {
   PROJECT_SET_BAR_COUNTER_START: 'payload',
   PROJECT_SET_MIXDOWN_START_BAR: 'payload',
   PROJECT_SET_METRONOME: 'payload',
+  PROJECT_SET_SEED_TEMPO_PREF: 'payload',
   AUDIO_FILE_PROBE: 'payload',
   MIXDOWN_START: 'payload',
   MIXDOWN_CANCEL: 'none',

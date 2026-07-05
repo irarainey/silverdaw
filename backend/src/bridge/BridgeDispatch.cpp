@@ -591,6 +591,10 @@ bool dispatchProject(const DispatchContext& ctx)
     {
         silverdaw::handleProjectSetMetronome(payload, engine, projectState);
     }
+    else if (type == "PROJECT_SET_SEED_TEMPO_PREF")
+    {
+        silverdaw::handleSetSeedProjectTempoPref(payload, projectState);
+    }
     else
     {
         return false;

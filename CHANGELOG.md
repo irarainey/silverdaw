@@ -20,6 +20,7 @@
 - Faster project loading for projects with many clips.
 - Faster waveform drawing for clips that share the same audio.
 - Faster startup, especially the first launch: the window appears immediately while the audio engine starts in the background.
+- New preference (on by default) to set the project tempo from the first clip added to a new project; turn it off to keep the project tempo fixed.
 
 ### Fixed
 

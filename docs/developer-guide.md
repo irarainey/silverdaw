@@ -1206,7 +1206,10 @@ playbackFilePath }`. The project BPM is seeded once, from the first musical clip
 placed **on a track**: the seed fires only when at least one clip is on a track
 and `ProjectState::isBpmSeeded()` is still false (the flag — not a count of
 analysed library items — is the authoritative once-only signal, and derived stems
-inherit a BPM without ever seeding). When it fires a `PROJECT_BPM_APPLIED { bpm }`
+inherit a BPM without ever seeding), **and** the app-level `ui.seedProjectTempoFromFirstClip`
+preference (default on, mirrored to the backend via `PROJECT_SET_SEED_TEMPO_PREF`)
+is enabled — with it off the seed is skipped entirely and the project BPM stays put.
+When it fires a `PROJECT_BPM_APPLIED { bpm }`
 envelope is broadcast and the renderer mirrors both into `libraryStore` and
 `transportStore`. Seeding runs even for variable-tempo and low-confidence sources
 (an approximate tempo is more useful than the default 100) but is suppressed for
@@ -1707,9 +1710,10 @@ sidebar:
 
 - **General** — appearance: the **waveform display** mode (single vs. left/right
   channels), library tile imagery, and toast notifications.
-- **Timeline** — timeline behaviour: follow-playback auto-scroll, **match project
-  tempo on drop** (auto-warp a dropped clip to the project BPM), and the transport
-  **previous / next button target**.
+- **Timeline** — timeline behaviour: follow-playback auto-scroll, **set project
+  tempo from first clip** (seed a new project's BPM from the first clip dropped),
+  **match project tempo on drop** (auto-warp a dropped clip to the project BPM),
+  and the transport **previous / next button target**.
 - **Project** — default Save / Open / Import directories, background autosave
   configuration, and **clean up project files on remove** (with a *cannot be
   undone* warning; a file-deleting removal is non-undoable and doesn't dirty the
@@ -1746,6 +1750,12 @@ Persisted fields:
   Preferences dialog.
 - **Show images on library tiles** — controls whether library tiles show embedded cover
   art or the fallback audio icon. Off makes the library tiles text-only.
+- **Set project tempo from first clip** — `ui.seedProjectTempoFromFirstClip`
+  (default on). Gates the first-clip project-BPM seed (see *Tempo, key & warp*).
+  When off, dropping the first clip onto a new project leaves the project BPM
+  untouched and the transport BPM field does not pulse a detection hint. Like the
+  turntable-effect defaults, it is pushed to the backend on change and re-sent on
+  every reconnect (`PROJECT_SET_SEED_TEMPO_PREF { enabled }`).
 - **Show toast notifications** — pop transient feedback (errors, save acks) in the
   bottom-right. Off silences them; the underlying events still go to the log when
   diagnostic logging is enabled.
