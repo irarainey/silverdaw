@@ -233,6 +233,13 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 />
               </ClipEffectModule>
               <ClipEffectModule
+                title="Beat grid"
+                :cols="1"
+                :rows="2"
+              >
+                <ClipEditorBeatGridPanel :grid="beatGrid" />
+              </ClipEffectModule>
+              <ClipEffectModule
                 title="Pitch"
                 :cols="1"
                 :rows="2"
@@ -240,16 +247,6 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 <ClipEditorPitchPanel
                   :draft="warpDraft"
                   :source-key="sourceKey"
-                />
-              </ClipEffectModule>
-              <ClipEffectModule
-                title="Beat grid"
-                :cols="1"
-                :rows="2"
-              >
-                <ClipEditorBeatGridPanel
-                  :grid="beatGrid"
-                  :source-bpm="sourceBpm"
                 />
               </ClipEffectModule>
               <ClipEffectModule

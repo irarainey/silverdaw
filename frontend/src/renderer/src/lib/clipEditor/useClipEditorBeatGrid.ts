@@ -18,7 +18,10 @@ export interface ClipEditorBeatGridDeps {
 export interface ClipEditorBeatGrid {
   /** When true, dragging the waveform slides the beat grid instead of selecting. */
   alignActive: Ref<boolean>
-  /** Two-way bound BPM the user types before applying. */
+  /**
+   * The beat-grid BPM shown in (and edited via) the tempo field. Kept in sync with
+   * the source's current tempo unless the user is actively editing it.
+   */
   manualBpmInput: Ref<number | null>
   /**
    * The source tempo captured when the editor opened, so the user can see what
@@ -27,8 +30,6 @@ export interface ClipEditorBeatGrid {
   originalBpm: Ref<number | null>
   /** Whether the source currently has a tempo grid to align. */
   hasGrid: () => boolean
-  /** Whether `manualBpmInput` is a valid, applicable BPM. */
-  canApply: () => boolean
   /** Whether the current BPM differs from the captured original (restore is possible). */
   canRestore: () => boolean
   /**
@@ -39,8 +40,14 @@ export interface ClipEditorBeatGrid {
   hasGridChanged: () => boolean
   /** Toggle slide-to-align mode (no-op without a grid). */
   toggleAlign: () => void
-  /** Apply the typed BPM, keeping the current phase anchor. */
-  applyManualBpm: () => void
+  /** Mark the tempo field as being edited so external tempo changes don't clobber typing. */
+  beginTempoEdit: () => void
+  /**
+   * Commit the typed tempo, keeping the current phase anchor. Reverts to the current
+   * tempo when the entry is empty or out of range. Pass `endEditing` on blur to release
+   * the edit lock so the field resumes tracking the source tempo.
+   */
+  commitTempoEdit: (endEditing?: boolean) => void
   /** Restore the source tempo to the value captured when the editor opened. */
   restoreOriginalBpm: () => void
   /** Halve / double the source BPM (octave fix), keeping the phase anchor. */
@@ -74,6 +81,20 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   // persisted immediately, but the Clip Editor still needs a dirty signal so
   // Save enables and gives the edit explicit closure.
   const gridEdited = ref(false)
+  // True while the user is typing in the tempo field, so external tempo changes
+  // (octave, restore, backend echo) don't overwrite what they are entering.
+  let tempoEditing = false
+
+  function currentBpm(): number | undefined {
+    const bpm = deps.sourceItem()?.bpm
+    return typeof bpm === 'number' && bpm > 0 ? bpm : undefined
+  }
+
+  function syncTempoField(): void {
+    if (tempoEditing) return
+    const cur = currentBpm()
+    manualBpmInput.value = cur !== undefined ? Math.round(cur * 100) / 100 : null
+  }
 
   watch(
     () => deps.sourceItem()?.bpm,
@@ -81,6 +102,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
       if (originalBpm.value === null && typeof bpm === 'number' && bpm > 0) {
         originalBpm.value = bpm
       }
+      syncTempoField()
     },
     { immediate: true }
   )
@@ -88,11 +110,6 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   function hasGrid(): boolean {
     const item = deps.sourceItem()
     return !!item && typeof item.bpm === 'number' && item.bpm > 0
-  }
-
-  function canApply(): boolean {
-    const bpm = manualBpmInput.value
-    return !!deps.sourceItem() && typeof bpm === 'number' && bpm >= MIN_BPM && bpm <= MAX_BPM
   }
 
   function canRestore(): boolean {
@@ -113,12 +130,25 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     alignActive.value = !alignActive.value
   }
 
-  function applyManualBpm(): void {
+  function beginTempoEdit(): void {
+    tempoEditing = true
+  }
+
+  function commitTempoEdit(endEditing = false): void {
     const item = deps.sourceItem()
     const bpm = manualBpmInput.value
-    if (!item || typeof bpm !== 'number' || bpm < MIN_BPM || bpm > MAX_BPM) return
-    library.setItemManualTempo(item.id, bpm, currentAnchorSec(item))
-    gridEdited.value = true
+    if (item && typeof bpm === 'number' && bpm >= MIN_BPM && bpm <= MAX_BPM) {
+      if (typeof item.bpm !== 'number' || Math.abs(item.bpm - bpm) > 1e-6) {
+        library.setItemManualTempo(item.id, bpm, currentAnchorSec(item))
+        gridEdited.value = true
+      }
+      manualBpmInput.value = Math.round(bpm * 100) / 100
+    } else if (!tempoEditing || endEditing) {
+      // Empty / out-of-range entry: revert the field to the current tempo.
+      const cur = currentBpm()
+      manualBpmInput.value = cur !== undefined ? Math.round(cur * 100) / 100 : null
+    }
+    if (endEditing) tempoEditing = false
   }
 
   function restoreOriginalBpm(): void {
@@ -182,11 +212,11 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     manualBpmInput,
     originalBpm,
     hasGrid,
-    canApply,
     canRestore,
     hasGridChanged,
     toggleAlign,
-    applyManualBpm,
+    beginTempoEdit,
+    commitTempoEdit,
     restoreOriginalBpm,
     halveBpm,
     doubleBpm,

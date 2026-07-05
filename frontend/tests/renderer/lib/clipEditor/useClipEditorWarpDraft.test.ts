@@ -64,8 +64,9 @@ describe('useClipEditorWarpDraft', () => {
 
     expect(draft.draftTempoEnabled.value).toBe(false)
     expect(draft.draftMode.value).toBe('rhythmic')
-    expect(draft.draftTempoPinned.value).toBe(false)
+    expect(draft.draftTempoMode.value).toBe('follow')
     expect(draft.draftPinnedBpm.value).toBeCloseTo(100, 2)
+    expect(draft.draftStretchPercent.value).toBe(100)
     expect(draft.draftSemitones.value).toBe(0)
     expect(draft.draftCents.value).toBe(0)
   })
@@ -87,7 +88,7 @@ describe('useClipEditorWarpDraft', () => {
 
     expect(draft.draftTempoEnabled.value).toBe(true)
     expect(draft.draftMode.value).toBe('tonal')
-    expect(draft.draftTempoPinned.value).toBe(true)
+    expect(draft.draftTempoMode.value).toBe('pin')
     expect(draft.draftPinnedBpm.value).toBeCloseTo(150, 2)
     expect(draft.draftSemitones.value).toBe(2)
     expect(draft.draftCents.value).toBe(10)
@@ -104,7 +105,7 @@ describe('useClipEditorWarpDraft', () => {
     expect(draft.draftTempoWarpActive.value).toBe(false)
 
     draft.draftTempoEnabled.value = true
-    draft.draftTempoPinned.value = true
+    draft.setTempoMode('pin')
     draft.draftPinnedBpm.value = 150
 
     expect(draft.draftEffectiveRatio.value).toBeCloseTo(1.5, 3)
@@ -132,21 +133,38 @@ describe('useClipEditorWarpDraft', () => {
     const draft = useClipEditorWarpDraft(sourceBpm)
     draft.initialise(null, false)
     draft.draftTempoEnabled.value = true
-    draft.draftTempoPinned.value = true
+    draft.setTempoMode('pin')
     draft.draftPinnedBpm.value = 200
     expect(draft.previewTempoRatio()).toBeCloseTo(2, 3)
   })
 
-  it('followProjectBpm/pinTempo flip the pinned flag without losing the BPM value', () => {
+  it('setTempoMode switches modes; follow/pin need a source BPM, stretch always works', () => {
     const sourceBpm = computed<number | undefined>(() => 100)
     const draft = useClipEditorWarpDraft(sourceBpm)
     useTransportStore().setBpm(120)
     draft.initialise(null, false)
-    draft.pinTempo()
-    expect(draft.draftTempoPinned.value).toBe(true)
+    draft.setTempoMode('pin')
+    expect(draft.draftTempoMode.value).toBe('pin')
     expect(draft.draftPinnedBpm.value).toBeCloseTo(120, 2)
-    draft.followProjectBpm()
-    expect(draft.draftTempoPinned.value).toBe(false)
+    draft.setTempoMode('follow')
+    expect(draft.draftTempoMode.value).toBe('follow')
+    draft.setTempoMode('stretch')
+    expect(draft.draftTempoMode.value).toBe('stretch')
+  })
+
+  it('stretch mode warps without a source BPM (e.g. spoken word)', () => {
+    const sourceBpm = computed<number | undefined>(() => undefined)
+    const draft = useClipEditorWarpDraft(sourceBpm)
+    draft.initialise(null, false)
+    draft.draftTempoEnabled.value = true
+    // follow/pin are unavailable without a source tempo
+    draft.setTempoMode('pin')
+    expect(draft.draftTempoMode.value).not.toBe('pin')
+    draft.setTempoMode('stretch')
+    draft.draftStretchPercent.value = 110
+    expect(draft.draftEffectiveRatio.value).toBeCloseTo(1.1, 3)
+    expect(draft.resolveManualRatio()).toBeCloseTo(1.1, 3)
+    expect(draft.draftTempoWarpActive.value).toBe(true)
   })
 
   it('applyKeyPreset stamps semitones and resets cents', () => {

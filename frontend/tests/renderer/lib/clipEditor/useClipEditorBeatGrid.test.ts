@@ -56,25 +56,49 @@ describe('useClipEditorBeatGrid', () => {
     expect(grid.alignActive.value).toBe(false)
   })
 
-  it('gates canApply on a valid BPM range', () => {
-    const item = addSource()
+  it('seeds the tempo field with the current source BPM', () => {
+    const item = addSource(140, 0)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
-    grid.manualBpmInput.value = null
-    expect(grid.canApply()).toBe(false)
-    grid.manualBpmInput.value = 10
-    expect(grid.canApply()).toBe(false)
-    grid.manualBpmInput.value = 400
-    expect(grid.canApply()).toBe(false)
-    grid.manualBpmInput.value = 128
-    expect(grid.canApply()).toBe(true)
+    expect(grid.manualBpmInput.value).toBe(140)
   })
 
-  it('applies the typed BPM through the store, keeping the current anchor', () => {
+  it('commits a valid typed tempo and reverts an out-of-range one', () => {
+    const item = addSource(120, 0)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    sendMock.mockClear()
+
+    grid.beginTempoEdit()
+    grid.manualBpmInput.value = 10
+    grid.commitTempoEdit(true)
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(grid.manualBpmInput.value).toBe(120)
+
+    grid.beginTempoEdit()
+    grid.manualBpmInput.value = 128
+    grid.commitTempoEdit(true)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+      itemId: item.id,
+      bpm: 128,
+      beatAnchorSec: 0
+    })
+  })
+
+  it('does not write when the committed tempo is unchanged', () => {
+    const item = addSource(120, 0)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    sendMock.mockClear()
+    grid.beginTempoEdit()
+    grid.commitTempoEdit(true)
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('commits the typed BPM through the store, keeping the current anchor', () => {
     const item = addSource(120, 0.3)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     sendMock.mockClear()
+    grid.beginTempoEdit()
     grid.manualBpmInput.value = 96
-    grid.applyManualBpm()
+    grid.commitTempoEdit(true)
     expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
       itemId: item.id,
       bpm: 96,
@@ -111,12 +135,13 @@ describe('useClipEditorBeatGrid', () => {
     expect(grid.hasGridChanged()).toBe(true)
   })
 
-  it('reports a grid change after applying a manual BPM', () => {
+  it('reports a grid change after committing a manual BPM', () => {
     const item = addSource(120, 0)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     expect(grid.hasGridChanged()).toBe(false)
+    grid.beginTempoEdit()
     grid.manualBpmInput.value = 96
-    grid.applyManualBpm()
+    grid.commitTempoEdit(true)
     expect(grid.hasGridChanged()).toBe(true)
   })
 
@@ -183,8 +208,9 @@ describe('useClipEditorBeatGrid', () => {
     // Nothing to restore while the current tempo still matches the original.
     expect(grid.canRestore()).toBe(false)
 
+    grid.beginTempoEdit()
     grid.manualBpmInput.value = 96
-    grid.applyManualBpm()
+    grid.commitTempoEdit(true)
     expect(item.bpm).toBe(96)
     expect(grid.canRestore()).toBe(true)
 

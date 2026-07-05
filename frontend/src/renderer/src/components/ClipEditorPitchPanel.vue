@@ -171,6 +171,16 @@ const currentPitchKey = computed(() =>
 </template>
 
 <style scoped>
+.pitch-range-input {
+  outline: none;
+}
+
+.pitch-range-input:focus,
+.pitch-range-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .pitch-range-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;

@@ -72,13 +72,14 @@ export function useClipEditorController(
   const {
     draftTempoEnabled,
     draftMode,
-    draftTempoPinned,
+    draftTempoMode,
     draftPinnedBpm,
+    draftStretchPercent,
     draftSemitones,
     draftCents,
     draftTempoWarpActive,
     draftProcessorEnabled,
-    tempoRatioFromPinnedBpm,
+    resolveManualRatio,
     previewTempoRatio,
     initialise: initialiseWarpDraft
   } = warpDraft
@@ -283,8 +284,9 @@ export function useClipEditorController(
     cropViewDurationMs: () => cropViewDurationMs.value,
     draftTempoEnabled: () => draftTempoEnabled.value,
     draftMode: () => draftMode.value,
-    draftTempoPinned: () => draftTempoPinned.value,
+    draftTempoMode: () => draftTempoMode.value,
     draftPinnedBpm: () => draftPinnedBpm.value,
+    draftStretchPercent: () => draftStretchPercent.value,
     draftSemitones: () => draftSemitones.value,
     draftCents: () => draftCents.value,
     hasVolumeShapeChanged: () => hasVolumeShapeChanged.value,
@@ -408,7 +410,7 @@ export function useClipEditorController(
   )
 
   watch(
-    [draftTempoEnabled, draftMode, draftTempoPinned, draftPinnedBpm, draftSemitones, draftCents],
+    [draftTempoEnabled, draftMode, draftTempoMode, draftPinnedBpm, draftStretchPercent, draftSemitones, draftCents],
     () => {
       scheduleDraftPreviewWarp()
     }
@@ -805,8 +807,8 @@ export function useClipEditorController(
     draftCents: () => draftCents.value,
     draftTempoEnabled: () => draftTempoEnabled.value,
     draftMode: () => draftMode.value,
-    draftTempoPinned: () => draftTempoPinned.value,
-    tempoRatioFromPinnedBpm: () => tempoRatioFromPinnedBpm(),
+    draftTempoMode: () => draftTempoMode.value,
+    resolveManualRatio: () => resolveManualRatio(),
     volumeShapeCommittedPoints: () => volumeShapeCommittedPoints(),
     reverseCommitted: () => reverseDraft.committed(),
     brakeCommitted: () => djEffectDraft.committedBrake(),

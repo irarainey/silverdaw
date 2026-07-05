@@ -232,7 +232,7 @@ const {
                 min="-12"
                 max="12"
                 step="1"
-                class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
+                class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700 outline-none focus:outline-none focus-visible:outline-none"
               >
               <input
                 v-if="semitonesEditing"
@@ -265,7 +265,7 @@ const {
                 min="-100"
                 max="100"
                 step="1"
-                class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700"
+                class="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700 outline-none focus:outline-none focus-visible:outline-none"
               >
               <input
                 v-if="centsEditing"

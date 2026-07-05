@@ -19,12 +19,12 @@ const WARP_MODES: ClipWarpMode[] = ['rhythmic', 'tonal', 'complex']
 // through the `draft` prop directly, keeping `vue/no-mutating-props` happy.
 const draftTempoEnabled = props.draft.draftTempoEnabled
 const draftMode = props.draft.draftMode
+const draftTempoMode = props.draft.draftTempoMode
 const draftPinnedBpm = props.draft.draftPinnedBpm
+const draftStretchPercent = props.draft.draftStretchPercent
 const draftEffectiveBpm = props.draft.draftEffectiveBpm
 const draftEffectiveRatio = props.draft.draftEffectiveRatio
-const tempoFollowsProject = props.draft.tempoFollowsProject
-const followProjectBpm = props.draft.followProjectBpm
-const pinTempo = props.draft.pinTempo
+const setTempoMode = props.draft.setTempoMode
 </script>
 
 <template>
@@ -77,28 +77,36 @@ const pinTempo = props.draft.pinTempo
 
     <fieldset
       class="flex flex-col gap-1"
-      :disabled="!draftTempoEnabled || !sourceBpm"
-      :class="!draftTempoEnabled || !sourceBpm ? 'opacity-50' : ''"
+      :disabled="!draftTempoEnabled"
+      :class="!draftTempoEnabled ? 'opacity-50' : ''"
     >
       <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
         Playback tempo
       </legend>
-      <label class="flex items-center gap-2">
+      <label
+        class="flex items-center gap-2"
+        :class="!sourceBpm ? 'opacity-50' : ''"
+      >
         <input
           type="radio"
-          :checked="tempoFollowsProject"
-          @change="followProjectBpm()"
+          :checked="draftTempoMode === 'follow'"
+          :disabled="!sourceBpm"
+          @change="setTempoMode('follow')"
         >
         <span class="text-zinc-200">Follow project BPM</span>
         <span class="ml-auto text-[10px] text-zinc-500">
           ({{ projectBpm.toFixed(2) }})
         </span>
       </label>
-      <label class="flex items-center gap-2">
+      <label
+        class="flex items-center gap-2"
+        :class="!sourceBpm ? 'opacity-50' : ''"
+      >
         <input
           type="radio"
-          :checked="!tempoFollowsProject"
-          @change="pinTempo()"
+          :checked="draftTempoMode === 'pin'"
+          :disabled="!sourceBpm"
+          @change="setTempoMode('pin')"
         >
         <span class="text-zinc-200">Pin to</span>
         <input
@@ -107,11 +115,48 @@ const pinTempo = props.draft.pinTempo
           min="20"
           max="300"
           step="0.01"
-          :disabled="tempoFollowsProject"
-          class="w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+          :disabled="draftTempoMode !== 'pin'"
+          class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
         >
         <span class="text-[10px] text-zinc-500">BPM</span>
       </label>
+      <label class="flex items-center gap-2">
+        <input
+          type="radio"
+          :checked="draftTempoMode === 'stretch'"
+          @change="setTempoMode('stretch')"
+        >
+        <span class="text-zinc-200">Stretch</span>
+        <input
+          v-model.number="draftStretchPercent"
+          type="number"
+          min="25"
+          max="400"
+          step="1"
+          :disabled="draftTempoMode !== 'stretch'"
+          class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+        >
+        <span class="text-[10px] text-zinc-500">%</span>
+      </label>
+      <p
+        v-if="!sourceBpm"
+        class="text-[10px] text-zinc-500"
+      >
+        No source tempo — use Stretch to fit non-beat material like vocals.
+      </p>
     </fieldset>
   </div>
 </template>
+
+<style scoped>
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.no-spinner {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+</style>

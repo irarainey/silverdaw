@@ -22,8 +22,9 @@ interface HarnessState {
   cropViewDurationMs: number
   draftTempoEnabled: boolean
   draftMode: ClipEditorDirtyStateDeps['draftMode'] extends () => infer R ? R : never
-  draftTempoPinned: boolean
+  draftTempoMode: ClipEditorDirtyStateDeps['draftTempoMode'] extends () => infer R ? R : never
   draftPinnedBpm: number
+  draftStretchPercent: number
   draftSemitones: number
   draftCents: number
   hasVolumeShapeChanged: boolean
@@ -68,8 +69,9 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
     cropViewDurationMs: 1000,
     draftTempoEnabled: false,
     draftMode: 'rhythmic',
-    draftTempoPinned: false,
+    draftTempoMode: 'follow',
     draftPinnedBpm: 120,
+    draftStretchPercent: 100,
     draftSemitones: 0,
     draftCents: 0,
     hasVolumeShapeChanged: false,
@@ -94,8 +96,9 @@ function makeHarness(initial: Partial<HarnessState> = {}) {
     cropViewDurationMs: () => state.cropViewDurationMs,
     draftTempoEnabled: () => state.draftTempoEnabled,
     draftMode: () => state.draftMode,
-    draftTempoPinned: () => state.draftTempoPinned,
+    draftTempoMode: () => state.draftTempoMode,
     draftPinnedBpm: () => state.draftPinnedBpm,
+    draftStretchPercent: () => state.draftStretchPercent,
     draftSemitones: () => state.draftSemitones,
     draftCents: () => state.draftCents,
     hasVolumeShapeChanged: () => state.hasVolumeShapeChanged,
