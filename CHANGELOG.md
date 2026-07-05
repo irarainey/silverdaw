@@ -9,6 +9,8 @@
 
 ### Changed
 
+- Library items now carry a distinct type badge — Track, Stem, or Sample — so their type reads at a glance.
+- Opening a library track/stem/sample is now labelled "Preview" (effects are edited per clip on the timeline) in a right-sized dialog, instead of the full editor.
 - Feedback is now submitted through Featurebase.
 - Sliders now snap to their centre when dragged near it, and reset on double-click.
 - Pitch semitone and cent values can be double-clicked to type an exact amount.
@@ -21,6 +23,7 @@
 
 ### Fixed
 
+- Trimming the view to the selection did nothing when previewing a library item.
 - Clip Editor pitch sliders showing a browser focus outline, and the Warp tempo fields showing number spinners.
 - "Unable to connect to audio engine" on some freshly installed machines.
 - Sleep-prone USB output devices staying silent on the first play.

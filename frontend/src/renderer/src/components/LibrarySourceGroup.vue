@@ -80,6 +80,7 @@ const childSummary = computed(() => {
     <div
       draggable="true"
       class="library-item group relative flex cursor-grab select-none items-stretch overflow-hidden bg-zinc-950/60 text-left transition-colors hover:bg-zinc-900 active:cursor-grabbing"
+      title="Drag onto a track to use it. Double-click to preview."
       @dragstart="(e) => emit('dragStart', e, props.source)"
       @dragend="emit('dragEnd')"
       @dblclick="emit('openEditor', props.source)"
@@ -134,6 +135,10 @@ const childSummary = computed(() => {
         <LibraryTypeBadge
           v-else-if="isSampleTile"
           kind="sample"
+        />
+        <LibraryTypeBadge
+          v-else
+          kind="source"
         />
       </div>
       <div class="flex min-w-0 flex-1 flex-col px-2 py-1.5">

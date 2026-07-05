@@ -61,7 +61,7 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     if (!item) return []
     const inUse = library.isItemInUse(item.id)
     const items: ClipContextMenuItem[] = [
-      { command: 'library.edit', label: 'Open in Editor' },
+      { command: 'library.edit', label: item.kind === 'clip' ? 'Open in Editor' : 'Preview' },
       { command: 'library.info', label: 'Show Information' },
       { command: 'library.rename', label: 'Rename', separatorAbove: true }
     ]

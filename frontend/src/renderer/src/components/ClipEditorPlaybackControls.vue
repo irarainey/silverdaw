@@ -7,6 +7,8 @@ defineProps<{
   isLoaded: boolean
   loopEnabled: boolean
   metronomeEnabled: boolean
+  /** Hidden in the read-only source preview, where a beat click serves no purpose. */
+  showMetronome?: boolean
 }>()
 
 defineEmits<{
@@ -88,6 +90,7 @@ defineEmits<{
       ><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" /></svg>
     </button>
     <button
+      v-if="showMetronome"
       type="button"
       data-borderless-button="true"
       role="switch"

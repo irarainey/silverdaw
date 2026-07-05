@@ -58,13 +58,17 @@ function makeVp(opts: {
   sourceDurationMs?: number
   uiZoomPxPerSecond?: number
 } = {}): ReturnType<typeof useClipEditorViewport> {
-  return useClipEditorViewport({
+  const vp = useClipEditorViewport({
     editorItem: ref(opts.editorItem ?? null) as never,
     editsExistingClip: ref(opts.editsExistingClip ?? false) as never,
     timelineClip: ref(opts.timelineClip ?? null) as never,
     sourceDurationMs: ref(opts.sourceDurationMs ?? 10_000) as never,
     uiZoomPxPerSecond: ref(opts.uiZoomPxPerSecond ?? 100) as never
   })
+  // Mirror real usage: the dialog initialises the crop/selection on open, seeding
+  // the (crop) view range the trim/zoom logic reads.
+  vp.initialiseForItem()
+  return vp
 }
 
 describe('useClipEditorViewport — view bounds', () => {
