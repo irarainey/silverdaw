@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { join, resolve as pathResolve } from 'node:path'
+import { join } from 'node:path'
 import type { DebugPreferences, RecentProject, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
 import type { StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '../shared/bridge/outbound'
 
@@ -157,30 +157,26 @@ export function getDefaultDebugLogDirectory(): string {
   // silently redirected into the package's hidden LocalCache container, so a
   // userData path is shown but never findable. The app has runFullTrust, so the
   // user-profile root is real, unvirtualised, and easy to navigate to — default
-  // logs to a Silverdaw folder there. Dev builds keep logs in the repo tree.
-  return app.isPackaged
-    ? join(app.getPath('home'), 'Silverdaw', 'Logs')
-    : join(pathResolve(__dirname, '..', '..', '..'), 'debug')
+  // logs to a Silverdaw folder there. Dev builds deliberately resolve to the
+  // same discoverable location so a dev run behaves identically to an install.
+  return join(app.getPath('home'), 'Silverdaw', 'Logs')
 }
 
 // Always-on startup diagnostics location. Shares the discoverable user-profile
-// Silverdaw folder for packaged installs (see getDefaultDebugLogDirectory for
-// the MSIX redirection rationale); dev builds keep them under userData.
+// Silverdaw folder (see getDefaultDebugLogDirectory for the MSIX redirection
+// rationale); dev and packaged builds resolve to the same location.
 export function getDiagnosticsDirectory(): string {
-  return app.isPackaged
-    ? join(app.getPath('home'), 'Silverdaw', 'Diagnostics')
-    : join(app.getPath('userData'), 'diagnostics')
+  return join(app.getPath('home'), 'Silverdaw', 'Diagnostics')
 }
 
 // Root that holds the app-managed downloaded stem-separation models (one
-// subfolder per model manifest id). Packaged installs use the discoverable
-// user-profile Silverdaw folder — the models are large and users need to find,
-// back up, or clear them, and an MSIX-redirected userData path is neither (see
-// getDefaultDebugLogDirectory). Dev builds keep them under userData.
+// subfolder per model manifest id). Uses the discoverable user-profile
+// Silverdaw folder — the models are large and users need to find, back up, or
+// clear them, and an MSIX-redirected userData path is neither (see
+// getDefaultDebugLogDirectory). Dev and packaged builds resolve to the same
+// location so a dev run reuses models an install already downloaded.
 export function getManagedModelsRoot(): string {
-  return app.isPackaged
-    ? join(app.getPath('home'), 'Silverdaw', 'Models')
-    : join(app.getPath('userData'), 'models')
+  return join(app.getPath('home'), 'Silverdaw', 'Models')
 }
 
 export function buildDefaultPrefs(): Preferences {

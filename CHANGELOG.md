@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The Preferences ▸ Stems tab now recognises already-downloaded separation models on open, instead of showing them as not downloaded when they are already present on disk.
+
 ## 1.0.2
 
 ### Added

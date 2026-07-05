@@ -202,6 +202,31 @@ describe('ModelStore', () => {
       await expect(stat(join(dir, '.installed'))).rejects.toThrow()
     })
   })
+
+  describe('reconcileInstallState', () => {
+    it('stamps the sentinel and reports installed when all files are present but unmarked', async () => {
+      await writeFile(vocalsPathIn(dir), Buffer.from([1, 2, 3, 4, 5]))
+      await writeFile(join(dir, 'drums.onnx'), Buffer.from([9, 8, 7, 6]))
+      const store = new ModelStore({ manifest, modelDir: dir })
+
+      // Without reconciliation the missing sentinel means "not installed".
+      expect((await store.readInstallState()).installed).toBe(false)
+
+      const state = await store.reconcileInstallState()
+      expect(state.installed).toBe(true)
+      expect(await readFile(join(dir, '.installed'), 'utf8')).toBe(manifest.revision)
+      expect(await store.isInstalled()).toBe(true)
+    })
+
+    it('does not stamp a sentinel when a file is missing', async () => {
+      await writeFile(vocalsPathIn(dir), Buffer.from([1, 2, 3, 4, 5]))
+      const store = new ModelStore({ manifest, modelDir: dir })
+
+      const state = await store.reconcileInstallState()
+      expect(state.installed).toBe(false)
+      await expect(stat(join(dir, '.installed'))).rejects.toThrow()
+    })
+  })
 })
 
 function vocalsPathIn(dir: string): string {
