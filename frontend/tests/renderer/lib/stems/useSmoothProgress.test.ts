@@ -19,12 +19,12 @@ describe('nextSmoothProgress', () => {
     expect(next).toBeGreaterThan(26)
   })
 
-  it('caps the creep so it cannot run far ahead of the last real value', () => {
+  it('caps the cold-start creep so it cannot run far ahead of the last real value', () => {
     let v = 26
     for (let i = 0; i < 1000; i++) v = nextSmoothProgress(v, 26, false, 0.1)
-    // Capped at target + headroom (30), clamped to the trickle ceiling (98).
-    expect(v).toBeLessThanOrEqual(56)
-    expect(v).toBeGreaterThan(50)
+    // Before any pace is known, capped at target + the small cold-start headroom (4).
+    expect(v).toBeLessThanOrEqual(30)
+    expect(v).toBeGreaterThan(29)
   })
 
   it('never trickles past the ceiling even for a high target', () => {
@@ -37,6 +37,21 @@ describe('nextSmoothProgress', () => {
     let v = 40
     for (let i = 0; i < 200; i++) v = nextSmoothProgress(v, 94, true, 0.1)
     expect(v).toBe(100)
+  })
+
+  it('creeps at the supplied observed pace toward the projected cap', () => {
+    // With a measured pace of 4%/s and a projected cap of 40, one 0.5 s step advances ~2%.
+    const next = nextSmoothProgress(30, 30, false, 0.5, { tricklePerSec: 4, cap: 40 })
+    expect(next).toBeCloseTo(32, 5)
+  })
+
+  it('never creeps past the supplied projected cap', () => {
+    let v = 30
+    for (let i = 0; i < 1000; i++) {
+      v = nextSmoothProgress(v, 30, false, 0.1, { tricklePerSec: 4, cap: 40 })
+    }
+    expect(v).toBeLessThanOrEqual(40)
+    expect(v).toBeGreaterThan(39)
   })
 
   it('is monotonic across a realistic bursty milestone sequence', () => {

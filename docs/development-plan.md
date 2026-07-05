@@ -271,7 +271,8 @@ actually produce with the backup.
 `SilverdawBackend.exe` are `onnxruntime.dll` and — for the default DirectML
 build — `DirectML.dll`. The model **weights are not shipped**: htdemucs and both
 RoFormer packs are downloaded on demand (or located from an existing copy) into
-app-data / user-selected directories. GPU acceleration via the DirectML
+a discoverable `Silverdaw\Models` folder in the user's home folder (packaged
+installs) or `<userData>/models` (dev builds), or a user-selected directory. GPU acceleration via the DirectML
 execution provider on Windows is **implemented**: the bundled ONNX Runtime is a
 DirectML build (a CPU+GPU superset — a single `onnxruntime.dll` serves both EPs),
 and the renderer threads a `useGpu` flag through to the backend's session options
@@ -321,9 +322,12 @@ resolved model directories.
 **Target UX:** Separation runs on a background thread and never touches the audio
 callback. Progress is emitted as `STEM_PROGRESS` events and shown in a
 non-blocking progress dialog; the audio engine keeps playing during separation.
-ONNX inference reserves one logical core for the UI/message thread, so the
-progress bar keeps repainting even when separating on the CPU (which would
-otherwise pin every core and freeze the renderer). The dialog stays open through
+ONNX inference runs on a small pool of physical performance cores (P-cores,
+capped at 8) rather than every logical core — faster on hybrid CPUs and it
+leaves the efficiency cores free so the progress bar keeps repainting. Cancel
+terminates the in-flight ONNX run immediately, and the progress bar creeps at
+the observed per-chunk pace so it never stalls partway on slow machines. The
+dialog stays open through
 a final "Writing files…" phase until the stems have been placed, so it never
 vanishes before the new clips appear.
 Stems appear **incrementally**: the backend emits a `STEM_PARTIAL` envelope the
@@ -1633,7 +1637,7 @@ library, transport, UI layout and per-clip edits — from a single
 - [x] `PROJECT_NEW`, `PROJECT_SAVE`, `PROJECT_SAVE_AS`, `PROJECT_LOAD`
   envelopes; acks `PROJECT_SAVED`, `PROJECT_LOAD_FAILED`
 - [x] OS open / save-as dialogs in Electron main; `*.silverdaw` filter;
-  default project folder preference (`<home>/Music/Silverdaw/`)
+  default project folder preference (`%USERPROFILE%\Silverdaw\Projects`)
 - [x] Path tracking on the backend (`ProjectSession::currentPath`)
   drives title bar + "Save" vs "Save As" behaviour
 

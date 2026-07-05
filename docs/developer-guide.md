@@ -538,7 +538,7 @@ certification VM). Two always-on mechanisms guarantee a diagnosable artifact,
 **independent of the Preferences ▸ Developer diagnostic-logging toggle**:
 
 - **Diagnostics directory.** Electron main always creates a diagnostics
-  directory on launch (packaged installs: `%USERPROFILE%\Silverdaw\diagnostics`,
+  directory on launch (packaged installs: `%USERPROFILE%\Silverdaw\Diagnostics`,
   a discoverable non-virtualised location — under MSIX a `userData`/`%APPDATA%`
   path is silently redirected into a hidden package container; dev builds:
   `<userData>/diagnostics`) and passes it to the backend as `SILVERDAW_DIAG_DIR`
@@ -1417,15 +1417,27 @@ session options. Using the GPU is **opt-in** — the `stems.useGpu` preference
 defaults off and is honoured only when a compatible adapter is detected
 (Preferences ▸ Stems). The path is hardened against GPU timeout/TDR recovery.
 
-Inference reserves **one logical core** for the UI/message thread
-(`inferenceIntraOpThreads()` in `stems/InferenceThreads.h` sets ONNX Runtime's
-intra-op thread count to `cores − 1`, never below one). Without this a CPU-only
-separation pins every core and starves the Electron renderer, so the
-separation-progress dialog freezes at the top of each stem's band until the run
-completes; leaving a core free keeps the progress bar repainting throughout. The
-separation is a touch slower but stays visibly responsive, which is the priority
-for a long background task. On the GPU path the compute runs on the adapter, so
-the reserved core costs nothing.
+Inference runs on a **small pool of physical performance cores**
+(`inferenceIntraOpThreads()` in `stems/InferenceThreads.cpp` detects P-cores via
+`GetLogicalProcessorInformationEx` + `EfficiencyClass` and caps ONNX Runtime's
+intra-op thread count to that count, at most 8; it falls back to
+`min(logical / 2, 8)` when detection is unavailable). This is a deliberate
+speed win, not just a responsiveness one: on Intel hybrid CPUs the transformer
+models synchronise at every op boundary, so spreading work across the slower
+E-cores and hyperthread siblings makes each op wait on its slowest thread — a
+tight P-core pool is markedly **faster** than using every logical core. It also
+leaves the E-cores and HT siblings free for the backend's websocket-send and
+message threads, so the progress bar keeps flowing without any explicit core
+reservation. On the GPU path the compute runs on the adapter instead.
+
+Cancellation aborts the **in-flight** ONNX run rather than waiting for the
+current chunk (which can take tens of seconds on a slow CPU) to finish. Each
+`Session::Run` is wrapped by `runCancellable()` (`stems/StemRunCancellation.h`),
+which spins a lightweight watcher thread that calls `Ort::RunOptions::SetTerminate()`
+the moment the cancel flag is set; ONNX Runtime then unwinds at the next op
+boundary and the resulting `Ort::Exception` is translated to a normal
+`StemFailureCode::Cancelled`. So `STEM_SEPARATE_CANCEL` lands in well under a
+second instead of up to a whole chunk later.
 
 The separation-progress dialog is driven by the reactive `stemSeparationState`
 and stays open through a final **"Writing files…"** phase: on `STEM_READY` the
@@ -1763,10 +1775,12 @@ Persisted fields:
   bottom-right. Off silences them; the underlying events still go to the log when
   diagnostic logging is enabled.
 - **Default project folder** — used as the starting directory for File → Save / Save As /
-  Open. Defaults to `<home>/Music/Silverdaw/`, which is created on first launch.
+  Open. Defaults to `%USERPROFILE%\Silverdaw\Projects` (alongside `Logs`, `Diagnostics`,
+  and `Models`), which is created on first launch.
 - **Default clip folder** — starting directory for Add Track from File / library Import.
-  Defaults to `<home>/Music/`. After every successful open it remembers the folder you
-  browsed to **for the rest of the session**; on next launch it resets to this default.
+  Defaults to the user's Music library (`<home>/Music/`). After every successful open it
+  remembers the folder you browsed to **for the rest of the session**; on next launch it
+  resets to this default.
 - **Autosave** — enable / disable plus tick interval (clamped 5..600 s, default 30 s).
 - **Audio output device** — persisted `{ typeName, deviceName }` pair. The
   Preferences ▸ Audio list shows **real named devices only** (pseudo-endpoints like
@@ -1797,12 +1811,12 @@ Persisted fields:
   logger (all levels, whole session). When on, the next launch writes a
   per-session timestamped folder containing `{main,backend,renderer}.log` with
   aligned millisecond timestamps. The **Log folder** field lets the user choose
-  the parent folder; by default this is a discoverable `Silverdaw\logs` folder in
+  the parent folder; by default this is a discoverable `Silverdaw\Logs` folder in
   the user's home folder (packaged installs — a `userData`/`%APPDATA%` path is
   redirected into a hidden MSIX container; dev builds use the repo `debug`
   folder), and blank entries are normalised back to that default. This is
   separate from the always-on **startup diagnostics**
-  (packaged: `%USERPROFILE%\Silverdaw\diagnostics`, see *Engine resilience and
+  (packaged: `%USERPROFILE%\Silverdaw\Diagnostics`, see *Engine resilience and
   recovery ▸ Startup diagnostics*), which are written on every launch regardless
   of this toggle but only cover startup.
 - **Show Developer Tools** — gates the visibility of the **Debug** menu and
@@ -1815,7 +1829,12 @@ Persisted fields:
 - **Located model directories** — optional override paths to existing on-disk
   copies of each separation model: `paths.stemModelDir` (htdemucs backup),
   `paths.vocalPackDir` and `paths.rhythmPackDir` (the RoFormer packs). Empty =
-  use the app-managed download location.
+  use the app-managed download location: a discoverable `Silverdaw\Models`
+  folder in the user's home folder for packaged installs (one subfolder per
+  model id; a userData/%APPDATA% path would be redirected into a hidden MSIX
+  container), `<userData>/models` for dev builds. Existing downloads are
+  best-effort migrated from the legacy `<userData>/models` location on first run
+  after the default moved.
 
 QoL settings take effect on **Save**; developer settings require a restart and
 the dialog surfaces that explicitly.

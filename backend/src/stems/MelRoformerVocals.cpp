@@ -14,6 +14,7 @@
 #include "InferenceThreads.h"
 #include "Log.h"
 #include "MelRoformerSpectral.h"
+#include "StemRunCancellation.h"
 #include "StemSeparator.h"
 
 namespace silverdaw
@@ -39,7 +40,8 @@ struct MelRoformerVocals::Impl
         session.reset();
         sessionPath = {};
         sessionOptions = Ort::SessionOptions{};
-        sessionOptions.SetIntraOpNumThreads(stems::inferenceIntraOpThreads());
+        const int intraOpThreads = stems::inferenceIntraOpThreads();
+        sessionOptions.SetIntraOpNumThreads(intraOpThreads);
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         if (useGpu)
         {
@@ -56,7 +58,8 @@ struct MelRoformerVocals::Impl
         }
         else
         {
-            silverdaw::log::info("stems", "RoFormer ONNX execution provider: CPU");
+            silverdaw::log::info("stems", "RoFormer ONNX execution provider: CPU ("
+                                              + juce::String(intraOpThreads) + " intra-op threads)");
         }
         epUsesGpu = useGpu;
         epConfigured = true;
@@ -170,7 +173,9 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
                                                             shape.data(), shape.size());
         const char* inNames[] = {inputName.get()};
         const char* outNames[] = {outputName.get()};
-        session.Run(Ort::RunOptions{nullptr}, inNames, &inputTensor, 1, outNames, &outputTensor, 1);
+        stems::runCancellable(shouldCancel, [&](Ort::RunOptions& runOptions) {
+            session.Run(runOptions, inNames, &inputTensor, 1, outNames, &outputTensor, 1);
+        });
 
         impl->spectral.synthesize(stft.data(), masks.data(), sep.data());
 

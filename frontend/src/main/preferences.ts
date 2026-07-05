@@ -159,7 +159,7 @@ export function getDefaultDebugLogDirectory(): string {
   // user-profile root is real, unvirtualised, and easy to navigate to — default
   // logs to a Silverdaw folder there. Dev builds keep logs in the repo tree.
   return app.isPackaged
-    ? join(app.getPath('home'), 'Silverdaw', 'logs')
+    ? join(app.getPath('home'), 'Silverdaw', 'Logs')
     : join(pathResolve(__dirname, '..', '..', '..'), 'debug')
 }
 
@@ -168,20 +168,33 @@ export function getDefaultDebugLogDirectory(): string {
 // the MSIX redirection rationale); dev builds keep them under userData.
 export function getDiagnosticsDirectory(): string {
   return app.isPackaged
-    ? join(app.getPath('home'), 'Silverdaw', 'diagnostics')
+    ? join(app.getPath('home'), 'Silverdaw', 'Diagnostics')
     : join(app.getPath('userData'), 'diagnostics')
+}
+
+// Root that holds the app-managed downloaded stem-separation models (one
+// subfolder per model manifest id). Packaged installs use the discoverable
+// user-profile Silverdaw folder — the models are large and users need to find,
+// back up, or clear them, and an MSIX-redirected userData path is neither (see
+// getDefaultDebugLogDirectory). Dev builds keep them under userData.
+export function getManagedModelsRoot(): string {
+  return app.isPackaged
+    ? join(app.getPath('home'), 'Silverdaw', 'Models')
+    : join(app.getPath('userData'), 'models')
 }
 
 export function buildDefaultPrefs(): Preferences {
   const home = app.getPath('home')
-  // Prefer Music/Silverdaw, falling back to home when Music is unavailable.
+  // Projects live in a discoverable Silverdaw folder in the user's home folder,
+  // alongside Logs / Diagnostics / Models. The clip/import browse start defaults
+  // to the Music library (falling back to the projects folder if unavailable).
   let musicDir = ''
   try {
     musicDir = app.getPath('music')
   } catch {
     musicDir = ''
   }
-  const defaultProjectDir = musicDir ? join(musicDir, 'Silverdaw') : join(home, 'Silverdaw')
+  const defaultProjectDir = join(home, 'Silverdaw', 'Projects')
   const defaultClipDir = musicDir || defaultProjectDir
   return {
     window: { width: 1400, height: 900, maximized: false },

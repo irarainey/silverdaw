@@ -50,7 +50,7 @@ const logDirectory = defineModel<string>('logDirectory', { required: true })
       </div>
       <p class="text-[11px] text-zinc-500">
         Silverdaw creates a timestamped subfolder here for each
-        session. By default this is a <span class="font-mono">Silverdaw\logs</span>
+        session. By default this is a <span class="font-mono">Silverdaw\Logs</span>
         folder in your user folder.
       </p>
     </div>

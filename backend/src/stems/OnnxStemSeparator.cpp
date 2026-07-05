@@ -23,6 +23,7 @@
 
 #include "Log.h"
 #include "InferenceThreads.h"
+#include "StemRunCancellation.h"
 #include "StemShifts.h"
 #include "BsRoformerRhythm.h"
 #include "MelRoformerVocals.h"
@@ -227,6 +228,23 @@ bool isGpuDeviceLost(const Ort::Exception& e)
            msg.contains("device reset") || msg.contains("device lost") ||
            msg.contains("dxgi_error_device") || msg.contains("887a00");
 }
+
+// Out of GPU memory (E_OUTOFMEMORY 0x8007000E / "not enough memory resources").
+// Common on integrated GPUs, which share a limited slice of system memory: a
+// large transformer MatMul can exceed the DirectML allocation budget. Treated as
+// recoverable so the job retries on the CPU (ample system RAM) instead of failing.
+bool isGpuOutOfMemory(const Ort::Exception& e)
+{
+    const juce::String msg = juce::String(e.what()).toLowerCase();
+    return msg.contains("8007000e") || msg.contains("e_outofmemory") ||
+           msg.contains("not enough memory") || msg.contains("out of memory");
+}
+
+// Any DirectML fault we can recover from by re-running the job on the CPU.
+bool isRecoverableGpuFault(const Ort::Exception& e)
+{
+    return isGpuDeviceLost(e) || isGpuOutOfMemory(e);
+}
 #endif
 
 class OnnxStemSeparator : public StemSeparator
@@ -245,11 +263,13 @@ class OnnxStemSeparator : public StemSeparator
         applyExecutionProvider(request.useGpu);
 
 #if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
-        // On a DirectML GPU reset (Windows TDR) mid-inference, transparently retry
-        // the whole job on the CPU provider so the user still gets their stems
-        // instead of a hard failure. The CPU provider never triggers TDR, so a
-        // single fallback cannot loop. Already-written stems are re-emitted; the
-        // renderer dedupes them per job, so the retry is idempotent.
+        // On a recoverable DirectML fault mid-inference — a GPU reset (Windows TDR)
+        // or running out of (often shared, integrated-GPU) memory — transparently
+        // retry the whole job on the CPU provider so the user still gets their stems
+        // instead of a hard failure. The CPU provider never triggers TDR and draws
+        // on ample system RAM, so a single fallback cannot loop. Already-written
+        // stems are re-emitted; the renderer dedupes them per job, so the retry is
+        // idempotent.
         if (epUsesGpu)
         {
             try
@@ -258,12 +278,17 @@ class OnnxStemSeparator : public StemSeparator
             }
             catch (const Ort::Exception& e)
             {
-                if (! isGpuDeviceLost(e)) throw;
+                if (! isRecoverableGpuFault(e)) throw;
                 silverdaw::log::warn("stems",
-                                     juce::String("GPU device lost during separation (") + e.what() +
+                                     juce::String("GPU separation failed (") + e.what() +
                                          "); falling back to CPU and retrying.");
                 applyExecutionProvider(false);
-                return runSeparation(request, onProgress, onStemReady, shouldCancel);
+                // Force the whole retry — including the RoFormer packs, which
+                // configure their own sessions from the request — onto the CPU,
+                // otherwise they would reconfigure to the GPU and fault again.
+                StemSeparationRequest cpuRequest = request;
+                cpuRequest.useGpu = false;
+                return runSeparation(cpuRequest, onProgress, onStemReady, shouldCancel);
             }
         }
 #endif
@@ -345,12 +370,11 @@ class OnnxStemSeparator : public StemSeparator
 
         // Only run the stems the user selected; an empty selection means all four.
         // Skipping a stem skips its specialist model entirely, so a partial
-        // selection is proportionally faster.
-        const size_t selectedCount =
-            request.stems.empty() ? kStemNames.size() : request.stems.size();
-
-        // Split the separate band evenly across the selected specialist models.
-        const double stemSpan = (kSeparatePercent - kPreparePercent) / static_cast<double>(selectedCount);
+        // selection is proportionally faster. The progress band each stem occupies
+        // is computed further down (stemBandBase / stemBandSpan), weighted by real
+        // compute cost rather than split evenly — a naive even split makes the heavy
+        // rhythm run (which yields drums AND bass in one pass) look stuck on drums
+        // while bass then snaps instantly from its cache.
 
         // Residual-into-other mixture consistency: htdemucs-ft is a bag of four
         // INDEPENDENT specialists, so the stems don't reconstruct the mixture and
@@ -387,6 +411,54 @@ class OnnxStemSeparator : public StemSeparator
         juce::AudioBuffer<float> vocalForRemoval;
         bool vocalForRemovalReady = false;
 
+        // Progress bands weighted by each stem's real compute cost. One model run
+        // per selected specialist normally costs ~1 unit; but the rhythm pack
+        // produces drums AND bass from a SINGLE run (billed to whichever of the two
+        // is processed first), so the second is cache-served for ~nothing, and the
+        // residual `other` is a cheap subtraction. Weighting by these costs keeps
+        // the bar advancing in proportion to the work actually happening instead of
+        // stalling in an equal-sized band during the long rhythm run.
+        std::array<double, kStemNames.size()> stemCost{};
+        for (size_t s = 0; s < kStemNames.size(); ++s)
+        {
+            if (! isSelected(kStemNames[s])) { stemCost[s] = 0.0; continue; }
+            const juce::String st(kStemNames[s]);
+            double cost = 1.0; // a specialist model run
+            if (st == "vocals")
+                cost = haveVocalPack ? 1.0 : static_cast<double>(std::max(1, request.shifts));
+            else if ((st == "drums" || st == "bass") && useRhythmPack)
+            {
+                const bool carriesRhythmRun = (st == "drums") || ! isSelected("drums");
+                if (carriesRhythmRun)
+                {
+                    cost = 1.0; // the single drums+bass rhythm run
+                    if (removeVocalsBeforeRhythm && ! isSelected("vocals"))
+                        cost += 1.0; // plus an internal vocal pass purely for de-bleeding
+                }
+                else
+                    cost = 0.02; // served from the rhythm cache — effectively instant
+            }
+            else if (st == "other" && mixtureConsistency)
+                cost = 0.02; // residual synthesis — a quick subtraction, no model run
+            stemCost[s] = cost;
+        }
+        double totalStemCost = 0.0;
+        for (const double c : stemCost) totalStemCost += c;
+        if (totalStemCost <= 0.0) totalStemCost = 1.0;
+
+        const double separateSpan = kSeparatePercent - kPreparePercent;
+        std::array<double, kStemNames.size()> stemBandBase{};
+        std::array<double, kStemNames.size()> stemBandSpan{};
+        {
+            double acc = 0.0;
+            for (size_t s = 0; s < kStemNames.size(); ++s)
+            {
+                stemBandBase[s] = kPreparePercent + separateSpan * (acc / totalStemCost);
+                stemBandSpan[s] = separateSpan * (stemCost[s] / totalStemCost);
+                acc += stemCost[s];
+            }
+        }
+
         // Build the raw (denormalised) stereo mixture the RoFormer packs consume.
         const auto buildRawMix = [&]() {
             juce::AudioBuffer<float> raw(kModelChannels, numSamples);
@@ -410,14 +482,13 @@ class OnnxStemSeparator : public StemSeparator
             return false;
         };
 
-        size_t produced = 0;
         for (size_t s = 0; s < kStemNames.size(); ++s)
         {
             const auto* stem = kStemNames[s];
             if (! isSelected(stem)) continue;
             if (shouldCancel()) throw StemSeparationError(StemFailureCode::Cancelled, "Cancelled");
-            const double stemBase = kPreparePercent + stemSpan * static_cast<double>(produced);
-            ++produced;
+            const double stemBase = stemBandBase[s];
+            const double stemSpan = stemBandSpan[s];
             onProgress("separate", stemBase, stem);
 
             // Reserve the tail of this stem's band for its cleanup pass (if any),
@@ -773,7 +844,9 @@ class OnnxStemSeparator : public StemSeparator
                                     static_cast<size_t>(contentBegin - start));
                 }
 
-                session.Run(Ort::RunOptions{nullptr}, binding);
+                stems::runCancellable(shouldCancel, [&](Ort::RunOptions& runOptions) {
+                    session.Run(runOptions, binding);
+                });
 
                 for (int i = 0; i < valid; ++i)
                 {
@@ -826,18 +899,18 @@ class OnnxStemSeparator : public StemSeparator
 
         sessionCache.clear();
         sessionOptions = Ort::SessionOptions{};
-        // Reserve one logical core for the UI/message thread so the progress bar
-        // keeps repainting during a CPU-only separation (which would otherwise
-        // pin every core and freeze the renderer). See InferenceThreads.h.
-        sessionOptions.SetIntraOpNumThreads(stems::inferenceIntraOpThreads());
-        // Idle intra-op threads SLEEP instead of spin-waiting. By default the ORT thread pool
-        // busy-waits on every intra-op thread (near-100% CPU even between ops), which pins the
-        // reserved core too and starves THIS backend's own websocket-send and message threads.
-        // That stalled STEM_PROGRESS delivery (the bar "sat" mid-stem, then jumped at the stem
-        // boundary where inference briefly idled) and delayed STEM_SEPARATE_CANCEL until a segment
-        // finished. Disabling spinning keeps progress flowing and cancellation responsive, at a
-        // negligible throughput cost for these long, chunked jobs.
-        sessionOptions.AddConfigEntry("session.intra_op.allow_spinning", "0");
+        // Inference runs on a small pool of physical performance cores (see
+        // InferenceThreads.h), which by design leaves the E-cores / hyperthread
+        // siblings free for this backend's websocket-send and message threads —
+        // so progress keeps flowing and cancellation stays responsive WITHOUT
+        // hobbling throughput. Spinning is therefore left at its default (enabled):
+        // the many-op transformer graph pays per-op thread wake latency with
+        // spinning off, and the reserved-core starvation that once justified
+        // disabling it no longer exists. Cancellation now also terminates the
+        // in-flight run directly (StemRunCancellation.h) rather than relying on a
+        // spare polling core.
+        const int intraOpThreads = stems::inferenceIntraOpThreads();
+        sessionOptions.SetIntraOpNumThreads(intraOpThreads);
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
         if (useGpu)
@@ -865,7 +938,9 @@ class OnnxStemSeparator : public StemSeparator
         }
         else
         {
-            silverdaw::log::info("stems", "ONNX execution provider: CPU");
+            silverdaw::log::info(
+                "stems",
+                "ONNX execution provider: CPU (" + juce::String(intraOpThreads) + " intra-op threads)");
         }
 
         epUsesGpu = useGpu;
