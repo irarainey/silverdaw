@@ -2015,6 +2015,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `M` | Toggle a marker at the nearest grid point to the playhead. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
 | `Ctrl` + `←` / `→` | Move the playhead to the previous or next marker, scrolling the timeline if needed. |
 | `Ctrl` + `Shift` + `←` / `→` | Skip to the start or end of the project and jump the timeline viewport there. |
+| `Home` / `End` | Skip to the start or end of the project and jump the timeline viewport there (the bare-key twin of `Ctrl` + `Shift` + `←` / `→`). |
 | Mouse wheel | Scroll the track stack vertically. |
 | `Ctrl` + mouse wheel | Zoom the timeline (anchored on the pointer). |
 | Two-finger horizontal swipe (trackpad) | Pan left/right. |

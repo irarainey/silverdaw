@@ -4,6 +4,8 @@
 
 ### Added
 
+- The Home and End keys now jump the playhead to the start and end of the timeline (scrolling the view there), matching Ctrl+Shift+Left / Right.
+
 ### Changed
 
 - The transport's previous / next buttons now step through timeline markers by default (instead of jumping to the project start / end); you can switch back in Preferences ▸ Timeline.

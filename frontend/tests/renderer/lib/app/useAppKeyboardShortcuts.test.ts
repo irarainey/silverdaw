@@ -240,6 +240,27 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 10_000 })
   })
 
+  it('Home skips to the start of the timeline', () => {
+    const { e } = makeKey({ key: 'Home' })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineScroll).toHaveBeenCalledWith('start')
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 0 })
+  })
+
+  it('End skips to the end of the timeline', () => {
+    const { e } = makeKey({ key: 'End' })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineScroll).toHaveBeenCalledWith('end')
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 10_000 })
+  })
+
+  it('modified Home is ignored (left to the browser / OS)', () => {
+    const { e } = makeKey({ key: 'Home', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineScroll).not.toHaveBeenCalled()
+    expect(sendBridge).not.toHaveBeenCalled()
+  })
+
   it('Ctrl+ArrowRight seeks to the next marker', () => {
     h.stores.project.markers = [{ positionMs: 2000 }, { positionMs: 4000 }]
     h.stores.transport.positionMs = 1000

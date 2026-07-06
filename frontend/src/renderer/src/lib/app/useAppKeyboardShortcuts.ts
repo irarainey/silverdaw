@@ -78,6 +78,30 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     return { id, clip }
   }
 
+  // Jump the playhead to the start of the timeline and scroll the view there.
+  // Never touches the playback state — playing carries on from 0. Shared by the
+  // Ctrl/Cmd+Shift+ArrowLeft and Home shortcuts.
+  function seekToTimelineStart(): void {
+    lastArrowSeekMs = null
+    ui.requestTimelineScroll('start')
+    transport.setPosition(0)
+    sendBridge('TRANSPORT_SEEK', { positionMs: 0 })
+    log.info('transport', 'shortcut skip-back')
+  }
+
+  // Jump the playhead to the end of the timeline and scroll the view there.
+  // No-op when the project is empty. Shared by the Ctrl/Cmd+Shift+ArrowRight and
+  // End shortcuts.
+  function seekToTimelineEnd(): void {
+    const end = project.durationMs
+    if (!Number.isFinite(end) || end <= 0) return
+    lastArrowSeekMs = null
+    ui.requestTimelineScroll('end')
+    transport.setPosition(end)
+    sendBridge('TRANSPORT_SEEK', { positionMs: end })
+    log.info('transport', `shortcut skip-forward -> ${end}ms`)
+  }
+
   function onGlobalShortcutKey(e: KeyboardEvent): void {
     // Don't fight text fields, and don't trigger before the bridge is up
     // (no point sending TRANSPORT_SEEK that the backend would just drop).
@@ -190,23 +214,25 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault()
       e.stopPropagation()
-      lastArrowSeekMs = null
       if (e.key === 'ArrowLeft') {
-        // Skip-to-start: scroll the view + rewind the playhead. Never
-        // touches the playback state — playing carries on from 0.
-        ui.requestTimelineScroll('start')
-        transport.setPosition(0)
-        sendBridge('TRANSPORT_SEEK', { positionMs: 0 })
-        log.info('transport', 'shortcut skip-back')
-        return
+        seekToTimelineStart()
+      } else {
+        seekToTimelineEnd()
       }
+      return
+    }
 
-      const end = project.durationMs
-      if (!Number.isFinite(end) || end <= 0) return
-      ui.requestTimelineScroll('end')
-      transport.setPosition(end)
-      sendBridge('TRANSPORT_SEEK', { positionMs: end })
-      log.info('transport', `shortcut skip-forward -> ${end}ms`)
+    // Home / End: jump the playhead to the start / end of the timeline (the
+    // bare-key twin of Ctrl/Cmd+Shift+Arrow). No modifiers — a modified
+    // Home/End is left to the browser / OS.
+    if ((e.key === 'Home' || e.key === 'End') && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.key === 'Home') {
+        seekToTimelineStart()
+      } else {
+        seekToTimelineEnd()
+      }
       return
     }
 
